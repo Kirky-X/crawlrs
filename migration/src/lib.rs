@@ -15,15 +15,6 @@
 pub use sea_orm_migration::prelude::*;
 
 mod m20251211_initial_schema;
-mod m20251212_add_scrape_result_fields;
-mod m20251213_add_missing_fields;
-mod m20251213_add_task_fields;
-mod m20251214_063323_m20251214_add_name_to_crawls;
-mod m20251214_102356_add_url_to_crawls;
-mod m20251214_103104_add_updated_at_to_crawls;
-mod m20251214_103918_add_attempt_count_to_webhook_events;
-mod m20251214_add_more_missing_fields;
-mod m20251214_add_response_status_to_webhook_events;
 
 /// 数据库迁移器
 pub struct Migrator;
@@ -38,15 +29,6 @@ impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
             Box::new(m20251211_initial_schema::Migration),
-            Box::new(m20251212_add_scrape_result_fields::Migration),
-            Box::new(m20251213_add_task_fields::Migration),
-            Box::new(m20251213_add_missing_fields::Migration),
-            Box::new(m20251214_add_more_missing_fields::Migration),
-            Box::new(m20251214_add_response_status_to_webhook_events::Migration),
-            Box::new(m20251214_063323_m20251214_add_name_to_crawls::Migration),
-            Box::new(m20251214_102356_add_url_to_crawls::Migration),
-            Box::new(m20251214_103104_add_updated_at_to_crawls::Migration),
-            Box::new(m20251214_103918_add_attempt_count_to_webhook_events::Migration),
         ]
     }
 }
