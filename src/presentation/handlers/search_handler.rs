@@ -24,9 +24,7 @@ use uuid::Uuid;
 use crate::{
     application::dto::search_request::SearchRequestDto,
     domain::{
-        repositories::{
-            crawl_repository::CrawlRepository, task_repository::TaskRepository,
-        },
+        repositories::{crawl_repository::CrawlRepository, task_repository::TaskRepository},
         services::search_service::{SearchService, SearchServiceError},
     },
 };

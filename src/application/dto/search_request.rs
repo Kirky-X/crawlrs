@@ -24,11 +24,11 @@ pub struct SearchRequestDto {
     #[validate(range(min = 1, max = 100))]
     pub limit: Option<u32>,
     pub lang: Option<String>,
-    
+
     // Optional crawl configuration for async crawling of search results
     #[validate(nested)]
     pub crawl_config: Option<CrawlConfigDto>,
-    
+
     // If true, will create a crawl task for each search result
     pub crawl_results: Option<bool>,
 }

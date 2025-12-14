@@ -241,7 +241,9 @@ where
                     match crate::domain::services::extraction_service::ExtractionService::extract(
                         &response.content,
                         rules,
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(data) => {
                             extracted_data = Some(data);
                         }
@@ -277,7 +279,10 @@ where
                 match self.crawl_repository.find_by_id(crawl_id).await {
                     Ok(Some(c)) => {
                         if c.completed_tasks + c.failed_tasks == c.total_tasks {
-                            info!("All tasks completed for crawl {}, marking as completed", crawl_id);
+                            info!(
+                                "All tasks completed for crawl {}, marking as completed",
+                                crawl_id
+                            );
                             if let Err(e) = self
                                 .crawl_repository
                                 .update_status(crawl_id, CrawlStatus::Completed)
@@ -309,7 +314,7 @@ where
                         crawl_id, e
                     );
                 }
-                
+
                 // Check if all tasks are completed (even with failure)
                 match self.crawl_repository.find_by_id(crawl_id).await {
                     Ok(Some(c)) => {

@@ -275,10 +275,7 @@ impl TaskRepository for TaskRepositoryImpl {
             .filter(
                 // 使用 JSON 包含操作符 @>
                 // payload @> '{"crawl_id": "crawl_id"}'
-                Expr::cust_with_values(
-                    "payload->>'crawl_id' = ?",
-                    vec![crawl_id.to_string()],
-                ),
+                Expr::cust_with_values("payload->>'crawl_id' = ?", vec![crawl_id.to_string()]),
             )
             .exec(self.db.as_ref())
             .await?;
@@ -288,9 +285,7 @@ impl TaskRepository for TaskRepositoryImpl {
 
     async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
         let models = task_entity::Entity::find()
-            .filter(
-                task_entity::Column::CrawlId.eq(crawl_id)
-            )
+            .filter(task_entity::Column::CrawlId.eq(crawl_id))
             .all(self.db.as_ref())
             .await?;
 

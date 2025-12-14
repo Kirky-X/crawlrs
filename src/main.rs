@@ -31,7 +31,9 @@ use crawlrs::infrastructure::storage::local::LocalStorage;
 
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
-use crawlrs::presentation::handlers::{crawl_handler, scrape_handler, search_handler, webhook_handler};
+use crawlrs::presentation::handlers::{
+    crawl_handler, scrape_handler, search_handler, webhook_handler,
+};
 use crawlrs::presentation::middleware::auth_middleware::{auth_middleware, AuthState};
 use crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware;
 use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
@@ -148,12 +150,54 @@ async fn main() -> anyhow::Result<()> {
     let protected_routes = Router::new()
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/:id", get(scrape_handler::get_scrape_status))
-        .route("/v1/webhooks", post(webhook_handler::create_webhook::<WebhookRepoImpl>))
-        .route("/v1/crawl", post(crawl_handler::create_crawl::<CrawlRepositoryImpl, TaskRepositoryImpl, WebhookRepoImpl, ScrapeResultRepositoryImpl>))
-        .route("/v1/crawl/:id", get(crawl_handler::get_crawl::<CrawlRepositoryImpl, TaskRepositoryImpl, WebhookRepoImpl, ScrapeResultRepositoryImpl>))
-        .route("/v1/crawl/:id/results", get(crawl_handler::get_crawl_results::<CrawlRepositoryImpl, TaskRepositoryImpl, WebhookRepoImpl, ScrapeResultRepositoryImpl>))
-        .route("/v1/crawl/:id", delete(crawl_handler::cancel_crawl::<CrawlRepositoryImpl, TaskRepositoryImpl, WebhookRepoImpl, ScrapeResultRepositoryImpl>))
-        .route("/v1/search", post(search_handler::search::<CrawlRepositoryImpl, TaskRepositoryImpl>))
+        .route(
+            "/v1/webhooks",
+            post(webhook_handler::create_webhook::<WebhookRepoImpl>),
+        )
+        .route(
+            "/v1/crawl",
+            post(
+                crawl_handler::create_crawl::<
+                    CrawlRepositoryImpl,
+                    TaskRepositoryImpl,
+                    WebhookRepoImpl,
+                    ScrapeResultRepositoryImpl,
+                >,
+            ),
+        )
+        .route(
+            "/v1/crawl/:id",
+            get(crawl_handler::get_crawl::<
+                CrawlRepositoryImpl,
+                TaskRepositoryImpl,
+                WebhookRepoImpl,
+                ScrapeResultRepositoryImpl,
+            >),
+        )
+        .route(
+            "/v1/crawl/:id/results",
+            get(crawl_handler::get_crawl_results::<
+                CrawlRepositoryImpl,
+                TaskRepositoryImpl,
+                WebhookRepoImpl,
+                ScrapeResultRepositoryImpl,
+            >),
+        )
+        .route(
+            "/v1/crawl/:id",
+            delete(
+                crawl_handler::cancel_crawl::<
+                    CrawlRepositoryImpl,
+                    TaskRepositoryImpl,
+                    WebhookRepoImpl,
+                    ScrapeResultRepositoryImpl,
+                >,
+            ),
+        )
+        .route(
+            "/v1/search",
+            post(search_handler::search::<CrawlRepositoryImpl, TaskRepositoryImpl>),
+        )
         .layer(axum::middleware::from_fn_with_state(
             rate_limiter.clone(),
             distributed_rate_limit_middleware,

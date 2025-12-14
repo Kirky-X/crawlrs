@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::application::dto::search_request::{SearchRequestDto, SearchResponseDto, SearchResultDto};
+use crate::application::dto::search_request::{
+    SearchRequestDto, SearchResponseDto, SearchResultDto,
+};
 use crate::domain::models::crawl::{Crawl, CrawlStatus};
 use crate::domain::models::task::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
@@ -60,7 +62,9 @@ where
             .map_err(|e| SearchServiceError::ValidationError(e.to_string()))?;
 
         // 1. Perform Search (Mock for now, would integrate with real search engine)
-        let results = self.perform_search(&dto.query, dto.limit.unwrap_or(10)).await?;
+        let results = self
+            .perform_search(&dto.query, dto.limit.unwrap_or(10))
+            .await?;
 
         let mut crawl_id = None;
 
@@ -69,14 +73,16 @@ where
             let cid = Uuid::new_v4();
             let now = Utc::now();
 
-            let config = dto.crawl_config.unwrap_or(crate::application::dto::crawl_request::CrawlConfigDto {
-                max_depth: 1,
-                include_patterns: None,
-                exclude_patterns: None,
-                strategy: Some("bfs".to_string()),
-                headers: None,
-                extraction_rules: None,
-            });
+            let config = dto.crawl_config.unwrap_or(
+                crate::application::dto::crawl_request::CrawlConfigDto {
+                    max_depth: 1,
+                    include_patterns: None,
+                    exclude_patterns: None,
+                    strategy: Some("bfs".to_string()),
+                    headers: None,
+                    extraction_rules: None,
+                },
+            );
 
             let crawl = Crawl {
                 id: cid,
@@ -129,7 +135,11 @@ where
         })
     }
 
-    async fn perform_search(&self, query: &str, limit: u32) -> Result<Vec<SearchResultDto>, SearchServiceError> {
+    async fn perform_search(
+        &self,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<SearchResultDto>, SearchServiceError> {
         // TODO: Integrate with real search engine (e.g., Google, Bing, DuckDuckGo)
         // For now, return mock results
         let mut results = Vec::new();
@@ -137,7 +147,10 @@ where
             results.push(SearchResultDto {
                 title: format!("Result {} for {}", i, query),
                 url: format!("https://example.com/result/{}", i),
-                description: Some(format!("This is a description for result {} of query {}", i, query)),
+                description: Some(format!(
+                    "This is a description for result {} of query {}",
+                    i, query
+                )),
             });
         }
         Ok(results)

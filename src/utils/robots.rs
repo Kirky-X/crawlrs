@@ -25,7 +25,7 @@ use url::Url;
 struct CachedRobots {
     /// 内容
     content: String,
-    
+
     /// 过期时间
     expires_at: Instant,
 }
@@ -35,7 +35,7 @@ struct CachedRobots {
 pub struct RobotsChecker {
     /// HTTP客户端
     client: Client,
-    
+
     /// 缓存
     cache: Arc<Mutex<HashMap<String, CachedRobots>>>,
 }

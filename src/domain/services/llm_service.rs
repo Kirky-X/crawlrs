@@ -52,7 +52,7 @@ impl LLMService {
             // Check if we have a real implementation available (e.g. via feature flag or simple check)
             // For this project, we'll implement a basic HTTP call to an OpenAI-compatible API
             // if the API key is present.
-            
+
             // This is a simplified implementation. In production, use a proper client library (e.g. async-openai)
             let client = reqwest::Client::new();
             let prompt = format!(
@@ -66,11 +66,11 @@ impl LLMService {
                 "model": self.model,
                 "messages": [
                     {
-                        "role": "system", 
+                        "role": "system",
                         "content": "You are a helpful data extraction assistant. You output only valid JSON."
                     },
                     {
-                        "role": "user", 
+                        "role": "user",
                         "content": prompt
                     }
                 ],
@@ -78,7 +78,8 @@ impl LLMService {
             });
 
             // Assuming OpenAI-compatible endpoint
-            let response = client.post("https://api.openai.com/v1/chat/completions")
+            let response = client
+                .post("https://api.openai.com/v1/chat/completions")
                 .header("Authorization", format!("Bearer {}", api_key))
                 .json(&request_body)
                 .send()
@@ -89,12 +90,13 @@ impl LLMService {
                     if resp.status().is_success() {
                         let body: Value = resp.json().await?;
                         if let Some(content) = body["choices"][0]["message"]["content"].as_str() {
-                             // Clean up potential markdown code blocks
-                            let clean_content = content.trim()
+                            // Clean up potential markdown code blocks
+                            let clean_content = content
+                                .trim()
                                 .trim_start_matches("```json")
                                 .trim_start_matches("```")
                                 .trim_end_matches("```");
-                            
+
                             match serde_json::from_str::<Value>(clean_content) {
                                 Ok(val) => return Ok(val),
                                 Err(_) => {
@@ -107,7 +109,7 @@ impl LLMService {
                     // If API call fails or returns unexpected format, fall back to mock
                     self.mock_extraction(truncated_text, schema)
                 }
-                Err(_) => self.mock_extraction(truncated_text, schema)
+                Err(_) => self.mock_extraction(truncated_text, schema),
             }
         } else {
             self.mock_extraction(truncated_text, schema)
@@ -117,7 +119,7 @@ impl LLMService {
     fn mock_extraction(&self, text: &str, _schema: &Value) -> Result<Value> {
         // Simple mock implementation that attempts to find keywords or returns a dummy object
         // In a real scenario, this would call an LLM API
-        
+
         // Simulate processing time
         // std::thread::sleep(std::time::Duration::from_millis(100));
 

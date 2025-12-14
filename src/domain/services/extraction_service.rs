@@ -1,17 +1,17 @@
+use crate::domain::services::llm_service::LLMService;
 use anyhow::Result;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use crate::domain::services::llm_service::LLMService;
 
 /// 提取规则
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractionRule {
     pub selector: Option<String>, // Make selector optional for LLM extraction
-    pub attr: Option<String>, // If None, extract text
+    pub attr: Option<String>,     // If None, extract text
     pub is_array: bool,
-    pub use_llm: Option<bool>, // New field to enable LLM extraction
+    pub use_llm: Option<bool>,      // New field to enable LLM extraction
     pub llm_prompt: Option<String>, // Optional specific prompt for this rule
 }
 
@@ -22,40 +22,51 @@ pub struct ExtractionService;
 
 impl ExtractionService {
     /// 提取数据
-    pub async fn extract(html_content: &str, rules: &HashMap<String, ExtractionRule>) -> Result<Value> {
+    pub async fn extract(
+        html_content: &str,
+        rules: &HashMap<String, ExtractionRule>,
+    ) -> Result<Value> {
         let mut result = HashMap::new();
         let llm_service = LLMService::new();
 
         for (key, rule) in rules {
             if rule.use_llm.unwrap_or(false) {
                 // Use LLM for extraction
-                let prompt = rule.llm_prompt.clone().unwrap_or_else(|| format!("Extract {} from the text", key));
+                let prompt = rule
+                    .llm_prompt
+                    .clone()
+                    .unwrap_or_else(|| format!("Extract {} from the text", key));
                 let schema = json!({ "type": if rule.is_array { "array" } else { "string" }, "description": prompt });
-                
+
                 // Pass the raw HTML or text content to LLM
                 // Ideally, we might want to pass specific parts if a selector is provided
                 // Note: parsing document is not Send safe if done outside async context or held across await points if not careful
                 // So we parse inside the scope where needed or avoid holding Html across await
                 let content_to_process = if let Some(sel) = &rule.selector {
-                     // Parse document locally just for this scope to avoid Send issues? 
-                     // Or just pass the raw html if selector parsing is complex?
-                     // Let's parse just for extraction to be safe, though it might be less efficient
-                     let document = Html::parse_document(html_content);
-                     if let Ok(selector) = Selector::parse(sel) {
-                        document.select(&selector)
+                    // Parse document locally just for this scope to avoid Send issues?
+                    // Or just pass the raw html if selector parsing is complex?
+                    // Let's parse just for extraction to be safe, though it might be less efficient
+                    let document = Html::parse_document(html_content);
+                    if let Ok(selector) = Selector::parse(sel) {
+                        document
+                            .select(&selector)
                             .map(|e| e.text().collect::<Vec<_>>().join(" "))
                             .collect::<Vec<_>>()
                             .join("\n")
-                     } else {
-                         html_content.to_string()
-                     }
+                    } else {
+                        html_content.to_string()
+                    }
                 } else {
                     html_content.to_string()
                 };
 
                 match llm_service.extract_data(&content_to_process, &schema).await {
-                     Ok(val) => { result.insert(key.clone(), val); },
-                     Err(_) => { result.insert(key.clone(), Value::Null); }
+                    Ok(val) => {
+                        result.insert(key.clone(), val);
+                    }
+                    Err(_) => {
+                        result.insert(key.clone(), Value::Null);
+                    }
                 }
                 continue;
             }
@@ -63,14 +74,14 @@ impl ExtractionService {
             // Traditional CSS Selector Extraction
             let selector_str = match &rule.selector {
                 Some(s) => s,
-                None => continue, 
+                None => continue,
             };
-            
+
             let selector = match Selector::parse(selector_str) {
                 Ok(s) => s,
                 Err(_) => continue, // Skip invalid selectors
             };
-            
+
             // Parse document for traditional extraction
             let document = Html::parse_document(html_content);
 
