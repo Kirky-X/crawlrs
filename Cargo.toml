@@ -1,0 +1,76 @@
+# Copyright 2025 Kirky.X
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+[package]
+name = "crawlrs"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["s3"]
+s3 = ["dep:aws-config", "dep:aws-sdk-s3"]
+
+[dependencies]
+tokio = { version = "1.36", features = ["full"] }
+axum = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+config = "0.13"
+thiserror = "1.0"
+anyhow = "1.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "cookies", "http2", "charset", "macos-system-configuration"] }
+url = "2.5"
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+uuid = { version = "1.7", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sea-orm = { version = "1.0.0", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "mock", "with-chrono", "with-uuid", "with-json"] }
+sqlx = { version = "0.7", default-features = false, features = ["postgres", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
+redis = { version = "0.24", features = ["tokio-comp"] }
+async-trait = "0.1"
+futures = "0.3"
+governor = "0.6"
+chromiumoxide = { version = "0.5.7", default-features = false, features = ["tokio-runtime"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["trace"] }
+robotstxt = "0.3"
+scraper = "0.25.0"
+metrics = "0.24.3"
+metrics-exporter-prometheus = { version = "0.18.1", default-features = false, features = ["http-listener"] }
+regex = "1.12.2"
+base64 = "0.22.1"
+aws-config = { version = "1.1", default-features = false, features = ["behavior-version-latest", "rustls"], optional = true }
+aws-sdk-s3 = { version = "1.117", default-features = false, features = ["rustls"], optional = true }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+validator = { version = "0.20.0", features = ["derive"] }
+migration = { path = "migration" }
+
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = "0.12"
+wiremock = "0.6"
+criterion = "0.5"
+
+[[test]]
+name = "integration_tests"
+path = "tests/integration/mod.rs"
+
+[[bench]]
+name = "benchmark"
+harness = false

@@ -1,0 +1,395 @@
+// Copyright 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use sea_orm_migration::prelude::*;
+
+/// 数据库初始模式迁移
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    /// 应用数据库迁移
+    ///
+    /// # 参数
+    ///
+    /// * `manager` - 数据库模式管理器
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(())` - 迁移成功
+    /// * `Err(DbErr)` - 迁移失败
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // 1. Create teams table (No dependencies)
+        manager
+            .create_table(
+                Table::create()
+                    .table(Teams::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Teams::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(Teams::Name).string().not_null())
+                    .col(
+                        ColumnDef::new(Teams::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // 2. Create api_keys table (Depends on Teams)
+        manager
+            .create_table(
+                Table::create()
+                    .table(ApiKeys::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(ApiKeys::Key)
+                            .string()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(ApiKeys::TeamId).uuid().not_null())
+                    .col(
+                        ColumnDef::new(ApiKeys::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Index for api_keys
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_api_key_team")
+                    .table(ApiKeys::Table)
+                    .col(ApiKeys::TeamId)
+                    .to_owned(),
+            )
+            .await?;
+
+        // 3. Create tasks table (Depends on Teams)
+        manager
+            .create_table(
+                Table::create()
+                    .table(Tasks::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Tasks::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(Tasks::TaskType).string().not_null())
+                    .col(ColumnDef::new(Tasks::Status).string().not_null())
+                    .col(ColumnDef::new(Tasks::Priority).integer().not_null().default(0))
+                    .col(ColumnDef::new(Tasks::TeamId).uuid().not_null())
+                    .col(ColumnDef::new(Tasks::Url).string().not_null())
+                    .col(ColumnDef::new(Tasks::Payload).json().not_null())
+                    .col(ColumnDef::new(Tasks::RetryCount).integer().not_null().default(0))
+                    .col(ColumnDef::new(Tasks::MaxRetries).integer().not_null().default(3))
+                    .col(
+                        ColumnDef::new(Tasks::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(ColumnDef::new(Tasks::StartedAt).timestamp_with_time_zone())
+                    .col(ColumnDef::new(Tasks::CompletedAt).timestamp_with_time_zone())
+                    .col(ColumnDef::new(Tasks::LockToken).uuid())
+                    .col(ColumnDef::new(Tasks::LockExpiresAt).timestamp_with_time_zone())
+                    .to_owned(),
+            )
+            .await?;
+
+        // Indexes for tasks
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_status_priority")
+                    .table(Tasks::Table)
+                    .col(Tasks::Status)
+                    .col(Tasks::Priority)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_team_id")
+                    .table(Tasks::Table)
+                    .col(Tasks::TeamId)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_tasks_status_priority_created_at")
+                    .table(Tasks::Table)
+                    .col(Tasks::Status)
+                    .col(Tasks::Priority)
+                    .col(Tasks::CreatedAt)
+                    .to_owned(),
+            )
+            .await?;
+
+        // 4. Create crawls table (Depends on Teams)
+        manager
+            .create_table(
+                Table::create()
+                    .table(Crawls::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(Crawls::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(Crawls::TeamId).uuid().not_null())
+                    .col(ColumnDef::new(Crawls::RootUrl).string().not_null())
+                    .col(ColumnDef::new(Crawls::Status).string().not_null())
+                    .col(ColumnDef::new(Crawls::Config).json().not_null())
+                    .col(ColumnDef::new(Crawls::TotalTasks).integer().not_null().default(0))
+                    .col(ColumnDef::new(Crawls::CompletedTasks).integer().not_null().default(0))
+                    .col(ColumnDef::new(Crawls::FailedTasks).integer().not_null().default(0))
+                    .col(
+                        ColumnDef::new(Crawls::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(ColumnDef::new(Crawls::CompletedAt).timestamp_with_time_zone())
+                    .to_owned(),
+            )
+            .await?;
+
+        // Indexes for crawls
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_team_status")
+                    .table(Crawls::Table)
+                    .col(Crawls::TeamId)
+                    .col(Crawls::Status)
+                    .to_owned(),
+            )
+            .await?;
+
+        // 5. Create webhook_events table (Depends on Teams)
+        manager
+            .create_table(
+                Table::create()
+                    .table(WebhookEvents::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(WebhookEvents::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(WebhookEvents::TeamId).uuid().not_null())
+                    .col(ColumnDef::new(WebhookEvents::EventType).string().not_null())
+                    .col(ColumnDef::new(WebhookEvents::Payload).json().not_null())
+                    .col(ColumnDef::new(WebhookEvents::WebhookUrl).string().not_null())
+                    .col(
+                        ColumnDef::new(WebhookEvents::Status)
+                            .string()
+                            .not_null()
+                            .default("pending"),
+                    )
+                    .col(
+                        ColumnDef::new(WebhookEvents::RetryCount)
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
+                    .col(
+                        ColumnDef::new(WebhookEvents::MaxRetries)
+                            .integer()
+                            .not_null()
+                            .default(5),
+                    )
+                    .col(ColumnDef::new(WebhookEvents::NextRetryAt).timestamp_with_time_zone())
+                    .col(
+                        ColumnDef::new(WebhookEvents::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(ColumnDef::new(WebhookEvents::DeliveredAt).timestamp_with_time_zone())
+                    .to_owned(),
+            )
+            .await?;
+
+        // Indexes for webhook_events
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_status_retry")
+                    .table(WebhookEvents::Table)
+                    .col(WebhookEvents::Status)
+                    .col(WebhookEvents::NextRetryAt)
+                    .to_owned(),
+            )
+            .await?;
+
+        // 6. Create scrape_results table (Depends on Tasks)
+        manager
+            .create_table(
+                Table::create()
+                    .table(ScrapeResults::Table)
+                    .if_not_exists()
+                    .col(
+                        ColumnDef::new(ScrapeResults::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(ColumnDef::new(ScrapeResults::TaskId).uuid().not_null())
+                    .col(ColumnDef::new(ScrapeResults::StatusCode).integer().not_null())
+                    .col(ColumnDef::new(ScrapeResults::Content).text().not_null())
+                    .col(ColumnDef::new(ScrapeResults::ContentType).string().not_null())
+                    .col(ColumnDef::new(ScrapeResults::ResponseTimeMs).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(ScrapeResults::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // Drop tables in reverse order of creation/dependency
+        manager
+            .drop_table(Table::drop().table(ScrapeResults::Table).to_owned())
+            .await?;
+
+        manager
+            .drop_table(Table::drop().table(WebhookEvents::Table).to_owned())
+            .await?;
+
+        manager
+            .drop_table(Table::drop().table(Crawls::Table).to_owned())
+            .await?;
+
+        manager
+            .drop_table(Table::drop().table(Tasks::Table).to_owned())
+            .await?;
+
+        manager
+            .drop_table(Table::drop().table(ApiKeys::Table).to_owned())
+            .await?;
+
+        manager
+            .drop_table(Table::drop().table(Teams::Table).to_owned())
+            .await?;
+
+        Ok(())
+    }
+}
+
+#[derive(DeriveIden)]
+enum Teams {
+    Table,
+    Id,
+    Name,
+    CreatedAt,
+}
+
+#[derive(DeriveIden)]
+enum ApiKeys {
+    Table,
+    Key,
+    TeamId,
+    CreatedAt,
+}
+
+#[derive(DeriveIden)]
+enum Tasks {
+    Table,
+    Id,
+    TaskType,
+    Status,
+    Priority,
+    TeamId,
+    Url,
+    Payload,
+    RetryCount,
+    MaxRetries,
+    CreatedAt,
+    StartedAt,
+    CompletedAt,
+    LockToken,
+    LockExpiresAt,
+}
+
+#[derive(DeriveIden)]
+enum Crawls {
+    Table,
+    Id,
+    TeamId,
+    RootUrl,
+    Status,
+    Config,
+    TotalTasks,
+    CompletedTasks,
+    FailedTasks,
+    CreatedAt,
+    CompletedAt,
+}
+
+#[derive(DeriveIden)]
+enum WebhookEvents {
+    Table,
+    Id,
+    TeamId,
+    EventType,
+    Payload,
+    WebhookUrl,
+    Status,
+    RetryCount,
+    MaxRetries,
+    NextRetryAt,
+    CreatedAt,
+    DeliveredAt,
+}
+
+#[derive(DeriveIden)]
+enum ScrapeResults {
+    Table,
+    Id,
+    TaskId,
+    StatusCode,
+    Content,
+    ContentType,
+    ResponseTimeMs,
+    CreatedAt,
+}

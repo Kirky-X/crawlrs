@@ -1,0 +1,6 @@
+[build]
+rustflags = ["-C", "link-arg=-L/usr/lib/gcc/x86_64-openEuler-linux/12"]
+
+[env]
+CC_x86_64_unknown_linux_gnu = "/home/project/crawlrs/clang_wrapper.sh"
+CFLAGS_x86_64_unknown_linux_gnu = "-B/usr/lib/gcc/x86_64-openEuler-linux/12"

@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crawlrs-worker
+  labels:
+    app: crawlrs-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: crawlrs-worker
+  template:
+    metadata:
+      labels:
+        app: crawlrs-worker
+    spec:
+      containers:
+      - name: crawlrs-worker
+        image: crawlrs:latest
+        command: ["./crawlrs", "worker"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: crawlrs-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: crawlrs-secrets
+              key: redis-url
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
