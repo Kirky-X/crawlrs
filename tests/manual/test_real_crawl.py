@@ -15,7 +15,7 @@ URLS = [
     "https://www.chinanews.com.cn/sh/2025/12-14/10533307.shtml"
 ]
 
-def test_crawl(url):
+def run_crawl(url):
     print(f"\n🚀 Starting crawl for: {url}")
     payload = {
         "url": url,
@@ -91,5 +91,5 @@ if __name__ == "__main__":
         sys.exit(1)
 
     for url in URLS:
-        test_crawl(url)
+        run_crawl(url)
         time.sleep(2) # Graceful pause between tests

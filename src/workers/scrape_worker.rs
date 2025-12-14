@@ -743,6 +743,9 @@ mod tests {
         async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
             Ok(0)
         }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
     }
 
     struct MockScrapeResultRepository;
@@ -753,6 +756,9 @@ mod tests {
     {
         async fn save(&self, _result: ScrapeResult) -> Result<()> {
             Ok(())
+        }
+        async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
+            Ok(None)
         }
     }
 
