@@ -29,6 +29,7 @@ pub struct Model {
     pub payload: Json,
     pub max_retries: i32,
     pub scheduled_at: Option<ChronoDateTimeWithTimeZone>,
+    pub expires_at: Option<ChronoDateTimeWithTimeZone>,
     pub completed_at: Option<ChronoDateTimeWithTimeZone>,
     pub lock_token: Option<Uuid>,
     pub lock_expires_at: Option<ChronoDateTimeWithTimeZone>,

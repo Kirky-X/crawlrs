@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod crawl_request;
+pub mod extract_request;
 pub mod scrape_request;
 pub mod scrape_response;
 pub mod search_request;

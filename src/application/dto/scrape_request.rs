@@ -24,18 +24,33 @@ pub struct ScrapeRequestDto {
     pub url: String,
     /// 请求的数据格式列表
     pub formats: Option<Vec<String>>,
-    /// 自定义HTTP请求头
-    pub headers: Option<Value>,
     /// 包含的HTML标签列表
     pub include_tags: Option<Vec<String>>,
     /// 排除的HTML标签列表
     pub exclude_tags: Option<Vec<String>>,
+    /// 回调Webhook地址
+    pub webhook: Option<String>,
+    /// 提取规则
+    pub extraction_rules: Option<
+        std::collections::HashMap<
+            String,
+            crate::domain::services::extraction_service::ExtractionRule,
+        >,
+    >,
+    /// 页面交互动作
+    pub actions: Option<Vec<ScrapeActionDto>>,
+    /// 抓取选项
+    pub options: Option<ScrapeOptionsDto>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ScrapeOptionsDto {
+    /// 自定义HTTP请求头
+    pub headers: Option<Value>,
     /// 等待时间（毫秒）
     pub wait_for: Option<u64>,
     /// 超时时间（秒）
     pub timeout: Option<u64>,
-    /// 回调Webhook地址
-    pub webhook: Option<String>,
     /// 是否需要JavaScript渲染
     pub js_rendering: Option<bool>,
     /// 是否需要截图
@@ -44,13 +59,24 @@ pub struct ScrapeRequestDto {
     pub screenshot_options: Option<ScreenshotOptionsDto>,
     /// 是否模拟移动设备
     pub mobile: Option<bool>,
-    /// 提取规则
-    pub extraction_rules: Option<
-        std::collections::HashMap<
-            String,
-            crate::domain::services::extraction_service::ExtractionRule,
-        >,
-    >,
+    /// 代理配置 (URL)
+    pub proxy: Option<String>,
+    /// 是否跳过TLS验证
+    pub skip_tls_verification: Option<bool>,
+    /// 是否需要TLS指纹对抗
+    pub needs_tls_fingerprint: Option<bool>,
+    /// 是否使用Fire Engine (CDP)
+    pub use_fire_engine: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ScrapeActionDto {
+    Wait { milliseconds: u64 },
+    Click { selector: String },
+    Scroll { direction: String },
+    Screenshot { full_page: Option<bool> },
+    Input { selector: String, text: String },
 }
 
 #[derive(Debug, Deserialize, Serialize)]

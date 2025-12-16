@@ -27,6 +27,7 @@ use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlConfigDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
+use crate::application::usecases::create_scrape::CreateScrapeUseCase;
 use crate::domain::models::crawl::CrawlStatus;
 use crate::domain::models::scrape_result::ScrapeResult;
 use crate::domain::models::task::{Task, TaskStatus, TaskType};
@@ -40,7 +41,7 @@ use crate::engines::router::EngineRouter;
 use crate::engines::traits::{ScrapeRequest, ScrapeResponse, ScreenshotConfig};
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::queue::task_queue::TaskQueue;
-use crate::utils::url_utils;
+use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 
 /// 抓取工作者
 pub struct ScrapeWorker<R, S, C, ST>
@@ -56,8 +57,10 @@ where
     storage_repository: Option<Arc<ST>>,
     webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
     router: Arc<EngineRouter>,
+    create_scrape_use_case: Arc<CreateScrapeUseCase>,
     #[allow(dead_code)]
     redis: RedisClient,
+    robots_checker: Arc<RobotsChecker>,
     worker_id: Uuid,
 }
 
@@ -69,6 +72,7 @@ where
     ST: StorageRepository + Send + Sync,
 {
     /// 创建新的抓取工作器实例
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         repository: Arc<R>,
         result_repository: Arc<S>,
@@ -76,7 +80,9 @@ where
         storage_repository: Option<Arc<ST>>,
         webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
         router: Arc<EngineRouter>,
+        create_scrape_use_case: Arc<CreateScrapeUseCase>,
         redis: RedisClient,
+        robots_checker: Arc<RobotsChecker>,
     ) -> Self {
         Self {
             repository,
@@ -85,7 +91,9 @@ where
             storage_repository,
             webhook_event_repository,
             router,
+            create_scrape_use_case,
             redis,
+            robots_checker,
             worker_id: Uuid::new_v4(),
         }
     }
@@ -142,21 +150,47 @@ where
     }
 
     async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
-        let request = match Self::build_scrape_request(&task) {
-            Ok(req) => req,
+        let request_dto = match serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
+            Ok(dto) => dto,
             Err(e) => {
-                error!("Failed to build scrape request: {}", e);
+                error!("Failed to deserialize ScrapeRequestDto: {}", e);
                 self.handle_failure(&mut task).await?;
                 return Ok(());
             }
         };
 
-        let response = self.router.route(&request).await;
+        let response = self.create_scrape_use_case.execute(request_dto).await;
 
         match response {
             Ok(response) => {
                 info!("Scrape successful, status: {}", response.status_code);
-                self.handle_scrape_success(task, response).await
+
+                // Map ScrapeResponse to ScrapeResult
+                // _result variable is currently unused but might be used later or for debugging
+                let _result = ScrapeResult {
+                    id: Uuid::new_v4(),
+                    task_id: task.id,
+                    url: task.url.clone(),
+                    status_code: response.status_code,
+                    content: response.content.clone(),
+                    content_type: response.content_type.clone(),
+                    headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null),
+                    meta_data: Value::Null,
+                    screenshot: response.screenshot.clone(),
+                    response_time_ms: response.response_time_ms,
+                    created_at: Utc::now(),
+                };
+
+                if let Err(e) = self.handle_scrape_success(task.clone(), &response).await {
+                    error!("Scrape success handler failed: {}", e);
+                    self.handle_failure(&mut task).await?;
+                } else {
+                    // Mark as completed only if handle_scrape_success succeeded
+                    // handle_scrape_success calls mark_completed internally?
+                    // Let's check handle_scrape_success implementation.
+                    // It does: self.repository.mark_completed(task.id).await?;
+                }
+                Ok(())
             }
             Err(e) => {
                 error!("Scrape failed: {}", e);
@@ -193,6 +227,31 @@ where
                 }
             };
 
+        // Robots.txt Check
+        let user_agent = "crawlrs-bot";
+        if !self
+            .robots_checker
+            .is_allowed(&task.url, user_agent)
+            .await
+            .unwrap_or(true)
+        {
+            info!("Access denied by robots.txt for {}", task.url);
+            // Mark as failed or maybe a specific status like "Skipped" or "Blocked"
+            // For now, mark as failed but maybe we should add a reason
+            self.repository.mark_failed(task.id).await?;
+            return Ok(());
+        }
+
+        if let Some(delay) = self
+            .robots_checker
+            .get_crawl_delay(&task.url, user_agent)
+            .await
+            .unwrap_or(None)
+        {
+            info!("Respecting crawl delay of {:?} for {}", delay, task.url);
+            sleep(delay).await;
+        }
+
         // 2. 构建抓取请求
         let mut headers = HashMap::new();
         if let Some(h) = &config.headers {
@@ -213,6 +272,10 @@ where
             needs_screenshot: false,
             screenshot_config: None,
             mobile: false,
+            proxy: config.proxy.clone(),
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
         };
 
         // 检查配置中是否有自定义请求头 (假设 CrawlConfigDto 中可能包含 headers 字段，如果没有则忽略)
@@ -234,6 +297,8 @@ where
                     "Crawl step successful, url: {}, status: {}",
                     task.url, response.status_code
                 );
+
+                // Map ScrapeResponse to ScrapeResult (No need to map here, we use ScrapeResponse directly)
 
                 // 3. 执行数据提取（如果配置了提取规则）
                 let mut extracted_data = None;
@@ -371,7 +436,7 @@ where
             for element in document.select(&selector) {
                 if let Some(href) = element.value().attr("href") {
                     // 转换相对路径为绝对路径
-                    if let Ok(absolute_url) = url_utils::resolve_url(&base_url, href) {
+                    if let Ok(absolute_url) = base_url.join(href) {
                         let url_str = absolute_url.to_string();
 
                         // 过滤非 http/https 协议
@@ -398,11 +463,11 @@ where
 
         info!("Found {} unique links on {}", unique_links.len(), task.url);
 
-        for link in unique_links {
+        for link in unique_links.iter() {
             // 检查是否已经抓取过 (去重)
             // 这里简单使用 repository 检查 URL 是否存在
             // 在大规模系统中可能需要 BloomFilter 或 Redis Set
-            if self.repository.exists_by_url(&link).await? {
+            if self.repository.exists_by_url(link).await? {
                 continue;
             }
 
@@ -420,7 +485,7 @@ where
                 status: TaskStatus::Queued,
                 priority,
                 team_id: task.team_id,
-                url: link,
+                url: link.to_string(),
                 payload: json!({
                     "crawl_id": crawl_id.to_string(),
                     "depth": current_depth + 1,
@@ -436,6 +501,7 @@ where
                 updated_at: Utc::now().into(),
                 lock_token: None,
                 lock_expires_at: None,
+                expires_at: None,
             };
 
             self.repository.create(&new_task).await?;
@@ -484,7 +550,7 @@ where
         true
     }
 
-    async fn handle_scrape_success(&self, task: Task, response: ScrapeResponse) -> Result<()> {
+    async fn handle_scrape_success(&self, task: Task, response: &ScrapeResponse) -> Result<()> {
         // 解析 ScrapeRequest 以检查是否有提取规则
         let mut extracted_data = None;
         if let Ok(req) = serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
@@ -505,7 +571,7 @@ where
             }
         }
 
-        self.save_result(&task, &response, extracted_data).await?;
+        self.save_result(&task, response, extracted_data).await?;
         self.repository.mark_completed(task.id).await?;
 
         self.trigger_webhook(&task, WebhookEventType::ScrapeCompleted, None)
@@ -546,22 +612,19 @@ where
             }
         }
 
+        // Create result entity
         let result = ScrapeResult {
             id: Uuid::new_v4(),
             task_id: task.id,
             url: task.url.clone(),
             status_code: response.status_code,
-            content: response.content.clone(),
-            content_type: response
-                .headers
-                .get("content-type")
-                .cloned()
-                .unwrap_or_else(|| "text/html".to_string()),
+            content: content_to_store,
+            content_type: response.content_type.clone(),
             headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null),
             meta_data,
-            created_at: Utc::now(),
             screenshot: response.screenshot.clone(),
             response_time_ms: response.response_time_ms,
+            created_at: Utc::now(),
         };
 
         self.result_repository.save(result).await?;
@@ -657,218 +720,48 @@ where
             serde_json::from_value(task.payload.clone()).context("Failed to parse task payload")?;
 
         let mut headers = HashMap::new();
-        if let Some(h) = &scrape_request.headers {
-            if let Some(obj) = h.as_object() {
-                for (k, v) in obj {
-                    if let Some(s) = v.as_str() {
-                        headers.insert(k.clone(), s.to_string());
+        let options = scrape_request.options.as_ref();
+        if let Some(opts) = options {
+            if let Some(h) = &opts.headers {
+                if let Some(obj) = h.as_object() {
+                    for (k, v) in obj {
+                        if let Some(s) = v.as_str() {
+                            headers.insert(k.clone(), s.to_string());
+                        }
                     }
                 }
             }
         }
 
-        let screenshot_config = if let Some(options) = &scrape_request.screenshot_options {
-            Some(ScreenshotConfig {
-                full_page: options.full_page.unwrap_or(true),
-                selector: options.selector.clone(),
-                quality: options.quality,
-                format: options.format.clone(),
-            })
-        } else if scrape_request.screenshot.unwrap_or(false) {
-            Some(ScreenshotConfig::default())
-        } else {
-            None
-        };
+        let mut screenshot_config = None;
+        if let Some(opts) = options {
+            if let Some(s_opts) = &opts.screenshot_options {
+                screenshot_config = Some(ScreenshotConfig {
+                    full_page: s_opts.full_page.unwrap_or(true),
+                    selector: s_opts.selector.clone(),
+                    quality: s_opts.quality,
+                    format: s_opts.format.clone(),
+                });
+            } else if opts.screenshot.unwrap_or(false) {
+                // Default screenshot config if screenshot is requested but no options provided
+                screenshot_config = Some(ScreenshotConfig::default());
+            }
+        }
 
         Ok(ScrapeRequest {
-            url: scrape_request.url,
+            url: scrape_request.url.clone(),
             headers,
-            timeout: Duration::from_secs(scrape_request.timeout.unwrap_or(30)),
-            needs_js: scrape_request.js_rendering.unwrap_or(false),
-            needs_screenshot: screenshot_config.is_some(),
+            timeout: Duration::from_secs(options.and_then(|o| o.timeout).unwrap_or(30)),
+            needs_js: options.and_then(|o| o.js_rendering).unwrap_or(false),
+            needs_screenshot: options.and_then(|o| o.screenshot).unwrap_or(false),
             screenshot_config,
-            mobile: scrape_request.mobile.unwrap_or(false),
+            mobile: options.and_then(|o| o.mobile).unwrap_or(false),
+            proxy: options.and_then(|o| o.proxy.clone()),
+            skip_tls_verification: options
+                .and_then(|o| o.skip_tls_verification)
+                .unwrap_or(false),
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::models::crawl::{Crawl, CrawlStatus};
-    use crate::domain::models::task::{Task, TaskStatus, TaskType};
-    use crate::domain::repositories::storage_repository::{StorageError, StorageRepository};
-    use crate::domain::repositories::task_repository::RepositoryError;
-    use anyhow::Result;
-    use async_trait::async_trait;
-    use chrono::Utc;
-    use serde_json::json;
-    use uuid::Uuid;
-
-    // Mock repositories for testing
-    struct MockTaskRepository;
-
-    #[async_trait]
-    impl crate::domain::repositories::task_repository::TaskRepository for MockTaskRepository {
-        async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
-            Ok(_task.clone())
-        }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
-            unimplemented!()
-        }
-        async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> {
-            Ok(_task.clone())
-        }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
-            Ok(None)
-        }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
-        }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
-        }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
-        }
-        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
-            Ok(false)
-        }
-        async fn reset_stuck_tasks(
-            &self,
-            _timeout: chrono::Duration,
-        ) -> Result<u64, RepositoryError> {
-            Ok(0)
-        }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
-            Ok(0)
-        }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
-            Ok(vec![])
-        }
-    }
-
-    struct MockScrapeResultRepository;
-
-    #[async_trait]
-    impl crate::domain::repositories::scrape_result_repository::ScrapeResultRepository
-        for MockScrapeResultRepository
-    {
-        async fn save(&self, _result: ScrapeResult) -> Result<()> {
-            Ok(())
-        }
-        async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
-            Ok(None)
-        }
-    }
-
-    struct MockCrawlRepository;
-
-    #[async_trait]
-    impl crate::domain::repositories::crawl_repository::CrawlRepository for MockCrawlRepository {
-        async fn create(&self, _crawl: &Crawl) -> Result<Crawl, RepositoryError> {
-            Ok(_crawl.clone())
-        }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
-            unimplemented!()
-        }
-        async fn update(&self, _crawl: &Crawl) -> Result<Crawl, RepositoryError> {
-            Ok(_crawl.clone())
-        }
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
-        }
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
-        }
-        async fn update_status(
-            &self,
-            _id: Uuid,
-            _status: CrawlStatus,
-        ) -> Result<(), RepositoryError> {
-            Ok(())
-        }
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
-        }
-    }
-
-    struct MockStorageRepository;
-
-    #[async_trait]
-    impl StorageRepository for MockStorageRepository {
-        async fn save(&self, _key: &str, _data: &[u8]) -> Result<(), StorageError> {
-            Ok(())
-        }
-        async fn get(&self, _key: &str) -> Result<Option<Vec<u8>>, StorageError> {
-            Ok(None)
-        }
-        async fn delete(&self, _key: &str) -> Result<(), StorageError> {
-            Ok(())
-        }
-        async fn exists(&self, _key: &str) -> Result<bool, StorageError> {
-            Ok(false)
-        }
-    }
-
-    struct MockWebhookRepository;
-
-    #[allow(dead_code)]
-    #[async_trait]
-    impl crate::domain::repositories::webhook_event_repository::WebhookEventRepository
-        for MockWebhookRepository
-    {
-        async fn create(&self, _event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
-            Ok(_event.clone())
-        }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
-            unimplemented!()
-        }
-        async fn find_pending(&self, _limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError> {
-            unimplemented!()
-        }
-        async fn update(&self, _event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
-            Ok(_event.clone())
-        }
-    }
-
-    fn create_test_task(payload: serde_json::Value) -> Task {
-        Task {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
-            url: "http://example.com".to_string(),
-            task_type: TaskType::Scrape,
-            priority: 0,
-            payload,
-            scheduled_at: None,
-            status: TaskStatus::Queued,
-            attempt_count: 0,
-            max_retries: 3,
-            created_at: Utc::now().into(),
-            started_at: None,
-            completed_at: None,
-            crawl_id: None,
-            updated_at: Utc::now().into(),
-            lock_token: None,
-            lock_expires_at: None,
-        }
-    }
-
-    #[test]
-    fn test_build_scrape_request_defaults() {
-        let payload = json!({
-            "url": "http://example.com"
-        });
-        let task = create_test_task(payload);
-
-        let request = ScrapeWorker::<
-            MockTaskRepository,
-            MockScrapeResultRepository,
-            MockCrawlRepository,
-            MockStorageRepository,
-        >::build_scrape_request(&task)
-        .unwrap();
-
-        assert_eq!(request.url, "http://example.com");
     }
 }

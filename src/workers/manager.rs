@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::application::usecases::create_scrape::CreateScrapeUseCase;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::storage_repository::StorageRepository;
@@ -25,6 +26,8 @@ use std::sync::Arc;
 use tokio::signal;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
+
+use crate::utils::robots::RobotsChecker;
 
 /// 工作管理器
 pub struct WorkerManager<Q, R, S, C, ST>
@@ -42,7 +45,9 @@ where
     storage_repository: Option<Arc<ST>>,
     webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
     router: Arc<EngineRouter>,
+    create_scrape_use_case: Arc<CreateScrapeUseCase>,
     redis: RedisClient,
+    robots_checker: Arc<RobotsChecker>,
     handles: Vec<JoinHandle<()>>,
 }
 
@@ -63,7 +68,9 @@ where
         storage_repository: Option<Arc<ST>>,
         webhook_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
         router: Arc<EngineRouter>,
+        create_scrape_use_case: Arc<CreateScrapeUseCase>,
         redis: RedisClient,
+        robots_checker: Arc<RobotsChecker>,
     ) -> Self {
         Self {
             queue,
@@ -73,7 +80,9 @@ where
             storage_repository,
             webhook_event_repository: webhook_repository,
             router,
+            create_scrape_use_case,
             redis,
+            robots_checker,
             handles: Vec::new(),
         }
     }
@@ -94,7 +103,9 @@ where
                 self.storage_repository.clone(),
                 self.webhook_event_repository.clone(),
                 self.router.clone(),
+                self.create_scrape_use_case.clone(),
                 self.redis.clone(),
+                self.robots_checker.clone(),
             );
 
             let queue = self.queue.clone();

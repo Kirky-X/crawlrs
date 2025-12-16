@@ -72,6 +72,17 @@ impl<R: TaskRepository + Send + Sync + 'static> TaskScheduler<R> {
                     }
                 }
 
+                match repository.expire_tasks().await {
+                    Ok(count) => {
+                        if count > 0 {
+                            info!("Expired {} tasks", count);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to expire tasks: {}", e);
+                    }
+                }
+
                 info!("Scheduler maintenance tick");
             }
         })

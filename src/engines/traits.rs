@@ -68,6 +68,14 @@ pub struct ScrapeRequest {
     pub screenshot_config: Option<ScreenshotConfig>,
     /// 是否移动端
     pub mobile: bool,
+    /// 代理配置 (URL)
+    pub proxy: Option<String>,
+    /// 是否跳过TLS验证
+    pub skip_tls_verification: bool,
+    /// 是否需要TLS指纹对抗
+    pub needs_tls_fingerprint: bool,
+    /// 是否使用Fire Engine (CDP)
+    pub use_fire_engine: bool,
 }
 
 /// 截图配置

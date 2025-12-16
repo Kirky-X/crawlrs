@@ -203,7 +203,9 @@ async fn test_semaphore_acquire_and_release() {
 
 ## 3. 集成测试
 
-### 3.1 API 端到端测试
+### 3.1 API 端到端测试 (❌ 未完成)
+
+**状态**: `tests/integration/api_tests.rs` 文件为空，测试用例未实现。
 
 #### 测试用例：创建抓取任务
 
@@ -320,7 +322,9 @@ async fn test_worker_retries_failed_task() {
 
 ---
 
-### 3.3 数据库交互测试
+### 3.3 数据库交互测试 (❌ 未完成)
+
+**状态**: `tests/integration/repositories/task_repository_test.rs` 文件缺失，测试用例未实现。
 
 #### 测试用例：仓储操作
 
@@ -373,10 +377,10 @@ async fn test_repository_acquire_next_task() {
 ```
 
 **测试覆盖**:
-- ✅ CRUD 基本操作
-- ✅ 事务一致性
-- ✅ 并发锁机制
-- ✅ 查询性能
+- ❌ CRUD 基本操作
+- ❌ 事务一致性
+- ❌ 并发锁机制
+- ❌ 查询性能
 
 ---
 

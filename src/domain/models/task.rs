@@ -44,6 +44,8 @@ pub struct Task {
     pub max_retries: i32,
     /// 计划执行时间
     pub scheduled_at: Option<DateTime<FixedOffset>>,
+    /// 过期时间
+    pub expires_at: Option<DateTime<FixedOffset>>,
     /// 创建时间
     pub created_at: DateTime<FixedOffset>,
     /// 开始执行时间
@@ -146,6 +148,14 @@ pub enum DomainError {
     /// 无效的状态转换
     #[error("Invalid state transition")]
     InvalidStateTransition,
+
+    /// 验证错误
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+
+    /// 引擎错误
+    #[error("Engine error: {0}")]
+    EngineError(String),
 }
 
 impl Task {
@@ -185,6 +195,7 @@ impl Task {
             updated_at: Utc::now().into(),
             lock_token: None,
             lock_expires_at: None,
+            expires_at: None,
         }
     }
 

@@ -1,4 +1,3 @@
-
 version: '3.8'
 
 services:
@@ -29,6 +28,15 @@ services:
     image: redis:7-alpine
     ports:
       - "6380:6379"
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+    ports:
+      - "8191:8191"
+    restart: unless-stopped
 
 volumes:
   db_data:

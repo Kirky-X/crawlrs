@@ -63,7 +63,10 @@ async fn scrape_endpoint_returns_401_without_auth() {
     // For this test, we are checking 401, which happens BEFORE queue access.
     // However, the route setup requires the extension.
     // We'll create a dummy queue with the mock DB.
-    let task_repo = Arc::new(TaskRepositoryImpl::new(db_arc.clone()));
+    let task_repo = Arc::new(TaskRepositoryImpl::new(
+        db_arc.clone(),
+        chrono::Duration::seconds(10),
+    ));
     let queue = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
 
     let app = routes::routes()

@@ -20,6 +20,11 @@ use url::Url;
 ///
 /// 检查解析后的 IP 是否为私有地址或环回地址
 pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
+    // 允许通过环境变量禁用 SSRF 保护（用于测试）
+    if std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default() == "true" {
+        return Ok(());
+    }
+
     let url = Url::parse(url_str)?;
     let host = url
         .host_str()

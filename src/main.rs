@@ -18,8 +18,8 @@ use axum::{
     Router,
 };
 use crawlrs::config::settings::Settings;
-use crawlrs::engines::fetch_engine::FetchEngine;
 use crawlrs::engines::playwright_engine::PlaywrightEngine;
+use crawlrs::engines::reqwest_engine::ReqwestEngine;
 use crawlrs::engines::router::EngineRouter;
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
@@ -35,8 +35,9 @@ use crawlrs::presentation::handlers::{
     crawl_handler, scrape_handler, search_handler, webhook_handler,
 };
 use crawlrs::presentation::middleware::auth_middleware::{auth_middleware, AuthState};
-use crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware;
 use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
+use crawlrs::presentation::middleware::team_semaphore::TeamSemaphore;
+use crawlrs::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crawlrs::presentation::routes;
 use crawlrs::queue::task_queue::PostgresTaskQueue;
 use crawlrs::workers::manager::WorkerManager;
@@ -85,8 +86,17 @@ async fn main() -> anyhow::Result<()> {
     ));
     info!("Rate limiter initialized");
 
+    // 6. Initialize Team Semaphore
+    let team_semaphore = Arc::new(TeamSemaphore::new(
+        settings.concurrency.default_team_limit as usize,
+    ));
+    info!("Team semaphore initialized");
+
     // 6. Initialize Components
-    let task_repo = Arc::new(TaskRepositoryImpl::new(db.clone()));
+    let task_repo = Arc::new(TaskRepositoryImpl::new(
+        db.clone(),
+        chrono::Duration::seconds(settings.concurrency.task_lock_duration_seconds),
+    ));
     let queue = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
     let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db.clone()));
     let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db.clone()));
@@ -105,13 +115,21 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Initialize Engines
-    let fetch_engine = Arc::new(FetchEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine);
     let playwright_engine = Arc::new(PlaywrightEngine);
-    let engines: Vec<Arc<dyn ScraperEngine>> = vec![fetch_engine, playwright_engine];
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
     let router = Arc::new(EngineRouter::new(engines));
+
+    // Initialize Use Cases
+    let create_scrape_use_case = Arc::new(
+        crawlrs::application::usecases::create_scrape::CreateScrapeUseCase::new(router.clone()),
+    );
 
     let webhook_event_repository = Arc::new(WebhookEventRepoImpl::new(db.clone()));
     let webhook_repository = Arc::new(WebhookRepoImpl::new(db.clone()));
+
+    // Initialize RobotsChecker
+    let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new());
 
     // 7. Start Workers
     let mut worker_manager = WorkerManager::new(
@@ -122,7 +140,9 @@ async fn main() -> anyhow::Result<()> {
         storage_repo.clone(),
         webhook_event_repository.clone(),
         router.clone(),
+        create_scrape_use_case.clone(),
         redis_client.clone(),
+        robots_checker.clone(),
     );
     worker_manager.start_workers(5).await;
 
@@ -199,12 +219,12 @@ async fn main() -> anyhow::Result<()> {
             post(search_handler::search::<CrawlRepositoryImpl, TaskRepositoryImpl>),
         )
         .layer(axum::middleware::from_fn_with_state(
-            rate_limiter.clone(),
-            distributed_rate_limit_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            team_semaphore.clone(),
+            team_semaphore_middleware,
         ))
         .layer(Extension(task_repo.clone()))
         .layer(Extension(result_repo.clone()))
@@ -215,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
+        .layer(Extension(team_semaphore.clone()))
         .layer(Extension(queue))
         .layer(Extension(task_repo.clone()))
         .layer(Extension(webhook_event_repository))

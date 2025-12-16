@@ -12,26 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use uuid::Uuid;
-use axum::{
-    Router,
-    routing::post,
-    extract::Extension,
-    http::StatusCode,
-    Json,
-};
-use tower::ServiceExt;
 use axum::body::Body;
 use axum::http::Request;
-use std::sync::Arc;
-use crawlrs::presentation::handlers::scrape_handler::create_scrape;
-use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
-use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crawlrs::infrastructure::cache::redis_client::RedisClient;
+use axum::{extract::Extension, http::StatusCode, routing::post, Json, Router};
+use crawlrs::application::dto::scrape_request::ScrapeRequestDto;
 use crawlrs::config::settings::Settings;
 use crawlrs::domain::models::task::{Task, TaskType};
-use crawlrs::application::dto::scrape_request::ScrapeRequestDto;
+use crawlrs::infrastructure::cache::redis_client::RedisClient;
+use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
+use crawlrs::presentation::handlers::scrape_handler::create_scrape;
+use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use tokio::sync::Mutex;
+use tower::ServiceExt;
+use uuid::Uuid;
 
 /// Mock依赖
 ///
@@ -44,17 +37,17 @@ impl TaskQueue for MockQueue {
     async fn enqueue(&self, _task: Task) -> anyhow::Result<()> {
         Ok(())
     }
-    
+
     /// 模拟出队操作
     async fn dequeue(&self, _worker_id: Uuid) -> anyhow::Result<Option<Task>> {
         Ok(None)
     }
-    
+
     /// 模拟完成任务操作
     async fn complete(&self, _task_id: Uuid) -> anyhow::Result<()> {
         Ok(())
     }
-    
+
     /// 模拟失败任务操作
     async fn fail(&self, _task_id: Uuid) -> anyhow::Result<()> {
         Ok(())
@@ -69,11 +62,11 @@ async fn test_create_scrape_handler() {
     // Setup dependencies
     let queue = Arc::new(MockQueue);
     let team_id = Uuid::new_v4();
-    
-    // Create a mock redis client or use a real one if available. 
+
+    // Create a mock redis client or use a real one if available.
     // Since we don't have a mock redis easily, we might need to skip this test or integration test it.
     // For now, let's assume we can construct a router and verify the endpoint structure.
-    
+
     // Note: Integration testing with real Redis is preferred but requires environment setup.
     // This unit test is just a placeholder to show structure.
 }

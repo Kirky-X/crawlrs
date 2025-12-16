@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::domain::models::task::{Task, TaskStatus, TaskType};
+use crate::domain::models::task::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
-use crate::utils::robots::RobotsChecker;
+use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 use anyhow::Result;
 use chrono::Utc;
 use scraper::{Html, Selector};
@@ -26,14 +26,14 @@ use uuid::Uuid;
 /// 爬取服务
 ///
 /// 处理网站爬取任务的核心业务逻辑
-pub struct CrawlService<R: TaskRepository> {
+pub struct CrawlService<R: TaskRepository, C: RobotsCheckerTrait = RobotsChecker> {
     /// 任务仓库
     repo: Arc<R>,
     /// Robots.txt检查器
-    robots_checker: RobotsChecker,
+    robots_checker: C,
 }
 
-impl<R: TaskRepository> CrawlService<R> {
+impl<R: TaskRepository> CrawlService<R, RobotsChecker> {
     /// 创建新的爬取服务实例
     ///
     /// # 参数
@@ -47,6 +47,16 @@ impl<R: TaskRepository> CrawlService<R> {
         Self {
             repo,
             robots_checker: RobotsChecker::new(),
+        }
+    }
+}
+
+impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
+    /// 使用自定义Robots检查器创建新的爬取服务实例
+    pub fn new_with_checker(repo: Arc<R>, checker: C) -> Self {
+        Self {
+            repo,
+            robots_checker: checker,
         }
     }
 
@@ -139,6 +149,19 @@ impl<R: TaskRepository> CrawlService<R> {
                 parent_task.priority
             };
 
+            let delay_ms = parent_task
+                .payload
+                .get("config")
+                .and_then(|c| c.get("crawl_delay_ms"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            let scheduled_at = if delay_ms > 0 {
+                Some((Utc::now() + chrono::Duration::milliseconds(delay_ms as i64)).into())
+            } else {
+                None
+            };
+
             let new_task = Task {
                 id: Uuid::new_v4(),
                 task_type: parent_task.task_type, // Propagate task type
@@ -149,10 +172,15 @@ impl<R: TaskRepository> CrawlService<R> {
                 payload,
                 attempt_count: 0,
                 max_retries: parent_task.max_retries,
-                scheduled_at: None,
+                scheduled_at,
                 created_at: Utc::now().into(),
                 started_at: None,
                 completed_at: None,
+                crawl_id: parent_task.crawl_id,
+                updated_at: Utc::now().into(),
+                lock_token: None,
+                lock_expires_at: None,
+                expires_at: None,
             };
 
             // Save to repository
@@ -190,6 +218,14 @@ impl LinkDiscoverer {
 
         for element in fragment.select(&selector) {
             if let Some(href) = element.value().attr("href") {
+                // Ignore fragment identifiers, mailto and javascript links
+                if href.starts_with('#')
+                    || href.starts_with("mailto:")
+                    || href.starts_with("javascript:")
+                {
+                    continue;
+                }
+
                 if let Ok(url) = base.join(href) {
                     // Only keep http/https links
                     if url.scheme() == "http" || url.scheme() == "https" {

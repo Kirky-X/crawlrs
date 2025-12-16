@@ -17,7 +17,7 @@ use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRe
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
-    crawl_handler, scrape_handler, search_handler, webhook_handler,
+    crawl_handler, extract_handler, scrape_handler, search_handler, webhook_handler,
 };
 use axum::{
     routing::{delete, get, post},
@@ -37,6 +37,7 @@ pub fn routes() -> Router {
     let protected_routes = Router::new()
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/:id", get(scrape_handler::get_scrape_status))
+        .route("/v1/extract", post(extract_handler::extract))
         .route(
             "/v1/webhooks",
             post(webhook_handler::create_webhook::<WebhookRepoImpl>),

@@ -32,6 +32,8 @@ use uuid::Uuid;
 pub struct TaskRepositoryImpl {
     /// 数据库连接
     db: Arc<DatabaseConnection>,
+    /// 锁持续时间
+    lock_duration: Duration,
 }
 
 impl TaskRepositoryImpl {
@@ -44,8 +46,8 @@ impl TaskRepositoryImpl {
     /// # 返回值
     ///
     /// 返回新的任务仓库实例
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
-        Self { db }
+    pub fn new(db: Arc<DatabaseConnection>, lock_duration: Duration) -> Self {
+        Self { db, lock_duration }
     }
 }
 
@@ -69,6 +71,7 @@ impl From<task_entity::Model> for Task {
             updated_at: model.updated_at,
             lock_token: model.lock_token,
             lock_expires_at: model.lock_expires_at,
+            expires_at: model.expires_at,
         }
     }
 }
@@ -86,6 +89,7 @@ impl From<Task> for task_entity::ActiveModel {
             attempt_count: Set(task.attempt_count),
             max_retries: Set(task.max_retries),
             scheduled_at: Set(task.scheduled_at),
+            expires_at: Set(task.expires_at),
             created_at: Set(task.created_at),
             started_at: Set(task.started_at),
             completed_at: Set(task.completed_at),
@@ -93,7 +97,7 @@ impl From<Task> for task_entity::ActiveModel {
             updated_at: Set(task.updated_at),
             lock_token: Set(task.lock_token),
             lock_expires_at: Set(task.lock_expires_at),
-            ..Default::default()
+            
         }
     }
 }
@@ -132,7 +136,15 @@ impl TaskRepository for TaskRepositoryImpl {
         let txn = self.db.begin().await?;
 
         let task = task_entity::Entity::find()
-            .filter(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
+            .filter(
+                Condition::any()
+                    .add(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
+                    .add(
+                        Condition::all()
+                            .add(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
+                            .add(task_entity::Column::LockExpiresAt.lt(Utc::now())),
+                    ),
+            )
             .filter(
                 Condition::any()
                     .add(task_entity::Column::ScheduledAt.is_null())
@@ -147,7 +159,7 @@ impl TaskRepository for TaskRepositoryImpl {
         if let Some(task) = task {
             let mut active: task_entity::ActiveModel = task.into();
             active.lock_token = Set(Some(worker_id));
-            active.lock_expires_at = Set(Some((Utc::now() + Duration::minutes(5)).into()));
+            active.lock_expires_at = Set(Some((Utc::now() + self.lock_duration).into()));
             active.status = Set(TaskStatus::Active.to_string());
             active.started_at = Set(Some(Utc::now().into()));
             let current_attempt = *active.attempt_count.as_ref();
@@ -276,6 +288,27 @@ impl TaskRepository for TaskRepositoryImpl {
                 // 使用 JSON 包含操作符 @>
                 // payload @> '{"crawl_id": "crawl_id"}'
                 Expr::cust_with_values("payload->>'crawl_id' = ?", vec![crawl_id.to_string()]),
+            )
+            .exec(self.db.as_ref())
+            .await?;
+
+        Ok(result.rows_affected)
+    }
+
+    async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+        let now = Utc::now();
+        let result = task_entity::Entity::update_many()
+            .col_expr(task_entity::Column::Status, Expr::value("failed"))
+            .col_expr(task_entity::Column::CompletedAt, Expr::value(now))
+            .filter(
+                Condition::all()
+                    .add(task_entity::Column::ExpiresAt.is_not_null())
+                    .add(task_entity::Column::ExpiresAt.lt(now))
+                    .add(
+                        Condition::any()
+                            .add(task_entity::Column::Status.eq("queued"))
+                            .add(task_entity::Column::Status.eq("active")),
+                    ),
             )
             .exec(self.db.as_ref())
             .await?;

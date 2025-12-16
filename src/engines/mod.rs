@@ -13,8 +13,9 @@
 // limitations under the License.
 
 pub mod circuit_breaker;
-pub mod fetch_engine;
+pub mod fire_engine;
 pub mod playwright_engine;
+pub mod reqwest_engine;
 pub mod router;
 pub mod traits;
 pub mod validators;

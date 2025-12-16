@@ -21,10 +21,10 @@ use std::time::Instant;
 /// 抓取引擎
 ///
 /// 基于reqwest实现的基本HTTP抓取引擎
-pub struct FetchEngine;
+pub struct ReqwestEngine;
 
 #[async_trait]
-impl ScraperEngine for FetchEngine {
+impl ScraperEngine for ReqwestEngine {
     /// 执行HTTP抓取
     ///
     /// # 参数
@@ -53,15 +53,28 @@ impl ScraperEngine for FetchEngine {
         }
 
         // Each request gets a fresh client for cookie isolation
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .user_agent(if request.mobile {
                 "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
             } else {
                 "Mozilla/5.0 (compatible; crawlrs/1.0; +http://crawlrs.dev)"
             })
             .timeout(request.timeout)
-            .cookie_store(true)
-            .build()?;
+            .cookie_store(true);
+
+        // Handle proxy
+        if let Some(proxy_url) = &request.proxy {
+            let proxy = reqwest::Proxy::all(proxy_url)
+                .map_err(|e| EngineError::Other(format!("Invalid proxy: {}", e)))?;
+            builder = builder.proxy(proxy);
+        }
+
+        // Handle TLS verification
+        if request.skip_tls_verification {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        let client = builder.build()?;
 
         let start = Instant::now();
         let response = client.get(&request.url).headers(headers).send().await?;
@@ -115,6 +128,6 @@ impl ScraperEngine for FetchEngine {
     ///
     /// 引擎名称
     fn name(&self) -> &'static str {
-        "fetch"
+        "reqwest"
     }
 }

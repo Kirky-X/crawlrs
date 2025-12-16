@@ -12,16 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+#[cfg(test)]
+use mockall::automock;
 use serde_json::{json, Value};
 use std::env;
 
+#[cfg_attr(test, automock)]
+#[async_trait]
+pub trait LLMServiceTrait: Send + Sync {
+    async fn extract_data(&self, text: &str, schema: &Value) -> Result<Value>;
+}
+
 /// LLM Service to handle interaction with LLM providers
-///
-/// Currently supports a mock implementation and placeholders for real providers (e.g., OpenAI)
 pub struct LLMService {
     api_key: Option<String>,
     model: String,
+}
+
+#[async_trait]
+impl LLMServiceTrait for LLMService {
+    async fn extract_data(&self, text: &str, schema: &Value) -> Result<Value> {
+        self.extract_data(text, schema).await
+    }
+}
+
+impl Default for LLMService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LLMService {
@@ -41,6 +61,11 @@ impl LLMService {
     /// # Returns
     /// * `Result<Value>` - The extracted data as a JSON Value
     pub async fn extract_data(&self, text: &str, schema: &Value) -> Result<Value> {
+        let api_key = self
+            .api_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("LLM API key not configured"))?;
+
         // Truncate text to avoid token limits (simplified)
         let truncated_text = if text.len() > 10000 {
             &text[..10000]
@@ -48,85 +73,65 @@ impl LLMService {
             text
         };
 
-        if let Some(api_key) = &self.api_key {
-            // Check if we have a real implementation available (e.g. via feature flag or simple check)
-            // For this project, we'll implement a basic HTTP call to an OpenAI-compatible API
-            // if the API key is present.
+        let client = reqwest::Client::new();
+        let prompt = format!(
+            "Extract data from the following text according to this JSON schema: {}. \
+            Return ONLY the valid JSON object, no markdown formatting. \
+            Text: {}",
+            schema, truncated_text
+        );
 
-            // This is a simplified implementation. In production, use a proper client library (e.g. async-openai)
-            let client = reqwest::Client::new();
-            let prompt = format!(
-                "Extract data from the following text according to this JSON schema: {}. \
-                Return ONLY the valid JSON object, no markdown formatting. \
-                Text: {}",
-                schema, truncated_text
-            );
-
-            let request_body = json!({
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a helpful data extraction assistant. You output only valid JSON."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": 0.0
-            });
-
-            // Assuming OpenAI-compatible endpoint
-            let response = client
-                .post("https://api.openai.com/v1/chat/completions")
-                .header("Authorization", format!("Bearer {}", api_key))
-                .json(&request_body)
-                .send()
-                .await;
-
-            match response {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        let body: Value = resp.json().await?;
-                        if let Some(content) = body["choices"][0]["message"]["content"].as_str() {
-                            // Clean up potential markdown code blocks
-                            let clean_content = content
-                                .trim()
-                                .trim_start_matches("```json")
-                                .trim_start_matches("```")
-                                .trim_end_matches("```");
-
-                            match serde_json::from_str::<Value>(clean_content) {
-                                Ok(val) => return Ok(val),
-                                Err(_) => {
-                                    // If parsing fails, fall back to mock or error
-                                    // println!("Failed to parse LLM response: {}", content);
-                                }
-                            }
-                        }
-                    }
-                    // If API call fails or returns unexpected format, fall back to mock
-                    self.mock_extraction(truncated_text, schema)
+        let request_body = json!({
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful data extraction assistant. You output only valid JSON."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
                 }
-                Err(_) => self.mock_extraction(truncated_text, schema),
-            }
-        } else {
-            self.mock_extraction(truncated_text, schema)
+            ],
+            "temperature": 0.0
+        });
+
+        // Assuming OpenAI-compatible endpoint
+        let response = client
+            .post("https://api.openai.com/v1/chat/completions")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&request_body)
+            .send()
+            .await
+            .context("Failed to send request to LLM API")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "LLM API returned error: {} - {}",
+                status,
+                error_text
+            ));
         }
-    }
 
-    fn mock_extraction(&self, text: &str, _schema: &Value) -> Result<Value> {
-        // Simple mock implementation that attempts to find keywords or returns a dummy object
-        // In a real scenario, this would call an LLM API
+        let body: Value = response
+            .json()
+            .await
+            .context("Failed to parse LLM API response")?;
 
-        // Simulate processing time
-        // std::thread::sleep(std::time::Duration::from_millis(100));
+        if let Some(content) = body["choices"][0]["message"]["content"].as_str() {
+            // Clean up potential markdown code blocks
+            let clean_content = content
+                .trim()
+                .trim_start_matches("```json")
+                .trim_start_matches("```")
+                .trim_end_matches("```");
 
-        Ok(json!({
-            "summary": format!("Extracted from {} chars", text.len()),
-            "entities": ["mock_entity_1", "mock_entity_2"],
-            "sentiment": "neutral"
-        }))
+            serde_json::from_str::<Value>(clean_content)
+                .context("Failed to parse extracted JSON content")
+        } else {
+            Err(anyhow::anyhow!("Invalid response format from LLM API"))
+        }
     }
 }

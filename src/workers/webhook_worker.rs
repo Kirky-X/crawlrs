@@ -84,7 +84,7 @@ impl<R: WebhookEventRepository> WebhookWorker<R> {
     ///
     /// * `Ok(())` - 处理成功
     /// * `Err(anyhow::Error)` - 处理失败
-    async fn process_pending_webhooks(&self) -> anyhow::Result<()> {
+    pub async fn process_pending_webhooks(&self) -> anyhow::Result<()> {
         // Batch size
         let batch_size = 50;
 
@@ -130,6 +130,7 @@ impl<R: WebhookEventRepository> WebhookWorker<R> {
             .client
             .post(&event.webhook_url)
             .header("X-Crawlrs-Signature", signature_hex)
+            .header("X-Crawlrs-Event", event.event_type.to_string())
             .json(&event.payload)
             .timeout(Duration::from_secs(10))
             .send()
@@ -139,27 +140,33 @@ impl<R: WebhookEventRepository> WebhookWorker<R> {
         histogram!("webhook_delivery_duration_seconds").record(duration.as_secs_f64());
 
         match response {
-            Ok(resp) if resp.status().is_success() => {
-                event.status = WebhookStatus::Delivered;
-                event.delivered_at = Some(Utc::now());
-
-                info!("Webhook {} delivered successfully", event.id);
-                self.repo.update(&event).await?;
-                counter!("webhook_delivery_success_total").increment(1);
-            }
             Ok(resp) => {
-                // Non-success status code
-                error!(
-                    "Webhook {} delivery failed with status: {}",
-                    event.id,
-                    resp.status()
-                );
-                self.handle_failure(event).await?;
-                counter!("webhook_delivery_failed_total", "reason" => "http_error").increment(1);
+                // Record response status
+                event.response_status = Some(resp.status().as_u16() as i32);
+
+                if resp.status().is_success() {
+                    event.status = WebhookStatus::Delivered;
+                    event.delivered_at = Some(Utc::now());
+
+                    info!("Webhook {} delivered successfully", event.id);
+                    self.repo.update(&event).await?;
+                    counter!("webhook_delivery_success_total").increment(1);
+                } else {
+                    // Non-success status code
+                    error!(
+                        "Webhook {} delivery failed with status: {}",
+                        event.id,
+                        resp.status()
+                    );
+                    self.handle_failure(event).await?;
+                    counter!("webhook_delivery_failed_total", "reason" => "http_error")
+                        .increment(1);
+                }
             }
             Err(e) => {
                 // Network or other error
                 error!("Webhook {} delivery failed with error: {}", event.id, e);
+                event.error_message = Some(e.to_string());
                 self.handle_failure(event).await?;
                 counter!("webhook_delivery_failed_total", "reason" => "network_error").increment(1);
             }

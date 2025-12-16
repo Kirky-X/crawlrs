@@ -1,4 +1,4 @@
-use crate::domain::services::llm_service::LLMService;
+use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
 use anyhow::Result;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -18,16 +18,30 @@ pub struct ExtractionRule {
 /// 提取服务
 ///
 /// 负责从 HTML 内容中提取结构化数据
-pub struct ExtractionService;
+pub struct ExtractionService {
+    llm_service: Box<dyn LLMServiceTrait>,
+}
 
 impl ExtractionService {
+    pub fn new(llm_service: Box<dyn LLMServiceTrait>) -> Self {
+        Self { llm_service }
+    }
+
     /// 提取数据
     pub async fn extract(
         html_content: &str,
         rules: &HashMap<String, ExtractionRule>,
     ) -> Result<Value> {
+        let service = Self::new(Box::new(LLMService::new()));
+        service.extract_data(html_content, rules).await
+    }
+
+    pub async fn extract_data(
+        &self,
+        html_content: &str,
+        rules: &HashMap<String, ExtractionRule>,
+    ) -> Result<Value> {
         let mut result = HashMap::new();
-        let llm_service = LLMService::new();
 
         for (key, rule) in rules {
             if rule.use_llm.unwrap_or(false) {
@@ -60,7 +74,11 @@ impl ExtractionService {
                     html_content.to_string()
                 };
 
-                match llm_service.extract_data(&content_to_process, &schema).await {
+                match self
+                    .llm_service
+                    .extract_data(&content_to_process, &schema)
+                    .await
+                {
                     Ok(val) => {
                         result.insert(key.clone(), val);
                     }

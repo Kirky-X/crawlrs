@@ -11,19 +11,20 @@
 
 ### 1.1 核心依赖
 
-| 组件 | 技术选型 | 版本 | 选型理由 |
-|------|---------|------|---------|
-| **Web 框架** | Axum | 0.7 | 基于 Tower，性能最优，类型安全 |
-| **ORM** | SeaORM | 1.0 | 异步、迁移管理、编译期类型检查 |
-| **HTTP 客户端** | reqwest | 0.11 | 生态成熟，支持连接池和 HTTP/2 |
-| **异步运行时** | tokio | 1.35 | 业界标准，生态完善 |
-| **限流** | governor | 0.6 | 零依赖，令牌桶算法 |
-| **序列化** | serde | 1.0 | Rust 生态标准 |
-| **日志** | tracing | 0.1 | 结构化日志，与 tokio 深度集成 |
-| **错误处理** | thiserror + anyhow | - | 库用 thiserror，应用用 anyhow |
-| **配置管理** | config + dotenvy | - | 多环境配置支持 |
-| **Redis 客户端** | redis | 0.24 | 异步支持，连接池管理 |
-| **对象存储** | aws-sdk-s3 | 1.0 | 官方 SDK，兼容 GCS/MinIO |
+| 组件            | 技术选型               | 版本   | 选型理由                                       | 状态 |
+|---------------|--------------------|------|--------------------------------------------|----|
+| **Web 框架**    | Axum               | 0.7  | 基于 Tower，性能最优，类型安全                         | ✅  |
+| **ORM**       | SeaORM             | 1.0  | 异步、迁移管理、编译期类型检查                            | ✅  |
+| **HTTP 客户端**  | reqwest            | 0.12 | 生态成熟，支持连接池和 HTTP/2                         | ✅  |
+| **异步运行时**     | tokio              | 1.36 | 业界标准，生态完善                                  | ✅  |
+| **限流**        | redis              | 0.24 | 使用 Redis INCR/EXPIRE 实现分布式限流 (替代 governor) | ✅ |
+| **序列化**       | serde              | 1.0  | Rust 生态标准                                  | ✅  |
+| **日志**        | tracing            | 0.1  | 结构化日志，与 tokio 深度集成                         | ✅  |
+| **错误处理**      | thiserror + anyhow | -    | 库用 thiserror，应用用 anyhow                    | ✅  |
+| **配置管理**      | config             | 0.13 | 多环境配置支持                                    | ✅  |
+| **Redis 客户端** | redis              | 0.24 | 异步支持，连接池管理                                 | ✅  |
+| **对象存储**      | aws-sdk-s3         | 1.0  | 官方 SDK，兼容 GCS/MinIO                        | ✅  |
+| **浏览器引擎**     | chromiumoxide      | 0.5  | Rust 原生 CDP 客户端，无头浏览器支持                    | ✅  |
 
 ### 1.2 Cargo.toml（关键依赖）
 
@@ -43,9 +44,6 @@ reqwest = { version = "0.11", features = ["json", "rustls-tls", "cookies"] }
 
 # 异步运行时
 tokio = { version = "1.35", features = ["full"] }
-
-# 限流
-governor = "0.6"
 
 # 序列化
 serde = { version = "1.0", features = ["derive"] }
@@ -283,44 +281,21 @@ pub trait TaskRepository: Send + Sync {
 
 #### 3.2.1 用例示例：创建抓取任务
 
+**状态**: ❌ 未完成 (文件存在但为空)
+
 ```rust
 // application/usecases/create_scrape.rs
-use crate::domain::repositories::TaskRepository;
-use crate::application::dto::{ScrapeRequest, ScrapeResponse};
-
-pub struct CreateScrapeUseCase<R: TaskRepository> {
-    task_repo: Arc<R>,
-    rate_limiter: Arc<RateLimiter>,
-    team_semaphore: Arc<TeamSemaphore>,
-}
-
-impl<R: TaskRepository> CreateScrapeUseCase<R> {
-    pub async fn execute(&self, req: ScrapeRequest) -> Result<ScrapeResponse, AppError> {
-        // 1. 速率限制检查
-        self.rate_limiter.check(&req.api_key).await?;
-        
-        // 2. 团队并发检查
-        let _guard = self.team_semaphore.acquire(req.team_id).await?;
-        
-        // 3. 创建任务
-        let task = Task::new(
-            TaskType::Scrape,
-            req.team_id,
-            req.url,
-            serde_json::to_value(&req.options)?,
-        );
-        
-        // 4. 持久化
-        let saved_task = self.task_repo.create(&task).await?;
-        
-        // 5. 返回响应
-        Ok(ScrapeResponse {
-            id: saved_task.id,
-            status: saved_task.status,
-            created_at: saved_task.created_at,
-        })
-    }
-}
+// TODO: Implement logic matching the design below
+//
+// use crate::domain::repositories::TaskRepository;
+// use crate::application::dto::{ScrapeRequest, ScrapeResponse};
+//
+// pub struct CreateScrapeUseCase<R: TaskRepository> {
+//     task_repo: Arc<R>,
+//     rate_limiter: Arc<RateLimiter>,
+//     team_semaphore: Arc<TeamSemaphore>,
+// }
+// ...
 ```
 
 ---
@@ -554,88 +529,52 @@ impl EngineRouter {
 ### 3.5 并发控制
 
 #### 3.5.1 速率限制器
+**状态**: ✅ 已实现 (使用 Redis INCR/EXPIRE)
 
 ```rust
-// presentation/middleware/rate_limit.rs
-use governor::{Quota, RateLimiter as GovRateLimiter, Jitter};
-use std::num::NonZeroU32;
+// presentation/middleware/rate_limit_middleware.rs
+use crate::infrastructure::cache::redis_client::RedisClient;
 
 pub struct RateLimiter {
-    limiters: Arc<RwLock<HashMap<String, GovRateLimiter>>>,
+    redis_client: RedisClient,
+    default_limit_per_minute: u32,
 }
 
 impl RateLimiter {
     pub async fn check(&self, api_key: &str) -> Result<(), RateLimitError> {
-        let limiters = self.limiters.read().await;
-        let limiter = limiters.get(api_key)
-            .ok_or(RateLimitError::KeyNotFound)?;
+        let key = format!("rate_limit:{}", api_key);
+        // 使用 Redis INCR + EXPIRE 实现
+        let current_requests = self.redis_client.incr(&key).await?;
         
-        limiter.check()
-            .map_err(|_| RateLimitError::TooManyRequests)?;
+        if current_requests == 1 {
+            self.redis_client.expire(&key, 60).await?;
+        }
+        
+        let limit = self.get_rate_limit(api_key).await?;
+        
+        if current_requests > limit.into() {
+            return Err(RateLimitError::TooManyRequests);
+        }
         
         Ok(())
-    }
-    
-    pub async fn register_key(&self, api_key: String, rpm: u32) {
-        let quota = Quota::per_minute(NonZeroU32::new(rpm).unwrap());
-        let limiter = GovRateLimiter::direct(quota);
-        
-        let mut limiters = self.limiters.write().await;
-        limiters.insert(api_key, limiter);
     }
 }
 ```
 
 #### 3.5.2 团队信号量
 
+**状态**: ❌ 未完成 (文件存在但为空)
+
 ```rust
 // presentation/middleware/team_semaphore.rs
-use redis::AsyncCommands;
-
-pub struct TeamSemaphore {
-    redis: ConnectionManager,
-}
-
-impl TeamSemaphore {
-    pub async fn acquire(&self, team_id: Uuid, max: u32) -> Result<SemaphoreGuard, SemaphoreError> {
-        let key = format!("team:{}:semaphore", team_id);
-        let mut conn = self.redis.clone();
-        
-        // 原子操作：GET -> 检查 -> INCR
-        let current: u32 = conn.get(&key).await.unwrap_or(0);
-        
-        if current >= max {
-            return Err(SemaphoreError::Exhausted);
-        }
-        
-        // INCR + EXPIRE
-        let _: () = redis::pipe()
-            .atomic()
-            .incr(&key, 1)
-            .expire(&key, 3600)
-            .query_async(&mut conn)
-            .await?;
-        
-        Ok(SemaphoreGuard::new(conn, team_id))
-    }
-}
-
-// RAII 自动释放
-pub struct SemaphoreGuard {
-    redis: ConnectionManager,
-    team_id: Uuid,
-}
-
-impl Drop for SemaphoreGuard {
-    fn drop(&mut self) {
-        let key = format!("team:{}:semaphore", self.team_id);
-        let mut conn = self.redis.clone();
-        
-        tokio::spawn(async move {
-            let _: Result<(), _> = conn.decr(&key, 1).await;
-        });
-    }
-}
+// TODO: Implement Team Semaphore logic
+//
+// use redis::AsyncCommands;
+//
+// pub struct TeamSemaphore {
+//     redis: ConnectionManager,
+// }
+// ...
 ```
 
 ---
@@ -833,7 +772,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - DATABASE_URL=postgres://user:pass@postgres:5432/crawlrs
+      - DATABASE_URL=postgres://user:password@postgres:5432/crawlrs
       - REDIS_URL=redis://redis:6379
     depends_on:
       - postgres
@@ -843,7 +782,7 @@ services:
     build: .
     command: ["crawlrs", "worker"]
     environment:
-      - DATABASE_URL=postgres://user:pass@postgres:5432/crawlrs
+      - DATABASE_URL=postgres://user:password@postgres:5432/crawlrs
       - REDIS_URL=redis://redis:6379
     depends_on:
       - postgres
@@ -853,7 +792,7 @@ services:
     image: postgres:16
     environment:
       POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
+      POSTGRES_PASSWORD: password
       POSTGRES_DB: crawlrs
     volumes:
       - postgres_data:/var/lib/postgresql/data

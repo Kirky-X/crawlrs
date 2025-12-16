@@ -61,7 +61,7 @@ where
         dto.validate()
             .map_err(|e| SearchServiceError::ValidationError(e.to_string()))?;
 
-        // 1. Perform Search (Mock for now, would integrate with real search engine)
+        // 1. Perform Search using configured engine
         let results = self
             .perform_search(&dto.query, dto.limit.unwrap_or(10))
             .await?;
@@ -79,7 +79,9 @@ where
                     include_patterns: None,
                     exclude_patterns: None,
                     strategy: Some("bfs".to_string()),
+                    crawl_delay_ms: None,
                     headers: None,
+                    proxy: None,
                     extraction_rules: None,
                 },
             );
@@ -121,6 +123,7 @@ where
                     updated_at: now.into(),
                     lock_token: None,
                     lock_expires_at: None,
+                    expires_at: None,
                 };
                 self.task_repo.create(&task).await?;
             }
@@ -137,22 +140,25 @@ where
 
     async fn perform_search(
         &self,
-        query: &str,
-        limit: u32,
+        _query: &str,
+        _limit: u32,
     ) -> Result<Vec<SearchResultDto>, SearchServiceError> {
-        // TODO: Integrate with real search engine (e.g., Google, Bing, DuckDuckGo)
-        // For now, return mock results
-        let mut results = Vec::new();
-        for i in 1..=limit {
-            results.push(SearchResultDto {
-                title: format!("Result {} for {}", i, query),
-                url: format!("https://example.com/result/{}", i),
-                description: Some(format!(
-                    "This is a description for result {} of query {}",
-                    i, query
-                )),
-            });
+        // Check for search engine configuration
+        let google_key = std::env::var("GOOGLE_SEARCH_API_KEY").ok();
+        let google_cx = std::env::var("GOOGLE_SEARCH_CX").ok();
+
+        if let (Some(_key), Some(_cx)) = (google_key, google_cx) {
+            // TODO: Implement actual Google Custom Search API call
+            // For now, we return an error to indicate it's not fully implemented rather than returning mock data
+            return Err(SearchServiceError::SearchEngine(
+                "Google Search integration is not yet implemented".to_string(),
+            ));
         }
-        Ok(results)
+
+        // If no search engine is configured, return error
+        Err(SearchServiceError::SearchEngine(
+            "No search engine configured. Please set GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX."
+                .to_string(),
+        ))
     }
 }

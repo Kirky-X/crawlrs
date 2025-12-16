@@ -81,6 +81,8 @@ pub struct RateLimitingSettings {
 pub struct ConcurrencySettings {
     /// 默认团队并发限制
     pub default_team_limit: i64,
+    /// 任务锁持续时间（秒）
+    pub task_lock_duration_seconds: i64,
 }
 
 /// 存储配置设置
@@ -137,6 +139,7 @@ impl Settings {
             .set_default("rate_limiting.default_rpm", 100)?
             // Default Concurrency settings
             .set_default("concurrency.default_team_limit", 10)?
+            .set_default("concurrency.task_lock_duration_seconds", 300)? // 5 minutes
             // Default Webhook settings
             .set_default("webhook.secret", "your-secret-key")?
             .add_source(File::with_name("config/default").required(false))

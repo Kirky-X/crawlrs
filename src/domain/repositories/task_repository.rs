@@ -54,6 +54,8 @@ pub trait TaskRepository: Send + Sync {
     async fn reset_stuck_tasks(&self, timeout: chrono::Duration) -> Result<u64, RepositoryError>;
     /// 取消与特定 Crawl ID 相关的所有任务
     async fn cancel_tasks_by_crawl_id(&self, crawl_id: Uuid) -> Result<u64, RepositoryError>;
+    /// 标记过期任务为失败
+    async fn expire_tasks(&self) -> Result<u64, RepositoryError>;
     /// 根据 Crawl ID 查找所有任务
     async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError>;
 }

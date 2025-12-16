@@ -31,6 +31,9 @@ pub struct CrawlConfigDto {
     pub include_patterns: Option<Vec<String>>,
     pub exclude_patterns: Option<Vec<String>>,
     pub strategy: Option<String>,
+    #[validate(range(min = 0, max = 60000))]
+    pub crawl_delay_ms: Option<u64>,
+    pub proxy: Option<String>,
     pub headers: Option<serde_json::Value>,
     pub extraction_rules: Option<
         std::collections::HashMap<

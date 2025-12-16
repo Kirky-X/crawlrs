@@ -21,6 +21,8 @@ pub struct SearchRequestDto {
     #[validate(length(min = 1, message = "Query cannot be empty"))]
     pub query: String,
     pub engine: Option<String>, // e.g., "google", "bing"
+    #[serde(alias = "sources")]
+    pub sources: Option<Vec<String>>, // Alias for "engine" or multi-source support
     #[validate(range(min = 1, max = 100))]
     pub limit: Option<u32>,
     pub lang: Option<String>,

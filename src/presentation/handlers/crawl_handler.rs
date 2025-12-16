@@ -22,17 +22,13 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{
-    application::{
-        dto::crawl_request::CrawlRequestDto,
-        use_cases::crawl_use_case::{CrawlUseCase, CrawlUseCaseError},
-    },
-    domain::repositories::{
-        crawl_repository::CrawlRepository, scrape_result_repository::ScrapeResultRepository,
-        task_repository::TaskRepository, webhook_repository::WebhookRepository,
-    },
-    presentation::middleware::auth_middleware::AuthState,
-};
+use crate::application::dto::crawl_request::CrawlRequestDto;
+use crate::application::use_cases::crawl_use_case::{CrawlUseCase, CrawlUseCaseError};
+use crate::domain::repositories::crawl_repository::CrawlRepository;
+use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
+use crate::domain::repositories::task_repository::TaskRepository;
+use crate::domain::repositories::webhook_repository::WebhookRepository;
+use crate::presentation::middleware::auth_middleware::AuthState;
 
 /// 创建新的爬取任务
 pub async fn create_crawl<CR, TR, WR, SRR>(
@@ -40,7 +36,7 @@ pub async fn create_crawl<CR, TR, WR, SRR>(
     Extension(task_repo): Extension<Arc<TR>>,
     Extension(webhook_repo): Extension<Arc<WR>>,
     Extension(scrape_result_repo): Extension<Arc<SRR>>,
-    Extension(team_id): Extension<Uuid>,
+    Extension(user): Extension<AuthState>,
     Json(payload): Json<CrawlRequestDto>,
 ) -> impl IntoResponse
 where
@@ -50,6 +46,7 @@ where
     SRR: ScrapeResultRepository + 'static,
 {
     let use_case = CrawlUseCase::new(crawl_repo, task_repo, webhook_repo, scrape_result_repo);
+    let team_id = user.team_id;
     match use_case.create_crawl(team_id, payload).await {
         Ok(crawl) => (StatusCode::CREATED, Json(crawl)).into_response(),
         Err(e) => {
@@ -127,8 +124,6 @@ where
     SRR: ScrapeResultRepository + 'static,
 {
     let use_case = CrawlUseCase::new(crawl_repo, task_repo, webhook_repo, scrape_result_repo);
-    // TODO: 获取当前用户的 Team ID
-    // 假设 user.team_id 存在
     let team_id = user.team_id;
 
     match use_case.cancel_crawl(crawl_id, team_id).await {

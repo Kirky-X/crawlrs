@@ -152,6 +152,7 @@ where
             updated_at: now.into(),
             lock_token: None,
             lock_expires_at: None,
+            expires_at: None,
         };
 
         self.task_repo.create(&initial_task).await?;

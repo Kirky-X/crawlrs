@@ -59,6 +59,18 @@ impl ScraperEngine for PlaywrightEngine {
             builder = builder.no_sandbox()
                 .request_timeout(timeout_duration);
 
+            // Handle proxy (Chromiumoxide uses args for proxy)
+            if let Some(proxy_url) = &request.proxy {
+                builder = builder.arg(format!("--proxy-server={}", proxy_url));
+            }
+
+            // Handle TLS verification
+            if request.skip_tls_verification {
+                builder = builder
+                    .arg("--ignore-certificate-errors")
+                    .arg("--allow-insecure-localhost");
+            }
+
             // Set window size if mobile
             if request.mobile {
                 // Default to iPhone 12 Pro dimensions
@@ -225,6 +237,10 @@ mod tests {
             needs_screenshot: false,
             screenshot_config: None,
             mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
         };
         assert_eq!(engine.support_score(&request_js), 100);
 
@@ -237,6 +253,10 @@ mod tests {
             needs_screenshot: true,
             screenshot_config: None,
             mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
         };
         assert_eq!(engine.support_score(&request_screenshot), 100);
 
@@ -249,6 +269,10 @@ mod tests {
             needs_screenshot: false,
             screenshot_config: None,
             mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
         };
         assert_eq!(engine.support_score(&request_basic), 10);
     }
