@@ -40,3 +40,14 @@ max_retries = 3
 retry_interval_seconds = 60
 user_agent = "Crawlrs-Webhook/1.0"
 secret = "your-webhook-secret"
+
+# Google Custom Search API Configuration
+[google_search]
+api_key = ""
+cx = ""
+
+# LLM Configuration
+[llm]
+api_key = ""
+model = "gpt-3.5-turbo"
+api_base_url = "https://api.openai.com/v1"

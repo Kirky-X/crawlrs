@@ -47,6 +47,10 @@ pub struct Settings {
     pub storage: StorageSettings,
     /// Webhook 配置
     pub webhook: WebhookSettings,
+    /// Google Custom Search API 配置
+    pub google_search: GoogleSearchSettings,
+    /// LLM 配置
+    pub llm: LLMSettings,
 }
 
 /// 数据库配置设置
@@ -179,6 +183,41 @@ pub struct WebhookSettings {
     pub secret: String,
 }
 
+/// Google Custom Search API 配置设置
+///
+/// 配置 Google Custom Search API 的参数
+///
+/// # 字段说明
+///
+/// * `api_key` - Google Search API 密钥
+/// * `cx` - Google Custom Search Engine ID
+#[derive(Debug, Deserialize)]
+pub struct GoogleSearchSettings {
+    /// Google Search API 密钥
+    pub api_key: Option<String>,
+    /// Google Custom Search Engine ID
+    pub cx: Option<String>,
+}
+
+/// LLM 配置设置
+///
+/// 配置 LLM（大语言模型）服务的参数
+///
+/// # 字段说明
+///
+/// * `api_key` - LLM API 密钥
+/// * `model` - 使用的模型名称，默认 "gpt-3.5-turbo"
+/// * `api_base_url` - LLM API 基础 URL，默认 "https://api.openai.com/v1"
+#[derive(Debug, Deserialize)]
+pub struct LLMSettings {
+    /// LLM API 密钥
+    pub api_key: Option<String>,
+    /// 使用的模型名称
+    pub model: Option<String>,
+    /// LLM API 基础 URL
+    pub api_base_url: Option<String>,
+}
+
 impl Settings {
     /// 创建新的配置实例
     ///
@@ -244,10 +283,17 @@ impl Settings {
             .set_default("concurrency.task_lock_duration_seconds", 300)? // 任务锁持续 300 秒（5 分钟）
             // 6. 设置 Webhook 默认配置
             .set_default("webhook.secret", "your-secret-key")? // Webhook 签名密钥
-            // 7. 加载配置文件（可选）
+            // 7. 设置 Google Custom Search API 默认配置
+            .set_default("google_search.api_key", "")? // Google Search API 密钥
+            .set_default("google_search.cx", "")? // Google Custom Search Engine ID
+            // 8. 设置 LLM 默认配置
+            .set_default("llm.api_key", "")? // LLM API 密钥
+            .set_default("llm.model", "gpt-3.5-turbo")? // 默认模型
+            .set_default("llm.api_base_url", "https://api.openai.com/v1")? // 默认 API 基础 URL
+            // 9. 加载配置文件（可选）
             .add_source(File::with_name("config/default").required(false)) // 加载默认配置
             .add_source(File::with_name(&format!("config/{}", env)).required(false)) // 加载环境特定配置
-            // 8. 加载环境变量（最高优先级）
+            // 10. 加载环境变量（最高优先级）
             .add_source(Environment::with_prefix("CRAWLRS").separator("__")); // 加载 CRAWLRS__ 前缀的环境变量
 
         // 构建并反序列化配置

@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::{
     application::dto::search_request::SearchRequestDto,
+    config::settings::Settings,
     domain::{
         repositories::{crawl_repository::CrawlRepository, task_repository::TaskRepository},
         services::search_service::{SearchService, SearchServiceError},
@@ -42,6 +43,7 @@ use crate::{
 pub async fn search<CR, TR>(
     Extension(crawl_repo): Extension<Arc<CR>>,
     Extension(task_repo): Extension<Arc<TR>>,
+    Extension(settings): Extension<Arc<Settings>>,
     Extension(team_id): Extension<Uuid>,
     Json(payload): Json<SearchRequestDto>,
 ) -> impl IntoResponse
@@ -49,7 +51,7 @@ where
     CR: CrawlRepository + 'static,
     TR: TaskRepository + 'static,
 {
-    let service = SearchService::new(crawl_repo, task_repo);
+    let service = SearchService::new(crawl_repo, task_repo, settings);
     match service.search(team_id, payload).await {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(e) => {

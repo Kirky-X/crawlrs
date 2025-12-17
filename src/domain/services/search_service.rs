@@ -6,6 +6,7 @@
 use crate::application::dto::search_request::{
     SearchRequestDto, SearchResponseDto, SearchResultDto,
 };
+use crate::config::settings::Settings;
 use crate::domain::models::crawl::{Crawl, CrawlStatus};
 use crate::domain::models::task::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
@@ -30,6 +31,7 @@ pub enum SearchServiceError {
 pub struct SearchService<CR, TR> {
     crawl_repo: Arc<CR>,
     task_repo: Arc<TR>,
+    settings: Arc<Settings>,
 }
 
 impl<CR, TR> SearchService<CR, TR>
@@ -37,10 +39,11 @@ where
     CR: CrawlRepository + 'static,
     TR: TaskRepository + 'static,
 {
-    pub fn new(crawl_repo: Arc<CR>, task_repo: Arc<TR>) -> Self {
+    pub fn new(crawl_repo: Arc<CR>, task_repo: Arc<TR>, settings: Arc<Settings>) -> Self {
         Self {
             crawl_repo,
             task_repo,
+            settings,
         }
     }
 
@@ -135,8 +138,8 @@ where
         limit: u32,
     ) -> Result<Vec<SearchResultDto>, SearchServiceError> {
         // Check for search engine configuration
-        let google_key = std::env::var("GOOGLE_SEARCH_API_KEY").ok();
-        let google_cx = std::env::var("GOOGLE_SEARCH_CX").ok();
+        let google_key = self.settings.google_search.api_key.clone();
+        let google_cx = self.settings.google_search.cx.clone();
 
         if let (Some(key), Some(cx)) = (google_key, google_cx) {
             let client = reqwest::Client::new();
@@ -182,7 +185,7 @@ where
 
         // If no search engine is configured, return error
         Err(SearchServiceError::SearchEngine(
-            "No search engine configured. Please set GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_CX."
+            "No search engine configured. Please set google_search.api_key and google_search.cx in config/default.toml."
                 .to_string(),
         ))
     }
