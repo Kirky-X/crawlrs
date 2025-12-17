@@ -6,9 +6,11 @@
 pub use sea_orm_migration::prelude::*;
 
 mod m20251211_initial_schema;
-mod m20251216_add_expires_at_to_tasks;
 
 /// 数据库迁移器
+///
+/// 管理数据库模式迁移，负责数据库结构的版本控制
+/// 包含所有数据库迁移的定义和执行逻辑
 pub struct Migrator;
 
 #[async_trait::async_trait]
@@ -21,7 +23,6 @@ impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
             Box::new(m20251211_initial_schema::Migration),
-            Box::new(m20251216_add_expires_at_to_tasks::Migration),
         ]
     }
 }

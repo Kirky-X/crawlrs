@@ -150,6 +150,11 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Tasks::CompletedAt).timestamp_with_time_zone())
                     .col(ColumnDef::new(Tasks::LockToken).uuid())
                     .col(ColumnDef::new(Tasks::LockExpiresAt).timestamp_with_time_zone())
+                    .col(
+                        ColumnDef::new(Tasks::ExpiresAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -248,7 +253,37 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // 5. Create webhook_events table (Depends on Teams)
+        // 5. Create webhooks table (Depends on Teams)
+        manager
+            .create_table(
+                Table::create()
+                    .table(Webhooks::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(Webhooks::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(Webhooks::TeamId).uuid().not_null())
+                    .col(ColumnDef::new(Webhooks::Url).string().not_null())
+                    .col(
+                        ColumnDef::new(Webhooks::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Add index on team_id for webhooks
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_webhooks_team_id")
+                    .table(Webhooks::Table)
+                    .col(Webhooks::TeamId)
+                    .to_owned(),
+            )
+            .await?;
+
+        // 6. Create webhook_events table (Depends on Teams)
         manager
             .create_table(
                 Table::create()
@@ -378,6 +413,10 @@ impl MigrationTrait for Migration {
             .await?;
 
         manager
+            .drop_table(Table::drop().table(Webhooks::Table).to_owned())
+            .await?;
+
+        manager
             .drop_table(Table::drop().table(Crawls::Table).to_owned())
             .await?;
 
@@ -437,6 +476,7 @@ enum Tasks {
     CompletedAt,
     LockToken,
     LockExpiresAt,
+    ExpiresAt,
 }
 
 #[derive(DeriveIden)]
@@ -455,6 +495,15 @@ enum Crawls {
     CreatedAt,
     UpdatedAt,
     CompletedAt,
+}
+
+#[derive(DeriveIden)]
+enum Webhooks {
+    Table,
+    Id,
+    TeamId,
+    Url,
+    CreatedAt,
 }
 
 #[derive(DeriveIden)]
