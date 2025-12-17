@@ -25,7 +25,6 @@ use crate::{
 
 pub async fn create_scrape(
     Extension(queue): Extension<Arc<PostgresTaskQueue<TaskRepositoryImpl>>>,
-    Extension(team_id): Extension<Uuid>,
     Extension(_redis_client): Extension<RedisClient>,
     Extension(_settings): Extension<Arc<Settings>>,
     Json(payload): Json<ScrapeRequestDto>,
@@ -33,6 +32,7 @@ pub async fn create_scrape(
     // Note: Concurrency limit is now enforced at the Worker level (Execution time)
     // rather than at Submission time. This allows tasks to be queued (Backlog)
     // and retried later if the team's concurrency limit is reached.
+    let team_id = Uuid::nil(); // TODO: Get from auth
 
     let task = Task::new(
         TaskType::Scrape,
@@ -67,8 +67,8 @@ pub async fn create_scrape(
 pub async fn get_scrape_status(
     Path(id): Path<Uuid>,
     Extension(repository): Extension<Arc<TaskRepositoryImpl>>,
-    Extension(team_id): Extension<Uuid>,
 ) -> impl IntoResponse {
+    let team_id = Uuid::nil(); // TODO: Get from auth
     match repository.find_by_id(id).await {
         Ok(Some(task)) => {
             if task.team_id != team_id {

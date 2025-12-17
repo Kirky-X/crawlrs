@@ -120,26 +120,26 @@ async fn test_router_selects_fetch_for_simple_request() {
     };
     
     let router = EngineRouter::new(vec![
-        Arc::new(FetchEngine),
+        Arc::new(ReqwestEngine),
         Arc::new(PlaywrightEngine),
     ]);
     
     // When: 路由请求
     let response = router.route(&request).await.unwrap();
     
-    // Then: 应选择 Fetch 引擎
-    assert_eq!(response.engine_used, "fetch");
+    // Then: 应选择 ReqwestEngine 引擎
+    assert_eq!(response.engine_used, "reqwest");
 }
 
 #[tokio::test]
 async fn test_router_fallback_on_engine_failure() {
-    // Given: Fetch 引擎已断路
+    // Given: ReqwestEngine 引擎已断路
     let circuit_breaker = Arc::new(CircuitBreaker::new());
     circuit_breaker.open("fetch");
     
     let router = EngineRouter::with_circuit_breaker(
         vec![
-            Arc::new(FetchEngine),
+            Arc::new(ReqwestEngine),
             Arc::new(PlaywrightEngine),
         ],
         circuit_breaker,
@@ -148,7 +148,7 @@ async fn test_router_fallback_on_engine_failure() {
     // When: 路由请求
     let response = router.route(&request).await.unwrap();
     
-    // Then: 应降级到 Playwright
+    // Then: 应降级到 PlaywrightEngine
     assert_eq!(response.engine_used, "playwright");
 }
 ```

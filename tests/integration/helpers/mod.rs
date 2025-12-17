@@ -185,6 +185,8 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
     let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(router.clone()));
     let robots_checker = Arc::new(RobotsChecker::new());
 
+    let settings = Arc::new(Settings::new().unwrap());
+
     let mut worker_manager = WorkerManager::new(
         queue.clone(),
         task_repo.clone(),
@@ -196,6 +198,7 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
         create_scrape_use_case.clone(),
         redis_client.clone(),
         robots_checker.clone(),
+        settings.clone(),
         10,
     );
 
@@ -224,7 +227,7 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
         .layer(Extension(task_repo.clone()))
         .layer(Extension(redis_client))
         .layer(Extension(rate_limiter))
-        .layer(Extension(Arc::new(Settings::new().unwrap()))); // Use default settings for tests
+        .layer(Extension(settings)); // Use default settings for tests
 
     let server = TestServer::new(app).unwrap();
 

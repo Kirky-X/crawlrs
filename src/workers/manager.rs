@@ -18,6 +18,7 @@ use tokio::signal;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
 
+use crate::config::settings::Settings;
 use crate::utils::robots::RobotsChecker;
 
 /// 工作管理器
@@ -39,6 +40,7 @@ where
     create_scrape_use_case: Arc<CreateScrapeUseCase>,
     redis: RedisClient,
     robots_checker: Arc<RobotsChecker>,
+    settings: Arc<Settings>,
     default_concurrency_limit: usize,
     handles: Vec<JoinHandle<()>>,
 }
@@ -63,6 +65,7 @@ where
         create_scrape_use_case: Arc<CreateScrapeUseCase>,
         redis: RedisClient,
         robots_checker: Arc<RobotsChecker>,
+        settings: Arc<Settings>,
         default_concurrency_limit: usize,
     ) -> Self {
         Self {
@@ -76,6 +79,7 @@ where
             create_scrape_use_case,
             redis,
             robots_checker,
+            settings,
             default_concurrency_limit,
             handles: Vec::new(),
         }
@@ -100,6 +104,7 @@ where
                 self.create_scrape_use_case.clone(),
                 self.redis.clone(),
                 self.robots_checker.clone(),
+                self.settings.clone(),
                 self.default_concurrency_limit,
             );
 

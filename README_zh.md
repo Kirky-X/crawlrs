@@ -5,7 +5,7 @@
 ![Rust Version](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)
-![Coverage](https://img.shields.io/badge/coverage-80%25-green.svg)
+![Coverage](https://img.shields.io/badge/coverage-90%25-green.svg)
 
 **高性能企业级网页数据采集平台**
 
@@ -41,7 +41,7 @@ crawlrs 是一个用 Rust 开发的企业级网页数据采集平台，提供搜
 
 ### 技术特性
 
-- **智能引擎路由**: 自动选择最优抓取引擎（Fetch/Playwright）
+- **智能引擎路由**: 自动选择最优抓取引擎（ReqwestEngine/PlaywrightEngine）
 - **断路器保护**: 引擎故障自动降级，保证系统可用性
 - **两层限流**: API 速率限制 + 团队并发控制
 - **可靠 Webhook**: Outbox 模式 + 指数退避重试
@@ -165,7 +165,7 @@ curl -X POST http://localhost:8080/v1/scrape \
                  │
 ┌────────────────▼────────────────────────┐
 │      Engine Router (Strategy)           │
-│   Fetch │ Playwright │ Fire Engine      │
+│ ReqwestEngine │ PlaywrightEngine │ FireEngine │
 └─────────────────────────────────────────┘
 ```
 

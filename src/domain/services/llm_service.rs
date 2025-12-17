@@ -3,10 +3,10 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+use crate::config::settings::Settings;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::env;
 
 use serde::{Deserialize, Serialize};
 
@@ -30,10 +30,10 @@ pub trait LLMServiceTrait: Send + Sync {
 ///
 /// # 配置
 ///
-/// 通过环境变量进行配置：
-/// - `LLM_API_KEY` - LLM API密钥
-/// - `LLM_MODEL` - 使用的模型名称（默认为 gpt-3.5-turbo）
-/// - `LLM_API_BASE_URL` - LLM API基础URL
+/// 通过配置文件进行配置：
+/// - `llm.api_key` - LLM API密钥
+/// - `llm.model` - 使用的模型名称（默认为 gpt-3.5-turbo）
+/// - `llm.api_base_url` - LLM API基础URL
 pub struct LLMService {
     api_key: Option<String>,
     model: String,
@@ -49,17 +49,21 @@ impl LLMServiceTrait for LLMService {
 
 impl Default for LLMService {
     fn default() -> Self {
-        Self::new()
+        // This is a temporary implementation - in production, settings should be passed
+        Self {
+            api_key: None,
+            model: "gpt-3.5-turbo".to_string(),
+            api_base_url: "https://api.openai.com/v1".to_string(),
+        }
     }
 }
 
 impl LLMService {
-    pub fn new() -> Self {
+    pub fn new(settings: &Settings) -> Self {
         Self {
-            api_key: env::var("LLM_API_KEY").ok(),
-            model: env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-3.5-turbo".to_string()),
-            api_base_url: env::var("LLM_API_BASE_URL")
-                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+            api_key: settings.llm.api_key.clone(),
+            model: settings.llm.model.clone().unwrap_or_else(|| "gpt-3.5-turbo".to_string()),
+            api_base_url: settings.llm.api_base_url.clone().unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
         }
     }
 

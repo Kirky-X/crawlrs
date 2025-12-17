@@ -3,6 +3,10 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+/// 集成测试模块
+///
+/// 包含系统的端到端集成测试
+/// 测试各个组件之间的交互和整体功能
 pub mod api_tests;
 pub mod crawl_service_test;
 pub mod health_check;

@@ -3,25 +3,30 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use axum::{http::StatusCode, response::IntoResponse, Json};
+use axum::{http::StatusCode, response::IntoResponse, Extension, Json};
 use serde_json::json;
 
 use crate::application::dto::extract_request::{
     ExtractRequestDto, ExtractResponseDto, ExtractResultDto,
 };
+use crate::config::settings::Settings;
 use crate::domain::services::extraction_service::{ExtractionRule, ExtractionService};
 use crate::domain::services::llm_service::LLMService;
 use crate::engines::reqwest_engine::ReqwestEngine;
 use crate::engines::traits::{ScrapeRequest, ScraperEngine};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 // Use domain services
-pub async fn extract(Json(payload): Json<ExtractRequestDto>) -> impl IntoResponse {
+pub async fn extract(
+    Extension(settings): Extension<Arc<Settings>>,
+    Json(payload): Json<ExtractRequestDto>,
+) -> impl IntoResponse {
     let mut results = Vec::new();
 
     // In a real production app, these services should be injected via state
-    let extraction_service = ExtractionService::new(Box::new(LLMService::new()));
+    let extraction_service = ExtractionService::new(Box::new(LLMService::new(&settings)));
     let fetch_engine = ReqwestEngine;
 
     for url in payload.urls {

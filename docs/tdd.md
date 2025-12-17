@@ -425,14 +425,14 @@ pub struct ScrapeResponse {
 }
 ```
 
-#### 3.4.2 Fetch 引擎实现
+#### 3.4.2 ReqwestEngine 引擎实现
 
 ```rust
-// engines/fetch_engine.rs
-pub struct FetchEngine;
+// engines/reqwest_engine.rs
+pub struct ReqwestEngine;
 
 #[async_trait]
-impl ScraperEngine for FetchEngine {
+impl ScraperEngine for ReqwestEngine {
     async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
         // 每个请求创建独立 Client（隔离 Cookie）
         let client = reqwest::Client::builder()

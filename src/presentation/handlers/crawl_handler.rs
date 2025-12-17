@@ -19,7 +19,6 @@ use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
-use crate::presentation::middleware::auth_middleware::AuthState;
 
 /// 创建新的爬取任务
 pub async fn create_crawl<CR, TR, WR, SRR>(
@@ -27,7 +26,6 @@ pub async fn create_crawl<CR, TR, WR, SRR>(
     Extension(task_repo): Extension<Arc<TR>>,
     Extension(webhook_repo): Extension<Arc<WR>>,
     Extension(scrape_result_repo): Extension<Arc<SRR>>,
-    Extension(user): Extension<AuthState>,
     Json(payload): Json<CrawlRequestDto>,
 ) -> impl IntoResponse
 where
@@ -37,7 +35,7 @@ where
     SRR: ScrapeResultRepository + 'static,
 {
     let use_case = CrawlUseCase::new(crawl_repo, task_repo, webhook_repo, scrape_result_repo);
-    let team_id = user.team_id;
+    let team_id = Uuid::nil(); // TODO: Get from auth
     match use_case.create_crawl(team_id, payload).await {
         Ok(crawl) => (StatusCode::CREATED, Json(crawl)).into_response(),
         Err(e) => {
@@ -78,7 +76,6 @@ pub async fn get_crawl_results<CR, TR, WR, SRR>(
     Extension(task_repo): Extension<Arc<TR>>,
     Extension(webhook_repo): Extension<Arc<WR>>,
     Extension(scrape_result_repo): Extension<Arc<SRR>>,
-    Extension(user): Extension<AuthState>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse
 where
@@ -88,7 +85,7 @@ where
     SRR: ScrapeResultRepository + 'static,
 {
     let use_case = CrawlUseCase::new(crawl_repo, task_repo, webhook_repo, scrape_result_repo);
-    let team_id = user.team_id;
+    let team_id = Uuid::nil(); // TODO: Get from auth
 
     match use_case.get_crawl_results(crawl_id, team_id).await {
         Ok(results) => (StatusCode::OK, Json(results)).into_response(),
@@ -105,7 +102,6 @@ pub async fn cancel_crawl<CR, TR, WR, SRR>(
     Extension(task_repo): Extension<Arc<TR>>,
     Extension(webhook_repo): Extension<Arc<WR>>,
     Extension(scrape_result_repo): Extension<Arc<SRR>>,
-    Extension(user): Extension<AuthState>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse
 where
@@ -115,7 +111,7 @@ where
     SRR: ScrapeResultRepository + 'static,
 {
     let use_case = CrawlUseCase::new(crawl_repo, task_repo, webhook_repo, scrape_result_repo);
-    let team_id = user.team_id;
+    let team_id = Uuid::nil(); // TODO: Get from auth
 
     match use_case.cancel_crawl(crawl_id, team_id).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),

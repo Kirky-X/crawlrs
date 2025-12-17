@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::application::dto::crawl_request::CrawlConfigDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::application::usecases::create_scrape::CreateScrapeUseCase;
+use crate::config::settings::Settings;
 use crate::domain::models::crawl::CrawlStatus;
 use crate::domain::models::scrape_result::ScrapeResult;
 use crate::domain::models::task::{Task, TaskStatus, TaskType};
@@ -51,6 +52,7 @@ where
     create_scrape_use_case: Arc<CreateScrapeUseCase>,
     redis: RedisClient,
     robots_checker: Arc<RobotsChecker>,
+    settings: Arc<Settings>,
     worker_id: Uuid,
     default_concurrency_limit: usize,
 }
@@ -74,6 +76,7 @@ where
         create_scrape_use_case: Arc<CreateScrapeUseCase>,
         redis: RedisClient,
         robots_checker: Arc<RobotsChecker>,
+        settings: Arc<Settings>,
         default_concurrency_limit: usize,
     ) -> Self {
         Self {
@@ -86,6 +89,7 @@ where
             create_scrape_use_case,
             redis,
             robots_checker,
+            settings,
             worker_id: Uuid::new_v4(),
             default_concurrency_limit,
         }
@@ -362,6 +366,7 @@ where
                     match crate::domain::services::extraction_service::ExtractionService::extract(
                         &response.content,
                         rules,
+                        &self.settings,
                     )
                     .await
                     {
@@ -627,6 +632,7 @@ where
                 match crate::domain::services::extraction_service::ExtractionService::extract(
                     &response.content,
                     rules,
+                    &self.settings,
                 )
                 .await
                 {

@@ -29,7 +29,6 @@ __pycache__/
 venv/
 .venv/
 env/
-docs/
 
 # Logs
 *.log
@@ -51,3 +50,10 @@ dump.rdb
 # App specific
 data/
 storage/
+
+# Documentation files that should not be tracked
+docs/prd.md
+docs/task.md
+docs/tdd.md
+docs/test.md
+docs/uat.md

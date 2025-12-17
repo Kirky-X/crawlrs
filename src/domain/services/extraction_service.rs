@@ -3,6 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+use crate::config::settings::Settings;
 use crate::domain::services::llm_service::{LLMService, LLMServiceTrait, TokenUsage};
 use anyhow::Result;
 use scraper::{Html, Selector};
@@ -36,8 +37,9 @@ impl ExtractionService {
     pub async fn extract(
         html_content: &str,
         rules: &HashMap<String, ExtractionRule>,
+        settings: &Settings,
     ) -> Result<(Value, TokenUsage)> {
-        let service = Self::new(Box::new(LLMService::new()));
+        let service = Self::new(Box::new(LLMService::new(settings)));
         service.extract_data(html_content, rules).await
     }
 
@@ -226,7 +228,8 @@ mod tests {
             },
         );
 
-        let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
+        let settings = Settings::new().unwrap();
+        let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
 
         assert_eq!(result["title"], "Test Page");
         assert_eq!(result["header"], "Main Header");

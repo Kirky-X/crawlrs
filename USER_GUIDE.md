@@ -539,6 +539,33 @@ curl -X POST https://api.crawlrs.com/v1/extract \
 
 ## 高级特性
 
+### 环境变量配置
+
+#### FireEngine 配置
+
+FireEngine 使用 Flaresolverr 后端来处理需要 JavaScript 渲染的页面。您可以通过环境变量配置 Flaresolverr 服务地址：
+
+```bash
+# 设置 Flaresolverr 服务地址（默认: http://localhost:8191/v1）
+export FIRE_ENGINE_URL=http://your-flaresolverr-server:8191/v1
+```
+
+**配置说明**:
+
+- `FIRE_ENGINE_URL`: Flaresolverr 服务的完整 URL 地址
+- 如果未设置，默认使用 `http://localhost:8191/v1`
+- 确保 Flaresolverr 服务正在运行并可访问
+
+**示例**:
+
+```bash
+# 本地开发环境
+export FIRE_ENGINE_URL=http://localhost:8191/v1
+
+# 生产环境
+export FIRE_ENGINE_URL=http://flaresolverr.internal:8191/v1
+```
+
 ### Webhook 回调
 
 #### 配置 Webhook
@@ -682,7 +709,7 @@ def retry_with_backoff(func, max_retries=3):
 
 **使用正确的引擎**:
 
-- 静态页面 → 不指定（自动选择 Fetch）
+- 静态页面 → 不指定（自动选择 ReqwestEngine）
 - SPA 应用 → 需要 JS 渲染
 - 需要截图 → 明确指定 `formats: ["screenshot"]`
 
@@ -774,7 +801,7 @@ crawl(root_url, limit=100)
 **解决方案**:
 
 ```bash
-# 让系统自动选择 Playwright 引擎
+# 让系统自动选择 PlaywrightEngine 引擎
 curl -X POST https://api.crawlrs.com/v1/scrape \
   -d '{
     "url": "https://spa-app.com",

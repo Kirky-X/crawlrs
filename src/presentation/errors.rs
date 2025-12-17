@@ -12,6 +12,9 @@ use serde_json::json;
 
 use crate::domain::repositories::task_repository::RepositoryError;
 
+/// 应用错误类型
+///
+/// 封装所有可能的应用层错误，提供统一的错误处理接口
 pub struct AppError(anyhow::Error);
 
 impl IntoResponse for AppError {

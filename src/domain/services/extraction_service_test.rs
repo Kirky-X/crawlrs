@@ -3,6 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+use crate::config::settings::Settings;
 use crate::domain::services::extraction_service::{ExtractionRule, ExtractionService};
 use crate::domain::services::llm_service::LLMService;
 use axum::{routing::post, Json, Router};
@@ -57,7 +58,8 @@ fn test_extraction_service_basic_selectors() {
         },
     );
 
-    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
+    let settings = Settings::new().unwrap();
+    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
 
     assert_eq!(result["title"], "Hello World");
 
@@ -84,7 +86,8 @@ fn test_extraction_service_missing_elements() {
         },
     );
 
-    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
+    let settings = Settings::new().unwrap();
+    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
     assert_eq!(result["missing"], Value::Null);
 }
 
@@ -103,7 +106,8 @@ fn test_extraction_service_empty_array() {
         },
     );
 
-    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
+    let settings = Settings::new().unwrap();
+    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
     let list = result["missing_list"].as_array().unwrap();
     assert!(list.is_empty());
 }

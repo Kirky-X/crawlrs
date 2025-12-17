@@ -35,7 +35,7 @@ def test_create_and_cancel_crawl():
         }
     }
     
-    # 2. Mock Authentication (if needed) or assuming dev environment allows access
+    # 2. Send Create Request
     print("🚀 Creating crawl task...")
     try:
         response = requests.post(f"{BASE_URL}/crawl", json=payload, headers=HEADERS)
@@ -94,5 +94,4 @@ if __name__ == "__main__":
     print("Running E2E Tests...")
     test_health_check()
     test_create_and_cancel_crawl()
-    test_search_and_crawl()
     test_search_and_crawl()
