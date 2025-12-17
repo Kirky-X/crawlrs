@@ -3,67 +3,52 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use axum::async_trait;
-use axum::extract::FromRequestParts;
-use axum::http::request::Parts;
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use axum_extra::headers::{Header, HeaderName};
-use axum_extra::TypedHeader;
 use serde_json::json;
 use uuid::Uuid;
 
-static HEADER_NAME: &str = "X-Team-Id";
-
-pub struct TeamIdHeader(pub Uuid);
-
-impl Header for TeamIdHeader {
-    fn name() -> &'static HeaderName {
-        static NAME: once_cell::sync::Lazy<HeaderName> =
-            once_cell::sync::Lazy::new(|| HeaderName::from_static(HEADER_NAME));
-        &NAME
-    }
-
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
-    where
-        Self: Sized,
-        I: Iterator<Item = &'i axum::http::HeaderValue>,
-    {
-        let value = values
-            .next()
-            .ok_or_else(axum_extra::headers::Error::invalid)?;
-        let uuid = Uuid::parse_str(
-            value
-                .to_str()
-                .map_err(|_| axum_extra::headers::Error::invalid())?,
-        )
-        .map_err(|_| axum_extra::headers::Error::invalid())?;
-        Ok(TeamIdHeader(uuid))
-    }
-
-    fn encode<E: Extend<axum::http::HeaderValue>>(&self, _values: &mut E) {}
-}
+static HEADER_NAME: &str = "x-team-id";
 
 #[derive(Debug, Clone, Copy)]
 pub struct TeamId(pub Uuid);
 
-#[async_trait]
-impl<S> FromRequestParts<S> for TeamId
-where
-    S: Send + Sync,
-{
-    type Rejection = Response;
-
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        match <TypedHeader<TeamIdHeader> as FromRequestParts<S>>::from_request_parts(parts, state)
-            .await
-        {
-            Ok(TypedHeader(TeamIdHeader(team_id))) => Ok(TeamId(team_id)),
-            Err(_) => {
+impl TeamId {
+    /// 从 HeaderMap 中提取 TeamId
+    pub fn from_headers(headers: &HeaderMap) -> Result<Self, Box<Response>> {
+        match headers.get(HEADER_NAME) {
+            Some(header_value) => match header_value.to_str() {
+                Ok(uuid_str) => match Uuid::parse_str(uuid_str) {
+                    Ok(uuid) => Ok(TeamId(uuid)),
+                    Err(_) => {
+                        let status = axum::http::StatusCode::BAD_REQUEST;
+                        let body =
+                            Json(json!({ "error": "Invalid UUID format in X-Team-Id header" }));
+                        Err(Box::new((status, body).into_response()))
+                    }
+                },
+                Err(_) => {
+                    let status = axum::http::StatusCode::BAD_REQUEST;
+                    let body = Json(json!({ "error": "Invalid header value in X-Team-Id header" }));
+                    Err(Box::new((status, body).into_response()))
+                }
+            },
+            None => {
                 let status = axum::http::StatusCode::BAD_REQUEST;
-                let body = Json(json!({ "error": "Missing or invalid X-Team-Id header" }));
-                Err((status, body).into_response())
+                let body = Json(json!({ "error": "Missing X-Team-Id header" }));
+                Err(Box::new((status, body).into_response()))
             }
         }
     }
+
+    /// 获取 UUID 字符串表示
+    pub fn as_string(&self) -> String {
+        self.0.to_string()
+    }
+}
+
+///// 提供一个便利的函数，用于在处理器中使用
+pub fn extract_team_id(headers: &HeaderMap) -> Result<TeamId, Box<Response>> {
+    TeamId::from_headers(headers)
 }

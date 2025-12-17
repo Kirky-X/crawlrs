@@ -9,7 +9,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use hmac::{Hmac, Mac};
 use metrics::{counter, histogram};
-use rand::Rng;
+use rand;
 use reqwest::{header, Client};
 
 use sha2::Sha256;
@@ -182,7 +182,7 @@ impl<R: WebhookEventRepository> WebhookWorker<R> {
 
             // Exponential backoff with jitter
             let base_backoff = 2u64.pow(new_attempt_count as u32);
-            let jitter = rand::thread_rng().gen_range(0..base_backoff / 2);
+            let jitter = rand::random_range(0..base_backoff / 2);
             let backoff = base_backoff + jitter;
 
             event.next_retry_at = Some(Utc::now() + chrono::Duration::seconds(backoff as i64));

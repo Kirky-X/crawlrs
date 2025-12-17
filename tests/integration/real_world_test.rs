@@ -31,24 +31,45 @@ fn create_base_request() -> ScrapeRequest {
 }
 
 async fn wait_for_flaresolverr(base_url: &str) {
-    let client = reqwest::Client::new();
-    let health_url = base_url; // Assuming base_url is like http://ip:port
-    info!("Checking Flaresolverr health at {}", health_url);
+    let _client = reqwest::Client::new();
+    
+    // Try multiple endpoints that Flaresolverr might respond to
+    let endpoints = vec![
+        format!("{}/v1/health", base_url),
+        format!("{}/", base_url),
+        format!("{}/v1", base_url),
+    ];
+    
+    info!("Checking Flaresolverr health at multiple endpoints");
+    let mut found = false;
+    
     for i in 0..30 {
-        match reqwest::get(&health_url).await {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    info!("Flaresolverr is ready!");
-                    break;
-                } else {
-                    info!("Flaresolverr returned status: {}", resp.status());
+        for endpoint in &endpoints {
+            match reqwest::get(endpoint).await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        info!("Flaresolverr is ready! Responding to: {}", endpoint);
+                        found = true;
+                        break;
+                    } else {
+                        info!("Flaresolverr endpoint {} returned status: {}", endpoint, resp.status());
+                    }
                 }
+                Err(e) => info!("Endpoint {} not ready: {:?}", endpoint, e),
             }
-            Err(e) => info!("Waiting for Flaresolverr... ({}) {:?}", i, e),
         }
+        
+        if found {
+            break;
+        }
+        
+        info!("Waiting for Flaresolverr... attempt {}", i);
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
-    panic!("Flaresolverr failed to start after 30 seconds");
+    
+    if !found {
+        panic!("Flaresolverr failed to start after 30 seconds");
+    }
 }
 
 #[tokio::test]
@@ -162,9 +183,9 @@ async fn test_real_world_playwright_engine() {
 
 #[tokio::test]
 async fn test_real_world_fire_engine_cdp() {
-    println!("Starting Flaresolverr container for CDP test...");
+    info!("Starting Flaresolverr container for CDP test...");
     let flaresolverr = GenericImage::new("ghcr.io/flaresolverr/flaresolverr", "latest")
-        .with_exposed_port(8191)
+        .with_exposed_port(testcontainers::core::ContainerPort::Tcp(8191))
         .start()
         .await
         .expect("Failed to start flaresolverr");
@@ -172,7 +193,7 @@ async fn test_real_world_fire_engine_cdp() {
     let port = flaresolverr.get_host_port_ipv4(8191).await.expect("port");
     let base_url = format!("http://127.0.0.1:{}", port);
     let api_url = format!("{}/v1", base_url);
-    println!("Flaresolverr started at {}", base_url);
+    info!("Flaresolverr started at {}", base_url);
 
     // Wait for Flaresolverr to be ready
     wait_for_flaresolverr(&base_url).await;
@@ -184,19 +205,19 @@ async fn test_real_world_fire_engine_cdp() {
     request.needs_js = true;
     request.use_fire_engine = true;
 
-    println!("Testing FireEngineCdp with URL: {}", TEST_URL);
+    info!("Testing FireEngineCdp with URL: {}", TEST_URL);
     let result = engine.scrape(&request).await;
 
     std::env::remove_var("FIRE_ENGINE_CDP_URL");
 
     match result {
         Ok(response) => {
-            println!("=== FireEngineCdp 抓取结果 ===");
-            println!("状态码: {}", response.status_code);
-            println!("内容长度: {} 字符", response.content.len());
-            println!("响应内容预览 (前500字符):");
-            println!("{}", &response.content[..response.content.len().min(500)]);
-            println!("=== 结束 ===");
+            info!("=== FireEngineCdp 抓取结果 ===");
+            info!("状态码: {}", response.status_code);
+            info!("内容长度: {} 字符", response.content.len());
+            info!("响应内容预览 (前500字符):");
+            info!("{}", &response.content[..response.content.len().min(500)]);
+            info!("=== 结束 ===");
 
             assert_eq!(response.status_code, 200, "Expected status code 200");
             assert!(
@@ -212,9 +233,9 @@ async fn test_real_world_fire_engine_cdp() {
 
 #[tokio::test]
 async fn test_real_world_fire_engine_tls() {
-    println!("Starting Flaresolverr container for TLS test...");
+    info!("Starting Flaresolverr container for TLS test...");
     let flaresolverr = GenericImage::new("ghcr.io/flaresolverr/flaresolverr", "latest")
-        .with_exposed_port(8191)
+        .with_exposed_port(testcontainers::core::ContainerPort::Tcp(8191))
         .start()
         .await
         .expect("Failed to start flaresolverr");
@@ -222,7 +243,7 @@ async fn test_real_world_fire_engine_tls() {
     let port = flaresolverr.get_host_port_ipv4(8191).await.expect("port");
     let base_url = format!("http://127.0.0.1:{}", port);
     let api_url = format!("{}/v1", base_url);
-    println!("Flaresolverr started at {}", base_url);
+    info!("Flaresolverr started at {}", base_url);
 
     // Wait for Flaresolverr to be ready
     wait_for_flaresolverr(&base_url).await;
@@ -234,19 +255,19 @@ async fn test_real_world_fire_engine_tls() {
     request.needs_tls_fingerprint = true;
     request.use_fire_engine = true;
 
-    println!("Testing FireEngineTls with URL: {}", TEST_URL);
+    info!("Testing FireEngineTls with URL: {}", TEST_URL);
     let result = engine.scrape(&request).await;
 
     std::env::remove_var("FIRE_ENGINE_TLS_URL");
 
     match result {
         Ok(response) => {
-            println!("=== FireEngineTls 抓取结果 ===");
-            println!("状态码: {}", response.status_code);
-            println!("内容长度: {} 字符", response.content.len());
-            println!("响应内容预览 (前500字符):");
-            println!("{}", &response.content[..response.content.len().min(500)]);
-            println!("=== 结束 ===");
+            info!("=== FireEngineTls 抓取结果 ===");
+            info!("状态码: {}", response.status_code);
+            info!("内容长度: {} 字符", response.content.len());
+            info!("响应内容预览 (前500字符):");
+            info!("{}", &response.content[..response.content.len().min(500)]);
+            info!("=== 结束 ===");
 
             assert_eq!(response.status_code, 200, "Expected status code 200");
             assert!(

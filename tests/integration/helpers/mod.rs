@@ -28,7 +28,7 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use std::sync::Arc;
 
-use testcontainers::runners::AsyncRunner;
+use testcontainers::{runners::AsyncRunner, ImageExt};
 use uuid::Uuid;
 
 use crawlrs::utils::robots::RobotsChecker;

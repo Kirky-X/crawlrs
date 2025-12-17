@@ -27,7 +27,7 @@ pub fn routes() -> Router {
 
     let protected_routes = Router::new()
         .route("/v1/scrape", post(scrape_handler::create_scrape))
-        .route("/v1/scrape/:id", get(scrape_handler::get_scrape_status))
+        .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
         .route("/v1/extract", post(extract_handler::extract))
         .route(
             "/v1/webhooks",
@@ -45,7 +45,7 @@ pub fn routes() -> Router {
             ),
         )
         .route(
-            "/v1/crawl/:id",
+            "/v1/crawl/{id}",
             get(crawl_handler::get_crawl::<
                 CrawlRepositoryImpl,
                 TaskRepositoryImpl,
@@ -54,7 +54,7 @@ pub fn routes() -> Router {
             >),
         )
         .route(
-            "/v1/crawl/:id/results",
+            "/v1/crawl/{id}/results",
             get(crawl_handler::get_crawl_results::<
                 CrawlRepositoryImpl,
                 TaskRepositoryImpl,
@@ -63,7 +63,7 @@ pub fn routes() -> Router {
             >),
         )
         .route(
-            "/v1/crawl/:id",
+            "/v1/crawl/{id}",
             delete(
                 crawl_handler::cancel_crawl::<
                     CrawlRepositoryImpl,

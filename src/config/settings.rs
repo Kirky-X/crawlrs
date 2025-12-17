@@ -23,8 +23,13 @@ use serde::Deserialize;
 /// # 示例
 ///
 /// ```rust
-/// let settings = Settings::new()?;
-/// println!("Server will run on {}:{}", settings.server.host, settings.server.port);
+/// use crawlrs::config::settings::Settings;
+/// 
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let settings = Settings::new()?;
+///     println!("Server will run on {}:{}", settings.server.host, settings.server.port);
+///     Ok(())
+/// }
 /// ```
 #[derive(Debug, Deserialize)]
 pub struct Settings {
@@ -193,12 +198,16 @@ impl Settings {
     /// * `Err(ConfigError)` - 配置加载失败
     ///
     /// # 示例
-    ///
-    /// ```rust
-    /// use crawlrs::config::settings::Settings;
-    /// let settings = Settings::new()?;
-    /// println!("Database URL: {}", settings.database.url);
-    /// ```
+///
+/// ```rust
+/// use crawlrs::config::settings::Settings;
+/// 
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let settings = Settings::new()?;
+///     println!("Database URL: {}", settings.database.url);
+///     Ok(())
+/// }
+/// ```
     ///
     /// # 错误
     ///
