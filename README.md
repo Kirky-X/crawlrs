@@ -78,36 +78,51 @@ cargo test
 
 #### Method 2: Docker Compose (Recommended)
 
-```bash
-# Start the full stack
-docker-compose up -d
+1.  **Configure Application Settings**
 
-# View logs
-docker-compose logs -f api
+    Edit the TOML configuration file:
 
-# Stop services
-docker-compose down
-```
+    ```bash
+    cp config/default.toml config/local.toml
+    nano config/local.toml  # or use your preferred editor
+    ```
 
-### Configuration
+    Update the configuration with your API keys and settings:
 
-Create a `.env` file:
+    ```toml
+    [google_search]
+    api_key = "YOUR_GOOGLE_API_KEY"
+    cx = "YOUR_GOOGLE_CX_ID"
 
-```env
-# Database
-DATABASE_URL=postgres://user:password@localhost:5432/crawlrs
+    [llm]
+    api_key = "YOUR_LLM_API_KEY"
+    model = "gpt-3.5-turbo"
+    api_base_url = "https://api.openai.com/v1"
+    ```
 
-# Redis
-REDIS_URL=redis://localhost:6379
+2.  **Start the Services**
 
-# Service Configuration
-HOST=0.0.0.0
-PORT=8080
-RUST_LOG=info
+    With the environment variables configured, start the entire stack using Docker Compose:
 
-# Engine Configuration
-PLAYWRIGHT_SERVICE_URL=http://localhost:3000
-```
+    ```bash
+    docker-compose up -d
+    ```
+
+3.  **Monitor Logs**
+
+    You can view the logs of the API service to monitor its status:
+
+    ```bash
+    docker-compose logs -f crawlrs
+    ```
+
+4.  **Stop the Services**
+
+    To stop all running services, use:
+
+    ```bash
+    docker-compose down
+    ```
 
 ### First Request
 
