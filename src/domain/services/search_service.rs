@@ -1,16 +1,7 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use crate::application::dto::search_request::{
     SearchRequestDto, SearchResponseDto, SearchResultDto,
@@ -140,19 +131,53 @@ where
 
     async fn perform_search(
         &self,
-        _query: &str,
-        _limit: u32,
+        query: &str,
+        limit: u32,
     ) -> Result<Vec<SearchResultDto>, SearchServiceError> {
         // Check for search engine configuration
         let google_key = std::env::var("GOOGLE_SEARCH_API_KEY").ok();
         let google_cx = std::env::var("GOOGLE_SEARCH_CX").ok();
 
-        if let (Some(_key), Some(_cx)) = (google_key, google_cx) {
-            // TODO: Implement actual Google Custom Search API call
-            // For now, we return an error to indicate it's not fully implemented rather than returning mock data
-            return Err(SearchServiceError::SearchEngine(
-                "Google Search integration is not yet implemented".to_string(),
-            ));
+        if let (Some(key), Some(cx)) = (google_key, google_cx) {
+            let client = reqwest::Client::new();
+            let url = "https://www.googleapis.com/customsearch/v1";
+
+            let response = client
+                .get(url)
+                .query(&[
+                    ("key", key.as_str()),
+                    ("cx", cx.as_str()),
+                    ("q", query),
+                    ("num", &limit.to_string()),
+                ])
+                .send()
+                .await
+                .map_err(|e| SearchServiceError::SearchEngine(e.to_string()))?;
+
+            if !response.status().is_success() {
+                return Err(SearchServiceError::SearchEngine(format!(
+                    "Google Search API error: {}",
+                    response.status()
+                )));
+            }
+
+            let google_resp: GoogleSearchResponse = response
+                .json()
+                .await
+                .map_err(|e| SearchServiceError::SearchEngine(e.to_string()))?;
+
+            let results = google_resp
+                .items
+                .unwrap_or_default()
+                .into_iter()
+                .map(|item| SearchResultDto {
+                    title: item.title,
+                    url: item.link,
+                    description: item.snippet,
+                })
+                .collect();
+
+            return Ok(results);
         }
 
         // If no search engine is configured, return error
@@ -161,4 +186,16 @@ where
                 .to_string(),
         ))
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GoogleSearchResponse {
+    items: Option<Vec<GoogleSearchItem>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GoogleSearchItem {
+    title: String,
+    link: String,
+    snippet: Option<String>,
 }

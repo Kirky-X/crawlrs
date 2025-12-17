@@ -1,17 +1,12 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
+/// 应用程序模块
+///
+/// 包含应用程序的核心业务逻辑和用例实现
+/// 该模块遵循领域驱动设计（DDD）原则，将业务逻辑与基础设施分离
 pub mod dto;
 pub mod use_cases;
 pub mod usecases;

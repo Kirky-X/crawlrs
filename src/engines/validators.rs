@@ -1,16 +1,7 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use std::net::IpAddr;
 use tokio::net::lookup_host;
@@ -110,9 +101,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_url_private() {
-        assert!(validate_url("http://localhost").await.is_err());
+        // Ensure SSRF protection is ENABLED for this test
+        // However, environment variables are process-global.
+        // We need to be careful not to interfere with other tests running in parallel if they rely on this env var.
+        // For unit tests running via cargo test, they might run in threads.
+        // Let's explicitly unset the variable to be sure, assuming other tests don't need it set to true.
+        // Or better, we only set it to true where needed (integration tests usually).
+
+        // Save current value
+        let old_val = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
+        std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
+
         assert!(validate_url("http://127.0.0.1").await.is_err());
+        assert!(validate_url("http://localhost").await.is_err());
         assert!(validate_url("http://192.168.1.1").await.is_err());
         assert!(validate_url("http://10.0.0.1").await.is_err());
+
+        // Restore value
+        if let Some(v) = old_val {
+            std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", v);
+        }
     }
 }

@@ -1,4 +1,9 @@
-use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
+use crate::domain::services::llm_service::{LLMService, LLMServiceTrait, TokenUsage};
 use anyhow::Result;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -31,7 +36,7 @@ impl ExtractionService {
     pub async fn extract(
         html_content: &str,
         rules: &HashMap<String, ExtractionRule>,
-    ) -> Result<Value> {
+    ) -> Result<(Value, TokenUsage)> {
         let service = Self::new(Box::new(LLMService::new()));
         service.extract_data(html_content, rules).await
     }
@@ -40,8 +45,9 @@ impl ExtractionService {
         &self,
         html_content: &str,
         rules: &HashMap<String, ExtractionRule>,
-    ) -> Result<Value> {
+    ) -> Result<(Value, TokenUsage)> {
         let mut result = HashMap::new();
+        let mut total_usage = TokenUsage::default();
 
         for (key, rule) in rules {
             if rule.use_llm.unwrap_or(false) {
@@ -79,8 +85,11 @@ impl ExtractionService {
                     .extract_data(&content_to_process, &schema)
                     .await
                 {
-                    Ok(val) => {
+                    Ok((val, usage)) => {
                         result.insert(key.clone(), val);
+                        total_usage.prompt_tokens += usage.prompt_tokens;
+                        total_usage.completion_tokens += usage.completion_tokens;
+                        total_usage.total_tokens += usage.total_tokens;
                     }
                     Err(_) => {
                         result.insert(key.clone(), Value::Null);
@@ -150,7 +159,7 @@ impl ExtractionService {
             }
         }
 
-        Ok(json!(result))
+        Ok((json!(result), total_usage))
     }
 }
 
@@ -217,7 +226,7 @@ mod tests {
             },
         );
 
-        let result = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
+        let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
 
         assert_eq!(result["title"], "Test Page");
         assert_eq!(result["header"], "Main Header");

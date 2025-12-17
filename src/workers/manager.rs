@@ -1,16 +1,7 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use crate::application::usecases::create_scrape::CreateScrapeUseCase;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
@@ -48,6 +39,7 @@ where
     create_scrape_use_case: Arc<CreateScrapeUseCase>,
     redis: RedisClient,
     robots_checker: Arc<RobotsChecker>,
+    default_concurrency_limit: usize,
     handles: Vec<JoinHandle<()>>,
 }
 
@@ -71,6 +63,7 @@ where
         create_scrape_use_case: Arc<CreateScrapeUseCase>,
         redis: RedisClient,
         robots_checker: Arc<RobotsChecker>,
+        default_concurrency_limit: usize,
     ) -> Self {
         Self {
             queue,
@@ -83,6 +76,7 @@ where
             create_scrape_use_case,
             redis,
             robots_checker,
+            default_concurrency_limit,
             handles: Vec::new(),
         }
     }
@@ -106,6 +100,7 @@ where
                 self.create_scrape_use_case.clone(),
                 self.redis.clone(),
                 self.robots_checker.clone(),
+                self.default_concurrency_limit,
             );
 
             let queue = self.queue.clone();

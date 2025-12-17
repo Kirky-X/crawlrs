@@ -1,40 +1,38 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-#[cfg(test)]
-use mockall::automock;
 use serde_json::{json, Value};
 use std::env;
 
-#[cfg_attr(test, automock)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
 #[async_trait]
 pub trait LLMServiceTrait: Send + Sync {
-    async fn extract_data(&self, text: &str, schema: &Value) -> Result<Value>;
+    async fn extract_data(&self, text: &str, schema: &Value) -> Result<(Value, TokenUsage)>;
 }
 
 /// LLM Service to handle interaction with LLM providers
 pub struct LLMService {
     api_key: Option<String>,
     model: String,
+    api_base_url: String,
 }
 
 #[async_trait]
 impl LLMServiceTrait for LLMService {
-    async fn extract_data(&self, text: &str, schema: &Value) -> Result<Value> {
-        self.extract_data(text, schema).await
+    async fn extract_data(&self, text: &str, schema: &Value) -> Result<(Value, TokenUsage)> {
+        LLMService::extract_data(self, text, schema).await
     }
 }
 
@@ -49,6 +47,16 @@ impl LLMService {
         Self {
             api_key: env::var("LLM_API_KEY").ok(),
             model: env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-3.5-turbo".to_string()),
+            api_base_url: env::var("LLM_API_BASE_URL")
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+        }
+    }
+
+    pub fn new_with_config(api_key: String, model: String, api_base_url: String) -> Self {
+        Self {
+            api_key: Some(api_key),
+            model,
+            api_base_url,
         }
     }
 
@@ -59,8 +67,8 @@ impl LLMService {
     /// * `schema` - A JSON schema describing the desired output structure
     ///
     /// # Returns
-    /// * `Result<Value>` - The extracted data as a JSON Value
-    pub async fn extract_data(&self, text: &str, schema: &Value) -> Result<Value> {
+    /// * `Result<(Value, TokenUsage)>` - The extracted data and token usage
+    pub async fn extract_data(&self, text: &str, schema: &Value) -> Result<(Value, TokenUsage)> {
         let api_key = self
             .api_key
             .as_ref()
@@ -96,9 +104,9 @@ impl LLMService {
             "temperature": 0.0
         });
 
-        // Assuming OpenAI-compatible endpoint
+        let url = format!("{}/chat/completions", self.api_base_url);
         let response = client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post(url)
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&request_body)
             .send()
@@ -120,6 +128,16 @@ impl LLMService {
             .await
             .context("Failed to parse LLM API response")?;
 
+        let usage = if let Some(usage_val) = body.get("usage") {
+            TokenUsage {
+                prompt_tokens: usage_val["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                completion_tokens: usage_val["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                total_tokens: usage_val["total_tokens"].as_u64().unwrap_or(0) as u32,
+            }
+        } else {
+            TokenUsage::default()
+        };
+
         if let Some(content) = body["choices"][0]["message"]["content"].as_str() {
             // Clean up potential markdown code blocks
             let clean_content = content
@@ -128,8 +146,9 @@ impl LLMService {
                 .trim_start_matches("```")
                 .trim_end_matches("```");
 
-            serde_json::from_str::<Value>(clean_content)
-                .context("Failed to parse extracted JSON content")
+            let data = serde_json::from_str::<Value>(clean_content)
+                .context("Failed to parse extracted JSON content")?;
+            Ok((data, usage))
         } else {
             Err(anyhow::anyhow!("Invalid response format from LLM API"))
         }

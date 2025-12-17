@@ -1,16 +1,7 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use crate::engines::validators;
@@ -56,10 +47,9 @@ impl ScraperEngine for PlaywrightEngine {
         tokio::time::timeout(timeout_duration, async {
             // Check if we should connect to a remote Chrome instance
             let remote_debugging_url = std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").ok();
-            
             let (mut browser, mut handler) = if let Some(ref url) = remote_debugging_url {
                 // Connect to existing Chrome instance via remote debugging
-                println!("Connecting to remote Chrome instance at: {}", url);
+                tracing::info!("Connecting to remote Chrome instance at: {}", url);
                 Browser::connect(url)
                     .await
                     .map_err(|e| EngineError::Other(format!("Failed to connect to remote Chrome: {}", e)))?

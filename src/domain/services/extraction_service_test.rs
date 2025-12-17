@@ -1,7 +1,14 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use crate::domain::services::extraction_service::{ExtractionRule, ExtractionService};
-use crate::domain::services::llm_service::MockLLMServiceTrait;
+use crate::domain::services::llm_service::LLMService;
+use axum::{routing::post, Json, Router};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use tokio::net::TcpListener;
 
 #[test]
 fn test_extraction_service_basic_selectors() {
@@ -50,7 +57,7 @@ fn test_extraction_service_basic_selectors() {
         },
     );
 
-    let result = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
+    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
 
     assert_eq!(result["title"], "Hello World");
 
@@ -77,7 +84,7 @@ fn test_extraction_service_missing_elements() {
         },
     );
 
-    let result = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
+    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
     assert_eq!(result["missing"], Value::Null);
 }
 
@@ -96,7 +103,7 @@ fn test_extraction_service_empty_array() {
         },
     );
 
-    let result = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
+    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules)).unwrap();
     let list = result["missing_list"].as_array().unwrap();
     assert!(list.is_empty());
 }
@@ -117,14 +124,52 @@ async fn test_extraction_service_with_llm() {
         },
     );
 
-    let mut mock_llm = MockLLMServiceTrait::new();
-    mock_llm
-        .expect_extract_data()
-        .times(1)
-        .returning(|_, _| Ok(json!({"name": "Product X", "price": 100})));
+    // Setup Local Server for LLM
+    let content_json = json!({"name": "Product X", "price": 100}).to_string();
+    let fake_response = json!({
+        "id": "chatcmpl-123",
+        "object": "chat.completion",
+        "created": 1677652288,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": content_json
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 10,
+            "total_tokens": 20
+        }
+    });
 
-    let service = ExtractionService::new(Box::new(mock_llm));
-    let result = service.extract_data(html, &rules).await.unwrap();
+    let app = Router::new().route(
+        "/chat/completions",
+        post(move |Json(_): Json<Value>| {
+            let resp = fake_response.clone();
+            async move { Json(resp) }
+        }),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_url = format!("http://{}", addr);
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // Use Real LLMService with Local Server
+    let llm_service = LLMService::new_with_config(
+        "test-key".to_string(),
+        "gpt-3.5-turbo".to_string(),
+        server_url,
+    );
+
+    let service = ExtractionService::new(Box::new(llm_service));
+    let (result, _) = service.extract_data(html, &rules).await.unwrap();
 
     assert_eq!(result["product_info"]["name"], "Product X");
     assert_eq!(result["product_info"]["price"], 100);

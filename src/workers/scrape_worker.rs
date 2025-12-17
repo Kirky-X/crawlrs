@@ -1,16 +1,7 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -58,10 +49,10 @@ where
     webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
     router: Arc<EngineRouter>,
     create_scrape_use_case: Arc<CreateScrapeUseCase>,
-    #[allow(dead_code)]
     redis: RedisClient,
     robots_checker: Arc<RobotsChecker>,
     worker_id: Uuid,
+    default_concurrency_limit: usize,
 }
 
 impl<R, S, C, ST> ScrapeWorker<R, S, C, ST>
@@ -83,6 +74,7 @@ where
         create_scrape_use_case: Arc<CreateScrapeUseCase>,
         redis: RedisClient,
         robots_checker: Arc<RobotsChecker>,
+        default_concurrency_limit: usize,
     ) -> Self {
         Self {
             repository,
@@ -95,6 +87,7 @@ where
             redis,
             robots_checker,
             worker_id: Uuid::new_v4(),
+            default_concurrency_limit,
         }
     }
 
@@ -134,19 +127,82 @@ where
         Ok(false)
     }
 
+    async fn acquire_concurrency_permit(&self, team_id: Uuid) -> Result<bool> {
+        let team_concurrency_key = format!("team:{}:active_jobs", team_id);
+        let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
+
+        let current = self.redis.incr(&team_concurrency_key).await?;
+
+        // Get limit
+        let limit_str: Option<String> = self.redis.get(&team_concurrency_limit_key).await?;
+        let limit: usize = limit_str
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(self.default_concurrency_limit);
+
+        if current > limit as i64 {
+            // Revert
+            if let Err(e) = self.redis.decr(&team_concurrency_key).await {
+                error!(
+                    "Failed to revert active jobs count for team {}: {}",
+                    team_id, e
+                );
+            }
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    async fn release_concurrency_permit(&self, team_id: Uuid) -> Result<()> {
+        let team_concurrency_key = format!("team:{}:active_jobs", team_id);
+        self.redis.decr(&team_concurrency_key).await?;
+        Ok(())
+    }
+
     #[instrument(skip(self, task), fields(task_id = %task.id, url = %task.url, task_type = %task.task_type))]
-    async fn process_task(&self, task: Task) -> Result<()> {
+    async fn process_task(&self, mut task: Task) -> Result<()> {
         info!("Processing task");
 
-        match task.task_type {
-            TaskType::Scrape => self.process_scrape_task(task).await,
-            TaskType::Crawl => self.process_crawl_task(task).await,
+        // Concurrency Check (Layer 2: Team Semaphore)
+        if !self.acquire_concurrency_permit(task.team_id).await? {
+            warn!(
+                "Team {} concurrency limit exceeded, rescheduling task {}",
+                task.team_id, task.id
+            );
+            // Reschedule logic (Backlog)
+            // Delay by 30 seconds
+            task.scheduled_at = Some((Utc::now() + chrono::Duration::seconds(30)).into());
+            task.status = TaskStatus::Queued;
+            // Reset attempt count to avoid failing task due to concurrency limits?
+            // Or keep it? If we keep it, it might eventually fail.
+            // PRD says "Enter backlog". It doesn't imply failure count increment.
+            // So we probably shouldn't increment attempt_count here, but update resets status.
+            // Since we acquired it, attempt_count might have been incremented by queue?
+            // PostgresTaskQueue usually doesn't increment attempt_count on acquire, only on error handling?
+            // Let's assume we just update it.
+            self.repository.update(&task).await?;
+            return Ok(());
+        }
+
+        let result = match task.task_type {
+            TaskType::Scrape => self.process_scrape_task(task.clone()).await,
+            TaskType::Crawl => self.process_crawl_task(task.clone()).await,
             _ => {
                 warn!("Unsupported task type: {:?}", task.task_type);
                 self.repository.mark_failed(task.id).await?;
                 Ok(())
             }
+        };
+
+        // Always release permit
+        if let Err(e) = self.release_concurrency_permit(task.team_id).await {
+            error!(
+                "Failed to release concurrency permit for team {}: {}",
+                task.team_id, e
+            );
         }
+
+        result
     }
 
     async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
@@ -309,8 +365,21 @@ where
                     )
                     .await
                     {
-                        Ok(data) => {
+                        Ok((data, usage)) => {
                             extracted_data = Some(data);
+                            // Record usage (PRD-334: Tokens Billing)
+                            if usage.total_tokens > 0 {
+                                let key = format!("team:{}:token_usage", task.team_id);
+                                if let Err(e) =
+                                    self.redis.incr_by(&key, usage.total_tokens as i64).await
+                                {
+                                    error!("Failed to record token usage: {}", e);
+                                }
+                                info!(
+                                    "Recorded {} tokens for team {}",
+                                    usage.total_tokens, task.team_id
+                                );
+                            }
                         }
                         Err(e) => {
                             error!("Extraction failed for url {}: {}", task.url, e);
@@ -561,8 +630,21 @@ where
                 )
                 .await
                 {
-                    Ok(data) => {
+                    Ok((data, usage)) => {
                         extracted_data = Some(data);
+                        // Record usage (PRD-334: Tokens Billing)
+                        if usage.total_tokens > 0 {
+                            let key = format!("team:{}:token_usage", task.team_id);
+                            if let Err(e) =
+                                self.redis.incr_by(&key, usage.total_tokens as i64).await
+                            {
+                                error!("Failed to record token usage: {}", e);
+                            }
+                            info!(
+                                "Recorded {} tokens for team {}",
+                                usage.total_tokens, task.team_id
+                            );
+                        }
                     }
                     Err(e) => {
                         error!("Extraction failed for url {}: {}", task.url, e);

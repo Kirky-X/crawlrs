@@ -1,16 +1,7 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use async_trait::async_trait;
@@ -84,7 +75,9 @@ impl ScraperEngine for FireEngineTls {
     async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
         // TLS Engine explicitly rejects screenshot requests
         if request.needs_screenshot {
-             return Err(EngineError::Other("FireEngineTls does not support screenshots".to_string()));
+            return Err(EngineError::Other(
+                "FireEngineTls does not support screenshots".to_string(),
+            ));
         }
 
         let start = Instant::now();

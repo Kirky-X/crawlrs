@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use serde_json::json;
 
@@ -64,7 +69,7 @@ pub async fn extract(Json(payload): Json<ExtractRequestDto>) -> impl IntoRespons
             );
 
             match extraction_service.extract_data(&html_content, &rules).await {
-                Ok(val) => val,
+                Ok((val, _)) => val,
                 Err(e) => json!({ "error": format!("Extraction failed: {}", e) }),
             }
         } else if let Some(schema) = &payload.schema {
@@ -81,7 +86,7 @@ pub async fn extract(Json(payload): Json<ExtractRequestDto>) -> impl IntoRespons
             );
 
             match extraction_service.extract_data(&html_content, &rules).await {
-                Ok(val) => val,
+                Ok((val, _)) => val,
                 Err(e) => json!({ "error": format!("Extraction failed: {}", e) }),
             }
         } else {

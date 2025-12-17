@@ -1,16 +1,7 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use crate::domain::models::task::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::{RepositoryError, TaskRepository};
@@ -64,6 +55,7 @@ impl From<task_entity::Model> for Task {
             attempt_count: model.attempt_count,
             max_retries: model.max_retries,
             scheduled_at: model.scheduled_at,
+            expires_at: model.expires_at,
             created_at: model.created_at,
             started_at: model.started_at,
             completed_at: model.completed_at,
@@ -71,7 +63,6 @@ impl From<task_entity::Model> for Task {
             updated_at: model.updated_at,
             lock_token: model.lock_token,
             lock_expires_at: model.lock_expires_at,
-            expires_at: model.expires_at,
         }
     }
 }
@@ -97,7 +88,6 @@ impl From<Task> for task_entity::ActiveModel {
             updated_at: Set(task.updated_at),
             lock_token: Set(task.lock_token),
             lock_expires_at: Set(task.lock_expires_at),
-            
         }
     }
 }
@@ -296,20 +286,21 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
-        let now = Utc::now();
+        // 将长时间处于队列状态的任务标记为失败
+        // 使用24小时作为过期阈值
+        let threshold = Utc::now() - chrono::Duration::hours(24);
+
         let result = task_entity::Entity::update_many()
-            .col_expr(task_entity::Column::Status, Expr::value("failed"))
-            .col_expr(task_entity::Column::CompletedAt, Expr::value(now))
-            .filter(
-                Condition::all()
-                    .add(task_entity::Column::ExpiresAt.is_not_null())
-                    .add(task_entity::Column::ExpiresAt.lt(now))
-                    .add(
-                        Condition::any()
-                            .add(task_entity::Column::Status.eq("queued"))
-                            .add(task_entity::Column::Status.eq("active")),
-                    ),
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(TaskStatus::Failed.to_string()),
             )
+            .col_expr(
+                task_entity::Column::CompletedAt,
+                Expr::value::<Option<DateTime<FixedOffset>>>(Some(Utc::now().into())),
+            )
+            .filter(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
+            .filter(task_entity::Column::CreatedAt.lt(threshold))
             .exec(self.db.as_ref())
             .await?;
 

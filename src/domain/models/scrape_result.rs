@@ -1,16 +1,7 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -18,35 +9,49 @@ use uuid::Uuid;
 
 /// 爬取结果实体
 ///
-/// 存储网页爬取任务的结果数据
+/// 存储网页爬取任务的结果数据，包含爬取到的内容、
+/// 响应信息和性能指标。每个结果对应一个具体的爬取任务。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeResult {
     /// 结果唯一标识符
     pub id: Uuid,
-    /// 关联的任务ID
+    /// 关联的任务ID，建立与爬取任务的关联关系
     pub task_id: Uuid,
-    /// 目标URL
+    /// 目标URL，被爬取的具体网页地址
     pub url: String,
-    /// HTTP响应状态码
+    /// HTTP响应状态码，表示请求的处理结果
     pub status_code: u16,
-    /// 爬取的内容
+    /// 爬取的内容，网页的HTML或其他响应内容
     pub content: String,
-    /// 内容类型
+    /// 内容类型，HTTP响应的Content-Type头信息
     pub content_type: String,
-    /// 响应头
+    /// 响应头，完整的HTTP响应头部信息
     pub headers: serde_json::Value,
-    /// 元数据
+    /// 元数据，额外的爬取信息和统计
     pub meta_data: serde_json::Value,
-    /// 截图数据 (base64 encoded)
+    /// 截图数据，网页截图的base64编码（可选）
     pub screenshot: Option<String>,
-    /// 响应时间（毫秒）
+    /// 响应时间（毫秒），从发起请求到收到响应的总时间
     pub response_time_ms: u64,
-    /// 创建时间
+    /// 创建时间，结果记录创建的时间戳
     pub created_at: DateTime<Utc>,
 }
 
 impl ScrapeResult {
     /// 创建一个新的爬取结果
+    ///
+    /// # 参数
+    ///
+    /// * `task_id` - 关联的任务ID
+    /// * `url` - 被爬取的URL
+    /// * `status_code` - HTTP响应状态码
+    /// * `content` - 爬取到的内容
+    /// * `content_type` - 内容类型
+    /// * `response_time_ms` - 响应时间（毫秒）
+    ///
+    /// # 返回值
+    ///
+    /// 返回一个新的ScrapeResult实例，包含生成的唯一ID和当前时间戳
     pub fn new(
         task_id: Uuid,
         url: String,

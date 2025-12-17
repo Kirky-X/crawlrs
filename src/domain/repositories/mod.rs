@@ -1,17 +1,23 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
+/// 仓库接口模块
+///
+/// 该模块定义了领域层的仓库接口，遵循依赖倒置原则。
+/// 仓库接口定义了数据持久化的抽象契约，具体实现由基础设施层提供。
+///
+/// 包含的仓库接口：
+/// - 爬取任务仓库（crawl_repository）：管理爬取任务的持久化
+/// - 爬取结果仓库（scrape_result_repository）：管理爬取结果的存储
+/// - 存储仓库（storage_repository）：管理文件和对象的存储
+/// - 任务仓库（task_repository）：管理任务的调度和执行
+/// - Webhook事件仓库（webhook_event_repository）：管理Webhook事件的发送
+/// - Webhook仓库（webhook_repository）：管理Webhook配置
+///
+/// 这些接口确保了领域层不依赖于具体的数据存储技术，
+/// 提高了系统的可测试性和可维护性。
 pub mod crawl_repository;
 pub mod scrape_result_repository;
 pub mod storage_repository;

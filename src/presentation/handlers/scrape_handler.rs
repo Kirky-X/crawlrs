@@ -1,16 +1,7 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use axum::{
     extract::{Extension, Json, Path},
@@ -18,7 +9,7 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
-use tracing::{error, warn};
+use tracing::error;
 use uuid::Uuid;
 
 use crate::{
@@ -35,90 +26,13 @@ use crate::{
 pub async fn create_scrape(
     Extension(queue): Extension<Arc<PostgresTaskQueue<TaskRepositoryImpl>>>,
     Extension(team_id): Extension<Uuid>,
-    Extension(redis_client): Extension<RedisClient>,
-    Extension(settings): Extension<Arc<Settings>>,
+    Extension(_redis_client): Extension<RedisClient>,
+    Extension(_settings): Extension<Arc<Settings>>,
     Json(payload): Json<ScrapeRequestDto>,
 ) -> impl IntoResponse {
-    // Parse request body happens in the extractor, so if it fails, it's handled by Axum's default rejection handler.
-    // However, since we are doing manual concurrency management before parsing (in my thought process, but actually here Json is extracted FIRST),
-    // we need to be careful. Axum extracts arguments in order.
-    // If Json parsing fails, this handler is never called, so we don't increment the counter.
-    // The previous implementation assumed we were manually parsing body, but here we use Json extractor.
-    // So the counter increment happens AFTER successful parsing.
-
-    let team_concurrency_key = format!("team:{}:active_jobs", team_id);
-    let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
-
-    // Increment active jobs counter
-    let current_active_jobs = match redis_client.incr(&team_concurrency_key).await {
-        Ok(val) => val,
-        Err(e) => {
-            error!(
-                "Failed to increment active jobs for team {}: {}",
-                team_id, e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": "Failed to process request due to internal error."
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    // Get concurrency limit (default to 10 if not set)
-    let concurrency_limit: i64 = match redis_client.get(&team_concurrency_limit_key).await {
-        Ok(Some(limit_str)) => limit_str
-            .parse()
-            .unwrap_or(settings.concurrency.default_team_limit),
-        Ok(None) => settings.concurrency.default_team_limit, // Default limit from settings
-        Err(e) => {
-            error!(
-                "Failed to get concurrency limit for team {}: {}",
-                team_id, e
-            );
-            // If we can't get the limit, we should probably err on the side of caution
-            // and decrement the counter to avoid false positives.
-            if let Err(decr_err) = redis_client.decr(&team_concurrency_key).await {
-                error!(
-                    "Failed to decrement active jobs after limit check error: {}",
-                    decr_err
-                );
-            }
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": "Failed to process request due to internal error."
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    if current_active_jobs > concurrency_limit {
-        warn!(
-            "Team {} exceeded concurrency limit. Current: {}, Limit: {}",
-            team_id, current_active_jobs, concurrency_limit
-        );
-        // Decrement the counter as this request is rejected
-        if let Err(e) = redis_client.decr(&team_concurrency_key).await {
-            error!(
-                "Failed to decrement active jobs for team {} after exceeding limit: {}",
-                team_id, e
-            );
-        }
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "success": false,
-                "error": "Too many concurrent scrape requests for this team."
-            })),
-        )
-            .into_response();
-    }
+    // Note: Concurrency limit is now enforced at the Worker level (Execution time)
+    // rather than at Submission time. This allows tasks to be queued (Backlog)
+    // and retried later if the team's concurrency limit is reached.
 
     let task = Task::new(
         TaskType::Scrape,
@@ -138,13 +52,6 @@ pub async fn create_scrape(
         }
         Err(e) => {
             error!("Failed to enqueue task for team {}: {}", team_id, e);
-            // If enqueuing fails, decrement the counter
-            if let Err(decr_err) = redis_client.decr(&team_concurrency_key).await {
-                error!(
-                    "Failed to decrement active jobs after enqueue failure: {}",
-                    decr_err
-                );
-            }
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({

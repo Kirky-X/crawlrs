@@ -1,22 +1,12 @@
-// Copyright 2025 Kirky.X
+// Copyright (c) 2025 Kirky.X
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
 
 use axum::Extension;
 use axum_test::TestServer;
 use crawlrs::application::usecases::create_scrape::CreateScrapeUseCase;
 use crawlrs::config::settings::{DatabaseSettings, Settings};
-use crawlrs::engines::fire_engine::FireEngine;
 use crawlrs::engines::playwright_engine::PlaywrightEngine;
 use crawlrs::engines::reqwest_engine::ReqwestEngine;
 use crawlrs::engines::router::EngineRouter;
@@ -206,6 +196,7 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
         create_scrape_use_case.clone(),
         redis_client.clone(),
         robots_checker.clone(),
+        10,
     );
 
     // Start 1 worker in the background

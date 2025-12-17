@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use super::helpers::create_test_app_no_worker;
 use chrono::{Duration, Utc};
 use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
