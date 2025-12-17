@@ -105,6 +105,8 @@ pub struct ServerSettings {
     pub host: String,
     /// 服务器监听端口
     pub port: u16,
+    /// 是否开启端口嗅探功能
+    pub enable_port_detection: bool,
 }
 
 /// 速率限制配置设置
@@ -266,7 +268,8 @@ impl Settings {
         let builder = Config::builder()
             // 1. 设置服务器默认配置
             .set_default("server.host", "0.0.0.0")? // 默认监听所有网络接口
-            .set_default("server.port", 3000)? // 默认端口 3000
+            .set_default("server.port", 8899)? // 默认端口 8899
+            .set_default("server.enable_port_detection", true)? // 默认启用端口嗅探
             // 2. 设置数据库连接池默认配置
             .set_default("database.max_connections", 100)? // 最大连接数 100
             .set_default("database.min_connections", 10)? // 最小连接数 10

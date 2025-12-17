@@ -98,8 +98,32 @@ async fn main() -> anyhow::Result<()> {
     crawlrs::infrastructure::metrics::init_metrics();
 
     // 2. 加载应用程序配置
-    let settings = Arc::new(Settings::new()?);
+    let mut settings = Settings::new()?;
     info!("Configuration loaded");
+
+    // 端口嗅探
+    let port_result = crawlrs::utils::port_sniffer::PortSniffer::find_available_port(
+        settings.server.port,
+        settings.server.enable_port_detection,
+    );
+
+    match port_result {
+        Ok(result) => {
+            if result.port != settings.server.port {
+                info!("默认端口 {} 被占用，切换到端口 {}", settings.server.port, result.port);
+                settings.server.port = result.port;
+            }
+            for log in result.logs {
+                info!("{}", log);
+            }
+        }
+        Err(e) => {
+            error!("端口检测失败: {}", e);
+            return Err(anyhow::anyhow!("Failed to find available port: {}", e));
+        }
+    }
+
+    let settings = Arc::new(settings);
 
     // 3. 建立数据库连接
     let db = connection::create_pool(&settings.database).await?;
@@ -241,10 +265,7 @@ async fn main() -> anyhow::Result<()> {
                     "/v1/search",
                     post(search_handler::search::<CrawlRepositoryImpl, TaskRepositoryImpl>),
                 )
-                // .layer(axum::middleware::from_fn_with_state(
-                //     auth_state.clone(),
-                //     auth_middleware,
-                // ))
+                // 
                 .layer(axum::middleware::from_fn_with_state(
                     team_semaphore.clone(),
                     team_semaphore_middleware,
