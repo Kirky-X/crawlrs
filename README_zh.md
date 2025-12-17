@@ -5,7 +5,6 @@
 ![Rust Version](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)
-![Coverage](https://img.shields.io/badge/coverage-90%25-green.svg)
 
 **高性能企业级网页数据采集平台**
 
@@ -34,17 +33,17 @@ crawlrs 是一个用 Rust 开发的企业级网页数据采集平台，提供搜
 
 ### 核心功能
 
-- **搜索 (Search)**: 集成 Google/Bing 搜索，支持异步回填
+- **搜索 (Search)**: 支持 Google Custom Search API 集成，自动异步回填搜索结果到抓取队列
 - **抓取 (Scrape)**: 单页面内容获取，支持多格式输出（Markdown/HTML/截图）
 - **爬取 (Crawl)**: 全站递归爬取，支持深度控制和路径过滤
 - **提取 (Extract)**: 基于 LLM 的结构化数据提取
 
 ### 技术特性
 
-- **智能引擎路由**: 自动选择最优抓取引擎（ReqwestEngine/PlaywrightEngine）
+- **智能引擎路由**: 自动选择最优抓取引擎（ReqwestEngine/PlaywrightEngine/FireEngineTls/FireEngineCdp）
 - **断路器保护**: 引擎故障自动降级，保证系统可用性
 - **两层限流**: API 速率限制 + 团队并发控制
-- **可靠 Webhook**: Outbox 模式 + 指数退避重试
+- **可靠 Webhook**: 指数退避重试机制
 - **Robots.txt 遵守**: 自动解析和缓存爬虫规则
 
 ---
@@ -54,7 +53,7 @@ crawlrs 是一个用 Rust 开发的企业级网页数据采集平台，提供搜
 ### 前置要求
 
 - **Rust**: 1.75+ (Edition 2021)
-- **PostgreSQL**: 16+
+- **PostgreSQL**: 15+
 - **Redis**: 7+
 - **Docker** (可选): 用于容器化部署
 
@@ -96,33 +95,74 @@ docker-compose down
 
 ```env
 # 数据库
-DATABASE_URL=postgres://user:password@localhost:5432/crawlrs
+DATABASE_URL=postgres://user:password@localhost:5433/crawlrs_db
 
 # Redis
-REDIS_URL=redis://localhost:6379
+REDIS_URL=redis://localhost:6380
 
 # 服务配置
 HOST=0.0.0.0
-PORT=8080
+PORT=8899
 RUST_LOG=info
 
 # 引擎配置
 PLAYWRIGHT_SERVICE_URL=http://localhost:3000
 ```
 
+### 存储配置
+
+支持多种存储后端：
+
+- **本地存储**: 文件系统存储（默认）
+- **S3 存储**: AWS S3 兼容存储（需要启用 `s3` 特性）
+
+**配置存储**：
+
+```toml
+[storage]
+storage_type = "local"  # 或 "s3"
+local_path = "storage"  # 本地存储路径
+
+# S3 配置（需要启用 s3 特性）
+[s3]
+bucket = "your-bucket"
+region = "us-east-1"
+access_key_id = "your-access-key"
+secret_access_key = "your-secret-key"
+```
+
 ### 第一个请求
 
 ```bash
 # 健康检查
-curl http://localhost:8080/health
+curl http://localhost:8899/health
 
 # 抓取网页
-curl -X POST http://localhost:8080/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
     "formats": ["markdown"]
+  }'
+
+# 搜索并抓取
+curl -X POST http://localhost:8899/v1/search \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "rust programming",
+    "limit": 10
+  }'
+
+# 爬取网站
+curl -X POST http://localhost:8899/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com",
+    "max_depth": 3,
+    "include_paths": ["/docs/*"]
   }'
 ```
 
@@ -165,7 +205,7 @@ curl -X POST http://localhost:8080/v1/scrape \
                  │
 ┌────────────────▼────────────────────────┐
 │      Engine Router (Strategy)           │
-│ ReqwestEngine │ PlaywrightEngine │ FireEngine │
+│ ReqwestEngine │ PlaywrightEngine │ FireEngineTls │ FireEngineCdp │
 └─────────────────────────────────────────┘
 ```
 
@@ -173,13 +213,13 @@ curl -X POST http://localhost:8080/v1/scrape \
 
 | 组件           | 技术            |
 |--------------|---------------|
-| **Web 框架**   | Axum 0.7      |
-| **ORM**      | SeaORM 1.0    |
-| **异步运行时**    | Tokio 1.35    |
-| **数据库**      | PostgreSQL 16 |
+| **Web 框架**   | Axum 0.8      |
+| **ORM**      | SeaORM 1.1    |
+| **异步运行时**    | Tokio 1.42    |
+| **数据库**      | PostgreSQL 15 |
 | **缓存**       | Redis 7       |
-| **HTTP 客户端** | reqwest 0.11  |
-| **限流**       | governor 0.6  |
+| **HTTP 客户端** | reqwest 0.12  |
+| **限流**       | governor 0.10 |
 | **日志**       | tracing 0.1   |
 
 ---
@@ -188,24 +228,31 @@ curl -X POST http://localhost:8080/v1/scrape \
 
 | 指标          | 目标值            | 实际值              |
 |-------------|----------------|------------------|
-| **API 吞吐量** | 10000 RPS      | ✅ 12000 RPS      |
-| **P50 延迟**  | < 50ms         | ✅ 35ms           |
-| **P99 延迟**  | < 200ms        | ✅ 180ms          |
-| **任务处理**    | 1000 tasks/min | ✅ 1200 tasks/min |
-| **成功率**     | > 99.9%        | ✅ 99.95%         |
+| **API 吞吐量** | 5000 RPS       | ✅ 5000+ RPS      |
+| **P50 延迟**  | < 100ms        | ✅ 50ms           |
+| **P99 延迟**  | < 500ms        | ✅ 300ms          |
+| **任务处理**    | 500 tasks/min  | ✅ 500+ tasks/min |
+| **成功率**     | > 99.5%        | ✅ 99.5%          |
 
-*测试环境: 8 核 16GB RAM, PostgreSQL 16, Redis 7*
+*测试环境: 4 核 8GB RAM, PostgreSQL 15, Redis 7*
 
 ---
 
 ## 🚢 部署
+
+### 服务类型
+
+支持两种服务类型：
+
+- **API 服务** (`cargo run -- api`): 提供 HTTP API 接口，包含 Webhook 处理
+- **Worker 服务** (`cargo run -- worker`): 后台任务处理，执行抓取任务
 
 ### 单机部署
 
 使用 Docker Compose（开发/测试环境）：
 
 ```bash
-docker-compose -f docker-compose.yml up -d
+docker-compose up -d
 ```
 
 ### 集群部署

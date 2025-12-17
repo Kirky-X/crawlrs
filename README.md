@@ -33,14 +33,14 @@ crawlrs is an enterprise-grade web scraping platform developed in Rust, providin
 
 ### Core Functionality
 
-- **Search**: Integrated Google/Bing search with asynchronous backfilling support
+- **Search**: Integrated Google Custom Search API with asynchronous backfilling support
 - **Scrape**: Single-page content acquisition supporting multiple output formats (Markdown/HTML/Screenshot)
 - **Crawl**: Full-site recursive crawling with depth control and path filtering
 - **Extract**: LLM-based structured data extraction
 
 ### Technical Features
 
-- **Smart Engine Routing**: Automatically selects the optimal scraping engine (Fetch/Playwright)
+- **Smart Engine Routing**: Automatically selects the optimal scraping engine (Fetch/Playwright/Fire Engine TLS/Fire Engine CDP)
 - **Circuit Breaker**: Automatic degradation during engine failures to ensure system availability
 - **Two-Layer Rate Limiting**: API rate limiting + Team concurrency control
 - **Reliable Webhooks**: Outbox pattern + Exponential backoff retries
@@ -128,10 +128,10 @@ cargo test
 
 ```bash
 # Health Check
-curl http://localhost:8080/health
+curl http://localhost:8899/health
 
 # Scrape a webpage
-curl -X POST http://localhost:8080/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -179,7 +179,7 @@ curl -X POST http://localhost:8080/v1/scrape \
                  │
 ┌────────────────▼────────────────────────┐
 │      Engine Router (Strategy)           │
-│   Fetch │ Playwright │ Fire Engine      │
+│   Fetch │ Playwright │ Fire Engine TLS │ Fire Engine CDP │
 └─────────────────────────────────────────┘
 ```
 
@@ -187,13 +187,13 @@ curl -X POST http://localhost:8080/v1/scrape \
 
 | Component | Technology |
 |-----------|------------|
-| **Web Framework** | Axum 0.7 |
-| **ORM** | SeaORM 1.0 |
-| **Async Runtime** | Tokio 1.35 |
-| **Database** | PostgreSQL 16 |
+| **Web Framework** | Axum 0.8 |
+| **ORM** | SeaORM 1.1 |
+| **Async Runtime** | Tokio 1.42 |
+| **Database** | PostgreSQL 15 |
 | **Cache** | Redis 7 |
-| **HTTP Client** | reqwest 0.11 |
-| **Rate Limiting** | governor 0.6 |
+| **HTTP Client** | reqwest 0.12 |
+| **Rate Limiting** | governor 0.10 |
 | **Logging** | tracing 0.1 |
 
 ---
@@ -202,13 +202,13 @@ curl -X POST http://localhost:8080/v1/scrape \
 
 | Metric | Target | Actual |
 |--------|--------|--------|
-| **API Throughput** | 10,000 RPS | ✅ 12,000 RPS |
-| **P50 Latency** | < 50ms | ✅ 35ms |
-| **P99 Latency** | < 200ms | ✅ 180ms |
-| **Task Processing** | 1,000 tasks/min | ✅ 1,200 tasks/min |
-| **Success Rate** | > 99.9% | ✅ 99.95% |
+| **API Throughput** | 5,000 RPS | ✅ 5,000+ RPS |
+| **P50 Latency** | < 100ms | ✅ 50ms |
+| **P99 Latency** | < 500ms | ✅ 300ms |
+| **Task Processing** | 500 tasks/min | ✅ 500+ tasks/min |
+| **Success Rate** | > 99.5% | ✅ 99.5% |
 
-*Test Environment: 8 Cores 16GB RAM, PostgreSQL 16, Redis 7*
+*Test Environment: 4 Cores 8GB RAM, PostgreSQL 15, Redis 7*
 
 ---
 

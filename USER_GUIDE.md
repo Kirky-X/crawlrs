@@ -27,7 +27,7 @@ https://console.crawlrs.com/api-keys
 ### 2. 发起第一个请求
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -59,12 +59,14 @@ curl -X POST https://api.crawlrs.com/v1/scrape \
 
 ### 搜索 (Search)
 
+> **注意**: 搜索功能基于 Google Custom Search API，需要配置 Google API Key 和 Custom Search Engine ID。
+
 #### 基本搜索
 
 搜索网页内容并返回结果：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/search \
+curl -X POST http://localhost:8899/v1/search \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -97,7 +99,7 @@ curl -X POST https://api.crawlrs.com/v1/search \
 搜索后自动抓取每个结果页面的完整内容：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/search \
+curl -X POST http://localhost:8899/v1/search \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -134,7 +136,7 @@ curl -X POST https://api.crawlrs.com/v1/search \
 查询抓取状态：
 
 ```bash
-curl https://api.crawlrs.com/v1/scrape/550e8400-e29b-41d4-a716-446655440000 \
+curl http://localhost:8899/v1/scrape/550e8400-e29b-41d4-a716-446655440000 \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -152,7 +154,7 @@ curl https://api.crawlrs.com/v1/scrape/550e8400-e29b-41d4-a716-446655440000 \
 抓取单个网页内容：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -172,7 +174,7 @@ curl -X POST https://api.crawlrs.com/v1/scrape \
 #### 自定义选项
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -201,7 +203,7 @@ curl -X POST https://api.crawlrs.com/v1/scrape \
 对于动态加载的内容，可以执行页面操作：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -240,7 +242,7 @@ curl -X POST https://api.crawlrs.com/v1/scrape \
 生成页面截图：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -287,7 +289,7 @@ curl -X POST https://api.crawlrs.com/v1/scrape \
 递归爬取整个网站：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/crawl \
+curl -X POST http://localhost:8899/v1/crawl \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -321,7 +323,7 @@ curl -X POST https://api.crawlrs.com/v1/crawl \
 只爬取特定路径：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/crawl \
+curl -X POST http://localhost:8899/v1/crawl \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -343,7 +345,7 @@ curl -X POST https://api.crawlrs.com/v1/crawl \
 #### 查询爬取状态
 
 ```bash
-curl https://api.crawlrs.com/v1/crawl/crawl-550e8400-e29b-41d4-a716-446655440000 \
+curl http://localhost:8899/v1/crawl/crawl-550e8400-e29b-41d4-a716-446655440000 \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -374,7 +376,7 @@ curl https://api.crawlrs.com/v1/crawl/crawl-550e8400-e29b-41d4-a716-446655440000
 分页获取已完成的页面：
 
 ```bash
-curl "https://api.crawlrs.com/v1/crawl/crawl-550e8400/results?page=1&limit=50" \
+curl "http://localhost:8899/v1/crawl/crawl-550e8400/results?page=1&limit=50" \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -404,7 +406,7 @@ curl "https://api.crawlrs.com/v1/crawl/crawl-550e8400/results?page=1&limit=50" \
 #### 取消爬取
 
 ```bash
-curl -X DELETE https://api.crawlrs.com/v1/crawl/crawl-550e8400 \
+curl -X DELETE http://localhost:8899/v1/crawl/crawl-550e8400 \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -424,7 +426,7 @@ curl -X DELETE https://api.crawlrs.com/v1/crawl/crawl-550e8400 \
 
 ```bash
 # 强制忽略 robots.txt
-curl -X POST https://api.crawlrs.com/v1/crawl \
+curl -X POST http://localhost:8899/v1/crawl \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -446,7 +448,7 @@ curl -X POST https://api.crawlrs.com/v1/crawl \
 使用自然语言描述提取需求：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/extract \
+curl -X POST http://localhost:8899/v1/extract \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -483,7 +485,7 @@ curl -X POST https://api.crawlrs.com/v1/extract \
 使用 JSON Schema 定义结构：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/extract \
+curl -X POST http://localhost:8899/v1/extract \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -511,7 +513,7 @@ curl -X POST https://api.crawlrs.com/v1/extract \
 #### 选择 LLM 模型
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/extract \
+curl -X POST http://localhost:8899/v1/extract \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -802,7 +804,7 @@ crawl(root_url, limit=100)
 
 ```bash
 # 让系统自动选择 PlaywrightEngine 引擎
-curl -X POST https://api.crawlrs.com/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -d '{
     "url": "https://spa-app.com",
     "formats": ["markdown"]
@@ -857,7 +859,7 @@ X-Debug: true
 使用 webhook.site 测试：
 
 ```bash
-curl -X POST https://api.crawlrs.com/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -d '{
     "url": "https://example.com",
     "webhook_url": "https://webhook.site/your-unique-id"
