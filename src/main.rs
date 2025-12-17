@@ -27,7 +27,7 @@ use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crawlrs::presentation::handlers::{
     crawl_handler, scrape_handler, search_handler, webhook_handler,
 };
-use crawlrs::presentation::middleware::auth_middleware::{auth_middleware, AuthState};
+use crawlrs::presentation::middleware::auth_middleware::AuthState;
 use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
 use crawlrs::presentation::middleware::team_semaphore::TeamSemaphore;
 use crawlrs::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
@@ -181,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
                 webhook_worker.run().await;
             });
 
-            let auth_state = AuthState {
+            let _auth_state = AuthState {
                 db: db.clone(),
                 team_id: uuid::Uuid::nil(),
             };
