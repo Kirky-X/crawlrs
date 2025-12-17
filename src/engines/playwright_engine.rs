@@ -54,49 +54,61 @@ impl ScraperEngine for PlaywrightEngine {
 
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
-            // Configure browser for production/container environment
-            let mut builder = BrowserConfig::builder();
-            builder = builder.no_sandbox()
-                .request_timeout(timeout_duration);
-
-            // Handle proxy (Chromiumoxide uses args for proxy)
-            if let Some(proxy_url) = &request.proxy {
-                builder = builder.arg(format!("--proxy-server={}", proxy_url));
-            }
-
-            // Handle TLS verification
-            if request.skip_tls_verification {
-                builder = builder
-                    .arg("--ignore-certificate-errors")
-                    .arg("--allow-insecure-localhost");
-            }
-
-            // Set window size if mobile
-            if request.mobile {
-                // Default to iPhone 12 Pro dimensions
-                builder = builder.viewport(chromiumoxide::handler::viewport::Viewport {
-                    width: 390,
-                    height: 844,
-                    device_scale_factor: Some(3.0),
-                    emulating_mobile: true,
-                    is_landscape: false,
-                    has_touch: true,
-                });
+            // Check if we should connect to a remote Chrome instance
+            let remote_debugging_url = std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").ok();
+            
+            let (mut browser, mut handler) = if let Some(ref url) = remote_debugging_url {
+                // Connect to existing Chrome instance via remote debugging
+                println!("Connecting to remote Chrome instance at: {}", url);
+                Browser::connect(url)
+                    .await
+                    .map_err(|e| EngineError::Other(format!("Failed to connect to remote Chrome: {}", e)))?
             } else {
-                // Desktop viewport
-                builder = builder.viewport(chromiumoxide::handler::viewport::Viewport {
-                    width: 1920,
-                    height: 1080,
-                    device_scale_factor: Some(1.0),
-                    emulating_mobile: false,
-                    is_landscape: true,
-                    has_touch: false,
-                });
-            }
+                // Launch new Chrome instance
+                // Configure browser for production/container environment
+                let mut builder = BrowserConfig::builder();
+                builder = builder.no_sandbox()
+                    .request_timeout(timeout_duration);
 
-            let (mut browser, mut handler) = Browser::launch(builder.build().map_err(|e| EngineError::Other(e.to_string()))?)
-                .await
-                .map_err(|e| EngineError::Other(e.to_string()))?;
+                // Handle proxy (Chromiumoxide uses args for proxy)
+                if let Some(proxy_url) = &request.proxy {
+                    builder = builder.arg(format!("--proxy-server={}", proxy_url));
+                }
+
+                // Handle TLS verification
+                if request.skip_tls_verification {
+                    builder = builder
+                        .arg("--ignore-certificate-errors")
+                        .arg("--allow-insecure-localhost");
+                }
+
+                // Set window size if mobile
+                if request.mobile {
+                    // Default to iPhone 12 Pro dimensions
+                    builder = builder.viewport(chromiumoxide::handler::viewport::Viewport {
+                        width: 390,
+                        height: 844,
+                        device_scale_factor: Some(3.0),
+                        emulating_mobile: true,
+                        is_landscape: false,
+                        has_touch: true,
+                    });
+                } else {
+                    // Desktop viewport
+                    builder = builder.viewport(chromiumoxide::handler::viewport::Viewport {
+                        width: 1920,
+                        height: 1080,
+                        device_scale_factor: Some(1.0),
+                        emulating_mobile: false,
+                        is_landscape: true,
+                        has_touch: false,
+                    });
+                }
+
+                Browser::launch(builder.build().map_err(|e| EngineError::Other(e.to_string()))?)
+                    .await
+                    .map_err(|e| EngineError::Other(e.to_string()))?
+            };
 
             // Spawn handler
             let handle = tokio::spawn(async move {

@@ -1,0 +1,173 @@
+// Copyright 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::time::Instant;
+
+/// Fire Engine (CDP) 实现
+///
+/// 支持完整的浏览器自动化，包括 JS 渲染、截图和 TLS 指纹对抗。
+/// 成本较高，速度较慢。
+pub struct FireEngineCdp {
+    client: reqwest::Client,
+    base_url: String,
+}
+
+#[derive(Serialize)]
+struct FlaresolverrRequest {
+    cmd: String,
+    url: String,
+    #[serde(rename = "maxTimeout")]
+    max_timeout: u64,
+    #[serde(rename = "returnScreenshot")]
+    return_screenshot: bool,
+}
+
+#[derive(Deserialize, Debug)]
+struct FlaresolverrResponse {
+    status: String,
+    message: String,
+    solution: Option<FlaresolverrSolution>,
+    #[serde(rename = "startTimestamp")]
+    #[allow(dead_code)]
+    start_timestamp: u64,
+    #[serde(rename = "endTimestamp")]
+    #[allow(dead_code)]
+    end_timestamp: u64,
+    #[allow(dead_code)]
+    version: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct FlaresolverrSolution {
+    #[allow(dead_code)]
+    url: String,
+    status: u16,
+    headers: serde_json::Value,
+    response: String,
+    #[allow(dead_code)]
+    cookies: Vec<serde_json::Value>,
+    #[serde(rename = "userAgent")]
+    #[allow(dead_code)]
+    user_agent: String,
+    // Added field for screenshot support
+    screenshot: Option<String>,
+}
+
+impl FireEngineCdp {
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: std::env::var("FIRE_ENGINE_CDP_URL")
+                .or_else(|_| std::env::var("FIRE_ENGINE_URL"))
+                .unwrap_or_else(|_| "http://localhost:8191/v1".to_string()),
+        }
+    }
+}
+
+impl Default for FireEngineCdp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ScraperEngine for FireEngineCdp {
+    async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+        let start = Instant::now();
+
+        let req_body = FlaresolverrRequest {
+            cmd: "request.get".to_string(),
+            url: request.url.clone(),
+            max_timeout: request.timeout.as_millis() as u64,
+            return_screenshot: request.needs_screenshot,
+        };
+
+        let resp = self
+            .client
+            .post(&self.base_url)
+            .json(&req_body)
+            .send()
+            .await
+            .map_err(EngineError::RequestFailed)?;
+
+        let flare_resp: FlaresolverrResponse =
+            resp.json().await.map_err(EngineError::RequestFailed)?;
+
+        if flare_resp.status == "error" {
+            return Err(EngineError::Other(format!(
+                "Flaresolverr error: {}",
+                flare_resp.message
+            )));
+        }
+
+        let solution = flare_resp
+            .solution
+            .ok_or_else(|| EngineError::Other("Flaresolverr returned no solution".to_string()))?;
+
+        // Convert headers
+        let mut headers = std::collections::HashMap::new();
+        if let serde_json::Value::Object(map) = solution.headers {
+            for (k, v) in map {
+                if let Some(s) = v.as_str() {
+                    headers.insert(k, s.to_string());
+                }
+            }
+        }
+
+        Ok(ScrapeResponse {
+            status_code: solution.status,
+            content: solution.response,
+            screenshot: solution.screenshot,
+            content_type: "text/html".to_string(),
+            headers,
+            response_time_ms: start.elapsed().as_millis() as u64,
+        })
+    }
+
+    fn support_score(&self, request: &ScrapeRequest) -> u8 {
+        // 如果需要 TLS 指纹且需要截图，这是最佳选择
+        if request.needs_tls_fingerprint && request.needs_screenshot {
+            return 100;
+        }
+
+        // 如果明确请求使用 Fire Engine
+        if request.use_fire_engine {
+            return 100;
+        }
+
+        // 如果需要截图，但不需要 TLS，Playwright 可能更好，但这个也能做
+        if request.needs_screenshot {
+            return 80;
+        }
+
+        // 如果需要 JS，支持
+        if request.needs_js {
+            return 90;
+        }
+
+        // 成本较高，默认优先级低
+        40
+    }
+
+    fn name(&self) -> &'static str {
+        "fire_engine_cdp"
+    }
+}
+
+#[cfg(test)]
+#[path = "fire_engine_cdp_test.rs"]
+mod tests;
