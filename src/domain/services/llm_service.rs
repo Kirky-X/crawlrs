@@ -22,7 +22,18 @@ pub trait LLMServiceTrait: Send + Sync {
     async fn extract_data(&self, text: &str, schema: &Value) -> Result<(Value, TokenUsage)>;
 }
 
-/// LLM Service to handle interaction with LLM providers
+/// LLM服务 - 处理与LLM提供商的交互
+///
+/// # 功能
+///
+/// 提供与大型语言模型（LLM）提供商的交互接口，支持数据提取功能
+///
+/// # 配置
+///
+/// 通过环境变量进行配置：
+/// - `LLM_API_KEY` - LLM API密钥
+/// - `LLM_MODEL` - 使用的模型名称（默认为 gpt-3.5-turbo）
+/// - `LLM_API_BASE_URL` - LLM API基础URL
 pub struct LLMService {
     api_key: Option<String>,
     model: String,
@@ -60,14 +71,18 @@ impl LLMService {
         }
     }
 
-    /// Extract structured data from text using LLM
+    /// 使用LLM从文本中提取结构化数据
     ///
-    /// # Arguments
-    /// * `text` - The input text to process (e.g., HTML content or raw text)
-    /// * `schema` - A JSON schema describing the desired output structure
+    /// # 参数
+    /// * `text` - 输入文本（例如HTML内容或纯文本）
+    /// * `schema` - JSON模式，描述期望的输出结构
     ///
-    /// # Returns
-    /// * `Result<(Value, TokenUsage)>` - The extracted data and token usage
+    /// # 返回值
+    /// * `Result<(Value, TokenUsage)>` - 提取的数据和令牌使用情况
+    ///
+    /// # 错误
+    /// * 当LLM API密钥未配置时返回错误
+    /// * 当LLM服务调用失败时返回错误
     pub async fn extract_data(&self, text: &str, schema: &Value) -> Result<(Value, TokenUsage)> {
         let api_key = self
             .api_key

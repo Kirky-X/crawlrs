@@ -20,7 +20,25 @@ use crate::{
     },
 };
 
-/// Handle search request
+/// 处理搜索请求
+///
+/// # 参数
+///
+/// * `crawl_repo` - 爬取任务仓库实例
+/// * `task_repo` - 任务仓库实例  
+/// * `team_id` - 团队ID
+/// * `payload` - 搜索请求数据
+///
+/// # 返回值
+///
+/// 返回实现了 `IntoResponse` 的响应，包含搜索结果或错误信息
+///
+/// # 错误
+///
+/// 可能在以下情况下返回错误响应：
+/// - 搜索参数验证失败
+/// - 仓库操作失败
+/// - 搜索引擎错误
 pub async fn search<CR, TR>(
     Extension(crawl_repo): Extension<Arc<CR>>,
     Extension(task_repo): Extension<Arc<TR>>,

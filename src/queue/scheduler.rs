@@ -123,7 +123,17 @@ impl<R: TaskRepository + Send + Sync + 'static> TaskScheduler<R> {
         self.schedule_at(task, time).await
     }
 
-    /// Reschedule a failed task for retry with exponential backoff or fixed delay
+    /// 重新调度失败的任务进行重试，支持指数退避或固定延迟
+    ///
+    /// # 参数
+    ///
+    /// * `task` - 需要重试的任务
+    /// * `delay` - 重试延迟时间
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(Task)` - 重调度后的任务
+    /// * `Err(QueueError)` - 重调度失败
     pub async fn reschedule_retry(
         &self,
         mut task: Task,
@@ -147,7 +157,20 @@ impl<R: TaskRepository + Send + Sync + 'static> TaskScheduler<R> {
         Ok(updated)
     }
 
-    /// Schedule a task with high priority
+    /// 以高优先级调度任务
+    ///
+    /// # 参数
+    ///
+    /// * `task` - 需要调度的任务
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(Task)` - 调度后的任务
+    /// * `Err(QueueError)` - 调度失败
+    ///
+    /// # 说明
+    ///
+    /// 将任务优先级设置为100（高优先级），并立即调度执行
     pub async fn schedule_urgent(&self, mut task: Task) -> Result<Task, QueueError> {
         task.priority = 100; // Assuming 100 is high priority
         task.scheduled_at = Some(Utc::now().into()); // Immediate
