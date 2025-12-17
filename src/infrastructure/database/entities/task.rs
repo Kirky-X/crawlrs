@@ -6,6 +6,9 @@
 use sea_orm::entity::prelude::*;
 use uuid::Uuid;
 
+/// 任务数据库实体模型
+///
+/// 对应数据库中的 tasks 表，存储任务的详细信息和执行状态
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "tasks")]
 pub struct Model {

@@ -6,6 +6,9 @@
 use sea_orm::entity::prelude::*;
 use uuid::Uuid;
 
+/// 爬取任务数据库实体模型
+///
+/// 对应数据库中的 crawls 表，存储爬取任务的基本信息和状态
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "crawls")]
 pub struct Model {
