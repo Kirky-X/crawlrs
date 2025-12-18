@@ -96,14 +96,14 @@ where
     }
 
     /// 运行抓取工作器
-    pub async fn run<Q>(&self, queue: Arc<Q>)
+    pub async fn run<Q>(&self, queue: Q)
     where
         Q: TaskQueue + Send + Sync,
     {
         info!("Scrape worker {} started", self.worker_id);
 
         loop {
-            match self.process_next_task(queue.as_ref()).await {
+            match self.process_next_task(&queue).await {
                 Ok(processed) => {
                     if !processed {
                         sleep(Duration::from_secs(1)).await;
@@ -117,11 +117,11 @@ where
         }
     }
 
-    async fn process_next_task<Q>(&self, _queue: &Q) -> Result<bool>
+    async fn process_next_task<Q>(&self, queue: &Q) -> Result<bool>
     where
         Q: TaskQueue,
     {
-        let task_opt = self.repository.acquire_next(self.worker_id).await?;
+        let task_opt = queue.dequeue(self.worker_id).await?;
 
         if let Some(task) = task_opt {
             self.process_task(task).await?;
@@ -165,6 +165,7 @@ where
 
     #[instrument(skip(self, task), fields(task_id = %task.id, url = %task.url, task_type = %task.task_type))]
     async fn process_task(&self, mut task: Task) -> Result<()> {
+        println!("DEBUG: Processing task {} of type {:?}", task.id, task.task_type);
         info!("Processing task");
 
         // Concurrency Check (Layer 2: Team Semaphore)
@@ -206,14 +207,22 @@ where
             );
         }
 
+        if let Err(ref e) = result {
+            println!("DEBUG: Task processing failed: {}", e);
+        } else {
+            println!("DEBUG: Task processing completed successfully");
+        }
+
         result
     }
 
     async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
+        println!("DEBUG: Processing scrape task {} with payload: {}", task.id, task.payload);
         let request_dto = match serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
             Ok(dto) => dto,
             Err(e) => {
                 error!("Failed to deserialize ScrapeRequestDto: {}", e);
+                println!("DEBUG: Failed to deserialize payload: {}", e);
                 self.handle_failure(&mut task).await?;
                 return Ok(());
             }
@@ -223,6 +232,7 @@ where
 
         match response {
             Ok(response) => {
+                println!("DEBUG: Scrape successful, status: {}", response.status_code);
                 info!("Scrape successful, status: {}", response.status_code);
 
                 // Map ScrapeResponse to ScrapeResult
@@ -243,8 +253,10 @@ where
 
                 if let Err(e) = self.handle_scrape_success(task.clone(), &response).await {
                     error!("Scrape success handler failed: {}", e);
+                    println!("DEBUG: Scrape success handler failed: {}", e);
                     self.handle_failure(&mut task).await?;
                 } else {
+                    println!("DEBUG: Scrape success handler completed successfully");
                     // Mark as completed only if handle_scrape_success succeeded
                     // handle_scrape_success calls mark_completed internally?
                     // Let's check handle_scrape_success implementation.
@@ -254,6 +266,7 @@ where
             }
             Err(e) => {
                 error!("Scrape failed: {}", e);
+                println!("DEBUG: Scrape failed: {}", e);
                 self.handle_failure(&mut task).await?;
                 // 触发失败 Webhook
                 self.trigger_webhook(&task, WebhookEventType::ScrapeFailed, Some(e.to_string()))
@@ -625,6 +638,7 @@ where
     }
 
     async fn handle_scrape_success(&self, task: Task, response: &ScrapeResponse) -> Result<()> {
+        println!("DEBUG: handle_scrape_success called for task {}", task.id);
         // 解析 ScrapeRequest 以检查是否有提取规则
         let mut extracted_data = None;
         if let Ok(req) = serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
@@ -660,7 +674,9 @@ where
         }
 
         self.save_result(&task, response, extracted_data).await?;
+        println!("DEBUG: About to mark task {} as completed", task.id);
         self.repository.mark_completed(task.id).await?;
+        println!("DEBUG: Successfully marked task {} as completed", task.id);
 
         self.trigger_webhook(&task, WebhookEventType::ScrapeCompleted, None)
             .await;

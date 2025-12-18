@@ -5,13 +5,15 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use validator::Validate;
 
 /// 爬取请求数据传输对象
 ///
 /// 用于封装客户端发起的网页爬取请求的相关参数
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Validate)]
 pub struct ScrapeRequestDto {
     /// 要爬取的网页URL
+    #[validate(url)]
     pub url: String,
     /// 请求的数据格式列表
     pub formats: Option<Vec<String>>,
@@ -32,6 +34,8 @@ pub struct ScrapeRequestDto {
     pub actions: Option<Vec<ScrapeActionDto>>,
     /// 抓取选项
     pub options: Option<ScrapeOptionsDto>,
+    /// 自定义元数据
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

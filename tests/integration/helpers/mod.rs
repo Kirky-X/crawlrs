@@ -6,32 +6,32 @@
 use axum::Extension;
 use axum_test::TestServer;
 use crawlrs::application::usecases::create_scrape::CreateScrapeUseCase;
-use crawlrs::config::settings::{DatabaseSettings, Settings};
+use crawlrs::config::settings::Settings;
 use crawlrs::engines::playwright_engine::PlaywrightEngine;
 use crawlrs::engines::reqwest_engine::ReqwestEngine;
 use crawlrs::engines::router::EngineRouter;
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
-use crawlrs::infrastructure::database::connection;
 use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
-use crawlrs::infrastructure::storage::local::LocalStorage;
+use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
+use crawlrs::infrastructure::storage::LocalStorage;
 use crawlrs::presentation::middleware::auth_middleware::{auth_middleware, AuthState};
 use crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware;
 use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
 use crawlrs::presentation::routes;
-use crawlrs::queue::task_queue::PostgresTaskQueue;
 use crawlrs::workers::manager::WorkerManager;
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use std::process::{Child, Command};
 use std::sync::Arc;
-
-use testcontainers::{runners::AsyncRunner, ImageExt};
 use uuid::Uuid;
 
 use crawlrs::utils::robots::RobotsChecker;
+
+use crawlrs::queue::task_queue::{TaskQueue, PostgresTaskQueue};
 
 #[allow(dead_code)]
 pub struct TestApp {
@@ -41,16 +41,23 @@ pub struct TestApp {
     pub task_repo: Arc<TaskRepositoryImpl>,
     pub worker_manager: Option<
         WorkerManager<
-            PostgresTaskQueue<TaskRepositoryImpl>,
+            Arc<dyn TaskQueue>,
             TaskRepositoryImpl,
             ScrapeResultRepositoryImpl,
             CrawlRepositoryImpl,
             LocalStorage,
         >,
     >,
-    // Keep nodes alive
-    pub postgres_node: testcontainers::ContainerAsync<testcontainers::GenericImage>,
-    pub redis_node: testcontainers::ContainerAsync<testcontainers::GenericImage>,
+    // Keep redis process alive
+    pub redis_process: Option<Child>,
+}
+
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.redis_process.take() {
+            let _ = child.kill();
+        }
+    }
 }
 
 pub async fn create_test_app() -> TestApp {
@@ -62,68 +69,25 @@ pub async fn create_test_app_no_worker() -> TestApp {
 }
 
 async fn create_test_app_with_options(start_worker: bool) -> TestApp {
-    // Start PostgreSQL container
-    // Note: testcontainers 0.17 with testcontainers-modules 0.5 automatically uses the default tag (usually latest)
-    // or whatever is specified in the module.
-    // If we can't change the tag easily, we should ensure the image it tries to pull is available.
-    // However, the error message says it fails to pull postgres:11-alpine.
-    // We want to force it to use a newer version if possible, or we need to pull 11-alpine manually.
-    // Since we cannot easily change the tag in code with this version combination without a trait,
-    // let's rely on the default and hope the environment can pull it if we fix the network or image name.
-    // But wait, the error is about `postgres:11-alpine`. This implies the default in the library IS 11-alpine.
-    // Let's try to instantiate a GenericImage instead to control the tag.
-
-    let postgres_node = testcontainers::GenericImage::new("postgres", "15-alpine")
-        .with_env_var("POSTGRES_DB", "postgres")
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .start()
-        .await
-        .expect("Failed to start Postgres");
-
-    let postgres_port = postgres_node
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("Failed to get Postgres port");
-    let db_url = format!(
-        "postgres://postgres:postgres@127.0.0.1:{}/postgres",
-        postgres_port
-    );
-
-    // Start Redis container
-    let redis_node = testcontainers::GenericImage::new("redis", "7-alpine")
-        .start()
-        .await
-        .expect("Failed to start Redis");
-    let redis_port = redis_node
-        .get_host_port_ipv4(6379)
-        .await
-        .expect("Failed to get Redis port");
+    // 1. Setup SQLite
+    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db_pool = Arc::new(db);
+    
+    // 2. Setup Redis
+    let start_port = 6379;
+    let result = crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true).unwrap();
+    let redis_port = result.port;
+    let redis_process = Command::new("redis-server")
+        .arg("--port")
+        .arg(redis_port.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("Failed to start redis-server");
+        
+    // Wait for redis to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let redis_url = format!("redis://127.0.0.1:{}", redis_port);
-
-    // Create database connection pool
-    let db_settings = DatabaseSettings {
-        url: db_url.clone(),
-        max_connections: None,
-        min_connections: None,
-        connect_timeout: None,
-        idle_timeout: None,
-    };
-
-    // Retry logic for database connection
-    let mut db_pool = None;
-    for _ in 0..20 {
-        match connection::create_pool(&db_settings).await {
-            Ok(pool) => {
-                db_pool = Some(Arc::new(pool));
-                break;
-            }
-            Err(_) => {
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-            }
-        }
-    }
-    let db_pool = db_pool.expect("Failed to connect to database");
 
     // Run migrations
     Migrator::up(db_pool.as_ref(), None).await.unwrap();
@@ -132,28 +96,21 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
     let api_key = Uuid::new_v4().to_string();
     let team_id = Uuid::new_v4();
 
-    // This is a simplified insertion for testing purposes.
-    // In a real scenario, you would use your repository layer.
-    let insert_team_stmt = format!(
-        "INSERT INTO teams (id, name, created_at, updated_at) VALUES ('{}', 'test-team', NOW(), NOW())",
-        team_id
-    );
-    let insert_api_key_stmt = format!(
-        "INSERT INTO api_keys (key, team_id, created_at, updated_at) VALUES ('{}', '{}', NOW(), NOW())",
-        api_key, team_id
-    );
-
+    // Insert data (SQLite syntax)
     db_pool
-        .execute(Statement::from_string(
-            DbBackend::Postgres,
-            insert_team_stmt,
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, 'test-team', datetime('now'), datetime('now'))",
+            vec![team_id.into()],
         ))
         .await
         .unwrap();
+
     db_pool
-        .execute(Statement::from_string(
-            DbBackend::Postgres,
-            insert_api_key_stmt,
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+            vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
         ))
         .await
         .unwrap();
@@ -169,12 +126,15 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
         db_pool.clone(),
         chrono::Duration::seconds(10),
     ));
-    let queue = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
+    
+    // Use PostgresTaskQueue for proper task processing
+    let queue: Arc<dyn TaskQueue> = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
 
     // Initialize dependencies for WorkerManager
     let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db_pool.clone()));
     let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db_pool.clone()));
     let webhook_event_repo = Arc::new(WebhookEventRepoImpl::new(db_pool.clone()));
+    let webhook_repo = Arc::new(WebhookRepoImpl::new(db_pool.clone()));
     let storage_repo = Some(Arc::new(LocalStorage::new("test_storage".to_string())));
 
     let reqwest_engine = Arc::new(ReqwestEngine);
@@ -185,9 +145,18 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
     let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(router.clone()));
     let robots_checker = Arc::new(RobotsChecker::new());
 
-    let settings = Arc::new(Settings::new().unwrap());
+    // Create custom settings for tests (disable rate limiting)
+    let mut settings = Settings::new().unwrap();
+    settings.rate_limiting.enabled = false; // Disable rate limiting for tests
+    let settings = Arc::new(settings);
 
-    let mut worker_manager = WorkerManager::new(
+    let mut worker_manager: WorkerManager<
+        Arc<dyn TaskQueue>,
+        TaskRepositoryImpl,
+        ScrapeResultRepositoryImpl,
+        CrawlRepositoryImpl,
+        LocalStorage,
+    > = WorkerManager::new(
         queue.clone(),
         task_repo.clone(),
         result_repo.clone(),
@@ -225,6 +194,9 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
         ))
         .layer(Extension(queue))
         .layer(Extension(task_repo.clone()))
+        .layer(Extension(crawl_repo))
+        .layer(Extension(result_repo))
+        .layer(Extension(webhook_repo))
         .layer(Extension(redis_client))
         .layer(Extension(rate_limiter))
         .layer(Extension(settings)); // Use default settings for tests
@@ -241,7 +213,6 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
         } else {
             None
         },
-        postgres_node,
-        redis_node,
+        redis_process: Some(redis_process),
     }
 }
