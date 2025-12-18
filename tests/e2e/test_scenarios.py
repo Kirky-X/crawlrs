@@ -18,7 +18,7 @@ from typing import Dict, Any, Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 基础配置
-BASE_URL = "http://localhost:3000"
+BASE_URL = "http://localhost:8899"
 HEADERS = {
     "Authorization": "Bearer test-api-key",
     "Content-Type": "application/json"

@@ -1,9 +1,15 @@
+#!/usr/bin/env python3
+# Copyright (c) 2025 Kirky.X
+#
+# Licensed under the MIT License
+# See LICENSE file in the project root for full license information.
+
 import requests
 import time
 import json
 import sys
 
-BASE_URL = "http://localhost:3000/v1"
+BASE_URL = "http://localhost:8899/v1"
 API_KEY = "test_api_key_123"
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
@@ -81,7 +87,7 @@ if __name__ == "__main__":
     
     # Verify Health First
     try:
-        h = requests.get("http://localhost:3000/health")
+        h = requests.get("http://localhost:8899/health")
         if h.status_code != 200:
             print("❌ Health check failed. Is the server running?")
             sys.exit(1)
