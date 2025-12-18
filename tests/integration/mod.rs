@@ -13,6 +13,7 @@ pub mod health_check;
 pub mod health_monitor_test;
 pub mod helpers;
 pub mod real_world_test;
+pub mod repositories;
 pub mod scheduler_test;
 pub mod scrape_handler_test;
 pub mod scrape_test;

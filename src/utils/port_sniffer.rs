@@ -42,10 +42,7 @@ impl PortSniffer {
     ///
     /// * `bool` - 如果端口已被占用返回 true，否则返回 false
     pub fn is_port_in_use(port: u16) -> bool {
-        match TcpListener::bind(("0.0.0.0", port)) {
-            Ok(_) => false,
-            Err(_) => true,
-        }
+        TcpListener::bind(("0.0.0.0", port)).is_err()
     }
 
     /// 查找可用端口

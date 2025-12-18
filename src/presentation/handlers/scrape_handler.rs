@@ -165,7 +165,7 @@ fn is_internal_url(url_str: &str) -> bool {
                  // Check 172.16.0.0/12
                  if let Some(second_octet) = host.split('.').nth(1) {
                      if let Ok(num) = second_octet.parse::<u8>() {
-                         if num >= 16 && num <= 31 {
+                         if (16..=31).contains(&num) {
                              return true;
                          }
                      }
