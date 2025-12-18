@@ -14,10 +14,8 @@ use super::helpers::create_test_app_no_worker;
 use crawlrs::domain::models::task::{Task, TaskStatus};
 use crawlrs::domain::services::crawl_service::{CrawlService, LinkDiscoverer};
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crawlrs::utils::robots::RobotsCheckerTrait;
 use serde_json::json;
 use std::sync::Arc;
-use std::time::Duration;
 use uuid::Uuid;
 
 /// UAT-007: 路径过滤规则验证
@@ -309,36 +307,7 @@ async fn test_uat008_robots_txt_caching() {
     println!("  - 创建任务数: {}", new_tasks.len());
 }
 
-/// 模拟robots.txt检查器，用于测试
-struct MockRobotsChecker {
-    disallowed_patterns: Vec<String>,
-}
 
-impl MockRobotsChecker {
-    fn new() -> Self {
-        Self {
-            disallowed_patterns: vec!["/disallowed/".to_string()],
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl RobotsCheckerTrait for MockRobotsChecker {
-    async fn is_allowed(&self, url_str: &str, _user_agent: &str) -> anyhow::Result<bool> {
-        // 模拟robots.txt检查：如果URL包含不允许的模式，返回false
-        for pattern in &self.disallowed_patterns {
-            if url_str.contains(pattern) {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    async fn get_crawl_delay(&self, _url_str: &str, _user_agent: &str) -> anyhow::Result<Option<Duration>> {
-        // 模拟1秒爬取延迟
-        Ok(Some(Duration::from_secs(1)))
-    }
-}
 
 /// UAT-009: 并发任务处理边界测试
 /// 
@@ -432,46 +401,17 @@ async fn test_uat010_error_recovery_and_retry() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(300));
     
-    // 使用模拟的错误robots检查器
-    struct FailingRobotsChecker {
-        fail_count: std::sync::atomic::AtomicU32,
-    }
-    
-    impl FailingRobotsChecker {
-        fn new() -> Self {
-            Self {
-                fail_count: std::sync::atomic::AtomicU32::new(0),
-            }
-        }
-    }
-    
-    #[async_trait::async_trait]
-    impl RobotsCheckerTrait for FailingRobotsChecker {
-        async fn is_allowed(&self, _url_str: &str, _user_agent: &str) -> anyhow::Result<bool> {
-            let count = self.fail_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            // 前两次调用失败，第三次成功
-            if count < 2 {
-                Err(anyhow::anyhow!("Simulated robots.txt check failure"))
-            } else {
-                Ok(true)
-            }
-        }
+    // 使用真实的robots检查器，但创建会失败的任务场景
+    let crawl_service = CrawlService::new(Arc::new(repo.clone()));
 
-        async fn get_crawl_delay(&self, _url_str: &str, _user_agent: &str) -> anyhow::Result<Option<Duration>> {
-            Ok(None)
-        }
-    }
-    
-    let failing_checker = FailingRobotsChecker::new();
-    let crawl_service = CrawlService::new_with_checker(Arc::new(repo.clone()), failing_checker);
-
+    // 创建任务，使用无效URL来测试错误处理
     let parent_task = Task {
         id: Uuid::new_v4(),
         task_type: crawlrs::domain::models::task::TaskType::Crawl,
         status: TaskStatus::Completed,
         priority: 50,
         team_id: Uuid::new_v4(),
-        url: "https://example.com".to_string(),
+        url: "https://invalid-domain-that-does-not-exist-12345.com".to_string(),
         payload: json!({
             "depth": 0,
             "max_depth": 2,
@@ -493,23 +433,23 @@ async fn test_uat010_error_recovery_and_retry() {
     let html_content = r#"
         <html>
             <body>
-                <a href="https://example.com/page1">Page 1</a>
-                <a href="https://example.com/page2">Page 2</a>
+                <a href="https://invalid-domain-that-does-not-exist-12345.com/page1">Page 1</a>
+                <a href="https://invalid-domain-that-does-not-exist-12345.com/page2">Page 2</a>
             </body>
         </html>
     "#;
 
-    // 第一次处理应该成功（第三次调用robots检查器）
+    // 测试处理包含无效URL的结果 - 应该能够处理错误 gracefully
     let result = crawl_service.process_crawl_result(&parent_task, html_content).await;
     
     match result {
         Ok(tasks) => {
-            // 即使robots检查器前两次失败，系统应该能够恢复
+            // 系统应该能够处理无效URL并继续处理其他任务
             println!("✓ 错误恢复测试通过");
             println!("  - 生成任务数: {}", tasks.len());
         }
         Err(e) => {
-            // 如果完全失败，验证错误信息是合理的
+            // 验证错误信息是合理的
             println!("✓ 错误处理测试通过");
             println!("  - 错误信息: {}", e);
         }

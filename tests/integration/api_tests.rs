@@ -3,7 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use super::helpers::create_test_app;
+use super::helpers::{create_test_app, create_test_app_with_rate_limit_options};
 use crawlrs::utils::telemetry::init_telemetry;
 use axum::http::StatusCode;
 use crawlrs::infrastructure::database::entities::task;
@@ -54,7 +54,7 @@ async fn test_create_scrape_task_success() {
 /// 对应文档章节：3.1.2
 #[tokio::test]
 async fn test_scrape_rate_limit() {
-    let app = create_test_app().await;
+    let app = create_test_app_with_rate_limit_options(true, true).await;
 
     // The rate limiter is configured to 100 RPM in tests.
     // We send 101 requests to ensure the limit is triggered.

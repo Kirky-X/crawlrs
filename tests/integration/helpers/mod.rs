@@ -69,6 +69,10 @@ pub async fn create_test_app_no_worker() -> TestApp {
 }
 
 async fn create_test_app_with_options(start_worker: bool) -> TestApp {
+    create_test_app_with_rate_limit_options(start_worker, false).await
+}
+
+pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_rate_limiting: bool) -> TestApp {
     // 1. Setup SQLite
     let db = Database::connect("sqlite::memory:").await.unwrap();
     let db_pool = Arc::new(db);
@@ -145,9 +149,9 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
     let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(router.clone()));
     let robots_checker = Arc::new(RobotsChecker::new());
 
-    // Create custom settings for tests (disable rate limiting)
+    // Create custom settings for tests
     let mut settings = Settings::new().unwrap();
-    settings.rate_limiting.enabled = false; // Disable rate limiting for tests
+    settings.rate_limiting.enabled = enable_rate_limiting; // 根据参数决定是否启用速率限制
     let settings = Arc::new(settings);
 
     let mut worker_manager: WorkerManager<

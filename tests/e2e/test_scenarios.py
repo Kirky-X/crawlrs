@@ -488,7 +488,7 @@ def test_scrape_screenshot():
 def test_crawl_full():
     """测试全站爬取功能 (UAT-006)"""
     print("🧪 测试全站爬取功能...")
-    # Use a small site or mock for full crawl test
+    # Use a small real site for full crawl test
     payload = {
         "url": "https://httpbin.org/links/5/0", # Returns a page with 5 links
         "crawler_options": {
