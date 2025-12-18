@@ -17,4 +17,5 @@ pub mod repositories;
 pub mod scheduler_test;
 pub mod scrape_handler_test;
 pub mod scrape_test;
+pub mod uat_scenarios_test;
 pub mod webhook_test;

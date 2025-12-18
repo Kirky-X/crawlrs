@@ -8,6 +8,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 use anyhow::Result;
 use chrono::Utc;
+use regex::Regex;
 use scraper::{Html, Selector};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -189,6 +190,27 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
 pub struct LinkDiscoverer;
 
 impl LinkDiscoverer {
+    /// 将glob模式转换为正则表达式
+    fn glob_to_regex(pattern: &str) -> Result<Regex> {
+        // 简单的glob到regex转换
+        let mut regex_pattern = String::new();
+        let mut chars = pattern.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            match ch {
+                '*' => regex_pattern.push_str(".*"),
+                '?' => regex_pattern.push('.'),
+                '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
+                    regex_pattern.push('\\');
+                    regex_pattern.push(ch);
+                }
+                _ => regex_pattern.push(ch),
+            }
+        }
+        
+        Regex::new(&regex_pattern).map_err(|e| anyhow::anyhow!("Invalid regex pattern: {}", e))
+    }
+
     /// 从HTML内容中提取链接
     ///
     /// # 参数
@@ -201,6 +223,7 @@ impl LinkDiscoverer {
     /// * `Ok(HashSet<String>)` - 提取到的链接集合
     /// * `Err(anyhow::Error)` - 提取过程中出现的错误
     pub fn extract_links(html_content: &str, base_url: &str) -> Result<HashSet<String>> {
+        println!("DEBUG: extract_links called with base_url: {}", base_url);
         let fragment = Html::parse_document(html_content);
         let selector =
             Selector::parse("a").map_err(|e| anyhow::anyhow!("Invalid selector: {:?}", e))?;
@@ -209,6 +232,7 @@ impl LinkDiscoverer {
 
         for element in fragment.select(&selector) {
             if let Some(href) = element.value().attr("href") {
+                println!("DEBUG: Found href: {}", href);
                 // Ignore fragment identifiers, mailto and javascript links
                 if href.starts_with('#')
                     || href.starts_with("mailto:")
@@ -217,18 +241,28 @@ impl LinkDiscoverer {
                     continue;
                 }
 
-                if let Ok(url) = base.join(href) {
-                    // Only keep http/https links
-                    if url.scheme() == "http" || url.scheme() == "https" {
-                        // Remove fragment to improve deduplication
-                        let mut url_clean = url.clone();
-                        url_clean.set_fragment(None);
-                        links.insert(url_clean.to_string());
+                match base.join(href) {
+                    Ok(url) => {
+                        println!("DEBUG: Successfully joined URL: {}", url);
+                        // Only keep http/https links
+                        if url.scheme() == "http" || url.scheme() == "https" {
+                            // Remove fragment to improve deduplication
+                            let mut url_clean = url.clone();
+                            url_clean.set_fragment(None);
+                            links.insert(url_clean.to_string());
+                            println!("DEBUG: Added URL to links: {}", url_clean);
+                        } else {
+                            println!("DEBUG: Skipped URL due to scheme: {}", url.scheme());
+                        }
+                    }
+                    Err(e) => {
+                        println!("DEBUG: Failed to join URL: {:?}", e);
                     }
                 }
             }
         }
 
+        println!("DEBUG: Total links extracted: {}", links.len());
         Ok(links)
     }
 
@@ -250,21 +284,54 @@ impl LinkDiscoverer {
         include_patterns: &[String],
         exclude_patterns: &[String],
     ) -> HashSet<String> {
-        links
+        println!("DEBUG: filter_links called with {} links", links.len());
+        println!("DEBUG: include_patterns: {:?}", include_patterns);
+        println!("DEBUG: exclude_patterns: {:?}", exclude_patterns);
+        
+        // Convert glob patterns to regex patterns
+        let include_regexes: Vec<Regex> = include_patterns
+            .iter()
+            .filter_map(|p| Self::glob_to_regex(p).ok())
+            .collect();
+        
+        let exclude_regexes: Vec<Regex> = exclude_patterns
+            .iter()
+            .filter_map(|p| Self::glob_to_regex(p).ok())
+            .collect();
+        
+        let filtered: HashSet<String> = links
             .into_iter()
             .filter(|link| {
+                println!("DEBUG: Processing link: {}", link);
                 // If include patterns are provided, link must match at least one
-                let matches_include = if include_patterns.is_empty() {
+                let matches_include = if include_regexes.is_empty() {
+                    println!("DEBUG: No include patterns, allowing all");
                     true
                 } else {
-                    include_patterns.iter().any(|p| link.contains(p))
+                    let matched = include_regexes.iter().any(|regex| {
+                        let matches = regex.is_match(link);
+                        println!("DEBUG: Checking if '{}' matches include pattern '{}': {}", link, regex.as_str(), matches);
+                        matches
+                    });
+                    println!("DEBUG: matches_include: {}", matched);
+                    matched
                 };
 
                 // Link must NOT match any exclude pattern
-                let matches_exclude = exclude_patterns.iter().any(|p| link.contains(p));
+                let matches_exclude = exclude_regexes.iter().any(|regex| {
+                    let matches = regex.is_match(link);
+                    println!("DEBUG: Checking if '{}' matches exclude pattern '{}': {}", link, regex.as_str(), matches);
+                    matches
+                });
+                println!("DEBUG: matches_exclude: {}", matches_exclude);
 
-                matches_include && !matches_exclude
+                let result = matches_include && !matches_exclude;
+                println!("DEBUG: Final result for '{}': {}", link, result);
+                result
             })
-            .collect()
+            .collect();
+        
+        println!("DEBUG: Filtered links count: {}", filtered.len());
+        filtered
     }
 }
