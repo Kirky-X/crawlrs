@@ -125,6 +125,10 @@ impl TaskRepository for TaskRepositoryImpl {
     async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
         let txn = self.db.begin().await?;
 
+        println!("DEBUG: acquire_next called by worker {}", worker_id);
+        let now = Utc::now();
+        println!("DEBUG: Current time: {}", now);
+
         let task = task_entity::Entity::find()
             .filter(
                 Condition::any()
@@ -132,19 +136,24 @@ impl TaskRepository for TaskRepositoryImpl {
                     .add(
                         Condition::all()
                             .add(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
-                            .add(task_entity::Column::LockExpiresAt.lt(Utc::now())),
+                            .add(task_entity::Column::LockExpiresAt.lt(now)),
                     ),
             )
             .filter(
                 Condition::any()
                     .add(task_entity::Column::ScheduledAt.is_null())
-                    .add(task_entity::Column::ScheduledAt.lte(Utc::now())),
+                    .add(task_entity::Column::ScheduledAt.lte(now)),
             )
             .order_by_desc(task_entity::Column::Priority)
             .order_by_asc(task_entity::Column::CreatedAt)
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .one(&txn)
             .await?;
+
+        println!("DEBUG: Found task: {:?}", task.as_ref().map(|t| t.id));
+        if let Some(ref t) = task {
+            println!("DEBUG: Task status: {}, lock_expires_at: {:?}", t.status, t.lock_expires_at);
+        }
 
         if let Some(task) = task {
             let mut active: task_entity::ActiveModel = task.into();
@@ -233,6 +242,10 @@ impl TaskRepository for TaskRepositoryImpl {
                 task_entity::Column::LockExpiresAt,
                 Expr::value(Option::<DateTime<FixedOffset>>::None),
             )
+            .col_expr(
+                task_entity::Column::StartedAt,
+                Expr::value(Option::<DateTime<FixedOffset>>::None),
+            )
             .filter(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
             .filter(
                 Condition::any()
@@ -250,15 +263,6 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn cancel_tasks_by_crawl_id(&self, crawl_id: Uuid) -> Result<u64, RepositoryError> {
-        // 使用 Payload 中的 crawl_id 字段进行筛选
-        // 由于 Payload 是 JSONB 类型，我们需要使用 JSON 操作符
-        // 注意：sea-orm 对 JSONB 查询的支持取决于后端数据库
-        // 这里假设是 Postgres，使用 Expr::cust 进行原生 SQL 片段构建可能更灵活，
-        // 但为了保持 safe，尝试使用 sea-orm 的 filter
-
-        // 假设 payload 结构为 { "crawl_id": "uuid-string", ... }
-        // Postgres JSONB 查询: payload->>'crawl_id' = 'uuid-string'
-
         use sea_orm::sea_query::Expr;
 
         let result = task_entity::Entity::update_many()
@@ -277,11 +281,7 @@ impl TaskRepository for TaskRepositoryImpl {
                     TaskStatus::Active.to_string(),
                 ]),
             )
-            .filter(
-                // 使用 JSON 包含操作符 @>
-                // payload @> '{"crawl_id": "crawl_id"}'
-                Expr::cust_with_values("payload->>'crawl_id' = ?", vec![crawl_id.to_string()]),
-            )
+            .filter(task_entity::Column::CrawlId.eq(crawl_id))
             .exec(self.db.as_ref())
             .await?;
 
