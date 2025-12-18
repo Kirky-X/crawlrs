@@ -20,7 +20,7 @@ use crawlrs::infrastructure::database::connection;
 use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crawlrs::infrastructure::storage::local::LocalStorage;
+use crawlrs::infrastructure::storage::LocalStorage;
 
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
@@ -32,7 +32,7 @@ use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
 use crawlrs::presentation::middleware::team_semaphore::TeamSemaphore;
 use crawlrs::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crawlrs::presentation::routes;
-use crawlrs::queue::task_queue::PostgresTaskQueue;
+use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use crawlrs::workers::manager::WorkerManager;
 use crawlrs::workers::webhook_worker::WebhookWorker;
 use std::sync::Arc;
@@ -157,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
         db.clone(),
         chrono::Duration::seconds(settings.concurrency.task_lock_duration_seconds),
     ));
-    let queue = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
+    let queue: Arc<dyn TaskQueue> = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
     let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db.clone()));
     let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db.clone()));
     let storage_repo = if settings.storage.storage_type == "local" {

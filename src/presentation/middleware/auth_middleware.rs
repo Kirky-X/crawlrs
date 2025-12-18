@@ -59,7 +59,7 @@ pub async fn auth_middleware(
 
     // inside middleware function
     debug!("AuthMiddleware processing path: {}", path);
-    if path == "/health" || path == "/v1/version" {
+    if path == "/health" || path == "/metrics" || path == "/v1/version" {
         return Ok(next.run(req).await);
     }
 

@@ -9,6 +9,7 @@
 /// 每个处理器负责处理特定类型的HTTP请求并返回响应
 pub mod crawl_handler;
 pub mod extract_handler;
+pub mod metrics_handler;
 pub mod scrape_handler;
 pub mod search_handler;
 pub mod webhook_handler;

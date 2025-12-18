@@ -168,6 +168,7 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn mark_completed(&self, id: Uuid) -> Result<(), RepositoryError> {
+        println!("DEBUG: mark_completed called for task {}", id);
         let task = self
             .find_by_id(id)
             .await?
@@ -175,7 +176,9 @@ impl TaskRepository for TaskRepositoryImpl {
         let mut updated_task = task.clone();
         updated_task.status = TaskStatus::Completed;
         updated_task.completed_at = Some(Utc::now().into());
+        println!("DEBUG: Updating task {} to status {:?}", id, updated_task.status);
         self.update(&updated_task).await?;
+        println!("DEBUG: Successfully updated task {} to completed", id);
         Ok(())
     }
 

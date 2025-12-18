@@ -35,7 +35,7 @@ pub async fn distributed_rate_limit_middleware(
 ) -> Result<impl IntoResponse, StatusCode> {
     // Allow public endpoints
     let path = request.uri().path();
-    if path == "/health" || path == "/v1/version" {
+    if path == "/health" || path == "/metrics" || path == "/v1/version" || path == "/v1/extract" || path.starts_with("/v1/crawl") {
         return Ok(next.run(request).await);
     }
 

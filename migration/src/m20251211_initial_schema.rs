@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use sea_orm_migration::prelude::*;
+use sea_orm_migration::sea_orm::DbBackend;
 
 /// 数据库初始模式迁移
 #[derive(DeriveMigrationName)]
@@ -53,10 +54,14 @@ impl MigrationTrait for Migration {
                     .table(ApiKeys::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(ApiKeys::Id)
-                            .uuid()
-                            .not_null()
-                            .default(Expr::cust("gen_random_uuid()")),
+                        {
+                            let mut col = ColumnDef::new(ApiKeys::Id);
+                            col.uuid().not_null();
+                            if manager.get_database_backend() == DbBackend::Postgres {
+                                col.default(Expr::cust("gen_random_uuid()"));
+                            }
+                            col
+                        }
                     )
                     .col(
                         ColumnDef::new(ApiKeys::Key)

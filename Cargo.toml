@@ -23,8 +23,8 @@ url = "2.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 uuid = { version = "1.19", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-sea-orm = { version = "1.0", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
-sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
+sea-orm = { version = "1.0", default-features = false, features = ["sqlx-postgres", "sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "sqlite", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
 redis = { version = "1.0", features = ["tokio-comp"] }
 async-trait = "0.1"
 futures = "0.3"
@@ -63,4 +63,6 @@ uuid = { version = "1.19", features = ["v4"] }
 name = "integration_tests"
 path = "tests/integration/mod.rs"
 
-
+[[bench]]
+name = "benchmark"
+harness = false

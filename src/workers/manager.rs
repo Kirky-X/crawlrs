@@ -24,13 +24,13 @@ use crate::utils::robots::RobotsChecker;
 /// 工作管理器
 pub struct WorkerManager<Q, R, S, C, ST>
 where
-    Q: TaskQueue + 'static,
+    Q: TaskQueue + Clone + 'static,
     R: TaskRepository + 'static,
     S: ScrapeResultRepository + 'static,
     C: CrawlRepository + 'static,
     ST: StorageRepository + 'static,
 {
-    queue: Arc<Q>,
+    queue: Q,
     repository: Arc<R>,
     result_repository: Arc<S>,
     crawl_repository: Arc<C>,
@@ -47,7 +47,7 @@ where
 
 impl<Q, R, S, C, ST> WorkerManager<Q, R, S, C, ST>
 where
-    Q: TaskQueue + Send + Sync,
+    Q: TaskQueue + Clone + Send + Sync,
     R: TaskRepository + Send + Sync,
     S: ScrapeResultRepository + Send + Sync,
     C: CrawlRepository + Send + Sync,
@@ -55,7 +55,7 @@ where
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        queue: Arc<Q>,
+        queue: Q,
         repository: Arc<R>,
         result_repository: Arc<S>,
         crawl_repository: Arc<C>,

@@ -8,12 +8,13 @@ use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRe
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
-    crawl_handler, extract_handler, scrape_handler, search_handler, webhook_handler,
+    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler, webhook_handler,
 };
 use axum::{
     routing::{delete, get, post},
-    Router,
+    Router, Json,
 };
+use serde_json::json;
 
 /// 创建应用路由
 ///
@@ -23,11 +24,13 @@ use axum::{
 pub fn routes() -> Router {
     let public_routes = Router::new()
         .route("/health", get(health_check))
+        .route("/metrics", get(metrics_handler::metrics))
         .route("/v1/version", get(version));
 
     let protected_routes = Router::new()
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
+        .route("/v1/scrape/{id}", delete(scrape_handler::cancel_scrape))
         .route("/v1/extract", post(extract_handler::extract))
         .route(
             "/v1/webhooks",
@@ -85,9 +88,9 @@ pub fn routes() -> Router {
 ///
 /// # 返回值
 ///
-/// 返回"OK"字符串
-pub async fn health_check() -> &'static str {
-    "OK"
+/// 返回JSON格式的健康状态
+pub async fn health_check() -> Json<serde_json::Value> {
+    Json(json!({ "status": "healthy" }))
 }
 
 /// 版本信息端点

@@ -99,8 +99,8 @@ impl<R: TaskRepository> TaskQueue for PostgresTaskQueue<R> {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 任务完成成功
-    /// * `Err(QueueError)` - 任务完成失败
+    /// * `Ok(())` - 成功
+    /// * `Err(QueueError)` - 失败
     async fn complete(&self, task_id: Uuid) -> Result<(), QueueError> {
         self.repository.mark_completed(task_id).await?;
         Ok(())
@@ -114,10 +114,29 @@ impl<R: TaskRepository> TaskQueue for PostgresTaskQueue<R> {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 任务标记失败成功
-    /// * `Err(QueueError)` - 任务标记失败失败
+    /// * `Ok(())` - 成功
+    /// * `Err(QueueError)` - 失败
     async fn fail(&self, task_id: Uuid) -> Result<(), QueueError> {
         self.repository.mark_failed(task_id).await?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl<T: TaskQueue + ?Sized> TaskQueue for Arc<T> {
+    async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
+        (**self).enqueue(task).await
+    }
+
+    async fn dequeue(&self, worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+        (**self).dequeue(worker_id).await
+    }
+
+    async fn complete(&self, task_id: Uuid) -> Result<(), QueueError> {
+        (**self).complete(task_id).await
+    }
+
+    async fn fail(&self, task_id: Uuid) -> Result<(), QueueError> {
+        (**self).fail(task_id).await
     }
 }

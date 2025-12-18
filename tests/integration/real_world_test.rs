@@ -74,7 +74,6 @@ async fn wait_for_flaresolverr(base_url: &str) {
 
 #[tokio::test]
 async fn test_real_world_reqwest_engine() {
-    crawlrs::utils::telemetry::init_telemetry();
     let engine = ReqwestEngine;
     let request = create_base_request();
 
