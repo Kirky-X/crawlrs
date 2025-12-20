@@ -29,11 +29,13 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+use crate::domain::services::llm_service::LLMService;
 use crate::engines::router::EngineRouter;
 use crate::engines::traits::{ScrapeRequest, ScrapeResponse, ScreenshotConfig};
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::queue::task_queue::TaskQueue;
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
+use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
 
 /// 抓取工作者
 pub struct ScrapeWorker<R, S, C, ST>
@@ -131,17 +133,36 @@ where
         Ok(false)
     }
 
-    async fn acquire_concurrency_permit(&self, team_id: Uuid) -> Result<bool> {
+    async fn acquire_concurrency_permit(&self, task: &Task) -> Result<bool> {
+        let team_id = task.team_id;
         let team_concurrency_key = format!("team:{}:active_jobs", team_id);
         let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
 
         let current = self.redis.incr(&team_concurrency_key).await?;
 
         // Get limit
-        let limit_str: Option<String> = self.redis.get(&team_concurrency_limit_key).await?;
-        let limit: usize = limit_str
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(self.default_concurrency_limit);
+        // Priority: 1. Task Payload (max_concurrency) 2. Redis Key 3. Default
+        let payload_limit = if task.task_type == TaskType::Crawl {
+            task.payload
+                .get("config")
+                .and_then(|c| c.get("max_concurrency"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+        } else {
+             // For Scrape task, we can check options if available, or just fallback
+             // Assuming ScrapeRequestDto might have options but it's nested differently
+             // For now, let's stick to Crawl config or Redis
+             None
+        };
+
+        let limit: usize = if let Some(l) = payload_limit {
+            l
+        } else {
+             let limit_str: Option<String> = self.redis.get(&team_concurrency_limit_key).await?;
+             limit_str
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(self.default_concurrency_limit)
+        };
 
         if current > limit as i64 {
             // Revert
@@ -165,11 +186,30 @@ where
 
     #[instrument(skip(self, task), fields(task_id = %task.id, url = %task.url, task_type = %task.task_type))]
     async fn process_task(&self, mut task: Task) -> Result<()> {
-        println!("DEBUG: Processing task {} of type {:?}", task.id, task.task_type);
+        println!(
+            "DEBUG: Processing task {} of type {:?}",
+            task.id, task.task_type
+        );
         info!("Processing task");
 
+        // Check Task Expiration
+        if let Some(expires_at) = task.expires_at {
+            if Utc::now() > expires_at {
+                warn!("Task {} expired at {}", task.id, expires_at);
+                self.repository.mark_failed(task.id).await?;
+                // Trigger failure webhook if needed
+                let event_type = match task.task_type {
+                    TaskType::Scrape => WebhookEventType::ScrapeFailed,
+                    TaskType::Crawl => WebhookEventType::CrawlFailed,
+                    _ => WebhookEventType::Custom("task.failed".to_string()),
+                };
+                self.trigger_webhook(&task, event_type, Some("Task expired".to_string())).await;
+                return Ok(());
+            }
+        }
+
         // Concurrency Check (Layer 2: Team Semaphore)
-        if !self.acquire_concurrency_permit(task.team_id).await? {
+        if !self.acquire_concurrency_permit(&task).await? {
             warn!(
                 "Team {} concurrency limit exceeded, rescheduling task {}",
                 task.team_id, task.id
@@ -192,11 +232,7 @@ where
         let result = match task.task_type {
             TaskType::Scrape => self.process_scrape_task(task.clone()).await,
             TaskType::Crawl => self.process_crawl_task(task.clone()).await,
-            _ => {
-                warn!("Unsupported task type: {:?}", task.task_type);
-                self.repository.mark_failed(task.id).await?;
-                Ok(())
-            }
+            TaskType::Extract => self.process_extract_task(task.clone()).await,
         };
 
         // Always release permit
@@ -217,7 +253,10 @@ where
     }
 
     async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
-        println!("DEBUG: Processing scrape task {} with payload: {}", task.id, task.payload);
+        println!(
+            "DEBUG: Processing scrape task {} with payload: {}",
+            task.id, task.payload
+        );
         let request_dto = match serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
             Ok(dto) => dto,
             Err(e) => {
@@ -371,13 +410,28 @@ where
                     task.url, response.status_code
                 );
 
+                // 文本编码处理 - 集成文本处理功能
+                let processed_content = match self.process_text_encoding(&task, &response).await {
+                    Ok(content) => content,
+                    Err(e) => {
+                        warn!("文本编码处理失败，使用原始内容: {}", e);
+                        response.content.clone()
+                    }
+                };
+
+                // 创建处理后的响应用于后续处理
+                let processed_response = ScrapeResponse {
+                    content: processed_content,
+                    ..response
+                };
+
                 // Map ScrapeResponse to ScrapeResult (No need to map here, we use ScrapeResponse directly)
 
                 // 3. 执行数据提取（如果配置了提取规则）
                 let mut extracted_data = None;
                 if let Some(rules) = &config.extraction_rules {
                     match crate::domain::services::extraction_service::ExtractionService::extract(
-                        &response.content,
+                        &processed_response.content,
                         rules,
                         &self.settings,
                     )
@@ -406,11 +460,11 @@ where
                 }
 
                 // 4. 保存结果
-                self.save_result(&task, &response, extracted_data).await?;
+                self.save_result(&task, &processed_response, extracted_data).await?;
 
                 // 5. 如果深度未达上限，解析链接并生成子任务
                 if depth < config.max_depth {
-                    self.extract_and_queue_links(&task, &response, crawl_id, depth, &config)
+                    self.extract_and_queue_links(&task, &processed_response, crawl_id, depth, &config)
                         .await?;
                 }
 
@@ -498,6 +552,141 @@ where
                 Ok(())
             }
         }
+    }
+
+    async fn process_extract_task(&self, mut task: Task) -> Result<()> {
+        info!("Processing extract task {}", task.id);
+        
+        let payload: crate::application::dto::extract_request::ExtractRequestDto = 
+            serde_json::from_value(task.payload.clone())
+            .context("Failed to parse extract task input")?;
+            
+        let url = payload.urls.first().context("No URL provided")?.clone();
+        
+        // 1. Scrape Content
+        let scrape_req = ScrapeRequest {
+            url: url.clone(),
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: true,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+        };
+        
+        // Execute scrape
+        let scrape_resp = self.router.route(&scrape_req).await?;
+
+        // 文本编码处理 - 集成文本处理功能
+        let processed_content = match self.process_text_encoding(&task, &scrape_resp).await {
+            Ok(content) => content,
+            Err(e) => {
+                warn!("文本编码处理失败，使用原始内容: {}", e);
+                scrape_resp.content.clone()
+            }
+        };
+
+        // 创建处理后的响应用于后续处理
+        let processed_scrape_resp = ScrapeResponse {
+            content: processed_content,
+            ..scrape_resp
+        };
+        
+        // 2. Extract Data using ExtractionService (which uses LLM internally if configured)
+        // Convert ExtractRequestDto schema/prompt to ExtractionRule
+        let mut rules = HashMap::new();
+        if let Some(prompt) = payload.prompt {
+             rules.insert(
+                "extracted_data".to_string(),
+                crate::domain::services::extraction_service::ExtractionRule {
+                    selector: None,
+                    attr: None,
+                    is_array: false,
+                    use_llm: Some(true),
+                    llm_prompt: Some(prompt),
+                },
+            );
+        } else if let Some(_schema) = payload.schema {
+             // If schema is provided but no prompt, we might need a way to pass schema directly
+             // For now, ExtractionService mainly works with Rules. 
+             // Let's assume for this specific flow we want to use LLM extraction if prompt is present.
+             // If schema is present but no prompt, it might be better to just use the schema as prompt or description?
+             // Actually, LLMService::extract_data takes a schema. ExtractionService::extract constructs schema from rules.
+             
+             // To fully support arbitrary schema extraction via ExtractionService, we might need to enhance ExtractionRule 
+             // or ExtractionService to accept a raw schema for the whole document.
+             // But for now, let's stick to the existing pattern:
+             
+             // If we want to support the previous direct LLM usage:
+             let llm_service = LLMService::new(&self.settings);
+             let schema = _schema; // use the schema from payload
+             
+             let html_content = processed_scrape_resp.content.clone(); // clone for use here
+             let content_preview = if html_content.len() > 50000 {
+                 &html_content[..50000]
+             } else {
+                 &html_content
+             };
+     
+             let (extracted_data, usage) = llm_service.extract_data(content_preview, &schema).await?;
+             
+             // Record usage
+             if usage.total_tokens > 0 {
+                let key = format!("team:{}:token_usage", task.team_id);
+                if let Err(e) =
+                    self.redis.incr_by(&key, usage.total_tokens as i64).await
+                {
+                    error!("Failed to record token usage: {}", e);
+                }
+             }
+
+             // 3. Save Output
+            let mut scrape_result = ScrapeResult::new(
+                task.id,
+                url,
+                processed_scrape_resp.status_code,
+                processed_scrape_resp.content,
+                "text/html".to_string(),
+                0,
+            );
+            scrape_result.meta_data = json!({
+                "extracted_data": extracted_data
+            });
+            
+            self.result_repository.save(scrape_result).await?;
+    
+            task.status = TaskStatus::Completed;
+            self.repository.update(&task).await?;
+            
+            self.trigger_webhook(&task, WebhookEventType::Custom("extract.completed".to_string()), None).await;
+            
+            return Ok(());
+        }
+        
+        // Fallback if no schema/prompt (should usually have one)
+        // If we reach here, it means we didn't do the direct LLM call above.
+        // We could default to empty extraction or error.
+        
+        let scrape_result = ScrapeResult::new(
+            task.id,
+            url,
+            processed_scrape_resp.status_code,
+            processed_scrape_resp.content,
+            "text/html".to_string(),
+            0,
+        );
+        self.result_repository.save(scrape_result).await?;
+
+        task.status = TaskStatus::Completed;
+        self.repository.update(&task).await?;
+        
+        self.trigger_webhook(&task, WebhookEventType::Custom("extract.completed".to_string()), None).await;
+        
+        Ok(())
     }
 
     async fn extract_and_queue_links(
@@ -639,12 +828,32 @@ where
 
     async fn handle_scrape_success(&self, task: Task, response: &ScrapeResponse) -> Result<()> {
         println!("DEBUG: handle_scrape_success called for task {}", task.id);
+        
+        // 文本编码处理 - 集成文本处理功能
+        let processed_content = match self.process_text_encoding(&task, response).await {
+            Ok(content) => content,
+            Err(e) => {
+                warn!("文本编码处理失败，使用原始内容: {}", e);
+                response.content.clone()
+            }
+        };
+        
+        // 创建处理后的响应用于后续处理
+        let processed_response = ScrapeResponse {
+            content: processed_content,
+            status_code: response.status_code,
+            screenshot: response.screenshot.clone(),
+            content_type: response.content_type.clone(),
+            headers: response.headers.clone(),
+            response_time_ms: response.response_time_ms,
+        };
+        
         // 解析 ScrapeRequest 以检查是否有提取规则
         let mut extracted_data = None;
         if let Ok(req) = serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
             if let Some(rules) = &req.extraction_rules {
                 match crate::domain::services::extraction_service::ExtractionService::extract(
-                    &response.content,
+                    &processed_response.content,
                     rules,
                     &self.settings,
                 )
@@ -673,7 +882,7 @@ where
             }
         }
 
-        self.save_result(&task, response, extracted_data).await?;
+        self.save_result(&task, &processed_response, extracted_data).await?;
         println!("DEBUG: About to mark task {} as completed", task.id);
         self.repository.mark_completed(task.id).await?;
         println!("DEBUG: Successfully marked task {} as completed", task.id);
@@ -681,6 +890,53 @@ where
         self.trigger_webhook(&task, WebhookEventType::ScrapeCompleted, None)
             .await;
         Ok(())
+    }
+
+    /// 处理文本编码转换
+    async fn process_text_encoding(&self, task: &Task, response: &ScrapeResponse) -> Result<String> {
+        use tracing::{info, warn};
+        
+        info!("开始处理文本编码转换，任务ID: {}, URL: {}", task.id, task.url);
+        
+        // 创建文本处理集成器
+        let text_integration = CrawlTextIntegration::new(false); // Disable by default for now
+        
+        // 准备输入数据
+        let input = ScrapeResponseInput {
+            content: response.content.as_bytes().to_vec(),
+            url: task.url.clone(),
+            content_type: response.content_type.clone(),
+            status_code: response.status_code,
+        };
+        
+        // 处理响应内容
+        match text_integration.process_scrape_response(
+            &input.content,
+            &input.url,
+            input.content_type.as_deref(),
+            input.status_code,
+        ).await {
+            Ok(processed_response) => {
+                if processed_response.processing_success {
+                    info!(
+                    "文本编码处理成功，检测到的编码: {:?}, 处理时间: {}ms, 质量评分: {}",
+                    processed_response.encoding_detected,
+                    processed_response.processing_success as u32,
+                    processed_response.processing_error.is_none() as u32
+                );
+                    Ok(processed_response.processed_content)
+                } else {
+                    let error_msg = processed_response.processing_error
+                        .unwrap_or_else(|| "未知错误".to_string());
+                    warn!("文本编码处理失败: {}", error_msg);
+                    Err(anyhow::anyhow!("文本编码处理失败: {}", error_msg))
+                }
+            }
+            Err(e) => {
+                warn!("文本编码处理异常: {}", e);
+                Err(anyhow::anyhow!("文本编码处理异常: {}", e))
+            }
+        }
     }
 
     async fn save_result(
@@ -779,7 +1035,7 @@ where
                 webhook_url: url,
                 status: WebhookStatus::Pending,
                 attempt_count: 0,
-                max_retries: 3,
+                max_retries: 5,
                 response_status: None,
                 response_body: None,
                 error_message: None,
