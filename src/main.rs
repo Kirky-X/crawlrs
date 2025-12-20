@@ -49,9 +49,7 @@ use tracing::info;
 
 use crawlrs::domain::search::engine::SearchEngine;
 use crawlrs::infrastructure::search::aggregator::SearchAggregator;
-use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+
 use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 
 use crawlrs::utils::telemetry;
