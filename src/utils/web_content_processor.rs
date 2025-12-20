@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use crate::utils::text_encoding::{TextEncodingProcessor, TextEncodingError};
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -154,16 +159,16 @@ impl WebContentProcessor {
     fn clean_text(&self, text: &str) -> String {
         let mut cleaned = text.to_string();
         
-        // 移除多余的空白字符
-        cleaned = self.html_cleaner.normalize_whitespace(&cleaned);
-        
         // 解码HTML实体
         cleaned = html_escape::decode_html_entities(&cleaned).to_string();
         
-        // 移除不可见字符
+        // 移除不可见字符（但保留空白字符）
         cleaned = cleaned.chars()
             .filter(|c| !c.is_control() || c.is_whitespace())
             .collect();
+        
+        // 去除首位换行符
+        cleaned = self.text_processor.trim_newlines(&cleaned);
         
         cleaned.trim().to_string()
     }
@@ -389,5 +394,47 @@ mod tests {
         let results = processor.process_batch(contents);
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    #[test]
+    fn test_newline_trimming_in_html() {
+        let processor = WebContentProcessor::new();
+        
+        // 测试HTML内容中的首位换行符去除
+        let html_with_newlines = r#"
+
+<html>
+<head><title>Test</title></head>
+<body>
+<p>Hello World</p>
+</body>
+</html>
+
+"#;
+        
+        let result = processor.process_web_content(html_with_newlines.as_bytes(), Some("text/html")).unwrap();
+        
+        // 验证提取的文本没有首位换行符
+        assert!(!result.extracted_text.starts_with('\n'));
+        assert!(!result.extracted_text.ends_with('\n'));
+        assert!(result.extracted_text.contains("Hello World"));
+    }
+
+    #[test]
+    fn test_newline_trimming_in_plain_text() {
+        let processor = WebContentProcessor::new();
+        
+        // 测试纯文本中的首位换行符去除
+        let text_with_newlines = "\n\nThis is plain text.\nWith multiple lines.\n\n";
+        let result = processor.process_web_content(text_with_newlines.as_bytes(), Some("text/plain")).unwrap();
+        
+        // 验证处理后的文本没有首位换行符
+        assert!(!result.extracted_text.starts_with('\n'));
+        assert!(!result.extracted_text.ends_with('\n'));
+        assert!(result.extracted_text.contains("plain text"));
+        assert!(result.extracted_text.contains("multiple lines"));
+        
+        // 验证中间换行符被保留
+        assert!(result.extracted_text.contains("text.\nWith")); // 中间换行符被保留
     }
 }
