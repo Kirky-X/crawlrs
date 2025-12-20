@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use async_trait::async_trait;
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};
@@ -411,6 +416,9 @@ impl SearchEngine for BingSearchEngine {
                     .join("; ");
                 
                 let future = async move {
+                    let page_num = page;
+                    let query_str_result = query_str_clone.clone();
+                    
                     let response = tokio::time::timeout(
                         std::time::Duration::from_secs(30),
                         client
@@ -430,25 +438,54 @@ impl SearchEngine for BingSearchEngine {
                         Ok(Ok(response)) => {
                             let status = response.status();
                             if !status.is_success() {
-                                return Err(format!("HTTP error {} on page {}", status, page));
+                                return Err(SearchError::EngineError(format!("HTTP error {} on page {}", status, page_num)));
                             }
                             
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(10),
-                                response.text()
-                            ).await {
-                                Ok(Ok(html)) => {
-                                    if html.len() < 100 {
-                                        return Err(format!("Response too small on page {}", page));
-                                    }
-                                    Ok((html, page, query_str_clone))
+                            // 正确处理压缩响应
+                            let result = async move {
+                                // 获取编码信息
+                                let encoding = response.headers()
+                                    .get("content-encoding")
+                                    .and_then(|v| v.to_str().ok())
+                                    .unwrap_or("")
+                                    .to_string();
+                                
+                                // 读取响应体
+                                let bytes = response.bytes().await
+                                    .map_err(|e| SearchError::EngineError(format!("Failed to read response body: {}", e)))?;
+                                
+                                if bytes.len() < 100 {
+                                    return Err(SearchError::EngineError(format!("Response too small on page {}", page_num)));
                                 }
-                                Ok(Err(e)) => Err(format!("Failed to read response body on page {}: {}", page, e)),
-                                Err(_) => Err(format!("Timeout reading response body on page {}", page)),
+                                
+                                // 解压响应数据
+                                let html = if encoding.contains("br") {
+                                    use std::io::Read;
+                                    let mut decoder = brotli::Decompressor::new(&bytes[..], 4096);
+                                    let mut decompressed = Vec::new();
+                                    decoder.read_to_end(&mut decompressed).map_err(|e| SearchError::EngineError(format!("Decompression failed: {}", e)))?;
+                                    String::from_utf8_lossy(&decompressed).to_string()
+                                } else if encoding.contains("gzip") {
+                                    use std::io::Read;
+                                    let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+                                    let mut decompressed = String::new();
+                                    decoder.read_to_string(&mut decompressed).map_err(|e| SearchError::EngineError(format!("Decompression failed: {}", e)))?;
+                                    decompressed
+                                } else {
+                                    String::from_utf8_lossy(&bytes).to_string()
+                                };
+                                
+                                Ok::<String, SearchError>(html)
+                            };
+                            
+                            match tokio::time::timeout(std::time::Duration::from_secs(10), result).await {
+                                Ok(Ok(html)) => Ok((html, page_num, query_str_result)),
+                                Ok(Err(e)) => Err(e),
+                                Err(_) => Err(SearchError::EngineError(format!("Timeout reading response body on page {}", page_num))),
                             }
                         }
-                        Ok(Err(e)) => Err(format!("Network error on page {}: {}", page, e)),
-                        Err(_) => Err(format!("Request timeout on page {}", page)),
+                        Ok(Err(e)) => Err(SearchError::EngineError(format!("Network error on page {}: {}", page_num, e))),
+                        Err(_) => Err(SearchError::EngineError(format!("Request timeout on page {}", page_num))),
                     }
                 };
                 
