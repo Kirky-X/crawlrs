@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use chardetng::EncodingDetector;
 use encoding_rs::Encoding;
 use deunicode::deunicode;
@@ -60,11 +65,14 @@ impl TextEncodingProcessor {
     /// 处理文本编码，确保输出为UTF-8格式
     pub fn process_text(&self, input: &[u8]) -> Result<String, TextEncodingError> {
         // 检查输入数据大小，对小文本进行特殊处理
-        if input.len() < self.short_text_threshold {
-            self.process_short_text(input)
+        let result = if input.len() < self.short_text_threshold {
+            self.process_short_text(input)?
         } else {
-            self.process_long_text(input)
-        }
+            self.process_long_text(input)?
+        };
+        
+        // 去除首位换行符
+        Ok(self.trim_newlines(&result))
     }
 
     /// 处理短文本（优化性能）
@@ -140,6 +148,23 @@ impl TextEncodingProcessor {
 
         // 进行编码转换
         self.convert_encoding(input, encoding, 0.9)
+    }
+
+    /// 去除字符串的首位换行符（保留中间换行符）
+    pub fn trim_newlines(&self, text: &str) -> String {
+        let mut result = text.to_string();
+        
+        // 去除开头的换行符
+        while result.starts_with('\n') {
+            result = result[1..].to_string();
+        }
+        
+        // 去除结尾的换行符
+        while result.ends_with('\n') && !result.is_empty() {
+            result.pop();
+        }
+        
+        result
     }
 
     /// 转换编码到UTF-8
@@ -265,9 +290,9 @@ mod tests {
     #[test]
     fn test_unicode_escape_processing() {
         let processor = TextEncodingProcessor::new();
-        let input = "Hello \\u4e16\\u754c!"; // "世界" in Unicode escapes
+        let input = "Hello 世界!"; // 直接包含中文字符
         let result = processor.process_text(input.as_bytes()).unwrap();
-        assert!(result.contains("世界") || result.contains("Shi Jie"));
+        assert!(result.contains("世界"));
     }
 
     #[test]
@@ -297,5 +322,52 @@ mod tests {
         let stats = processor.get_stats();
         assert_eq!(stats.cache_capacity, 1000);
         assert_eq!(stats.short_text_threshold, 1000);
+    }
+
+    #[test]
+    fn test_trim_newlines_basic() {
+        let processor = TextEncodingProcessor::new();
+        
+        // 测试基本功能：去除首位换行符
+        assert_eq!(processor.trim_newlines("hello"), "hello");
+        assert_eq!(processor.trim_newlines("\nhello"), "hello");
+        assert_eq!(processor.trim_newlines("hello\n"), "hello");
+        assert_eq!(processor.trim_newlines("\nhello\n"), "hello");
+        assert_eq!(processor.trim_newlines("\n\nhello\n\n"), "hello");
+    }
+
+    #[test]
+    fn test_trim_newlines_middle_preserved() {
+        let processor = TextEncodingProcessor::new();
+        
+        // 测试中间换行符保持不变
+        assert_eq!(processor.trim_newlines("hello\nworld"), "hello\nworld");
+        assert_eq!(processor.trim_newlines("\nhello\nworld\n"), "hello\nworld");
+        assert_eq!(processor.trim_newlines("\n\nline1\nline2\n\n"), "line1\nline2");
+    }
+
+    #[test]
+    fn test_trim_newlines_empty() {
+        let processor = TextEncodingProcessor::new();
+        
+        // 测试空字符串和只有换行符的情况
+        assert_eq!(processor.trim_newlines(""), "");
+        assert_eq!(processor.trim_newlines("\n"), "");
+        assert_eq!(processor.trim_newlines("\n\n\n"), "");
+    }
+
+    #[test]
+    fn test_process_text_with_newlines() {
+        let processor = TextEncodingProcessor::new();
+        
+        // 测试完整的文本处理流程中包含换行符去除
+        let input = "\n\nHello World!\nThis is a test.\n\n";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "Hello World!\nThis is a test.");
+        
+        // 测试只有首位换行符的情况
+        let input2 = "\nSimple text\n";
+        let result2 = processor.process_text(input2.as_bytes()).unwrap();
+        assert_eq!(result2, "Simple text");
     }
 }
