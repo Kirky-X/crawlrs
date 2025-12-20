@@ -5,7 +5,7 @@
 
 pub use sea_orm_migration::prelude::*;
 
-mod m20251211_initial_schema;
+mod m20251211_complete_schema;
 
 /// 数据库迁移器
 ///
@@ -22,7 +22,7 @@ impl MigratorTrait for Migrator {
     /// 返回迁移列表
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
-            Box::new(m20251211_initial_schema::Migration),
+            Box::new(m20251211_complete_schema::Migration),
         ]
     }
 }

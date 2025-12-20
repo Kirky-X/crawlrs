@@ -6,13 +6,13 @@
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::DbBackend;
 
-/// 数据库初始模式迁移
+/// 完整数据库模式迁移 - 合并了初始模式、积分系统和任务积压功能
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
-    /// 应用数据库迁移
+    /// 应用完整的数据库迁移
     ///
     /// # 参数
     ///
@@ -362,7 +362,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // 6. Create scrape_results table (Depends on Tasks)
+        // 7. Create scrape_results table (Depends on Tasks)
         manager
             .create_table(
                 Table::create()
@@ -381,8 +381,7 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(ColumnDef::new(ScrapeResults::Content).text().not_null())
-                    .col(
-                        ColumnDef::new(ScrapeResults::ContentType)
+                    .col(ColumnDef::new(ScrapeResults::ContentType)
                             .string()
                             .not_null(),
                     )
@@ -404,11 +403,183 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
+        // 8. Create credits table (Depends on Teams) - 新增积分系统
+        manager
+            .create_table(
+                Table::create()
+                    .table(Credits::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(Credits::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(Credits::TeamId).uuid().not_null())
+                    .col(ColumnDef::new(Credits::Balance).big_integer().not_null().default(0))
+                    .col(
+                        ColumnDef::new(Credits::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(
+                        ColumnDef::new(Credits::UpdatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Index for credits
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_credits_team_id")
+                    .table(Credits::Table)
+                    .col(Credits::TeamId)
+                    .unique()
+                    .to_owned(),
+            )
+            .await?;
+
+        // 9. Create credits_transactions table (Depends on Teams) - 新增积分交易
+        manager
+            .create_table(
+                Table::create()
+                    .table(CreditsTransactions::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(CreditsTransactions::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(CreditsTransactions::TeamId).uuid().not_null())
+                    .col(ColumnDef::new(CreditsTransactions::Amount).big_integer().not_null())
+                    .col(ColumnDef::new(CreditsTransactions::TransactionType).string().not_null())
+                    .col(ColumnDef::new(CreditsTransactions::Description).string().not_null())
+                    .col(ColumnDef::new(CreditsTransactions::ReferenceId).uuid().null())
+                    .col(
+                        ColumnDef::new(CreditsTransactions::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .to_owned(),
+            )
+            .await?;
+
+        // Indexes for credits_transactions
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_credits_transactions_team_id")
+                    .table(CreditsTransactions::Table)
+                    .col(CreditsTransactions::TeamId)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_credits_transactions_created_at")
+                    .table(CreditsTransactions::Table)
+                    .col(CreditsTransactions::CreatedAt)
+                    .to_owned(),
+            )
+            .await?;
+
+        // 10. Create tasks_backlog table (Depends on Teams) - 新增任务积压
+        manager
+            .create_table(
+                Table::create()
+                    .table(TasksBacklog::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(TasksBacklog::Id).uuid().not_null().primary_key())
+                    .col(ColumnDef::new(TasksBacklog::TaskId).uuid().not_null())
+                    .col(ColumnDef::new(TasksBacklog::TeamId).uuid().not_null())
+                    .col(ColumnDef::new(TasksBacklog::TaskType).string().not_null())
+                    .col(ColumnDef::new(TasksBacklog::Priority).integer().not_null().default(0))
+                    .col(ColumnDef::new(TasksBacklog::Payload).json().not_null())
+                    .col(ColumnDef::new(TasksBacklog::MaxRetries).integer().not_null().default(3))
+                    .col(ColumnDef::new(TasksBacklog::RetryCount).integer().not_null().default(0))
+                    .col(ColumnDef::new(TasksBacklog::Status).string().not_null().default("pending"))
+                    .col(
+                        ColumnDef::new(TasksBacklog::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(
+                        ColumnDef::new(TasksBacklog::UpdatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(ColumnDef::new(TasksBacklog::ScheduledAt).timestamp_with_time_zone().null())
+                    .col(ColumnDef::new(TasksBacklog::ExpiresAt).timestamp_with_time_zone().null())
+                    .col(ColumnDef::new(TasksBacklog::ProcessedAt).timestamp_with_time_zone().null())
+                    .to_owned(),
+            )
+            .await?;
+
+        // Indexes for tasks_backlog
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_tasks_backlog_team_status")
+                    .table(TasksBacklog::Table)
+                    .col(TasksBacklog::TeamId)
+                    .col(TasksBacklog::Status)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_tasks_backlog_priority_created_at")
+                    .table(TasksBacklog::Table)
+                    .col(TasksBacklog::Priority)
+                    .col(TasksBacklog::CreatedAt)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .name("idx_tasks_backlog_expires_at")
+                    .table(TasksBacklog::Table)
+                    .col(TasksBacklog::ExpiresAt)
+                    .to_owned(),
+            )
+            .await?;
+
+        // Add foreign key constraint for tasks_backlog
+        manager
+            .create_foreign_key(
+                ForeignKey::create()
+                    .name("fk_tasks_backlog_team")
+                    .from(TasksBacklog::Table, TasksBacklog::TeamId)
+                    .to(Teams::Table, Teams::Id)
+                    .on_delete(ForeignKeyAction::Cascade)
+                    .on_update(ForeignKeyAction::Cascade)
+                    .to_owned(),
+            )
+            .await?;
+
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // Drop tables in reverse order of creation/dependency
+        manager
+            .drop_table(Table::drop().table(TasksBacklog::Table).to_owned())
+            .await?;
+
+        manager
+            .drop_table(Table::drop().table(CreditsTransactions::Table).to_owned())
+            .await?;
+
+        manager
+            .drop_table(Table::drop().table(Credits::Table).to_owned())
+            .await?;
+
         manager
             .drop_table(Table::drop().table(ScrapeResults::Table).to_owned())
             .await?;
@@ -441,6 +612,7 @@ impl MigrationTrait for Migration {
     }
 }
 
+// 所有表定义枚举
 #[derive(DeriveIden)]
 enum Teams {
     Table,
@@ -543,4 +715,45 @@ enum ScrapeResults {
     Screenshot,
     ResponseTimeMs,
     CreatedAt,
+}
+
+#[derive(DeriveIden)]
+enum Credits {
+    Table,
+    Id,
+    TeamId,
+    Balance,
+    CreatedAt,
+    UpdatedAt,
+}
+
+#[derive(DeriveIden)]
+enum CreditsTransactions {
+    Table,
+    Id,
+    TeamId,
+    Amount,
+    TransactionType,
+    Description,
+    ReferenceId,
+    CreatedAt,
+}
+
+#[derive(DeriveIden)]
+enum TasksBacklog {
+    Table,
+    Id,
+    TaskId,
+    TeamId,
+    TaskType,
+    Priority,
+    Payload,
+    MaxRetries,
+    RetryCount,
+    Status,
+    CreatedAt,
+    UpdatedAt,
+    ScheduledAt,
+    ExpiresAt,
+    ProcessedAt,
 }
