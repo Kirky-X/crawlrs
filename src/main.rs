@@ -8,6 +8,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
+use crawlrs::domain::services::rate_limiting_service::{RateLimitConfig, RateLimitStrategy};
 use crawlrs::config::settings::Settings;
 use crawlrs::engines::fire_engine_cdp::FireEngineCdp;
 use crawlrs::engines::fire_engine_tls::FireEngineTls;
@@ -18,6 +19,7 @@ use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::database::connection;
 use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
+use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::storage::LocalStorage;
@@ -32,12 +34,25 @@ use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
 use crawlrs::presentation::middleware::team_semaphore::TeamSemaphore;
 use crawlrs::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crawlrs::presentation::routes;
+use crawlrs::presentation::routes::task::task_routes;
 use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use crawlrs::workers::manager::WorkerManager;
 use crawlrs::workers::webhook_worker::WebhookWorker;
+use crawlrs::workers::backlog_worker::BacklogWorker;
+use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
+use crawlrs::infrastructure::services::rate_limiting_service_impl::{RateLimitingServiceImpl, RateLimitingConfig};
+use crawlrs::domain::services::rate_limiting_service::{ConcurrencyConfig, ConcurrencyStrategy};
+use crawlrs::workers::Worker;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::info;
+
+use crawlrs::domain::search::engine::SearchEngine;
+use crawlrs::infrastructure::search::aggregator::SearchAggregator;
+use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
+use crawlrs::infrastructure::search::bing::BingSearchEngine;
+use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 
 use crawlrs::utils::telemetry;
 use migration::{Migrator, MigratorTrait};
@@ -87,7 +102,6 @@ use migration::{Migrator, MigratorTrait};
 /// ```
 use tracing::error;
 
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // 1. 初始化日志和遥测系统
@@ -110,7 +124,10 @@ async fn main() -> anyhow::Result<()> {
     match port_result {
         Ok(result) => {
             if result.port != settings.server.port {
-                info!("默认端口 {} 被占用，切换到端口 {}", settings.server.port, result.port);
+                info!(
+                    "默认端口 {} 被占用，切换到端口 {}",
+                    settings.server.port, result.port
+                );
                 settings.server.port = result.port;
             }
             for log in result.logs {
@@ -125,6 +142,28 @@ async fn main() -> anyhow::Result<()> {
 
     let settings = Arc::new(settings);
 
+    // Initialize Search Engines
+    let mut search_engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
+
+    // 禁用Google搜索引擎
+    // search_engines.push(Arc::new(GoogleSearchEngine::new()));
+
+    // Bing search engine - 禁用（通过空API密钥）
+    // if let Some(key) = settings.bing_search.api_key.clone() {
+    //     if !key.is_empty() {
+    //         search_engines.push(Arc::new(BingSearchEngine::new()));
+    //     }
+    // }
+
+    // 禁用百度搜索引擎
+    // search_engines.push(Arc::new(BaiduSearchEngine::new()));
+    
+    // 仅启用搜狗搜索引擎
+    search_engines.push(Arc::new(SogouSearchEngine::new()));
+
+    let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
+    let search_engine_service: Arc<dyn SearchEngine> = search_aggregator;
+
     // 3. 建立数据库连接
     let db = connection::create_pool(&settings.database).await?;
     let db = Arc::new(db);
@@ -136,12 +175,12 @@ async fn main() -> anyhow::Result<()> {
     info!("Database migrations applied");
 
     // 4. 初始化 Redis 客户端
-    let redis_client = RedisClient::new(&settings.redis.url).await?;
+    let redis_client = Arc::new(RedisClient::new(&settings.redis.url).await?);
     info!("Redis client initialized");
 
     // 5. 初始化速率限制器
     let rate_limiter = Arc::new(RateLimiter::new(
-        redis_client.clone(),
+        (*redis_client).clone(),
         settings.rate_limiting.default_rpm,
     ));
     info!("Rate limiter initialized");
@@ -160,6 +199,7 @@ async fn main() -> anyhow::Result<()> {
     let queue: Arc<dyn TaskQueue> = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
     let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db.clone()));
     let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db.clone()));
+    let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.clone()));
     let storage_repo = if settings.storage.storage_type == "local" {
         let path = settings
             .storage
@@ -188,6 +228,36 @@ async fn main() -> anyhow::Result<()> {
     let webhook_repository = Arc::new(WebhookRepoImpl::new(db.clone()));
     let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new());
 
+    // 初始化限流与并发控制组件
+    let tasks_backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db.clone()));
+    let rate_limiting_config = RateLimitingConfig {
+        redis_key_prefix: "crawlrs".to_string(),
+        rate_limit: RateLimitConfig {
+            strategy: RateLimitStrategy::TokenBucket,
+            requests_per_second: settings.rate_limiting.default_rpm / 60,
+            requests_per_minute: settings.rate_limiting.default_rpm,
+            requests_per_hour: settings.rate_limiting.default_rpm * 60,
+            bucket_capacity: Some(settings.rate_limiting.default_rpm),
+            enabled: settings.rate_limiting.enabled,
+        },
+        concurrency: ConcurrencyConfig {
+            strategy: ConcurrencyStrategy::DistributedSemaphore,
+            max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
+            max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
+            lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds as u64,
+            enabled: true,
+        },
+        backlog_process_interval_seconds: 30,
+        rate_limit_ttl_seconds: 3600,
+    };
+    let rate_limiting_service = Arc::new(RateLimitingServiceImpl::new(
+        redis_client.clone(),
+        task_repo.clone(),
+        tasks_backlog_repo.clone(),
+        rate_limiting_config,
+    ));
+    info!("Rate limiting service initialized");
+
     // 8. 根据启动参数选择服务类型
     let args: Vec<String> = std::env::args().collect();
     let service_type = args.get(1).map(String::as_str).unwrap_or("api");
@@ -203,6 +273,18 @@ async fn main() -> anyhow::Result<()> {
             );
             tokio::spawn(async move {
                 webhook_worker.run().await;
+            });
+
+            // 启动积压任务处理Worker
+            let backlog_worker = BacklogWorker::new(
+                tasks_backlog_repo.clone(),
+                task_repo.clone(),
+                rate_limiting_service.clone(),
+                std::time::Duration::from_secs(30), // 每30秒处理一次积压任务
+                settings.concurrency.default_team_limit as usize,
+            );
+            tokio::spawn(async move {
+                let _ = backlog_worker.run().await;
             });
 
             let _auth_state = AuthState {
@@ -263,9 +345,13 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .route(
                     "/v1/search",
-                    post(search_handler::search::<CrawlRepositoryImpl, TaskRepositoryImpl>),
-                )
-                // 
+                    post(search_handler::search::<CrawlRepositoryImpl, TaskRepositoryImpl, CreditsRepositoryImpl>),
+                );
+
+            let v2_routes = task_routes()
+                .layer(Extension(task_repo.clone()))
+                .layer(Extension(result_repo.clone()))
+                //
                 .layer(axum::middleware::from_fn_with_state(
                     team_semaphore.clone(),
                     team_semaphore_middleware,
@@ -279,6 +365,7 @@ async fn main() -> anyhow::Result<()> {
             let app = Router::new()
                 .merge(public_routes)
                 .merge(protected_routes)
+                .merge(v2_routes)
                 .layer(Extension(team_semaphore.clone()))
                 .layer(Extension(queue))
                 .layer(Extension(task_repo.clone()))
@@ -287,7 +374,11 @@ async fn main() -> anyhow::Result<()> {
                 .layer(Extension(redis_client))
                 .layer(Extension(rate_limiter))
                 .layer(Extension(crawl_repo.clone()))
-                .layer(Extension(settings.clone()));
+                .layer(Extension(credits_repo))
+                .layer(Extension(settings.clone()))
+                .layer(Extension(search_engine_service))
+                .layer(Extension(tasks_backlog_repo.clone()))
+                .layer(Extension(rate_limiting_service.clone()));
 
             let addr = format!("{}:{}", settings.server.host, settings.server.port);
             let listener = TcpListener::bind(&addr).await?;
@@ -305,7 +396,7 @@ async fn main() -> anyhow::Result<()> {
                 webhook_event_repository.clone(),
                 router.clone(),
                 create_scrape_use_case.clone(),
-                redis_client.clone(),
+                (*redis_client).clone(),
                 robots_checker.clone(),
                 settings.clone(),
                 settings.concurrency.default_team_limit as usize,
