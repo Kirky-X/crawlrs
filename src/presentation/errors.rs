@@ -15,22 +15,31 @@ use crate::domain::repositories::task_repository::RepositoryError;
 /// 应用错误类型
 ///
 /// 封装所有可能的应用层错误，提供统一的错误处理接口
+#[derive(Debug)]
 pub struct AppError(anyhow::Error);
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, error_message) = match self.0.downcast_ref::<RepositoryError>() {
-            Some(RepositoryError::Database(db_err)) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Database error: {}", db_err),
-            ),
-            Some(RepositoryError::NotFound) => {
-                (StatusCode::NOT_FOUND, "Resource not found".to_string())
+        let error_message = self.0.to_string();
+        
+        let status = match self.0.downcast_ref::<RepositoryError>() {
+            Some(RepositoryError::Database(_db_err)) => {
+                StatusCode::INTERNAL_SERVER_ERROR
             }
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Internal server error: {}", self.0),
-            ),
+            Some(RepositoryError::NotFound) => {
+                StatusCode::NOT_FOUND
+            }
+            None => {
+                // 检查是否为验证错误（包含特定关键词）
+                if error_message.contains("cannot be empty") ||
+                   error_message.contains("invalid") ||
+                   error_message.contains("required") ||
+                   error_message.contains("validation") {
+                    StatusCode::BAD_REQUEST
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            }
         };
 
         let body = Json(json!({ "error": error_message }));

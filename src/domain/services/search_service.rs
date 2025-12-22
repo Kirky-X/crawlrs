@@ -8,8 +8,10 @@ use crate::application::dto::search_request::{
 };
 use crate::config::settings::Settings;
 use crate::domain::models::crawl::{Crawl, CrawlStatus};
+use crate::domain::models::credits::CreditsTransactionType;
 use crate::domain::models::task::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
+use crate::domain::repositories::credits_repository::{CreditsRepository, CreditsRepositoryError};
 use crate::domain::repositories::task_repository::TaskRepository;
 use chrono::Utc;
 use serde_json::json;
@@ -24,26 +26,41 @@ pub enum SearchServiceError {
     ValidationError(String),
     #[error("Repository error: {0}")]
     Repository(#[from] crate::domain::repositories::task_repository::RepositoryError),
+    #[error("Credits repository error: {0}")]
+    CreditsRepository(#[from] CreditsRepositoryError),
     #[error("Search engine error: {0}")]
     SearchEngine(String),
+    #[error("Insufficient credits: available {available}, required {required}")]
+    InsufficientCredits { available: i64, required: i64 },
 }
 
-pub struct SearchService<CR, TR> {
+use crate::domain::search::engine::SearchEngine;
+
+pub struct SearchService<CR, TR, CRR> {
     crawl_repo: Arc<CR>,
     task_repo: Arc<TR>,
-    settings: Arc<Settings>,
+    credits_repo: Arc<CRR>,
+    search_engine: Arc<dyn SearchEngine>,
 }
 
-impl<CR, TR> SearchService<CR, TR>
+impl<CR, TR, CRR> SearchService<CR, TR, CRR>
 where
     CR: CrawlRepository + 'static,
     TR: TaskRepository + 'static,
+    CRR: CreditsRepository + 'static,
 {
-    pub fn new(crawl_repo: Arc<CR>, task_repo: Arc<TR>, settings: Arc<Settings>) -> Self {
+    pub fn new(
+        crawl_repo: Arc<CR>,
+        task_repo: Arc<TR>,
+        credits_repo: Arc<CRR>,
+        _settings: Arc<Settings>,
+        search_engine: Arc<dyn SearchEngine>,
+    ) -> Self {
         Self {
             crawl_repo,
             task_repo,
-            settings,
+            credits_repo,
+            search_engine,
         }
     }
 
@@ -55,12 +72,29 @@ where
         dto.validate()
             .map_err(|e| SearchServiceError::ValidationError(e.to_string()))?;
 
+        // Check team credits balance before performing search
+        let current_balance = self.credits_repo.get_balance(team_id).await?;
+        let search_cost = 1i64; // 1 credit per search as per PRD
+
+        if current_balance < search_cost {
+            return Err(SearchServiceError::InsufficientCredits {
+                available: current_balance,
+                required: search_cost,
+            });
+        }
+
         // 1. Perform Search using configured engine
         let results = self
-            .perform_search(&dto.query, dto.limit.unwrap_or(10))
+            .perform_search(
+                &dto.query,
+                dto.limit.unwrap_or(10),
+                dto.lang.as_deref(),
+                dto.country.as_deref(),
+            )
             .await?;
 
         let mut crawl_id = None;
+        let credits_used = search_cost;
 
         // 2. If crawl_results is true, create a crawl task
         if dto.crawl_results.unwrap_or(false) && !results.is_empty() {
@@ -74,6 +108,7 @@ where
                     exclude_patterns: None,
                     strategy: Some("bfs".to_string()),
                     crawl_delay_ms: None,
+                    max_concurrency: Some(10),
                     headers: None,
                     proxy: None,
                     extraction_rules: None,
@@ -125,10 +160,22 @@ where
             crawl_id = Some(cid);
         }
 
+        // Deduct credits for the search operation
+        self.credits_repo
+            .deduct_credits(
+                team_id,
+                search_cost,
+                CreditsTransactionType::Search,
+                format!("Search query: {}", dto.query),
+                None,
+            )
+            .await?;
+
         Ok(SearchResponseDto {
             query: dto.query,
             results,
             crawl_id,
+            credits_used: credits_used as u32,
         })
     }
 
@@ -136,69 +183,22 @@ where
         &self,
         query: &str,
         limit: u32,
+        lang: Option<&str>,
+        country: Option<&str>,
     ) -> Result<Vec<SearchResultDto>, SearchServiceError> {
-        // Check for search engine configuration
-        let google_key = self.settings.google_search.api_key.clone();
-        let google_cx = self.settings.google_search.cx.clone();
+        let results = self
+            .search_engine
+            .search(query, limit, lang, country)
+            .await
+            .map_err(|e| SearchServiceError::SearchEngine(e.to_string()))?;
 
-        if let (Some(key), Some(cx)) = (google_key, google_cx) {
-            let client = reqwest::Client::new();
-            let url = "https://www.googleapis.com/customsearch/v1";
-
-            let response = client
-                .get(url)
-                .query(&[
-                    ("key", key.as_str()),
-                    ("cx", cx.as_str()),
-                    ("q", query),
-                    ("num", &limit.to_string()),
-                ])
-                .send()
-                .await
-                .map_err(|e| SearchServiceError::SearchEngine(e.to_string()))?;
-
-            if !response.status().is_success() {
-                return Err(SearchServiceError::SearchEngine(format!(
-                    "Google Search API error: {}",
-                    response.status()
-                )));
-            }
-
-            let google_resp: GoogleSearchResponse = response
-                .json()
-                .await
-                .map_err(|e| SearchServiceError::SearchEngine(e.to_string()))?;
-
-            let results = google_resp
-                .items
-                .unwrap_or_default()
-                .into_iter()
-                .map(|item| SearchResultDto {
-                    title: item.title,
-                    url: item.link,
-                    description: item.snippet,
-                })
-                .collect();
-
-            return Ok(results);
-        }
-
-        // If no search engine is configured, return error
-        Err(SearchServiceError::SearchEngine(
-            "No search engine configured. Please set google_search.api_key and google_search.cx in config/default.toml."
-                .to_string(),
-        ))
+        Ok(results
+            .into_iter()
+            .map(|item| SearchResultDto {
+                title: item.title,
+                url: item.url,
+                description: item.description,
+            })
+            .collect())
     }
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct GoogleSearchResponse {
-    items: Option<Vec<GoogleSearchItem>>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct GoogleSearchItem {
-    title: String,
-    link: String,
-    snippet: Option<String>,
 }

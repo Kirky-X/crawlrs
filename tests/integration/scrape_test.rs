@@ -35,7 +35,14 @@ async fn test_scrape_real_website() {
         }))
         .await;
 
-    assert_eq!(response.status_code(), StatusCode::CREATED);
+    // 接受201 (Created) 或 202 (Accepted) 状态码
+    // 202表示任务已接受但同步等待超时
+    assert!(
+        response.status_code() == StatusCode::CREATED
+            || response.status_code() == StatusCode::ACCEPTED,
+        "Expected status code 201 or 202, got {}",
+        response.status_code()
+    );
 
     let task_response: serde_json::Value = response.json();
     let task_id_str = task_response["id"].as_str().unwrap();

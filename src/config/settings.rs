@@ -24,7 +24,7 @@ use serde::Deserialize;
 ///
 /// ```rust
 /// use crawlrs::config::settings::Settings;
-/// 
+///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let settings = Settings::new()?;
 ///     println!("Server will run on {}:{}", settings.server.host, settings.server.port);
@@ -49,6 +49,10 @@ pub struct Settings {
     pub webhook: WebhookSettings,
     /// Google Custom Search API 配置
     pub google_search: GoogleSearchSettings,
+    /// Bing Search API 配置
+    pub bing_search: BingSearchSettings,
+    /// 搜索配置 (包含 A/B 测试)
+    pub search: SearchSettings,
     /// LLM 配置
     pub llm: LLMSettings,
 }
@@ -117,7 +121,7 @@ pub struct ServerSettings {
 ///
 /// * `enabled` - 是否启用速率限制，默认 true
 /// * `default_rpm` - 默认每分钟请求数限制，默认 100
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RateLimitingSettings {
     /// 是否启用速率限制
     pub enabled: bool,
@@ -133,7 +137,7 @@ pub struct RateLimitingSettings {
 ///
 /// * `default_team_limit` - 每个团队的最大并发任务数，默认 10
 /// * `task_lock_duration_seconds` - 任务锁持续时间，防止重复处理，默认 300 秒（5 分钟）
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ConcurrencySettings {
     /// 默认团队并发限制
     pub default_team_limit: i64,
@@ -201,6 +205,22 @@ pub struct GoogleSearchSettings {
     pub cx: Option<String>,
 }
 
+/// Bing Search API 配置设置
+#[derive(Debug, Deserialize)]
+pub struct BingSearchSettings {
+    /// Bing Search API 密钥
+    pub api_key: Option<String>,
+}
+
+/// 搜索配置设置
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchSettings {
+    /// 是否启用 A/B 测试
+    pub ab_test_enabled: bool,
+    /// Variant B 的流量权重 (0.0 到 1.0)
+    pub variant_b_weight: f64,
+}
+
 /// LLM 配置设置
 ///
 /// 配置 LLM（大语言模型）服务的参数
@@ -239,16 +259,16 @@ impl Settings {
     /// * `Err(ConfigError)` - 配置加载失败
     ///
     /// # 示例
-///
-/// ```rust
-/// use crawlrs::config::settings::Settings;
-/// 
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let settings = Settings::new()?;
-///     println!("Database URL: {}", settings.database.url);
-///     Ok(())
-/// }
-/// ```
+    ///
+    /// ```rust
+    /// use crawlrs::config::settings::Settings;
+    ///
+    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let settings = Settings::new()?;
+    ///     println!("Database URL: {}", settings.database.url);
+    ///     Ok(())
+    /// }
+    /// ```
     ///
     /// # 错误
     ///
@@ -286,10 +306,15 @@ impl Settings {
             .set_default("concurrency.task_lock_duration_seconds", 300)? // 任务锁持续 300 秒（5 分钟）
             // 6. 设置 Webhook 默认配置
             .set_default("webhook.secret", "your-secret-key")? // Webhook 签名密钥
-            // 7. 设置 Google Custom Search API 默认配置
+            // 7. 设置搜索 A/B 测试默认配置
+            .set_default("search.ab_test_enabled", false)? // 默认关闭 A/B 测试
+            .set_default("search.variant_b_weight", 0.1)? // 默认分配 10% 流量到 B 变体
+            // 8. 设置 Google Custom Search API 默认配置
             .set_default("google_search.api_key", "")? // Google Search API 密钥
             .set_default("google_search.cx", "")? // Google Custom Search Engine ID
-            // 8. 设置 LLM 默认配置
+            // 8. 设置 Bing Search API 默认配置
+            .set_default("bing_search.api_key", "")?
+            // 9. 设置 LLM 默认配置
             .set_default("llm.api_key", "")? // LLM API 密钥
             .set_default("llm.model", "gpt-3.5-turbo")? // 默认模型
             .set_default("llm.api_base_url", "https://api.openai.com/v1")? // 默认 API 基础 URL

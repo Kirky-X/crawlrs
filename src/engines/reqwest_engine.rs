@@ -7,7 +7,7 @@ use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, Scraper
 use crate::engines::validators;
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// 抓取引擎
 ///
@@ -72,7 +72,13 @@ impl ScraperEngine for ReqwestEngine {
         let client = builder.build()?;
 
         let start = Instant::now();
-        let response = client.get(&request.url).headers(headers).send().await?;
+        let response_result = client.get(&request.url).headers(headers).send().await;
+
+        let response = match response_result {
+            Ok(resp) => resp,
+            Err(e) if e.is_timeout() => return Err(EngineError::Timeout),
+            Err(e) => return Err(EngineError::RequestFailed(e)),
+        };
 
         let status_code = response.status().as_u16();
         let content_type = response
@@ -97,6 +103,11 @@ impl ScraperEngine for ReqwestEngine {
         }
 
         let content = response.text().await?;
+
+        // 同步等待
+        if request.sync_wait_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(request.sync_wait_ms as u64)).await;
+        }
 
         Ok(ScrapeResponse {
             status_code,
@@ -133,7 +144,3 @@ impl ScraperEngine for ReqwestEngine {
         "reqwest"
     }
 }
-
-#[cfg(test)]
-#[path = "reqwest_engine_test.rs"]
-mod tests;

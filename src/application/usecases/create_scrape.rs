@@ -10,11 +10,11 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::application::dto::scrape_request::{
-    ScrapeOptionsDto, ScrapeRequestDto, ScreenshotOptionsDto,
+    ScrapeActionDto, ScrapeOptionsDto, ScrapeRequestDto, ScreenshotOptionsDto,
 };
 use crate::domain::models::task::DomainError;
 use crate::engines::router::EngineRouter;
-use crate::engines::traits::{ScrapeRequest, ScrapeResponse, ScreenshotConfig};
+use crate::engines::traits::{ScrapeAction, ScrapeRequest, ScrapeResponse, ScreenshotConfig};
 
 // === Section: Use Case Definition ===
 
@@ -57,6 +57,7 @@ impl CreateScrapeUseCase {
 
         let headers = self.parse_headers(options.headers)?;
         let screenshot_config = self.parse_screenshot_config(options.screenshot_options);
+        let actions = self.parse_actions(dto.actions);
 
         Ok(ScrapeRequest {
             url: dto.url,
@@ -70,7 +71,23 @@ impl CreateScrapeUseCase {
             skip_tls_verification: options.skip_tls_verification.unwrap_or(false),
             needs_tls_fingerprint: options.needs_tls_fingerprint.unwrap_or(false),
             use_fire_engine: options.use_fire_engine.unwrap_or(false),
+            actions,
+            sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
         })
+    }
+
+    fn parse_actions(&self, dto_actions: Option<Vec<ScrapeActionDto>>) -> Vec<ScrapeAction> {
+        dto_actions
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| match a {
+                ScrapeActionDto::Wait { milliseconds } => ScrapeAction::Wait { milliseconds },
+                ScrapeActionDto::Click { selector } => ScrapeAction::Click { selector },
+                ScrapeActionDto::Scroll { direction } => ScrapeAction::Scroll { direction },
+                ScrapeActionDto::Screenshot { full_page } => ScrapeAction::Screenshot { full_page },
+                ScrapeActionDto::Input { selector, text } => ScrapeAction::Input { selector, text },
+            })
+            .collect()
     }
 
     fn parse_headers(

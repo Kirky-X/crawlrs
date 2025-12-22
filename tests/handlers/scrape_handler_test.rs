@@ -40,7 +40,7 @@ async fn test_postgres_task_queue_real_implementation() {
         id: Uuid::new_v4(),
         crawl_id: None,
         task_type: TaskType::Scrape,
-        status: TaskStatus::Pending,
+        status: TaskStatus::Queued,
         priority: 0,
         team_id: Uuid::new_v4(),
         url: "https://example.com".to_string(),

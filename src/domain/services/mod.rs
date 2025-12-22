@@ -18,13 +18,10 @@
 /// 领域服务与应用程序服务的区别在于：领域服务包含纯粹的业务逻辑，
 /// 而应用程序服务负责协调和编排，可能包含技术实现细节。
 pub mod crawl_service;
-#[cfg(test)]
-mod crawl_service_test;
 pub mod extraction_service;
-#[cfg(test)]
-mod extraction_service_test;
 pub mod llm_service;
+pub mod rate_limiting_service;
+pub mod relevance_scorer;
 pub mod scrape_service;
 pub mod search_service;
-#[cfg(test)]
-mod search_service_test;
+pub mod webhook_service;

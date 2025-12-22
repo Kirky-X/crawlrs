@@ -17,6 +17,7 @@ pub struct SearchRequestDto {
     #[validate(range(min = 1, max = 100))]
     pub limit: Option<u32>,
     pub lang: Option<String>,
+    pub country: Option<String>,
 
     // Optional crawl configuration for async crawling of search results
     #[validate(nested)]
@@ -24,6 +25,10 @@ pub struct SearchRequestDto {
 
     // If true, will create a crawl task for each search result
     pub crawl_results: Option<bool>,
+
+    /// 同步等待时长（毫秒，默认 5000，最大 30000）
+    #[validate(range(min = 0, max = 30000))]
+    pub sync_wait_ms: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,6 +36,7 @@ pub struct SearchResponseDto {
     pub query: String,
     pub results: Vec<SearchResultDto>,
     pub crawl_id: Option<uuid::Uuid>, // If async crawling was triggered
+    pub credits_used: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

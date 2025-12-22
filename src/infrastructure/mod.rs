@@ -20,5 +20,8 @@
 pub mod cache;
 pub mod database;
 pub mod metrics;
+pub mod observability;
 pub mod repositories;
+pub mod search;
+pub mod services;
 pub mod storage;

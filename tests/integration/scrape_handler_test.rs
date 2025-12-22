@@ -27,7 +27,14 @@ async fn test_create_scrape_handler_real_queue() {
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .await;
 
-    response.assert_status(StatusCode::CREATED);
+    // 接受201 (Created) 或 202 (Accepted) 状态码
+    // 202表示任务已接受但同步等待超时
+    assert!(
+        response.status_code() == StatusCode::CREATED
+            || response.status_code() == StatusCode::ACCEPTED,
+        "Expected status code 201 or 202, got {}",
+        response.status_code()
+    );
     let json_response = response.json::<serde_json::Value>();
     assert_eq!(json_response["success"], true);
 

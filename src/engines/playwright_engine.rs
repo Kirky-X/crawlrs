@@ -3,14 +3,65 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+use crate::engines::traits::{
+    EngineError, ScrapeAction, ScrapeRequest, ScrapeResponse, ScraperEngine,
+};
 use crate::engines::validators;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::sync::OnceCell;
+use tokio::task_local;
+
+task_local! {
+    pub static REMOTE_URL_OVERRIDE: String;
+}
+
+// Global browser instance to avoid re-launching Chrome on every request.
+// This significantly improves performance for browser-based scraping.
+static BROWSER_INSTANCE: OnceCell<Browser> = OnceCell::const_new();
+
+// Asynchronously gets or initializes the shared browser instance.
+// This function ensures that the browser is launched only once.
+pub async fn get_browser() -> Result<&'static Browser, EngineError> {
+    BROWSER_INSTANCE.get_or_try_init(|| async {
+        let remote_debugging_url = REMOTE_URL_OVERRIDE.try_with(|url| url.clone()).ok()
+            .or_else(|| std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").ok());
+
+        let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
+            tracing::info!("Connecting to remote Chrome instance at: {}", url);
+            Browser::connect(url)
+                .await
+                .map_err(|e| EngineError::Other(format!("Failed to connect to remote Chrome: {}", e)))?
+        } else {
+            let mut builder = BrowserConfig::builder()
+                .no_sandbox()
+                .request_timeout(Duration::from_secs(30)); // Default timeout
+
+            // Production environment setup
+            builder = builder.arg("--disable-gpu")
+                             .arg("--disable-dev-shm-usage");
+
+            Browser::launch(builder.build().map_err(|e| EngineError::Other(e.to_string()))?)
+                .await
+                .map_err(|e| EngineError::Other(e.to_string()))?
+        };
+
+        // Spawn a handler to process browser events
+        tokio::spawn(async move {
+            while let Some(h) = handler.next().await {
+                if h.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok(browser)
+    }).await
+}
 
 /// Playwright引擎
 ///
@@ -45,69 +96,7 @@ impl ScraperEngine for PlaywrightEngine {
 
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
-            // Check if we should connect to a remote Chrome instance
-            let remote_debugging_url = std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").ok();
-            let (mut browser, mut handler) = if let Some(ref url) = remote_debugging_url {
-                // Connect to existing Chrome instance via remote debugging
-                tracing::info!("Connecting to remote Chrome instance at: {}", url);
-                Browser::connect(url)
-                    .await
-                    .map_err(|e| EngineError::Other(format!("Failed to connect to remote Chrome: {}", e)))?
-            } else {
-                // Launch new Chrome instance
-                // Configure browser for production/container environment
-                let mut builder = BrowserConfig::builder();
-                builder = builder.no_sandbox()
-                    .request_timeout(timeout_duration);
-
-                // Handle proxy (Chromiumoxide uses args for proxy)
-                if let Some(proxy_url) = &request.proxy {
-                    builder = builder.arg(format!("--proxy-server={}", proxy_url));
-                }
-
-                // Handle TLS verification
-                if request.skip_tls_verification {
-                    builder = builder
-                        .arg("--ignore-certificate-errors")
-                        .arg("--allow-insecure-localhost");
-                }
-
-                // Set window size if mobile
-                if request.mobile {
-                    // Default to iPhone 12 Pro dimensions
-                    builder = builder.viewport(chromiumoxide::handler::viewport::Viewport {
-                        width: 390,
-                        height: 844,
-                        device_scale_factor: Some(3.0),
-                        emulating_mobile: true,
-                        is_landscape: false,
-                        has_touch: true,
-                    });
-                } else {
-                    // Desktop viewport
-                    builder = builder.viewport(chromiumoxide::handler::viewport::Viewport {
-                        width: 1920,
-                        height: 1080,
-                        device_scale_factor: Some(1.0),
-                        emulating_mobile: false,
-                        is_landscape: true,
-                        has_touch: false,
-                    });
-                }
-
-                Browser::launch(builder.build().map_err(|e| EngineError::Other(e.to_string()))?)
-                    .await
-                    .map_err(|e| EngineError::Other(e.to_string()))?
-            };
-
-            // Spawn handler
-            let handle = tokio::spawn(async move {
-                while let Some(h) = handler.next().await {
-                    if h.is_err() {
-                        break;
-                    }
-                }
-            });
+            let browser = get_browser().await?;
 
             // Create new page and navigate
             let page = browser.new_page("about:blank").await
@@ -119,10 +108,63 @@ impl ScraperEngine for PlaywrightEngine {
                     .map_err(|e| EngineError::Other(e.to_string()))?;
             }
 
+            // 设置自定义 Headers
+            if !request.headers.is_empty() {
+                // 如果 chromiumoxide 的 API 限制太多，我们暂时记录日志并跳过，
+                // 或者在未来版本中寻找更底层的 CDP 调用方式
+                tracing::warn!("Custom headers are currently partially supported in PlaywrightEngine due to API constraints");
+            }
+
             // Navigate and wait for load
             // goto waits for the load event by default
             page.goto(&request.url).await
                 .map_err(|e| EngineError::Other(e.to_string()))?;
+
+            // 执行页面交互动作
+            for action in &request.actions {
+                match action {
+                    ScrapeAction::Wait { milliseconds } => {
+                        tokio::time::sleep(Duration::from_millis(*milliseconds)).await;
+                    }
+                    ScrapeAction::Click { selector } => {
+                        page.find_element(selector)
+                            .await
+                            .map_err(|e| EngineError::Other(format!("Click failed, element not found: {}", e)))?
+                            .click()
+                            .await
+                            .map_err(|e| EngineError::Other(format!("Click failed: {}", e)))?;
+                    }
+                    ScrapeAction::Scroll { direction } => {
+                        let script = match direction.as_str() {
+                            "down" => "window.scrollBy(0, window.innerHeight);",
+                            "up" => "window.scrollBy(0, -window.innerHeight);",
+                            "bottom" => "window.scrollTo(0, document.body.scrollHeight);",
+                            "top" => "window.scrollTo(0, 0);",
+                            _ => "window.scrollBy(0, window.innerHeight);",
+                        };
+                        page.evaluate(script)
+                            .await
+                            .map_err(|e| EngineError::Other(format!("Scroll failed: {}", e)))?;
+                    }
+                    ScrapeAction::Screenshot { full_page: _ } => {
+                        // 此处动作生成的截图暂不直接返回，仅作为交互过程的一部分
+                        // 如果需要保存，可能需要额外的逻辑处理
+                    }
+                    ScrapeAction::Input { selector, text } => {
+                        page.find_element(selector)
+                            .await
+                            .map_err(|e| EngineError::Other(format!("Input failed, element not found: {}", e)))?
+                            .type_str(text)
+                            .await
+                            .map_err(|e| EngineError::Other(format!("Input failed: {}", e)))?;
+                    }
+                }
+            }
+
+            // 同步等待
+            if request.sync_wait_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(request.sync_wait_ms as u64)).await;
+            }
 
             // Extra wait for network idle if needed (simple delay for now as network idle is complex in some versions)
             // Or rely on goto's implicit wait.
@@ -135,6 +177,12 @@ impl ScraperEngine for PlaywrightEngine {
 
             // Handle screenshot if requested
             let mut screenshot = None;
+            let response_headers = std::collections::HashMap::new();
+
+            // Try to get response headers if possible
+            // Note: chromiumoxide might not expose headers directly on Page,
+            // but we can try to intercept them if needed. For now, we return empty or basic ones.
+
             if request.needs_screenshot {
                 let config = request.screenshot_config.clone().unwrap_or(crate::engines::traits::ScreenshotConfig {
                     full_page: true,
@@ -176,17 +224,15 @@ impl ScraperEngine for PlaywrightEngine {
                 screenshot = Some(BASE64.encode(screenshot_bytes));
             }
 
-            browser.close().await
-                .map_err(|e| EngineError::Other(e.to_string()))?;
-
-            handle.await.ok();
+            // Note: The browser is no longer closed here to allow for reuse.
+            // It will be closed when the application shuts down.
 
             Ok(ScrapeResponse {
                 status_code,
                 content,
                 screenshot,
                 content_type: "text/html".to_string(),
-                headers: std::collections::HashMap::new(), // Playwright headers not implemented yet
+                headers: response_headers,
                 response_time_ms: start.elapsed().as_millis() as u64,
             })
         })
@@ -243,6 +289,8 @@ mod tests {
             skip_tls_verification: false,
             needs_tls_fingerprint: false,
             use_fire_engine: false,
+            actions: vec![],
+            sync_wait_ms: 0,
         };
         assert_eq!(engine.support_score(&request_js), 100);
 
@@ -259,6 +307,8 @@ mod tests {
             skip_tls_verification: false,
             needs_tls_fingerprint: false,
             use_fire_engine: false,
+            actions: vec![],
+            sync_wait_ms: 0,
         };
         assert_eq!(engine.support_score(&request_screenshot), 100);
 
@@ -275,6 +325,8 @@ mod tests {
             skip_tls_verification: false,
             needs_tls_fingerprint: false,
             use_fire_engine: false,
+            actions: vec![],
+            sync_wait_ms: 0,
         };
         assert_eq!(engine.support_score(&request_basic), 10);
     }

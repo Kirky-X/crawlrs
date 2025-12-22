@@ -3,9 +3,14 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+/// 指标收集模块
+///
+/// 提供系统指标的收集和导出功能
+/// 使用Prometheus格式暴露应用性能指标
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::net::SocketAddr;
 use tracing::info;
+
 
 pub fn init_metrics() {
     let builder = PrometheusBuilder::new();

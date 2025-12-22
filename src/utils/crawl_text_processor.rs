@@ -1,12 +1,25 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use crate::utils::text_encoding::{process_text_encoding, TextEncodingError};
-use crate::utils::web_content_processor::{process_web_content, WebContentError, ProcessedWebContent};
+use crate::utils::web_content_processor::{
+    process_web_content, ProcessedWebContent, WebContentError,
+};
 use std::time::{Duration, Instant};
-use tracing::{info, error};
+use tracing::{error, info};
 
 /// 爬虫文本处理集成器
 pub struct CrawlTextProcessor {
     max_processing_time: Duration,
     max_content_size: usize,
+}
+
+impl Default for CrawlTextProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CrawlTextProcessor {
@@ -27,9 +40,12 @@ impl CrawlTextProcessor {
     ) -> Result<ProcessedCrawlContent, CrawlProcessingError> {
         let start_time = Instant::now();
         let content_size = content.len();
-        
-        info!("开始处理抓取的内容: URL={}, 大小={} 字节", url, content_size);
-        
+
+        info!(
+            "开始处理抓取的内容: URL={}, 大小={} 字节",
+            url, content_size
+        );
+
         // 检查内容大小
         if content_size > self.max_content_size {
             return Err(CrawlProcessingError::ContentTooLarge {
@@ -37,15 +53,15 @@ impl CrawlTextProcessor {
                 max_size: self.max_content_size,
             });
         }
-        
+
         // 检查处理时间
         if start_time.elapsed() > self.max_processing_time {
             return Err(CrawlProcessingError::ProcessingTimeout);
         }
-        
+
         // 处理文本编码
         let processed_content = self.process_content_with_timeout(content, content_type)?;
-        
+
         let processing_time = start_time.elapsed();
         info!(
             "内容处理完成: URL={}, 耗时={:?}, 提取文本长度={}",
@@ -53,7 +69,7 @@ impl CrawlTextProcessor {
             processing_time,
             processed_content.extracted_text.len()
         );
-        
+
         Ok(ProcessedCrawlContent {
             url: url.to_string(),
             processed_content: processed_content.clone(),
@@ -69,18 +85,18 @@ impl CrawlTextProcessor {
         content: &[u8],
         content_type: Option<&str>,
     ) -> Result<ProcessedWebContent, CrawlProcessingError> {
-        use std::thread;
         use std::sync::mpsc;
-        
+        use std::thread;
+
         let (tx, rx) = mpsc::channel();
         let content = content.to_vec();
         let content_type = content_type.map(|s| s.to_string());
-        
+
         thread::spawn(move || {
             let result = process_web_content(&content, content_type.as_deref());
             let _ = tx.send(result);
         });
-        
+
         match rx.recv_timeout(self.max_processing_time) {
             Ok(result) => result.map_err(CrawlProcessingError::WebContentError),
             Err(_) => Err(CrawlProcessingError::ProcessingTimeout),
@@ -93,12 +109,12 @@ impl CrawlTextProcessor {
         batch: Vec<(&[u8], &str, Option<&str>)>,
     ) -> Vec<Result<ProcessedCrawlContent, CrawlProcessingError>> {
         let mut results = Vec::with_capacity(batch.len());
-        
+
         for (content, url, content_type) in batch {
             let result = self.process_crawled_content(content, url, content_type);
             results.push(result);
         }
-        
+
         results
     }
 
@@ -107,7 +123,7 @@ impl CrawlTextProcessor {
         if text.is_empty() {
             return Ok(String::new());
         }
-        
+
         // 使用文本编码处理器处理简单文本
         match process_text_encoding(text.as_bytes()) {
             Ok(processed) => Ok(processed),
@@ -118,30 +134,35 @@ impl CrawlTextProcessor {
     /// 验证内容质量
     pub fn validate_content_quality(&self, content: &ProcessedCrawlContent) -> ContentQuality {
         let text_length = content.processed_content.extracted_text.len();
-        let word_count = content.processed_content.extracted_text.split_whitespace().count();
-        
+        let word_count = content
+            .processed_content
+            .extracted_text
+            .split_whitespace()
+            .count();
+
         // 检查文本长度
         if text_length < 50 {
             return ContentQuality::Poor("文本内容过短".to_string());
         }
-        
+
         // 检查单词数量
         if word_count < 10 {
             return ContentQuality::Poor("单词数量过少".to_string());
         }
-        
+
         // 检查是否包含有效内容
         let text_ratio = text_length as f64 / content.original_size as f64;
         if text_ratio < 0.01 && content.original_size > 1000 {
             return ContentQuality::Poor("有效内容比例过低".to_string());
         }
-        
+
         // 检查是否可能是垃圾内容
-        let repetitive_ratio = self.calculate_repetitive_ratio(&content.processed_content.extracted_text);
+        let repetitive_ratio =
+            self.calculate_repetitive_ratio(&content.processed_content.extracted_text);
         if repetitive_ratio > 0.8 {
             return ContentQuality::Poor("内容重复度过高".to_string());
         }
-        
+
         // 根据处理时间和内容质量给出评级
         if content.processing_time.as_secs() > 10 {
             ContentQuality::Good
@@ -156,15 +177,15 @@ impl CrawlTextProcessor {
         if words.len() < 10 {
             return 0.0;
         }
-        
+
         let mut word_counts = std::collections::HashMap::new();
         for word in &words {
             *word_counts.entry(word.to_lowercase()).or_insert(0) += 1;
         }
-        
+
         let max_count = *word_counts.values().max().unwrap_or(&1);
         let total_words = words.len();
-        
+
         (max_count as f64 / total_words as f64).min(1.0)
     }
 
@@ -180,7 +201,7 @@ impl CrawlTextProcessor {
     pub fn update_config(&mut self, config: CrawlProcessorConfig) {
         self.max_processing_time = Duration::from_secs(config.max_processing_time_secs);
         self.max_content_size = config.max_content_size_mb * 1024 * 1024;
-        
+
         info!("更新爬虫文本处理器配置: {:?}", config);
     }
 }
@@ -200,16 +221,16 @@ pub struct ProcessedCrawlContent {
 pub enum CrawlProcessingError {
     #[error("文本编码处理错误: {0}")]
     TextEncodingError(#[from] TextEncodingError),
-    
+
     #[error("网页内容处理错误: {0}")]
     WebContentError(#[from] WebContentError),
-    
+
     #[error("内容过大: {size} 字节 (最大允许: {max_size} 字节)")]
     ContentTooLarge { size: usize, max_size: usize },
-    
+
     #[error("处理超时")]
     ProcessingTimeout,
-    
+
     #[error("内容质量过低: {0}")]
     PoorContentQuality(String),
 }
@@ -263,7 +284,7 @@ mod tests {
     fn test_simple_text_processing() {
         let processor = CrawlTextProcessor::new();
         let text = "Hello, 世界! This is a test.";
-        
+
         let result = processor.process_simple_text(text).unwrap();
         assert_eq!(result, text);
     }
@@ -271,7 +292,7 @@ mod tests {
     #[test]
     fn test_content_quality_validation() {
         let processor = CrawlTextProcessor::new();
-        
+
         // 创建模拟的处理内容
         let processed_content = ProcessedWebContent {
             original_content: "Test content".to_string(),
@@ -282,7 +303,7 @@ mod tests {
             content_type: Some("text/plain".to_string()),
             content_length: 100,
         };
-        
+
         let crawl_content = ProcessedCrawlContent {
             url: "http://example.com".to_string(),
             processed_content,
@@ -290,19 +311,22 @@ mod tests {
             original_size: 1000,
             processed_size: 200,
         };
-        
+
         let quality = processor.validate_content_quality(&crawl_content);
-        assert!(matches!(quality, ContentQuality::Good | ContentQuality::Excellent));
+        assert!(matches!(
+            quality,
+            ContentQuality::Good | ContentQuality::Excellent
+        ));
     }
 
     #[test]
     fn test_repetitive_content_detection() {
         let processor = CrawlTextProcessor::new();
-        
+
         let repetitive_text = "spam spam spam spam spam spam spam spam spam spam";
         let ratio = processor.calculate_repetitive_ratio(repetitive_text);
         assert!(ratio > 0.5);
-        
+
         let normal_text = "This is normal text with different words and meaningful content.";
         let ratio = processor.calculate_repetitive_ratio(normal_text);
         assert!(ratio < 0.5);
@@ -312,7 +336,7 @@ mod tests {
     fn test_processor_config() {
         let processor = CrawlTextProcessor::new();
         let config = processor.get_config();
-        
+
         assert_eq!(config.max_processing_time_secs, 30);
         assert_eq!(config.max_content_size_mb, 10);
     }

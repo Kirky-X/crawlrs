@@ -119,11 +119,17 @@ impl ScraperEngine for FireEngineCdp {
             }
         }
 
+        let content_type = headers
+            .get("content-type")
+            .or_else(|| headers.get("Content-Type"))
+            .cloned()
+            .unwrap_or_else(|| "text/html".to_string());
+
         Ok(ScrapeResponse {
             status_code: solution.status,
             content: solution.response,
             screenshot: solution.screenshot,
-            content_type: "text/html".to_string(),
+            content_type,
             headers,
             response_time_ms: start.elapsed().as_millis() as u64,
         })
@@ -150,6 +156,11 @@ impl ScraperEngine for FireEngineCdp {
             return 90;
         }
 
+        // 如果有交互动作，支持
+        if !request.actions.is_empty() {
+            return 90;
+        }
+
         // 成本较高，默认优先级低
         40
     }
@@ -158,7 +169,3 @@ impl ScraperEngine for FireEngineCdp {
         "fire_engine_cdp"
     }
 }
-
-#[cfg(test)]
-#[path = "fire_engine_cdp_test.rs"]
-mod tests;

@@ -12,3 +12,4 @@ pub mod extract_request;
 pub mod scrape_request;
 pub mod scrape_response;
 pub mod search_request;
+pub mod task_query_request;

@@ -550,18 +550,20 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // Add foreign key constraint for tasks_backlog
-        manager
-            .create_foreign_key(
-                ForeignKey::create()
-                    .name("fk_tasks_backlog_team")
-                    .from(TasksBacklog::Table, TasksBacklog::TeamId)
-                    .to(Teams::Table, Teams::Id)
-                    .on_delete(ForeignKeyAction::Cascade)
-                    .on_update(ForeignKeyAction::Cascade)
-                    .to_owned(),
-            )
-            .await?;
+        // Add foreign key constraint for tasks_backlog (skip for SQLite)
+        if manager.get_database_backend() != DbBackend::Sqlite {
+            manager
+                .create_foreign_key(
+                    ForeignKey::create()
+                        .name("fk_tasks_backlog_team")
+                        .from(TasksBacklog::Table, TasksBacklog::TeamId)
+                        .to(Teams::Table, Teams::Id)
+                        .on_delete(ForeignKeyAction::Cascade)
+                        .on_update(ForeignKeyAction::Cascade)
+                        .to_owned(),
+                )
+                .await?;
+        }
 
         Ok(())
     }

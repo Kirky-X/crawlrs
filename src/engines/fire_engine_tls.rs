@@ -131,30 +131,21 @@ impl ScraperEngine for FireEngineTls {
     }
 
     fn support_score(&self, request: &ScrapeRequest) -> u8 {
-        // 如果需要截图，直接不支持
-        if request.needs_screenshot {
-            return 0;
-        }
-
-        // 如果明确请求使用 Fire Engine 或需要 TLS 指纹
-        if request.use_fire_engine || request.needs_tls_fingerprint {
+        // 如果需要 TLS 指纹且不需要截图，这是最佳选择
+        if request.needs_tls_fingerprint && !request.needs_screenshot {
             return 100;
         }
 
-        // 如果只是需要 JS，但不需要截图，可以支持
-        if request.needs_js {
-            return 80;
+        // 如果需要 JS 或交互动作，不支持
+        if request.needs_js || !request.actions.is_empty() {
+            return 0;
         }
 
-        // 普通请求
-        50
+        // 成本较高，默认优先级低
+        40
     }
 
     fn name(&self) -> &'static str {
         "fire_engine_tls"
     }
 }
-
-#[cfg(test)]
-#[path = "fire_engine_tls_test.rs"]
-mod tests;

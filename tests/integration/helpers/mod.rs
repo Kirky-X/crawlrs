@@ -3,21 +3,34 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+/// 集成测试辅助模块
+///
+/// 提供集成测试中使用的通用工具函数和测试辅助结构
+/// 包括测试应用创建、数据库设置、依赖注入等功能
 use axum::Extension;
 use axum_test::TestServer;
 use crawlrs::application::usecases::create_scrape::CreateScrapeUseCase;
 use crawlrs::config::settings::Settings;
+use crawlrs::domain::search::engine::SearchEngine;
 use crawlrs::engines::playwright_engine::PlaywrightEngine;
 use crawlrs::engines::reqwest_engine::ReqwestEngine;
 use crawlrs::engines::router::EngineRouter;
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
+use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
+use crawlrs::infrastructure::search::aggregator::SearchAggregator;
+use crawlrs::infrastructure::search::google::GoogleSearchEngine;
 use crawlrs::infrastructure::storage::LocalStorage;
+use crawlrs::domain::services::rate_limiting_service::RateLimitingService;
+use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
+use crawlrs::infrastructure::services::rate_limiting_service_impl::{
+    RateLimitingConfig, RateLimitingServiceImpl,
+};
 use crawlrs::presentation::middleware::auth_middleware::{auth_middleware, AuthState};
 use crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware;
 use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
@@ -31,7 +44,11 @@ use uuid::Uuid;
 
 use crawlrs::utils::robots::RobotsChecker;
 
-use crawlrs::queue::task_queue::{TaskQueue, PostgresTaskQueue};
+use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
+
+use crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl;
+use crawlrs::workers::webhook_worker::WebhookWorker;
+use crawlrs::workers::Worker;
 
 #[allow(dead_code)]
 pub struct TestApp {
@@ -46,10 +63,54 @@ pub struct TestApp {
             ScrapeResultRepositoryImpl,
             CrawlRepositoryImpl,
             LocalStorage,
+            CreditsRepositoryImpl,
         >,
     >,
     // Keep redis process alive
     pub redis_process: Option<Child>,
+    pub redis_url: String,
+    pub team_id: Uuid,
+    pub redis: Arc<RedisClient>,
+}
+
+impl TestApp {
+    /// 创建一个新团队并返回其 API Key 和 Team ID
+    pub async fn create_team(&self, name: &str) -> (String, Uuid) {
+        let api_key = Uuid::new_v4().to_string();
+        let team_id = Uuid::new_v4();
+
+        // 插入团队
+        self.db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
+                vec![team_id.into(), name.into()],
+            ))
+            .await
+            .unwrap();
+
+        // 插入 API Key
+        self.db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+                vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+
+        // 为团队添加初始积分
+        self.db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, 1000, datetime('now'), datetime('now'))",
+                vec![Uuid::new_v4().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+
+        (api_key, team_id)
+    }
 }
 
 impl Drop for TestApp {
@@ -72,14 +133,18 @@ async fn create_test_app_with_options(start_worker: bool) -> TestApp {
     create_test_app_with_rate_limit_options(start_worker, false).await
 }
 
-pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_rate_limiting: bool) -> TestApp {
+pub async fn create_test_app_with_rate_limit_options(
+    start_worker: bool,
+    enable_rate_limiting: bool,
+) -> TestApp {
     // 1. Setup SQLite
     let db = Database::connect("sqlite::memory:").await.unwrap();
     let db_pool = Arc::new(db);
-    
+
     // 2. Setup Redis
-    let start_port = 6379;
-    let result = crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true).unwrap();
+    let start_port = 7000; // Use higher port range to avoid conflicts
+    let result =
+        crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true).unwrap();
     let redis_port = result.port;
     let redis_process = Command::new("redis-server")
         .arg("--port")
@@ -88,7 +153,7 @@ pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("Failed to start redis-server");
-        
+
     // Wait for redis to start
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let redis_url = format!("redis://127.0.0.1:{}", redis_port);
@@ -119,18 +184,39 @@ pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_
         .await
         .unwrap();
 
+    // 为测试团队添加初始积分
+    db_pool
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, 1000, datetime('now'), datetime('now'))",
+            vec![Uuid::new_v4().into(), team_id.into()],
+        ))
+        .await
+        .unwrap();
+
     // Initialize Redis client
     let redis_client = RedisClient::new(&redis_url).await.unwrap();
 
     // Initialize Rate Limiter
-    let rate_limiter = Arc::new(RateLimiter::new(redis_client.clone(), 100)); // 100 RPM for tests
+    let rate_limiter = Arc::new(RateLimiter::new(redis_client.clone(), 10)); // 10 RPM for tests
 
     // Initialize other components
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db_pool.clone(),
         chrono::Duration::seconds(10),
     ));
-    
+    let credits_repo = Arc::new(CreditsRepositoryImpl::new(db_pool.clone()));
+    let backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db_pool.clone()));
+
+    // Initialize Rate Limiting Service
+    let rate_limiting_service: Arc<dyn RateLimitingService> = Arc::new(RateLimitingServiceImpl::new(
+        Arc::new(redis_client.clone()),
+        task_repo.clone(),
+        backlog_repo,
+        credits_repo.clone(),
+        RateLimitingConfig::default(),
+    ));
+
     // Use PostgresTaskQueue for proper task processing
     let queue: Arc<dyn TaskQueue> = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
 
@@ -147,7 +233,13 @@ pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_
     let router = Arc::new(EngineRouter::new(engines));
 
     let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(router.clone()));
-    let robots_checker = Arc::new(RobotsChecker::new());
+    let robots_checker = Arc::new(RobotsChecker::new(Some(Arc::new(redis_client.clone()))));
+
+    // 初始化搜索引擎
+    let mut search_engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
+    search_engines.push(Arc::new(GoogleSearchEngine::new()));
+    let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
+    let search_engine_service: Arc<dyn SearchEngine> = search_aggregator;
 
     // Create custom settings for tests
     let mut settings = Settings::new().unwrap();
@@ -160,6 +252,7 @@ pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_
         ScrapeResultRepositoryImpl,
         CrawlRepositoryImpl,
         LocalStorage,
+        CreditsRepositoryImpl,
     > = WorkerManager::new(
         queue.clone(),
         task_repo.clone(),
@@ -167,6 +260,7 @@ pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_
         crawl_repo.clone(),
         storage_repo.clone(),
         webhook_event_repo.clone(),
+        credits_repo.clone(),
         router.clone(),
         create_scrape_use_case.clone(),
         redis_client.clone(),
@@ -178,6 +272,16 @@ pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_
     // Start 1 worker in the background
     if start_worker {
         worker_manager.start_workers(1).await;
+
+        // 启动 WebhookWorker
+        let webhook_service = Arc::new(WebhookServiceImpl::new("test_secret".to_string()));
+        let webhook_worker = WebhookWorker::with_default_policy(
+            webhook_event_repo.clone(),
+            webhook_service,
+        );
+        tokio::spawn(async move {
+            let _ = webhook_worker.run().await;
+        });
     }
 
     // AuthState
@@ -198,12 +302,15 @@ pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_
         ))
         .layer(Extension(queue))
         .layer(Extension(task_repo.clone()))
+        .layer(Extension(rate_limiting_service))
         .layer(Extension(crawl_repo))
+        .layer(Extension(credits_repo))
         .layer(Extension(result_repo))
         .layer(Extension(webhook_repo))
-        .layer(Extension(redis_client))
+        .layer(Extension(redis_client.clone()))
         .layer(Extension(rate_limiter))
-        .layer(Extension(settings)); // Use default settings for tests
+        .layer(Extension(settings))
+        .layer(Extension(search_engine_service)); // Use default settings for tests
 
     let server = TestServer::new(app).unwrap();
 
@@ -211,6 +318,7 @@ pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_
         server,
         db_pool,
         api_key,
+        team_id,
         task_repo,
         worker_manager: if start_worker {
             Some(worker_manager)
@@ -218,5 +326,7 @@ pub async fn create_test_app_with_rate_limit_options(start_worker: bool, enable_
             None
         },
         redis_process: Some(redis_process),
+        redis_url,
+        redis: Arc::new(redis_client),
     }
 }

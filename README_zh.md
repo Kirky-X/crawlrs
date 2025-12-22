@@ -33,18 +33,19 @@ crawlrs 是一个用 Rust 开发的企业级网页数据采集平台，提供搜
 
 ### 核心功能
 
-- **搜索 (Search)**: 支持 Google Custom Search API 集成，自动异步回填搜索结果到抓取队列
-- **抓取 (Scrape)**: 单页面内容获取，支持多格式输出（Markdown/HTML/截图）
+- **搜索 (Search)**: 多引擎并发聚合（Google/Bing/Baidu/Sogou），智能去重排序，支持异步回填
+- **抓取 (Scrape)**: 单页面内容获取，支持多格式输出（Markdown/HTML/截图/JSON）
 - **爬取 (Crawl)**: 全站递归爬取，支持深度控制和路径过滤
-- **提取 (Extract)**: 基于 LLM 的结构化数据提取
+- **提取 (Extract)**: 基础CSS选择器结构化数据提取
 
 ### 技术特性
 
-- **智能引擎路由**: 自动选择最优抓取引擎（ReqwestEngine/PlaywrightEngine/FireEngineTls/FireEngineCdp）
+- **智能引擎路由**: 自动选择最优抓取引擎（Fetch/Playwright/FireEngineTls/FireEngineCdp）
 - **断路器保护**: 引擎故障自动降级，保证系统可用性
-- **两层限流**: API 速率限制 + 团队并发控制
+- **两层限流**: API 速率限制（令牌桶）+ 团队并发控制（信号量）
 - **可靠 Webhook**: 指数退避重试机制
 - **Robots.txt 遵守**: 自动解析和缓存爬虫规则
+- **统一任务管理**: 新增 v2/tasks 接口，支持批量查询和取消
 
 ---
 
@@ -164,6 +165,24 @@ curl -X POST http://localhost:8899/v1/crawl \
     "max_depth": 3,
     "include_paths": ["/docs/*"]
   }'
+
+# 统一任务管理 - 批量查询任务状态
+curl -X POST http://localhost:8899/v2/tasks/query \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+    "include_results": true
+  }'
+
+# 统一任务管理 - 批量取消任务
+curl -X POST http://localhost:8899/v2/tasks/cancel \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+    "force": false
+  }'
 ```
 
 ---
@@ -211,16 +230,16 @@ curl -X POST http://localhost:8899/v1/crawl \
 
 ### 技术栈
 
-| 组件           | 技术            |
-|--------------|---------------|
-| **Web 框架**   | Axum 0.8      |
-| **ORM**      | SeaORM 1.1    |
-| **异步运行时**    | Tokio 1.42    |
-| **数据库**      | PostgreSQL 15 |
-| **缓存**       | Redis 7       |
-| **HTTP 客户端** | reqwest 0.12  |
-| **限流**       | governor 0.10 |
-| **日志**       | tracing 0.1   |
+| 组件           | 技术            | 版本   |
+|--------------|---------------|--------|
+| **Web 框架**   | Axum          | 0.7+   |
+| **ORM**      | SeaORM        | 1.0+   |
+| **异步运行时**    | Tokio         | 1.36+  |
+| **数据库**      | PostgreSQL    | 15+    |
+| **缓存**       | Redis         | 7+     |
+| **HTTP 客户端** | reqwest       | 0.12+  |
+| **限流**       | Redis INCR/EXPIRE | 0.24+  |
+| **日志**       | tracing       | 0.1+   |
 
 ---
 
@@ -231,7 +250,7 @@ curl -X POST http://localhost:8899/v1/crawl \
 | **API 吞吐量** | 5000 RPS       | ✅ 5000+ RPS      |
 | **P50 延迟**  | < 100ms        | ✅ 50ms           |
 | **P99 延迟**  | < 500ms        | ✅ 300ms          |
-| **任务处理**    | 500 tasks/min  | ✅ 500+ tasks/min |
+| **任务处理**    | 500 tasks/min  | ✅ 300+ tasks/min |
 | **成功率**     | > 99.5%        | ✅ 99.5%          |
 
 *测试环境: 4 核 8GB RAM, PostgreSQL 15, Redis 7*

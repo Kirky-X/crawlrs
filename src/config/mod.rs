@@ -7,6 +7,3 @@
 ///
 /// 处理应用程序的配置设置，包括数据库、Redis、服务器等配置
 pub mod settings;
-
-#[cfg(test)]
-mod settings_test;

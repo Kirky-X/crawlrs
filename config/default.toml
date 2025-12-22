@@ -1,6 +1,6 @@
 # Database Configuration
 [database]
-url = "postgres://user:password@localhost:5433/crawlrs_db"
+url = "postgres://weaver:weaver_password@localhost:5432/weaver_db"
 max_connections = 20
 min_connections = 5
 connect_timeout = 30
@@ -8,7 +8,7 @@ idle_timeout = 600
 
 # Redis Configuration
 [redis]
-url = "redis://localhost:6380"
+url = "redis://localhost:6379"
 
 # Server Configuration
 [server]

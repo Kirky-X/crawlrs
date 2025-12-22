@@ -38,6 +38,7 @@ pub struct LLMService {
     api_key: Option<String>,
     model: String,
     api_base_url: String,
+    client: reqwest::Client,
 }
 
 #[async_trait]
@@ -54,16 +55,37 @@ impl Default for LLMService {
             api_key: None,
             model: "gpt-3.5-turbo".to_string(),
             api_base_url: "https://api.openai.com/v1".to_string(),
+            client: reqwest::Client::new(),
         }
     }
 }
 
 impl LLMService {
     pub fn new(settings: &Settings) -> Self {
+        let api_key = if settings
+            .llm
+            .api_key
+            .as_ref()
+            .is_none_or(|key| key.is_empty())
+        {
+            None
+        } else {
+            settings.llm.api_key.clone()
+        };
+
         Self {
-            api_key: settings.llm.api_key.clone(),
-            model: settings.llm.model.clone().unwrap_or_else(|| "gpt-3.5-turbo".to_string()),
-            api_base_url: settings.llm.api_base_url.clone().unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+            api_key,
+            model: settings
+                .llm
+                .model
+                .clone()
+                .unwrap_or_else(|| "gpt-3.5-turbo".to_string()),
+            api_base_url: settings
+                .llm
+                .api_base_url
+                .clone()
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+            client: reqwest::Client::new(),
         }
     }
 
@@ -72,6 +94,7 @@ impl LLMService {
             api_key: Some(api_key),
             model,
             api_base_url,
+            client: reqwest::Client::new(),
         }
     }
 
@@ -100,7 +123,6 @@ impl LLMService {
             text
         };
 
-        let client = reqwest::Client::new();
         let prompt = format!(
             "Extract data from the following text according to this JSON schema: {}. \
             Return ONLY the valid JSON object, no markdown formatting. \
@@ -124,7 +146,8 @@ impl LLMService {
         });
 
         let url = format!("{}/chat/completions", self.api_base_url);
-        let response = client
+        let response = self
+            .client
             .post(url)
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&request_body)

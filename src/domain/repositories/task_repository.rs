@@ -3,8 +3,9 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::task::Task;
+use crate::domain::models::task::{Task, TaskStatus, TaskType};
 use async_trait::async_trait;
+use chrono::{DateTime, FixedOffset};
 use sea_orm::DbErr;
 use thiserror::Error;
 use uuid::Uuid;
@@ -18,6 +19,20 @@ pub enum RepositoryError {
     /// 记录未找到
     #[error("Record not found")]
     NotFound,
+}
+
+/// 任务查询参数
+#[derive(Debug, Default, Clone)]
+pub struct TaskQueryParams {
+    pub team_id: Uuid,
+    pub task_ids: Option<Vec<Uuid>>,
+    pub task_types: Option<Vec<TaskType>>,
+    pub statuses: Option<Vec<TaskStatus>>,
+    pub created_after: Option<DateTime<FixedOffset>>,
+    pub created_before: Option<DateTime<FixedOffset>>,
+    pub crawl_id: Option<Uuid>,
+    pub limit: u32,
+    pub offset: u32,
 }
 
 /// 任务仓库特质
@@ -49,4 +64,16 @@ pub trait TaskRepository: Send + Sync {
     async fn expire_tasks(&self) -> Result<u64, RepositoryError>;
     /// 根据 Crawl ID 查找所有任务
     async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError>;
+    /// 高级任务查询
+    async fn query_tasks(
+        &self,
+        params: TaskQueryParams,
+    ) -> Result<(Vec<Task>, u64), RepositoryError>;
+    /// 批量取消任务
+    async fn batch_cancel(
+        &self,
+        task_ids: Vec<Uuid>,
+        team_id: Uuid,
+        force: bool,
+    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError>;
 }

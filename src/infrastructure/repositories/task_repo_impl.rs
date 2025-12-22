@@ -4,7 +4,9 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::models::task::{Task, TaskStatus};
-use crate::domain::repositories::task_repository::{RepositoryError, TaskRepository};
+use crate::domain::repositories::task_repository::{
+    RepositoryError, TaskQueryParams, TaskRepository,
+};
 use crate::infrastructure::database::entities::task as task_entity;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, FixedOffset, Utc};
@@ -13,6 +15,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
+use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -97,6 +100,8 @@ impl TaskRepository for TaskRepositoryImpl {
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
         let model: task_entity::ActiveModel = task.clone().into();
 
+        println!("DEBUG: Creating task {} with status {}", task.id, task.status);
+
         model.insert(self.db.as_ref()).await?;
         Ok(task.clone())
     }
@@ -152,7 +157,10 @@ impl TaskRepository for TaskRepositoryImpl {
 
         println!("DEBUG: Found task: {:?}", task.as_ref().map(|t| t.id));
         if let Some(ref t) = task {
-            println!("DEBUG: Task status: {}, lock_expires_at: {:?}", t.status, t.lock_expires_at);
+            println!(
+                "DEBUG: Task status: {}, lock_expires_at: {:?}",
+                t.status, t.lock_expires_at
+            );
         }
 
         if let Some(task) = task {
@@ -185,7 +193,10 @@ impl TaskRepository for TaskRepositoryImpl {
         let mut updated_task = task.clone();
         updated_task.status = TaskStatus::Completed;
         updated_task.completed_at = Some(Utc::now().into());
-        println!("DEBUG: Updating task {} to status {:?}", id, updated_task.status);
+        println!(
+            "DEBUG: Updating task {} to status {:?}",
+            id, updated_task.status
+        );
         self.update(&updated_task).await?;
         println!("DEBUG: Successfully updated task {} to completed", id);
         Ok(())
@@ -272,7 +283,7 @@ impl TaskRepository for TaskRepositoryImpl {
             )
             .col_expr(
                 task_entity::Column::CompletedAt,
-                Expr::value::<Option<DateTime<FixedOffset>>>(Some(Utc::now().into())),
+                Expr::value::<Option<DateTime<FixedOffset>>>(Some(Utc::now().fixed_offset())),
             )
             .filter(
                 // 仅取消未完成的任务 (Queued 或 Active)
@@ -300,7 +311,7 @@ impl TaskRepository for TaskRepositoryImpl {
             )
             .col_expr(
                 task_entity::Column::CompletedAt,
-                Expr::value::<Option<DateTime<FixedOffset>>>(Some(Utc::now().into())),
+                Expr::value::<Option<DateTime<FixedOffset>>>(Some(Utc::now().fixed_offset())),
             )
             .filter(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
             .filter(task_entity::Column::CreatedAt.lt(threshold))
@@ -317,5 +328,208 @@ impl TaskRepository for TaskRepositoryImpl {
             .await?;
 
         Ok(models.into_iter().map(Task::from).collect())
+    }
+
+    async fn query_tasks(
+        &self,
+        params: TaskQueryParams,
+    ) -> Result<(Vec<Task>, u64), RepositoryError> {
+        println!("DEBUG: query_tasks params: {:?}", params);
+        let mut query =
+            task_entity::Entity::find().filter(task_entity::Column::TeamId.eq(params.team_id));
+
+        // 应用任务ID过滤
+        if let Some(ids) = params.task_ids {
+            if !ids.is_empty() {
+                query = query.filter(task_entity::Column::Id.is_in(ids));
+            }
+        }
+
+        // 应用任务类型过滤
+        if let Some(types) = params.task_types {
+            if !types.is_empty() {
+                let type_strings: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+                query = query.filter(task_entity::Column::TaskType.is_in(type_strings));
+            }
+        }
+
+        // 应用状态过滤
+        if let Some(status_list) = params.statuses {
+            if !status_list.is_empty() {
+                let status_strings: Vec<String> =
+                    status_list.iter().map(|s| s.to_string()).collect();
+                println!("DEBUG: Filtering by status: {:?}", status_strings);
+                query = query.filter(task_entity::Column::Status.is_in(status_strings));
+            }
+        }
+
+        // 应用创建时间过滤
+        if let Some(after) = params.created_after {
+            query = query.filter(task_entity::Column::CreatedAt.gte(after));
+        }
+        if let Some(before) = params.created_before {
+            query = query.filter(task_entity::Column::CreatedAt.lte(before));
+        }
+
+        // 应用爬取任务ID过滤
+        if let Some(crawl_id_filter) = params.crawl_id {
+            query = query.filter(task_entity::Column::CrawlId.eq(crawl_id_filter));
+        }
+
+        // 获取总数
+        println!("DEBUG: About to count total with current filters");
+        let total = query.clone().count(self.db.as_ref()).await?;
+        println!("DEBUG: Total count result: {}", total);
+
+        // 应用分页
+        let models = query
+            .order_by_desc(task_entity::Column::CreatedAt)
+            .limit(params.limit as u64)
+            .offset(params.offset as u64)
+            .all(self.db.as_ref())
+            .await?;
+
+        let tasks: Vec<Task> = models.into_iter().map(Task::from).collect();
+        Ok((tasks, total))
+    }
+
+    async fn batch_cancel(
+        &self,
+        task_ids: Vec<Uuid>,
+        team_id: Uuid,
+        force: bool,
+    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        let mut cancelled_tasks = Vec::new();
+        let mut failed_tasks = Vec::new();
+
+        // 获取所有任务并验证团队权限
+        let tasks = task_entity::Entity::find()
+            .filter(task_entity::Column::Id.is_in(task_ids.clone()))
+            .filter(task_entity::Column::TeamId.eq(team_id))
+            .all(self.db.as_ref())
+            .await?;
+
+        // 创建任务ID到模型的映射
+        let task_map: std::collections::HashMap<Uuid, task_entity::Model> =
+            tasks.into_iter().map(|task| (task.id, task)).collect();
+
+        // 收集需要级联取消的crawl_id
+        let mut crawl_ids_to_cancel = Vec::new();
+
+        for task_id in task_ids {
+            if let Some(task_model) = task_map.get(&task_id) {
+                let current_status =
+                    TaskStatus::from_str(&task_model.status).unwrap_or(TaskStatus::Queued);
+
+                println!("DEBUG: Processing task {} with status {:?}", task_id, current_status);
+
+                match current_status {
+                    TaskStatus::Queued => {
+                        // 只有 Queued 状态可以直接取消
+                        let result = task_entity::Entity::update_many()
+                            .col_expr(
+                                task_entity::Column::Status,
+                                Expr::value(TaskStatus::Cancelled.to_string()),
+                            )
+                            .col_expr(
+                                task_entity::Column::CompletedAt,
+                                Expr::value::<Option<DateTime<FixedOffset>>>(Some(
+                                    Utc::now().fixed_offset(),
+                                )),
+                            )
+                            .filter(task_entity::Column::Id.eq(task_id))
+                            .exec(self.db.as_ref())
+                            .await?;
+
+                        if result.rows_affected > 0 {
+                            cancelled_tasks.push(task_id);
+
+                            // 如果任务有crawl_id，收集用于级联取消
+                            if let Some(crawl_id) = task_model.crawl_id {
+                                crawl_ids_to_cancel.push(crawl_id);
+                            }
+                        } else {
+                            failed_tasks
+                                .push((task_id, "Failed to update task status".to_string()));
+                        }
+                    }
+                    TaskStatus::Failed => {
+                        failed_tasks.push((task_id, "Task is already failed".to_string()));
+                    }
+                    TaskStatus::Cancelled => {
+                        failed_tasks.push((task_id, "Task is already cancelled".to_string()));
+                    }
+                    TaskStatus::Active => {
+                        if force {
+                            // 强制取消活跃任务
+                            let result = task_entity::Entity::update_many()
+                                .col_expr(
+                                    task_entity::Column::Status,
+                                    Expr::value(TaskStatus::Cancelled.to_string()),
+                                )
+                                .col_expr(
+                                    task_entity::Column::CompletedAt,
+                                    Expr::value::<Option<DateTime<FixedOffset>>>(Some(
+                                        Utc::now().fixed_offset(),
+                                    )),
+                                )
+                                .col_expr(
+                                    task_entity::Column::LockToken,
+                                    Expr::value(Option::<Uuid>::None),
+                                )
+                                .col_expr(
+                                    task_entity::Column::LockExpiresAt,
+                                    Expr::value(Option::<DateTime<FixedOffset>>::None),
+                                )
+                                .filter(task_entity::Column::Id.eq(task_id))
+                                .exec(self.db.as_ref())
+                                .await?;
+
+                            if result.rows_affected > 0 {
+                                cancelled_tasks.push(task_id);
+
+                                // 如果任务有crawl_id，收集用于级联取消
+                                if let Some(crawl_id) = task_model.crawl_id {
+                                    crawl_ids_to_cancel.push(crawl_id);
+                                }
+                            } else {
+                                failed_tasks
+                                    .push((task_id, "Failed to update task status".to_string()));
+                            }
+                        } else {
+                            failed_tasks.push((
+                                task_id,
+                                "Task is active, use force=true to cancel".to_string(),
+                            ));
+                        }
+                    }
+                    TaskStatus::Completed => {
+                        failed_tasks.push((task_id, "Task is already completed".to_string()));
+                    }
+                }
+            } else {
+                failed_tasks.push((task_id, "Task not found or no permission".to_string()));
+            }
+        }
+
+        // 执行级联取消：取消所有与已取消任务关联的爬取任务
+        if !crawl_ids_to_cancel.is_empty() {
+            // 去重crawl_id以避免重复取消
+            crawl_ids_to_cancel.sort_unstable();
+            crawl_ids_to_cancel.dedup();
+
+            for crawl_id in crawl_ids_to_cancel {
+                match self.cancel_tasks_by_crawl_id(crawl_id).await {
+                    Ok(cancelled_count) => {
+                        println!("Cancelled {} tasks for crawl_id: {}", cancelled_count, crawl_id);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to cancel tasks for crawl_id {}: {}", crawl_id, e);
+                    }
+                }
+            }
+        }
+
+        Ok((cancelled_tasks, failed_tasks))
     }
 }

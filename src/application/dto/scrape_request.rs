@@ -36,6 +36,9 @@ pub struct ScrapeRequestDto {
     pub options: Option<ScrapeOptionsDto>,
     /// 自定义元数据
     pub metadata: Option<serde_json::Value>,
+    /// 同步等待时长（毫秒，默认 5000，最大 30000）
+    #[validate(range(min = 0, max = 30000))]
+    pub sync_wait_ms: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -64,7 +67,7 @@ pub struct ScrapeOptionsDto {
     pub use_fire_engine: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ScrapeActionDto {
     Wait { milliseconds: u64 },

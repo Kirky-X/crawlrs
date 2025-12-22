@@ -60,6 +60,21 @@ pub enum Status {
     HalfOpen,
 }
 
+/// 熔断器统计信息
+#[derive(Clone, Debug, Default)]
+pub struct CircuitStats {
+    /// 是否处于打开状态
+    pub is_open: bool,
+    /// 时间窗口内的失败次数
+    pub failure_count: u32,
+    /// 总请求数
+    pub total_requests: u64,
+    /// 总失败数
+    pub total_failures: u64,
+    /// 总成功数
+    pub total_successes: u64,
+}
+
 /// 熔断器
 ///
 /// 实现熔断器模式，防止系统因故障而崩溃
@@ -256,6 +271,30 @@ impl CircuitBreaker {
                 self.update_status_metric(engine_name, Status::Open);
             }
             Status::Open => {}
+        }
+    }
+
+    /// 获取引擎的熔断统计信息
+    ///
+    /// # 参数
+    ///
+    /// * `engine_name` - 引擎名称
+    ///
+    /// # 返回值
+    ///
+    /// 统计信息
+    pub async fn get_stats(&self, engine_name: &str) -> CircuitStats {
+        let states = self.states.read().unwrap();
+        if let Some(state) = states.get(engine_name) {
+            CircuitStats {
+                is_open: state.status == Status::Open,
+                failure_count: state.failure_timestamps.len() as u32,
+                total_requests: state.total_requests,
+                total_failures: state.total_failures,
+                total_successes: state.total_successes,
+            }
+        } else {
+            CircuitStats::default()
         }
     }
 

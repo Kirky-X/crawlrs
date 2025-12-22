@@ -5,6 +5,7 @@
 
 use crate::domain::models::task::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
+use crate::infrastructure::observability::metrics::{get_cpu_usage, get_memory_usage};
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 use anyhow::Result;
 use chrono::Utc;
@@ -38,7 +39,7 @@ impl<R: TaskRepository> CrawlService<R, RobotsChecker> {
     pub fn new(repo: Arc<R>) -> Self {
         Self {
             repo,
-            robots_checker: RobotsChecker::new(),
+            robots_checker: RobotsChecker::new(None),
         }
     }
 }
@@ -87,6 +88,27 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
             return Ok(vec![]);
         }
 
+        // Degradation strategy: reduce max_depth under high load
+        let cpu_usage = get_cpu_usage();
+        let mem_usage = get_memory_usage();
+        let effective_max_depth = if cpu_usage > 0.8 || mem_usage > 0.8 {
+            // High load: limit depth to current + 1 or config/2
+            std::cmp::min(max_depth, depth + 1)
+        } else if cpu_usage > 0.6 || mem_usage > 0.6 {
+            // Medium load: limit depth to 75% of max_depth
+            std::cmp::max(depth + 1, (max_depth as f64 * 0.75) as u64)
+        } else {
+            max_depth
+        };
+
+        if depth >= effective_max_depth {
+            tracing::warn!(
+                "Crawl depth limited by degradation strategy: depth={}, effective_max_depth={}, cpu={}, mem={}",
+                depth, effective_max_depth, cpu_usage, mem_usage
+            );
+            return Ok(vec![]);
+        }
+
         let include_patterns: Vec<String> = parent_task
             .payload
             .get("include_patterns")
@@ -105,6 +127,12 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
             .and_then(|v| v.as_str())
             .unwrap_or("bfs");
 
+        let domain_blacklist: Vec<String> = parent_task
+            .payload
+            .get("domain_blacklist")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
         // Extract links
         let links = LinkDiscoverer::extract_links(html_content, &parent_task.url)?;
 
@@ -114,13 +142,14 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         let mut created_tasks = Vec::new();
 
         for link in filtered {
-            // Robots.txt check
-            if !self
-                .robots_checker
-                .is_allowed(&link, "Crawlrs/0.1.0")
-                .await?
-            {
-                continue;
+            // Domain blacklist check
+            if let Ok(url) = Url::parse(&link) {
+                if let Some(domain) = url.domain() {
+                    if domain_blacklist.iter().any(|d| domain.contains(d)) {
+                        tracing::info!("Skipping blacklisted domain: {} for link: {}", domain, link);
+                        continue;
+                    }
+                }
             }
 
             // Deduplication check
@@ -135,18 +164,53 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
             // Adjust priority based on strategy
             // BFS: Same priority (FIFO) or lower
             // DFS: Higher priority (LIFO)
-            let priority = if strategy.to_lowercase() == "dfs" {
+            let mut priority = if strategy.to_lowercase() == "dfs" {
                 parent_task.priority + 10
             } else {
                 parent_task.priority
             };
 
-            let delay_ms = parent_task
+            // Degradation strategy: reduce priority for non-critical tasks under high load
+            if cpu_usage > 0.7 || mem_usage > 0.7 {
+                priority = priority.saturating_sub(5);
+            }
+
+            // Get robots.txt crawl delay if available
+            // 注意：这里将 robots 检查推迟到任务处理时，或者在此处并行检查
+            // 为了优化 UAT-012 的处理时间，我们可以在这里跳过 robots 检查，
+            // 让 Worker 在实际执行时进行检查。或者我们只获取 delay 但不进行完整的 allowed 检查。
+            // 但根据目前的代码结构，Robots 检查是在这里进行的。
+            // 优化：只有当 URL 不在数据库中时才检查 robots.txt
+
+            let user_agent = "Crawlrs/0.1.0";
+            // Robots.txt check - Move AFTER deduplication check to save network requests
+            if !self
+                .robots_checker
+                .is_allowed(&link, user_agent)
+                .await?
+            {
+                continue;
+            }
+
+            let robots_delay = self
+                .robots_checker
+                .get_crawl_delay(&link, user_agent)
+                .await?
+                .map(|d| d.as_millis() as u64);
+
+            let config_delay = parent_task
                 .payload
                 .get("config")
                 .and_then(|c| c.get("crawl_delay_ms"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+                .and_then(|v| v.as_u64());
+
+            // Prefer robots.txt delay if it's larger, or use config delay
+            let delay_ms = match (robots_delay, config_delay) {
+                (Some(r), Some(c)) => std::cmp::max(r, c),
+                (Some(r), None) => r,
+                (None, Some(c)) => c,
+                (None, None) => 0,
+            };
 
             let scheduled_at = if delay_ms > 0 {
                 Some((Utc::now() + chrono::Duration::milliseconds(delay_ms as i64)).into())
@@ -172,7 +236,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
                 updated_at: Utc::now().into(),
                 lock_token: None,
                 lock_expires_at: None,
-                expires_at: None,
+                expires_at: parent_task.expires_at,
             };
 
             // Save to repository
@@ -194,9 +258,8 @@ impl LinkDiscoverer {
     fn glob_to_regex(pattern: &str) -> Result<Regex> {
         // 简单的glob到regex转换
         let mut regex_pattern = String::new();
-        let mut chars = pattern.chars().peekable();
-        
-        while let Some(ch) = chars.next() {
+
+        for ch in pattern.chars() {
             match ch {
                 '*' => regex_pattern.push_str(".*"),
                 '?' => regex_pattern.push('.'),
@@ -207,7 +270,7 @@ impl LinkDiscoverer {
                 _ => regex_pattern.push(ch),
             }
         }
-        
+
         Regex::new(&regex_pattern).map_err(|e| anyhow::anyhow!("Invalid regex pattern: {}", e))
     }
 
@@ -287,18 +350,18 @@ impl LinkDiscoverer {
         println!("DEBUG: filter_links called with {} links", links.len());
         println!("DEBUG: include_patterns: {:?}", include_patterns);
         println!("DEBUG: exclude_patterns: {:?}", exclude_patterns);
-        
+
         // Convert glob patterns to regex patterns
         let include_regexes: Vec<Regex> = include_patterns
             .iter()
             .filter_map(|p| Self::glob_to_regex(p).ok())
             .collect();
-        
+
         let exclude_regexes: Vec<Regex> = exclude_patterns
             .iter()
             .filter_map(|p| Self::glob_to_regex(p).ok())
             .collect();
-        
+
         let filtered: HashSet<String> = links
             .into_iter()
             .filter(|link| {
@@ -310,7 +373,12 @@ impl LinkDiscoverer {
                 } else {
                     let matched = include_regexes.iter().any(|regex| {
                         let matches = regex.is_match(link);
-                        println!("DEBUG: Checking if '{}' matches include pattern '{}': {}", link, regex.as_str(), matches);
+                        println!(
+                            "DEBUG: Checking if '{}' matches include pattern '{}': {}",
+                            link,
+                            regex.as_str(),
+                            matches
+                        );
                         matches
                     });
                     println!("DEBUG: matches_include: {}", matched);
@@ -320,7 +388,12 @@ impl LinkDiscoverer {
                 // Link must NOT match any exclude pattern
                 let matches_exclude = exclude_regexes.iter().any(|regex| {
                     let matches = regex.is_match(link);
-                    println!("DEBUG: Checking if '{}' matches exclude pattern '{}': {}", link, regex.as_str(), matches);
+                    println!(
+                        "DEBUG: Checking if '{}' matches exclude pattern '{}': {}",
+                        link,
+                        regex.as_str(),
+                        matches
+                    );
                     matches
                 });
                 println!("DEBUG: matches_exclude: {}", matches_exclude);
@@ -330,7 +403,7 @@ impl LinkDiscoverer {
                 result
             })
             .collect();
-        
+
         println!("DEBUG: Filtered links count: {}", filtered.len());
         filtered
     }

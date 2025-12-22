@@ -57,14 +57,20 @@ impl PortSniffer {
     /// # 返回值
     ///
     /// * `Result<PortSnifferResult, PortSnifferError>` - 嗅探结果或错误
-    pub fn find_available_port(start_port: u16, enable_detection: bool) -> Result<PortSnifferResult, PortSnifferError> {
+    pub fn find_available_port(
+        start_port: u16,
+        enable_detection: bool,
+    ) -> Result<PortSnifferResult, PortSnifferError> {
         let mut logs = Vec::new();
         logs.push(format!("开始端口检测，起始端口: {}", start_port));
 
         // 如果未启用检测功能，直接检查起始端口
         if !enable_detection {
             if Self::is_port_in_use(start_port) {
-                logs.push(format!("端口 {} 已被占用，且自动嗅探功能未启用", start_port));
+                logs.push(format!(
+                    "端口 {} 已被占用，且自动嗅探功能未启用",
+                    start_port
+                ));
                 warn!("端口 {} 已被占用，且自动嗅探功能未启用", start_port);
                 // 虽然被占用，但根据需求，如果不启用检测，可能应该直接返回配置的端口让系统去报错，
                 // 或者在这里就报错。根据题目要求 "当设置为false时，程序直接使用配置的默认端口而不进行嗅探"，
@@ -84,10 +90,11 @@ impl PortSniffer {
         }
 
         let mut current_port = start_port;
-        // 设置最大尝试范围，例如尝试100个端口
-        let max_port = std::cmp::min(start_port as u32 + 100, 65535) as u16;
+        // 设置最大尝试范围，最多尝试50个端口
+        let max_attempts = 50;
+        let mut attempts = 0;
 
-        while current_port <= max_port {
+        while attempts < max_attempts {
             if !Self::is_port_in_use(current_port) {
                 logs.push(format!("找到可用端口: {}", current_port));
                 info!("找到可用端口: {}", current_port);
@@ -98,21 +105,34 @@ impl PortSniffer {
                 });
             }
 
+            attempts += 1;
             logs.push(format!("端口 {} 已被占用", current_port));
-            warn!("端口 {} 已被占用，尝试下一个端口...", current_port);
-            
+
+            // 只在最后几次尝试时显示警告
+            if attempts < max_attempts {
+                warn!(
+                    "端口 {} 已被占用，尝试下一个端口... ({}/{})",
+                    current_port, attempts, max_attempts
+                );
+            }
+
             // 检查下一个端口是否超出范围
             if current_port == 65535 {
                 return Err(PortSnifferError::PortOutOfRange(current_port));
             }
-            
+
             current_port += 1;
-            
+
             // 适当的间隔时间，避免检测过快
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        Err(PortSnifferError::NoAvailablePort(format!("在范围 {}-{} 内未找到可用端口", start_port, max_port)))
+        Err(PortSnifferError::NoAvailablePort(format!(
+            "在尝试 {} 个端口后未找到可用端口 (范围 {}-{})",
+            max_attempts,
+            start_port,
+            current_port - 1
+        )))
     }
 }
 
@@ -126,7 +146,7 @@ mod tests {
         // 绑定一个随机端口
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        
+
         // 该端口应该显示被占用
         // 注意：is_port_in_use 尝试绑定 0.0.0.0，如果测试环境支持双栈或特定绑定可能会有差异
         // 这里简单测试逻辑
@@ -140,7 +160,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         // 释放该端口
         drop(listener);
-        
+
         let result = PortSniffer::find_available_port(port, true).unwrap();
         assert_eq!(result.port, port);
         assert!(result.success);
@@ -151,21 +171,21 @@ mod tests {
         // 占用一个端口
         let listener = TcpListener::bind("0.0.0.0:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        
+
         // 尝试从该端口开始查找，应该找到下一个可用端口
         let result = PortSniffer::find_available_port(port, true).unwrap();
-        
+
         assert!(result.port > port);
         assert!(result.success);
         assert!(result.logs.iter().any(|log| log.contains("已被占用")));
     }
-    
+
     #[test]
     fn test_disable_detection() {
         // 占用一个端口
         let listener = TcpListener::bind("0.0.0.0:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        
+
         // 禁用检测，应该直接返回原端口
         let result = PortSniffer::find_available_port(port, false).unwrap();
         assert_eq!(result.port, port);

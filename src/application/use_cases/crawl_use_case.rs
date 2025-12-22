@@ -19,7 +19,7 @@ use crate::{
         },
     },
 };
-use chrono::Utc;
+use chrono::{FixedOffset, Utc};
 use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
@@ -224,7 +224,9 @@ where
             updated_at: now.into(),
             lock_token: None,      // 尚未加锁
             lock_expires_at: None, // 锁未过期
-            expires_at: None,      // 任务未过期
+            expires_at: dto
+                .expires_at
+                .map(|dt| dt.with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap())), // 任务过期时间
         };
 
         // 6. 保存初始任务到数据库

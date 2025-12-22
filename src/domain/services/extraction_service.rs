@@ -43,6 +43,24 @@ impl ExtractionService {
         service.extract_data(html_content, rules).await
     }
 
+    /// 使用全局 Schema 直接通过 LLM 提取数据
+    pub async fn extract_with_schema(
+        html_content: &str,
+        schema: &Value,
+        settings: &Settings,
+    ) -> Result<(Value, TokenUsage)> {
+        let llm_service = LLMService::new(settings);
+
+        // 限制内容长度以节省 token 并避免超出上下文窗口
+        let content_preview = if html_content.len() > 50000 {
+            &html_content[..50000]
+        } else {
+            html_content
+        };
+
+        llm_service.extract_data(content_preview, schema).await
+    }
+
     pub async fn extract_data(
         &self,
         html_content: &str,
@@ -229,7 +247,8 @@ mod tests {
         );
 
         let settings = Settings::new().unwrap();
-        let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
+        let (result, _) =
+            tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
 
         assert_eq!(result["title"], "Test Page");
         assert_eq!(result["header"], "Main Header");

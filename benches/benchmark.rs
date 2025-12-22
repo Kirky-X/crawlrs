@@ -7,21 +7,24 @@
 //!
 //! 该模块包含对 crawlrs 系统核心组件的性能基准测试，用于评估系统在不同场景下的性能表现。
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
-use std::hint::black_box;
 use crawlrs::domain::models::task::{Task, TaskType};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{Database, DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, DbErr, QueryOrder, QuerySelect, PaginatorTrait};
+use sea_orm::{
+    ColumnTrait, Database, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect,
+};
+use std::hint::black_box;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 /// 创建测试数据库连接并运行迁移
 async fn create_test_db() -> Result<DatabaseConnection, DbErr> {
     let db = Database::connect("sqlite::memory:").await?;
-    
+
     // 运行数据库迁移
     Migrator::up(&db, None).await?;
-    
+
     Ok(db)
 }
 
@@ -30,73 +33,85 @@ async fn create_test_db() -> Result<DatabaseConnection, DbErr> {
 /// 测试在不同并发级别下创建任务的性能表现，包括数据库持久化操作
 fn benchmark_task_creation(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let db = rt.block_on(create_test_db()).expect("Failed to setup test database");
-    
+    let db = rt
+        .block_on(create_test_db())
+        .expect("Failed to setup test database");
+
     let mut group = c.benchmark_group("task_creation");
-    
+
     // 测试内存中的任务创建
     for size in [10, 100, 1000].iter() {
-        group.bench_with_input(BenchmarkId::new("memory_creation", size), size, |b, &size| {
-            b.iter(|| {
-                let mut tasks = Vec::new();
-                for i in 0..size {
-                    let task = Task::new(
-                        TaskType::Scrape,
-                        Uuid::new_v4(),
-                        format!("https://example{}.com", i),
-                        serde_json::json!({"test": true})
-                    );
-                    tasks.push(task);
-                }
-                black_box(tasks)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("memory_creation", size),
+            size,
+            |b, &size| {
+                b.iter(|| {
+                    let mut tasks = Vec::new();
+                    for i in 0..size {
+                        let task = Task::new(
+                            TaskType::Scrape,
+                            Uuid::new_v4(),
+                            format!("https://example{}.com", i),
+                            serde_json::json!({"test": true}),
+                        );
+                        tasks.push(task);
+                    }
+                    black_box(tasks)
+                });
+            },
+        );
     }
-    
+
     // 测试数据库持久化的任务创建
     for size in [10, 100, 500].iter() {
-        group.bench_with_input(BenchmarkId::new("database_persistence", size), size, |b, &size| {
-            b.iter(|| {
-                let rt = Runtime::new().unwrap();
-                let db = &db;
-                let mut tasks = Vec::new();
-                
-                for i in 0..size {
-                    let task = crawlrs::infrastructure::database::entities::task::ActiveModel {
-                        id: sea_orm::Set(Uuid::new_v4()),
-                        crawl_id: sea_orm::Set(None),
-                        task_type: sea_orm::Set("scrape".to_string()),
-                        status: sea_orm::Set("queued".to_string()),
-                        priority: sea_orm::Set(0),
-                        team_id: sea_orm::Set(Uuid::new_v4()),
-                        url: sea_orm::Set(format!("https://example{}.com", i)),
-                        payload: sea_orm::Set(serde_json::json!({"test": true})),
-                        attempt_count: sea_orm::Set(0),
-                        max_retries: sea_orm::Set(3),
-                        created_at: sea_orm::Set(chrono::Utc::now().into()),
-                        updated_at: sea_orm::Set(chrono::Utc::now().into()),
-                        scheduled_at: sea_orm::Set(None),
-                        started_at: sea_orm::Set(None),
-                        completed_at: sea_orm::Set(None),
-                        lock_token: sea_orm::Set(None),
-                        lock_expires_at: sea_orm::Set(None),
-                        expires_at: sea_orm::Set(None),
-                    };
-                    tasks.push(task);
-                }
-                
-                // 批量插入到数据库
-                let result = rt.block_on(async {
-                    crawlrs::infrastructure::database::entities::task::Entity::insert_many(tasks)
+        group.bench_with_input(
+            BenchmarkId::new("database_persistence", size),
+            size,
+            |b, &size| {
+                b.iter(|| {
+                    let rt = Runtime::new().unwrap();
+                    let db = &db;
+                    let mut tasks = Vec::new();
+
+                    for i in 0..size {
+                        let task = crawlrs::infrastructure::database::entities::task::ActiveModel {
+                            id: sea_orm::Set(Uuid::new_v4()),
+                            crawl_id: sea_orm::Set(None),
+                            task_type: sea_orm::Set("scrape".to_string()),
+                            status: sea_orm::Set("queued".to_string()),
+                            priority: sea_orm::Set(0),
+                            team_id: sea_orm::Set(Uuid::new_v4()),
+                            url: sea_orm::Set(format!("https://example{}.com", i)),
+                            payload: sea_orm::Set(serde_json::json!({"test": true})),
+                            attempt_count: sea_orm::Set(0),
+                            max_retries: sea_orm::Set(3),
+                            created_at: sea_orm::Set(chrono::Utc::now().into()),
+                            updated_at: sea_orm::Set(chrono::Utc::now().into()),
+                            scheduled_at: sea_orm::Set(None),
+                            started_at: sea_orm::Set(None),
+                            completed_at: sea_orm::Set(None),
+                            lock_token: sea_orm::Set(None),
+                            lock_expires_at: sea_orm::Set(None),
+                            expires_at: sea_orm::Set(None),
+                        };
+                        tasks.push(task);
+                    }
+
+                    // 批量插入到数据库
+                    let result = rt.block_on(async {
+                        crawlrs::infrastructure::database::entities::task::Entity::insert_many(
+                            tasks,
+                        )
                         .exec(db)
                         .await
+                    });
+
+                    black_box(result)
                 });
-                
-                black_box(result)
-            });
-        });
+            },
+        );
     }
-    
+
     group.finish();
 }
 
@@ -105,9 +120,9 @@ fn benchmark_task_creation(c: &mut Criterion) {
 /// 测试任务在不同状态之间转换的性能
 fn benchmark_task_status_transitions(c: &mut Criterion) {
     let _rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("task_status_transitions");
-    
+
     // 测试单个任务的状态转换
     group.bench_function("single_task_lifecycle", |b| {
         b.iter(|| {
@@ -115,37 +130,41 @@ fn benchmark_task_status_transitions(c: &mut Criterion) {
                 TaskType::Scrape,
                 Uuid::new_v4(),
                 "https://example.com".to_string(),
-                serde_json::json!({})
+                serde_json::json!({}),
             );
-            
+
             // 模拟完整的任务生命周期
             task = task.start().unwrap();
             task = task.complete().unwrap();
-            
+
             black_box(task)
         });
     });
-    
+
     // 测试批量任务状态转换
     for batch_size in [10, 50, 100].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(batch_size), batch_size, |b, &batch_size| {
-            b.iter(|| {
-                let mut tasks = Vec::new();
-                for i in 0..batch_size {
-                    let mut task = Task::new(
-                        TaskType::Scrape,
-                        Uuid::new_v4(),
-                        format!("https://example{}.com", i),
-                        serde_json::json!({})
-                    );
-                    task = task.start().unwrap();
-                    tasks.push(task);
-                }
-                black_box(tasks)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(batch_size),
+            batch_size,
+            |b, &batch_size| {
+                b.iter(|| {
+                    let mut tasks = Vec::new();
+                    for i in 0..batch_size {
+                        let mut task = Task::new(
+                            TaskType::Scrape,
+                            Uuid::new_v4(),
+                            format!("https://example{}.com", i),
+                            serde_json::json!({}),
+                        );
+                        task = task.start().unwrap();
+                        tasks.push(task);
+                    }
+                    black_box(tasks)
+                });
+            },
+        );
     }
-    
+
     group.finish();
 }
 
@@ -154,9 +173,9 @@ fn benchmark_task_status_transitions(c: &mut Criterion) {
 /// 测试任务对象的JSON序列化和反序列化性能
 fn benchmark_json_serialization(c: &mut Criterion) {
     let _rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("json_serialization");
-    
+
     // 创建测试任务
     let task = Task::new(
         TaskType::Scrape,
@@ -171,9 +190,9 @@ fn benchmark_json_serialization(c: &mut Criterion) {
             "array": [1, 2, 3, 4, 5],
             "boolean": true,
             "number": 42.5
-        })
+        }),
     );
-    
+
     // 序列化基准测试
     group.bench_function("serialize_task", |b| {
         b.iter(|| {
@@ -181,7 +200,7 @@ fn benchmark_json_serialization(c: &mut Criterion) {
             black_box(json_str)
         });
     });
-    
+
     // 反序列化基准测试
     let task_json = serde_json::to_string(&task).unwrap();
     group.bench_function("deserialize_task", |b| {
@@ -190,7 +209,7 @@ fn benchmark_json_serialization(c: &mut Criterion) {
             black_box(deserialized)
         });
     });
-    
+
     // 测试不同大小的payload
     for payload_size in ["small", "medium", "large"].iter() {
         let payload = match *payload_size {
@@ -226,17 +245,21 @@ fn benchmark_json_serialization(c: &mut Criterion) {
                     "object": {"nested": "value"}
                 }
             }),
-            _ => serde_json::json!({})
+            _ => serde_json::json!({}),
         };
-        
-        group.bench_with_input(BenchmarkId::new("serialize_payload", payload_size), &payload, |b, payload| {
-            b.iter(|| {
-                let json_str = serde_json::to_string(payload).unwrap();
-                black_box(json_str)
-            });
-        });
+
+        group.bench_with_input(
+            BenchmarkId::new("serialize_payload", payload_size),
+            &payload,
+            |b, payload| {
+                b.iter(|| {
+                    let json_str = serde_json::to_string(payload).unwrap();
+                    black_box(json_str)
+                });
+            },
+        );
     }
-    
+
     group.finish();
 }
 
@@ -245,7 +268,7 @@ fn benchmark_json_serialization(c: &mut Criterion) {
 /// 测试UUID生成和字符串转换的性能
 fn benchmark_uuid_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("uuid_operations");
-    
+
     // UUID生成
     group.bench_function("generate_uuid_v4", |b| {
         b.iter(|| {
@@ -253,7 +276,7 @@ fn benchmark_uuid_operations(c: &mut Criterion) {
             black_box(id)
         });
     });
-    
+
     // UUID到字符串转换
     group.bench_function("uuid_to_string", |b| {
         let id = Uuid::new_v4();
@@ -262,7 +285,7 @@ fn benchmark_uuid_operations(c: &mut Criterion) {
             black_box(s)
         });
     });
-    
+
     // 字符串到UUID转换
     let uuid_str = Uuid::new_v4().to_string();
     group.bench_function("string_to_uuid", |b| {
@@ -271,7 +294,7 @@ fn benchmark_uuid_operations(c: &mut Criterion) {
             black_box(id)
         });
     });
-    
+
     group.finish();
 }
 
@@ -280,7 +303,7 @@ fn benchmark_uuid_operations(c: &mut Criterion) {
 /// 测试任务对象的内存分配和克隆性能
 fn benchmark_memory_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_operations");
-    
+
     // 创建包含大量数据的任务
     let task = Task::new(
         TaskType::Scrape,
@@ -304,7 +327,7 @@ fn benchmark_memory_operations(c: &mut Criterion) {
             }
         })
     );
-    
+
     // 克隆操作
     group.bench_function("clone_large_task", |b| {
         b.iter(|| {
@@ -312,22 +335,24 @@ fn benchmark_memory_operations(c: &mut Criterion) {
             black_box(cloned)
         });
     });
-    
+
     // 内存分配测试 - 创建多个任务
     group.bench_function("allocate_task_batch", |b| {
         b.iter(|| {
-            let tasks: Vec<Task> = (0..100).map(|i| {
-                Task::new(
-                    TaskType::Scrape,
-                    Uuid::new_v4(),
-                    format!("https://example{}.com", i),
-                    serde_json::json!({"index": i})
-                )
-            }).collect();
+            let tasks: Vec<Task> = (0..100)
+                .map(|i| {
+                    Task::new(
+                        TaskType::Scrape,
+                        Uuid::new_v4(),
+                        format!("https://example{}.com", i),
+                        serde_json::json!({"index": i}),
+                    )
+                })
+                .collect();
             black_box(tasks)
         });
     });
-    
+
     group.finish();
 }
 
@@ -337,26 +362,30 @@ fn benchmark_memory_operations(c: &mut Criterion) {
 fn benchmark_concurrent_task_processing(c: &mut Criterion) {
     let _rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("concurrent_task_processing");
-    
+
     // 测试不同并发级别的任务创建
     for concurrency in [10, 50, 100].iter() {
-        group.bench_with_input(BenchmarkId::new("create_concurrent_tasks", concurrency), concurrency, |b, &concurrency| {
-            b.iter(|| {
-                let mut tasks = Vec::new();
-                for i in 0..concurrency {
-                    let task = Task::new(
-                        TaskType::Scrape,
-                        Uuid::new_v4(),
-                        format!("https://example{}.com", i),
-                        serde_json::json!({"task_id": i})
-                    );
-                    tasks.push(task);
-                }
-                black_box(tasks)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("create_concurrent_tasks", concurrency),
+            concurrency,
+            |b, &concurrency| {
+                b.iter(|| {
+                    let mut tasks = Vec::new();
+                    for i in 0..concurrency {
+                        let task = Task::new(
+                            TaskType::Scrape,
+                            Uuid::new_v4(),
+                            format!("https://example{}.com", i),
+                            serde_json::json!({"task_id": i}),
+                        );
+                        tasks.push(task);
+                    }
+                    black_box(tasks)
+                });
+            },
+        );
     }
-    
+
     group.finish();
 }
 
@@ -365,24 +394,24 @@ fn benchmark_concurrent_task_processing(c: &mut Criterion) {
 /// 测试系统在处理错误情况时的性能表现
 fn benchmark_error_handling(c: &mut Criterion) {
     let mut group = c.benchmark_group("error_handling");
-    
+
     // 测试任务状态转换中的错误处理
     group.bench_function("task_state_validation", |b| {
         let completed_task = Task::new(
             TaskType::Scrape,
             Uuid::new_v4(),
             "https://example.com".to_string(),
-            serde_json::json!({})
+            serde_json::json!({}),
         );
         let completed_task = completed_task.complete().unwrap();
-        
+
         b.iter(|| {
             // 尝试对已完成的任务执行无效操作
             let result = completed_task.clone().start();
             black_box(result)
         });
     });
-    
+
     // JSON解析错误处理
     let invalid_json = r#"{"invalid": json}"#;
     group.bench_function("json_parse_error", |b| {
@@ -391,7 +420,7 @@ fn benchmark_error_handling(c: &mut Criterion) {
             black_box(result)
         });
     });
-    
+
     // UUID解析错误处理
     let invalid_uuid = "not-a-valid-uuid";
     group.bench_function("uuid_parse_error", |b| {
@@ -400,7 +429,7 @@ fn benchmark_error_handling(c: &mut Criterion) {
             black_box(result)
         });
     });
-    
+
     group.finish();
 }
 
@@ -409,8 +438,10 @@ fn benchmark_error_handling(c: &mut Criterion) {
 /// 测试数据库查询性能，包括索引使用和复杂查询
 fn benchmark_database_queries(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let db = rt.block_on(create_test_db()).expect("Failed to setup test database");
-    
+    let db = rt
+        .block_on(create_test_db())
+        .expect("Failed to setup test database");
+
     // 预填充测试数据
     rt.block_on(async {
         let mut tasks = Vec::new();
@@ -418,8 +449,22 @@ fn benchmark_database_queries(c: &mut Criterion) {
             let task = crawlrs::infrastructure::database::entities::task::ActiveModel {
                 id: sea_orm::Set(Uuid::new_v4()),
                 crawl_id: sea_orm::Set(None),
-                task_type: sea_orm::Set(if i % 3 == 0 { "scrape".to_string() } else if i % 3 == 1 { "crawl".to_string() } else { "extract".to_string() }),
-                status: sea_orm::Set(if i % 4 == 0 { "completed".to_string() } else if i % 4 == 1 { "failed".to_string() } else if i % 4 == 2 { "active".to_string() } else { "queued".to_string() }),
+                task_type: sea_orm::Set(if i % 3 == 0 {
+                    "scrape".to_string()
+                } else if i % 3 == 1 {
+                    "crawl".to_string()
+                } else {
+                    "extract".to_string()
+                }),
+                status: sea_orm::Set(if i % 4 == 0 {
+                    "completed".to_string()
+                } else if i % 4 == 1 {
+                    "failed".to_string()
+                } else if i % 4 == 2 {
+                    "active".to_string()
+                } else {
+                    "queued".to_string()
+                }),
                 priority: sea_orm::Set((i % 5) as i32),
                 team_id: sea_orm::Set(Uuid::new_v4()),
                 url: sea_orm::Set(format!("https://example{}.com", i)),
@@ -437,15 +482,15 @@ fn benchmark_database_queries(c: &mut Criterion) {
             };
             tasks.push(task);
         }
-        
+
         crawlrs::infrastructure::database::entities::task::Entity::insert_many(tasks)
             .exec(&db)
             .await
             .expect("Failed to insert test data");
     });
-    
+
     let mut group = c.benchmark_group("database_queries");
-    
+
     // 基础查询 - 按ID查询
     group.bench_function("query_by_id", |b| {
         b.iter(|| {
@@ -459,14 +504,17 @@ fn benchmark_database_queries(c: &mut Criterion) {
             black_box(result)
         });
     });
-    
+
     // 索引查询 - 按状态查询
     group.bench_function("query_by_status", |b| {
         b.iter(|| {
             let rt = Runtime::new().unwrap();
             let result = rt.block_on(async {
                 crawlrs::infrastructure::database::entities::task::Entity::find()
-                    .filter(crawlrs::infrastructure::database::entities::task::Column::Status.eq("queued"))
+                    .filter(
+                        crawlrs::infrastructure::database::entities::task::Column::Status
+                            .eq("queued"),
+                    )
                     .limit(10)
                     .all(&db)
                     .await
@@ -474,16 +522,23 @@ fn benchmark_database_queries(c: &mut Criterion) {
             black_box(result)
         });
     });
-    
+
     // 复合索引查询 - 按状态和优先级排序
     group.bench_function("query_by_status_priority", |b| {
         b.iter(|| {
             let rt = Runtime::new().unwrap();
             let result = rt.block_on(async {
                 crawlrs::infrastructure::database::entities::task::Entity::find()
-                    .filter(crawlrs::infrastructure::database::entities::task::Column::Status.eq("queued"))
-                    .order_by_asc(crawlrs::infrastructure::database::entities::task::Column::Priority)
-                    .order_by_asc(crawlrs::infrastructure::database::entities::task::Column::CreatedAt)
+                    .filter(
+                        crawlrs::infrastructure::database::entities::task::Column::Status
+                            .eq("queued"),
+                    )
+                    .order_by_asc(
+                        crawlrs::infrastructure::database::entities::task::Column::Priority,
+                    )
+                    .order_by_asc(
+                        crawlrs::infrastructure::database::entities::task::Column::CreatedAt,
+                    )
                     .limit(10)
                     .all(&db)
                     .await
@@ -491,21 +546,24 @@ fn benchmark_database_queries(c: &mut Criterion) {
             black_box(result)
         });
     });
-    
+
     // 聚合查询 - 统计任务数量
     group.bench_function("count_tasks", |b| {
         b.iter(|| {
             let rt = Runtime::new().unwrap();
             let result = rt.block_on(async {
                 crawlrs::infrastructure::database::entities::task::Entity::find()
-                    .filter(crawlrs::infrastructure::database::entities::task::Column::Status.eq("completed"))
+                    .filter(
+                        crawlrs::infrastructure::database::entities::task::Column::Status
+                            .eq("completed"),
+                    )
                     .count(&db)
                     .await
             });
             black_box(result)
         });
     });
-    
+
     group.finish();
 }
 
@@ -514,7 +572,7 @@ fn benchmark_database_queries(c: &mut Criterion) {
 /// 测试常用的字符串操作性能
 fn benchmark_string_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("string_operations");
-    
+
     // URL验证和处理
     let test_urls = vec![
         "https://example.com",
@@ -522,7 +580,7 @@ fn benchmark_string_operations(c: &mut Criterion) {
         "http://localhost:8080/api/v1/endpoint",
         "https://example.com/very/long/path/with/many/segments/and/query/parameters?param1=value1&param2=value2&param3=value3",
     ];
-    
+
     group.bench_function("url_validation", |b| {
         b.iter(|| {
             for url in &test_urls {
@@ -531,19 +589,19 @@ fn benchmark_string_operations(c: &mut Criterion) {
             }
         });
     });
-    
+
     // JSON字符串转义
     let test_content = r#"Content with "quotes" and special chars: 
 	
  and unicode: 你好世界 🌍"#;
-    
+
     group.bench_function("json_string_escape", |b| {
         b.iter(|| {
             let escaped = serde_json::to_string(test_content).unwrap();
             black_box(escaped)
         });
     });
-    
+
     // 字符串截断操作
     let long_content = "A".repeat(10000);
     group.bench_function("string_truncation", |b| {
@@ -556,7 +614,7 @@ fn benchmark_string_operations(c: &mut Criterion) {
             black_box(truncated)
         });
     });
-    
+
     group.finish();
 }
 

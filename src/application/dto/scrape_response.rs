@@ -17,4 +17,7 @@ pub struct ScrapeResponseDto {
     pub id: Uuid,
     /// 请求爬取的URL
     pub url: String,
+    /// 消耗的积分
+    #[serde(default)]
+    pub credits_used: u32,
 }

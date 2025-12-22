@@ -8,8 +8,8 @@ use chrono::Utc;
 use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use uuid::Uuid;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// 测试并发任务获取和超时
 ///
@@ -29,8 +29,8 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     let worker2_id = Uuid::new_v4();
 
     // Clean up any existing tasks
-    use sea_orm::EntityTrait;
     use crawlrs::infrastructure::database::entities::task as task_entity;
+    use sea_orm::EntityTrait;
     task_entity::Entity::delete_many()
         .exec(app.db_pool.as_ref())
         .await
@@ -63,9 +63,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
 
     // --- Concurrent Acquisition ---
     let repo1 = repo.clone();
-    let handle1 = tokio::spawn(async move {
-        repo1.acquire_next(worker1_id).await.unwrap()
-    });
+    let handle1 = tokio::spawn(async move { repo1.acquire_next(worker1_id).await.unwrap() });
 
     let repo2 = repo.clone();
     let handle2 = tokio::spawn(async move {
@@ -77,8 +75,14 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     let result1 = handle1.await.unwrap();
     let result2 = handle2.await.unwrap();
 
-    println!("DEBUG: Worker 1 result: {:?}", result1.as_ref().map(|t| t.id));
-    println!("DEBUG: Worker 2 result: {:?}", result2.as_ref().map(|t| t.id));
+    println!(
+        "DEBUG: Worker 1 result: {:?}",
+        result1.as_ref().map(|t| t.id)
+    );
+    println!(
+        "DEBUG: Worker 2 result: {:?}",
+        result2.as_ref().map(|t| t.id)
+    );
 
     // Assert that only one worker got the task
     assert!(result1.is_some());
@@ -94,7 +98,6 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     assert!(reacquired_task.is_some());
     assert_eq!(reacquired_task.unwrap().id, task.id);
 }
-
 
 /// 测试仓库的CRUD操作
 ///
@@ -264,7 +267,7 @@ async fn test_task_status_transitions() {
     failed_task.id = failed_task_id;
     failed_task.status = TaskStatus::Active;
     repo.create(&failed_task).await.unwrap();
-    
+
     repo.mark_failed(failed_task_id).await.unwrap();
     let found_failed_task = repo.find_by_id(failed_task_id).await.unwrap().unwrap();
     assert_eq!(found_failed_task.status, TaskStatus::Failed);
@@ -275,7 +278,7 @@ async fn test_task_status_transitions() {
     cancelled_task.id = cancelled_task_id;
     cancelled_task.status = TaskStatus::Queued;
     repo.create(&cancelled_task).await.unwrap();
-    
+
     repo.mark_cancelled(cancelled_task_id).await.unwrap();
     let found_cancelled_task = repo.find_by_id(cancelled_task_id).await.unwrap().unwrap();
     assert_eq!(found_cancelled_task.status, TaskStatus::Cancelled);
@@ -324,7 +327,10 @@ async fn test_exists_by_url() {
     assert!(repo.exists_by_url(test_url).await.unwrap());
 
     // Test with different URL
-    assert!(!repo.exists_by_url("https://different-url.com").await.unwrap());
+    assert!(!repo
+        .exists_by_url("https://different-url.com")
+        .await
+        .unwrap());
 }
 
 /// 测试重置卡住的任务
@@ -386,7 +392,10 @@ async fn test_reset_stuck_tasks() {
     repo.create(&recent_task).await.unwrap();
 
     // Reset tasks that have been active for more than 30 minutes
-    let reset_count = repo.reset_stuck_tasks(chrono::Duration::minutes(30)).await.unwrap();
+    let reset_count = repo
+        .reset_stuck_tasks(chrono::Duration::minutes(30))
+        .await
+        .unwrap();
     assert_eq!(reset_count, 1);
 
     // Verify the stuck task was reset
@@ -470,7 +479,11 @@ async fn test_cancel_tasks_by_crawl_id() {
     }
 
     // Verify task with different crawl_id was not affected
-    let unchanged_task = repo.find_by_id(different_crawl_task.id).await.unwrap().unwrap();
+    let unchanged_task = repo
+        .find_by_id(different_crawl_task.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(unchanged_task.status, TaskStatus::Queued);
 }
 

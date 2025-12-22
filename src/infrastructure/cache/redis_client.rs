@@ -138,4 +138,24 @@ impl RedisClient {
         let value: i64 = con.decr(key, 1).await?;
         Ok(value)
     }
+
+    /// 获取Redis多路复用连接
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(redis::aio::MultiplexedConnection)` - Redis多路复用连接
+    /// * `Err(anyhow::Error)` - 获取连接过程中出现的错误
+    pub async fn get_connection(&self) -> Result<redis::aio::MultiplexedConnection> {
+        self.client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// 删除指定键
+    pub async fn del(&self, key: &str) -> Result<()> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        con.del::<_, ()>(key).await?;
+        Ok(())
+    }
 }

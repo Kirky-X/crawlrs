@@ -69,6 +69,10 @@ fn is_private_ip(ip: IpAddr) -> bool {
             if ipv4.is_link_local() {
                 return true;
             }
+            // 224.0.0.0/4 (Multicast)
+            if ipv4.octets()[0] >= 224 && ipv4.octets()[0] <= 239 {
+                return true;
+            }
             false
         }
         IpAddr::V6(ipv6) => {
@@ -82,6 +86,10 @@ fn is_private_ip(ip: IpAddr) -> bool {
             }
             // Link-local (fe80::/10)
             if (ipv6.segments()[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+            // Multicast (ff00::/8)
+            if (ipv6.segments()[0] & 0xff00) == 0xff00 {
                 return true;
             }
             false
@@ -116,6 +124,26 @@ mod tests {
         assert!(validate_url("http://localhost").await.is_err());
         assert!(validate_url("http://192.168.1.1").await.is_err());
         assert!(validate_url("http://10.0.0.1").await.is_err());
+        assert!(validate_url("http://172.16.0.1").await.is_err());
+        assert!(validate_url("http://169.254.1.1").await.is_err());
+
+        // Restore value
+        if let Some(v) = old_val {
+            std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", v);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validate_url_multicast() {
+        // Save current value
+        let old_val = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
+        std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
+
+        // IPv4 multicast addresses (224.0.0.0/4)
+        assert!(validate_url("http://224.0.0.1").await.is_err());
+        assert!(validate_url("http://239.255.255.255").await.is_err());
+        assert!(validate_url("http://225.0.0.1").await.is_err());
+        assert!(validate_url("http://238.255.255.255").await.is_err());
 
         // Restore value
         if let Some(v) = old_val {

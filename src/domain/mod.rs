@@ -15,5 +15,6 @@
 /// 体现了纯粹的业务逻辑和业务规则。
 pub mod models;
 pub mod repositories;
+pub mod search;
 pub mod services;
 pub mod use_cases;

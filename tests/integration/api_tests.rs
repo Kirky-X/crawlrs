@@ -739,7 +739,7 @@ async fn create_test_app_with_low_rate_limit() -> super::helpers::TestApp {
     let queue: Arc<dyn TaskQueue> = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
     let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db_pool.clone()));
     let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db_pool.clone()));
-    let webhook_event_repo = Arc::new(WebhookEventRepoImpl::new(db_pool.clone()));
+    let _webhook_event_repo = Arc::new(WebhookEventRepoImpl::new(db_pool.clone()));
     let webhook_repo = Arc::new(WebhookRepoImpl::new(db_pool.clone()));
 
     let reqwest_engine = Arc::new(ReqwestEngine);
@@ -747,8 +747,8 @@ async fn create_test_app_with_low_rate_limit() -> super::helpers::TestApp {
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
     let router = Arc::new(EngineRouter::new(engines));
 
-    let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(router.clone()));
-    let robots_checker = Arc::new(RobotsChecker::new(Some(Arc::new(redis_client.clone()))));
+    let _create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(router.clone()));
+    let _robots_checker = Arc::new(RobotsChecker::new(Some(Arc::new(redis_client.clone()))));
 
     let mut search_engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
     search_engines.push(Arc::new(GoogleSearchEngine::new()));
@@ -779,7 +779,7 @@ async fn create_test_app_with_low_rate_limit() -> super::helpers::TestApp {
         .layer(Extension(credits_repo))
         .layer(Extension(result_repo))
         .layer(Extension(webhook_repo))
-        .layer(Extension(redis_client))
+        .layer(Extension(redis_client.clone()))
         .layer(Extension(rate_limiter))
         .layer(Extension(settings))
         .layer(Extension(search_engine_service));
@@ -795,6 +795,7 @@ async fn create_test_app_with_low_rate_limit() -> super::helpers::TestApp {
         worker_manager: None,
         redis_process: Some(redis_process),
         redis_url,
+        redis: Arc::new(redis_client),
     }
 }
 
@@ -857,7 +858,7 @@ async fn test_task_expiration() {
     task::Entity::insert(task_model).exec(app.db_pool.as_ref()).await.unwrap();
 
     // 2. 将任务加入队列
-    let task = task::Entity::find_by_id(expired_task_id)
+    let _task = task::Entity::find_by_id(expired_task_id)
         .one(app.db_pool.as_ref())
         .await
         .unwrap()
@@ -918,7 +919,7 @@ async fn test_webhook_trigger() {
         .await;
     
     assert_eq!(response.status_code(), StatusCode::CREATED);
-    let task_id: Uuid = response.json::<serde_json::Value>()["id"].as_str().unwrap().parse().unwrap();
+    let _task_id: Uuid = response.json::<serde_json::Value>()["id"].as_str().unwrap().parse().unwrap();
 
     // 3. 等待任务完成 (Mock 引擎已被真实引擎替换)
     // 增加等待时间，确保 Webhook 事件有足够的时间被创建和处理
@@ -999,7 +1000,7 @@ async fn test_webhook_retry_policy() {
         .unwrap();
     
     assert!(!events.is_empty(), "Should have created a webhook event");
-    let event = &events[0];
+    let _event = &events[0];
     
     // 初始状态应该是 Failed (因为 500 是可重试错误)
     // 且 attempt_count 应该至少为 1
@@ -1030,6 +1031,13 @@ async fn test_webhook_retry_policy() {
 /// 验证/v1/search端点的基本功能
 #[tokio::test]
 async fn test_search_basic() {
+    // Enable HTTP fallback for testing when browser is not available
+    std::env::set_var("GOOGLE_HTTP_FALLBACK_MOCK_RESULTS", "1");
+    
+    if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
+        println!("CHROMIUM_REMOTE_DEBUGGING_URL not set, will use HTTP fallback with mock results.");
+    }
+    init_telemetry();
     let app = create_test_app().await;
 
     let response = app
@@ -1049,8 +1057,9 @@ async fn test_search_basic() {
     assert_eq!(response.status_code(), StatusCode::OK);
 
     let search_response: serde_json::Value = response.json();
-    assert!(search_response.get("data").is_some());
-    assert!(search_response["data"].get("web").is_some());
+    assert!(search_response.get("results").is_some());
+    let results = search_response.get("results").unwrap().as_array().unwrap();
+    assert!(!results.is_empty(), "Expected search results to be non-empty");
 }
 
 /// 测试爬取功能

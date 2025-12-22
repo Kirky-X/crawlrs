@@ -20,25 +20,26 @@ pub enum EngineError {
     /// 超时
     #[error("Timeout")]
     Timeout,
+    /// 状态过期
+    #[error("Status expired")]
+    Expired,
     /// 其他错误
     #[error("Other error: {0}")]
     Other(String),
 }
 
 impl EngineError {
-    /// 判断错误是否可重试
-    ///
-    /// # 返回值
-    ///
-    /// 如果错误是可重试的则返回true，否则返回false
+    /// 检查错误是否可以重试
     pub fn is_retryable(&self) -> bool {
         match self {
-            EngineError::RequestFailed(e) => {
-                e.is_timeout() || e.is_connect() || e.status().is_some_and(|s| s.is_server_error())
+            Self::RequestFailed(e) => {
+                // 网络错误、连接超时等可以重试
+                e.is_timeout() || e.is_connect() || e.is_request()
             }
-            EngineError::Timeout => true,
-            EngineError::Other(_) => false, // Assume other errors (like validation) are not retryable
-            _ => false,
+            Self::Timeout => true,
+            Self::Expired => false, // 任务过期不应重试
+            Self::AllEnginesFailed => false,
+            Self::Other(_) => false,
         }
     }
 }
@@ -67,6 +68,46 @@ pub struct ScrapeRequest {
     pub needs_tls_fingerprint: bool,
     /// 是否使用Fire Engine (CDP)
     pub use_fire_engine: bool,
+    /// 页面交互动作
+    pub actions: Vec<ScrapeAction>,
+    /// 同步等待时长（毫秒）
+    pub sync_wait_ms: u32,
+}
+
+impl ScrapeRequest {
+    /// 创建一个新的抓取请求
+    pub fn new(url: &str) -> Self {
+        Self {
+            url: url.to_string(),
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            sync_wait_ms: 0,
+        }
+    }
+}
+
+/// 页面交互动作
+#[derive(Debug, Clone)]
+pub enum ScrapeAction {
+    /// 等待
+    Wait { milliseconds: u64 },
+    /// 点击
+    Click { selector: String },
+    /// 滚动
+    Scroll { direction: String },
+    /// 截图
+    Screenshot { full_page: Option<bool> },
+    /// 输入
+    Input { selector: String, text: String },
 }
 
 /// 截图配置
@@ -109,7 +150,25 @@ pub struct ScrapeResponse {
     pub response_time_ms: u64,
 }
 
+impl ScrapeResponse {
+    /// 创建一个新的抓取响应
+    pub fn new(_url: &str, content: &str) -> Self {
+        let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), "text/html".to_string());
+
+        Self {
+            status_code: 200,
+            content: content.to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers,
+            response_time_ms: 0,
+        }
+    }
+}
+
 /// 抓取引擎特质
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ScraperEngine: Send + Sync {
     /// 执行抓取

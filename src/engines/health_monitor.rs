@@ -175,6 +175,8 @@ impl EngineHealthMonitor {
             skip_tls_verification: false,
             needs_tls_fingerprint: false,
             use_fire_engine: false,
+            actions: Vec::new(),
+            sync_wait_ms: 0,
         };
 
         match engine.scrape(&test_request).await {

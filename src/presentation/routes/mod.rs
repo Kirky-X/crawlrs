@@ -3,16 +3,21 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+pub mod task;
+
 use crate::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
+use crate::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
-    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler, webhook_handler,
+    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
+    webhook_handler,
 };
+use crate::presentation::routes::task::task_routes;
 use axum::{
     routing::{delete, get, post},
-    Router, Json,
+    Json, Router,
 };
 use serde_json::json;
 
@@ -78,10 +83,21 @@ pub fn routes() -> Router {
         )
         .route(
             "/v1/search",
-            post(search_handler::search::<CrawlRepositoryImpl, TaskRepositoryImpl>),
+            post(
+                search_handler::search::<
+                    CrawlRepositoryImpl,
+                    TaskRepositoryImpl,
+                    CreditsRepositoryImpl,
+                >,
+            ),
         );
 
-    Router::new().merge(public_routes).merge(protected_routes)
+    let v2_routes = task_routes();
+
+    Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
+        .merge(v2_routes)
 }
 
 /// 健康检查端点
