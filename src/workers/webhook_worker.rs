@@ -5,190 +5,179 @@
 
 use crate::domain::models::webhook::{WebhookEvent, WebhookStatus};
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+use crate::domain::services::webhook_service::WebhookService;
+use crate::utils::{errors::WorkerError, retry_policy::RetryPolicy};
+use crate::workers::worker::Worker;
+use anyhow::Result;
 use chrono::Utc;
-use futures::StreamExt;
-use hmac::{Hmac, Mac};
-use metrics::{counter, histogram};
-use rand;
-use reqwest::{header, Client};
-
-use sha2::Sha256;
+use metrics::counter;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{error, info};
-
-use std::sync::Arc;
+use tracing::{error, info, warn};
 
 /// Webhook工作器
-#[derive(Clone)]
-pub struct WebhookWorker<R: WebhookEventRepository> {
-    /// 仓库
-    repo: Arc<R>,
-    /// Webhook 密钥
-    secret: String,
-    /// HTTP客户端
-    client: Client,
+///
+/// 负责处理webhook事件的发送和重试
+pub struct WebhookWorker {
+    /// Webhook事件仓库
+    repo: Arc<dyn WebhookEventRepository>,
+    /// Webhook服务
+    webhook_service: Arc<dyn WebhookService>,
+    /// 重试策略
+    retry_policy: RetryPolicy,
 }
 
-impl<R: WebhookEventRepository> WebhookWorker<R> {
-    /// 创建新的Webhook工作器实例
-    ///
-    /// # 参数
-    ///
-    /// * `repo` - 仓库
-    /// * `secret` - Webhook 密钥
-    ///
-    /// # 返回值
-    ///
-    /// 返回新的Webhook工作器实例
-    pub fn new(repo: Arc<R>, secret: String) -> Self {
-        let mut headers = header::HeaderMap::new();
-        headers.insert(
-            header::USER_AGENT,
-            header::HeaderValue::from_static("Crawlrs-Webhook/0.1.0"),
-        );
+impl WebhookWorker {
+    /// 创建新的webhook工作器
+    pub fn new(
+        repo: Arc<dyn WebhookEventRepository>,
+        webhook_service: Arc<dyn WebhookService>,
+        retry_policy: RetryPolicy,
+    ) -> Self {
         Self {
             repo,
-            secret,
-            client: Client::builder().default_headers(headers).build().unwrap(),
+            webhook_service,
+            retry_policy,
         }
     }
 
-    /// 运行Webhook工作器
-    ///
-    /// 启动Webhook处理循环，定期处理待处理的Webhook事件
-    pub async fn run(&self) {
-        info!("Webhook worker started");
+    /// 使用默认重试策略创建webhook工作器
+    pub fn with_default_policy(
+        repo: Arc<dyn WebhookEventRepository>,
+        webhook_service: Arc<dyn WebhookService>,
+    ) -> Self {
+        Self::new(repo, webhook_service, RetryPolicy::default())
+    }
+
+    /// 处理待处理的webhook事件
+    pub async fn process_pending_webhooks(&self) -> Result<()> {
+        let pending_events = self
+            .repo
+            .find_pending(100)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to find pending events: {}", e))?;
+
+        if !pending_events.is_empty() {
+            info!("Processing {} pending webhook events", pending_events.len());
+
+            for event in pending_events {
+                if let Err(e) = self.process_webhook_event(event).await {
+                    error!("Failed to process webhook event: {}", e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 处理单个webhook事件
+    async fn process_webhook_event(&self, mut event: WebhookEvent) -> Result<()> {
+        info!(
+            "Processing webhook event {} for URL {} (attempt {})",
+            event.id, event.webhook_url, event.attempt_count
+        );
+
+        // 尝试发送webhook
+        match self.webhook_service.send_webhook(&event).await {
+            Ok(_) => {
+                info!("Successfully delivered webhook {}", event.id);
+                event.status = WebhookStatus::Delivered;
+                event.delivered_at = Some(Utc::now());
+                event.response_status = Some(200);
+                self.repo
+                    .update(&event)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to update event: {}", e))?;
+
+                counter!("webhook_delivery_success_total").increment(1);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to deliver webhook {}: {}", event.id, e);
+
+                // 尝试解析错误中的 HTTP 状态码
+                let error_msg = e.to_string();
+                if error_msg.contains("status 500") {
+                    event.response_status = Some(500);
+                } else if error_msg.contains("status 400") {
+                    event.response_status = Some(400);
+                } else if error_msg.contains("status 404") {
+                    event.response_status = Some(404);
+                }
+
+                self.handle_webhook_failure(event, e).await
+            }
+        }
+    }
+
+    /// 处理webhook发送失败
+    async fn handle_webhook_failure(
+        &self,
+        mut event: WebhookEvent,
+        error: anyhow::Error,
+    ) -> Result<()> {
+        let new_attempt_count = event.attempt_count + 1;
+
+        // 检查是否应该重试
+        if !self
+            .retry_policy
+            .should_retry_with_error(new_attempt_count as u32, &error)
+        {
+            // 达到最大重试次数或错误不可重试，移动到死信队列
+            event.status = WebhookStatus::Dead;
+            event.error_message = Some(error.to_string());
+            event.attempt_count = new_attempt_count;
+
+            warn!(
+                "Webhook {} moved to dead letter state after {} attempts: {}",
+                event.id, new_attempt_count, error
+            );
+            counter!("webhook_dead_letter_total", "reason" => error.to_string()).increment(1);
+        } else {
+            // 计算下次重试时间
+            let next_retry = self
+                .retry_policy
+                .next_retry_time(new_attempt_count as u32, Utc::now());
+
+            event.status = WebhookStatus::Failed;
+            event.attempt_count = new_attempt_count;
+            event.next_retry_at = Some(next_retry);
+            event.error_message = Some(error.to_string());
+
+            info!(
+                "Webhook {} will be retried at {} (attempt {})",
+                event.id, next_retry, new_attempt_count
+            );
+            counter!("webhook_retry_scheduled_total", "attempt" => new_attempt_count.to_string())
+                .increment(1);
+        }
+
+        self.repo
+            .update(&event)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to update event: {}", e))?;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl Worker for WebhookWorker {
+    async fn run(&self) -> Result<(), WorkerError> {
+        info!("Starting webhook worker");
+
         loop {
             if let Err(e) = self.process_pending_webhooks().await {
-                error!("Error processing webhooks: {}", e);
+                error!("Error processing pending webhooks: {}", e);
             }
+
             sleep(Duration::from_secs(5)).await;
         }
     }
 
-    /// 处理待处理的Webhook事件
-    ///
-    /// 从数据库中获取待处理的Webhook事件并发送
-    ///
-    /// # 返回值
-    ///
-    /// * `Ok(())` - 处理成功
-    /// * `Err(anyhow::Error)` - 处理失败
-    pub async fn process_pending_webhooks(&self) -> anyhow::Result<()> {
-        // Batch size
-        let batch_size = 50;
-
-        let events = self.repo.find_pending(batch_size).await?;
-
-        if events.is_empty() {
-            return Ok(());
-        }
-
-        info!("Processing {} pending webhooks", events.len());
-
-        // Process in parallel with bounded concurrency
-        let worker = self;
-        futures::stream::iter(events)
-            .for_each_concurrent(10, |event| {
-                let w = worker;
-                async move {
-                    if let Err(e) = w.deliver_webhook(event).await {
-                        error!("Failed to deliver webhook: {}", e);
-                    }
-                }
-            })
-            .await;
-
-        Ok(())
-    }
-
-    async fn deliver_webhook(&self, mut event: WebhookEvent) -> anyhow::Result<()> {
-        info!("Delivering webhook {} to {}", event.id, event.webhook_url);
-        counter!("webhook_delivery_attempts_total").increment(1);
-
-        let start = std::time::Instant::now();
-
-        // Create signature
-        let secret = self.secret.as_bytes();
-        type HmacSha256 = Hmac<Sha256>;
-        let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
-        mac.update(event.payload.to_string().as_bytes());
-        let signature = mac.finalize().into_bytes();
-        let signature_hex = hex::encode(signature);
-
-        let response = self
-            .client
-            .post(&event.webhook_url)
-            .header("X-Crawlrs-Signature", signature_hex)
-            .header("X-Crawlrs-Event", event.event_type.to_string())
-            .json(&event.payload)
-            .timeout(Duration::from_secs(10))
-            .send()
-            .await;
-
-        let duration = start.elapsed();
-        histogram!("webhook_delivery_duration_seconds").record(duration.as_secs_f64());
-
-        match response {
-            Ok(resp) => {
-                // Record response status
-                event.response_status = Some(resp.status().as_u16() as i32);
-
-                if resp.status().is_success() {
-                    event.status = WebhookStatus::Delivered;
-                    event.delivered_at = Some(Utc::now());
-
-                    info!("Webhook {} delivered successfully", event.id);
-                    self.repo.update(&event).await?;
-                    counter!("webhook_delivery_success_total").increment(1);
-                } else {
-                    // Non-success status code
-                    error!(
-                        "Webhook {} delivery failed with status: {}",
-                        event.id,
-                        resp.status()
-                    );
-                    self.handle_failure(event).await?;
-                    counter!("webhook_delivery_failed_total", "reason" => "http_error")
-                        .increment(1);
-                }
-            }
-            Err(e) => {
-                // Network or other error
-                error!("Webhook {} delivery failed with error: {}", event.id, e);
-                event.error_message = Some(e.to_string());
-                self.handle_failure(event).await?;
-                counter!("webhook_delivery_failed_total", "reason" => "network_error").increment(1);
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn handle_failure(&self, mut event: WebhookEvent) -> anyhow::Result<()> {
-        let new_attempt_count = event.attempt_count + 1;
-
-        if new_attempt_count >= event.max_retries {
-            event.status = WebhookStatus::Dead; // Dead Letter Queue equivalent
-            info!(
-                "Webhook moved to dead letter state after {} retries",
-                event.max_retries
-            );
-            counter!("webhook_dead_letter_total").increment(1);
-        } else {
-            event.status = WebhookStatus::Failed;
-            event.attempt_count = new_attempt_count;
-
-            // Exponential backoff with jitter
-            let base_backoff = 2u64.pow(new_attempt_count as u32);
-            let jitter = rand::random_range(0..base_backoff / 2);
-            let backoff = base_backoff + jitter;
-
-            event.next_retry_at = Some(Utc::now() + chrono::Duration::seconds(backoff as i64));
-        }
-
-        self.repo.update(&event).await?;
-        Ok(())
+    fn name(&self) -> &str {
+        "webhook_worker"
     }
 }
+
+

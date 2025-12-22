@@ -25,46 +25,52 @@ use crate::domain::models::scrape_result::ScrapeResult;
 use crate::domain::models::task::{Task, TaskStatus, TaskType};
 use crate::domain::models::webhook::{WebhookEvent, WebhookEventType, WebhookStatus};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
+use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
-use crate::domain::services::llm_service::LLMService;
+
 use crate::engines::router::EngineRouter;
-use crate::engines::traits::{ScrapeRequest, ScrapeResponse, ScreenshotConfig};
+use crate::engines::traits::{ScrapeAction, ScrapeRequest, ScrapeResponse, ScreenshotConfig};
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::queue::task_queue::TaskQueue;
-use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
+use crate::utils::retry_policy::RetryPolicy;
+use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 
 /// 抓取工作者
-pub struct ScrapeWorker<R, S, C, ST>
+pub struct ScrapeWorker<R, S, C, ST, CRR>
 where
     R: TaskRepository + Send + Sync,
     S: ScrapeResultRepository + Send + Sync,
     C: CrawlRepository + Send + Sync,
     ST: StorageRepository + Send + Sync,
+    CRR: CreditsRepository + Send + Sync,
 {
     repository: Arc<R>,
     result_repository: Arc<S>,
     crawl_repository: Arc<C>,
     storage_repository: Option<Arc<ST>>,
     webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
+    credits_repository: Arc<CRR>,
     router: Arc<EngineRouter>,
-    create_scrape_use_case: Arc<CreateScrapeUseCase>,
+    _create_scrape_use_case: Arc<CreateScrapeUseCase>,
     redis: RedisClient,
     robots_checker: Arc<RobotsChecker>,
     settings: Arc<Settings>,
     worker_id: Uuid,
     default_concurrency_limit: usize,
+    retry_policy: RetryPolicy,
 }
 
-impl<R, S, C, ST> ScrapeWorker<R, S, C, ST>
+impl<R, S, C, ST, CRR> ScrapeWorker<R, S, C, ST, CRR>
 where
     R: TaskRepository + Send + Sync,
     S: ScrapeResultRepository + Send + Sync,
     C: CrawlRepository + Send + Sync,
     ST: StorageRepository + Send + Sync,
+    CRR: CreditsRepository + Send + Sync,
 {
     /// 创建新的抓取工作器实例
     #[allow(clippy::too_many_arguments)]
@@ -74,26 +80,32 @@ where
         crawl_repository: Arc<C>,
         storage_repository: Option<Arc<ST>>,
         webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
+        credits_repository: Arc<CRR>,
         router: Arc<EngineRouter>,
-        create_scrape_use_case: Arc<CreateScrapeUseCase>,
+        _create_scrape_use_case: Arc<CreateScrapeUseCase>,
         redis: RedisClient,
         robots_checker: Arc<RobotsChecker>,
         settings: Arc<Settings>,
         default_concurrency_limit: usize,
     ) -> Self {
+        // 根据任务类型选择合适的重试策略
+        let retry_policy = RetryPolicy::slow(); // 网络请求适合慢速重试策略
+        
         Self {
             repository,
             result_repository,
             crawl_repository,
             storage_repository,
             webhook_event_repository,
+            credits_repository,
             router,
-            create_scrape_use_case,
+            _create_scrape_use_case,
             redis,
             robots_checker,
             settings,
             worker_id: Uuid::new_v4(),
             default_concurrency_limit,
+            retry_policy,
         }
     }
 
@@ -149,17 +161,17 @@ where
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize)
         } else {
-             // For Scrape task, we can check options if available, or just fallback
-             // Assuming ScrapeRequestDto might have options but it's nested differently
-             // For now, let's stick to Crawl config or Redis
-             None
+            // For Scrape task, we can check options if available, or just fallback
+            // Assuming ScrapeRequestDto might have options but it's nested differently
+            // For now, let's stick to Crawl config or Redis
+            None
         };
 
         let limit: usize = if let Some(l) = payload_limit {
             l
         } else {
-             let limit_str: Option<String> = self.redis.get(&team_concurrency_limit_key).await?;
-             limit_str
+            let limit_str: Option<String> = self.redis.get(&team_concurrency_limit_key).await?;
+            limit_str
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(self.default_concurrency_limit)
         };
@@ -203,7 +215,8 @@ where
                     TaskType::Crawl => WebhookEventType::CrawlFailed,
                     _ => WebhookEventType::Custom("task.failed".to_string()),
                 };
-                self.trigger_webhook(&task, event_type, Some("Task expired".to_string())).await;
+                self.trigger_webhook(&task, event_type, Some("Task expired".to_string()))
+                    .await;
                 return Ok(());
             }
         }
@@ -257,17 +270,54 @@ where
             "DEBUG: Processing scrape task {} with payload: {}",
             task.id, task.payload
         );
-        let request_dto = match serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
-            Ok(dto) => dto,
-            Err(e) => {
-                error!("Failed to deserialize ScrapeRequestDto: {}", e);
-                println!("DEBUG: Failed to deserialize payload: {}", e);
-                self.handle_failure(&mut task).await?;
-                return Ok(());
-            }
+
+        // Create ScrapeRequestDto from task fields
+        let request_dto: ScrapeRequestDto = serde_json::from_value(task.payload.clone())
+            .unwrap_or_else(|_| ScrapeRequestDto {
+                url: task.url.clone(),
+                formats: None,
+                include_tags: None,
+                exclude_tags: None,
+                webhook: None,
+                extraction_rules: None,
+                actions: None,
+                options: None,
+                metadata: None,
+                sync_wait_ms: None,
+            });
+
+        // Resolve engine router directly to handle actions if they exist
+        let scrape_request = ScrapeRequest {
+            url: request_dto.url.clone(),
+            headers: HashMap::new(), // Will be populated from options if needed
+            timeout: Duration::from_secs(request_dto.options.as_ref().and_then(|o| o.timeout).unwrap_or(30)),
+            needs_js: request_dto.actions.as_ref().map(|a| !a.is_empty()).unwrap_or(false)
+                || request_dto.options.as_ref().and_then(|o| o.js_rendering).unwrap_or(false),
+            needs_screenshot: request_dto.options.as_ref().and_then(|o| o.screenshot).unwrap_or(false),
+            screenshot_config: request_dto.options.as_ref().and_then(|o| o.screenshot_options.as_ref().map(|so| ScreenshotConfig {
+                full_page: so.full_page.unwrap_or(false),
+                selector: so.selector.clone(),
+                quality: so.quality,
+                format: so.format.clone(),
+            })),
+            mobile: request_dto.options.as_ref().and_then(|o| o.mobile).unwrap_or(false),
+            proxy: request_dto.options.as_ref().and_then(|o| o.proxy.clone()),
+            skip_tls_verification: request_dto.options.as_ref().and_then(|o| o.skip_tls_verification).unwrap_or(false),
+            needs_tls_fingerprint: request_dto.options.as_ref().and_then(|o| o.needs_tls_fingerprint).unwrap_or(false),
+            use_fire_engine: request_dto.options.as_ref().and_then(|o| o.use_fire_engine).unwrap_or(false),
+            actions: request_dto.actions.as_ref().map(|actions| {
+                actions.iter().map(|a| match a {
+                    crate::application::dto::scrape_request::ScrapeActionDto::Wait { milliseconds } => ScrapeAction::Wait { milliseconds: *milliseconds },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Click { selector } => ScrapeAction::Click { selector: selector.clone() },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Scroll { direction } => ScrapeAction::Scroll { direction: direction.clone() },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Screenshot { full_page } => ScrapeAction::Screenshot { full_page: *full_page },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Input { selector, text } => ScrapeAction::Input { selector: selector.clone(), text: text.clone() },
+                }).collect()
+            }).unwrap_or_default(),
+            sync_wait_ms: request_dto.sync_wait_ms.unwrap_or(0),
         };
 
-        let response = self.create_scrape_use_case.execute(request_dto).await;
+        let response = self.router.route(&scrape_request).await;
 
         match response {
             Ok(response) => {
@@ -296,17 +346,59 @@ where
                     self.handle_failure(&mut task).await?;
                 } else {
                     println!("DEBUG: Scrape success handler completed successfully");
-                    // Mark as completed only if handle_scrape_success succeeded
-                    // handle_scrape_success calls mark_completed internally?
-                    // Let's check handle_scrape_success implementation.
-                    // It does: self.repository.mark_completed(task.id).await?;
+                    // 扣除基础费用及高级功能费用 (PRD-253)
+                    let mut extra_credits = 0;
+
+                    // 1. 基础抓取 1 Credit (已在 handler 或创建时计算，此处确保额外功能扣费)
+
+                    // 2. 截图额外消耗 2 Credits
+                    if response.screenshot.is_some() {
+                        extra_credits += 2;
+                    }
+
+                    // 3. 使用代理额外消耗 1 Credit
+                    if scrape_request.proxy.is_some() {
+                        extra_credits += 1;
+                    }
+
+                    if extra_credits > 0 {
+                        if let Err(e) = self.credits_repository.deduct_credits(
+                            task.team_id,
+                            extra_credits,
+                            crate::domain::models::credits::CreditsTransactionType::Scrape,
+                            format!("Extra credits for scrape (screenshot/proxy) for task {}", task.id),
+                            Some(task.id),
+                        ).await {
+                            error!("Failed to deduct extra credits for task {}: {}", task.id, e);
+                        }
+                    }
                 }
                 Ok(())
             }
             Err(e) => {
                 error!("Scrape failed: {}", e);
                 println!("DEBUG: Scrape failed: {}", e);
-                self.handle_failure(&mut task).await?;
+
+                // If it's a timeout error, mark as failed immediately instead of rescheduling
+                let err_str = e.to_string().to_lowercase();
+                if err_str.contains("timeout") || err_str.contains("expired") || err_str.contains("all engines failed") {
+                    println!("DEBUG: Timeout or AllEnginesFailed detected, marking task as failed");
+                    // Fetch task to ensure we have latest state
+                    if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
+                        t.status = TaskStatus::Failed;
+                        t.completed_at = Some(Utc::now().into());
+                        // Add error to payload for tracking
+                        let mut payload = t.payload.clone();
+                        if let Some(obj) = payload.as_object_mut() {
+                            obj.insert("error".to_string(), json!(e.to_string()));
+                        }
+                        t.payload = payload;
+                        self.repository.update(&t).await?;
+                    }
+                } else {
+                    self.handle_failure(&mut task).await?;
+                }
+
                 // 触发失败 Webhook
                 self.trigger_webhook(&task, WebhookEventType::ScrapeFailed, Some(e.to_string()))
                     .await;
@@ -388,6 +480,8 @@ where
             skip_tls_verification: false,
             needs_tls_fingerprint: false,
             use_fire_engine: false,
+            actions: Vec::new(),
+            sync_wait_ms: 0,
         };
 
         // 检查配置中是否有自定义请求头 (假设 CrawlConfigDto 中可能包含 headers 字段，如果没有则忽略)
@@ -441,16 +535,34 @@ where
                             extracted_data = Some(data);
                             // Record usage (PRD-334: Tokens Billing)
                             if usage.total_tokens > 0 {
+                                // 1. Record in Redis for real-time tracking
                                 let key = format!("team:{}:token_usage", task.team_id);
                                 if let Err(e) =
                                     self.redis.incr_by(&key, usage.total_tokens as i64).await
                                 {
-                                    error!("Failed to record token usage: {}", e);
+                                    error!("Failed to record token usage in Redis: {}", e);
                                 }
-                                info!(
-                                    "Recorded {} tokens for team {}",
-                                    usage.total_tokens, task.team_id
-                                );
+
+                                // 2. Convert to credits and deduct from database
+                                // 10 Credits / 1000 Tokens = 0.01 Credits per Token
+                                // Use integer math: (total_tokens * 10) / 1000
+                                let credits_to_deduct = (usage.total_tokens as i64 * 10) / 1000;
+                                if credits_to_deduct > 0 {
+                                    if let Err(e) = self.credits_repository.deduct_credits(
+                                        task.team_id,
+                                        credits_to_deduct,
+                                        crate::domain::models::credits::CreditsTransactionType::Extract,
+                                        format!("Tokens used for extraction ({} tokens)", usage.total_tokens),
+                                        Some(task.id),
+                                    ).await {
+                                        error!("Failed to deduct credits for token usage: {}", e);
+                                    } else {
+                                        info!(
+                                            "Deducted {} credits for {} tokens for team {}",
+                                            credits_to_deduct, usage.total_tokens, task.team_id
+                                        );
+                                    }
+                                }
                             }
                         }
                         Err(e) => {
@@ -460,11 +572,18 @@ where
                 }
 
                 // 4. 保存结果
-                self.save_result(&task, &processed_response, extracted_data).await?;
+                self.save_result(&task, &processed_response, extracted_data)
+                    .await?;
 
                 // 5. 如果深度未达上限，解析链接并生成子任务
                 if depth < config.max_depth {
-                    self.extract_and_queue_links(&task, &processed_response, crawl_id, depth, &config)
+                    self.extract_and_queue_links(
+                        &task,
+                        &processed_response,
+                        crawl_id,
+                        depth,
+                        &config,
+                    )
                         .await?;
                 }
 
@@ -556,13 +675,13 @@ where
 
     async fn process_extract_task(&self, mut task: Task) -> Result<()> {
         info!("Processing extract task {}", task.id);
-        
-        let payload: crate::application::dto::extract_request::ExtractRequestDto = 
+
+        let payload: crate::application::dto::extract_request::ExtractRequestDto =
             serde_json::from_value(task.payload.clone())
-            .context("Failed to parse extract task input")?;
-            
+                .context("Failed to parse extract task input")?;
+
         let url = payload.urls.first().context("No URL provided")?.clone();
-        
+
         // 1. Scrape Content
         let scrape_req = ScrapeRequest {
             url: url.clone(),
@@ -576,8 +695,10 @@ where
             skip_tls_verification: true,
             needs_tls_fingerprint: false,
             use_fire_engine: false,
+            actions: vec![],
+            sync_wait_ms: 0,
         };
-        
+
         // Execute scrape
         let scrape_resp = self.router.route(&scrape_req).await?;
 
@@ -595,12 +716,12 @@ where
             content: processed_content,
             ..scrape_resp
         };
-        
+
         // 2. Extract Data using ExtractionService (which uses LLM internally if configured)
         // Convert ExtractRequestDto schema/prompt to ExtractionRule
         let mut rules = HashMap::new();
         if let Some(prompt) = payload.prompt {
-             rules.insert(
+            rules.insert(
                 "extracted_data".to_string(),
                 crate::domain::services::extraction_service::ExtractionRule {
                     selector: None,
@@ -611,40 +732,44 @@ where
                 },
             );
         } else if let Some(_schema) = payload.schema {
-             // If schema is provided but no prompt, we might need a way to pass schema directly
-             // For now, ExtractionService mainly works with Rules. 
-             // Let's assume for this specific flow we want to use LLM extraction if prompt is present.
-             // If schema is present but no prompt, it might be better to just use the schema as prompt or description?
-             // Actually, LLMService::extract_data takes a schema. ExtractionService::extract constructs schema from rules.
-             
-             // To fully support arbitrary schema extraction via ExtractionService, we might need to enhance ExtractionRule 
-             // or ExtractionService to accept a raw schema for the whole document.
-             // But for now, let's stick to the existing pattern:
-             
-             // If we want to support the previous direct LLM usage:
-             let llm_service = LLMService::new(&self.settings);
-             let schema = _schema; // use the schema from payload
-             
-             let html_content = processed_scrape_resp.content.clone(); // clone for use here
-             let content_preview = if html_content.len() > 50000 {
-                 &html_content[..50000]
-             } else {
-                 &html_content
-             };
-     
-             let (extracted_data, usage) = llm_service.extract_data(content_preview, &schema).await?;
-             
-             // Record usage
-             if usage.total_tokens > 0 {
-                let key = format!("team:{}:token_usage", task.team_id);
-                if let Err(e) =
-                    self.redis.incr_by(&key, usage.total_tokens as i64).await
-                {
-                    error!("Failed to record token usage: {}", e);
-                }
-             }
+            // 使用新实现的 extract_with_schema 优化提取流程
+            let (extracted_data, usage) =
+                crate::domain::services::extraction_service::ExtractionService::extract_with_schema(
+                    &processed_scrape_resp.content,
+                    &_schema,
+                    &self.settings,
+                )
+                    .await?;
 
-             // 3. Save Output
+            // Record usage
+            if usage.total_tokens > 0 {
+                // 1. Record in Redis for real-time tracking
+                let key = format!("team:{}:token_usage", task.team_id);
+                if let Err(e) = self.redis.incr_by(&key, usage.total_tokens as i64).await {
+                    error!("Failed to record token usage in Redis: {}", e);
+                }
+
+                // 2. Convert to credits and deduct from database
+                let credits_to_deduct = (usage.total_tokens as i64 * 10) / 1000;
+                if credits_to_deduct > 0 {
+                    if let Err(e) = self.credits_repository.deduct_credits(
+                        task.team_id,
+                        credits_to_deduct,
+                        crate::domain::models::credits::CreditsTransactionType::Extract,
+                        format!("Tokens used for extraction ({} tokens)", usage.total_tokens),
+                        Some(task.id),
+                    ).await {
+                        error!("Failed to deduct credits for token usage: {}", e);
+                    } else {
+                        info!(
+                            "Deducted {} credits for {} tokens for team {}",
+                            credits_to_deduct, usage.total_tokens, task.team_id
+                        );
+                    }
+                }
+            }
+
+            // 3. Save Output
             let mut scrape_result = ScrapeResult::new(
                 task.id,
                 url,
@@ -656,21 +781,26 @@ where
             scrape_result.meta_data = json!({
                 "extracted_data": extracted_data
             });
-            
+
             self.result_repository.save(scrape_result).await?;
-    
+
             task.status = TaskStatus::Completed;
             self.repository.update(&task).await?;
-            
-            self.trigger_webhook(&task, WebhookEventType::Custom("extract.completed".to_string()), None).await;
-            
+
+            self.trigger_webhook(
+                &task,
+                WebhookEventType::Custom("extract.completed".to_string()),
+                None,
+            )
+                .await;
+
             return Ok(());
         }
-        
+
         // Fallback if no schema/prompt (should usually have one)
         // If we reach here, it means we didn't do the direct LLM call above.
         // We could default to empty extraction or error.
-        
+
         let scrape_result = ScrapeResult::new(
             task.id,
             url,
@@ -683,9 +813,14 @@ where
 
         task.status = TaskStatus::Completed;
         self.repository.update(&task).await?;
-        
-        self.trigger_webhook(&task, WebhookEventType::Custom("extract.completed".to_string()), None).await;
-        
+
+        self.trigger_webhook(
+            &task,
+            WebhookEventType::Custom("extract.completed".to_string()),
+            None,
+        )
+            .await;
+
         Ok(())
     }
 
@@ -828,7 +963,7 @@ where
 
     async fn handle_scrape_success(&self, task: Task, response: &ScrapeResponse) -> Result<()> {
         println!("DEBUG: handle_scrape_success called for task {}", task.id);
-        
+
         // 文本编码处理 - 集成文本处理功能
         let processed_content = match self.process_text_encoding(&task, response).await {
             Ok(content) => content,
@@ -837,7 +972,7 @@ where
                 response.content.clone()
             }
         };
-        
+
         // 创建处理后的响应用于后续处理
         let processed_response = ScrapeResponse {
             content: processed_content,
@@ -847,7 +982,7 @@ where
             headers: response.headers.clone(),
             response_time_ms: response.response_time_ms,
         };
-        
+
         // 解析 ScrapeRequest 以检查是否有提取规则
         let mut extracted_data = None;
         if let Ok(req) = serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
@@ -863,16 +998,32 @@ where
                         extracted_data = Some(data);
                         // Record usage (PRD-334: Tokens Billing)
                         if usage.total_tokens > 0 {
+                            // 1. Record in Redis for real-time tracking
                             let key = format!("team:{}:token_usage", task.team_id);
                             if let Err(e) =
                                 self.redis.incr_by(&key, usage.total_tokens as i64).await
                             {
-                                error!("Failed to record token usage: {}", e);
+                                error!("Failed to record token usage in Redis: {}", e);
                             }
-                            info!(
-                                "Recorded {} tokens for team {}",
-                                usage.total_tokens, task.team_id
-                            );
+
+                            // 2. Convert to credits and deduct from database
+                            let credits_to_deduct = (usage.total_tokens as i64 * 10) / 1000;
+                            if credits_to_deduct > 0 {
+                                if let Err(e) = self.credits_repository.deduct_credits(
+                                    task.team_id,
+                                    credits_to_deduct,
+                                    crate::domain::models::credits::CreditsTransactionType::Extract,
+                                    format!("Tokens used for extraction ({} tokens)", usage.total_tokens),
+                                    Some(task.id),
+                                ).await {
+                                    error!("Failed to deduct credits for token usage: {}", e);
+                                } else {
+                                    info!(
+                                            "Deducted {} credits for {} tokens for team {}",
+                                            credits_to_deduct, usage.total_tokens, task.team_id
+                                        );
+                                }
+                            }
                         }
                     }
                     Err(e) => {
@@ -882,7 +1033,8 @@ where
             }
         }
 
-        self.save_result(&task, &processed_response, extracted_data).await?;
+        self.save_result(&task, &processed_response, extracted_data)
+            .await?;
         println!("DEBUG: About to mark task {} as completed", task.id);
         self.repository.mark_completed(task.id).await?;
         println!("DEBUG: Successfully marked task {} as completed", task.id);
@@ -893,40 +1045,51 @@ where
     }
 
     /// 处理文本编码转换
-    async fn process_text_encoding(&self, task: &Task, response: &ScrapeResponse) -> Result<String> {
+    async fn process_text_encoding(
+        &self,
+        task: &Task,
+        response: &ScrapeResponse,
+    ) -> Result<String> {
         use tracing::{info, warn};
-        
-        info!("开始处理文本编码转换，任务ID: {}, URL: {}", task.id, task.url);
-        
+
+        info!(
+            "开始处理文本编码转换，任务ID: {}, URL: {}",
+            task.id, task.url
+        );
+
         // 创建文本处理集成器
         let text_integration = CrawlTextIntegration::new(false); // Disable by default for now
-        
+
         // 准备输入数据
         let input = ScrapeResponseInput {
             content: response.content.as_bytes().to_vec(),
             url: task.url.clone(),
-            content_type: response.content_type.clone(),
+            content_type: Some(response.content_type.clone()),
             status_code: response.status_code,
         };
-        
+
         // 处理响应内容
-        match text_integration.process_scrape_response(
-            &input.content,
-            &input.url,
-            input.content_type.as_deref(),
-            input.status_code,
-        ).await {
+        match text_integration
+            .process_scrape_response(
+                &input.content,
+                &input.url,
+                input.content_type.as_deref(),
+                input.status_code,
+            )
+            .await
+        {
             Ok(processed_response) => {
                 if processed_response.processing_success {
                     info!(
-                    "文本编码处理成功，检测到的编码: {:?}, 处理时间: {}ms, 质量评分: {}",
-                    processed_response.encoding_detected,
-                    processed_response.processing_success as u32,
-                    processed_response.processing_error.is_none() as u32
-                );
+                        "文本编码处理成功，检测到的编码: {:?}, 处理时间: {}ms, 质量评分: {}",
+                        processed_response.encoding_detected,
+                        processed_response.processing_success as u32,
+                        processed_response.processing_error.is_none() as u32
+                    );
                     Ok(processed_response.processed_content)
                 } else {
-                    let error_msg = processed_response.processing_error
+                    let error_msg = processed_response
+                        .processing_error
                         .unwrap_or_else(|| "未知错误".to_string());
                     warn!("文本编码处理失败: {}", error_msg);
                     Err(anyhow::anyhow!("文本编码处理失败: {}", error_msg))
@@ -1054,12 +1217,13 @@ where
     async fn handle_failure(&self, task: &mut Task) -> Result<()> {
         let new_attempt_count = task.attempt_count + 1;
 
-        if new_attempt_count >= task.max_retries {
+        if !self.retry_policy.should_retry(new_attempt_count as u32) {
             warn!("Task failed after {} retries", task.max_retries);
             self.repository.mark_failed(task.id).await?;
         } else {
-            let delay_secs = 2u64.pow(new_attempt_count as u32);
-            let next_retry = Utc::now() + chrono::Duration::seconds(delay_secs as i64);
+            // 使用可配置的重试策略计算退避时间
+            let backoff_duration = self.retry_policy.calculate_backoff(new_attempt_count as u32);
+            let next_retry = Utc::now() + chrono::Duration::milliseconds(backoff_duration.as_millis() as i64);
 
             task.attempt_count = new_attempt_count;
             task.scheduled_at = Some(next_retry.into());
@@ -1067,8 +1231,9 @@ where
 
             self.repository.update(task).await?;
             info!(
-                "Scheduled retry {}/{} for task {} in {}s",
-                new_attempt_count, task.max_retries, task.id, delay_secs
+                "Scheduled retry {}/{} for task {} in {:?} (backoff: {:?})",
+                new_attempt_count, task.max_retries, task.id, 
+                backoff_duration, next_retry
             );
         }
 
@@ -1122,6 +1287,16 @@ where
                 .unwrap_or(false),
             needs_tls_fingerprint: false,
             use_fire_engine: false,
+            actions: scrape_request.actions.clone().unwrap_or_default().into_iter().map(|a| {
+                match a {
+                    crate::application::dto::scrape_request::ScrapeActionDto::Wait { milliseconds } => ScrapeAction::Wait { milliseconds },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Click { selector } => ScrapeAction::Click { selector },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Scroll { direction } => ScrapeAction::Scroll { direction },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Screenshot { full_page } => ScrapeAction::Screenshot { full_page },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Input { selector, text } => ScrapeAction::Input { selector, text },
+                }
+            }).collect(),
+            sync_wait_ms: scrape_request.sync_wait_ms.unwrap_or(0),
         })
     }
 }

@@ -8,8 +8,8 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use crawlrs::domain::services::rate_limiting_service::{RateLimitConfig, RateLimitStrategy};
 use crawlrs::config::settings::Settings;
+use crawlrs::domain::services::rate_limiting_service::{RateLimitConfig, RateLimitStrategy};
 use crawlrs::engines::fire_engine_cdp::FireEngineCdp;
 use crawlrs::engines::fire_engine_tls::FireEngineTls;
 use crawlrs::engines::playwright_engine::PlaywrightEngine;
@@ -24,8 +24,14 @@ use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResult
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::storage::LocalStorage;
 
+use crawlrs::domain::services::rate_limiting_service::{ConcurrencyConfig, ConcurrencyStrategy};
+use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
+use crawlrs::infrastructure::services::rate_limiting_service_impl::{
+    RateLimitingConfig, RateLimitingServiceImpl,
+};
+use crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl;
 use crawlrs::presentation::handlers::{
     crawl_handler, scrape_handler, search_handler, webhook_handler,
 };
@@ -36,12 +42,10 @@ use crawlrs::presentation::middleware::team_semaphore_middleware::team_semaphore
 use crawlrs::presentation::routes;
 use crawlrs::presentation::routes::task::task_routes;
 use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
-use crawlrs::workers::manager::WorkerManager;
-use crawlrs::workers::webhook_worker::WebhookWorker;
 use crawlrs::workers::backlog_worker::BacklogWorker;
-use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
-use crawlrs::infrastructure::services::rate_limiting_service_impl::{RateLimitingServiceImpl, RateLimitingConfig};
-use crawlrs::domain::services::rate_limiting_service::{ConcurrencyConfig, ConcurrencyStrategy};
+use crawlrs::workers::manager::WorkerManager;
+use crawlrs::utils::retry_policy::RetryPolicy;
+use crawlrs::workers::webhook_worker::WebhookWorker;
 use crawlrs::workers::Worker;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -50,7 +54,7 @@ use tracing::info;
 use crawlrs::domain::search::engine::SearchEngine;
 use crawlrs::infrastructure::search::aggregator::SearchAggregator;
 
-use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
+use crawlrs::infrastructure::search::smart_search;
 
 use crawlrs::utils::telemetry;
 use migration::{Migrator, MigratorTrait};
@@ -100,6 +104,7 @@ use migration::{Migrator, MigratorTrait};
 /// ```
 use tracing::error;
 
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // 1. 初始化日志和遥测系统
@@ -140,27 +145,7 @@ async fn main() -> anyhow::Result<()> {
 
     let settings = Arc::new(settings);
 
-    // Initialize Search Engines
-    let mut search_engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
-
-    // 禁用Google搜索引擎
-    // search_engines.push(Arc::new(GoogleSearchEngine::new()));
-
-    // Bing search engine - 禁用（通过空API密钥）
-    // if let Some(key) = settings.bing_search.api_key.clone() {
-    //     if !key.is_empty() {
-    //         search_engines.push(Arc::new(BingSearchEngine::new()));
-    //     }
-    // }
-
-    // 禁用百度搜索引擎
-    // search_engines.push(Arc::new(BaiduSearchEngine::new()));
-    
-    // 仅启用搜狗搜索引擎
-    search_engines.push(Arc::new(SogouSearchEngine::new()));
-
-    let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
-    let search_engine_service: Arc<dyn SearchEngine> = search_aggregator;
+    // 初始化搜索引擎将在EngineRouter创建之后进行
 
     // 3. 建立数据库连接
     let db = connection::create_pool(&settings.database).await?;
@@ -190,14 +175,16 @@ async fn main() -> anyhow::Result<()> {
     info!("Team semaphore initialized");
 
     // 7. 初始化核心组件
+    let _credits_repo = Arc::new(CreditsRepositoryImpl::new(db.clone()));
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db.clone(),
         chrono::Duration::seconds(settings.concurrency.task_lock_duration_seconds),
     ));
+    let _tasks_backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db.clone()));
     let queue: Arc<dyn TaskQueue> = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
     let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db.clone()));
     let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db.clone()));
-    let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.clone()));
+    let _webhook_event_repository = Arc::new(WebhookEventRepoImpl::new(db.clone()));
     let storage_repo = if settings.storage.storage_type == "local" {
         let path = settings
             .storage
@@ -219,12 +206,54 @@ async fn main() -> anyhow::Result<()> {
         fire_engine_cdp,
     ];
     let router = Arc::new(EngineRouter::new(engines));
+
+    // 初始化智能搜索引擎（使用EngineRouter进行智能路由）
+    let mut search_engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
+
+    // 创建Google智能搜索引擎
+    search_engines.push(smart_search::create_google_smart_search(router.clone()));
+
+    // 如果有Bing API密钥，创建Bing智能搜索引擎
+    if let Some(key) = settings.bing_search.api_key.clone() {
+        if !key.is_empty() {
+            search_engines.push(smart_search::create_bing_smart_search(router.clone()));
+        }
+    }
+
+    // 创建百度智能搜索引擎
+    search_engines.push(smart_search::create_baidu_smart_search(router.clone()));
+
+    let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
+
+    // 集成 A/B 测试引擎 (TASK-036)
+    // 假设我们将 B 变体设置为 aggregator，A 变体也设置为 aggregator (实际应用中 A/B 应该是不同的实现)
+    // 这里为了演示框架集成，我们配置一个 10% 流量到 variant_b 的 A/B 测试
+    let search_engine_service: Arc<dyn SearchEngine> = if settings.search.ab_test_enabled {
+        info!(
+            "Search A/B testing enabled, weight: {}",
+            settings.search.variant_b_weight
+        );
+        Arc::new(
+            crawlrs::infrastructure::search::ab_test::SearchABTestEngine::new(
+                search_aggregator.clone(),
+                search_aggregator, // 实际应用中这里应该是不同的引擎实现
+                settings.search.variant_b_weight,
+            ),
+        )
+    } else {
+        search_aggregator
+    };
+
     let create_scrape_use_case = Arc::new(
         crawlrs::application::usecases::create_scrape::CreateScrapeUseCase::new(router.clone()),
     );
     let webhook_event_repository = Arc::new(WebhookEventRepoImpl::new(db.clone()));
     let webhook_repository = Arc::new(WebhookRepoImpl::new(db.clone()));
-    let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new());
+    let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.clone()));
+    let _credits_repo_unused = credits_repo.clone();
+    let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(
+        redis_client.clone(),
+    )));
 
     // 初始化限流与并发控制组件
     let tasks_backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db.clone()));
@@ -252,6 +281,7 @@ async fn main() -> anyhow::Result<()> {
         redis_client.clone(),
         task_repo.clone(),
         tasks_backlog_repo.clone(),
+        credits_repo.clone(),
         rate_limiting_config,
     ));
     info!("Rate limiting service initialized");
@@ -265,12 +295,15 @@ async fn main() -> anyhow::Result<()> {
             info!("Starting API service...");
 
             // 启动 Webhook 工作器 (也需要在 API 服务中运行以处理事件)
+            let webhook_service =
+                Arc::new(WebhookServiceImpl::new(settings.webhook.secret.clone()));
             let webhook_worker = WebhookWorker::new(
                 webhook_event_repository.clone(),
-                settings.webhook.secret.clone(),
+                webhook_service,
+                RetryPolicy::default(),
             );
             tokio::spawn(async move {
-                webhook_worker.run().await;
+                let _ = webhook_worker.run().await;
             });
 
             // 启动积压任务处理Worker
@@ -343,7 +376,13 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .route(
                     "/v1/search",
-                    post(search_handler::search::<CrawlRepositoryImpl, TaskRepositoryImpl, CreditsRepositoryImpl>),
+                    post(
+                        search_handler::search::<
+                            CrawlRepositoryImpl,
+                            TaskRepositoryImpl,
+                            CreditsRepositoryImpl,
+                        >,
+                    ),
                 );
 
             let v2_routes = task_routes()
@@ -376,7 +415,8 @@ async fn main() -> anyhow::Result<()> {
                 .layer(Extension(settings.clone()))
                 .layer(Extension(search_engine_service))
                 .layer(Extension(tasks_backlog_repo.clone()))
-                .layer(Extension(rate_limiting_service.clone()));
+                .layer(Extension(rate_limiting_service.clone()))
+                .layer(Extension(uuid::Uuid::nil())); // TODO: Real team_id from auth
 
             let addr = format!("{}:{}", settings.server.host, settings.server.port);
             let listener = TcpListener::bind(&addr).await?;
@@ -392,6 +432,7 @@ async fn main() -> anyhow::Result<()> {
                 crawl_repo.clone(),
                 storage_repo.clone(),
                 webhook_event_repository.clone(),
+                credits_repo.clone(),
                 router.clone(),
                 create_scrape_use_case.clone(),
                 (*redis_client).clone(),

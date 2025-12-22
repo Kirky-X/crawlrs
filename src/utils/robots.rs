@@ -32,14 +32,23 @@ struct CachedRobots {
     expires_at: Instant,
 }
 
+use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::utils::retry_policy::RetryPolicy;
+
 /// Robots.txt检查器
 #[derive(Clone)]
 pub struct RobotsChecker {
     /// HTTP客户端
     client: Client,
 
-    /// 缓存
-    cache: Arc<Mutex<HashMap<String, CachedRobots>>>,
+    /// 内存缓存
+    memory_cache: Arc<Mutex<HashMap<String, CachedRobots>>>,
+
+    /// Redis客户端
+    redis_client: Option<Arc<RedisClient>>,
+
+    /// 重试策略
+    retry_policy: RetryPolicy,
 }
 
 #[async_trait]
@@ -59,7 +68,7 @@ impl RobotsCheckerTrait for RobotsChecker {
 
 impl Default for RobotsChecker {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
@@ -69,10 +78,17 @@ impl RobotsChecker {
     /// # 返回值
     ///
     /// 返回新的Robots检查器实例
-    pub fn new() -> Self {
+    pub fn new(redis_client: Option<Arc<RedisClient>>) -> Self {
         Self {
             client: Client::new(),
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            memory_cache: Arc::new(Mutex::new(HashMap::new())),
+            redis_client,
+            retry_policy: RetryPolicy {
+                max_retries: 3,
+                initial_backoff: Duration::from_secs(2),
+                max_backoff: Duration::from_secs(10),
+                ..Default::default()
+            },
         }
     }
 
@@ -87,9 +103,9 @@ impl RobotsChecker {
 
         let robots_url = format!("{}://{}:{}/robots.txt", scheme, host, port);
 
-        // Check cache
+        // 1. Check memory cache
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.memory_cache.lock().unwrap();
             if let Some(cached) = cache.get(&robots_url) {
                 if cached.expires_at > Instant::now() {
                     return Ok(cached.content.clone());
@@ -99,29 +115,93 @@ impl RobotsChecker {
             }
         }
 
-        // Fetch robots.txt
-        let response = self
-            .client
-            .get(&robots_url)
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await;
+        // 2. Check Redis cache
+        let redis_key = format!("robots_cache:{}", robots_url);
+        if let Some(ref redis) = self.redis_client {
+            if let Ok(Some(content)) = redis.get(&redis_key).await {
+                // Update memory cache
+                let mut cache = self.memory_cache.lock().unwrap();
+                cache.insert(
+                    robots_url.clone(),
+                    CachedRobots {
+                        content: content.clone(),
+                        expires_at: Instant::now() + Duration::from_secs(3600),
+                    },
+                );
+                return Ok(content);
+            }
+        }
 
-        let content = match response {
-            Ok(resp) if resp.status().is_success() => resp.text().await.unwrap_or_default(),
-            _ => "".to_string(), // Empty means allow all
-        };
+        // SSRF protection
+        crate::engines::validators::validate_url(&robots_url).await?;
 
-        // Update cache
+        // 3. Fetch robots.txt with retry
+        let mut attempt = 0;
+        let mut content = String::new();
+        let mut last_error = None;
+
+        while attempt < self.retry_policy.max_retries {
+            attempt += 1;
+            let response = self
+                .client
+                .get(&robots_url)
+                .header("User-Agent", "crawlrs-bot/1.0")
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await;
+
+            match response {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        content = resp.text().await.unwrap_or_default();
+                        last_error = None;
+                        break;
+                    } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                        // 404 is a valid response, meaning no robots.txt
+                        content = "".to_string();
+                        last_error = None;
+                        break;
+                    } else if resp.status().is_server_error() {
+                        last_error = Some(anyhow::anyhow!("Server error: {}", resp.status()));
+                    } else {
+                        // Other errors (403, etc.) might be permanent, but we'll treat them as "allow all" for safety or stop
+                        content = "".to_string();
+                        last_error = None;
+                        break;
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!("Request failed: {}", e));
+                }
+            }
+
+            if attempt < self.retry_policy.max_retries {
+                let backoff = self.retry_policy.calculate_backoff(attempt);
+                tokio::time::sleep(backoff).await;
+            }
+        }
+
+        if let Some(err) = last_error {
+            tracing::warn!("Failed to fetch robots.txt from {}: {}", robots_url, err);
+            // Default to empty content on persistent error
+            content = "".to_string();
+        }
+
+        // 4. Update memory cache
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.memory_cache.lock().unwrap();
             cache.insert(
-                robots_url,
+                robots_url.clone(),
                 CachedRobots {
                     content: content.clone(),
                     expires_at: Instant::now() + Duration::from_secs(3600), // Cache for 1 hour
                 },
             );
+        }
+
+        // 5. Update Redis cache
+        if let Some(ref redis) = self.redis_client {
+            let _ = redis.set(&redis_key, &content, 86400).await; // Redis cache for 24 hours
         }
 
         Ok(content)
