@@ -13,7 +13,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// 团队地理限制配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TeamGeoRestrictions {
     /// 是否启用地理限制
     pub enable_geo_restrictions: bool,
@@ -25,18 +25,6 @@ pub struct TeamGeoRestrictions {
     pub ip_whitelist: Option<Vec<String>>,
     /// 域名黑名单列表
     pub domain_blacklist: Option<Vec<String>>,
-}
-
-impl Default for TeamGeoRestrictions {
-    fn default() -> Self {
-        Self {
-            enable_geo_restrictions: false,
-            allowed_countries: None,
-            blocked_countries: None,
-            ip_whitelist: None,
-            domain_blacklist: None,
-        }
-    }
 }
 
 /// 地理限制验证结果

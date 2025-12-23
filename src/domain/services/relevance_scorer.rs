@@ -151,7 +151,7 @@ impl RelevanceScorer {
 
     /// Check if domain is authoritative (simplified heuristic)
     fn is_authoritative_domain(&self, url: &str) -> bool {
-        let authoritative_domains = vec![
+        let authoritative_domains = [
             "wikipedia.org",
             "github.com",
             "stackoverflow.com",

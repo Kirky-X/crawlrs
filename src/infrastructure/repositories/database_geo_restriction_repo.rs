@@ -35,28 +35,24 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
             .one(&self.db)
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?
-            .ok_or_else(|| GeoRestrictionRepositoryError::TeamNotFound(team_id))?;
+            .ok_or(GeoRestrictionRepositoryError::TeamNotFound(team_id))?;
 
         // 解析 JSON 字段
         let allowed_countries = team_model
             .allowed_countries
-            .map(|json| serde_json::from_value(json).ok())
-            .flatten();
+            .and_then(|json| serde_json::from_value(json).ok());
 
         let blocked_countries = team_model
             .blocked_countries
-            .map(|json| serde_json::from_value(json).ok())
-            .flatten();
+            .and_then(|json| serde_json::from_value(json).ok());
 
         let ip_whitelist = team_model
             .ip_whitelist
-            .map(|json| serde_json::from_value(json).ok())
-            .flatten();
+            .and_then(|json| serde_json::from_value(json).ok());
 
         let domain_blacklist = team_model
             .domain_blacklist
-            .map(|json| serde_json::from_value(json).ok())
-            .flatten();
+            .and_then(|json| serde_json::from_value(json).ok());
 
         Ok(TeamGeoRestrictions {
             enable_geo_restrictions: team_model.enable_geo_restrictions,
@@ -78,7 +74,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
             .one(&self.db)
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?
-            .ok_or_else(|| GeoRestrictionRepositoryError::TeamNotFound(team_id))?;
+            .ok_or(GeoRestrictionRepositoryError::TeamNotFound(team_id))?;
 
         // 转换为 ActiveModel 进行更新
         let mut active_model: team::ActiveModel = team_model.into();
@@ -168,6 +164,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore] // 需要数据库迁移支持
     async fn test_database_geo_restriction_repository() {
         // 这个测试需要数据库连接，这里只是展示结构
         // 实际测试应该在集成测试环境中运行
