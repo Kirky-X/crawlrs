@@ -490,6 +490,7 @@ async fn test_cancel_tasks_by_crawl_id() {
 /// 测试任务过期处理
 ///
 /// 验证expire_tasks方法是否能正确将过期的任务标记为失败。
+/// 包括队列中的任务和活跃状态的任务。
 ///
 /// 对应文档章节：3.3.8
 #[tokio::test]
@@ -498,14 +499,14 @@ async fn test_expire_tasks() {
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = Uuid::new_v4();
 
-    // Create an expired task (old created_at)
-    let expired_task = Task {
+    // Create an expired queued task (old created_at)
+    let expired_queued_task = Task {
         id: Uuid::new_v4(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
         team_id,
-        url: "https://example.com/expired".to_string(),
+        url: "https://example.com/expired-queued".to_string(),
         payload: serde_json::json!({}),
         attempt_count: 0,
         max_retries: 3,
@@ -520,14 +521,36 @@ async fn test_expire_tasks() {
         lock_expires_at: None,
     };
 
-    // Create a recent task (should not be expired)
-    let recent_task = Task {
+    // Create an expired active task (old started_at)
+    let expired_active_task = Task {
+        id: Uuid::new_v4(),
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Active,
+        priority: 0,
+        team_id,
+        url: "https://example.com/expired-active".to_string(),
+        payload: serde_json::json!({}),
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: (Utc::now() - chrono::Duration::days(2)).into(),
+        started_at: Some((Utc::now() - chrono::Duration::days(2)).fixed_offset()),
+        completed_at: None,
+        crawl_id: None,
+        updated_at: (Utc::now() - chrono::Duration::days(2)).into(),
+        lock_token: None,
+        lock_expires_at: None,
+    };
+
+    // Create a recent queued task (should not be expired)
+    let recent_queued_task = Task {
         id: Uuid::new_v4(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
         team_id,
-        url: "https://example.com/recent".to_string(),
+        url: "https://example.com/recent-queued".to_string(),
         payload: serde_json::json!({}),
         attempt_count: 0,
         max_retries: 3,
@@ -542,20 +565,68 @@ async fn test_expire_tasks() {
         lock_expires_at: None,
     };
 
-    repo.create(&expired_task).await.unwrap();
-    repo.create(&recent_task).await.unwrap();
+    // Create a recent active task (should not be expired)
+    let recent_active_task = Task {
+        id: Uuid::new_v4(),
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Active,
+        priority: 0,
+        team_id,
+        url: "https://example.com/recent-active".to_string(),
+        payload: serde_json::json!({}),
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: Utc::now().into(),
+        started_at: Some(Utc::now().fixed_offset()),
+        completed_at: None,
+        crawl_id: None,
+        updated_at: Utc::now().into(),
+        lock_token: None,
+        lock_expires_at: None,
+    };
+
+    repo.create(&expired_queued_task).await.unwrap();
+    repo.create(&expired_active_task).await.unwrap();
+    repo.create(&recent_queued_task).await.unwrap();
+    repo.create(&recent_active_task).await.unwrap();
 
     // Expire tasks older than 1 day
     let expired_count = repo.expire_tasks().await.unwrap();
-    assert_eq!(expired_count, 1);
+    assert_eq!(expired_count, 2); // Both expired tasks should be expired
 
-    // Verify the expired task was marked as failed
-    let expired_task_after = repo.find_by_id(expired_task.id).await.unwrap().unwrap();
-    assert_eq!(expired_task_after.status, TaskStatus::Failed);
+    // Verify the expired queued task was marked as failed
+    let expired_queued_after = repo
+        .find_by_id(expired_queued_task.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(expired_queued_after.status, TaskStatus::Failed);
 
-    // Verify the recent task was not affected
-    let recent_task_after = repo.find_by_id(recent_task.id).await.unwrap().unwrap();
-    assert_eq!(recent_task_after.status, TaskStatus::Queued);
+    // Verify the expired active task was marked as failed
+    let expired_active_after = repo
+        .find_by_id(expired_active_task.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(expired_active_after.status, TaskStatus::Failed);
+
+    // Verify the recent queued task was not affected
+    let recent_queued_after = repo
+        .find_by_id(recent_queued_task.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recent_queued_after.status, TaskStatus::Queued);
+
+    // Verify the recent active task was not affected
+    let recent_active_after = repo
+        .find_by_id(recent_active_task.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recent_active_after.status, TaskStatus::Active);
 }
 
 /// 测试按Crawl ID查找任务

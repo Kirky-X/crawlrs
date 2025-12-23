@@ -100,7 +100,10 @@ impl TaskRepository for TaskRepositoryImpl {
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
         let model: task_entity::ActiveModel = task.clone().into();
 
-        println!("DEBUG: Creating task {} with status {}", task.id, task.status);
+        println!(
+            "DEBUG: Creating task {} with status {}",
+            task.id, task.status
+        );
 
         model.insert(self.db.as_ref()).await?;
         Ok(task.clone())
@@ -300,11 +303,12 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
-        // 将长时间处于队列状态的任务标记为失败
+        // 将长时间处于队列状态或活跃状态的任务标记为失败
         // 使用24小时作为过期阈值
         let threshold = Utc::now() - chrono::Duration::hours(24);
 
-        let result = task_entity::Entity::update_many()
+        // 过期队列中的任务（基于创建时间）
+        let queued_result = task_entity::Entity::update_many()
             .col_expr(
                 task_entity::Column::Status,
                 Expr::value(TaskStatus::Failed.to_string()),
@@ -318,7 +322,22 @@ impl TaskRepository for TaskRepositoryImpl {
             .exec(self.db.as_ref())
             .await?;
 
-        Ok(result.rows_affected)
+        // 过期活跃状态的任务（基于开始时间）
+        let active_result = task_entity::Entity::update_many()
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(TaskStatus::Failed.to_string()),
+            )
+            .col_expr(
+                task_entity::Column::CompletedAt,
+                Expr::value::<Option<DateTime<FixedOffset>>>(Some(Utc::now().fixed_offset())),
+            )
+            .filter(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
+            .filter(task_entity::Column::StartedAt.lt(threshold))
+            .exec(self.db.as_ref())
+            .await?;
+
+        Ok(queued_result.rows_affected + active_result.rows_affected)
     }
 
     async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
@@ -421,7 +440,10 @@ impl TaskRepository for TaskRepositoryImpl {
                 let current_status =
                     TaskStatus::from_str(&task_model.status).unwrap_or(TaskStatus::Queued);
 
-                println!("DEBUG: Processing task {} with status {:?}", task_id, current_status);
+                println!(
+                    "DEBUG: Processing task {} with status {:?}",
+                    task_id, current_status
+                );
 
                 match current_status {
                     TaskStatus::Queued => {
@@ -521,7 +543,10 @@ impl TaskRepository for TaskRepositoryImpl {
             for crawl_id in crawl_ids_to_cancel {
                 match self.cancel_tasks_by_crawl_id(crawl_id).await {
                     Ok(cancelled_count) => {
-                        println!("Cancelled {} tasks for crawl_id: {}", cancelled_count, crawl_id);
+                        println!(
+                            "Cancelled {} tasks for crawl_id: {}",
+                            cancelled_count, crawl_id
+                        );
                     }
                     Err(e) => {
                         eprintln!("Failed to cancel tasks for crawl_id {}: {}", crawl_id, e);
