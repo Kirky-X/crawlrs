@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tracing::warn;
 
 use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 
@@ -201,6 +202,8 @@ impl EngineHealthMonitor {
                     .unwrap_or(1);
 
                 let health = if consecutive_failures >= self.config.max_consecutive_failures {
+                    // Alert P3-Low: Single Engine Failure
+                    warn!("ALARM: Engine {} is unhealthy after {} consecutive failures", engine_name, consecutive_failures);
                     EngineHealth::Unhealthy
                 } else {
                     EngineHealth::Degraded
