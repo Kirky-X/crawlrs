@@ -13,4 +13,5 @@ pub mod metrics_handler;
 pub mod scrape_handler;
 pub mod search_handler;
 pub mod task_handler;
+pub mod team_handler;
 pub mod webhook_handler;

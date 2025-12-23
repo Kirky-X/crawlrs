@@ -9,6 +9,8 @@
 /// 包括各种实体仓库的数据库实现
 pub mod crawl_repo_impl;
 pub mod credits_repo_impl;
+pub mod database_geo_restriction_repo;
+pub mod geo_restriction_repo_impl;
 pub mod scrape_result_repo_impl;
 pub mod task_repo_impl;
 pub mod tasks_backlog_repo_impl;

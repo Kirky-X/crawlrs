@@ -7,16 +7,17 @@ pub mod task;
 
 use crate::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crate::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
+use crate::infrastructure::repositories::geo_restriction_repo_impl::InMemoryGeoRestrictionRepository;
 use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
-    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
+    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler, team_handler,
     webhook_handler,
 };
 use crate::presentation::routes::task::task_routes;
 use axum::{
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use serde_json::json;
@@ -36,7 +37,10 @@ pub fn routes() -> Router {
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
         .route("/v1/scrape/{id}", delete(scrape_handler::cancel_scrape))
-        .route("/v1/extract", post(extract_handler::extract))
+        .route(
+            "/v1/extract",
+            post(extract_handler::extract::<InMemoryGeoRestrictionRepository>),
+        )
         .route(
             "/v1/webhooks",
             post(webhook_handler::create_webhook::<WebhookRepoImpl>),
@@ -49,6 +53,7 @@ pub fn routes() -> Router {
                     TaskRepositoryImpl,
                     WebhookRepoImpl,
                     ScrapeResultRepositoryImpl,
+                    InMemoryGeoRestrictionRepository,
                 >,
             ),
         )
@@ -59,6 +64,7 @@ pub fn routes() -> Router {
                 TaskRepositoryImpl,
                 WebhookRepoImpl,
                 ScrapeResultRepositoryImpl,
+                InMemoryGeoRestrictionRepository,
             >),
         )
         .route(
@@ -68,6 +74,7 @@ pub fn routes() -> Router {
                 TaskRepositoryImpl,
                 WebhookRepoImpl,
                 ScrapeResultRepositoryImpl,
+                InMemoryGeoRestrictionRepository,
             >),
         )
         .route(
@@ -78,6 +85,7 @@ pub fn routes() -> Router {
                     TaskRepositoryImpl,
                     WebhookRepoImpl,
                     ScrapeResultRepositoryImpl,
+                    InMemoryGeoRestrictionRepository,
                 >,
             ),
         )
@@ -90,6 +98,14 @@ pub fn routes() -> Router {
                     CreditsRepositoryImpl,
                 >,
             ),
+        )
+        .route(
+            "/v1/teams/geo-restrictions",
+            get(team_handler::get_team_geo_restrictions::<InMemoryGeoRestrictionRepository>),
+        )
+        .route(
+            "/v1/teams/geo-restrictions",
+            put(team_handler::update_team_geo_restrictions::<InMemoryGeoRestrictionRepository>),
         );
 
     let v2_routes = task_routes();

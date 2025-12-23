@@ -19,6 +19,7 @@
 /// 确保领域层保持纯粹的业务逻辑，不受技术实现的影响。
 pub mod cache;
 pub mod database;
+pub mod geolocation;
 pub mod metrics;
 pub mod observability;
 pub mod repositories;
