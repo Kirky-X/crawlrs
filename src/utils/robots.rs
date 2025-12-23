@@ -84,7 +84,7 @@ impl RobotsChecker {
             memory_cache: Arc::new(Mutex::new(HashMap::new())),
             redis_client,
             retry_policy: RetryPolicy {
-                max_retries: 3,
+                max_retries: 5,
                 initial_backoff: Duration::from_secs(2),
                 max_backoff: Duration::from_secs(10),
                 ..Default::default()

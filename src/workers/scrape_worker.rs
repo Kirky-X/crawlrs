@@ -90,7 +90,7 @@ where
     ) -> Self {
         // 根据任务类型选择合适的重试策略
         let retry_policy = RetryPolicy::slow(); // 网络请求适合慢速重试策略
-        
+
         Self {
             repository,
             result_repository,
@@ -362,13 +362,20 @@ where
                     }
 
                     if extra_credits > 0 {
-                        if let Err(e) = self.credits_repository.deduct_credits(
-                            task.team_id,
-                            extra_credits,
-                            crate::domain::models::credits::CreditsTransactionType::Scrape,
-                            format!("Extra credits for scrape (screenshot/proxy) for task {}", task.id),
-                            Some(task.id),
-                        ).await {
+                        if let Err(e) = self
+                            .credits_repository
+                            .deduct_credits(
+                                task.team_id,
+                                extra_credits,
+                                crate::domain::models::credits::CreditsTransactionType::Scrape,
+                                format!(
+                                    "Extra credits for scrape (screenshot/proxy) for task {}",
+                                    task.id
+                                ),
+                                Some(task.id),
+                            )
+                            .await
+                        {
                             error!("Failed to deduct extra credits for task {}: {}", task.id, e);
                         }
                     }
@@ -381,7 +388,10 @@ where
 
                 // If it's a timeout error, mark as failed immediately instead of rescheduling
                 let err_str = e.to_string().to_lowercase();
-                if err_str.contains("timeout") || err_str.contains("expired") || err_str.contains("all engines failed") {
+                if err_str.contains("timeout")
+                    || err_str.contains("expired")
+                    || err_str.contains("all engines failed")
+                {
                     println!("DEBUG: Timeout or AllEnginesFailed detected, marking task as failed");
                     // Fetch task to ensure we have latest state
                     if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
@@ -544,9 +554,9 @@ where
                                 }
 
                                 // 2. Convert to credits and deduct from database
-                                // 10 Credits / 1000 Tokens = 0.01 Credits per Token
-                                // Use integer math: (total_tokens * 10) / 1000
-                                let credits_to_deduct = (usage.total_tokens as i64 * 10) / 1000;
+                                // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
+                                let credits_to_deduct =
+                                    std::cmp::max(1, (usage.total_tokens as i64 * 10 + 999) / 1000);
                                 if credits_to_deduct > 0 {
                                     if let Err(e) = self.credits_repository.deduct_credits(
                                         task.team_id,
@@ -584,7 +594,7 @@ where
                         depth,
                         &config,
                     )
-                        .await?;
+                    .await?;
                 }
 
                 // 5. 更新任务状态和 Crawl 统计
@@ -718,7 +728,101 @@ where
         };
 
         // 2. Extract Data using ExtractionService (which uses LLM internally if configured)
-        // Convert ExtractRequestDto schema/prompt to ExtractionRule
+
+        // Handle extraction rules if provided
+        if let Some(rules) = payload.rules {
+            println!("DEBUG: Processing extraction rules: {:?}", rules);
+            // Use provided extraction rules with potential LLM usage
+            let (extracted_data, usage) =
+                crate::domain::services::extraction_service::ExtractionService::extract(
+                    &processed_scrape_resp.content,
+                    &rules,
+                    &self.settings,
+                )
+                .await?;
+
+            println!("DEBUG: Extraction completed, usage: {:?}", usage);
+            println!("DEBUG: Extracted data: {:?}", extracted_data);
+
+            // Record usage and deduct credits for LLM usage
+            if usage.total_tokens > 0 {
+                println!("DEBUG: Token usage detected: {} tokens", usage.total_tokens);
+                // 1. Record in Redis for real-time tracking
+                let key = format!("team:{}:token_usage", task.team_id);
+                if let Err(e) = self.redis.incr_by(&key, usage.total_tokens as i64).await {
+                    error!("Failed to record token usage in Redis: {}", e);
+                }
+
+                // 2. Convert to credits and deduct from database
+                // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
+                let credits_to_deduct =
+                    std::cmp::max(1, (usage.total_tokens as i64 * 10 + 999) / 1000);
+                println!("DEBUG: Credits to deduct: {}", credits_to_deduct);
+                if credits_to_deduct > 0 {
+                    println!(
+                        "DEBUG: Attempting to deduct {} credits for team {}",
+                        credits_to_deduct, task.team_id
+                    );
+                    match self
+                        .credits_repository
+                        .deduct_credits(
+                            task.team_id,
+                            credits_to_deduct,
+                            crate::domain::models::credits::CreditsTransactionType::Extract,
+                            format!(
+                                "Tokens used for extraction rules ({} tokens)",
+                                usage.total_tokens
+                            ),
+                            Some(task.id),
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            info!(
+                                "Deducted {} credits for {} tokens for team {}",
+                                credits_to_deduct, usage.total_tokens, task.team_id
+                            );
+                            println!("DEBUG: Successfully deducted {} credits", credits_to_deduct);
+                        }
+                        Err(e) => {
+                            error!("Failed to deduct credits for token usage: {}", e);
+                            println!("DEBUG: Failed to deduct credits: {}", e);
+                        }
+                    }
+                } else {
+                    println!("DEBUG: No credits to deduct (credits_to_deduct <= 0)");
+                }
+            }
+
+            // Save results
+            let mut scrape_result = ScrapeResult::new(
+                task.id,
+                url.clone(),
+                processed_scrape_resp.status_code,
+                processed_scrape_resp.content.clone(),
+                "text/html".to_string(),
+                0,
+            );
+            scrape_result.meta_data = json!({
+                "extracted_data": extracted_data
+            });
+
+            self.result_repository.save(scrape_result).await?;
+
+            task.status = TaskStatus::Completed;
+            self.repository.update(&task).await?;
+
+            self.trigger_webhook(
+                &task,
+                WebhookEventType::Custom("extract.completed".to_string()),
+                None,
+            )
+            .await;
+
+            return Ok(());
+        }
+
+        // Handle prompt-based extraction (legacy)
         let mut rules = HashMap::new();
         if let Some(prompt) = payload.prompt {
             rules.insert(
@@ -731,17 +835,17 @@ where
                     llm_prompt: Some(prompt),
                 },
             );
-        } else if let Some(_schema) = payload.schema {
-            // 使用新实现的 extract_with_schema 优化提取流程
+
+            // Use extraction rules for prompt-based extraction
             let (extracted_data, usage) =
-                crate::domain::services::extraction_service::ExtractionService::extract_with_schema(
+                crate::domain::services::extraction_service::ExtractionService::extract(
                     &processed_scrape_resp.content,
-                    &_schema,
+                    &rules,
                     &self.settings,
                 )
-                    .await?;
+                .await?;
 
-            // Record usage
+            // Record usage and deduct credits
             if usage.total_tokens > 0 {
                 // 1. Record in Redis for real-time tracking
                 let key = format!("team:{}:token_usage", task.team_id);
@@ -750,15 +854,21 @@ where
                 }
 
                 // 2. Convert to credits and deduct from database
-                let credits_to_deduct = (usage.total_tokens as i64 * 10) / 1000;
+                // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
+                let credits_to_deduct =
+                    std::cmp::max(1, (usage.total_tokens as i64 * 10 + 999) / 1000);
                 if credits_to_deduct > 0 {
-                    if let Err(e) = self.credits_repository.deduct_credits(
-                        task.team_id,
-                        credits_to_deduct,
-                        crate::domain::models::credits::CreditsTransactionType::Extract,
-                        format!("Tokens used for extraction ({} tokens)", usage.total_tokens),
-                        Some(task.id),
-                    ).await {
+                    if let Err(e) = self
+                        .credits_repository
+                        .deduct_credits(
+                            task.team_id,
+                            credits_to_deduct,
+                            crate::domain::models::credits::CreditsTransactionType::Extract,
+                            format!("Tokens used for extraction ({} tokens)", usage.total_tokens),
+                            Some(task.id),
+                        )
+                        .await
+                    {
                         error!("Failed to deduct credits for token usage: {}", e);
                     } else {
                         info!(
@@ -769,7 +879,80 @@ where
                 }
             }
 
-            // 3. Save Output
+            // Save results
+            let mut scrape_result = ScrapeResult::new(
+                task.id,
+                url.clone(),
+                processed_scrape_resp.status_code,
+                processed_scrape_resp.content.clone(),
+                "text/html".to_string(),
+                0,
+            );
+            scrape_result.meta_data = json!({
+                "extracted_data": extracted_data
+            });
+
+            self.result_repository.save(scrape_result).await?;
+
+            task.status = TaskStatus::Completed;
+            self.repository.update(&task).await?;
+
+            self.trigger_webhook(
+                &task,
+                WebhookEventType::Custom("extract.completed".to_string()),
+                None,
+            )
+            .await;
+
+            return Ok(());
+        } else if let Some(_schema) = payload.schema {
+            // 使用新实现的 extract_with_schema 优化提取流程
+            let (extracted_data, usage) =
+                crate::domain::services::extraction_service::ExtractionService::extract_with_schema(
+                    &processed_scrape_resp.content,
+                    &_schema,
+                    &self.settings,
+                )
+                    .await?;
+
+            // Record usage and deduct credits
+            if usage.total_tokens > 0 {
+                // 1. Record in Redis for real-time tracking
+                let key = format!("team:{}:token_usage", task.team_id);
+                if let Err(e) = self.redis.incr_by(&key, usage.total_tokens as i64).await {
+                    error!("Failed to record token usage in Redis: {}", e);
+                }
+
+                // 2. Convert to credits and deduct from database
+                // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
+                let credits_to_deduct =
+                    std::cmp::max(1, (usage.total_tokens as i64 * 10 + 999) / 1000);
+                if credits_to_deduct > 0 {
+                    if let Err(e) = self
+                        .credits_repository
+                        .deduct_credits(
+                            task.team_id,
+                            credits_to_deduct,
+                            crate::domain::models::credits::CreditsTransactionType::Extract,
+                            format!(
+                                "Tokens used for schema extraction ({} tokens)",
+                                usage.total_tokens
+                            ),
+                            Some(task.id),
+                        )
+                        .await
+                    {
+                        error!("Failed to deduct credits for token usage: {}", e);
+                    } else {
+                        info!(
+                            "Deducted {} credits for {} tokens for team {}",
+                            credits_to_deduct, usage.total_tokens, task.team_id
+                        );
+                    }
+                }
+            }
+
+            // Save results
             let mut scrape_result = ScrapeResult::new(
                 task.id,
                 url,
@@ -792,7 +975,7 @@ where
                 WebhookEventType::Custom("extract.completed".to_string()),
                 None,
             )
-                .await;
+            .await;
 
             return Ok(());
         }
@@ -819,7 +1002,7 @@ where
             WebhookEventType::Custom("extract.completed".to_string()),
             None,
         )
-            .await;
+        .await;
 
         Ok(())
     }
@@ -1007,7 +1190,9 @@ where
                             }
 
                             // 2. Convert to credits and deduct from database
-                            let credits_to_deduct = (usage.total_tokens as i64 * 10) / 1000;
+                            // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
+                            let credits_to_deduct =
+                                std::cmp::max(1, (usage.total_tokens as i64 * 10 + 999) / 1000);
                             if credits_to_deduct > 0 {
                                 if let Err(e) = self.credits_repository.deduct_credits(
                                     task.team_id,
@@ -1222,8 +1407,11 @@ where
             self.repository.mark_failed(task.id).await?;
         } else {
             // 使用可配置的重试策略计算退避时间
-            let backoff_duration = self.retry_policy.calculate_backoff(new_attempt_count as u32);
-            let next_retry = Utc::now() + chrono::Duration::milliseconds(backoff_duration.as_millis() as i64);
+            let backoff_duration = self
+                .retry_policy
+                .calculate_backoff(new_attempt_count as u32);
+            let next_retry =
+                Utc::now() + chrono::Duration::milliseconds(backoff_duration.as_millis() as i64);
 
             task.attempt_count = new_attempt_count;
             task.scheduled_at = Some(next_retry.into());
@@ -1232,8 +1420,7 @@ where
             self.repository.update(task).await?;
             info!(
                 "Scheduled retry {}/{} for task {} in {:?} (backoff: {:?})",
-                new_attempt_count, task.max_retries, task.id, 
-                backoff_duration, next_retry
+                new_attempt_count, task.max_retries, task.id, backoff_duration, next_retry
             );
         }
 
@@ -1287,15 +1474,30 @@ where
                 .unwrap_or(false),
             needs_tls_fingerprint: false,
             use_fire_engine: false,
-            actions: scrape_request.actions.clone().unwrap_or_default().into_iter().map(|a| {
-                match a {
-                    crate::application::dto::scrape_request::ScrapeActionDto::Wait { milliseconds } => ScrapeAction::Wait { milliseconds },
-                    crate::application::dto::scrape_request::ScrapeActionDto::Click { selector } => ScrapeAction::Click { selector },
-                    crate::application::dto::scrape_request::ScrapeActionDto::Scroll { direction } => ScrapeAction::Scroll { direction },
-                    crate::application::dto::scrape_request::ScrapeActionDto::Screenshot { full_page } => ScrapeAction::Screenshot { full_page },
-                    crate::application::dto::scrape_request::ScrapeActionDto::Input { selector, text } => ScrapeAction::Input { selector, text },
-                }
-            }).collect(),
+            actions: scrape_request
+                .actions
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| match a {
+                    crate::application::dto::scrape_request::ScrapeActionDto::Wait {
+                        milliseconds,
+                    } => ScrapeAction::Wait { milliseconds },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Click {
+                        selector,
+                    } => ScrapeAction::Click { selector },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Scroll {
+                        direction,
+                    } => ScrapeAction::Scroll { direction },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Screenshot {
+                        full_page,
+                    } => ScrapeAction::Screenshot { full_page },
+                    crate::application::dto::scrape_request::ScrapeActionDto::Input {
+                        selector,
+                        text,
+                    } => ScrapeAction::Input { selector, text },
+                })
+                .collect(),
             sync_wait_ms: scrape_request.sync_wait_ms.unwrap_or(0),
         })
     }

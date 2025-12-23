@@ -79,8 +79,8 @@ pub async fn create_scrape(
                 .into_response();
         }
         Ok(RateLimitResult::RetryAfter {
-               retry_after_seconds,
-           }) => {
+            retry_after_seconds,
+        }) => {
             return (
                 StatusCode::TOO_MANY_REQUESTS,
                 Json(serde_json::json!({
@@ -147,7 +147,7 @@ pub async fn create_scrape(
                     sync_wait_ms,
                     1000, // 基础轮询间隔1秒
                 )
-                    .await
+                .await
                 {
                     Ok(_) => {
                         waited_time_ms = wait_start.elapsed().as_millis() as u64;
@@ -180,7 +180,10 @@ pub async fn create_scrape(
             (status_code, Json(response)).into_response()
         }
         Err(e) => {
-            error!("Failed to enqueue task for team {}: {}. Payload: {:?}", team_id, e, payload);
+            error!(
+                "Failed to enqueue task for team {}: {}. Payload: {:?}",
+                team_id, e, payload
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({

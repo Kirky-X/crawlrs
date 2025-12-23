@@ -3,25 +3,40 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use axum::{http::StatusCode, response::IntoResponse, Extension, Json};
+use axum::{
+    extract::{ConnectInfo, Extension},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use serde_json::json;
+use std::net::SocketAddr;
 use tracing::error;
 use uuid::Uuid;
 
 use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::config::settings::Settings;
 use crate::domain::models::task::{Task, TaskType};
+use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
+use crate::domain::services::team_service::TeamService;
+use crate::infrastructure::geolocation::GeoLocationService;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::queue::task_queue::TaskQueue;
 use std::sync::Arc;
 
-pub async fn extract(
+pub async fn extract<GR>(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
     Extension(_settings): Extension<Arc<Settings>>,
     Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
+    Extension(geo_restriction_repo): Extension<Arc<GR>>,
+    Extension(team_id): Extension<Uuid>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<ExtractRequestDto>,
-) -> impl IntoResponse {
+) -> impl IntoResponse
+where
+    GR: GeoRestrictionRepository + 'static,
+{
     // Validate the request
     if payload.urls.is_empty() {
         return (
@@ -34,19 +49,95 @@ pub async fn extract(
             .into_response();
     }
 
-    if payload.prompt.is_none() && payload.schema.is_none() {
+    if payload.prompt.is_none() && payload.schema.is_none() && payload.rules.is_none() {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "success": false,
-                "error": "Either prompt or schema is required"
+                "error": "Either prompt, schema, or rules is required"
             })),
         )
             .into_response();
     }
 
+    // 检查地理限制
+    let client_ip = addr.ip().to_string();
+
+    // 获取团队地理限制配置
+    let restrictions = match geo_restriction_repo.get_team_restrictions(team_id).await {
+        Ok(restrictions) => restrictions,
+        Err(e) => {
+            error!("Failed to get team restrictions: {:?}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": "Failed to validate geographic access"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // 使用团队服务验证地理限制
+    let team_service = TeamService::new(GeoLocationService::new(), geo_restriction_repo.clone());
+    match team_service
+        .validate_geographic_restriction(team_id, &client_ip, &restrictions)
+        .await
+    {
+        Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
+            // 记录允许的访问日志
+            if let Err(e) = geo_restriction_repo
+                .log_geo_restriction_action(
+                    team_id,
+                    &client_ip,
+                    "",
+                    "ALLOWED",
+                    "Extract request - Geographic restriction check passed",
+                )
+                .await
+            {
+                error!("Failed to log geographic restriction action: {}", e);
+            }
+        }
+        Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
+            // 记录拒绝的访问日志
+            if let Err(e) = geo_restriction_repo
+                .log_geo_restriction_action(
+                    team_id,
+                    &client_ip,
+                    "",
+                    "DENIED",
+                    &format!("Extract request - {}", reason),
+                )
+                .await
+            {
+                error!("Failed to log geographic restriction action: {}", e);
+            }
+
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "success": false,
+                    "error": format!("Access denied due to geographic restrictions: {}", reason)
+                })),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            error!("Failed to validate geographic restrictions: {:?}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "error": "Failed to validate geographic access"
+                })),
+            )
+                .into_response();
+        }
+    }
+
     // Create a task for async extraction
-    let team_id = Uuid::nil(); // TODO: Get from auth
     let task = Task::new(
         TaskType::Extract,
         team_id,
@@ -71,7 +162,7 @@ pub async fn extract(
                     sync_wait_ms,
                     1000, // 基础轮询间隔1秒
                 )
-                    .await
+                .await
                 {
                     Ok(_) => {
                         waited_time_ms = wait_start.elapsed().as_millis() as u64;

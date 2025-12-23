@@ -203,9 +203,9 @@ pub async fn example_integration_usage() {
     let scrape_responses = vec![
         ScrapeResponseInput {
             content:
-            r#"<html><body><h1>测试页面1</h1><p>这是第一个测试页面的内容。</p></body></html>"#
-                .as_bytes()
-                .to_vec(),
+                r#"<html><body><h1>测试页面1</h1><p>这是第一个测试页面的内容。</p></body></html>"#
+                    .as_bytes()
+                    .to_vec(),
             url: "http://test1.com".to_string(),
             content_type: Some("text/html".to_string()),
             status_code: 200,

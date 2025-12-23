@@ -146,7 +146,11 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
             if let Ok(url) = Url::parse(&link) {
                 if let Some(domain) = url.domain() {
                     if domain_blacklist.iter().any(|d| domain.contains(d)) {
-                        tracing::info!("Skipping blacklisted domain: {} for link: {}", domain, link);
+                        tracing::info!(
+                            "Skipping blacklisted domain: {} for link: {}",
+                            domain,
+                            link
+                        );
                         continue;
                     }
                 }
@@ -184,11 +188,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
 
             let user_agent = "Crawlrs/0.1.0";
             // Robots.txt check - Move AFTER deduplication check to save network requests
-            if !self
-                .robots_checker
-                .is_allowed(&link, user_agent)
-                .await?
-            {
+            if !self.robots_checker.is_allowed(&link, user_agent).await? {
                 continue;
             }
 

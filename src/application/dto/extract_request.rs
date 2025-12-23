@@ -3,8 +3,10 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+use crate::domain::services::extraction_service::ExtractionRule;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use validator::Validate;
 
 #[derive(Debug, Deserialize, Serialize, Validate)]
@@ -13,6 +15,8 @@ pub struct ExtractRequestDto {
     pub prompt: Option<String>,
     pub schema: Option<Value>,
     pub model: Option<String>,
+    /// 提取规则（用于复杂提取场景）
+    pub rules: Option<HashMap<String, ExtractionRule>>,
     /// 同步等待时长（毫秒，默认 5000，最大 30000）
     #[validate(range(min = 0, max = 30000))]
     pub sync_wait_ms: Option<u32>,

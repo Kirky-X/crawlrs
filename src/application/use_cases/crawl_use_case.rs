@@ -13,16 +13,19 @@ use crate::{
         },
         repositories::{
             crawl_repository::CrawlRepository,
+            geo_restriction_repository::GeoRestrictionRepository,
             scrape_result_repository::ScrapeResultRepository,
             task_repository::{RepositoryError, TaskRepository},
             webhook_repository::WebhookRepository,
         },
+        services::team_service::TeamService,
     },
 };
 use chrono::{FixedOffset, Utc};
 use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
+use tracing::log::error;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -58,7 +61,8 @@ pub enum CrawlUseCaseError {
 /// * `TR` - 任务仓库类型，必须实现 `TaskRepository`
 /// * `WR` - Webhook 仓库类型，必须实现 `WebhookRepository`
 /// * `SRR` - 抓取结果仓库类型，必须实现 `ScrapeResultRepository`
-pub struct CrawlUseCase<CR, TR, WR, SRR> {
+/// * `GR` - 地理限制仓库类型，必须实现 `GeoRestrictionRepository`
+pub struct CrawlUseCase<CR, TR, WR, SRR, GR> {
     /// 爬取任务仓库
     crawl_repo: Arc<CR>,
     /// 任务仓库
@@ -67,14 +71,19 @@ pub struct CrawlUseCase<CR, TR, WR, SRR> {
     webhook_repo: Arc<WR>,
     /// 抓取结果仓库
     scrape_result_repo: Arc<SRR>,
+    /// 地理限制仓库
+    geo_restriction_repo: Arc<GR>,
+    /// 团队服务
+    team_service: Arc<TeamService>,
 }
 
-impl<CR, TR, WR, SRR> CrawlUseCase<CR, TR, WR, SRR>
+impl<CR, TR, WR, SRR, GR> CrawlUseCase<CR, TR, WR, SRR, GR>
 where
     CR: CrawlRepository + 'static,
     TR: TaskRepository + 'static,
     WR: WebhookRepository + 'static,
     SRR: ScrapeResultRepository + 'static,
+    GR: GeoRestrictionRepository + 'static,
 {
     /// 创建新的爬取用例实例
     ///
@@ -84,6 +93,8 @@ where
     /// * `task_repo` - 任务仓库
     /// * `webhook_repo` - Webhook 仓库
     /// * `scrape_result_repo` - 抓取结果仓库
+    /// * `geo_restriction_repo` - 地理限制仓库
+    /// * `team_service` - 团队服务
     ///
     /// # 返回值
     ///
@@ -93,12 +104,16 @@ where
         task_repo: Arc<TR>,
         webhook_repo: Arc<WR>,
         scrape_result_repo: Arc<SRR>,
+        geo_restriction_repo: Arc<GR>,
+        team_service: Arc<TeamService>,
     ) -> Self {
         Self {
             crawl_repo,
             task_repo,
             webhook_repo,
             scrape_result_repo,
+            geo_restriction_repo,
+            team_service,
         }
     }
 
@@ -155,12 +170,13 @@ where
 
     /// 创建新的爬取任务
     ///
-    /// 验证请求参数并创建新的爬取任务记录
+    /// 验证请求参数并检查地理限制，然后创建新的爬取任务记录
     ///
     /// # 参数
     ///
     /// * `team_id` - 团队 ID
     /// * `dto` - 爬取请求数据传输对象
+    /// * `client_ip` - 客户端 IP 地址（用于地理限制验证）
     ///
     /// # 返回值
     ///
@@ -171,17 +187,72 @@ where
     ///
     /// 可能在以下情况下返回错误：
     /// - 请求参数验证失败（ValidationError）
+    /// - 地理限制验证失败（ValidationError）
     /// - 数据库操作失败（RepositoryError）
     pub async fn create_crawl(
         &self,
         team_id: Uuid,
         dto: CrawlRequestDto,
+        client_ip: &str,
     ) -> Result<Crawl, CrawlUseCaseError> {
         // 1. 验证请求参数
         dto.validate()
             .map_err(|e| CrawlUseCaseError::ValidationError(e.to_string()))?;
 
-        // 2. 生成新的爬取任务 ID
+        // 2. 检查地理限制
+        let restrictions = self
+            .geo_restriction_repo
+            .get_team_restrictions(team_id)
+            .await
+            .map_err(|e| {
+                CrawlUseCaseError::Anyhow(anyhow::anyhow!("Failed to get team restrictions: {}", e))
+            })?;
+
+        match self
+            .team_service
+            .validate_geographic_restriction(team_id, client_ip, &restrictions)
+            .await
+        {
+            Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
+                // 记录允许的访问日志
+                if let Err(e) = self
+                    .geo_restriction_repo
+                    .log_geo_restriction_action(
+                        team_id,
+                        client_ip,
+                        "",
+                        "ALLOWED",
+                        "Geographic restriction check passed",
+                    )
+                    .await
+                {
+                    error!("Failed to log geographic restriction action: {}", e);
+                }
+            }
+            Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
+                // 记录拒绝的访问日志
+                if let Err(e) = self
+                    .geo_restriction_repo
+                    .log_geo_restriction_action(team_id, client_ip, "", "DENIED", &reason)
+                    .await
+                {
+                    error!("Failed to log geographic restriction action: {}", e);
+                }
+                return Err(CrawlUseCaseError::ValidationError(format!(
+                    "Geographic restriction check failed: {}",
+                    reason
+                )));
+            }
+            Err(e) => {
+                error!("Geographic restriction validation error: {}", e);
+                return Err(CrawlUseCaseError::Anyhow(anyhow::anyhow!(
+                    "Geographic restriction validation failed: {}",
+                    e
+                )));
+            }
+        }
+
+        // 3. 生成新的爬取任务 ID
         let crawl_id = Uuid::new_v4();
         let now = Utc::now();
 

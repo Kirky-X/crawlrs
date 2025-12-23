@@ -27,40 +27,47 @@ static BROWSER_INSTANCE: OnceCell<Browser> = OnceCell::const_new();
 // Asynchronously gets or initializes the shared browser instance.
 // This function ensures that the browser is launched only once.
 pub async fn get_browser() -> Result<&'static Browser, EngineError> {
-    BROWSER_INSTANCE.get_or_try_init(|| async {
-        let remote_debugging_url = REMOTE_URL_OVERRIDE.try_with(|url| url.clone()).ok()
-            .or_else(|| std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").ok());
+    BROWSER_INSTANCE
+        .get_or_try_init(|| async {
+            let remote_debugging_url = REMOTE_URL_OVERRIDE
+                .try_with(|url| url.clone())
+                .ok()
+                .or_else(|| std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").ok());
 
-        let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
-            tracing::info!("Connecting to remote Chrome instance at: {}", url);
-            Browser::connect(url)
-                .await
-                .map_err(|e| EngineError::Other(format!("Failed to connect to remote Chrome: {}", e)))?
-        } else {
-            let mut builder = BrowserConfig::builder()
-                .no_sandbox()
-                .request_timeout(Duration::from_secs(30)); // Default timeout
+            let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
+                tracing::info!("Connecting to remote Chrome instance at: {}", url);
+                Browser::connect(url).await.map_err(|e| {
+                    EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
+                })?
+            } else {
+                let mut builder = BrowserConfig::builder()
+                    .no_sandbox()
+                    .request_timeout(Duration::from_secs(30)); // Default timeout
 
-            // Production environment setup
-            builder = builder.arg("--disable-gpu")
-                             .arg("--disable-dev-shm-usage");
+                // Production environment setup
+                builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
 
-            Browser::launch(builder.build().map_err(|e| EngineError::Other(e.to_string()))?)
+                Browser::launch(
+                    builder
+                        .build()
+                        .map_err(|e| EngineError::Other(e.to_string()))?,
+                )
                 .await
                 .map_err(|e| EngineError::Other(e.to_string()))?
-        };
+            };
 
-        // Spawn a handler to process browser events
-        tokio::spawn(async move {
-            while let Some(h) = handler.next().await {
-                if h.is_err() {
-                    break;
+            // Spawn a handler to process browser events
+            tokio::spawn(async move {
+                while let Some(h) = handler.next().await {
+                    if h.is_err() {
+                        break;
+                    }
                 }
-            }
-        });
+            });
 
-        Ok(browser)
-    }).await
+            Ok(browser)
+        })
+        .await
 }
 
 /// Playwright引擎

@@ -265,7 +265,6 @@ pub struct ProcessedScrapeResponse {
 /// 爬虫文本处理器配置
 pub use crate::utils::crawl_text_processor::CrawlProcessorConfig as CrawlTextProcessorConfig;
 
-
 /// 集成器状态
 #[derive(Debug, Clone)]
 pub struct CrawlTextIntegrationStatus {

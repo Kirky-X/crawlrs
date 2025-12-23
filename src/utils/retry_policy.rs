@@ -28,7 +28,7 @@ pub struct RetryPolicy {
 impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
-            max_retries: 3,
+            max_retries: 5,
             initial_backoff: Duration::from_secs(1),
             max_backoff: Duration::from_secs(60),
             backoff_multiplier: 2.0,
@@ -48,7 +48,7 @@ impl RetryPolicy {
     /// 创建快速重试策略（更短的退避时间）
     pub fn fast() -> Self {
         Self {
-            max_retries: 3,
+            max_retries: 5,
             initial_backoff: Duration::from_millis(500),
             max_backoff: Duration::from_secs(10),
             backoff_multiplier: 1.5,
@@ -121,15 +121,15 @@ mod tests {
     fn test_calculate_backoff_exponential() {
         let mut policy = RetryPolicy::standard();
         policy.enable_jitter = false; // 禁用抖动以获得精确值
-        
+
         // 第一次重试 (attempt = 1)
         let backoff1 = policy.calculate_backoff(1);
         assert_eq!(backoff1, Duration::from_secs(1));
-        
+
         // 第二次重试 (attempt = 2)
         let backoff2 = policy.calculate_backoff(2);
         assert_eq!(backoff2, Duration::from_secs(2)); // 1 * 2^1
-        
+
         // 第三次重试 (attempt = 3)
         let backoff3 = policy.calculate_backoff(3);
         assert_eq!(backoff3, Duration::from_secs(4)); // 1 * 2^2
@@ -140,12 +140,12 @@ mod tests {
         let mut policy = RetryPolicy::standard();
         policy.enable_jitter = true;
         policy.jitter_factor = 0.1;
-        
+
         let backoff = policy.calculate_backoff(2);
         // 应该接近 2 秒，但有 ±10% 的抖动
         let expected = Duration::from_secs(2);
         let jitter_range = Duration::from_millis(200); // 10% of 2s
-        
+
         assert!(backoff >= expected - jitter_range);
         assert!(backoff <= expected + jitter_range);
     }
@@ -155,7 +155,7 @@ mod tests {
         let mut policy = RetryPolicy::standard();
         policy.max_backoff = Duration::from_secs(5);
         policy.enable_jitter = false; // 禁用抖动以获得精确值
-        
+
         // 尝试计算一个会超过最大值的退避时间
         let backoff = policy.calculate_backoff(10);
         assert_eq!(backoff, Duration::from_secs(5)); // 被限制在最大值
@@ -164,26 +164,28 @@ mod tests {
     #[test]
     fn test_should_retry() {
         let policy = RetryPolicy::standard();
-        
+
         assert!(policy.should_retry(0));
         assert!(policy.should_retry(1));
         assert!(policy.should_retry(2));
-        assert!(!policy.should_retry(3)); // max_retries = 3
-        assert!(!policy.should_retry(4));
+        assert!(policy.should_retry(3));
+        assert!(policy.should_retry(4));
+        assert!(!policy.should_retry(5)); // max_retries = 5
+        assert!(!policy.should_retry(6));
     }
 
     #[test]
     fn test_next_retry_time() {
         use chrono::TimeZone;
-        
+
         let mut policy = RetryPolicy::standard();
         policy.enable_jitter = false; // 禁用抖动以获得精确值
-        
+
         let base_time = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
-        
+
         let next_retry = policy.next_retry_time(2, base_time);
         let expected = base_time + chrono::Duration::seconds(2);
-        
+
         assert_eq!(next_retry, expected);
     }
 }

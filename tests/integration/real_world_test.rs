@@ -115,8 +115,14 @@ async fn test_real_world_playwright_engine() {
     info!("Testing PlaywrightEngine with Docker-based Chromium setup...");
 
     // Defensively stop and remove any existing container
-    std::process::Command::new("docker").args(&["stop", "chromium-test"]).output().ok();
-    std::process::Command::new("docker").args(&["rm", "chromium-test"]).output().ok();
+    std::process::Command::new("docker")
+        .args(&["stop", "chromium-test"])
+        .output()
+        .ok();
+    std::process::Command::new("docker")
+        .args(&["rm", "chromium-test"])
+        .output()
+        .ok();
 
     // Use Docker to run a container with Chromium pre-installed and remote debugging enabled
     info!("Starting Chromium container with remote debugging...");
