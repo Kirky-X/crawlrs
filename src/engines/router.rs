@@ -479,7 +479,7 @@ mod tests {
     use crate::engines::traits::MockScraperEngine;
     use crate::engines::traits::ScrapeRequest;
     use mockall::predicate::*;
-    
+
     #[tokio::test]
     async fn test_aggregate_concurrent_search() {
         let mut mock_engine1 = MockScraperEngine::new();
@@ -497,21 +497,21 @@ mod tests {
         mock_engine2
             .expect_scrape()
             .returning(|_| Ok(ScrapeResponse::new("http://example.com", "Result 2")));
-            
+
         let router = EngineRouter::new(vec![
             Arc::new(mock_engine1),
             Arc::new(mock_engine2),
         ]);
-        
+
         let request = ScrapeRequest::new("http://example.com");
         let result = router.aggregate(&request).await;
-        
+
         assert!(result.is_ok());
         // 由于并发执行，不知道哪个先返回，但肯定会成功
         let response = result.unwrap();
         assert!(response.content.contains("Result"));
     }
-    
+
     #[tokio::test]
     async fn test_aggregate_partial_failure() {
         let mut mock_engine1 = MockScraperEngine::new();
@@ -529,15 +529,15 @@ mod tests {
         mock_engine2
             .expect_scrape()
             .returning(|_| Ok(ScrapeResponse::new("http://example.com", "Result 2")));
-            
+
         let router = EngineRouter::new(vec![
             Arc::new(mock_engine1),
             Arc::new(mock_engine2),
         ]);
-        
+
         let request = ScrapeRequest::new("http://example.com");
         let result = router.aggregate(&request).await;
-        
+
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.content, "Result 2");

@@ -94,48 +94,48 @@ impl SogouSearchEngine {
 }
 
 #[async_trait]
-    impl SearchEngine for SogouSearchEngine {
-        async fn search(
-            &self,
-            query: &str,
-            limit: u32,
-            _lang: Option<&str>,
-            _country: Option<&str>,
-        ) -> Result<Vec<SearchResult>, SearchError> {
-            let url = "https://www.sogou.com/web";
-            let limit_str = limit.to_string();
+impl SearchEngine for SogouSearchEngine {
+    async fn search(
+        &self,
+        query: &str,
+        limit: u32,
+        _lang: Option<&str>,
+        _country: Option<&str>,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        let url = "https://www.sogou.com/web";
+        let limit_str = limit.to_string();
 
-            let query_params = vec![("query", query), ("num", limit_str.as_str())];
+        let query_params = vec![("query", query), ("num", limit_str.as_str())];
 
-            let response = self
-                .client
-                .get(url)
-                .query(&query_params)
-                .send()
-                .await
-                .map_err(|e| SearchError::NetworkError(e.to_string()))?;
+        let response = self
+            .client
+            .get(url)
+            .query(&query_params)
+            .send()
+            .await
+            .map_err(|e| SearchError::NetworkError(e.to_string()))?;
 
-            if !response.status().is_success() {
-                return Err(SearchError::EngineError(format!(
-                    "Sogou Search error: {}",
-                    response.status()
-                )));
-            }
-
-            let html_content = response
-                .text()
-                .await
-                .map_err(|e| SearchError::EngineError(e.to_string()))?;
-
-            let mut results = self.parse_search_results(&html_content, query)?;
-            
-            // 限制结果数量
-            if results.len() > limit as usize {
-                results.truncate(limit as usize);
-            }
-
-            Ok(results)
+        if !response.status().is_success() {
+            return Err(SearchError::EngineError(format!(
+                "Sogou Search error: {}",
+                response.status()
+            )));
         }
+
+        let html_content = response
+            .text()
+            .await
+            .map_err(|e| SearchError::EngineError(e.to_string()))?;
+
+        let mut results = self.parse_search_results(&html_content, query)?;
+
+        // 限制结果数量
+        if results.len() > limit as usize {
+            results.truncate(limit as usize);
+        }
+
+        Ok(results)
+    }
 
     fn name(&self) -> &'static str {
         "sogou"

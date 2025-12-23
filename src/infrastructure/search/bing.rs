@@ -97,7 +97,7 @@ impl BingSearchEngine {
         let mut params = HashMap::new();
         params.insert("q".to_string(), query.to_string());
         params.insert("pq".to_string(), query.to_string());
-        
+
         if page > 1 {
             params.insert("first".to_string(), ((page - 1) * 10 + 1).to_string());
             let form_value = if page == 2 {
@@ -107,7 +107,7 @@ impl BingSearchEngine {
             };
             params.insert("FORM".to_string(), form_value);
         }
-        
+
         params
     }
 

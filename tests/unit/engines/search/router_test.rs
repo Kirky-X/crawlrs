@@ -73,16 +73,11 @@ async fn test_search_router_concurrent_aggregation() {
     });
     slow_engine.expect_name().return_const("slow_engine");
 
-    let aggregator = SearchAggregator::new(
-        vec![Arc::new(fast_engine), Arc::new(slow_engine)],
-        1000,
-    );
+    let aggregator =
+        SearchAggregator::new(vec![Arc::new(fast_engine), Arc::new(slow_engine)], 1000);
 
     // When: 执行搜索
-    let results = aggregator
-        .search("test", 5, None, None)
-        .await
-        .unwrap();
+    let results = aggregator.search("test", 5, None, None).await.unwrap();
 
     // Then: 应该聚合两个引擎的结果
     assert_eq!(results.len(), 2);

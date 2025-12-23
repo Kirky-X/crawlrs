@@ -5,13 +5,13 @@ use crate::engines::playwright_engine::get_browser;
 use async_trait::async_trait;
 use chrono::Utc;
 use rand::Rng;
+use reqwest::Client;
 use scraper::{Html, Selector};
 use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
-use reqwest::Client;
 
 /// Google ARC_ID 缓存结构
 struct ArcIdCache {
@@ -98,7 +98,10 @@ impl GoogleSearchEngine {
 
         let response = client
             .get(&google_url)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+            .header(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            )
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Accept-Encoding", "gzip, deflate, br")
             .header("DNT", "1")
@@ -115,12 +118,14 @@ impl GoogleSearchEngine {
             )));
         }
 
-        let html = response
-            .text()
-            .await
-            .map_err(|e| SearchError::NetworkError(format!("Failed to read response body: {}", e)))?;
+        let html = response.text().await.map_err(|e| {
+            SearchError::NetworkError(format!("Failed to read response body: {}", e))
+        })?;
 
-        info!("HTTP fallback Google search returned HTML length: {} bytes", html.len());
+        info!(
+            "HTTP fallback Google search returned HTML length: {} bytes",
+            html.len()
+        );
 
         if html.len() < 1000 {
             warn!("Google search returned insufficient content (likely blocked)");
@@ -160,7 +165,11 @@ impl GoogleSearchEngine {
             results.push(SearchResult {
                 title: format!("Mock Result {} for query: {}", i + 1, query),
                 url: format!("https://example{}.com/{}", i + 1, query.replace(' ', "-")),
-                description: Some(format!("This is a mock search result {} for the query '{}'", i + 1, query)),
+                description: Some(format!(
+                    "This is a mock search result {} for the query '{}'",
+                    i + 1,
+                    query
+                )),
                 engine: "google".to_string(),
                 score: 1.0 - (i as f64 * 0.1),
                 published_time: None,
@@ -278,7 +287,6 @@ impl GoogleSearchEngine {
     }
 }
 
-
 #[async_trait]
 impl SearchEngine for GoogleSearchEngine {
     async fn search(
@@ -294,7 +302,7 @@ impl SearchEngine for GoogleSearchEngine {
             Err(browser_error) => {
                 warn!("Browser automation failed: {}", browser_error);
                 info!("Falling back to HTTP-based search");
-                
+
                 // Fallback to HTTP-based search
                 self.search_http_fallback(query, limit, lang, country).await
             }
@@ -369,9 +377,10 @@ impl GoogleSearchEngine {
             SearchError::EngineError(format!("Failed to get browser instance: {}", e))
         })?;
 
-        let page = browser.new_page(&google_url).await.map_err(|e| {
-            SearchError::NetworkError(format!("Failed to create new page: {}", e))
-        })?;
+        let page = browser
+            .new_page(&google_url)
+            .await
+            .map_err(|e| SearchError::NetworkError(format!("Failed to create new page: {}", e)))?;
 
         // Wait for the page to load completely
         page.wait_for_navigation().await.ok(); // Allow this to fail gracefully
@@ -379,8 +388,8 @@ impl GoogleSearchEngine {
         // Try to handle Cookie consent page
         // Google uses different selectors, so we try a few common ones.
         const COOKIE_SELECTORS: &[&str] = &[
-            "button[aria-label='Accept all']", // Common label
-            "button:has-text('Accept all')",   // Text-based selector
+            "button[aria-label='Accept all']",          // Common label
+            "button:has-text('Accept all')",            // Text-based selector
             "div[role='dialog'] button:nth-of-type(2)", // Second button in a dialog
         ];
 
@@ -403,9 +412,10 @@ impl GoogleSearchEngine {
             warn!("Could not find or click any cookie consent button.");
         }
 
-        let html = page.content().await.map_err(|e| {
-            SearchError::EngineError(format!("Failed to get page content: {}", e))
-        })?;
+        let html = page
+            .content()
+            .await
+            .map_err(|e| SearchError::EngineError(format!("Failed to get page content: {}", e)))?;
 
         page.close().await.ok(); // Close the page
 
@@ -430,7 +440,6 @@ impl GoogleSearchEngine {
         html: String,
         limit: u32,
     ) -> Result<Vec<SearchResult>, SearchError> {
-
         // 解析HTML结果
         let mut results = self.parse_results(&html)?;
 
@@ -485,7 +494,6 @@ impl GoogleSearchEngine {
 
         Ok(results)
     }
-
 }
 
 #[cfg(test)]
@@ -613,8 +621,8 @@ mod tests {
                             || r.title.contains("星光")
                             || r.title.contains("大赏")
                             || r.description.as_ref().map_or(false, |d| {
-                            d.contains("鸿蒙") || d.contains("星光") || d.contains("大赏")
-                        })
+                                d.contains("鸿蒙") || d.contains("星光") || d.contains("大赏")
+                            })
                     });
 
                     if has_relevant_result {

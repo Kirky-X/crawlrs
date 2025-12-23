@@ -60,8 +60,8 @@ where
                 .into_response();
         }
         Ok(RateLimitResult::RetryAfter {
-               retry_after_seconds,
-           }) => {
+            retry_after_seconds,
+        }) => {
             return (
                 StatusCode::TOO_MANY_REQUESTS,
                 Json(json!({
@@ -107,7 +107,7 @@ where
                                 sync_wait_ms,
                                 1000,
                             )
-                                .await
+                            .await
                             {
                                 Ok(_) => {
                                     // 等待成功，可以返回响应
