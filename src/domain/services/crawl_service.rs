@@ -71,6 +71,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         parent_task: &Task,
         html_content: &str,
     ) -> Result<Vec<Task>> {
+        tracing::debug!("Processing crawl result for task: {}", parent_task.id);
         // Parse config from payload
         let depth = parent_task
             .payload

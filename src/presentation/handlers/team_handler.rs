@@ -24,6 +24,8 @@ pub struct UpdateTeamGeoRestrictionsRequest {
     pub blocked_countries: Option<Vec<String>>,
     /// IP 白名单列表 (支持 CIDR 表示法)
     pub ip_whitelist: Option<Vec<String>>,
+    /// 域名黑名单列表
+    pub domain_blacklist: Option<Vec<String>>,
 }
 
 /// 团队地理限制配置的响应DTO
@@ -39,6 +41,8 @@ pub struct TeamGeoRestrictionsResponse {
     pub blocked_countries: Option<Vec<String>>,
     /// IP 白名单列表
     pub ip_whitelist: Option<Vec<String>>,
+    /// 域名黑名单列表
+    pub domain_blacklist: Option<Vec<String>>,
 }
 
 /// 获取团队地理限制配置
@@ -57,6 +61,7 @@ where
                 allowed_countries: restrictions.allowed_countries,
                 blocked_countries: restrictions.blocked_countries,
                 ip_whitelist: restrictions.ip_whitelist,
+                domain_blacklist: restrictions.domain_blacklist,
             };
 
             (
@@ -143,6 +148,7 @@ where
         allowed_countries: request.allowed_countries,
         blocked_countries: request.blocked_countries,
         ip_whitelist: request.ip_whitelist,
+        domain_blacklist: request.domain_blacklist,
     };
 
     match geo_restriction_repo
@@ -156,6 +162,7 @@ where
                 allowed_countries: restrictions.allowed_countries,
                 blocked_countries: restrictions.blocked_countries,
                 ip_whitelist: restrictions.ip_whitelist,
+                domain_blacklist: restrictions.domain_blacklist,
             };
 
             (

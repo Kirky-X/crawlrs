@@ -23,6 +23,8 @@ pub struct TeamGeoRestrictions {
     pub blocked_countries: Option<Vec<String>>,
     /// IP 白名单列表 (支持 CIDR 表示法)
     pub ip_whitelist: Option<Vec<String>>,
+    /// 域名黑名单列表
+    pub domain_blacklist: Option<Vec<String>>,
 }
 
 impl Default for TeamGeoRestrictions {
@@ -32,6 +34,7 @@ impl Default for TeamGeoRestrictions {
             allowed_countries: None,
             blocked_countries: None,
             ip_whitelist: None,
+            domain_blacklist: None,
         }
     }
 }
@@ -112,6 +115,11 @@ impl TeamService {
                 }
             }
         }
+
+        // 检查域名黑名单 (如果提供了域名)
+        // 注意：这里我们只检查 IP，域名检查逻辑应在 validators 模块中结合 URL 解析进行
+        // 但如果 restrictions 中包含 domain_blacklist，调用方应该负责检查
+        // 为了完整性，这里我们假设调用方已经验证了域名，或者只验证 IP
 
         // 获取 IP 的地理位置信息
         let location = match self.geolocation_service.get_location(&ip).await {

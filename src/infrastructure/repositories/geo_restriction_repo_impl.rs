@@ -60,6 +60,7 @@ impl InMemoryGeoRestrictionRepository {
                 allowed_countries: Some(vec!["US".to_string(), "GB".to_string(), "CA".to_string()]),
                 blocked_countries: Some(vec!["CN".to_string(), "RU".to_string()]),
                 ip_whitelist: Some(vec!["192.168.1.0/24".to_string(), "10.0.0.1".to_string()]),
+                domain_blacklist: Some(vec!["example.com".to_string()]),
             },
         );
 
@@ -72,6 +73,7 @@ impl InMemoryGeoRestrictionRepository {
                 allowed_countries: None,
                 blocked_countries: None,
                 ip_whitelist: Some(vec!["127.0.0.1".to_string(), "::1".to_string()]),
+                domain_blacklist: None,
             },
         );
     }
@@ -176,6 +178,7 @@ mod tests {
             allowed_countries: Some(vec!["US".to_string(), "GB".to_string()]),
             blocked_countries: Some(vec!["CN".to_string()]),
             ip_whitelist: Some(vec!["192.168.1.0/24".to_string()]),
+            domain_blacklist: Some(vec!["example.com".to_string()]),
         };
 
         repo.update_team_restrictions(team_id, &new_restrictions)
@@ -196,6 +199,10 @@ mod tests {
         assert_eq!(
             retrieved_restrictions.ip_whitelist,
             Some(vec!["192.168.1.0/24".to_string()])
+        );
+        assert_eq!(
+            retrieved_restrictions.domain_blacklist,
+            Some(vec!["example.com".to_string()])
         );
     }
 

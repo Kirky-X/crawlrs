@@ -19,6 +19,7 @@ pub struct Model {
     pub allowed_countries: Option<Json>,
     pub blocked_countries: Option<Json>,
     pub ip_whitelist: Option<Json>,
+    pub domain_blacklist: Option<Json>,
     pub enable_geo_restrictions: bool,
     pub created_at: ChronoDateTimeWithTimeZone,
     pub updated_at: ChronoDateTimeWithTimeZone,

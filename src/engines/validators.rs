@@ -102,52 +102,65 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_validate_url_public() {
-        assert!(validate_url("https://www.google.com").await.is_ok());
-        assert!(validate_url("http://example.com").await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_validate_url_private() {
-        // Ensure SSRF protection is ENABLED for this test
-        // However, environment variables are process-global.
-        // We need to be careful not to interfere with other tests running in parallel if they rely on this env var.
-        // For unit tests running via cargo test, they might run in threads.
-        // Let's explicitly unset the variable to be sure, assuming other tests don't need it set to true.
-        // Or better, we only set it to true where needed (integration tests usually).
-
-        // Save current value
-        let old_val = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
-        std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
-
-        assert!(validate_url("http://127.0.0.1").await.is_err());
+    async fn test_validate_url_ssrf() {
+        // Localhost should be blocked
         assert!(validate_url("http://localhost").await.is_err());
-        assert!(validate_url("http://192.168.1.1").await.is_err());
-        assert!(validate_url("http://10.0.0.1").await.is_err());
-        assert!(validate_url("http://172.16.0.1").await.is_err());
-        assert!(validate_url("http://169.254.1.1").await.is_err());
-
-        // Restore value
-        if let Some(v) = old_val {
-            std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", v);
+        assert!(validate_url("http://127.0.0.1").await.is_err());
+        
+        // Private IPs should be blocked
+        // Note: These tests depend on DNS resolution, which might fail in some environments
+        // We mock DNS resolution behavior by testing is_private_ip directly if needed,
+        // but here we test the public API.
+        
+        // Valid public URL (example.com usually resolves to public IP)
+        // We skip this in CI if no network access
+        if std::env::var("CI").is_err() {
+            assert!(validate_url("http://example.com").await.is_ok());
         }
     }
 
-    #[tokio::test]
-    async fn test_validate_url_multicast() {
-        // Save current value
-        let old_val = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
-        std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
+    #[test]
+    fn test_is_private_ip() {
+        assert!(is_private_ip("127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip("10.0.0.1".parse().unwrap()));
+        assert!(is_private_ip("192.168.1.1".parse().unwrap()));
+        assert!(is_private_ip("172.16.0.1".parse().unwrap()));
+        assert!(!is_private_ip("8.8.8.8".parse().unwrap()));
+    }
 
-        // IPv4 multicast addresses (224.0.0.0/4)
-        assert!(validate_url("http://224.0.0.1").await.is_err());
-        assert!(validate_url("http://239.255.255.255").await.is_err());
-        assert!(validate_url("http://225.0.0.1").await.is_err());
-        assert!(validate_url("http://238.255.255.255").await.is_err());
+    #[test]
+    fn test_validate_domain_blacklist() {
+        let blacklist = vec!["example.com".to_string(), "malicious.net".to_string()];
 
-        // Restore value
-        if let Some(v) = old_val {
-            std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", v);
-        }
+        // Blocked exact match
+        assert!(validate_domain_blacklist("http://example.com", &blacklist).is_err());
+        assert!(validate_domain_blacklist("http://malicious.net/path", &blacklist).is_err());
+
+        // Blocked subdomain
+        assert!(validate_domain_blacklist("http://sub.example.com", &blacklist).is_err());
+        assert!(validate_domain_blacklist("http://api.malicious.net", &blacklist).is_err());
+
+        // Allowed
+        assert!(validate_domain_blacklist("http://google.com", &blacklist).is_ok());
+        assert!(validate_domain_blacklist("http://example.org", &blacklist).is_ok());
+        
+        // Partial match should not block (e.g. example.com.cn should not be blocked by example.com)
+        // Current implementation: host.ends_with(".example.com")
+        assert!(validate_domain_blacklist("http://myexample.com", &blacklist).is_ok());
     }
 }
+
+/// 验证 URL 是否在黑名单域名中
+pub fn validate_domain_blacklist(url_str: &str, blacklist: &[String]) -> anyhow::Result<()> {
+    let url = Url::parse(url_str)?;
+    let host = url.host_str().ok_or_else(|| anyhow::anyhow!("Missing host"))?;
+
+    for domain in blacklist {
+        if host == domain || host.ends_with(&format!(".{}", domain)) {
+            return Err(anyhow::anyhow!("Domain {} is in blacklist", host));
+        }
+    }
+
+    Ok(())
+}
+

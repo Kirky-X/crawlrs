@@ -53,11 +53,17 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
             .map(|json| serde_json::from_value(json).ok())
             .flatten();
 
+        let domain_blacklist = team_model
+            .domain_blacklist
+            .map(|json| serde_json::from_value(json).ok())
+            .flatten();
+
         Ok(TeamGeoRestrictions {
             enable_geo_restrictions: team_model.enable_geo_restrictions,
             allowed_countries,
             blocked_countries,
             ip_whitelist,
+            domain_blacklist,
         })
     }
 
@@ -91,6 +97,10 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
             .ip_whitelist
             .as_ref()
             .map(|whitelist| serde_json::to_value(whitelist).unwrap()));
+        active_model.domain_blacklist = Set(restrictions
+            .domain_blacklist
+            .as_ref()
+            .map(|blacklist| serde_json::to_value(blacklist).unwrap()));
 
         // 更新记录
         active_model
@@ -147,6 +157,7 @@ mod tests {
             allowed_countries: Set(None),
             blocked_countries: Set(None),
             ip_whitelist: Set(None),
+            domain_blacklist: Set(None),
             enable_geo_restrictions: Set(false),
             created_at: Set(chrono::Utc::now().into()),
             updated_at: Set(chrono::Utc::now().into()),
@@ -190,6 +201,7 @@ mod tests {
             allowed_countries: Some(vec!["US".to_string(), "GB".to_string()]),
             blocked_countries: Some(vec!["CN".to_string()]),
             ip_whitelist: Some(vec!["192.168.1.0/24".to_string()]),
+            domain_blacklist: Some(vec!["example.com".to_string()]),
         };
 
         repo.update_team_restrictions(team_id, &new_restrictions)
@@ -210,6 +222,10 @@ mod tests {
         assert_eq!(
             updated_restrictions.ip_whitelist,
             Some(vec!["192.168.1.0/24".to_string()])
+        );
+        assert_eq!(
+            updated_restrictions.domain_blacklist,
+            Some(vec!["example.com".to_string()])
         );
 
         // 测试记录日志
