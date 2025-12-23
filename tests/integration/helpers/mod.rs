@@ -40,7 +40,6 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use std::process::{Child, Command};
 use std::sync::Arc;
-use tokio::net::TcpListener;
 use uuid::Uuid;
 
 use crawlrs::utils::robots::RobotsChecker;

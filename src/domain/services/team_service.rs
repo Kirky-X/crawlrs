@@ -116,12 +116,50 @@ impl TeamService {
             }
         }
 
-        // 检查域名黑名单 (如果提供了域名)
-        // 注意：这里我们只检查 IP，域名检查逻辑应在 validators 模块中结合 URL 解析进行
-        // 但如果 restrictions 中包含 domain_blacklist，调用方应该负责检查
-        // 为了完整性，这里我们假设调用方已经验证了域名，或者只验证 IP
+        // 检查允许的国家列表
+        if let Some(ref allowed) = restrictions.allowed_countries {
+            // 获取 IP 的地理位置信息
+            let location = match self.geolocation_service.get_location(&ip).await {
+                Ok(location) => location,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to get geolocation for IP {} for team {}: {}",
+                        ip_address,
+                        team_id,
+                        e
+                    );
+                    return Ok(GeoRestrictionResult::Denied(
+                        "Unable to determine geographic location".to_string(),
+                    ));
+                }
+            };
+            let country_code = location.country_code.to_uppercase();
 
-        // 获取 IP 的地理位置信息
+            if !allowed
+                .iter()
+                .any(|code| code.to_uppercase() == country_code)
+            {
+                tracing::warn!(
+                    "IP {} from country {} not in allowed list for team {} (allowed countries: {:?})",
+                    ip_address,
+                    country_code,
+                    team_id,
+                    allowed
+                );
+                return Ok(GeoRestrictionResult::Denied(format!(
+                    "Access from country {} is not allowed",
+                    country_code
+                )));
+            }
+            
+            // 如果在允许列表中，则继续检查其他限制（如黑名单）
+            // 注意：通常白名单优先于黑名单，但这里的 allowed_countries 是 "仅允许这些国家"，所以如果在列表中，还需要检查是否在黑名单中
+        }
+
+        // 获取 IP 的地理位置信息 (如果尚未获取)
+        // 优化：如果已经获取过，避免重复调用
+        // 但由于 Rust 的所有权机制，这里简单起见重新获取或重构代码
+        // 为了简化，我们假设 geolocation_service 有缓存
         let location = match self.geolocation_service.get_location(&ip).await {
             Ok(location) => location,
             Err(e) => {
@@ -136,7 +174,6 @@ impl TeamService {
                 ));
             }
         };
-
         let country_code = location.country_code.to_uppercase();
 
         // 检查阻止的国家列表
@@ -159,32 +196,36 @@ impl TeamService {
             }
         }
 
-        // 检查允许的国家列表
-        if let Some(ref allowed) = restrictions.allowed_countries {
-            if !allowed
-                .iter()
-                .any(|code| code.to_uppercase() == country_code)
-            {
-                tracing::warn!(
-                    "IP {} from country {} not in allowed list for team {} (allowed countries: {:?})",
-                    ip_address,
-                    country_code,
-                    team_id,
-                    allowed
-                );
-                return Ok(GeoRestrictionResult::Denied(format!(
-                    "Access from country {} is not allowed",
-                    country_code
-                )));
-            }
-        }
-
         tracing::info!(
             "IP {} from country {} allowed for team {}",
             ip_address,
             country_code,
             team_id
         );
+
+        Ok(GeoRestrictionResult::Allowed)
+    }
+
+    /// 验证域名是否在黑名单中
+    pub fn validate_domain_blacklist(
+        &self,
+        domain: &str,
+        restrictions: &TeamGeoRestrictions,
+    ) -> Result<GeoRestrictionResult> {
+        if !restrictions.enable_geo_restrictions {
+            return Ok(GeoRestrictionResult::Allowed);
+        }
+
+        if let Some(ref blacklist) = restrictions.domain_blacklist {
+            for blocked_domain in blacklist {
+                if domain.contains(blocked_domain) {
+                    return Ok(GeoRestrictionResult::Denied(format!(
+                        "Domain {} is in the blacklist",
+                        domain
+                    )));
+                }
+            }
+        }
 
         Ok(GeoRestrictionResult::Allowed)
     }
@@ -225,71 +266,5 @@ impl TeamService {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct MockGeoRestrictionRepository;
-
-    impl MockGeoRestrictionRepository {
-        fn new() -> Self {
-            Self
-        }
-    }
-
-    use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError;
-
-    #[async_trait::async_trait]
-    impl GeoRestrictionRepository for MockGeoRestrictionRepository {
-        async fn get_team_restrictions(
-            &self,
-            _team_id: Uuid,
-        ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
-            Ok(TeamGeoRestrictions::default())
-        }
-
-        async fn update_team_restrictions(
-            &self,
-            _team_id: Uuid,
-            _restrictions: &TeamGeoRestrictions,
-        ) -> Result<(), GeoRestrictionRepositoryError> {
-            Ok(())
-        }
-
-        async fn log_geo_restriction_action(
-            &self,
-            _team_id: Uuid,
-            _ip_address: &str,
-            _country_code: &str,
-            _action: &str,
-            _reason: &str,
-        ) -> Result<(), GeoRestrictionRepositoryError> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn test_team_geo_restrictions_default() {
-        let restrictions = TeamGeoRestrictions::default();
-        assert!(!restrictions.enable_geo_restrictions);
-        assert!(restrictions.allowed_countries.is_none());
-        assert!(restrictions.blocked_countries.is_none());
-        assert!(restrictions.ip_whitelist.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_validate_geographic_restriction_disabled() {
-        let geolocation_service = GeoLocationService::new();
-        let geo_restriction_repo = Arc::new(MockGeoRestrictionRepository::new());
-        let team_service = TeamService::new(geolocation_service, geo_restriction_repo);
-
-        let restrictions = TeamGeoRestrictions::default();
-        let team_id = Uuid::new_v4();
-
-        let result = team_service
-            .validate_geographic_restriction(team_id, "8.8.8.8", &restrictions)
-            .await
-            .unwrap();
-
-        assert_eq!(result, GeoRestrictionResult::Allowed);
-    }
-}
+#[path = "team_service_test.rs"]
+mod tests;

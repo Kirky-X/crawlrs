@@ -8,6 +8,7 @@
 /// 提供后台任务处理和工作器管理功能
 /// 包括任务执行、工作器生命周期管理和并发控制
 pub mod backlog_worker;
+pub mod expiration_worker;
 pub mod manager;
 pub mod scrape_worker;
 pub mod webhook_worker;
