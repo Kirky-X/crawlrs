@@ -25,7 +25,7 @@ use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::storage::LocalStorage;
 
 use crawlrs::domain::services::rate_limiting_service::{ConcurrencyConfig, ConcurrencyStrategy};
-use crawlrs::infrastructure::repositories::geo_restriction_repo_impl::InMemoryGeoRestrictionRepository;
+use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
@@ -251,7 +251,7 @@ async fn main() -> anyhow::Result<()> {
     let webhook_repository = Arc::new(WebhookRepoImpl::new(db.clone()));
     let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.clone()));
     let _credits_repo_unused = credits_repo.clone();
-    let geo_restriction_repo = Arc::new(InMemoryGeoRestrictionRepository::new());
+    let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new((*db).clone()));
     let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(
         redis_client.clone(),
     )));
@@ -333,7 +333,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
                 .route(
                     "/v1/extract",
-                    post(extract_handler::extract::<InMemoryGeoRestrictionRepository>),
+                    post(extract_handler::extract::<DatabaseGeoRestrictionRepository>),
                 )
                 .route(
                     "/v1/webhooks",
@@ -347,7 +347,7 @@ async fn main() -> anyhow::Result<()> {
                             TaskRepositoryImpl,
                             WebhookRepoImpl,
                             ScrapeResultRepositoryImpl,
-                            InMemoryGeoRestrictionRepository,
+                            DatabaseGeoRestrictionRepository,
                         >,
                     ),
                 )
@@ -358,7 +358,7 @@ async fn main() -> anyhow::Result<()> {
                         TaskRepositoryImpl,
                         WebhookRepoImpl,
                         ScrapeResultRepositoryImpl,
-                        InMemoryGeoRestrictionRepository,
+                        DatabaseGeoRestrictionRepository,
                     >),
                 )
                 .route(
@@ -368,7 +368,7 @@ async fn main() -> anyhow::Result<()> {
                         TaskRepositoryImpl,
                         WebhookRepoImpl,
                         ScrapeResultRepositoryImpl,
-                        InMemoryGeoRestrictionRepository,
+                        DatabaseGeoRestrictionRepository,
                     >),
                 )
                 .route(
@@ -379,7 +379,7 @@ async fn main() -> anyhow::Result<()> {
                             TaskRepositoryImpl,
                             WebhookRepoImpl,
                             ScrapeResultRepositoryImpl,
-                            InMemoryGeoRestrictionRepository,
+                            DatabaseGeoRestrictionRepository,
                         >,
                     ),
                 )
