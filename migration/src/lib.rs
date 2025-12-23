@@ -6,6 +6,7 @@
 pub use sea_orm_migration::prelude::*;
 
 mod m20251211_complete_schema;
+mod m20251222_geographic_restrictions;
 
 /// 数据库迁移器
 ///
@@ -23,6 +24,7 @@ impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
             Box::new(m20251211_complete_schema::Migration),
+            Box::new(m20251222_geographic_restrictions::Migration),
         ]
     }
 }
