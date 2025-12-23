@@ -37,8 +37,8 @@ pub async fn create_webhook<R: WebhookRepository>(
             )));
         }
         Ok(RateLimitResult::RetryAfter {
-               retry_after_seconds,
-           }) => {
+            retry_after_seconds,
+        }) => {
             return Err(AppError::from(anyhow::anyhow!(
                 "Rate limit exceeded, please retry after {} seconds",
                 retry_after_seconds

@@ -133,7 +133,7 @@ async fn test_webhook_max_retries_dead_letter() {
     let event_id = Uuid::new_v4();
     let team_id = Uuid::new_v4();
 
-    // 1. Create an event that already has 2 attempts (max is 3)
+    // 1. Create an event that already has 4 attempts (max is 5)
     let event = WebhookEvent {
         id: event_id,
         team_id,
@@ -142,8 +142,8 @@ async fn test_webhook_max_retries_dead_letter() {
         payload: serde_json::json!({ "task_id": "123" }),
         webhook_url,
         status: WebhookStatus::Failed,
-        attempt_count: 2,
-        max_retries: 3,
+        attempt_count: 4,
+        max_retries: 5,
         response_status: Some(500),
         response_body: None,
         error_message: None,
@@ -157,20 +157,20 @@ async fn test_webhook_max_retries_dead_letter() {
         .await
         .expect("Failed to create webhook event");
 
-    // 2. Process the event - this should be the 3rd attempt
+    // 2. Process the event - this should be the 5th attempt
     let webhook_service = Arc::new(WebhookServiceImpl::new("test_secret".to_string()));
     let retry_policy = RetryPolicy {
-        max_retries: 3,
+        max_retries: 5,
         ..RetryPolicy::default()
     };
     let worker = WebhookWorker::new(repo.clone(), webhook_service, retry_policy);
-    
+
     let result = worker.process_pending_webhooks().await;
     assert!(result.is_ok());
 
     // 3. Check that it's now in Dead state
     let updated_event = repo.find_by_id(event_id).await.unwrap().unwrap();
-    assert_eq!(updated_event.attempt_count, 3);
+    assert_eq!(updated_event.attempt_count, 5);
     assert_eq!(updated_event.status, WebhookStatus::Dead);
 }
 
@@ -208,7 +208,7 @@ async fn test_webhook_non_retryable_error() {
 
     let webhook_service = Arc::new(WebhookServiceImpl::new("test_secret".to_string()));
     let worker = WebhookWorker::new(repo.clone(), webhook_service, RetryPolicy::default());
-    
+
     let result = worker.process_pending_webhooks().await;
     assert!(result.is_ok());
 
@@ -220,10 +220,7 @@ async fn test_webhook_non_retryable_error() {
 
 async fn start_test_server_status(status_code: u16) -> String {
     let status = StatusCode::from_u16(status_code).unwrap();
-    let app = Router::new().route(
-        "/webhook",
-        post(move || async move { status }),
-    );
+    let app = Router::new().route("/webhook", post(move || async move { status }));
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

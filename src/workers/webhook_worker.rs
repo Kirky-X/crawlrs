@@ -179,5 +179,3 @@ impl Worker for WebhookWorker {
         "webhook_worker"
     }
 }
-
-
