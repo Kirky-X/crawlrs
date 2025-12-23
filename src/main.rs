@@ -25,6 +25,7 @@ use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::storage::LocalStorage;
 
 use crawlrs::domain::services::rate_limiting_service::{ConcurrencyConfig, ConcurrencyStrategy};
+use crawlrs::infrastructure::repositories::geo_restriction_repo_impl::InMemoryGeoRestrictionRepository;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
@@ -33,7 +34,7 @@ use crawlrs::infrastructure::services::rate_limiting_service_impl::{
 };
 use crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl;
 use crawlrs::presentation::handlers::{
-    crawl_handler, scrape_handler, search_handler, webhook_handler,
+    crawl_handler, extract_handler, scrape_handler, search_handler, webhook_handler,
 };
 use crawlrs::presentation::middleware::auth_middleware::AuthState;
 use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
@@ -42,9 +43,9 @@ use crawlrs::presentation::middleware::team_semaphore_middleware::team_semaphore
 use crawlrs::presentation::routes;
 use crawlrs::presentation::routes::task::task_routes;
 use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
+use crawlrs::utils::retry_policy::RetryPolicy;
 use crawlrs::workers::backlog_worker::BacklogWorker;
 use crawlrs::workers::manager::WorkerManager;
-use crawlrs::utils::retry_policy::RetryPolicy;
 use crawlrs::workers::webhook_worker::WebhookWorker;
 use crawlrs::workers::Worker;
 use std::sync::Arc;
@@ -103,7 +104,6 @@ use migration::{Migrator, MigratorTrait};
 /// }
 /// ```
 use tracing::error;
-
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -251,6 +251,7 @@ async fn main() -> anyhow::Result<()> {
     let webhook_repository = Arc::new(WebhookRepoImpl::new(db.clone()));
     let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.clone()));
     let _credits_repo_unused = credits_repo.clone();
+    let geo_restriction_repo = Arc::new(InMemoryGeoRestrictionRepository::new());
     let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(
         redis_client.clone(),
     )));
@@ -331,6 +332,10 @@ async fn main() -> anyhow::Result<()> {
                 .route("/v1/scrape", post(scrape_handler::create_scrape))
                 .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
                 .route(
+                    "/v1/extract",
+                    post(extract_handler::extract::<InMemoryGeoRestrictionRepository>),
+                )
+                .route(
                     "/v1/webhooks",
                     post(webhook_handler::create_webhook::<WebhookRepoImpl>),
                 )
@@ -342,6 +347,7 @@ async fn main() -> anyhow::Result<()> {
                             TaskRepositoryImpl,
                             WebhookRepoImpl,
                             ScrapeResultRepositoryImpl,
+                            InMemoryGeoRestrictionRepository,
                         >,
                     ),
                 )
@@ -352,6 +358,7 @@ async fn main() -> anyhow::Result<()> {
                         TaskRepositoryImpl,
                         WebhookRepoImpl,
                         ScrapeResultRepositoryImpl,
+                        InMemoryGeoRestrictionRepository,
                     >),
                 )
                 .route(
@@ -361,6 +368,7 @@ async fn main() -> anyhow::Result<()> {
                         TaskRepositoryImpl,
                         WebhookRepoImpl,
                         ScrapeResultRepositoryImpl,
+                        InMemoryGeoRestrictionRepository,
                     >),
                 )
                 .route(
@@ -371,6 +379,7 @@ async fn main() -> anyhow::Result<()> {
                             TaskRepositoryImpl,
                             WebhookRepoImpl,
                             ScrapeResultRepositoryImpl,
+                            InMemoryGeoRestrictionRepository,
                         >,
                     ),
                 )
@@ -406,12 +415,15 @@ async fn main() -> anyhow::Result<()> {
                 .layer(Extension(team_semaphore.clone()))
                 .layer(Extension(queue))
                 .layer(Extension(task_repo.clone()))
+                .layer(Extension(result_repo.clone()))
+                .layer(Extension(crawl_repo.clone()))
                 .layer(Extension(webhook_event_repository))
                 .layer(Extension(webhook_repository.clone()))
                 .layer(Extension(redis_client))
                 .layer(Extension(rate_limiter))
                 .layer(Extension(crawl_repo.clone()))
                 .layer(Extension(credits_repo))
+                .layer(Extension(geo_restriction_repo))
                 .layer(Extension(settings.clone()))
                 .layer(Extension(search_engine_service))
                 .layer(Extension(tasks_backlog_repo.clone()))

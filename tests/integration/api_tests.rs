@@ -58,7 +58,9 @@ async fn test_scrape_rate_limit() {
     // The rate limiter in tests is set to 10 RPM (see helpers/mod.rs)
     // We send 10 requests which should be allowed
     for i in 0..10 {
-        let response = app.server.post("/v1/scrape")
+        let response = app
+            .server
+            .post("/v1/scrape")
             .add_header("Authorization", format!("Bearer {}", app.api_key))
             .json(&json!({
                 "url": format!("https://example.com/{}", i),
@@ -69,7 +71,9 @@ async fn test_scrape_rate_limit() {
     }
 
     // The 11th request should be rate limited
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://example.com/11",
@@ -90,9 +94,9 @@ async fn test_team_concurrency_limit() {
     // Use a team-specific concurrency limit of 1
     let team_id = app.team_id;
     let redis_client = match app.redis_process.as_ref() {
-        Some(_) => {
-            crawlrs::infrastructure::cache::redis_client::RedisClient::new(&app.redis_url).await.unwrap()
-        },
+        Some(_) => crawlrs::infrastructure::cache::redis_client::RedisClient::new(&app.redis_url)
+            .await
+            .unwrap(),
         None => panic!("Redis must be running"),
     };
 
@@ -102,12 +106,12 @@ async fn test_team_concurrency_limit() {
     // 1. Submit first task (this will be picked up by worker and stay "active" for a bit if we can control it)
     // Actually, we don't need the worker to be slow, we just need to ensure the limit is hit.
     // If we have 1 worker, it will process tasks one by one.
-    // To trigger UAT-019 "concurrency slot exhaustion", we want to see the worker *rejecting* a task 
+    // To trigger UAT-019 "concurrency slot exhaustion", we want to see the worker *rejecting* a task
     // because the limit is exceeded.
-    
-    // In our system, the worker *acquires* a permit before processing. 
+
+    // In our system, the worker *acquires* a permit before processing.
     // If it fails to acquire, it reschedules.
-    
+
     // Let's manually increment the active jobs count in Redis to simulate an active job.
     let active_jobs_key = format!("team:{}:active_jobs", team_id);
     let _: () = redis_client.set(&active_jobs_key, "1", 3600).await.unwrap();
@@ -115,8 +119,10 @@ async fn test_team_concurrency_limit() {
     // 2. Submit a task. The worker should try to pick it up, see current=1, limit=1.
     // Wait, the worker logic is: current = incr(); if current > limit { decr(); return false; }
     // So if current=1 and limit=1, incr() makes it 2, 2 > 1 is true, so it rejects.
-    
-    let response = app.server.post("/v1/scrape")
+
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://example.com",
@@ -125,7 +131,11 @@ async fn test_team_concurrency_limit() {
         .await;
 
     assert_eq!(response.status_code(), StatusCode::ACCEPTED);
-    let task_id: Uuid = response.json::<serde_json::Value>()["id"].as_str().unwrap().parse().unwrap();
+    let task_id: Uuid = response.json::<serde_json::Value>()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
 
     // 3. Wait a bit for worker to try processing
     tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
@@ -137,10 +147,10 @@ async fn test_team_concurrency_limit() {
         .await
         .unwrap()
         .unwrap();
-    
+
     // Verify the status is still queued (not started because of concurrency limit)
     assert_eq!(task.status, "queued");
-    
+
     // Clean up
     let _: () = redis_client.del(&active_jobs_key).await.unwrap();
     let _: () = redis_client.del(&limit_key).await.unwrap();
@@ -149,19 +159,23 @@ async fn test_team_concurrency_limit() {
 /// 测试断路器和引擎降级 (UAT-022, UAT-005)
 #[tokio::test]
 async fn test_circuit_breaker_and_engine_fallback() {
+    use crawlrs::engines::circuit_breaker::{CircuitBreaker, CircuitConfig};
+    use crawlrs::engines::playwright_engine::PlaywrightEngine;
+    use crawlrs::engines::reqwest_engine::ReqwestEngine;
     use crawlrs::engines::router::{EngineRouter, LoadBalancingStrategy};
     use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
-    use crawlrs::engines::circuit_breaker::{CircuitBreaker, CircuitConfig};
-    use crawlrs::engines::reqwest_engine::ReqwestEngine;
-    use crawlrs::engines::playwright_engine::PlaywrightEngine;
-    use std::time::Duration;
     use std::collections::HashMap;
+    use std::time::Duration;
 
     // 1. 设置引擎：ReqwestEngine 和 PlaywrightEngine
     // 我们将使用一个本地服务器，它根据 User-Agent 返回不同的结果或超时
-    let app_server = axum::Router::new()
-        .route("/conditional", axum::routing::get(|headers: axum::http::HeaderMap| async move {
-            let ua = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let app_server = axum::Router::new().route(
+        "/conditional",
+        axum::routing::get(|headers: axum::http::HeaderMap| async move {
+            let ua = headers
+                .get("user-agent")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
             if ua.contains("crawlrs") {
                 // ReqwestEngine 的 User-Agent 包含 "crawlrs"
                 // 模拟超时：延迟 2 秒，而请求超时设置为 1 秒
@@ -171,7 +185,8 @@ async fn test_circuit_breaker_and_engine_fallback() {
                 // PlaywrightEngine 或其他
                 (axum::http::StatusCode::OK, "Success from other engine")
             }
-        }));
+        }),
+    );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -183,9 +198,9 @@ async fn test_circuit_breaker_and_engine_fallback() {
 
     let engine_a = Arc::new(ReqwestEngine);
     let engine_b = Arc::new(PlaywrightEngine);
-    
+
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![engine_a.clone(), engine_b.clone()];
-    
+
     // 2. 设置断路器：低阈值用于测试
     let circuit_config = CircuitConfig {
         failure_threshold: 2,
@@ -193,7 +208,7 @@ async fn test_circuit_breaker_and_engine_fallback() {
         failure_window: Duration::from_secs(60),
     };
     let cb = Arc::new(CircuitBreaker::with_default_config(circuit_config));
-    
+
     // 3. 设置 Router
     let router = EngineRouter::with_circuit_breaker_and_strategy(
         engines,
@@ -208,7 +223,7 @@ async fn test_circuit_breaker_and_engine_fallback() {
         url: test_url,
         headers: HashMap::new(),
         timeout: Duration::from_secs(1), // 短超时触发 Reqwest 失败
-        needs_js: true, // 确保 Playwright 愿意处理
+        needs_js: true,                  // 确保 Playwright 愿意处理
         needs_screenshot: false,
         screenshot_config: None,
         mobile: false,
@@ -222,17 +237,20 @@ async fn test_circuit_breaker_and_engine_fallback() {
 
     // 4. 第一次请求：Reqwest 应该超时失败，然后降级到 Playwright 成功
     let response = router.route(&request).await;
-    
+
     // 如果 Playwright 也不可用（例如环境中没有 Chrome），我们跳过此测试的后续部分
     match response {
         Ok(resp) => {
             assert_eq!(resp.status_code, 200);
             assert!(resp.content.contains("Success from other engine"));
             println!("Fallback successful: Reqwest failed (timeout), Playwright succeeded.");
-        },
+        }
         Err(e) => {
             // 如果 Playwright 因为环境问题失败，这里可能会报错
-            println!("Request failed: {:?}. This might be due to missing Chrome for Playwright.", e);
+            println!(
+                "Request failed: {:?}. This might be due to missing Chrome for Playwright.",
+                e
+            );
             if format!("{:?}", e).contains("Could not auto detect a chrome executable") {
                 println!("Skipping circuit breaker assertions because Playwright (Chrome) is not available.");
                 return;
@@ -258,10 +276,10 @@ async fn test_circuit_breaker_and_engine_fallback() {
     let start = std::time::Instant::now();
     let response = router.route(&request).await;
     let elapsed = start.elapsed();
-    
+
     // 断路器打开后，Reqwest 应该立即被跳过，不需要等待其超时
-    assert!(elapsed < Duration::from_secs(1)); 
-    
+    assert!(elapsed < Duration::from_secs(1));
+
     if let Ok(resp) = response {
         assert!(resp.content.contains("Success from other engine"));
         println!("Circuit breaker working: Reqwest skipped, Playwright used immediately.");
@@ -269,7 +287,6 @@ async fn test_circuit_breaker_and_engine_fallback() {
         println!("Circuit breaker working: Reqwest skipped, but Playwright also failed (as expected in CI).");
     }
 }
-
 
 /// 测试创建抓取任务时的参数验证
 ///
@@ -394,7 +411,9 @@ async fn test_ssrf_protection() {
     let app = create_test_app().await;
 
     // 1. 测试内部 URL (localhost)
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "http://localhost",
@@ -406,7 +425,9 @@ async fn test_ssrf_protection() {
     assert!(body["error"].as_str().unwrap().contains("SSRF protection"));
 
     // 2. 测试内部 IP (127.0.0.1)
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "http://127.0.0.1",
@@ -416,7 +437,9 @@ async fn test_ssrf_protection() {
     assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
 
     // 3. 测试私有 IP (192.168.1.1)
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "http://192.168.1.1",
@@ -426,7 +449,9 @@ async fn test_ssrf_protection() {
     assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
 
     // 4. 测试私有 IP (10.0.0.1)
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "http://10.0.0.1",
@@ -436,7 +461,9 @@ async fn test_ssrf_protection() {
     assert_eq!(response.status_code(), StatusCode::BAD_REQUEST);
 
     // 5. 测试有效外部 URL
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://example.com",
@@ -447,14 +474,16 @@ async fn test_ssrf_protection() {
 }
 
 /// 测试 JavaScript 渲染 (UAT-004)
-    ///
-    /// 验证系统是否能正确处理需要 JavaScript 渲染的 SPA 页面。
-    #[tokio::test]
-    async fn test_js_rendering_spa() {
+///
+/// 验证系统是否能正确处理需要 JavaScript 渲染的 SPA 页面。
+#[tokio::test]
+async fn test_js_rendering_spa() {
     let app = create_test_app().await;
 
     // 1. 发起抓取请求，明确要求 JS 渲染
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://example.com", // 使用 example.com 代替 google.com
@@ -462,20 +491,27 @@ async fn test_ssrf_protection() {
             "sync_wait_ms": 2000 // 增加同步等待时间
         }))
         .await;
-    
+
     // 根据同步等待结果设置响应状态
     let status_code = response.status_code();
     assert!(status_code == StatusCode::CREATED || status_code == StatusCode::ACCEPTED);
-    let task_id: Uuid = response.json::<serde_json::Value>()["id"].as_str().unwrap().parse().unwrap();
+    let task_id: Uuid = response.json::<serde_json::Value>()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
 
     // 2. 等待任务完成
     let mut completed = false;
-    for _ in 0..20 { // 增加重试次数
+    for _ in 0..20 {
+        // 增加重试次数
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let status_response = app.server.get(&format!("/v1/scrape/{}", task_id))
+        let status_response = app
+            .server
+            .get(&format!("/v1/scrape/{}", task_id))
             .add_header("Authorization", format!("Bearer {}", app.api_key))
             .await;
-        
+
         if status_response.status_code() == StatusCode::OK {
             let body: serde_json::Value = status_response.json();
             if body["status"] == "completed" {
@@ -489,7 +525,7 @@ async fn test_ssrf_protection() {
             }
         }
     }
-    
+
     assert!(completed, "Task did not complete in time");
 }
 
@@ -501,7 +537,9 @@ async fn test_full_site_crawl() {
     let app = create_test_app().await;
 
     // 1. 发起爬取请求
-    let response = app.server.post("/v1/crawl")
+    let response = app
+        .server
+        .post("/v1/crawl")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://example.com",
@@ -511,7 +549,7 @@ async fn test_full_site_crawl() {
             "sync_wait_ms": 1000
         }))
         .await;
-    
+
     // 爬取任务通常返回 201 Created (如果未超时) 或 202 Accepted (如果超时)
     let status = response.status_code();
     let body = response.json::<serde_json::Value>();
@@ -527,10 +565,12 @@ async fn test_full_site_crawl() {
     let mut completed = false;
     for _ in 0..15 {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let status_response = app.server.get(&format!("/v1/crawl/{}", crawl_id))
+        let status_response = app
+            .server
+            .get(&format!("/v1/crawl/{}", crawl_id))
             .add_header("Authorization", format!("Bearer {}", app.api_key))
             .await;
-        
+
         if status_response.status_code() == StatusCode::OK {
             let body: serde_json::Value = status_response.json();
             if body["status"] == "completed" {
@@ -539,26 +579,30 @@ async fn test_full_site_crawl() {
             }
         }
     }
-    
+
     assert!(completed, "Crawl task did not complete in time");
 
     // 3. 验证爬取结果 (UAT-006)
     // 检查结果列表
-    let results_response = app.server.get(&format!("/v1/crawl/{}/results", crawl_id))
+    let results_response = app
+        .server
+        .get(&format!("/v1/crawl/{}/results", crawl_id))
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .await;
-    
+
     assert_eq!(results_response.status_code(), StatusCode::OK);
     let results_body: serde_json::Value = results_response.json();
-    
+
     // API 返回的是 Vec<ScrapeResult> 而不是带有 pagination 包装的对象
-    let data = results_body.as_array().expect("Results data should be an array");
-    
+    let data = results_body
+        .as_array()
+        .expect("Results data should be an array");
+
     // 由于 example.com 抓取结果取决于 Mock 引擎或实际网络
     // 在测试环境中，通常会 mock 引擎返回固定内容
     // 验证至少有一个结果（首页）
     assert!(!data.is_empty(), "Should have at least one crawl result");
-    
+
     println!("✓ UAT-006 Full site crawl verified");
 }
 
@@ -572,9 +616,11 @@ async fn test_task_timeout_handling() {
     // 1. 发起抓取请求，设置非常短的超时时间
     // 我们需要确保任务被分配给 worker，但 worker 处理它时会超时。
     // 在我们的系统中，超时通常是在引擎级别或任务整体级别。
-    
+
     // 创建一个会超时的任务
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://httpbin.org/delay/5", // 强制延迟 5 秒
@@ -584,31 +630,40 @@ async fn test_task_timeout_handling() {
             "sync_wait_ms": 0
         }))
         .await;
-    
+
     assert_eq!(response.status_code(), StatusCode::CREATED);
-    let task_id: Uuid = response.json::<serde_json::Value>()["id"].as_str().unwrap().parse().unwrap();
+    let task_id: Uuid = response.json::<serde_json::Value>()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
 
     // 2. 等待 worker 处理并超时
     let mut timed_out = false;
     for _ in 0..10 {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let status_response = app.server.get(&format!("/v1/scrape/{}", task_id))
+        let status_response = app
+            .server
+            .get(&format!("/v1/scrape/{}", task_id))
             .add_header("Authorization", format!("Bearer {}", app.api_key))
             .await;
-        
+
         if status_response.status_code() == StatusCode::OK {
-                    let body: serde_json::Value = status_response.json();
-                    println!("DEBUG: Task status body: {:?}", body);
-                    if body["status"] == "failed" {
-                        let error = body["error"].as_str().unwrap_or("");
-                        if error.to_lowercase().contains("timeout") || error.to_lowercase().contains("expired") || error.to_lowercase().contains("all engines failed") {
-                            timed_out = true;
-                            break;
-                        }
-                    }
+            let body: serde_json::Value = status_response.json();
+            println!("DEBUG: Task status body: {:?}", body);
+            if body["status"] == "failed" {
+                let error = body["error"].as_str().unwrap_or("");
+                if error.to_lowercase().contains("timeout")
+                    || error.to_lowercase().contains("expired")
+                    || error.to_lowercase().contains("all engines failed")
+                {
+                    timed_out = true;
+                    break;
                 }
+            }
+        }
     }
-    
+
     assert!(timed_out, "Task did not time out as expected");
 }
 
@@ -621,7 +676,9 @@ async fn test_distributed_rate_limiting() {
     let app = create_test_app_with_low_rate_limit().await;
 
     // 2. 发起第一个请求，应该成功
-    let response1 = app.server.post("/v1/scrape")
+    let response1 = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://example.com/1",
@@ -631,59 +688,64 @@ async fn test_distributed_rate_limiting() {
     assert_eq!(response1.status_code(), StatusCode::CREATED);
 
     // 3. 立即发起第二个请求，应该被限流
-    let response2 = app.server.post("/v1/scrape")
+    let response2 = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://example.com/2",
             "sync_wait_ms": 0
         }))
         .await;
-    
+
     assert_eq!(response2.status_code(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 /// 创建一个低速率限制的测试应用
 async fn create_test_app_with_low_rate_limit() -> super::helpers::TestApp {
-    use migration::{Migrator, MigratorTrait};
-    use sea_orm::{Database, Statement, DbBackend, ConnectionTrait};
-    use std::process::Command;
+    use axum::Extension;
+    use axum_test::TestServer;
+    use crawlrs::application::usecases::create_scrape::CreateScrapeUseCase;
+    use crawlrs::config::settings::Settings;
+    use crawlrs::domain::search::engine::SearchEngine;
+    use crawlrs::engines::playwright_engine::PlaywrightEngine;
+    use crawlrs::engines::reqwest_engine::ReqwestEngine;
+    use crawlrs::engines::router::EngineRouter;
+    use crawlrs::engines::traits::ScraperEngine;
+    use crawlrs::infrastructure::cache::redis_client::RedisClient;
+    use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
+    use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
+    use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
+    use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
+    use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
+    use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
+    use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
+    use crawlrs::infrastructure::search::aggregator::SearchAggregator;
+    use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+    use crawlrs::infrastructure::services::rate_limiting_service_impl::{
+        RateLimitingConfig, RateLimitingServiceImpl,
+    };
     use crawlrs::presentation::middleware::auth_middleware::{auth_middleware, AuthState};
     use crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware;
     use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
     use crawlrs::presentation::routes;
-    use crawlrs::infrastructure::cache::redis_client::RedisClient;
-    use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-    use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
-    use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
-    use crawlrs::infrastructure::services::rate_limiting_service_impl::{RateLimitingConfig, RateLimitingServiceImpl};
     use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
-    use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
-    use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
-    use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
-    use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
-    use crawlrs::engines::reqwest_engine::ReqwestEngine;
-    use crawlrs::engines::playwright_engine::PlaywrightEngine;
-    use crawlrs::engines::router::EngineRouter;
-    use crawlrs::engines::traits::ScraperEngine;
-    use crawlrs::application::usecases::create_scrape::CreateScrapeUseCase;
     use crawlrs::utils::robots::RobotsChecker;
-    use crawlrs::domain::search::engine::SearchEngine;
-    use crawlrs::infrastructure::search::aggregator::SearchAggregator;
-    use crawlrs::infrastructure::search::google::GoogleSearchEngine;
-    use crawlrs::config::settings::Settings;
-    use axum::Extension;
-    use axum_test::TestServer;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+    use std::process::Command;
 
     // 此函数逻辑类似于 helpers/mod.rs 中的 create_test_app_with_rate_limit_options
     // 但我们可以直接在此处设置特定的限流参数
-    
+
     // 1. Setup SQLite
     let db = Database::connect("sqlite::memory:").await.unwrap();
     let db_pool = Arc::new(db);
 
     // 2. Setup Redis
-    let start_port = 8000; 
-    let result = crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true).unwrap();
+    let start_port = 8000;
+    let result =
+        crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true).unwrap();
     let redis_port = result.port;
     let redis_process = Command::new("redis-server")
         .arg("--port")
@@ -720,15 +782,20 @@ async fn create_test_app_with_low_rate_limit() -> super::helpers::TestApp {
     )).await.unwrap();
 
     let redis_client = RedisClient::new(&redis_url).await.unwrap();
-    
+
     // CRITICAL: Set 1 RPM limit
     let rate_limiter = Arc::new(RateLimiter::new(redis_client.clone(), 1));
 
-    let task_repo = Arc::new(TaskRepositoryImpl::new(db_pool.clone(), chrono::Duration::seconds(10)));
+    let task_repo = Arc::new(TaskRepositoryImpl::new(
+        db_pool.clone(),
+        chrono::Duration::seconds(10),
+    ));
     let credits_repo = Arc::new(CreditsRepositoryImpl::new(db_pool.clone()));
     let backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db_pool.clone()));
 
-    let rate_limiting_service: Arc<dyn crawlrs::domain::services::rate_limiting_service::RateLimitingService> = Arc::new(RateLimitingServiceImpl::new(
+    let rate_limiting_service: Arc<
+        dyn crawlrs::domain::services::rate_limiting_service::RateLimitingService,
+    > = Arc::new(RateLimitingServiceImpl::new(
         Arc::new(redis_client.clone()),
         task_repo.clone(),
         backlog_repo,
@@ -752,7 +819,8 @@ async fn create_test_app_with_low_rate_limit() -> super::helpers::TestApp {
 
     let mut search_engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
     search_engines.push(Arc::new(GoogleSearchEngine::new()));
-    let search_engine_service: Arc<dyn SearchEngine> = Arc::new(SearchAggregator::new(search_engines, 10000));
+    let search_engine_service: Arc<dyn SearchEngine> =
+        Arc::new(SearchAggregator::new(search_engines, 10000));
 
     let mut settings = Settings::new().unwrap();
     settings.rate_limiting.enabled = true;
@@ -807,24 +875,28 @@ async fn test_invalid_api_key_v2() {
     let app = create_test_app().await;
 
     // 1. 使用无效的 API Key
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", "Bearer invalid-key")
         .json(&json!({
             "url": "https://example.com",
             "sync_wait_ms": 0
         }))
         .await;
-    
+
     assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
 
     // 2. 不带 Authorization 头
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .json(&json!({
             "url": "https://example.com",
             "sync_wait_ms": 0
         }))
         .await;
-    
+
     assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
 }
 
@@ -855,7 +927,10 @@ async fn test_task_expiration() {
     };
 
     use sea_orm::EntityTrait;
-    task::Entity::insert(task_model).exec(app.db_pool.as_ref()).await.unwrap();
+    task::Entity::insert(task_model)
+        .exec(app.db_pool.as_ref())
+        .await
+        .unwrap();
 
     // 2. 将任务加入队列
     let _task = task::Entity::find_by_id(expired_task_id)
@@ -863,10 +938,10 @@ async fn test_task_expiration() {
         .await
         .unwrap()
         .unwrap();
-    
+
     // We need a worker to process it. In integration tests, we can use the app's worker or trigger it.
     // The ScrapeWorker in app.rs runs in a loop.
-    
+
     // 3. 等待 Worker 处理任务
     // Worker 应该在 process_task 中检查 expires_at 并将其标记为 Failed
     // 增加等待时间，并多次检查状态，因为异步处理可能有延迟
@@ -885,7 +960,10 @@ async fn test_task_expiration() {
     }
 
     // 4. 验证任务状态为 Failed
-    assert_eq!(task_status, "failed", "Task should be marked as failed due to expiration");
+    assert_eq!(
+        task_status, "failed",
+        "Task should be marked as failed due to expiration"
+    );
 }
 
 /// 测试 Webhook 触发 (UAT-023)
@@ -898,18 +976,22 @@ async fn test_webhook_trigger() {
     // 1. 创建一个 Webhook 接收器 (我们可以模拟一个，或者只是检查数据库中的 WebhookEvent)
     // 简单起见，我们创建一个 Webhook 配置，然后检查 WebhookEvent 表
     let webhook_url = "https://example.com/webhook";
-    
-    let response = app.server.post("/v1/webhooks")
+
+    let response = app
+        .server
+        .post("/v1/webhooks")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": webhook_url
         }))
         .await;
-    
+
     assert_eq!(response.status_code(), StatusCode::CREATED);
-    
+
     // 2. 提交一个抓取任务
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://example.com",
@@ -917,9 +999,13 @@ async fn test_webhook_trigger() {
             "sync_wait_ms": 0
         }))
         .await;
-    
+
     assert_eq!(response.status_code(), StatusCode::CREATED);
-    let _task_id: Uuid = response.json::<serde_json::Value>()["id"].as_str().unwrap().parse().unwrap();
+    let _task_id: Uuid = response.json::<serde_json::Value>()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
 
     // 3. 等待任务完成 (Mock 引擎已被真实引擎替换)
     // 增加等待时间，确保 Webhook 事件有足够的时间被创建和处理
@@ -928,7 +1014,7 @@ async fn test_webhook_trigger() {
     // 4. 检查 WebhookEvent 是否已创建
     // 我们需要访问 webhook_event 表
     use crawlrs::infrastructure::database::entities::webhook_event;
-    
+
     // 多次尝试检查，以防数据库写入延迟
     let mut events = Vec::new();
     for i in 0..10 {
@@ -937,15 +1023,23 @@ async fn test_webhook_trigger() {
             .all(app.db_pool.as_ref())
             .await
             .unwrap();
-        
+
         if !events.is_empty() {
-            println!("DEBUG: Found {} webhook events for team {} on attempt {}", events.len(), app.team_id, i);
+            println!(
+                "DEBUG: Found {} webhook events for team {} on attempt {}",
+                events.len(),
+                app.team_id,
+                i
+            );
             break;
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
     }
-    
-    assert!(!events.is_empty(), "Should have created at least one webhook event");
+
+    assert!(
+        !events.is_empty(),
+        "Should have created at least one webhook event"
+    );
     let has_completed_event = events.iter().any(|e| {
         let et = e.event_type.to_lowercase();
         et == "scrape_completed" || et == "scrape.completed"
@@ -953,7 +1047,10 @@ async fn test_webhook_trigger() {
     if !has_completed_event {
         println!("Events found for team {}: {:?}", app.team_id, events);
     }
-    assert!(has_completed_event, "Should have a scrape_completed or scrape.completed event");
+    assert!(
+        has_completed_event,
+        "Should have a scrape_completed or scrape.completed event"
+    );
 }
 
 /// 测试 Webhook 重试策略 (UAT-024)
@@ -965,16 +1062,19 @@ async fn test_webhook_retry_policy() {
 
     // 1. 创建一个无效的 Webhook 接收器 (模拟 500 错误)
     let webhook_url = "https://httpbin.org/status/500";
-    
-    app.server.post("/v1/webhooks")
+
+    app.server
+        .post("/v1/webhooks")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": webhook_url
         }))
         .await;
-    
+
     // 2. 提交一个抓取任务
-    let response = app.server.post("/v1/scrape")
+    let response = app
+        .server
+        .post("/v1/scrape")
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .json(&json!({
             "url": "https://example.com",
@@ -982,26 +1082,26 @@ async fn test_webhook_retry_policy() {
             "sync_wait_ms": 0
         }))
         .await;
-    
+
     assert_eq!(response.status_code(), StatusCode::CREATED);
-    
+
     // 3. 等待任务完成并触发 Webhook
     // 初始发送失败后，应该会被标记为 Failed 并计划重试
     tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
 
     // 4. 检查 WebhookEvent 状态
     use crawlrs::infrastructure::database::entities::webhook_event::{self, SeaWebhookStatus};
-    
+
     let events = webhook_event::Entity::find()
         .filter(webhook_event::Column::TeamId.eq(app.team_id))
         .filter(webhook_event::Column::WebhookUrl.eq(webhook_url))
         .all(app.db_pool.as_ref())
         .await
         .unwrap();
-    
+
     assert!(!events.is_empty(), "Should have created a webhook event");
     let _event = &events[0];
-    
+
     // 初始状态应该是 Failed (因为 500 是可重试错误)
     // 且 attempt_count 应该至少为 1
     let mut success = false;
@@ -1012,7 +1112,7 @@ async fn test_webhook_retry_policy() {
             .all(app.db_pool.as_ref())
             .await
             .unwrap();
-        
+
         if !events.is_empty() {
             let event = &events[0];
             if event.status == SeaWebhookStatus::Failed && event.attempt_count >= 1 {
@@ -1022,8 +1122,11 @@ async fn test_webhook_retry_policy() {
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
     }
-    
-    assert!(success, "Webhook event should be in Failed state with attempt_count >= 1");
+
+    assert!(
+        success,
+        "Webhook event should be in Failed state with attempt_count >= 1"
+    );
 }
 
 /// 测试搜索功能
@@ -1033,9 +1136,11 @@ async fn test_webhook_retry_policy() {
 async fn test_search_basic() {
     // Enable HTTP fallback for testing when browser is not available
     std::env::set_var("GOOGLE_HTTP_FALLBACK_MOCK_RESULTS", "1");
-    
+
     if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
-        println!("CHROMIUM_REMOTE_DEBUGGING_URL not set, will use HTTP fallback with mock results.");
+        println!(
+            "CHROMIUM_REMOTE_DEBUGGING_URL not set, will use HTTP fallback with mock results."
+        );
     }
     init_telemetry();
     let app = create_test_app().await;
@@ -1059,7 +1164,10 @@ async fn test_search_basic() {
     let search_response: serde_json::Value = response.json();
     assert!(search_response.get("results").is_some());
     let results = search_response.get("results").unwrap().as_array().unwrap();
-    assert!(!results.is_empty(), "Expected search results to be non-empty");
+    assert!(
+        !results.is_empty(),
+        "Expected search results to be non-empty"
+    );
 }
 
 /// 测试爬取功能

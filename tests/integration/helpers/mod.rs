@@ -12,6 +12,7 @@ use axum_test::TestServer;
 use crawlrs::application::usecases::create_scrape::CreateScrapeUseCase;
 use crawlrs::config::settings::Settings;
 use crawlrs::domain::search::engine::SearchEngine;
+use crawlrs::domain::services::rate_limiting_service::RateLimitingService;
 use crawlrs::engines::playwright_engine::PlaywrightEngine;
 use crawlrs::engines::reqwest_engine::ReqwestEngine;
 use crawlrs::engines::router::EngineRouter;
@@ -21,16 +22,15 @@ use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
+use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crawlrs::infrastructure::search::aggregator::SearchAggregator;
 use crawlrs::infrastructure::search::google::GoogleSearchEngine;
-use crawlrs::infrastructure::storage::LocalStorage;
-use crawlrs::domain::services::rate_limiting_service::RateLimitingService;
-use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::{
     RateLimitingConfig, RateLimitingServiceImpl,
 };
+use crawlrs::infrastructure::storage::LocalStorage;
 use crawlrs::presentation::middleware::auth_middleware::{auth_middleware, AuthState};
 use crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware;
 use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
@@ -40,6 +40,7 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use std::process::{Child, Command};
 use std::sync::Arc;
+use tokio::net::TcpListener;
 use uuid::Uuid;
 
 use crawlrs::utils::robots::RobotsChecker;
@@ -209,13 +210,14 @@ pub async fn create_test_app_with_rate_limit_options(
     let backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db_pool.clone()));
 
     // Initialize Rate Limiting Service
-    let rate_limiting_service: Arc<dyn RateLimitingService> = Arc::new(RateLimitingServiceImpl::new(
-        Arc::new(redis_client.clone()),
-        task_repo.clone(),
-        backlog_repo,
-        credits_repo.clone(),
-        RateLimitingConfig::default(),
-    ));
+    let rate_limiting_service: Arc<dyn RateLimitingService> =
+        Arc::new(RateLimitingServiceImpl::new(
+            Arc::new(redis_client.clone()),
+            task_repo.clone(),
+            backlog_repo,
+            credits_repo.clone(),
+            RateLimitingConfig::default(),
+        ));
 
     // Use PostgresTaskQueue for proper task processing
     let queue: Arc<dyn TaskQueue> = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
@@ -241,9 +243,51 @@ pub async fn create_test_app_with_rate_limit_options(
     let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
     let search_engine_service: Arc<dyn SearchEngine> = search_aggregator;
 
-    // Create custom settings for tests
+    // Set up mock LLM API server for testing
+    let mock_llm_response = serde_json::json!({
+        "id": "chatcmpl-test123",
+        "object": "chat.completion",
+        "created": 1677652288,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "{\"name\": \"Test Product\", \"price\": \"$99.99\", \"availability\": \"In Stock\"}"
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 50,
+            "completion_tokens": 25,
+            "total_tokens": 75
+        }
+    });
+
+    let mock_llm_app = axum::Router::new().route(
+        "/chat/completions",
+        axum::routing::post(move |axum::Json(_): axum::Json<serde_json::Value>| {
+            let resp = mock_llm_response.clone();
+            async move { axum::Json(resp) }
+        }),
+    );
+
+    let mock_llm_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_llm_addr = mock_llm_listener.local_addr().unwrap();
+    let mock_llm_url = format!("http://{}", mock_llm_addr);
+
+    tokio::spawn(async move {
+        axum::serve(mock_llm_listener, mock_llm_app).await.unwrap();
+    });
+
+    // Wait for mock server to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Create custom settings for tests with mock LLM configuration
     let mut settings = Settings::new().unwrap();
     settings.rate_limiting.enabled = enable_rate_limiting; // 根据参数决定是否启用速率限制
+    settings.llm.api_key = Some("test-api-key".to_string());
+    settings.llm.api_base_url = Some(mock_llm_url);
+    settings.llm.model = Some("gpt-3.5-turbo".to_string());
     let settings = Arc::new(settings);
 
     let mut worker_manager: WorkerManager<
@@ -275,10 +319,8 @@ pub async fn create_test_app_with_rate_limit_options(
 
         // 启动 WebhookWorker
         let webhook_service = Arc::new(WebhookServiceImpl::new("test_secret".to_string()));
-        let webhook_worker = WebhookWorker::with_default_policy(
-            webhook_event_repo.clone(),
-            webhook_service,
-        );
+        let webhook_worker =
+            WebhookWorker::with_default_policy(webhook_event_repo.clone(), webhook_service);
         tokio::spawn(async move {
             let _ = webhook_worker.run().await;
         });

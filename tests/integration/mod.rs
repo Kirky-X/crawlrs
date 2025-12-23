@@ -10,9 +10,11 @@
 pub mod api;
 pub mod api_tests;
 pub mod crawl_service_test;
+pub mod extract_credit_deduction_test;
 pub mod health_check;
 pub mod health_monitor_test;
 pub mod helpers;
+pub mod page_interactions_test;
 pub mod real_components_test;
 pub mod real_interactions_test;
 pub mod real_world_test;

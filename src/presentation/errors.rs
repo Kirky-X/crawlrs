@@ -21,20 +21,17 @@ pub struct AppError(anyhow::Error);
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let error_message = self.0.to_string();
-        
+
         let status = match self.0.downcast_ref::<RepositoryError>() {
-            Some(RepositoryError::Database(_db_err)) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-            Some(RepositoryError::NotFound) => {
-                StatusCode::NOT_FOUND
-            }
+            Some(RepositoryError::Database(_db_err)) => StatusCode::INTERNAL_SERVER_ERROR,
+            Some(RepositoryError::NotFound) => StatusCode::NOT_FOUND,
             None => {
                 // 检查是否为验证错误（包含特定关键词）
-                if error_message.contains("cannot be empty") ||
-                   error_message.contains("invalid") ||
-                   error_message.contains("required") ||
-                   error_message.contains("validation") {
+                if error_message.contains("cannot be empty")
+                    || error_message.contains("invalid")
+                    || error_message.contains("required")
+                    || error_message.contains("validation")
+                {
                     StatusCode::BAD_REQUEST
                 } else {
                     StatusCode::INTERNAL_SERVER_ERROR

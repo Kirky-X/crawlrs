@@ -3,9 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use metrics::{
-    describe_counter, describe_gauge, describe_histogram, gauge,
-};
+use metrics::{describe_counter, describe_gauge, describe_histogram, gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use once_cell::sync::Lazy;
 use std::sync::{Arc, Mutex};
@@ -42,8 +40,14 @@ pub fn init_metrics() {
     });
 
     // Register metrics
-    describe_gauge!("system_cpu_usage_ratio", "Current CPU usage ratio (0.0 to 1.0)");
-    describe_gauge!("system_memory_usage_ratio", "Current memory usage ratio (0.0 to 1.0)");
+    describe_gauge!(
+        "system_cpu_usage_ratio",
+        "Current CPU usage ratio (0.0 to 1.0)"
+    );
+    describe_gauge!(
+        "system_memory_usage_ratio",
+        "Current memory usage ratio (0.0 to 1.0)"
+    );
     describe_counter!("crawl_tasks_total", "Total number of crawl tasks submitted");
     describe_counter!(
         "crawl_tasks_completed_total",
@@ -91,7 +95,10 @@ fn update_system_metrics() {
 
         // Alerting logic
         if cpu_usage > 0.9 {
-            error!("CRITICAL: System CPU usage is extremely high: {:.2}%", cpu_usage * 100.0);
+            error!(
+                "CRITICAL: System CPU usage is extremely high: {:.2}%",
+                cpu_usage * 100.0
+            );
         } else if cpu_usage > 0.8 {
             warn!("ALARM: System CPU usage is high: {:.2}%", cpu_usage * 100.0);
         }
@@ -103,9 +110,15 @@ fn update_system_metrics() {
             gauge!("system_memory_usage_ratio").set(mem_usage);
 
             if mem_usage > 0.9 {
-                error!("CRITICAL: System memory usage is extremely high: {:.2}%", mem_usage * 100.0);
+                error!(
+                    "CRITICAL: System memory usage is extremely high: {:.2}%",
+                    mem_usage * 100.0
+                );
             } else if mem_usage > 0.8 {
-                warn!("ALARM: System memory usage is high: {:.2}%", mem_usage * 100.0);
+                warn!(
+                    "ALARM: System memory usage is high: {:.2}%",
+                    mem_usage * 100.0
+                );
             }
         }
     }

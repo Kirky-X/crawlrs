@@ -11,7 +11,6 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use std::net::SocketAddr;
 use tracing::info;
 
-
 pub fn init_metrics() {
     let builder = PrometheusBuilder::new();
     let addr: SocketAddr = "0.0.0.0:9000".parse().expect("Invalid metrics address");
