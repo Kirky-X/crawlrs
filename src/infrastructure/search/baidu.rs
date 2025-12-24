@@ -9,9 +9,156 @@ use crate::domain::services::relevance_scorer::RelevanceScorer;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
-use tracing::info;
 use std::fs;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
+use tracing::info;
+
+const MIN_REQUEST_INTERVAL_MS: u64 = 3000;
+const MAX_REQUEST_INTERVAL_MS: u64 = 8000;
+
+#[allow(dead_code)]
+const MAX_RETRIES: u32 = 3;
+#[allow(dead_code)]
+const INITIAL_BACKOFF_MS: u64 = 1000;
+#[allow(dead_code)]
+const MAX_BACKOFF_MS: u64 = 30000;
+
+const BAIDU_PC_USER_AGENTS: &[&str] = &[
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+];
+
+const BAIDU_MOBILE_USER_AGENTS: &[&str] = &[
+    "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36",
+];
+
+#[derive(Clone)]
+pub struct RateLimiter {
+    last_request_time: Arc<Mutex<Instant>>,
+    #[allow(dead_code)]
+    min_interval: Duration,
+    #[allow(dead_code)]
+    max_interval: Duration,
+    consecutive_failures: Arc<Mutex<u32>>,
+}
+
+impl RateLimiter {
+    pub fn new(min_interval_ms: u64, max_interval_ms: u64) -> Self {
+        Self {
+            last_request_time: Arc::new(Mutex::new(Instant::now() - Duration::from_secs(10))),
+            min_interval: Duration::from_millis(min_interval_ms),
+            max_interval: Duration::from_millis(max_interval_ms),
+            consecutive_failures: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    pub async fn wait_before_request(&self) {
+        let failures = *self.consecutive_failures.lock().await;
+        let interval = if failures > 2 {
+            let base_interval = Duration::from_millis(rand::random_range(
+                MIN_REQUEST_INTERVAL_MS..MAX_REQUEST_INTERVAL_MS * 2,
+            ));
+            let failure_multiplier = 2u64.saturating_pow(failures - 2);
+            let interval_ms = (base_interval.as_millis() as u64 * failure_multiplier).min(60_000);
+            Duration::from_millis(interval_ms)
+        } else {
+            Duration::from_millis(rand::random_range(
+                MIN_REQUEST_INTERVAL_MS..MAX_REQUEST_INTERVAL_MS,
+            ))
+        };
+
+        let last_time = *self.last_request_time.lock().await;
+        let elapsed = last_time.elapsed();
+
+        if elapsed < interval {
+            let jitter = Duration::from_millis(rand::random_range(0..1000));
+            tokio::time::sleep(interval - elapsed + jitter).await;
+        }
+
+        *self.last_request_time.lock().await = Instant::now();
+    }
+
+    pub async fn record_failure(&self) {
+        *self.consecutive_failures.lock().await += 1;
+    }
+
+    pub async fn record_success(&self) {
+        *self.consecutive_failures.lock().await = 0;
+    }
+
+    pub async fn get_consecutive_failures(&self) -> u32 {
+        *self.consecutive_failures.lock().await
+    }
+}
+
+#[derive(Clone)]
+pub struct UserAgentManager {
+    pc_agents: Vec<String>,
+    mobile_agents: Vec<String>,
+    last_rotation: Arc<Mutex<Instant>>,
+    rotation_interval: Duration,
+}
+
+impl UserAgentManager {
+    pub fn new() -> Self {
+        Self {
+            pc_agents: BAIDU_PC_USER_AGENTS.iter().map(|s| s.to_string()).collect(),
+            mobile_agents: BAIDU_MOBILE_USER_AGENTS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            last_rotation: Arc::new(Mutex::new(Instant::now())),
+            rotation_interval: Duration::from_secs(300),
+        }
+    }
+
+    pub fn get_random_pc_ua(&self) -> String {
+        self.pc_agents[rand::random_range(0..self.pc_agents.len())].clone()
+    }
+
+    pub fn get_random_mobile_ua(&self) -> String {
+        self.mobile_agents[rand::random_range(0..self.mobile_agents.len())].clone()
+    }
+
+    pub async fn should_rotate(&self) -> bool {
+        self.last_rotation.lock().await.elapsed() > self.rotation_interval
+    }
+
+    pub async fn record_rotation(&self) {
+        *self.last_rotation.lock().await = Instant::now();
+    }
+}
+
+impl Default for UserAgentManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone)]
+pub struct ProxyConfig {
+    pub proxy_url: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+impl ProxyConfig {
+    pub fn new(proxy_url: String, username: Option<String>, password: Option<String>) -> Self {
+        Self {
+            proxy_url,
+            username,
+            password,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum BaiduSearchCategory {
@@ -73,9 +220,9 @@ fn load_test_config() -> Option<BaiduTestConfig> {
             match fs::read_to_string(&config_path) {
                 Ok(content) => {
                     // 解析 YAML 配置文件
-                    let config: HashMap<String, BaiduTestConfig> = 
+                    let config: HashMap<String, BaiduTestConfig> =
                         serde_yaml::from_str(&content).ok()?;
-                    
+
                     // 返回百度搜索测试配置
                     if let Some(baidu_config) = config.get("baidu") {
                         return Some(baidu_config.clone());
@@ -90,7 +237,13 @@ fn load_test_config() -> Option<BaiduTestConfig> {
 }
 
 pub struct BaiduSearchEngine {
+    #[allow(dead_code)]
     client: reqwest::Client,
+    rate_limiter: RateLimiter,
+    #[allow(dead_code)]
+    user_agent_manager: UserAgentManager,
+    #[allow(dead_code)]
+    proxy_config: Option<ProxyConfig>,
 }
 
 impl Default for BaiduSearchEngine {
@@ -101,13 +254,307 @@ impl Default for BaiduSearchEngine {
 
 impl BaiduSearchEngine {
     pub fn new() -> Self {
-        // 使用浏览器风格的用户代理
         let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            .timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_default();
 
-        Self { client }
+        Self {
+            client,
+            rate_limiter: RateLimiter::new(MIN_REQUEST_INTERVAL_MS, MAX_REQUEST_INTERVAL_MS),
+            user_agent_manager: UserAgentManager::new(),
+            proxy_config: None,
+        }
+    }
+
+    pub fn with_proxy(
+        proxy_url: String,
+        username: Option<String>,
+        password: Option<String>,
+    ) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
+
+        Self {
+            client,
+            rate_limiter: RateLimiter::new(MIN_REQUEST_INTERVAL_MS, MAX_REQUEST_INTERVAL_MS),
+            user_agent_manager: UserAgentManager::new(),
+            proxy_config: Some(ProxyConfig::new(proxy_url, username, password)),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn create_request_builder(&self, url: &str) -> reqwest::RequestBuilder {
+        let use_mobile = rand::random::<f32>() < 0.2;
+        let user_agent = if use_mobile {
+            self.user_agent_manager.get_random_mobile_ua()
+        } else {
+            self.user_agent_manager.get_random_pc_ua()
+        };
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "Accept",
+            reqwest::header::HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"),
+        );
+        headers.insert(
+            "Accept-Language",
+            reqwest::header::HeaderValue::from_static("zh-CN,zh;q=0.9,en;q=0.8"),
+        );
+        headers.insert(
+            "Accept-Encoding",
+            reqwest::header::HeaderValue::from_static("gzip, deflate, br"),
+        );
+        headers.insert(
+            "Cache-Control",
+            reqwest::header::HeaderValue::from_static("no-cache"),
+        );
+        headers.insert(
+            "Pragma",
+            reqwest::header::HeaderValue::from_static("no-cache"),
+        );
+        headers.insert(
+            "Sec-Ch-Ua",
+            reqwest::header::HeaderValue::from_static(
+                "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"",
+            ),
+        );
+        headers.insert(
+            "Sec-Ch-Ua-Mobile",
+            reqwest::header::HeaderValue::from_static(if use_mobile { "?1" } else { "?0" }),
+        );
+        headers.insert(
+            "Sec-Ch-Ua-Platform",
+            reqwest::header::HeaderValue::from_static("\"Windows\""),
+        );
+        headers.insert(
+            "Sec-Fetch-Dest",
+            reqwest::header::HeaderValue::from_static("document"),
+        );
+        headers.insert(
+            "Sec-Fetch-Mode",
+            reqwest::header::HeaderValue::from_static("navigate"),
+        );
+        headers.insert(
+            "Sec-Fetch-Site",
+            reqwest::header::HeaderValue::from_static("none"),
+        );
+        headers.insert(
+            "Sec-Fetch-User",
+            reqwest::header::HeaderValue::from_static("?1"),
+        );
+        headers.insert(
+            "Upgrade-Insecure-Requests",
+            reqwest::header::HeaderValue::from_static("1"),
+        );
+
+        let mut request_builder = self.client.get(url).headers(headers);
+
+        request_builder = request_builder.header("User-Agent", user_agent);
+
+        request_builder
+    }
+
+    #[allow(dead_code)]
+    async fn execute_with_retry<F, T, E>(&self, operation: F) -> Result<T, SearchError>
+    where
+        F: Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, E>> + Send>>,
+        E: std::fmt::Display,
+    {
+        let mut last_error: Option<String> = None;
+
+        for attempt in 0..MAX_RETRIES {
+            match operation().await {
+                Ok(result) => {
+                    self.rate_limiter.record_success().await;
+                    return Ok(result);
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    last_error = Some(error_msg.clone());
+
+                    self.rate_limiter.record_failure().await;
+
+                    if attempt < MAX_RETRIES - 1 {
+                        let backoff_ms = INITIAL_BACKOFF_MS
+                            .saturating_mul(2u64.saturating_pow(attempt))
+                            .min(MAX_BACKOFF_MS);
+                        let jitter = rand::random_range(0..backoff_ms / 2);
+                        let total_delay = backoff_ms + jitter;
+
+                        tracing::warn!(
+                            "Baidu request attempt {} failed: {}, retrying in {}ms",
+                            attempt + 1,
+                            error_msg,
+                            total_delay
+                        );
+
+                        tokio::time::sleep(Duration::from_millis(total_delay)).await;
+                    }
+                }
+            }
+        }
+
+        Err(SearchError::EngineError(format!(
+            "Baidu request failed after {} attempts: {}",
+            MAX_RETRIES,
+            last_error.unwrap_or_else(|| "Unknown error".to_string())
+        )))
+    }
+
+    #[allow(dead_code)]
+    fn is_captcha_page(&self, content: &str) -> bool {
+        content.contains("captcha")
+            || content.contains("wappass.baidu.com")
+            || content.contains("验证码")
+            || content.contains("请输入验证码")
+            || content.contains("百度安全验证")
+            || content.contains("/static/antispam")
+            || content.contains("antispam")
+    }
+
+    #[allow(dead_code)]
+    fn is_rate_limited(&self, content: &str, status_code: u16) -> bool {
+        status_code == 429
+            || status_code == 403
+            || content.contains("请求过于频繁")
+            || content.contains("访问频率过快")
+            || content.contains("Too Many Requests")
+    }
+
+    async fn handle_search_with_anti_crawl(
+        &self,
+        query: &str,
+        page: u32,
+        category: BaiduSearchCategory,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        self.rate_limiter.wait_before_request().await;
+
+        let (url, params) = self.build_baidu_url(query, page, category);
+
+        let use_mobile = rand::random::<f32>() < 0.2;
+        let user_agent = if use_mobile {
+            "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36".to_string()
+        } else {
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string()
+        };
+
+        let result: Result<Vec<SearchResult>, SearchError> = async move {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                "Accept",
+                reqwest::header::HeaderValue::from_static("application/json, text/plain, */*"),
+            );
+            headers.insert(
+                "Accept-Language",
+                reqwest::header::HeaderValue::from_static("zh-CN,zh;q=0.9"),
+            );
+            headers.insert(
+                "Referer",
+                reqwest::header::HeaderValue::from_static("https://www.baidu.com/"),
+            );
+            headers.insert(
+                "User-Agent",
+                reqwest::header::HeaderValue::from_str(&user_agent).unwrap(),
+            );
+
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .default_headers(headers)
+                .build()
+                .map_err(|e| SearchError::EngineError(e.to_string()))?;
+
+            let request = client.get(&url).query(&params);
+
+            let response = request
+                .send()
+                .await
+                .map_err(|e| SearchError::EngineError(e.to_string()))?;
+
+            let status = response.status();
+
+            if status == 429 || status == 403 {
+                return Err(SearchError::EngineError(format!(
+                    "Rate limited with status: {}",
+                    status
+                )));
+            }
+
+            if !status.is_success() {
+                return Err(SearchError::EngineError(format!("HTTP error: {}", status)));
+            }
+
+            let json_content = response
+                .text()
+                .await
+                .map_err(|e| SearchError::EngineError(e.to_string()))?;
+
+            if json_content.contains("captcha")
+                || json_content.contains("wappass.baidu.com")
+                || json_content.contains("验证码")
+                || json_content.contains("请输入验证码")
+            {
+                return Err(SearchError::EngineError("CAPTCHA required".to_string()));
+            }
+
+            if json_content.trim_start().starts_with('<') {
+                return Err(SearchError::EngineError(
+                    "Received HTML instead of JSON".to_string(),
+                ));
+            }
+
+            let results = serde_json::from_str::<BaiduResponse>(&json_content)
+                .map_err(|e| SearchError::EngineError(format!("JSON parsing error: {}", e)))?;
+
+            let mut search_results = Vec::new();
+
+            if let Some(feed) = results.feed {
+                if let Some(entries) = feed.entry {
+                    for entry in entries {
+                        if let (Some(title), Some(url)) = (entry.title, entry.url) {
+                            let decoded_title =
+                                html_escape::decode_html_entities(&title).to_string();
+                            let decoded_content = entry
+                                .abs
+                                .as_ref()
+                                .map(|abs| html_escape::decode_html_entities(abs).to_string());
+
+                            let scorer = RelevanceScorer::new("");
+                            let relevance_score = scorer.calculate_score(
+                                &decoded_title,
+                                decoded_content.as_deref(),
+                                &url,
+                            );
+
+                            let mut search_result = SearchResult::new(
+                                decoded_title,
+                                url.clone(),
+                                decoded_content,
+                                "baidu".to_string(),
+                            );
+                            search_result.score = relevance_score;
+                            search_results.push(search_result);
+                        }
+                    }
+                }
+            }
+
+            Ok(search_results)
+        }
+        .await;
+
+        match result {
+            Ok(results) => {
+                self.rate_limiter.record_success().await;
+                Ok(results)
+            }
+            Err(e) => {
+                self.rate_limiter.record_failure().await;
+                Err(e)
+            }
+        }
     }
 
     /// 从配置创建搜索结果
@@ -116,23 +563,24 @@ impl BaiduSearchEngine {
         config: &BaiduTestConfig,
         engine_name: &str,
     ) -> Vec<SearchResult> {
-        config.results.iter().map(|entry| {
-            let scorer = RelevanceScorer::new("");
-            let relevance_score = scorer.calculate_score(
-                &entry.title,
-                Some(&entry.description),
-                &entry.url,
-            );
-            
-            let mut result = SearchResult::new(
-                entry.title.clone(),
-                entry.url.clone(),
-                Some(entry.description.clone()),
-                engine_name.to_string(),
-            );
-            result.score = relevance_score;
-            result
-        }).collect()
+        config
+            .results
+            .iter()
+            .map(|entry| {
+                let scorer = RelevanceScorer::new("");
+                let relevance_score =
+                    scorer.calculate_score(&entry.title, Some(&entry.description), &entry.url);
+
+                let mut result = SearchResult::new(
+                    entry.title.clone(),
+                    entry.url.clone(),
+                    Some(entry.description.clone()),
+                    engine_name.to_string(),
+                );
+                result.score = relevance_score;
+                result
+            })
+            .collect()
     }
 
     /// 构建百度搜索URL，支持多端点
@@ -251,75 +699,32 @@ impl SearchEngine for BaiduSearchEngine {
 
         // 默认使用通用搜索，可以通过参数或配置扩展到支持图片搜索
         let category = BaiduSearchCategory::General;
-        let page = 1; // 可以根据limit计算页数
+        let page = 1;
 
-        let (url, params) = self.build_baidu_url(query, page, category);
+        let mut results = self
+            .handle_search_with_anti_crawl(query, page, category)
+            .await?;
 
-        let response = self
-            .client
-            .get(&url)
-            .query(&params)
-            .send()
-            .await
-            .map_err(|e| SearchError::NetworkError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(SearchError::EngineError(format!(
-                "Baidu Search error: {}",
-                response.status()
-            )));
-        }
-
-        let json_content = response
-            .text()
-            .await
-            .map_err(|e| SearchError::EngineError(e.to_string()))?;
-
-        // 检查是否为百度验证码页面
-        if json_content.contains("captcha") || json_content.contains("wappass.baidu.com") {
-            return Err(SearchError::EngineError(
-                "Baidu requires CAPTCHA verification. Please try again later or use a different search engine.".to_string()
-            ));
-        }
-
-        // 如果返回的是HTML而不是JSON，可能是被重定向到了验证码页面
-        if json_content.trim_start().starts_with('<') {
-            return Err(SearchError::EngineError(
-                "Baidu returned HTML instead of JSON, likely due to rate limiting or CAPTCHA."
-                    .to_string(),
-            ));
-        }
-
-        // 解析JSON响应
-        let mut results = self.parse_baidu_response(&json_content)?;
-
-        // 限制结果数量
         results.truncate(limit as usize);
 
-        // 为每个结果计算相关性分数和新鲜度分数
         let scorer = RelevanceScorer::new(query);
         for result in &mut results {
-            // 重新计算相关性分数，使用正确的查询词
             let relevance_score =
                 scorer.calculate_score(&result.title, result.description.as_deref(), &result.url);
 
-            // 尝试从标题中提取发布日期
             if let Some(published_date) = RelevanceScorer::extract_published_date(&result.title) {
                 result.published_time = Some(published_date);
             }
 
-            // 计算新鲜度分数
             let freshness_score = if let Some(published_time) = result.published_time {
                 RelevanceScorer::calculate_freshness_score(published_time)
             } else {
-                0.5 // 默认新鲜度分数
+                0.5
             };
 
-            // 结合相关性分数和新鲜度分数（70% 相关性，30% 新鲜度）
             result.score = relevance_score * 0.7 + freshness_score * 0.3;
         }
 
-        // 按分数排序
         results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
