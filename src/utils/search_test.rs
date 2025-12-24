@@ -166,7 +166,10 @@ pub async fn print_engine_summary(results: &[(&str, &Result<TestResult, impl std
                 } else {
                     "❌ 完全异常"
                 };
-                info!("  {}: {} (可访问: {}, 不可访问: {})", name, status, r.accessible, r.inaccessible);
+                info!(
+                    "  {}: {} (可访问: {}, 不可访问: {})",
+                    name, status, r.accessible, r.inaccessible
+                );
             }
             Err(e) => {
                 info!("  {}: ❌ 搜索失败 ({:?})", name, e);
