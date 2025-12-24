@@ -750,7 +750,7 @@ mod tests {
         let config = load_test_config();
         assert!(config.is_some());
         let config = config.unwrap();
-        assert_eq!(config.results.len(), 3);
+        assert_eq!(config.results.len(), 4);
 
         std::env::remove_var("USE_TEST_DATA");
     }
