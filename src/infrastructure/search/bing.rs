@@ -11,9 +11,70 @@ use base64::engine::general_purpose::URL_SAFE;
 use base64::Engine as _;
 use futures::future::join_all;
 use html_escape;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use tracing::info;
 use url::Url;
+
+/// Test result entry structure for Bing search engine
+#[derive(Debug, Deserialize, Serialize)]
+pub struct TestSearchResultEntry {
+    pub title: String,
+    pub url: String,
+    pub description: Option<String>,
+    pub score: Option<f64>,
+    pub published_time: Option<String>,
+}
+
+/// Configuration structure for Bing test data
+#[derive(Debug, Deserialize, Serialize)]
+pub struct BingTestConfig {
+    pub bing: Vec<TestSearchResultEntry>,
+}
+
+/// Load Bing test configuration from YAML file
+fn load_test_config() -> Option<BingTestConfig> {
+    if std::env::var("USE_TEST_DATA").is_err() {
+        return None;
+    }
+
+    // Try multiple possible config file locations
+    let config_paths = [
+        "test-data/search-engines/test-results.yaml",
+        "test-data/search-engines.yaml",
+        "test-results.yaml",
+    ];
+
+    for config_path in &config_paths {
+        if let Ok(content) = fs::read_to_string(config_path) {
+            if let Ok(config) = serde_yaml::from_str::<BingTestConfig>(&content) {
+                info!("Loaded Bing test config from {}", config_path);
+                return Some(config);
+            }
+        }
+    }
+
+    None
+}
+
+/// Create search results from configuration
+fn create_search_results_from_config(config: &BingTestConfig) -> Vec<SearchResult> {
+    config
+        .bing
+        .iter()
+        .map(|entry| {
+            let mut result = SearchResult::new(
+                entry.title.clone(),
+                entry.url.clone(),
+                entry.description.clone(),
+                "bing".to_string(),
+            );
+            result.score = entry.score.unwrap_or(1.0);
+            result
+        })
+        .collect()
+}
 
 /// Bing Search Engine implementation following the web scraping approach
 /// as specified in the documentation with proper cookie management,
@@ -410,18 +471,22 @@ impl SearchEngine for BingSearchEngine {
         lang: Option<&str>,
         country: Option<&str>,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        // Check if we should use test results
-        if std::env::var("BING_TEST_RESULTS").is_ok() {
-            info!("Using test results for Bing search");
-            return Ok(vec![SearchResult::new(
-                "Microsoft Bing AI - Copilot".to_string(),
-                "https://www.bing.com/chat".to_string(),
-                Some(
-                    "Bing Chat (Copilot) is an AI-powered search assistant by Microsoft."
-                        .to_string(),
-                ),
-                "bing".to_string(),
-            )]);
+        let use_test_data = std::env::var("USE_TEST_DATA").is_ok();
+
+        // Load test configuration if available
+        let test_config = if use_test_data {
+            load_test_config()
+        } else {
+            None
+        };
+
+        // Return test results if configured
+        if let Some(config) = test_config {
+            let test_results = create_search_results_from_config(&config);
+            if !test_results.is_empty() {
+                info!("Using test results from config ({} results)", test_results.len());
+                return Ok(test_results);
+            }
         }
 
         // Validate input parameters
@@ -766,5 +831,57 @@ mod tests {
         let html_with_entities = "Test &amp; example &lt;tag&gt;";
         let cleaned_entities = engine.clean_html_text(html_with_entities);
         assert_eq!(cleaned_entities, "Test & example <tag>");
+    }
+
+    /// Test configuration loading when environment variable is not set
+    #[test]
+    fn test_load_test_config_no_env() {
+        // Clear the environment variable if set
+        std::env::remove_var("USE_TEST_DATA");
+
+        let config = load_test_config();
+        assert!(config.is_none(), "Should return None when USE_TEST_DATA is not set");
+    }
+
+    /// Test search results creation from configuration
+    #[test]
+    fn test_create_search_results_from_config() {
+        let config = BingTestConfig {
+            bing: vec![TestSearchResultEntry {
+                title: "Test Result".to_string(),
+                url: "https://example.com".to_string(),
+                description: Some("Test description".to_string()),
+                score: Some(0.95),
+                published_time: None,
+            }],
+        };
+
+        let results = create_search_results_from_config(&config);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Test Result");
+        assert_eq!(results[0].url, "https://example.com");
+        assert_eq!(results[0].description, Some("Test description".to_string()));
+        assert!((results[0].score - 0.95).abs() < 0.001);
+        assert_eq!(results[0].engine, "bing");
+    }
+
+    /// Test that default score is used when not provided in config
+    #[test]
+    fn test_create_search_results_default_score() {
+        let config = BingTestConfig {
+            bing: vec![TestSearchResultEntry {
+                title: "Test Result".to_string(),
+                url: "https://example.com".to_string(),
+                description: None,
+                score: None,
+                published_time: None,
+            }],
+        };
+
+        let results = create_search_results_from_config(&config);
+
+        assert_eq!(results.len(), 1);
+        assert!((results[0].score - 1.0).abs() < 0.001, "Default score should be 1.0");
     }
 }

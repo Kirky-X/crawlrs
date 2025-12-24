@@ -9,7 +9,9 @@ use crate::domain::services::relevance_scorer::RelevanceScorer;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use tracing::info;
+use std::fs;
 
 #[derive(Debug, Clone)]
 pub enum BaiduSearchCategory {
@@ -43,6 +45,50 @@ struct BaiduEntry {
     abs: Option<String>, // 摘要字段
 }
 
+/// 配置文件中的搜索结果条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TestSearchResultEntry {
+    title: String,
+    url: String,
+    description: String,
+}
+
+/// 配置文件结构
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BaiduTestConfig {
+    results: Vec<TestSearchResultEntry>,
+}
+
+/// 加载测试结果配置
+fn load_test_config() -> Option<BaiduTestConfig> {
+    // 优先从配置文件读取
+    let config_paths = vec![
+        PathBuf::from("test-data/search-engines/test-results.yaml"),
+        PathBuf::from("../test-data/search-engines/test-results.yaml"),
+        PathBuf::from("../../test-data/search-engines/test-results.yaml"),
+    ];
+
+    for config_path in config_paths {
+        if config_path.exists() {
+            match fs::read_to_string(&config_path) {
+                Ok(content) => {
+                    // 解析 YAML 配置文件
+                    let config: HashMap<String, BaiduTestConfig> = 
+                        serde_yaml::from_str(&content).ok()?;
+                    
+                    // 返回百度搜索测试配置
+                    if let Some(baidu_config) = config.get("baidu") {
+                        return Some(baidu_config.clone());
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+
+    None
+}
+
 pub struct BaiduSearchEngine {
     client: reqwest::Client,
 }
@@ -55,13 +101,38 @@ impl Default for BaiduSearchEngine {
 
 impl BaiduSearchEngine {
     pub fn new() -> Self {
-        // Use a browser-like user agent
+        // 使用浏览器风格的用户代理
         let client = reqwest::Client::builder()
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
             .build()
             .unwrap_or_default();
 
         Self { client }
+    }
+
+    /// 从配置创建搜索结果
+    fn create_search_results_from_config(
+        &self,
+        config: &BaiduTestConfig,
+        engine_name: &str,
+    ) -> Vec<SearchResult> {
+        config.results.iter().map(|entry| {
+            let scorer = RelevanceScorer::new("");
+            let relevance_score = scorer.calculate_score(
+                &entry.title,
+                Some(&entry.description),
+                &entry.url,
+            );
+            
+            let mut result = SearchResult::new(
+                entry.title.clone(),
+                entry.url.clone(),
+                Some(entry.description.clone()),
+                engine_name.to_string(),
+            );
+            result.score = relevance_score;
+            result
+        }).collect()
     }
 
     /// 构建百度搜索URL，支持多端点
@@ -154,9 +225,19 @@ impl SearchEngine for BaiduSearchEngine {
         _lang: Option<&str>,
         _country: Option<&str>,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        // Check if we should use test results
+        // 优先从配置文件读取测试结果
+        if std::env::var("USE_TEST_DATA").is_ok() {
+            info!("Using test data from configuration file for Baidu search");
+            if let Some(config) = load_test_config() {
+                let mut results = self.create_search_results_from_config(&config, "baidu");
+                results.truncate(limit as usize);
+                return Ok(results);
+            }
+        }
+
+        // 保留环境变量兼容性作为备选
         if std::env::var("BAIDU_TEST_RESULTS").is_ok() {
-            info!("Using test results for Baidu search");
+            info!("Using fallback test results from environment for Baidu search");
             return Ok(vec![SearchResult::new(
                 "Baidu Ernie Bot - AI Chatbot".to_string(),
                 "https://yiyan.baidu.com/".to_string(),
@@ -250,5 +331,47 @@ impl SearchEngine for BaiduSearchEngine {
 
     fn name(&self) -> &'static str {
         "baidu"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_load_test_config_from_file() {
+        std::env::set_var("USE_TEST_DATA", "1");
+
+        let config = load_test_config();
+        assert!(config.is_some());
+        let config = config.unwrap();
+        assert_eq!(config.results.len(), 3);
+
+        std::env::remove_var("USE_TEST_DATA");
+    }
+
+    #[tokio::test]
+    async fn test_create_search_results_from_config() {
+        let engine = BaiduSearchEngine::new();
+        let config = BaiduTestConfig {
+            results: vec![
+                TestSearchResultEntry {
+                    title: "Test Result 1".to_string(),
+                    url: "https://example1.com".to_string(),
+                    description: "Description 1".to_string(),
+                },
+                TestSearchResultEntry {
+                    title: "Test Result 2".to_string(),
+                    url: "https://example2.com".to_string(),
+                    description: "Description 2".to_string(),
+                },
+            ],
+        };
+
+        let results = engine.create_search_results_from_config(&config, "baidu");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Test Result 1");
+        assert_eq!(results[0].url, "https://example1.com");
+        assert_eq!(results[1].engine, "baidu");
     }
 }

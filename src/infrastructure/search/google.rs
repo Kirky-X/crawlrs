@@ -3,15 +3,77 @@ use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::domain::services::relevance_scorer::RelevanceScorer;
 use crate::engines::playwright_engine::get_browser;
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rand::Rng;
 use reqwest::Client;
 use scraper::{Html, Selector};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+
+/// 测试搜索结果条目结构
+#[derive(Debug, Deserialize, Serialize)]
+struct TestSearchResultEntry {
+    title: String,
+    url: String,
+    description: Option<String>,
+    score: Option<f64>,
+    published_time: Option<String>,
+}
+
+/// Google 测试配置结构
+#[derive(Debug, Deserialize, Serialize)]
+struct GoogleTestConfig {
+    google: Vec<TestSearchResultEntry>,
+}
+
+/// 加载测试配置
+fn load_test_config() -> Option<GoogleTestConfig> {
+    // 首先检查 USE_TEST_DATA 环境变量
+    if std::env::var("USE_TEST_DATA").is_err() {
+        return None;
+    }
+
+    // 尝试从配置文件读取
+    let config_paths = vec![
+        "test-data/search-engines/test-results.yaml",
+        "../test-data/search-engines/test-results.yaml",
+        "/home/project/crawlrs/test-data/search-engines/test-results.yaml",
+    ];
+
+    for path in config_paths {
+        if let Ok(content) = fs::read_to_string(path) {
+            if let Ok(config) = serde_yaml::from_str::<GoogleTestConfig>(&content) {
+                info!("成功加载 Google 测试配置 from {}", path);
+                return Some(config);
+            }
+        }
+    }
+
+    warn!("无法找到或解析 Google 测试配置文件");
+    None
+}
+
+/// 从配置创建搜索结果
+fn create_search_results_from_config(config: &GoogleTestConfig) -> Vec<SearchResult> {
+    config
+        .google
+        .iter()
+        .map(|entry| SearchResult {
+            title: entry.title.clone(),
+            url: entry.url.clone(),
+            description: entry.description.clone(),
+            engine: "google".to_string(),
+            score: entry.score.unwrap_or(1.0),
+            published_time: entry.published_time.as_ref().and_then(|s| {
+                DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))
+            }),
+        })
+        .collect()
+}
 
 /// Google ARC_ID 缓存结构
 struct ArcIdCache {
@@ -90,10 +152,15 @@ impl GoogleSearchEngine {
 
         info!("HTTP fallback Google Search URL: {}", google_url);
 
-        // Check if we should use test results
-        // This is a controlled test response mechanism, not a mock implementation
+        // 检查是否使用测试数据（配置文件优先）
+        if let Some(config) = load_test_config() {
+            info!("使用配置文件中的 Google 测试数据");
+            return Ok(create_search_results_from_config(&config));
+        }
+
+        // 备选方案：检查环境变量（保留向后兼容）
         if std::env::var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS").is_ok() {
-            info!("Using test results for Google HTTP fallback");
+            info!("使用环境变量中的 Google 测试结果（向后兼容）");
             return Ok(vec![SearchResult {
                 title: "Gemini - Google DeepMind".to_string(),
                 url: "https://deepmind.google/technologies/gemini/".to_string(),
@@ -624,6 +691,51 @@ mod tests {
         assert_eq!(result.url, "https://example.com");
         assert_eq!(result.description, Some("Test content here".to_string()));
         assert_eq!(result.engine, "google");
+        assert_eq!(result.score, 1.0);
+    }
+
+    #[test]
+    fn test_load_test_config_no_env() {
+        // 不设置 USE_TEST_DATA 环境变量时应该返回 None
+        std::env::remove_var("USE_TEST_DATA");
+        let config = load_test_config();
+        assert!(config.is_none());
+    }
+
+    #[test]
+    fn test_create_search_results_from_config() {
+        let config = GoogleTestConfig {
+            google: vec![
+                TestSearchResultEntry {
+                    title: "Test Result 1".to_string(),
+                    url: "https://example1.com".to_string(),
+                    description: Some("Description 1".to_string()),
+                    score: Some(0.9),
+                    published_time: Some("2024-01-01T00:00:00Z".to_string()),
+                },
+                TestSearchResultEntry {
+                    title: "Test Result 2".to_string(),
+                    url: "https://example2.com".to_string(),
+                    description: None,
+                    score: None,
+                    published_time: None,
+                },
+            ],
+        };
+
+        let results = create_search_results_from_config(&config);
+        assert_eq!(results.len(), 2);
+
+        assert_eq!(results[0].title, "Test Result 1");
+        assert_eq!(results[0].url, "https://example1.com");
+        assert_eq!(results[0].description, Some("Description 1".to_string()));
+        assert_eq!(results[0].score, 0.9);
+        assert_eq!(results[0].engine, "google");
+        assert!(results[0].published_time.is_some());
+
+        assert_eq!(results[1].title, "Test Result 2");
+        assert_eq!(results[1].score, 1.0); // 默认分数
+        assert!(results[1].published_time.is_none());
     }
 
     #[tokio::test]
