@@ -56,19 +56,22 @@ impl WebContentProcessor {
         // HTML meta标签编码声明
         patterns.insert(
             "html_meta".to_string(),
-            Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#).unwrap(),
+            Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#)
+                .expect("Failed to compile HTML meta charset regex"),
         );
 
         // XML声明编码
         patterns.insert(
             "xml_declaration".to_string(),
-            Regex::new(r#"(?i)<\?xml[^>]*encoding\s*=\s*["']?([^"'>\s]+)["']?[^>]*\?>"#).unwrap(),
+            Regex::new(r#"(?i)<\?xml[^>]*encoding\s*=\s*["']?([^"'>\s]+)["']?[^>]*\?>"#)
+                .expect("Failed to compile XML encoding regex"),
         );
 
         // HTTP Content-Type头编码
         patterns.insert(
             "http_content_type".to_string(),
-            Regex::new(r#"(?i)charset\s*=\s*([^;\s]+)"#).unwrap(),
+            Regex::new(r#"(?i)charset\s*=\s*([^;\s]+)"#)
+                .expect("Failed to compile HTTP content-type charset regex"),
         );
 
         patterns
@@ -242,11 +245,16 @@ impl HtmlCleaner {
     /// 创建新的HTML清理器
     fn new() -> Self {
         Self {
-            script_regex: Regex::new(r#"(?is)<script[^>]*>.*?</script>"#).unwrap(),
-            style_regex: Regex::new(r#"(?is)<style[^>]*>.*?</style>"#).unwrap(),
-            comment_regex: Regex::new(r#"(?is)<!--.*?-->"#).unwrap(),
-            tag_regex: Regex::new(r#"(?is)<[^>]+>"#).unwrap(),
-            whitespace_regex: Regex::new(r#"\s+"#).unwrap(),
+            script_regex: Regex::new(r#"(?is)<script[^>]*>.*?</script>"#)
+                .expect("Failed to compile script regex"),
+            style_regex: Regex::new(r#"(?is)<style[^>]*>.*?</style>"#)
+                .expect("Failed to compile style regex"),
+            comment_regex: Regex::new(r#"(?is)<!--.*?-->"#)
+                .expect("Failed to compile comment regex"),
+            tag_regex: Regex::new(r#"(?is)<[^>]+>"#)
+                .expect("Failed to compile tag regex"),
+            whitespace_regex: Regex::new(r#"\s+"#)
+                .expect("Failed to compile whitespace regex"),
         }
     }
 

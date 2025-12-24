@@ -38,6 +38,7 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
         let active_model = scrape_result_entity::ActiveModel {
             id: Set(result.id),
             task_id: Set(result.task_id),
+            url: Set(result.url),
             status_code: Set(result.status_code as i32),
             content: Set(result.content),
             content_type: Set(result.content_type),
@@ -65,7 +66,7 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
             Some(m) => Ok(Some(ScrapeResult {
                 id: m.id,
                 task_id: m.task_id,
-                url: "".to_string(), // TODO: add url to scrape_result table
+                url: m.url,
                 status_code: m.status_code as u16,
                 content: m.content,
                 content_type: m.content_type,

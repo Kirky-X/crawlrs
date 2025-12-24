@@ -13,6 +13,7 @@ use serde_json::json;
 use std::net::SocketAddr;
 use tracing::error;
 use uuid::Uuid;
+use validator::Validate;
 
 use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::config::settings::Settings;
@@ -79,6 +80,30 @@ where
         }
     };
 
+    // Validate request payload
+    if let Err(e) = payload.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": format!("Validation error: {}", e)
+            })),
+        )
+            .into_response();
+    }
+
+    // Validate URLs are not empty
+    if payload.urls.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": "At least one URL is required"
+            })),
+        )
+            .into_response();
+    }
+
     // 使用团队服务验证地理限制
     let team_service = TeamService::new(GeoLocationService::new(), geo_restriction_repo.clone());
     match team_service
@@ -138,10 +163,14 @@ where
     }
 
     // Create a task for async extraction
+    let primary_url = payload
+        .urls
+        .first()
+        .expect("URLs already validated as non-empty");
     let task = Task::new(
         TaskType::Extract,
         team_id,
-        payload.urls.first().unwrap().clone(), // Use first URL as primary
+        primary_url.clone(),
         serde_json::to_value(&payload).unwrap_or_default(),
     );
 

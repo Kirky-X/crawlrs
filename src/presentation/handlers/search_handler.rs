@@ -92,34 +92,34 @@ where
     match service.search(team_id, payload).await {
         Ok(response) => {
             // 如果启用了爬取结果并且有crawl_id，则等待任务完成
-            if sync_wait_ms > 0 && response.crawl_id.is_some() {
-                let crawl_id = response.crawl_id.unwrap();
-
-                match task_repo.find_by_crawl_id(crawl_id).await {
-                    Ok(tasks) => {
-                        if !tasks.is_empty() {
-                            let task_ids: Vec<uuid::Uuid> =
-                                tasks.iter().map(|task| task.id).collect();
-                            match wait_for_tasks_completion(
-                                task_repo.as_ref(),
-                                &task_ids,
-                                team_id,
-                                sync_wait_ms,
-                                1000,
-                            )
-                            .await
-                            {
-                                Ok(_) => {
-                                    // 等待成功，可以返回响应
-                                }
-                                Err(e) => {
-                                    error!("Failed to wait for task completion: {:?}", e);
+            if sync_wait_ms > 0 {
+                if let Some(crawl_id) = response.crawl_id {
+                    match task_repo.find_by_crawl_id(crawl_id).await {
+                        Ok(tasks) => {
+                            if !tasks.is_empty() {
+                                let task_ids: Vec<uuid::Uuid> =
+                                    tasks.iter().map(|task| task.id).collect();
+                                match wait_for_tasks_completion(
+                                    task_repo.as_ref(),
+                                    &task_ids,
+                                    team_id,
+                                    sync_wait_ms,
+                                    1000,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        // 等待成功，可以返回响应
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to wait for task completion: {:?}", e);
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        error!("Failed to find tasks for crawl {}: {:?}", crawl_id, e);
+                        Err(e) => {
+                            error!("Failed to find tasks for crawl {}: {:?}", crawl_id, e);
+                        }
                     }
                 }
             }

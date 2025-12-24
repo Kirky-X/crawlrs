@@ -12,6 +12,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub task_id: Uuid,
+    pub url: String,
     pub status_code: i32,
     pub content: String,
     pub content_type: String,
