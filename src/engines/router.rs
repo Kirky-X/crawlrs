@@ -444,6 +444,21 @@ impl EngineRouter {
             *stat = EngineStats::default();
         }
     }
+
+    /// 注册引擎
+    pub fn register_engine(&mut self, engine: Arc<dyn ScraperEngine>) {
+        let name = engine.name().to_string();
+        self.engines.push(engine);
+        self.engine_stats
+            .write()
+            .insert(name.clone(), EngineStats::default());
+        info!("引擎已注册: {}", name);
+    }
+
+    /// 获取所有已注册的引擎名称
+    pub fn registered_engines(&self) -> Vec<String> {
+        self.engines.iter().map(|e| e.name().to_string()).collect()
+    }
 }
 
 #[cfg(test)]
