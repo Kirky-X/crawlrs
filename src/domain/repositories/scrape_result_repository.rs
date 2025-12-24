@@ -18,4 +18,6 @@ pub trait ScrapeResultRepository: Send + Sync {
     async fn save(&self, result: ScrapeResult) -> Result<()>;
     /// 根据任务ID查找结果
     async fn find_by_task_id(&self, task_id: Uuid) -> Result<Option<ScrapeResult>>;
+    /// 根据任务ID列表批量查找结果
+    async fn find_by_task_ids(&self, task_ids: &[Uuid]) -> Result<Vec<ScrapeResult>>;
 }

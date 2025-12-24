@@ -79,4 +79,34 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
             None => Ok(None),
         }
     }
+
+    async fn find_by_task_ids(&self, task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+        if task_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let models = scrape_result_entity::Entity::find()
+            .filter(scrape_result_entity::Column::TaskId.is_in(task_ids.to_vec()))
+            .all(self.db.as_ref())
+            .await?;
+
+        let results = models
+            .into_iter()
+            .map(|m| ScrapeResult {
+                id: m.id,
+                task_id: m.task_id,
+                url: m.url,
+                status_code: m.status_code as u16,
+                content: m.content,
+                content_type: m.content_type,
+                response_time_ms: m.response_time_ms as u64,
+                created_at: m.created_at.into(),
+                headers: m.headers.unwrap_or_default(),
+                meta_data: m.meta_data.unwrap_or_default(),
+                screenshot: m.screenshot,
+            })
+            .collect();
+
+        Ok(results)
+    }
 }

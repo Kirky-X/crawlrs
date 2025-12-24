@@ -205,14 +205,28 @@ pub async fn query_tasks<T: TaskRepository>(
         }
     }
 
+    // 如果需要包含结果数据，批量查询所有结果（避免 N+1 查询）
+    let task_id_to_result = if include_results && !tasks.is_empty() {
+        let task_ids: Vec<uuid::Uuid> = tasks.iter().map(|task| task.id).collect();
+        let results = scrape_result_repo.find_by_task_ids(&task_ids).await?;
+
+        let mut map = std::collections::HashMap::new();
+        for result in results {
+            map.insert(result.task_id, result);
+        }
+        Some(map)
+    } else {
+        None
+    };
+
     // 构建任务信息列表
     let mut task_infos = Vec::new();
     for task in tasks {
         let mut result = None;
 
-        // 如果需要包含结果数据，查询相关的结果
-        if include_results {
-            if let Ok(Some(scrape_result)) = scrape_result_repo.find_by_task_id(task.id).await {
+        // 从批量查询结果中快速查找（O(1) 复杂度）
+        if let Some(ref results_map) = task_id_to_result {
+            if let Some(scrape_result) = results_map.get(&task.id) {
                 result = Some(serde_json::json!({
                     "id": scrape_result.id,
                     "status_code": scrape_result.status_code,

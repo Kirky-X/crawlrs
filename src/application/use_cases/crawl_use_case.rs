@@ -149,21 +149,15 @@ where
         crawl_id: Uuid,
         _team_id: Uuid,
     ) -> Result<Vec<ScrapeResult>, CrawlUseCaseError> {
-        // 1. 检查爬取任务是否存在
         if self.crawl_repo.find_by_id(crawl_id).await?.is_none() {
             return Err(CrawlUseCaseError::NotFound);
         }
 
-        // 2. 获取该爬取任务的所有子任务
         let tasks = self.task_repo.find_by_crawl_id(crawl_id).await?;
 
-        // 3. 获取每个任务的抓取结果
-        let mut results = Vec::new();
-        for task in tasks {
-            if let Some(result) = self.scrape_result_repo.find_by_task_id(task.id).await? {
-                results.push(result);
-            }
-        }
+        let task_ids: Vec<Uuid> = tasks.iter().map(|t| t.id).collect();
+
+        let results = self.scrape_result_repo.find_by_task_ids(&task_ids).await?;
 
         Ok(results)
     }
@@ -300,9 +294,11 @@ where
             updated_at: now.into(),
             lock_token: None,      // 尚未加锁
             lock_expires_at: None, // 锁未过期
-            expires_at: dto
-                .expires_at
-                .map(|dt| dt.with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap())), // 任务过期时间
+            expires_at: dto.expires_at.map(|dt| {
+                let offset = FixedOffset::east_opt(8 * 3600)
+                    .expect("Failed to create timezone offset for UTC+8");
+                dt.with_timezone(&offset)
+            }), // 任务过期时间
         };
 
         // 6. 保存初始任务到数据库

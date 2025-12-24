@@ -13,18 +13,18 @@ type DateParser = fn(&str) -> Option<DateTime<Utc>>;
 static DATE_REGEXES: Lazy<Vec<(Regex, DateParser)>> = Lazy::new(|| {
     vec![
         // ISO 8601 format: 2024-01-15T10:30:00Z
-        (Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z").unwrap(), |s| {
+        (Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z").expect("Invalid ISO 8601 date regex"), |s| {
             DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))
         }),
         // Date format: 2024-01-15
-        (Regex::new(r"\d{4}-\d{2}-\d{2}").unwrap(), |s| {
+        (Regex::new(r"\d{4}-\d{2}-\d{2}").expect("Invalid date format regex"), |s| {
             chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
-                .map(|date| date.and_hms_opt(0, 0, 0).unwrap().and_utc())
+                .and_then(|date| date.and_hms_opt(0, 0, 0).map(|d| d.and_utc()))
         }),
         // Relative time: 2 hours ago, 3 days ago, 1 week ago
-        (Regex::new(r"(\d+)\s+(hour|hours|day|days|week|weeks|month|months|year|years)\s+ago").unwrap(), |s| {
-            let captures = Regex::new(r"(\d+)\s+(hour|hours|day|days|week|weeks|month|months|year|years)").unwrap()
-                .captures(s)?;
+        (Regex::new(r"(\d+)\s+(hour|hours|day|days|week|weeks|month|months|year|years)\s+ago").expect("Invalid relative time regex"), |s| {
+            let relative_regex = Regex::new(r"(\d+)\s+(hour|hours|day|days|week|weeks|month|months|year|years)").expect("Invalid relative time pattern regex");
+            let captures = relative_regex.captures(s)?;
             let num: i64 = captures.get(1)?.as_str().parse().ok()?;
             let unit = captures.get(2)?.as_str();
 
@@ -32,18 +32,18 @@ static DATE_REGEXES: Lazy<Vec<(Regex, DateParser)>> = Lazy::new(|| {
                 "hour" | "hours" => Duration::hours(num),
                 "day" | "days" => Duration::days(num),
                 "week" | "weeks" => Duration::weeks(num),
-                "month" | "months" => Duration::days(num * 30), // Approximation
-                "year" | "years" => Duration::days(num * 365), // Approximation
+                "month" | "months" => Duration::days(num * 30),
+                "year" | "years" => Duration::days(num * 365),
                 _ => return None,
             };
 
             Some(Utc::now() - duration)
         }),
         // Common formats: Jan 15, 2024, January 15, 2024
-        (Regex::new(r"(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|September|Oct|October|Nov|November|Dec|December)\s+(\d{1,2}),?\s+(\d{4})").unwrap(), |s| {
+        (Regex::new(r"(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|September|Oct|October|Nov|November|Dec|December)\s+(\d{1,2}),?\s+(\d{4})").expect("Invalid month format regex"), |s| {
             chrono::NaiveDate::parse_from_str(s, "%b %d, %Y").ok()
                 .or_else(|| chrono::NaiveDate::parse_from_str(s, "%B %d, %Y").ok())
-                .map(|date| date.and_hms_opt(0, 0, 0).unwrap().and_utc())
+                .and_then(|date| date.and_hms_opt(0, 0, 0).map(|d| d.and_utc()))
         }),
     ]
 });
