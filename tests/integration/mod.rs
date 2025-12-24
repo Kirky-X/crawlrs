@@ -17,6 +17,7 @@ pub mod helpers;
 pub mod page_interactions_test;
 pub mod real_components_test;
 pub mod real_interactions_test;
+pub mod real_search_engines_test;
 pub mod real_world_test;
 pub mod repositories;
 pub mod scheduler_test;
