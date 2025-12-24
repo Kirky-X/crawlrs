@@ -13,6 +13,11 @@ pub mod bing;
 /// 包括Google、Bing、百度、搜狗等搜索引擎的API客户端
 /// 以及搜索结果聚合器
 pub mod enhanced_aggregator;
+pub mod factory;
 pub mod google;
+pub mod search_engine_router;
 pub mod smart_search;
 pub mod sogou;
+
+pub use factory::{create_default_router, SearchEngineFactory, SearchEngineFactoryConfig};
+pub use search_engine_router::{SearchEngineRouter, SearchEngineRouterConfig, SmartSearchEngineWrapper};

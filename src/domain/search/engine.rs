@@ -7,7 +7,7 @@ use crate::domain::models::search_result::SearchResult;
 use async_trait::async_trait;
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum SearchError {
     #[error("Search engine error: {0}")]
     EngineError(String),
