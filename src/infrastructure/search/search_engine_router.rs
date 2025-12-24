@@ -449,7 +449,8 @@ impl SearchEngineRouter {
                     warn!("搜索引擎 {} 失败: {}", name, e);
                 }
                 Err(_) => {
-                    last_error = Some(SearchError::Timeout);
+                    let timeout_secs = self.config.request_timeout.as_secs();
+                    last_error = Some(SearchError::TimeoutError(timeout_secs));
                     {
                         let mut metrics = self.metrics.write();
                         if let Some(m) = metrics.get_mut(name) {

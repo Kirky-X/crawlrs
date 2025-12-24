@@ -278,7 +278,7 @@ impl BingSearchEngine {
 
         // Check if Bing is blocking requests (anti-bot detection)
         if html.contains("<title>Robot Check</title>") || html.contains("captcha") {
-            return Err(SearchError::RateLimitExceeded);
+            return Err(SearchError::RateLimitExceeded("Bing bot detection triggered".to_string()));
         }
 
         // Check for no results
