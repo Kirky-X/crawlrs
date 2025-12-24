@@ -26,13 +26,13 @@ thiserror = "2.0.17"
 anyhow = "1.0"
 
 # HTTP client and networking
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "cookies", "http2", "charset", "macos-system-configuration"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "cookies", "http2", "charset", "macos-system-configuration", "gzip", "brotli"] }
 url = "2.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 
 # Database
 sea-orm = { version = "1.0", default-features = false, features = ["sqlx-postgres", "sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
-sqlx = { version = "0.8", default-features = false, features = ["postgres", "sqlite", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
+sqlx = { version = "0.7", default-features = false, features = ["postgres", "sqlite", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
 migration = { path = "migration" }
 
 # Caching and state management
@@ -94,13 +94,17 @@ aws-config = "1.8.12"
 
 
 [dev-dependencies]
-axum-test = "18.4"
-tokio-test = "0.4"
-criterion = "0.8"
-testcontainers = "0.26"
-testcontainers-modules = { version = "0.14", features = ["postgres", "redis"] }
-uuid = { version = "1.19", features = ["v4"] }
-mockall = "0.14.0"
+tokio = { version = "1.0", features = ["full", "test-util"] }
+wiremock = "0.5"
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1.0"
+cucumber = { version = "0.20", features = ["macros"] }
+axum-test = "18.4.1"
+testcontainers = "0.23"
+futures = "0.3"
+tempfile = "3.8"
+uuid = { version = "1.0", features = ["v4"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
 
 [[test]]
 name = "integration_tests"
