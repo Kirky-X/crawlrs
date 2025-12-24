@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use reqwest::Client;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::Arc;
@@ -69,7 +69,9 @@ fn create_search_results_from_config(config: &GoogleTestConfig) -> Vec<SearchRes
             engine: "google".to_string(),
             score: entry.score.unwrap_or(1.0),
             published_time: entry.published_time.as_ref().and_then(|s| {
-                DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))
+                DateTime::parse_from_rfc3339(s)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&Utc))
             }),
         })
         .collect()
@@ -278,79 +280,167 @@ impl GoogleSearchEngine {
     }
 
     /// 解析 Google HTML 结果
-    /// 使用 XPath 类似的选择器提取结果
+    /// 使用多种选择器策略来适应 Google 不断变化的 HTML 结构
     pub fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
         let document = Html::parse_document(html);
 
         let mut results = Vec::new();
 
-        // 策略 1: 尝试现代/JS 渲染结构 (div[jscontroller='SC7lYd'])
-        let selector_v1 = Selector::parse("div[jscontroller='SC7lYd']").unwrap();
-        // 策略 2: 尝试传统/基础 HTML 结构 (div.g) - 适用于 HTTP fallback
+        info!("开始解析 Google 搜索结果...");
+
+        // 策略 1: 使用 contains 选择器匹配 jscontroller 包含 SC7lYd 的元素
+        let selector_v1 = Selector::parse("div[jscontroller*='SC7lYd']").unwrap();
+        // 策略 2: 尝试传统/基础 HTML 结构 (div.g)
         let selector_v2 = Selector::parse("div.g").unwrap();
         // 策略 3: 尝试更通用的结构 (div[data-hveid])
         let selector_v3 = Selector::parse("div[data-hveid]").unwrap();
+        // 策略 4: 尝试包含 h3 链接的容器
+        let selector_v4 = Selector::parse("div:has(> a > h3)").unwrap();
+        // 策略 5: 尝试包含链接的通用容器
+        let selector_v5 = Selector::parse("div[class*='result'], div[class*='container']").unwrap();
 
         // 尝试不同的选择器策略
         let mut result_elements: Vec<_> = document.select(&selector_v1).collect();
+        let mut used_strategy = "v1 (jscontroller*SC7lYd)";
+
         if result_elements.is_empty() {
             result_elements = document.select(&selector_v2).collect();
-            if !result_elements.is_empty() {
-                info!("Using strategy v2 (div.g) for Google results parsing");
-            }
-        } else {
-            info!("Using strategy v1 (jscontroller) for Google results parsing");
+            used_strategy = "v2 (div.g)";
         }
 
         if result_elements.is_empty() {
             result_elements = document.select(&selector_v3).collect();
-            if !result_elements.is_empty() {
-                info!("Using strategy v3 (data-hveid) for Google results parsing");
-            }
+            used_strategy = "v3 (data-hveid)";
         }
 
         if result_elements.is_empty() {
-            // 最后的尝试：查找所有包含 h3 的 a 标签的父级容器
-            // 这可能会有点乱，但总比没有好
-            warn!("Standard selectors failed, trying to find any result-like structure");
+            result_elements = document.select(&selector_v4).collect();
+            used_strategy = "v4 (has(a > h3))";
         }
 
-        // 通用子元素选择器
-        let title_selector = Selector::parse("h3").unwrap();
-        let link_selector = Selector::parse("a").unwrap();
-        let snippet_selector_1 = Selector::parse("div[data-sncf='1']").unwrap();
-        let snippet_selector_2 = Selector::parse("div[style*='-webkit-line-clamp']").unwrap(); // 常见的摘要样式
-        let snippet_selector_3 = Selector::parse("span.st").unwrap(); // 旧版摘要
+        if result_elements.is_empty() {
+            result_elements = document.select(&selector_v5).collect();
+            used_strategy = "v5 (result/container class)";
+        }
+
+        info!(
+            "使用策略 {} 找到 {} 个结果元素",
+            used_strategy,
+            result_elements.len()
+        );
+
+        if result_elements.is_empty() {
+            warn!("所有选择器策略都失败，尝试查找所有包含链接的 div 元素");
+            // 最后的尝试：查找包含 a 标签的 div
+            let any_div_selector = Selector::parse("div:has(a)").unwrap();
+            result_elements = document.select(&any_div_selector).collect();
+            used_strategy = "v6 (div:has(a))";
+        }
+
+        info!(
+            "使用策略 {} 找到 {} 个结果元素",
+            used_strategy,
+            result_elements.len()
+        );
+
+        // 标题选择器 - 多种策略
+        let title_selector_1 = Selector::parse("h3").unwrap();
+
+        // 链接选择器
+        let link_selector = Selector::parse("a[href]").unwrap();
+
+        // 摘要选择器 - 多种策略
+        let snippet_selector_1 = Selector::parse("[data-sncf], div[data-snc]").unwrap();
+        let snippet_selector_2 = Selector::parse("span.st, div.st, p.st").unwrap();
+        let snippet_selector_3 =
+            Selector::parse("div[class*='snippet'], div[class*='desc']").unwrap();
 
         for element in result_elements {
-            // 提取标题 (h3)
-            let title_element = element.select(&title_selector).next();
-            let title = match title_element {
-                Some(e) => e.text().collect::<String>(),
-                None => continue,
+            // 提取标题 - 尝试多种选择器
+            let title = {
+                let mut title_text = String::new();
+
+                // 策略 1: a > h3
+                if let Some(a) = element.select(&link_selector).next() {
+                    if let Some(h3) = a.select(&title_selector_1).next() {
+                        let text = h3.text().collect::<String>();
+                        if !text.is_empty() {
+                            title_text = text;
+                        }
+                    }
+                }
+
+                // 策略 2: 直接查找 h3
+                if title_text.is_empty() {
+                    if let Some(h3) = element.select(&title_selector_1).next() {
+                        let text = h3.text().collect::<String>();
+                        if !text.is_empty() {
+                            title_text = text;
+                        }
+                    }
+                }
+
+                // 策略 3: 检查 h3 的父级是否是 a
+                if title_text.is_empty() {
+                    for h3 in element.select(&title_selector_1) {
+                        if let Some(parent) = h3.parent() {
+                            if parent.value().as_element().map(|e| e.name()) == Some("a") {
+                                let text = h3.text().collect::<String>();
+                                if !text.is_empty() {
+                                    title_text = text;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                title_text
             };
 
             if title.is_empty() {
                 continue;
             }
 
-            // 提取 URL (a tag)
-            // 有时 a 标签是 h3 的父级，有时是兄弟或子级
-            // 我们先看 element 下有没有 a 标签
-            let url = if let Some(a) = element.select(&link_selector).next() {
-                a.value().attr("href").unwrap_or("").to_string()
-            } else {
-                // 如果 element 本身是 a
-                element.value().attr("href").unwrap_or("").to_string()
+            // 提取 URL
+            let url = {
+                let mut found_url = String::new();
+
+                // 策略 1: 查找包含 h3 的 a 标签
+                if let Some(a) = element.select(&link_selector).next() {
+                    if let Some(_h3) = a.select(&title_selector_1).next() {
+                        if let Some(href) = a.value().attr("href") {
+                            if !href.is_empty() {
+                                found_url = href.to_string();
+                            }
+                        }
+                    }
+                }
+
+                // 策略 2: 查找任意链接
+                if found_url.is_empty() {
+                    for a in element.select(&link_selector) {
+                        if let Some(href) = a.value().attr("href") {
+                            if !href.is_empty() && href.starts_with("http") {
+                                found_url = href.to_string();
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                found_url
             };
 
-            // 清理 URL (Google 有时会包装 URL，如 /url?q=...)
+            // 清理 URL
             let clean_url = if url.starts_with("/url?q=") {
                 url.replace("/url?q=", "")
                     .split('&')
                     .next()
-                    .unwrap_or("")
+                    .unwrap_or(&url)
                     .to_string()
+            } else if url.starts_with("/") && !url.starts_with("//") {
+                format!("https://www.google.com{}", url)
             } else {
                 url
             };
@@ -361,15 +451,37 @@ impl GoogleSearchEngine {
 
             // 提取摘要
             let mut content = String::new();
-            if let Some(e) = element.select(&snippet_selector_1).next() {
-                content = e.text().collect::<String>();
-            } else if let Some(e) = element.select(&snippet_selector_2).next() {
-                content = e.text().collect::<String>();
-            } else if let Some(e) = element.select(&snippet_selector_3).next() {
-                content = e.text().collect::<String>();
+            for selector in &[
+                &snippet_selector_1,
+                &snippet_selector_2,
+                &snippet_selector_3,
+            ] {
+                if let Some(e) = element.select(selector).next() {
+                    let text = e.text().collect::<String>();
+                    if !text.is_empty() {
+                        content = text;
+                        break;
+                    }
+                }
             }
 
-            // 简单的去重（基于 URL）
+            // 备用：从链接标签后的文本提取
+            if content.is_empty() {
+                for a in element.select(&link_selector) {
+                    if let Some(next_sibling) = a.next_sibling() {
+                        if let Some(elem_ref) = ElementRef::wrap(next_sibling) {
+                            let text = elem_ref.text().collect::<String>();
+                            let text = text.trim().to_string();
+                            if text.len() > 10 && text.len() < 500 {
+                                content = text;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 去重
             if results.iter().any(|r: &SearchResult| r.url == clean_url) {
                 continue;
             }
@@ -392,7 +504,18 @@ impl GoogleSearchEngine {
             }
         }
 
-        info!("解析到 {} 个 Google 搜索结果", results.len());
+        info!("成功解析到 {} 个 Google 搜索结果", results.len());
+
+        // 打印前几个结果用于调试
+        for (i, result) in results.iter().take(5).enumerate() {
+            info!(
+                "结果 {}: {} - {}",
+                i + 1,
+                &result.title[..std::cmp::min(result.title.len(), 50)],
+                &result.url[..std::cmp::min(result.url.len(), 80)]
+            );
+        }
+
         Ok(results)
     }
 }
