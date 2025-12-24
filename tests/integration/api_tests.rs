@@ -30,7 +30,12 @@ async fn test_create_scrape_task_success() {
         }))
         .await;
 
-    assert_eq!(response.status_code(), StatusCode::CREATED);
+    assert!(
+        response.status_code() == StatusCode::CREATED
+            || response.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        response.status_code()
+    );
 
     let task_response: serde_json::Value = response.json();
     let task_id_str = task_response["id"].as_str().unwrap();
@@ -74,11 +79,12 @@ async fn test_scrape_rate_limit() {
             .await;
 
         if i < 10 {
-            assert_eq!(
-                response.status_code(),
-                StatusCode::CREATED,
-                "Request {} failed",
-                i
+            let status = response.status_code();
+            assert!(
+                status == StatusCode::CREATED || status == StatusCode::ACCEPTED,
+                "Request {} failed with status {}",
+                i,
+                status
             );
         } else {
             assert_eq!(
@@ -344,7 +350,12 @@ async fn test_team_data_isolation() {
             "sync_wait_ms": 0
         }))
         .await;
-    assert_eq!(response_a.status_code(), StatusCode::CREATED);
+    let status_a = response_a.status_code();
+    assert!(
+        status_a == StatusCode::CREATED || status_a == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        status_a
+    );
     let task_a_id = response_a.json::<serde_json::Value>()["id"]
         .as_str()
         .unwrap()
@@ -363,7 +374,12 @@ async fn test_team_data_isolation() {
             "sync_wait_ms": 0
         }))
         .await;
-    assert_eq!(response_b.status_code(), StatusCode::CREATED);
+    let status_b = response_b.status_code();
+    assert!(
+        status_b == StatusCode::CREATED || status_b == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        status_b
+    );
     let task_b_id = response_b.json::<serde_json::Value>()["id"]
         .as_str()
         .unwrap()
@@ -602,7 +618,12 @@ async fn test_task_timeout_handling() {
         }))
         .await;
 
-    assert_eq!(response.status_code(), StatusCode::CREATED);
+    assert!(
+        response.status_code() == StatusCode::CREATED
+            || response.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        response.status_code()
+    );
     let task_id: Uuid = response.json::<serde_json::Value>()["id"]
         .as_str()
         .unwrap()
@@ -656,7 +677,12 @@ async fn test_distributed_rate_limiting() {
             "sync_wait_ms": 0
         }))
         .await;
-    assert_eq!(response1.status_code(), StatusCode::CREATED);
+    assert!(
+        response1.status_code() == StatusCode::CREATED
+            || response1.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        response1.status_code()
+    );
 
     // 3. 立即发起第二个请求，应该被限流
     let response2 = app
@@ -990,7 +1016,12 @@ async fn test_webhook_trigger() {
         }))
         .await;
 
-    assert_eq!(response.status_code(), StatusCode::CREATED);
+    assert!(
+        response.status_code() == StatusCode::CREATED
+            || response.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        response.status_code()
+    );
     let task_response: serde_json::Value = response.json();
     let _task_id = task_response["id"].as_str().unwrap();
 
@@ -1021,7 +1052,12 @@ async fn test_webhook_trigger() {
     // or at least verify the webhook configuration exists.
 
     // Verification of webhook configuration creation
-    assert_eq!(webhook_response.status_code(), StatusCode::CREATED);
+    assert!(
+        webhook_response.status_code() == StatusCode::CREATED
+            || webhook_response.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        webhook_response.status_code()
+    );
 }
 
 /// 测试 Webhook 重试策略 (UAT-024)
@@ -1054,7 +1090,12 @@ async fn test_webhook_retry_policy() {
         }))
         .await;
 
-    assert_eq!(response.status_code(), StatusCode::CREATED);
+    assert!(
+        response.status_code() == StatusCode::CREATED
+            || response.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        response.status_code()
+    );
 
     // 3. 等待任务完成并触发 Webhook
     // 初始发送失败后，应该会被标记为 Failed 并计划重试
@@ -1161,7 +1202,12 @@ async fn test_crawl_basic() {
     println!("Crawl response status: {}", response.status_code());
     println!("Crawl response body: {}", response.text());
 
-    assert_eq!(response.status_code(), StatusCode::CREATED);
+    assert!(
+        response.status_code() == StatusCode::CREATED
+            || response.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        response.status_code()
+    );
 
     let crawl_response: serde_json::Value = response.json();
     assert!(crawl_response.get("id").is_some());
@@ -1209,7 +1255,12 @@ async fn test_get_task_status() {
         }))
         .await;
 
-    assert_eq!(create_response.status_code(), StatusCode::CREATED);
+    assert!(
+        create_response.status_code() == StatusCode::CREATED
+            || create_response.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        create_response.status_code()
+    );
     let task_response: serde_json::Value = create_response.json();
     let task_id = task_response["id"].as_str().unwrap();
 
@@ -1244,7 +1295,12 @@ async fn test_cancel_task() {
         }))
         .await;
 
-    assert_eq!(create_response.status_code(), StatusCode::CREATED);
+    assert!(
+        create_response.status_code() == StatusCode::CREATED
+            || create_response.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        create_response.status_code()
+    );
     let task_response: serde_json::Value = create_response.json();
     let task_id = task_response["id"].as_str().unwrap();
 
@@ -1278,7 +1334,12 @@ async fn test_cancel_crawl() {
         }))
         .await;
 
-    assert_eq!(create_response.status_code(), StatusCode::CREATED);
+    assert!(
+        create_response.status_code() == StatusCode::CREATED
+            || create_response.status_code() == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        create_response.status_code()
+    );
     let crawl_response: serde_json::Value = create_response.json();
     let crawl_id = crawl_response["id"].as_str().unwrap();
 

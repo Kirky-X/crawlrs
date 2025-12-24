@@ -6,18 +6,18 @@
 use crawlrs::domain::search::engine::SearchEngine;
 use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
 use crawlrs::infrastructure::search::bing::BingSearchEngine;
+use crawlrs::infrastructure::search::google::GoogleSearchEngine;
 use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 
 /// 简化版搜索引擎测试套件
-/// 专注于测试可用的搜索引擎（排除Google）
+/// 测试所有可用的搜索引擎（包括使用 FlareSolverr 的 Google）
 #[tokio::test]
 async fn test_available_search_engines_with_gemini() {
-    // Enable test mode for search engines to ensure reliable testing without network issues
-    std::env::set_var("BING_TEST_RESULTS", "true");
-    std::env::set_var("BAIDU_TEST_RESULTS", "true");
-    std::env::set_var("SOGOU_TEST_RESULTS", "true");
+    // Enable test mode for all search engines using the common USE_TEST_DATA environment variable
+    // This ensures consistent test data loading across Bing, Baidu, Sogou, and Google
+    std::env::set_var("USE_TEST_DATA", "1");
 
     let test_query = "gemini";
     let max_results = 10;
@@ -25,11 +25,12 @@ async fn test_available_search_engines_with_gemini() {
 
     println!("🚀 开始测试可用搜索引擎，关键词: {}", test_query);
 
-    // 创建可用的搜索引擎实例（排除Google）
+    // 创建可用的搜索引擎实例（包括Google）
     let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
         ("Bing", Arc::new(BingSearchEngine::new())),
         ("Baidu", Arc::new(BaiduSearchEngine::new())),
         ("Sogou", Arc::new(SogouSearchEngine::new())),
+        ("Google", Arc::new(GoogleSearchEngine::new())),
     ];
 
     // 使用信号量限制并发数，避免触发反爬虫机制

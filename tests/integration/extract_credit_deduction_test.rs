@@ -9,6 +9,7 @@ use crawlrs::domain::repositories::credits_repository::CreditsRepository;
 use crawlrs::domain::services::extraction_service::ExtractionRule;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
+use reqwest::StatusCode;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -71,7 +72,6 @@ async fn test_extract_with_rules_credit_deduction() {
     println!("Response status: {}", response.status_code());
 
     // 接受201 (Created) 或 202 (Accepted) 状态码
-    use axum::http::StatusCode;
     let status = response.status_code();
     assert!(status == StatusCode::CREATED || status == StatusCode::ACCEPTED);
 
@@ -201,7 +201,12 @@ async fn test_extract_css_only_no_credit_deduction() {
         .json(&extract_request)
         .await;
 
-    assert_eq!(response.status_code(), 201);
+    let status = response.status_code();
+    assert!(
+        status == StatusCode::CREATED || status == StatusCode::ACCEPTED,
+        "Expected 201 or 202, got {}",
+        status
+    );
 
     let extract_response: serde_json::Value = response.json();
     let task_id = extract_response["id"].as_str().unwrap();

@@ -24,14 +24,14 @@ struct TestSearchResultEntry {
     published_time: Option<String>,
 }
 
-/// Google 测试配置结构
+/// Google 测试配置结构（匹配 test-results.yaml 格式）
 #[derive(Debug, Deserialize, Serialize)]
-struct GoogleTestConfig {
-    google: Vec<TestSearchResultEntry>,
+struct GoogleTestData {
+    results: Vec<TestSearchResultEntry>,
 }
 
 /// 加载测试配置
-fn load_test_config() -> Option<GoogleTestConfig> {
+fn load_test_config() -> Option<GoogleTestData> {
     // 首先检查 USE_TEST_DATA 环境变量
     if std::env::var("USE_TEST_DATA").is_err() {
         return None;
@@ -46,9 +46,14 @@ fn load_test_config() -> Option<GoogleTestConfig> {
 
     for path in config_paths {
         if let Ok(content) = fs::read_to_string(path) {
-            if let Ok(config) = serde_yaml::from_str::<GoogleTestConfig>(&content) {
+            // 使用中间结构体解析
+            #[derive(Debug, Deserialize)]
+            struct ConfigWithGoogle {
+                google: GoogleTestData,
+            }
+            if let Ok(config) = serde_yaml::from_str::<ConfigWithGoogle>(&content) {
                 info!("成功加载 Google 测试配置 from {}", path);
-                return Some(config);
+                return Some(config.google);
             }
         }
     }
@@ -58,9 +63,9 @@ fn load_test_config() -> Option<GoogleTestConfig> {
 }
 
 /// 从配置创建搜索结果
-fn create_search_results_from_config(config: &GoogleTestConfig) -> Vec<SearchResult> {
+fn create_search_results_from_config(config: &GoogleTestData) -> Vec<SearchResult> {
     config
-        .google
+        .results
         .iter()
         .map(|entry| SearchResult {
             title: entry.title.clone(),
@@ -827,8 +832,8 @@ mod tests {
 
     #[test]
     fn test_create_search_results_from_config() {
-        let config = GoogleTestConfig {
-            google: vec![
+        let config = GoogleTestData {
+            results: vec![
                 TestSearchResultEntry {
                     title: "Test Result 1".to_string(),
                     url: "https://example1.com".to_string(),
