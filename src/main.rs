@@ -251,7 +251,7 @@ async fn main() -> anyhow::Result<()> {
     let webhook_repository = Arc::new(WebhookRepoImpl::new(db.clone()));
     let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.clone()));
     let _credits_repo_unused = credits_repo.clone();
-    let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new((*db).clone()));
+    let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.clone()));
     let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(
         redis_client.clone(),
     )));
@@ -392,7 +392,8 @@ async fn main() -> anyhow::Result<()> {
                             CreditsRepositoryImpl,
                         >,
                     ),
-                );
+                )
+                .layer(Extension(geo_restriction_repo.clone()));
 
             let v2_routes = task_routes()
                 .layer(Extension(task_repo.clone()))

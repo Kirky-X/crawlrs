@@ -53,14 +53,17 @@ pub async fn create_scrape(
     }
 
     if is_internal_url(&payload.url) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "success": false,
-                "error": "SSRF protection: Internal URLs are not allowed"
-            })),
-        )
-            .into_response();
+        // Allow disabling SSRF protection via environment variable (for testing)
+        if std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default() != "true" {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": "SSRF protection: Internal URLs are not allowed"
+                })),
+            )
+                .into_response();
+        }
     }
 
     // 1. 检查限流
@@ -265,7 +268,10 @@ fn is_internal_url(url_str: &str) -> bool {
                 return true;
             }
             // Basic private IP check (simplified)
-            if host.starts_with("192.168.") || host.starts_with("10.") {
+            if host.starts_with("192.168.")
+                || host.starts_with("10.")
+                || host.starts_with("169.254.")
+            {
                 return true;
             }
             if host.starts_with("172.") {

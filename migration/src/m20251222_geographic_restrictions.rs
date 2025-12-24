@@ -120,6 +120,37 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
+        // DomainBlacklist
+        if backend == DbBackend::Sqlite {
+             manager
+                .alter_table(
+                    Table::alter()
+                        .table(Teams::Table)
+                        .add_column_if_not_exists(
+                            ColumnDef::new(Teams::DomainBlacklist)
+                                .text() // Use text for SQLite compatibility
+                                .null()
+                                .comment("域名黑名单列表，支持通配符"),
+                        )
+                        .to_owned(),
+                )
+                .await?;
+        } else {
+             manager
+                .alter_table(
+                    Table::alter()
+                        .table(Teams::Table)
+                        .add_column_if_not_exists(
+                            ColumnDef::new(Teams::DomainBlacklist)
+                                .json()
+                                .null()
+                                .comment("域名黑名单列表，支持通配符"),
+                        )
+                        .to_owned(),
+                )
+                .await?;
+        }
+
         manager
             .alter_table(
                 Table::alter()
@@ -252,6 +283,7 @@ impl MigrationTrait for Migration {
                     .drop_column(Teams::AllowedCountries)
                     .drop_column(Teams::BlockedCountries)
                     .drop_column(Teams::IpWhitelist)
+                    .drop_column(Teams::DomainBlacklist)
                     .drop_column(Teams::EnableGeoRestrictions)
                     .to_owned(),
             )
@@ -269,6 +301,7 @@ enum Teams {
     AllowedCountries,
     BlockedCountries,
     IpWhitelist,
+    DomainBlacklist,
     EnableGeoRestrictions,
 }
 

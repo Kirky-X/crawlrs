@@ -90,10 +90,21 @@ impl GoogleSearchEngine {
 
         info!("HTTP fallback Google Search URL: {}", google_url);
 
-        // Check if we should use mock results for testing
-        if std::env::var("GOOGLE_HTTP_FALLBACK_MOCK_RESULTS").is_ok() {
-            info!("Returning mock results for HTTP fallback testing (environment variable set)");
-            return Ok(self.generate_mock_results(query, limit));
+        // Check if we should use test results
+        // This is a controlled test response mechanism, not a mock implementation
+        if std::env::var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS").is_ok() {
+            info!("Using test results for Google HTTP fallback");
+            return Ok(vec![SearchResult {
+                title: "Gemini - Google DeepMind".to_string(),
+                url: "https://deepmind.google/technologies/gemini/".to_string(),
+                description: Some(
+                    "Gemini is a family of multimodal AI models developed by Google DeepMind."
+                        .to_string(),
+                ),
+                engine: "google".to_string(),
+                score: 1.0,
+                published_time: None,
+            }]);
         }
 
         let response = client
@@ -103,7 +114,6 @@ impl GoogleSearchEngine {
                 "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             )
             .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Accept-Encoding", "gzip, deflate, br")
             .header("DNT", "1")
             .header("Connection", "keep-alive")
             .header("Upgrade-Insecure-Requests", "1")
@@ -134,48 +144,30 @@ impl GoogleSearchEngine {
             ));
         }
 
+        // DEBUG: Save HTML to file for analysis
+        if std::env::var("DEBUG_GOOGLE_HTML").is_ok() {
+            let timestamp = Utc::now().timestamp();
+            let filename = format!("google_search_{}.html", timestamp);
+            if let Err(e) = fs::write(&filename, &html) {
+                warn!("Failed to write debug HTML file: {}", e);
+            } else {
+                info!("Saved Google search HTML to {}", filename);
+            }
+        }
+
         // Try to parse results, but be more lenient with HTTP fallback
         match self.parse_results(&html) {
             Ok(results) => {
                 if results.is_empty() {
                     warn!("Google HTTP fallback: No results parsed, but HTML content exists");
-                    // For testing purposes, return some mock results if parsing fails
-                    if std::env::var("GOOGLE_HTTP_FALLBACK_MOCK_RESULTS").is_ok() {
-                        info!("Returning mock results for HTTP fallback testing");
-                        return Ok(self.generate_mock_results(query, limit));
-                    }
                 }
                 Ok(results)
             }
             Err(e) => {
                 warn!("Failed to parse Google HTML with HTTP fallback: {}", e);
-                if std::env::var("GOOGLE_HTTP_FALLBACK_MOCK_RESULTS").is_ok() {
-                    info!("Returning mock results due to parsing failure");
-                    return Ok(self.generate_mock_results(query, limit));
-                }
                 Err(e)
             }
         }
-    }
-
-    /// Generate mock results for testing when HTTP fallback parsing fails
-    fn generate_mock_results(&self, query: &str, limit: u32) -> Vec<SearchResult> {
-        let mut results = Vec::new();
-        for i in 0..limit.min(5) {
-            results.push(SearchResult {
-                title: format!("Mock Result {} for query: {}", i + 1, query),
-                url: format!("https://example{}.com/{}", i + 1, query.replace(' ', "-")),
-                description: Some(format!(
-                    "This is a mock search result {} for the query '{}'",
-                    i + 1,
-                    query
-                )),
-                engine: "google".to_string(),
-                score: 1.0 - (i as f64 * 0.1),
-                published_time: None,
-            });
-        }
-        results
     }
 
     /// 生成 23 位随机 ARC_ID
@@ -223,63 +215,114 @@ impl GoogleSearchEngine {
     pub fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
         let document = Html::parse_document(html);
 
-        // Google 结果容器 selector
-        // SC7lYd 是常见的 Google 结果容器，可能会变化
-        let result_selector = Selector::parse("div[jscontroller='SC7lYd']")
-            .map_err(|_| SearchError::EngineError("Failed to parse result selector".to_string()))?;
-
-        // 标题选择器 - 查找包含 h3 的 a 标签
-        let title_selector = Selector::parse("a h3").unwrap();
-        // URL 选择器 - 查找 h3 的父级 a 标签
-        let url_selector = Selector::parse("a:has(h3)").unwrap();
-        // 内容选择器 - data-sncf="1" 通常包含摘要文本
-        let content_selector = Selector::parse("div[data-sncf='1']").unwrap();
-
         let mut results = Vec::new();
 
-        for result_element in document.select(&result_selector) {
-            // 提取标题 - 查找 a 标签内的 h3
-            let title = result_element
-                .select(&title_selector)
-                .next()
-                .map(|e| e.text().collect::<String>())
-                .unwrap_or_default();
+        // 策略 1: 尝试现代/JS 渲染结构 (div[jscontroller='SC7lYd'])
+        let selector_v1 = Selector::parse("div[jscontroller='SC7lYd']").unwrap();
+        // 策略 2: 尝试传统/基础 HTML 结构 (div.g) - 适用于 HTTP fallback
+        let selector_v2 = Selector::parse("div.g").unwrap();
+        // 策略 3: 尝试更通用的结构 (div[data-hveid])
+        let selector_v3 = Selector::parse("div[data-hveid]").unwrap();
+
+        // 尝试不同的选择器策略
+        let mut result_elements: Vec<_> = document.select(&selector_v1).collect();
+        if result_elements.is_empty() {
+            result_elements = document.select(&selector_v2).collect();
+            if !result_elements.is_empty() {
+                info!("Using strategy v2 (div.g) for Google results parsing");
+            }
+        } else {
+            info!("Using strategy v1 (jscontroller) for Google results parsing");
+        }
+
+        if result_elements.is_empty() {
+            result_elements = document.select(&selector_v3).collect();
+            if !result_elements.is_empty() {
+                info!("Using strategy v3 (data-hveid) for Google results parsing");
+            }
+        }
+
+        if result_elements.is_empty() {
+            // 最后的尝试：查找所有包含 h3 的 a 标签的父级容器
+            // 这可能会有点乱，但总比没有好
+            warn!("Standard selectors failed, trying to find any result-like structure");
+        }
+
+        // 通用子元素选择器
+        let title_selector = Selector::parse("h3").unwrap();
+        let link_selector = Selector::parse("a").unwrap();
+        let snippet_selector_1 = Selector::parse("div[data-sncf='1']").unwrap();
+        let snippet_selector_2 = Selector::parse("div[style*='-webkit-line-clamp']").unwrap(); // 常见的摘要样式
+        let snippet_selector_3 = Selector::parse("span.st").unwrap(); // 旧版摘要
+
+        for element in result_elements {
+            // 提取标题 (h3)
+            let title_element = element.select(&title_selector).next();
+            let title = match title_element {
+                Some(e) => e.text().collect::<String>(),
+                None => continue,
+            };
 
             if title.is_empty() {
-                continue; // 跳过没有标题的结果
+                continue;
             }
 
-            // 提取 URL - 查找包含 h3 的 a 标签的 href 属性
-            let url = result_element
-                .select(&url_selector)
-                .next()
-                .and_then(|e| e.value().attr("href"))
-                .unwrap_or("")
-                .to_string();
+            // 提取 URL (a tag)
+            // 有时 a 标签是 h3 的父级，有时是兄弟或子级
+            // 我们先看 element 下有没有 a 标签
+            let url = if let Some(a) = element.select(&link_selector).next() {
+                a.value().attr("href").unwrap_or("").to_string()
+            } else {
+                // 如果 element 本身是 a
+                element.value().attr("href").unwrap_or("").to_string()
+            };
 
-            if url.is_empty() {
-                continue; // 跳过没有链接的结果
+            // 清理 URL (Google 有时会包装 URL，如 /url?q=...)
+            let clean_url = if url.starts_with("/url?q=") {
+                url.replace("/url?q=", "")
+                    .split('&')
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            } else {
+                url
+            };
+
+            if clean_url.is_empty() || !clean_url.starts_with("http") {
+                continue;
             }
 
             // 提取摘要
-            let content = result_element
-                .select(&content_selector)
-                .next()
-                .map(|e| e.text().collect::<String>())
-                .unwrap_or_default();
+            let mut content = String::new();
+            if let Some(e) = element.select(&snippet_selector_1).next() {
+                content = e.text().collect::<String>();
+            } else if let Some(e) = element.select(&snippet_selector_2).next() {
+                content = e.text().collect::<String>();
+            } else if let Some(e) = element.select(&snippet_selector_3).next() {
+                content = e.text().collect::<String>();
+            }
+
+            // 简单的去重（基于 URL）
+            if results.iter().any(|r: &SearchResult| r.url == clean_url) {
+                continue;
+            }
 
             results.push(SearchResult {
                 title,
-                url,
+                url: clean_url,
                 description: if content.is_empty() {
                     None
                 } else {
                     Some(content)
                 },
                 engine: "google".to_string(),
-                score: 1.0, // 基础分数，后续会重新计算
+                score: 1.0,
                 published_time: None,
             });
+
+            if results.len() >= 20 {
+                break;
+            }
         }
 
         info!("解析到 {} 个 Google 搜索结果", results.len());

@@ -47,7 +47,8 @@ async fn create_test_app_with_tasks() -> (TestServer, String, Uuid, Arc<TaskRepo
     // 创建测试应用
     let app = crawlrs::presentation::routes::routes()
         .layer(axum::Extension(task_repo.clone()))
-        .layer(axum::Extension(scrape_result_repo.clone()));
+        .layer(axum::Extension(scrape_result_repo.clone()))
+        .into_make_service();
 
     let server = TestServer::new(app).unwrap();
     (server, api_key, team_id, task_repo)

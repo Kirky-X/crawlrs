@@ -66,12 +66,12 @@ async fn test_process_crawl_result_creates_tasks_integration() {
     // 4. Process
     // Disable SSRF protection for local test
     std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "true");
-    
+
     let created_tasks = service
         .process_crawl_result(&parent_task, &html)
         .await
         .expect("Process failed");
-        
+
     std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
 
     // 5. Verify
@@ -147,13 +147,13 @@ async fn test_process_crawl_result_respects_domain_blacklist() {
         .process_crawl_result(&parent_task, &html)
         .await
         .expect("Process failed");
-    
+
     std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
 
     // 5. Verify
     assert_eq!(created_tasks.len(), 1);
     assert_eq!(created_tasks[0].url, allowed_url);
-    
+
     // Verify the blocked URL was NOT created
     // Note: We don't need to check the DB for the blocked URL because process_crawl_result only returns created tasks.
     // If it's not in created_tasks, it wasn't created.

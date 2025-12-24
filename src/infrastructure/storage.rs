@@ -26,13 +26,8 @@ impl S3Storage {
         secret_key: String,
         endpoint: Option<String>,
     ) -> Self {
-        let credentials = aws_sdk_s3::config::Credentials::new(
-            access_key,
-            secret_key,
-            None,
-            None,
-            "static",
-        );
+        let credentials =
+            aws_sdk_s3::config::Credentials::new(access_key, secret_key, None, None, "static");
 
         let mut config_builder = aws_sdk_s3::config::Builder::new()
             .region(aws_sdk_s3::config::Region::new(region))
@@ -64,7 +59,8 @@ impl StorageRepository for S3Storage {
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StorageError> {
-        match self.client
+        match self
+            .client
             .get_object()
             .bucket(&self.bucket)
             .key(key)
@@ -103,7 +99,8 @@ impl StorageRepository for S3Storage {
     }
 
     async fn exists(&self, key: &str) -> Result<bool, StorageError> {
-        match self.client
+        match self
+            .client
             .head_object()
             .bucket(&self.bucket)
             .key(key)

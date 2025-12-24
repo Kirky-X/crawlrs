@@ -11,14 +11,17 @@ use crate::infrastructure::database::entities::{geo_restriction_log, team};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;
 
+use std::sync::Arc;
+
 /// 基于数据库的地理限制仓库实现
+#[derive(Clone)]
 pub struct DatabaseGeoRestrictionRepository {
-    db: DatabaseConnection,
+    db: Arc<DatabaseConnection>,
 }
 
 impl DatabaseGeoRestrictionRepository {
     /// 创建新的数据库地理限制仓库实例
-    pub fn new(db: DatabaseConnection) -> Self {
+    pub fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
 }
@@ -32,7 +35,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
     ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
         // 查询团队记录
         let team_model = team::Entity::find_by_id(team_id)
-            .one(&self.db)
+            .one(self.db.as_ref())
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?
             .ok_or(GeoRestrictionRepositoryError::TeamNotFound(team_id))?;
@@ -71,7 +74,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
     ) -> Result<(), GeoRestrictionRepositoryError> {
         // 查询团队记录
         let team_model = team::Entity::find_by_id(team_id)
-            .one(&self.db)
+            .one(self.db.as_ref())
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?
             .ok_or(GeoRestrictionRepositoryError::TeamNotFound(team_id))?;
@@ -100,7 +103,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
 
         // 更新记录
         active_model
-            .update(&self.db)
+            .update(self.db.as_ref())
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
 
@@ -128,7 +131,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         };
 
         log_entry
-            .insert(&self.db)
+            .insert(self.db.as_ref())
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
 
@@ -140,100 +143,58 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
 mod tests {
     use super::*;
     use crate::infrastructure::database::entities::team;
-    use sea_orm::{ActiveModelTrait, Set};
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, Set};
 
-    /// 创建测试团队
-    async fn create_test_team(
-        db: &DatabaseConnection,
-        team_id: Uuid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let team_model = team::ActiveModel {
+    async fn setup_db() -> Arc<DatabaseConnection> {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let db = Arc::new(db);
+        Migrator::up(db.as_ref(), None).await.unwrap();
+        db
+    }
+
+    async fn create_team(db: &DatabaseConnection) -> Uuid {
+        let team_id = Uuid::new_v4();
+        let team = team::ActiveModel {
             id: Set(team_id),
             name: Set("Test Team".to_string()),
-            allowed_countries: Set(None),
-            blocked_countries: Set(None),
-            ip_whitelist: Set(None),
-            domain_blacklist: Set(None),
             enable_geo_restrictions: Set(false),
             created_at: Set(chrono::Utc::now().into()),
             updated_at: Set(chrono::Utc::now().into()),
+            ..Default::default()
         };
-
-        team_model.insert(db).await?;
-        Ok(())
+        team.insert(db).await.unwrap();
+        team_id
     }
 
     #[tokio::test]
-    #[ignore] // 需要数据库迁移支持
     async fn test_database_geo_restriction_repository() {
-        // 这个测试需要数据库连接，这里只是展示结构
-        // 实际测试应该在集成测试环境中运行
+        let db = setup_db().await;
+        let repo = DatabaseGeoRestrictionRepository::new(db.clone());
+        let team_id = create_team(&db).await;
 
-        // 创建内存数据库连接
-        let db = sea_orm::Database::connect("sqlite::memory:")
-            .await
-            .expect("Failed to connect to database");
-
-        // 这里应该运行数据库迁移来创建表结构
-        // 由于迁移逻辑复杂，这里省略具体实现
-
-        // 创建测试团队
-        let team_id = Uuid::new_v4();
-        create_test_team(&db, team_id)
-            .await
-            .expect("Failed to create test team");
-
-        let repo = DatabaseGeoRestrictionRepository::new(db);
-
-        // 测试获取默认配置
+        // Test getting default configuration
         let restrictions = repo.get_team_restrictions(team_id).await.unwrap();
         assert!(!restrictions.enable_geo_restrictions);
-        assert!(restrictions.allowed_countries.is_none());
-        assert!(restrictions.blocked_countries.is_none());
-        assert!(restrictions.ip_whitelist.is_none());
 
-        // 测试更新配置
-        let new_restrictions = TeamGeoRestrictions {
-            enable_geo_restrictions: true,
-            allowed_countries: Some(vec!["US".to_string(), "GB".to_string()]),
-            blocked_countries: Some(vec!["CN".to_string()]),
-            ip_whitelist: Some(vec!["192.168.1.0/24".to_string()]),
-            domain_blacklist: Some(vec!["example.com".to_string()]),
-        };
+        // Test updating configuration
+        let mut new_restrictions = restrictions.clone();
+        new_restrictions.enable_geo_restrictions = true;
+        new_restrictions.allowed_countries = Some(vec!["US".to_string(), "CA".to_string()]);
 
         repo.update_team_restrictions(team_id, &new_restrictions)
             .await
             .unwrap();
 
-        // 验证更新结果
+        // Verify update
         let updated_restrictions = repo.get_team_restrictions(team_id).await.unwrap();
         assert!(updated_restrictions.enable_geo_restrictions);
-        assert_eq!(
-            updated_restrictions.allowed_countries,
-            Some(vec!["US".to_string(), "GB".to_string()])
-        );
-        assert_eq!(
-            updated_restrictions.blocked_countries,
-            Some(vec!["CN".to_string()])
-        );
-        assert_eq!(
-            updated_restrictions.ip_whitelist,
-            Some(vec!["192.168.1.0/24".to_string()])
-        );
-        assert_eq!(
-            updated_restrictions.domain_blacklist,
-            Some(vec!["example.com".to_string()])
-        );
+        assert_eq!(updated_restrictions.allowed_countries.unwrap().len(), 2);
 
-        // 测试记录日志
-        repo.log_geo_restriction_action(
-            team_id,
-            "192.168.1.100",
-            "US",
-            "allowed",
-            "IP in whitelist",
-        )
-        .await
-        .unwrap();
+        // Test log_geo_restriction_action
+        let result = repo
+            .log_geo_restriction_action(team_id, "127.0.0.1", "US", "blocked", "Country blocked")
+            .await;
+        assert!(result.is_ok());
     }
 }

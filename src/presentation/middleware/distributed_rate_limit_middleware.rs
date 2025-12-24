@@ -44,13 +44,18 @@ pub async fn distributed_rate_limit_middleware(
         return Ok(next.run(request).await);
     }
 
-    let api_key_id = request.extensions().get::<String>().cloned().ok_or_else(|| {
+    let api_key = request.extensions().get::<String>().cloned().ok_or_else(|| {
         error!("API Key not found in request extensions. Ensure AuthMiddleware is applied before DistributedRateLimitMiddleware.");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    rate_limiter.check(&api_key_id).await.map_err(|e| {
-        warn!("Rate limit check failed for API Key {}: {}", api_key_id, e);
+    tracing::info!(
+        "DistributedRateLimitMiddleware checking rate limit for API Key: {}",
+        api_key
+    );
+
+    rate_limiter.check(&api_key).await.map_err(|e| {
+        warn!("Rate limit check failed for API Key {}: {}", api_key, e);
         StatusCode::TOO_MANY_REQUESTS
     })?;
 

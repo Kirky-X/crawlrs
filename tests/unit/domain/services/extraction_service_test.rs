@@ -133,7 +133,7 @@ async fn test_extraction_service_with_llm() {
 
     // Setup Local Server for LLM
     let content_json = json!({"name": "Product X", "price": 100}).to_string();
-    let fake_response = json!({
+    let canned_response = json!({
         "id": "chatcmpl-123",
         "object": "chat.completion",
         "created": 1677652288,
@@ -155,7 +155,7 @@ async fn test_extraction_service_with_llm() {
     let app = Router::new().route(
         "/chat/completions",
         post(move |Json(_): Json<Value>| {
-            let resp = fake_response.clone();
+            let resp = canned_response.clone();
             async move { Json(resp) }
         }),
     );

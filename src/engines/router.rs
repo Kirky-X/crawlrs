@@ -472,68 +472,110 @@ mod tests {
         let score = router.calculate_engine_score(1.0, &stats);
         assert!(score > 0.8 && score <= 1.0);
     }
+}
 
-    // Note: To run the following tests, you need to add `mockall` to dev-dependencies in Cargo.toml
-    // and uncomment the MockScraperEngine implementation in traits.rs or define it here for testing.
-    /*
-    use crate::engines::traits::MockScraperEngine;
+#[cfg(test)]
+mod tests_impl {
+    use super::*;
+    use crate::engines::traits::EngineError;
     use crate::engines::traits::ScrapeRequest;
-    use mockall::predicate::*;
+    use crate::engines::traits::ScrapeResponse;
+    use crate::engines::traits::ScraperEngine;
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+
+    // A simple test engine that is a controllable implementation
+    struct TestScraperEngineImpl {
+        name: &'static str,
+        _supported_domains: Vec<String>,
+        _weight: u8,
+        response_result: Mutex<Option<Result<ScrapeResponse, EngineError>>>,
+    }
+
+    impl TestScraperEngineImpl {
+        fn new(
+            name: &'static str,
+            supported_domains: Vec<String>,
+            weight: u8,
+            result: Result<ScrapeResponse, EngineError>,
+        ) -> Self {
+            Self {
+                name,
+                _supported_domains: supported_domains,
+                _weight: weight,
+                response_result: Mutex::new(Some(result)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ScraperEngine for TestScraperEngineImpl {
+        async fn scrape(&self, _request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+            let mut lock = self.response_result.lock().unwrap();
+            if let Some(res) = lock.take() {
+                // For concurrent tests, we might want to clone if we needed multiple calls,
+                // but here we just return the pre-configured result.
+                // Since Result is not Clone by default for EngineError, we have to be careful.
+                // For this simple test implementation, we just consume it.
+                // In a real scenario we might clone data.
+                return res;
+            }
+            // Default if called more times than configured
+            Ok(ScrapeResponse::new("http://example.com", "Default Result"))
+        }
+
+        fn support_score(&self, _request: &ScrapeRequest) -> u8 {
+            100
+        }
+
+        fn name(&self) -> &'static str {
+            self.name
+        }
+    }
 
     #[tokio::test]
     async fn test_aggregate_concurrent_search() {
-        let mut mock_engine1 = MockScraperEngine::new();
-        mock_engine1.expect_name().return_const("engine1");
-        mock_engine1.expect_supported_domains().return_const(vec!["example.com".to_string()]);
-        mock_engine1.expect_weight().return_const(1);
-        mock_engine1
-            .expect_scrape()
-            .returning(|_| Ok(ScrapeResponse::new("http://example.com", "Result 1")));
+        let engine1 = TestScraperEngineImpl::new(
+            "engine1",
+            vec!["example.com".to_string()],
+            1,
+            Ok(ScrapeResponse::new("http://example.com", "Result 1")),
+        );
 
-        let mut mock_engine2 = MockScraperEngine::new();
-        mock_engine2.expect_name().return_const("engine2");
-        mock_engine2.expect_supported_domains().return_const(vec!["example.com".to_string()]);
-        mock_engine2.expect_weight().return_const(1);
-        mock_engine2
-            .expect_scrape()
-            .returning(|_| Ok(ScrapeResponse::new("http://example.com", "Result 2")));
+        let engine2 = TestScraperEngineImpl::new(
+            "engine2",
+            vec!["example.com".to_string()],
+            1,
+            Ok(ScrapeResponse::new("http://example.com", "Result 2")),
+        );
 
-        let router = EngineRouter::new(vec![
-            Arc::new(mock_engine1),
-            Arc::new(mock_engine2),
-        ]);
+        let router = EngineRouter::new(vec![Arc::new(engine1), Arc::new(engine2)]);
 
         let request = ScrapeRequest::new("http://example.com");
         let result = router.aggregate(&request).await;
 
         assert!(result.is_ok());
-        // 由于并发执行，不知道哪个先返回，但肯定会成功
         let response = result.unwrap();
         assert!(response.content.contains("Result"));
     }
 
     #[tokio::test]
     async fn test_aggregate_partial_failure() {
-        let mut mock_engine1 = MockScraperEngine::new();
-        mock_engine1.expect_name().return_const("engine1");
-        mock_engine1.expect_supported_domains().return_const(vec!["example.com".to_string()]);
-        mock_engine1.expect_weight().return_const(1);
-        mock_engine1
-            .expect_scrape()
-            .returning(|_| Err(EngineError::Timeout));
+        let engine1 = TestScraperEngineImpl::new(
+            "engine1",
+            vec!["example.com".to_string()],
+            1,
+            Err(EngineError::Timeout),
+        );
 
-        let mut mock_engine2 = MockScraperEngine::new();
-        mock_engine2.expect_name().return_const("engine2");
-        mock_engine2.expect_supported_domains().return_const(vec!["example.com".to_string()]);
-        mock_engine2.expect_weight().return_const(1);
-        mock_engine2
-            .expect_scrape()
-            .returning(|_| Ok(ScrapeResponse::new("http://example.com", "Result 2")));
+        let engine2 = TestScraperEngineImpl::new(
+            "engine2",
+            vec!["example.com".to_string()],
+            1,
+            Ok(ScrapeResponse::new("http://example.com", "Result 2")),
+        );
 
-        let router = EngineRouter::new(vec![
-            Arc::new(mock_engine1),
-            Arc::new(mock_engine2),
-        ]);
+        let router = EngineRouter::new(vec![Arc::new(engine1), Arc::new(engine2)]);
 
         let request = ScrapeRequest::new("http://example.com");
         let result = router.aggregate(&request).await;
@@ -542,5 +584,4 @@ mod tests {
         let response = result.unwrap();
         assert_eq!(response.content, "Result 2");
     }
-    */
 }

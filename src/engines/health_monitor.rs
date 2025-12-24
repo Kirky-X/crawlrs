@@ -203,7 +203,10 @@ impl EngineHealthMonitor {
 
                 let health = if consecutive_failures >= self.config.max_consecutive_failures {
                     // Alert P3-Low: Single Engine Failure
-                    warn!("ALARM: Engine {} is unhealthy after {} consecutive failures", engine_name, consecutive_failures);
+                    warn!(
+                        "ALARM: Engine {} is unhealthy after {} consecutive failures",
+                        engine_name, consecutive_failures
+                    );
                     EngineHealth::Unhealthy
                 } else {
                     EngineHealth::Degraded

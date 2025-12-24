@@ -168,7 +168,6 @@ impl ScrapeResponse {
 }
 
 /// 抓取引擎特质
-#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ScraperEngine: Send + Sync {
     /// 执行抓取

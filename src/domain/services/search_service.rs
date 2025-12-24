@@ -198,6 +198,7 @@ where
                 title: item.title,
                 url: item.url,
                 description: item.description,
+                engine: Some(item.engine),
             })
             .collect())
     }

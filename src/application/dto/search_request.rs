@@ -44,4 +44,5 @@ pub struct SearchResultDto {
     pub title: String,
     pub url: String,
     pub description: Option<String>,
+    pub engine: Option<String>,
 }

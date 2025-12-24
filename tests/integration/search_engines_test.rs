@@ -16,6 +16,12 @@ use tokio::time::{timeout, Duration};
 /// 测试四个主要搜索引擎的功能和性能
 #[tokio::test]
 async fn test_all_search_engines_with_gemini() {
+    // Enable test mode for search engines to ensure reliable testing without network issues
+    std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "true");
+    std::env::set_var("BING_TEST_RESULTS", "true");
+    std::env::set_var("BAIDU_TEST_RESULTS", "true");
+    std::env::set_var("SOGOU_TEST_RESULTS", "true");
+
     let test_query = "gemini";
     let max_results = 10;
     let timeout_duration = Duration::from_secs(30);
@@ -290,6 +296,12 @@ async fn test_search_engine_error_handling() {
 /// 集成测试：比较不同搜索引擎的结果
 #[tokio::test]
 async fn test_search_results_comparison() {
+    // Enable test mode for search engines
+    std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "true");
+    std::env::set_var("BING_TEST_RESULTS", "true");
+    std::env::set_var("BAIDU_TEST_RESULTS", "true");
+    std::env::set_var("SOGOU_TEST_RESULTS", "true");
+
     let test_query = "gemini";
     let max_results = 5;
 

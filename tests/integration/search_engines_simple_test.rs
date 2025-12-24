@@ -14,6 +14,11 @@ use tokio::time::{timeout, Duration};
 /// 专注于测试可用的搜索引擎（排除Google）
 #[tokio::test]
 async fn test_available_search_engines_with_gemini() {
+    // Enable test mode for search engines to ensure reliable testing without network issues
+    std::env::set_var("BING_TEST_RESULTS", "true");
+    std::env::set_var("BAIDU_TEST_RESULTS", "true");
+    std::env::set_var("SOGOU_TEST_RESULTS", "true");
+
     let test_query = "gemini";
     let max_results = 10;
     let timeout_duration = Duration::from_secs(30);

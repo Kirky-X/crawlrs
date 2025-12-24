@@ -75,8 +75,20 @@ impl RateLimiter {
         }
 
         let limit = self.get_rate_limit(api_key).await?;
+        tracing::info!(
+            "RateLimiter: API Key {} - Current: {}, Limit: {}",
+            api_key,
+            current_requests,
+            limit
+        );
 
         if current_requests > limit.into() {
+            tracing::warn!(
+                "RateLimiter: API Key {} exceeded limit. Current: {}, Limit: {}",
+                api_key,
+                current_requests,
+                limit
+            );
             return Err(RateLimitError::TooManyRequests);
         }
 

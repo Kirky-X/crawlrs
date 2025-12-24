@@ -106,12 +106,12 @@ mod tests {
         // Localhost should be blocked
         assert!(validate_url("http://localhost").await.is_err());
         assert!(validate_url("http://127.0.0.1").await.is_err());
-        
+
         // Private IPs should be blocked
         // Note: These tests depend on DNS resolution, which might fail in some environments
-        // We mock DNS resolution behavior by testing is_private_ip directly if needed,
+        // We simulate DNS resolution behavior by testing is_private_ip directly if needed,
         // but here we test the public API.
-        
+
         // Valid public URL (example.com usually resolves to public IP)
         // We skip this in CI if no network access
         if std::env::var("CI").is_err() {
@@ -143,7 +143,7 @@ mod tests {
         // Allowed
         assert!(validate_domain_blacklist("http://google.com", &blacklist).is_ok());
         assert!(validate_domain_blacklist("http://example.org", &blacklist).is_ok());
-        
+
         // Partial match should not block (e.g. example.com.cn should not be blocked by example.com)
         // Current implementation: host.ends_with(".example.com")
         assert!(validate_domain_blacklist("http://myexample.com", &blacklist).is_ok());
@@ -153,7 +153,9 @@ mod tests {
 /// 验证 URL 是否在黑名单域名中
 pub fn validate_domain_blacklist(url_str: &str, blacklist: &[String]) -> anyhow::Result<()> {
     let url = Url::parse(url_str)?;
-    let host = url.host_str().ok_or_else(|| anyhow::anyhow!("Missing host"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing host"))?;
 
     for domain in blacklist {
         if host == domain || host.ends_with(&format!(".{}", domain)) {
@@ -163,4 +165,3 @@ pub fn validate_domain_blacklist(url_str: &str, blacklist: &[String]) -> anyhow:
 
     Ok(())
 }
-

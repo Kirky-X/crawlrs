@@ -1,48 +1,25 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::domain::repositories::geo_restriction_repository::{GeoRestrictionRepository, GeoRestrictionRepositoryError};
+    use crate::domain::services::team_service::{
+        GeoRestrictionResult, TeamGeoRestrictions, TeamService,
+    };
     use crate::infrastructure::geolocation::GeoLocationService;
-    use crate::domain::services::team_service::{TeamService, TeamGeoRestrictions, GeoRestrictionResult};
-    use anyhow::Result;
-    use async_trait::async_trait;
+    use crate::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
+    use migration::{Migrator, MigratorTrait};
+    use sea_orm::Database;
     use std::sync::Arc;
-    use uuid::Uuid;
 
-    struct MockGeoRestrictionRepository;
-
-    #[async_trait]
-    impl GeoRestrictionRepository for MockGeoRestrictionRepository {
-        async fn get_team_restrictions(
-            &self,
-            _team_id: Uuid,
-        ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
-            Ok(TeamGeoRestrictions::default())
-        }
-
-        async fn update_team_restrictions(
-            &self,
-            _team_id: Uuid,
-            _restrictions: &TeamGeoRestrictions,
-        ) -> Result<(), GeoRestrictionRepositoryError> {
-            Ok(())
-        }
-
-        async fn log_geo_restriction_action(
-            &self,
-            _team_id: Uuid,
-            _ip_address: &str,
-            _country_code: &str,
-            _action: &str,
-            _reason: &str,
-        ) -> Result<(), GeoRestrictionRepositoryError> {
-            Ok(())
-        }
+    async fn setup_db() -> Arc<sea_orm::DatabaseConnection> {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let db = Arc::new(db);
+        Migrator::up(db.as_ref(), None).await.unwrap();
+        db
     }
 
-    #[test]
-    fn test_domain_blacklist() {
-        let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    #[tokio::test]
+    async fn test_domain_blacklist() {
+        let db = setup_db().await;
+        let geo_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.clone()));
         let geo_service = GeoLocationService::new(); // Assuming default constructor
         let service = TeamService::new(geo_service, geo_repo);
 

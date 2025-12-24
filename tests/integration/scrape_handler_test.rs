@@ -50,6 +50,12 @@ async fn test_create_scrape_handler_real_queue() {
         .expect("DB error")
         .expect("Task should exist");
     assert_eq!(task.url, "https://example.com");
-    assert_eq!(task.status, TaskStatus::Queued);
+    // 任务状态可能是 Queued（等待处理）或 Active（已被 worker 开始处理）
+    // 这是正常的，因为后台 worker 可能在查询后立即获取任务
+    assert!(
+        task.status == TaskStatus::Queued || task.status == TaskStatus::Active,
+        "Task status should be Queued or Active, got {:?}",
+        task.status
+    );
     assert_eq!(task.task_type, TaskType::Scrape);
 }

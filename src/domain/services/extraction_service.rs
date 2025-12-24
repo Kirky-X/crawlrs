@@ -187,8 +187,8 @@ impl ExtractionService {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_extract_title_and_links() {
+    #[tokio::test]
+    async fn test_extract_title_and_links() {
         let html = r#"
             <html>
                 <head><title>Test Page</title></head>
@@ -247,8 +247,9 @@ mod tests {
         );
 
         let settings = Settings::new().unwrap();
-        let (result, _) =
-            tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
+        let (result, _) = ExtractionService::extract(html, &rules, &settings)
+            .await
+            .unwrap();
 
         assert_eq!(result["title"], "Test Page");
         assert_eq!(result["header"], "Main Header");
