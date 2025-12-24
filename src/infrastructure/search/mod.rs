@@ -20,4 +20,6 @@ pub mod smart_search;
 pub mod sogou;
 
 pub use factory::{create_default_router, SearchEngineFactory, SearchEngineFactoryConfig};
-pub use search_engine_router::{SearchEngineRouter, SearchEngineRouterConfig, SmartSearchEngineWrapper};
+pub use search_engine_router::{
+    SearchEngineRouter, SearchEngineRouterConfig, SmartSearchEngineWrapper,
+};

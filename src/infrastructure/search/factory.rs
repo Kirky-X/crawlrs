@@ -3,12 +3,21 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+use crate::domain::search::engine::SearchEngine;
+use crate::engines::fire_engine_cdp::FireEngineCdp;
+use crate::engines::fire_engine_tls::FireEngineTls;
+use crate::engines::router::EngineRouter;
 use crate::infrastructure::search::baidu::BaiduSearchEngine;
 use crate::infrastructure::search::bing::BingSearchEngine;
 use crate::infrastructure::search::google::GoogleSearchEngine;
-use crate::infrastructure::search::search_engine_router::{SearchEngineRouter, SearchEngineRouterConfig};
+use crate::infrastructure::search::search_engine_router::{
+    SearchEngineRouter, SearchEngineRouterConfig,
+};
+use crate::infrastructure::search::smart_search::{
+    create_baidu_smart_search, create_bing_smart_search, create_google_smart_search,
+};
 use crate::infrastructure::search::sogou::SogouSearchEngine;
-use crate::domain::search::engine::SearchEngine;
+use std::str::FromStr;
 use std::sync::Arc;
 use tracing::info;
 
@@ -41,17 +50,20 @@ impl SearchEngineType {
             Self::ABTest => "ab_test",
         }
     }
+}
 
-    /// 从字符串解析引擎类型
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for SearchEngineType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "google" => Some(Self::Google),
-            "bing" => Some(Self::Bing),
-            "baidu" => Some(Self::Baidu),
-            "sogou" => Some(Self::Sogou),
-            "smart" => Some(Self::Smart),
-            "ab_test" | "abtest" => Some(Self::ABTest),
-            _ => None,
+            "google" => Ok(Self::Google),
+            "bing" => Ok(Self::Bing),
+            "baidu" => Ok(Self::Baidu),
+            "sogou" => Ok(Self::Sogou),
+            "smart" => Ok(Self::Smart),
+            "ab_test" | "abtest" => Ok(Self::ABTest),
+            _ => Err(()),
         }
     }
 }
@@ -117,7 +129,9 @@ impl SearchEngineFactory {
     }
 
     /// 创建并注册所有支持的搜索引擎
-    pub async fn create_all_engines(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn create_all_engines(
+        &mut self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("正在创建所有搜索引擎...");
 
         // Google 搜索引擎
@@ -132,7 +146,10 @@ impl SearchEngineFactory {
         // Sogou 搜索引擎
         self.register_sogou_engine();
 
-        info!("所有搜索引擎创建完成，已注册: {:?}", self.router.registered_engines());
+        info!(
+            "所有搜索引擎创建完成，已注册: {:?}",
+            self.router.registered_engines()
+        );
 
         Ok(())
     }
@@ -173,6 +190,42 @@ impl SearchEngineFactory {
         let sogou_engine = Arc::new(SogouSearchEngine::new());
         self.router.register_engine(sogou_engine);
         info!("Sogou 搜索引擎已注册");
+    }
+
+    /// 创建 EngineRouter 并注册 Fire Engines（用于智能搜索）
+    pub fn create_engine_router_with_fire_engines(&self) -> Arc<EngineRouter> {
+        let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
+
+        // 注册 Fire Engine CDP（用于需要完整浏览器自动化的网站）
+        let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+        engines.push(fire_engine_cdp.clone() as Arc<dyn crate::engines::traits::ScraperEngine>);
+
+        // 注册 Fire Engine TLS（用于需要TLS指纹对抗的网站）
+        let fire_engine_tls = Arc::new(FireEngineTls::new());
+        engines.push(fire_engine_tls.clone() as Arc<dyn crate::engines::traits::ScraperEngine>);
+
+        let router = EngineRouter::new(engines);
+        info!("EngineRouter 创建完成，已注册 Fire Engines");
+
+        Arc::new(router)
+    }
+
+    /// 创建 Google 智能搜索引擎（使用 Fire Engine）
+    pub fn create_google_smart_search(&self) -> Arc<dyn SearchEngine> {
+        let engine_router = self.create_engine_router_with_fire_engines();
+        create_google_smart_search(engine_router)
+    }
+
+    /// 创建 Bing 智能搜索引擎
+    pub fn create_bing_smart_search(&self) -> Arc<dyn SearchEngine> {
+        let engine_router = self.create_engine_router_with_fire_engines();
+        create_bing_smart_search(engine_router)
+    }
+
+    /// 创建 Baidu 智能搜索引擎
+    pub fn create_baidu_smart_search(&self) -> Arc<dyn SearchEngine> {
+        let engine_router = self.create_engine_router_with_fire_engines();
+        create_baidu_smart_search(engine_router)
     }
 
     /// 注册自定义搜索引擎
@@ -219,42 +272,49 @@ impl SearchEngineFactory {
         lang: Option<&str>,
         country: Option<&str>,
         engine_type: Option<SearchEngineType>,
-    ) -> Result<Vec<crate::domain::models::search_result::SearchResult>, crate::domain::search::engine::SearchError> {
+    ) -> Result<
+        Vec<crate::domain::models::search_result::SearchResult>,
+        crate::domain::search::engine::SearchError,
+    > {
         match engine_type.unwrap_or(self.config.default_engine) {
             SearchEngineType::Google => {
                 if let Some(engine) = self.router.get_engine("google") {
                     engine.search(query, limit, lang, country).await
                 } else {
-                    self.router.search(query, limit, lang, country, Some("google")).await
+                    self.router
+                        .search(query, limit, lang, country, Some("google"))
+                        .await
                 }
             }
             SearchEngineType::Bing => {
                 if let Some(engine) = self.router.get_engine("bing") {
                     engine.search(query, limit, lang, country).await
                 } else {
-                    self.router.search(query, limit, lang, country, Some("bing")).await
+                    self.router
+                        .search(query, limit, lang, country, Some("bing"))
+                        .await
                 }
             }
             SearchEngineType::Baidu => {
                 if let Some(engine) = self.router.get_engine("baidu") {
                     engine.search(query, limit, lang, country).await
                 } else {
-                    self.router.search(query, limit, lang, country, Some("baidu")).await
+                    self.router
+                        .search(query, limit, lang, country, Some("baidu"))
+                        .await
                 }
             }
             SearchEngineType::Sogou => {
                 if let Some(engine) = self.router.get_engine("sogou") {
                     engine.search(query, limit, lang, country).await
                 } else {
-                    self.router.search(query, limit, lang, country, Some("sogou")).await
+                    self.router
+                        .search(query, limit, lang, country, Some("sogou"))
+                        .await
                 }
             }
-            SearchEngineType::Smart => {
-                self.router.search(query, limit, lang, country, None).await
-            }
-            SearchEngineType::ABTest => {
-                self.router.search(query, limit, lang, country, None).await
-            }
+            SearchEngineType::Smart => self.router.search(query, limit, lang, country, None).await,
+            SearchEngineType::ABTest => self.router.search(query, limit, lang, country, None).await,
         }
     }
 
@@ -288,7 +348,8 @@ impl Default for SearchEngineFactory {
 }
 
 /// 便捷函数：创建默认的搜索引擎路由器
-pub async fn create_default_router() -> Result<SearchEngineRouter, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn create_default_router(
+) -> Result<SearchEngineRouter, Box<dyn std::error::Error + Send + Sync>> {
     let mut factory = SearchEngineFactory::new();
     factory.create_all_engines().await?;
     Ok(factory.router.clone())

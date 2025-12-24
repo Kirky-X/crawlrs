@@ -148,38 +148,194 @@ impl SmartSearchEngine {
         needs_js: bool,
         needs_tls_fingerprint: bool,
     ) -> ScrapeRequest {
+        use crate::engines::traits::ScrapeAction;
+
+        let mut headers = HashMap::new();
+
+        if needs_js {
+            headers.insert("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8".to_string());
+            headers.insert("Accept-Language".to_string(), "en-US,en;q=0.5".to_string());
+            headers.insert("DNT".to_string(), "1".to_string());
+            headers.insert("Connection".to_string(), "keep-alive".to_string());
+            headers.insert("Upgrade-Insecure-Requests".to_string(), "1".to_string());
+            headers.insert("Sec-Fetch-Dest".to_string(), "document".to_string());
+            headers.insert("Sec-Fetch-Mode".to_string(), "navigate".to_string());
+            headers.insert("Sec-Fetch-Site".to_string(), "none".to_string());
+            headers.insert("Sec-Fetch-User".to_string(), "?1".to_string());
+            headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
+        }
+
+        let actions = if needs_js {
+            vec![
+                ScrapeAction::Wait { milliseconds: 2000 },
+                ScrapeAction::Scroll {
+                    direction: "top".to_string(),
+                },
+                ScrapeAction::Wait { milliseconds: 1000 },
+                ScrapeAction::Scroll {
+                    direction: "down".to_string(),
+                },
+                ScrapeAction::Wait { milliseconds: 1500 },
+                ScrapeAction::Scroll {
+                    direction: "down".to_string(),
+                },
+                ScrapeAction::Wait { milliseconds: 1000 },
+                ScrapeAction::Scroll {
+                    direction: "bottom".to_string(),
+                },
+                ScrapeAction::Wait { milliseconds: 2000 },
+            ]
+        } else {
+            Vec::new()
+        };
+
         ScrapeRequest {
             url: url.to_string(),
-            headers: HashMap::new(),
-            timeout: Duration::from_secs(30),
+            headers,
+            timeout: Duration::from_secs(90),
             needs_js,
             needs_screenshot: false,
             screenshot_config: None,
             mobile: false,
             proxy: None,
-            skip_tls_verification: true,
+            skip_tls_verification: false,
             needs_tls_fingerprint,
-            use_fire_engine: false,
-            actions: Vec::new(),
-            sync_wait_ms: 0,
+            use_fire_engine: needs_js,
+            actions,
+            sync_wait_ms: if needs_js { 8000 } else { 0 },
         }
     }
 
-    /// 解析搜索结果（简化版，实际应该根据具体搜索引擎实现）
+    /// 解析搜索结果（根据搜索引擎类型使用不同的解析器）
     fn parse_search_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
+        match self.name.as_str() {
+            "google_smart" => self.parse_google_results(html),
+            "bing_smart" => self.parse_bing_results(html),
+            "baidu_smart" => self.parse_baidu_results(html),
+            _ => self.parse_generic_results(html),
+        }
+    }
+
+    /// 解析 Google 搜索结果
+    fn parse_google_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
+        use scraper::{Html, Selector};
+
+        let document = Html::parse_document(html);
+        let mut results = Vec::new();
+
+        // Google 现代搜索结果容器选择器
+        let result_selectors = vec![
+            "div.g",
+            "div[data-sokoban-container]",
+            "div.MjjYud",
+            "div.Ww4FFb",
+            "div.v7W49e",
+        ];
+
+        for selector_str in result_selectors {
+            if let Ok(selector) = Selector::parse(selector_str) {
+                let elements: Vec<_> = document.select(&selector).collect();
+                if !elements.is_empty() {
+                    // 使用第一个找到有效结果的选择器
+                    for element in elements {
+                        if let Some(result) = self.extract_google_result(&element) {
+                            results.push(result);
+                        }
+                    }
+                    if !results.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        info!("Google 解析完成，找到 {} 个结果", results.len());
+        Ok(results)
+    }
+
+    /// 从 Google 结果元素中提取信息
+    fn extract_google_result(&self, element: &scraper::ElementRef<'_>) -> Option<SearchResult> {
+        use scraper::Selector;
+
+        // 标题选择器（多个备用）
+        let title_selectors = vec![
+            "h3",
+            "div[data-attrid='title']",
+            "span.dvSrP",
+            "div.v7W49e h3",
+        ];
+
+        let mut title = String::new();
+        for selector_str in &title_selectors {
+            if let Ok(selector) = Selector::parse(selector_str) {
+                if let Some(el) = element.select(&selector).next() {
+                    title = el.text().collect::<String>().trim().to_string();
+                    if !title.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 链接选择器
+        let link_selector = Selector::parse("a").ok()?;
+        let mut url = String::new();
+        for el in element.select(&link_selector) {
+            if let Some(href) = el.value().attr("href") {
+                if href.starts_with("http") && !href.contains("google.com") {
+                    url = href.to_string();
+                    break;
+                }
+            }
+        }
+
+        // 描述选择器
+        let snippet_selectors = vec![
+            "span[ae30]",
+            "div[itemprop='description']",
+            "div.yXK7ld",
+            "div.zIBAzf",
+            "span[style='color:#4d5156']",
+        ];
+
+        let mut description = String::new();
+        for selector_str in &snippet_selectors {
+            if let Ok(selector) = Selector::parse(selector_str) {
+                if let Some(el) = element.select(&selector).next() {
+                    description = el.text().collect::<String>().trim().to_string();
+                    if !description.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !title.is_empty() && !url.is_empty() {
+            let scorer = RelevanceScorer::new("google_search");
+            let mut result = SearchResult::new(title, url, Some(description), self.name.clone());
+            result.score =
+                scorer.calculate_score(&result.title, result.description.as_deref(), &result.url);
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    /// 解析 Bing 搜索结果
+    fn parse_bing_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
         use scraper::{Html, Selector};
 
         let document = Html::parse_document(html);
         let result_selector =
-            Selector::parse("div.g").unwrap_or_else(|_| Selector::parse("div").unwrap());
+            Selector::parse("li.b_algo").unwrap_or_else(|_| Selector::parse("div.sb_add").unwrap());
         let title_selector =
-            Selector::parse("h3").unwrap_or_else(|_| Selector::parse("a").unwrap());
+            Selector::parse("h2").unwrap_or_else(|_| Selector::parse("a").unwrap());
         let link_selector = Selector::parse("a").unwrap();
         let snippet_selector =
-            Selector::parse("span").unwrap_or_else(|_| Selector::parse("div").unwrap());
+            Selector::parse("p").unwrap_or_else(|_| Selector::parse("div").unwrap());
 
         let mut results = Vec::new();
-        let scorer = RelevanceScorer::new("search query"); // 实际应该从请求获取
+        let scorer = RelevanceScorer::new("bing_search");
 
         for element in document.select(&result_selector) {
             let title = element
@@ -204,19 +360,85 @@ impl SmartSearchEngine {
             if !title.is_empty() && !url.is_empty() {
                 let mut result =
                     SearchResult::new(title, url, Some(description), self.name.clone());
-
-                // 计算相关性评分
-                let relevance_score = scorer.calculate_score(
+                result.score = scorer.calculate_score(
                     &result.title,
                     result.description.as_deref(),
                     &result.url,
                 );
-
-                result.score = relevance_score;
                 results.push(result);
             }
         }
 
+        Ok(results)
+    }
+
+    /// 解析百度搜索结果
+    fn parse_baidu_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
+        use scraper::{Html, Selector};
+
+        let document = Html::parse_document(html);
+        let result_selector = Selector::parse("div.c-container")
+            .unwrap_or_else(|_| Selector::parse("div.result").unwrap());
+        let title_selector =
+            Selector::parse("h3 a").unwrap_or_else(|_| Selector::parse("a").unwrap());
+        let link_selector = Selector::parse("a").unwrap();
+        let snippet_selector =
+            Selector::parse("div.c-abstract").unwrap_or_else(|_| Selector::parse("div").unwrap());
+
+        let mut results = Vec::new();
+        let scorer = RelevanceScorer::new("baidu_search");
+
+        for element in document.select(&result_selector) {
+            let title = element
+                .select(&title_selector)
+                .next()
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
+
+            let url = element
+                .select(&link_selector)
+                .next()
+                .and_then(|el| el.value().attr("href"))
+                .map(|href| href.to_string())
+                .unwrap_or_default();
+
+            let description = element
+                .select(&snippet_selector)
+                .next()
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
+
+            if !title.is_empty() && !url.is_empty() {
+                let mut result =
+                    SearchResult::new(title, url, Some(description), self.name.clone());
+                result.score = scorer.calculate_score(
+                    &result.title,
+                    result.description.as_deref(),
+                    &result.url,
+                );
+                results.push(result);
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// 通用解析器（备用）
+    fn parse_generic_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
+        use scraper::{Html, Selector};
+
+        let document = Html::parse_document(html);
+        let mut results = Vec::new();
+
+        let result_selector = Selector::parse("div.g")
+            .map_err(|e| SearchError::EngineError(format!("Invalid selector: {}", e)))?;
+        for element in document.select(&result_selector) {
+            if let Some(result) = self.extract_google_result(&element) {
+                results.push(result);
+            }
+        }
+
+        info!("通用解析完成，找到 {} 个结果", results.len());
         Ok(results)
     }
 }
