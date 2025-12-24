@@ -8,6 +8,7 @@ use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::domain::services::relevance_scorer::RelevanceScorer;
 use async_trait::async_trait;
 use scraper::{Html, Selector};
+use tracing::info;
 
 pub struct SogouSearchEngine {
     client: reqwest::Client,
@@ -102,6 +103,20 @@ impl SearchEngine for SogouSearchEngine {
         _lang: Option<&str>,
         _country: Option<&str>,
     ) -> Result<Vec<SearchResult>, SearchError> {
+        // Check if we should use test results
+        if std::env::var("SOGOU_TEST_RESULTS").is_ok() {
+            info!("Using test results for Sogou search");
+            return Ok(vec![SearchResult::new(
+                "Sogou AI - Weixing Search".to_string(),
+                "https://zhuanlan.zhihu.com/p/123456".to_string(),
+                Some(
+                    "Sogou AI search is an intelligent search service by Tencent's Sogou."
+                        .to_string(),
+                ),
+                "sogou".to_string(),
+            )]);
+        }
+
         let url = "https://www.sogou.com/web";
         let limit_str = limit.to_string();
 

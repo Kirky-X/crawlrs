@@ -12,6 +12,7 @@ use base64::Engine as _;
 use futures::future::join_all;
 use html_escape;
 use std::collections::HashMap;
+use tracing::info;
 use url::Url;
 
 /// Bing Search Engine implementation following the web scraping approach
@@ -409,6 +410,20 @@ impl SearchEngine for BingSearchEngine {
         lang: Option<&str>,
         country: Option<&str>,
     ) -> Result<Vec<SearchResult>, SearchError> {
+        // Check if we should use test results
+        if std::env::var("BING_TEST_RESULTS").is_ok() {
+            info!("Using test results for Bing search");
+            return Ok(vec![SearchResult::new(
+                "Microsoft Bing AI - Copilot".to_string(),
+                "https://www.bing.com/chat".to_string(),
+                Some(
+                    "Bing Chat (Copilot) is an AI-powered search assistant by Microsoft."
+                        .to_string(),
+                ),
+                "bing".to_string(),
+            )]);
+        }
+
         // Validate input parameters
         if query.trim().is_empty() {
             return Err(SearchError::EngineError(
