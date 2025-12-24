@@ -13,10 +13,10 @@ pub enum SearchError {
     EngineError(String),
     #[error("Network error: {0}")]
     NetworkError(String),
-    #[error("Rate limit exceeded")]
-    RateLimitExceeded,
-    #[error("Timeout")]
-    Timeout,
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitExceeded(String),
+    #[error("Timeout after {0} seconds")]
+    TimeoutError(u64),
 }
 
 #[async_trait]
