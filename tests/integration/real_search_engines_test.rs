@@ -9,8 +9,8 @@
 //! 注意：这些测试会发起真实的网络请求
 
 use crawlrs::domain::search::engine::SearchEngine;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
 use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
+use crawlrs::infrastructure::search::bing::BingSearchEngine;
 use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
@@ -34,10 +34,7 @@ async fn test_real_search_engines_connectivity() {
     for (name, engine) in engines {
         println!("  测试 {}...", name);
 
-        let result = timeout(
-            timeout_duration,
-            engine.search(test_query, 5, None, None),
-        ).await;
+        let result = timeout(timeout_duration, engine.search(test_query, 5, None, None)).await;
 
         match result {
             Ok(Ok(search_results)) => {
@@ -87,10 +84,7 @@ async fn test_real_search_engines_content() {
 
             for (idx, result) in results.iter().enumerate() {
                 println!("  结果 {}: {}", idx + 1, result.title);
-                assert!(
-                    !result.title.is_empty(),
-                    "结果标题不应为空"
-                );
+                assert!(!result.title.is_empty(), "结果标题不应为空");
                 assert!(
                     result.url.starts_with("http"),
                     "结果URL应该是有效的HTTP链接"
@@ -123,7 +117,9 @@ async fn test_search_engines_language_filter() {
     match timeout(
         timeout_duration,
         engine.search(test_query, 3, Some("en"), Some("us")),
-    ).await {
+    )
+    .await
+    {
         Ok(Ok(results)) => {
             println!("  ✅ 语言过滤测试返回 {} 个结果", results.len());
             for result in results.iter().take(2) {
@@ -158,7 +154,12 @@ async fn test_search_engines_performance() {
     for (name, engine) in engines {
         let start = std::time::Instant::now();
 
-        match timeout(Duration::from_secs(60), engine.search(test_query, max_results, None, None)).await {
+        match timeout(
+            Duration::from_secs(60),
+            engine.search(test_query, max_results, None, None),
+        )
+        .await
+        {
             Ok(Ok(results)) => {
                 let elapsed = start.elapsed();
                 println!("  ✅ {}: {:?} ({} 结果)", name, elapsed, results.len());
@@ -180,10 +181,18 @@ async fn test_search_engines_performance() {
     }
 
     println!("\n📊 性能测试总结:");
-    let successful = performance_data.iter().filter(|(_, _, _, s)| *s).collect::<Vec<_>>();
+    let successful = performance_data
+        .iter()
+        .filter(|(_, _, _, s)| *s)
+        .collect::<Vec<_>>();
     if !successful.is_empty() {
-        let avg_time: f64 = successful.iter().map(|(_, t, _, _)| *t).sum::<f64>() / successful.len() as f64;
+        let avg_time: f64 =
+            successful.iter().map(|(_, t, _, _)| *t).sum::<f64>() / successful.len() as f64;
         println!("  平均响应时间: {:.2}s", avg_time);
-        println!("  成功测试数: {}/{}", successful.len(), performance_data.len());
+        println!(
+            "  成功测试数: {}/{}",
+            successful.len(),
+            performance_data.len()
+        );
     }
 }

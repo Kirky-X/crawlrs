@@ -14,8 +14,8 @@ use crate::domain::services::rate_limiting_service::{
 };
 use crate::domain::services::relevance_scorer::RelevanceScorer;
 use crate::engines::router::EngineRouter;
-use crate::engines::traits::ScrapeRequest;
 use crate::engines::traits::EngineError;
+use crate::engines::traits::ScrapeRequest;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -675,11 +675,8 @@ impl SearchEngine for SmartSearchEngine {
         // 执行搜索，支持重试
         let scrape_response = loop {
             let timeout_duration = Duration::from_secs(self.config.timeout_seconds);
-            let scrape_result = tokio::time::timeout(
-                timeout_duration,
-                self.router.route(&scrape_request),
-            )
-            .await;
+            let scrape_result =
+                tokio::time::timeout(timeout_duration, self.router.route(&scrape_request)).await;
 
             match scrape_result {
                 Ok(Ok(response)) => {
@@ -861,7 +858,8 @@ mod tests {
         let mut bing_config = create_test_config();
         bing_config.engine_type = SearchEngineType::Bing;
         let bing_smart_engine = SmartSearchEngine::new(router, bing_config);
-        let bing_url = bing_smart_engine.build_search_url("machine learning", Some("en"), Some("US"));
+        let bing_url =
+            bing_smart_engine.build_search_url("machine learning", Some("en"), Some("US"));
         assert!(bing_url.contains("bing.com"));
         assert!(bing_url.contains("machine"));
         assert!(bing_url.contains("learning"));
