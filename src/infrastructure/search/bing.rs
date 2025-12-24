@@ -484,7 +484,10 @@ impl SearchEngine for BingSearchEngine {
         if let Some(config) = test_config {
             let test_results = create_search_results_from_config(&config);
             if !test_results.is_empty() {
-                info!("Using test results from config ({} results)", test_results.len());
+                info!(
+                    "Using test results from config ({} results)",
+                    test_results.len()
+                );
                 return Ok(test_results);
             }
         }
@@ -840,7 +843,10 @@ mod tests {
         std::env::remove_var("USE_TEST_DATA");
 
         let config = load_test_config();
-        assert!(config.is_none(), "Should return None when USE_TEST_DATA is not set");
+        assert!(
+            config.is_none(),
+            "Should return None when USE_TEST_DATA is not set"
+        );
     }
 
     /// Test search results creation from configuration
@@ -882,6 +888,9 @@ mod tests {
         let results = create_search_results_from_config(&config);
 
         assert_eq!(results.len(), 1);
-        assert!((results[0].score - 1.0).abs() < 0.001, "Default score should be 1.0");
+        assert!(
+            (results[0].score - 1.0).abs() < 0.001,
+            "Default score should be 1.0"
+        );
     }
 }
