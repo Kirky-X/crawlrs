@@ -29,13 +29,18 @@ async fn main() {
 
     let timeout_duration = Duration::from_secs(TIMEOUT_SECS);
 
-    match timeout(timeout_duration, run_engine_test_with_output(
-        "Sogou",
-        SogouSearchEngine::new(),
-        Some(TEST_KEYWORD),
-        TIMEOUT_SECS,
-        Some(RESULT_LIMIT),
-    )).await {
+    match timeout(
+        timeout_duration,
+        run_engine_test_with_output(
+            "Sogou",
+            SogouSearchEngine::new(),
+            Some(TEST_KEYWORD),
+            TIMEOUT_SECS,
+            Some(RESULT_LIMIT),
+        ),
+    )
+    .await
+    {
         Ok(Ok(result)) => {
             info!("");
             info!("[SUCCESS] Sogou 搜索成功完成");

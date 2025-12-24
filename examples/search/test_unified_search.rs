@@ -39,57 +39,89 @@ async fn main() {
 
     let timeout_duration = Duration::from_secs(ENGINE_TIMEOUT_SECS);
 
-    info!("[1/4] 测试 Google 搜索引擎 (超时 {} 秒)...", ENGINE_TIMEOUT_SECS);
+    info!(
+        "[1/4] 测试 Google 搜索引擎 (超时 {} 秒)...",
+        ENGINE_TIMEOUT_SECS
+    );
     let google_engine = GoogleSearchEngine::new();
-    match timeout(timeout_duration, run_engine_test_with_output(
-        "Google",
-        google_engine,
-        Some(TEST_KEYWORD),
-        ENGINE_TIMEOUT_SECS,
-        Some(RESULT_LIMIT),
-    )).await {
+    match timeout(
+        timeout_duration,
+        run_engine_test_with_output(
+            "Google",
+            google_engine,
+            Some(TEST_KEYWORD),
+            ENGINE_TIMEOUT_SECS,
+            Some(RESULT_LIMIT),
+        ),
+    )
+    .await
+    {
         Ok(result) => google_result = result,
         Err(_) => info!("[TIMEOUT] Google 搜索超时"),
     }
     info!("");
 
-    info!("[2/4] 测试 Bing 搜索引擎 (超时 {} 秒)...", ENGINE_TIMEOUT_SECS);
+    info!(
+        "[2/4] 测试 Bing 搜索引擎 (超时 {} 秒)...",
+        ENGINE_TIMEOUT_SECS
+    );
     let bing_engine = BingSearchEngine::new();
-    match timeout(timeout_duration, run_engine_test_with_output(
-        "Bing",
-        bing_engine,
-        Some(TEST_KEYWORD),
-        ENGINE_TIMEOUT_SECS,
-        Some(RESULT_LIMIT),
-    )).await {
+    match timeout(
+        timeout_duration,
+        run_engine_test_with_output(
+            "Bing",
+            bing_engine,
+            Some(TEST_KEYWORD),
+            ENGINE_TIMEOUT_SECS,
+            Some(RESULT_LIMIT),
+        ),
+    )
+    .await
+    {
         Ok(result) => bing_result = result,
         Err(_) => info!("[TIMEOUT] Bing 搜索超时"),
     }
     info!("");
 
-    info!("[3/4] 测试 Baidu 搜索引擎 (超时 {} 秒)...", ENGINE_TIMEOUT_SECS);
+    info!(
+        "[3/4] 测试 Baidu 搜索引擎 (超时 {} 秒)...",
+        ENGINE_TIMEOUT_SECS
+    );
     let baidu_engine = BaiduSearchEngine::new();
-    match timeout(timeout_duration, run_engine_test_with_output(
-        "Baidu",
-        baidu_engine,
-        Some(TEST_KEYWORD),
-        ENGINE_TIMEOUT_SECS,
-        Some(RESULT_LIMIT),
-    )).await {
+    match timeout(
+        timeout_duration,
+        run_engine_test_with_output(
+            "Baidu",
+            baidu_engine,
+            Some(TEST_KEYWORD),
+            ENGINE_TIMEOUT_SECS,
+            Some(RESULT_LIMIT),
+        ),
+    )
+    .await
+    {
         Ok(result) => baidu_result = result,
         Err(_) => info!("[TIMEOUT] Baidu 搜索超时"),
     }
     info!("");
 
-    info!("[4/4] 测试 Sogou 搜索引擎 (超时 {} 秒)...", ENGINE_TIMEOUT_SECS);
+    info!(
+        "[4/4] 测试 Sogou 搜索引擎 (超时 {} 秒)...",
+        ENGINE_TIMEOUT_SECS
+    );
     let sogou_engine = SogouSearchEngine::new();
-    match timeout(timeout_duration, run_engine_test_with_output(
-        "Sogou",
-        sogou_engine,
-        Some(TEST_KEYWORD),
-        ENGINE_TIMEOUT_SECS,
-        Some(RESULT_LIMIT),
-    )).await {
+    match timeout(
+        timeout_duration,
+        run_engine_test_with_output(
+            "Sogou",
+            sogou_engine,
+            Some(TEST_KEYWORD),
+            ENGINE_TIMEOUT_SECS,
+            Some(RESULT_LIMIT),
+        ),
+    )
+    .await
+    {
         Ok(result) => sogou_result = result,
         Err(_) => info!("[TIMEOUT] Sogou 搜索超时"),
     }
@@ -106,7 +138,12 @@ async fn main() {
     info!("==========================================");
 }
 
-fn print_summary(results: &[(&str, &Result<TestResult, crawlrs::domain::search::engine::SearchError>)]) {
+fn print_summary(
+    results: &[(
+        &str,
+        &Result<TestResult, crawlrs::domain::search::engine::SearchError>,
+    )],
+) {
     info!("");
     info!("==========================================");
     info!("测试结果汇总");
@@ -119,11 +156,10 @@ fn print_summary(results: &[(&str, &Result<TestResult, crawlrs::domain::search::
     for (name, result) in results {
         match result {
             Ok(test_result) => {
-                info!("  {}: 成功 {} 个, ✅ {} 个, ❌ {} 个",
-                    name,
-                    test_result.total,
-                    test_result.accessible,
-                    test_result.inaccessible);
+                info!(
+                    "  {}: 成功 {} 个, ✅ {} 个, ❌ {} 个",
+                    name, test_result.total, test_result.accessible, test_result.inaccessible
+                );
                 total_accessible += test_result.accessible;
                 total_inaccessible += test_result.inaccessible;
                 total_success += 1;
