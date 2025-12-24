@@ -6,6 +6,7 @@ authors = ["Kirky.X <Kirky-X@outlook.com>"]
 
 [features]
 default = []
+playwright = []
 
 [dependencies]
 # Async runtime and web framework
@@ -19,6 +20,7 @@ tower-http = { version = "0.6", features = ["trace"] }
 # Serialization and configuration
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 config = "0.15.19"
 
 # Error handling

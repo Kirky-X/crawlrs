@@ -52,6 +52,9 @@ dump.rdb
 data/
 storage/
 
+# Test data
+test-data/
+
 # Documentation files that should not be tracked
 docs/prd.md
 docs/task.md
