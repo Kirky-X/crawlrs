@@ -34,7 +34,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "logg
 
 # Database
 sea-orm = { version = "1.0", default-features = false, features = ["sqlx-postgres", "sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
-sqlx = { version = "0.7", default-features = false, features = ["postgres", "sqlite", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "sqlite", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
 migration = { path = "migration" }
 
 # Caching and state management
@@ -106,7 +106,7 @@ testcontainers = "0.23"
 futures = "0.3"
 tempfile = "3.8"
 uuid = { version = "1.0", features = ["v4"] }
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
 
 [[test]]
 name = "integration_tests"
