@@ -20,13 +20,17 @@ use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
+use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crawlrs::infrastructure::search::aggregator::SearchAggregator;
+use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
+use crawlrs::infrastructure::search::bing::BingSearchEngine;
 use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::{
     RateLimitingConfig, RateLimitingServiceImpl,
 };
@@ -42,6 +46,8 @@ use std::process::{Child, Command};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crawlrs::domain::services::team_service::TeamService;
+use crawlrs::infrastructure::geolocation::GeoLocationService;
 use crawlrs::utils::robots::RobotsChecker;
 
 use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
@@ -198,7 +204,7 @@ pub async fn create_test_app_with_rate_limit_options(
     let redis_client = RedisClient::new(&redis_url).await.unwrap();
 
     // Initialize Rate Limiter
-    let rate_limiter = Arc::new(RateLimiter::new(redis_client.clone(), 10)); // 10 RPM for tests
+    let rate_limiter = Arc::new(RateLimiter::new(redis_client.clone(), 1000)); // 1000 RPM for tests
 
     // Initialize other components
     let task_repo = Arc::new(TaskRepositoryImpl::new(
@@ -226,6 +232,7 @@ pub async fn create_test_app_with_rate_limit_options(
     let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db_pool.clone()));
     let webhook_event_repo = Arc::new(WebhookEventRepoImpl::new(db_pool.clone()));
     let webhook_repo = Arc::new(WebhookRepoImpl::new(db_pool.clone()));
+    let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
     let storage_repo = Some(Arc::new(LocalStorage::new("test_storage".to_string())));
 
     let reqwest_engine = Arc::new(ReqwestEngine);
@@ -239,13 +246,24 @@ pub async fn create_test_app_with_rate_limit_options(
     // 初始化搜索引擎
     let mut search_engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
     search_engines.push(Arc::new(GoogleSearchEngine::new()));
+    search_engines.push(Arc::new(BingSearchEngine::new()));
+    search_engines.push(Arc::new(BaiduSearchEngine::new()));
+    search_engines.push(Arc::new(SogouSearchEngine::new()));
     let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
     let search_engine_service: Arc<dyn SearchEngine> = search_aggregator;
 
-    // Set up mock LLM API server for testing
-    let mock_llm_response = serde_json::json!({
+    // Initialize TeamService
+    let geolocation_service = GeoLocationService::new();
+    let team_service = Arc::new(TeamService::new(
+        geolocation_service,
+        geo_restriction_repo.clone(),
+    ));
+
+    // Set up test LLM API server for testing
+    let test_llm_response = serde_json::json!({
         "id": "chatcmpl-test123",
         "object": "chat.completion",
+        "model": "gpt-3.5-turbo",
         "created": 1677652288,
         "choices": [{
             "index": 0,
@@ -262,30 +280,38 @@ pub async fn create_test_app_with_rate_limit_options(
         }
     });
 
-    let mock_llm_app = axum::Router::new().route(
+    let test_llm_app = axum::Router::new().route(
         "/chat/completions",
         axum::routing::post(move |axum::Json(_): axum::Json<serde_json::Value>| {
-            let resp = mock_llm_response.clone();
+            let resp = test_llm_response.clone();
             async move { axum::Json(resp) }
         }),
     );
 
-    let mock_llm_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mock_llm_addr = mock_llm_listener.local_addr().unwrap();
-    let mock_llm_url = format!("http://{}", mock_llm_addr);
+    let test_llm_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let test_llm_addr = test_llm_listener.local_addr().unwrap();
+    let test_llm_url = format!("http://{}", test_llm_addr);
 
     tokio::spawn(async move {
-        axum::serve(mock_llm_listener, mock_llm_app).await.unwrap();
+        axum::serve(test_llm_listener, test_llm_app).await.unwrap();
     });
 
-    // Wait for mock server to start
+    // Wait for test server to start
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    // Create custom settings for tests with mock LLM configuration
+    // 允许通过环境变量禁用 SSRF 保护（用于测试）
+    // 注意：在创建应用时，如果未设置该环境变量，则默认启用 SSRF 保护（即设置为 false 或不设置）
+    // 在 test_ssrf_protection 测试中，我们会手动设置为 "false" 来启用保护
+    // 在其他测试中，默认可能是禁用的（即 "true"），这取决于全局配置
+    if std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").is_err() {
+        std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "true");
+    }
+
+    // Create custom settings for tests with test LLM configuration
     let mut settings = Settings::new().unwrap();
     settings.rate_limiting.enabled = enable_rate_limiting; // 根据参数决定是否启用速率限制
     settings.llm.api_key = Some("test-api-key".to_string());
-    settings.llm.api_base_url = Some(mock_llm_url);
+    settings.llm.api_base_url = Some(test_llm_url);
     settings.llm.model = Some("gpt-3.5-turbo".to_string());
     let settings = Arc::new(settings);
 
@@ -312,9 +338,9 @@ pub async fn create_test_app_with_rate_limit_options(
         10,
     );
 
-    // Start 1 worker in the background
+    // Start 2 workers in the background
     if start_worker {
-        worker_manager.start_workers(1).await;
+        worker_manager.start_workers(2).await;
 
         // 启动 WebhookWorker
         let webhook_service = Arc::new(WebhookServiceImpl::new("test_secret".to_string()));
@@ -332,15 +358,25 @@ pub async fn create_test_app_with_rate_limit_options(
     };
 
     // Build the app router
-    let app = routes::routes()
-        .layer(axum::middleware::from_fn_with_state(
+    let app = routes::routes();
+
+    // 有条件地添加速率限制中间件（内层，后执行）
+    let app = if enable_rate_limiting {
+        app.layer(axum::middleware::from_fn_with_state(
             rate_limiter.clone(),
             distributed_rate_limit_middleware,
         ))
-        .layer(axum::middleware::from_fn_with_state(
-            auth_state,
-            auth_middleware,
-        ))
+    } else {
+        app
+    };
+
+    // 认证中间件（外层，先执行），确保 api_key 存在于请求扩展中供速率限制中间件使用
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        auth_state,
+        auth_middleware,
+    ));
+
+    let app = app
         .layer(Extension(queue))
         .layer(Extension(task_repo.clone()))
         .layer(Extension(rate_limiting_service))
@@ -348,10 +384,20 @@ pub async fn create_test_app_with_rate_limit_options(
         .layer(Extension(credits_repo))
         .layer(Extension(result_repo))
         .layer(Extension(webhook_repo))
+        .layer(Extension(geo_restriction_repo))
         .layer(Extension(redis_client.clone()))
         .layer(Extension(rate_limiter))
         .layer(Extension(settings))
-        .layer(Extension(search_engine_service)); // Use default settings for tests
+        .layer(Extension(search_engine_service))
+        .layer(Extension(team_service))
+        .layer(axum::middleware::from_fn(
+            |mut req: axum::extract::Request, next: axum::middleware::Next| async move {
+                req.extensions_mut().insert(axum::extract::ConnectInfo(
+                    std::net::SocketAddr::from(([127, 0, 0, 1], 8080)),
+                ));
+                next.run(req).await
+            },
+        ));
 
     let server = TestServer::new(app).unwrap();
 
