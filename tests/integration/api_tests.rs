@@ -992,7 +992,7 @@ async fn test_webhook_trigger() {
 
     assert_eq!(response.status_code(), StatusCode::CREATED);
     let task_response: serde_json::Value = response.json();
-    let task_id = task_response["id"].as_str().unwrap();
+    let _task_id = task_response["id"].as_str().unwrap();
 
     // Wait for the task to complete and webhook to be triggered
     // In a real integration test, we would start a local server to receive the webhook.
@@ -1006,7 +1006,7 @@ async fn test_webhook_trigger() {
     use crawlrs::infrastructure::database::entities::webhook_event;
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
-    let events = webhook_event::Entity::find()
+    let _events = webhook_event::Entity::find()
         .filter(webhook_event::Column::TeamId.eq(app.team_id))
         .all(app.db_pool.as_ref())
         .await

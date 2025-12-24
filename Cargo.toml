@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
 
+exclude = ["examples/mod.rs"]
+autoexamples = false
+
 [features]
 default = []
 playwright = []
@@ -119,3 +122,27 @@ harness = false
 [[bin]]
 name = "crawlrs"
 path = "src/main.rs"
+
+[[example]]
+name = "test_smart_search"
+path = "examples/search/test_smart_search.rs"
+
+[[example]]
+name = "test_baidu"
+path = "examples/search/test_baidu.rs"
+
+[[example]]
+name = "test_bing"
+path = "examples/search/test_bing.rs"
+
+[[example]]
+name = "test_google"
+path = "examples/search/test_google.rs"
+
+[[example]]
+name = "test_sogou"
+path = "examples/search/test_sogou.rs"
+
+[[example]]
+name = "test_unified_search"
+path = "examples/search/test_unified_search.rs"
