@@ -13,6 +13,7 @@ pub mod port_sniffer;
 /// 包括机器人检测、遥测监控等功能
 pub mod retry_policy;
 pub mod robots;
+pub mod search_test;
 pub mod telemetry;
 pub mod text_encoding;
 pub mod text_encoding_examples;
