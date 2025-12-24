@@ -22,20 +22,11 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
 pub const DEFAULT_KEYWORD: &str = "gemini-3-pro";
 pub const DEFAULT_RESULT_LIMIT: u32 = 10;
 
+#[derive(Default)]
 pub struct TestResult {
     pub accessible: usize,
     pub inaccessible: usize,
     pub total: usize,
-}
-
-impl Default for TestResult {
-    fn default() -> Self {
-        Self {
-            accessible: 0,
-            inaccessible: 0,
-            total: 0,
-        }
-    }
 }
 
 pub async fn run_engine_test_with_output<E: SearchEngine + Send + 'static>(
