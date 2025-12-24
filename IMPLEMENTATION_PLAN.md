@@ -1,104 +1,111 @@
-# 实施计划：统一搜索引擎使用智能路由
+# 实施计划：搜索引擎智能路由优化
 
 ## 目标
-将所有搜索引擎（Google、Bing、Baidu）统一通过 `EngineRouter` 进行路由，实现 PRD 中定义的智能路由功能。
+将搜索引擎实现统一到智能路由架构，通过 `EngineRouter` 实现引擎管理、健康检查、负载均衡和故障转移。
 
-## 当前状态
+## 推荐方案
 
-| 搜索引擎 | 当前实现 | 使用 EngineRouter |
-|---------|---------|------------------|
-| SmartSearchEngine | 封装 EngineRouter | ✅ 是 |
-| GoogleSearchEngine | 直接使用 Playwright + HTTP fallback | ❌ 否 |
-| BingSearchEngine | 直接使用 reqwest::Client | ❌ 否 |
-| BaiduSearchEngine | 直接使用 reqwest::Client | ❌ 否 |
+**选择方案二（智能路由实现）**：`SmartSearchEngine` + `EngineRouter`
 
-## 重构方案
+**理由**：
+- 架构先进：分层设计，职责清晰
+- 代码复用：共享路由、健康检查、负载均衡逻辑
+- 可靠性高：自动故障转移和健康恢复机制
+- 可扩展性：新增引擎只需实现 trait 并注册
 
-### 方案：创建统一的 SmartSearchEngine 变体
+## 分阶段迁移策略
 
-参考 `SmartSearchEngine` 的实现，为每个搜索引擎创建基于 EngineRouter 的封装：
+### 阶段一：功能完善（当前阶段）
+- [ ] 完善 SmartSearchEngine 功能覆盖
+- [ ] 添加速率限制、超时控制、测试数据加载
+- [ ] 完善搜索引擎工厂方法
+- [ ] 创建示例代码
 
-1. **GoogleSmartSearchEngine** - 使用 `EngineRouter`，需要 JS 支持
-2. **BingSmartSearchEngine** - 使用 `EngineRouter`，可选 JS
-3. **BaiduSmartSearchEngine** - 使用 `EngineRouter`，可选 JS
+### 阶段二：功能验证
+- [ ] 运行单元测试验证功能
+- [ ] 添加集成测试验证路由和故障转移
+- [ ] 对比性能指标
 
-### 关键变化
+### 阶段三：渐进式切换
+- [ ] 添加功能开关控制引擎选择
+- [ ] 监控新架构运行稳定性
+- [ ] 收集性能数据
 
-1. **移除直接 HTTP 客户端依赖** - 统一通过 EngineRouter 路由
-2. **保留 URL 构建逻辑** - 每个引擎保留其特定的 URL 构建逻辑
-3. **保留结果解析逻辑** - 保留每个搜索引擎的 HTML 解析逻辑
-4. **统一工厂函数** - 在 `mod.rs` 中导出统一的创建函数
+### 阶段四：代码精简
+- [ ] 评估废弃原始实现
+- [ ] 移除重复代码
+- [ ] 更新文档
 
-## 实施步骤
+## 架构对比
 
-### 步骤 1: 重构 GoogleSearchEngine
-- [ ] 添加 EngineRouter 依赖
-- [ ] 重构 search 方法使用 router.route()
-- [ ] 保留 URL 构建逻辑
-- [ ] 保留测试数据加载逻辑
-
-### 步骤 2: 重构 BingSearchEngine
-- [ ] 添加 EngineRouter 依赖
-- [ ] 重构 search 方法使用 router.route()
-- [ ] 保留 URL 构建逻辑
-- [ ] 保留测试数据加载逻辑
-
-### 步骤 3: 重构 BaiduSearchEngine
-- [ ] 添加 EngineRouter 依赖
-- [ ] 重构 search 方法使用 router.route()
-- [ ] 保留 URL 构建逻辑
-- [ ] 保留测试数据加载逻辑
-
-### 步骤 4: 更新 mod.rs
-- [ ] 导出统一的工厂函数
-- [ ] 添加 EngineRouter 初始化示例
-
-### 步骤 5: 测试验证
-- [ ] 运行单元测试
-- [ ] 运行集成测试
-- [ ] 验证编译通过
-
-## 技术细节
-
-### 引擎选择策略
-
-| 搜索引擎 | needs_js | needs_screenshot | needs_tls_fingerprint |
-|---------|----------|-----------------|---------------------|
-| Google | true | false | false |
-| Bing | false | false | false |
-| Baidu | false | false | false |
-
-### ScrapeRequest 配置示例
-
-```rust
-ScrapeRequest {
-    url: search_url,
-    headers: HashMap::new(),
-    timeout: Duration::from_secs(30),
-    needs_js: true,        // Google 需要 JS
-    needs_screenshot: false,
-    screenshot_config: None,
-    mobile: false,
-    proxy: None,
-    skip_tls_verification: false,
-    needs_tls_fingerprint: false,
-    use_fire_engine: false,
-    actions: Vec::new(),
-    sync_wait_ms: 0,
-}
+### 原始实现（当前）
 ```
+SearchEngine Trait
+├── GoogleSearchEngine (独立 HTTP 客户端)
+├── BingSearchEngine (独立 HTTP 客户端)
+└── BaiduSearchEngine (独立 HTTP 客户端)
+```
+
+### 智能路由实现（目标）
+```
+SmartSearchEngine (封装 EngineRouter)
+└── EngineRouter
+    ├── 搜索引擎注册表
+    ├── 健康状态管理
+    ├── 负载均衡策略
+    └── 故障转移机制
+```
+
+## 实施任务
+
+### 任务 1: 完善 SmartSearchEngine 功能
+- [ ] 添加速率限制支持（参考 bing.rs 的 rate_limit）
+- [ ] 添加测试数据加载逻辑
+- [ ] 添加超时控制
+- [ ] 完善错误处理
+
+### 任务 2: 完善搜索引擎工厂
+- [ ] 添加 `create_engine_router()` 工厂方法
+- [ ] 添加引擎注册辅助函数
+- [ ] 导出统一的创建接口
+
+### 任务 3: 创建示例代码
+- [ ] 创建 `smart_search_demo.rs`
+- [ ] 展示基本搜索用法
+- [ ] 展示健康监控用法
+- [ ] 展示故障转移行为
+
+### 任务 4: 验证测试
+- [ ] 运行现有测试确保无回归
+- [ ] 添加新功能的单元测试
+- [ ] 添加集成测试
+
+## 关键文件
+
+| 文件 | 作用 |
+|-----|-----|
+| `src/infrastructure/search/smart_search.rs` | 智能搜索引擎主实现 |
+| `src/infrastructure/search/search_engine_router.rs` | 搜索引擎路由器 |
+| `src/infrastructure/search/factory.rs` | 搜索引擎工厂 |
+| `src/infrastructure/search/mod.rs` | 模块导出 |
+
+## 验收标准
+
+1. SmartSearchEngine 功能完整（速率限制、测试数据、超时控制）
+2. 所有现有测试通过
+3. 示例代码可正常运行
+4. 文档更新完成
 
 ## 风险与缓解
 
 | 风险 | 缓解措施 |
 |-----|---------|
-| 现有功能退化 | 保留原有实现作为备选，测试验证 |
-| 性能下降 | EngineRouter 已有性能优化机制 |
-| 测试数据失效 | 保留测试数据加载逻辑 |
+| 功能覆盖不全 | 对比原始实现补充功能 |
+| 性能下降 | 性能测试对比验证 |
+| 测试数据失效 | 复用现有测试配置 |
 
-## 验收标准
+## 更新日志
 
-1. 所有搜索引擎通过 EngineRouter 进行路由
-2. 保留原有功能（URL 构建、结果解析、测试数据）
-3. 编译通过，所有测试通过
-4. 性能不低于原有实现
+| 日期 | 更新内容 |
+|-----|---------|
+| 2025-12-24 | 制定分阶段迁移策略，选择智能路由方案 |
