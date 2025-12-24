@@ -3,7 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crate::application::usecases::create_scrape::CreateScrapeUseCase;
+use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;

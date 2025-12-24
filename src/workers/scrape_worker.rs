@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlConfigDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
-use crate::application::usecases::create_scrape::CreateScrapeUseCase;
+use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
 use crate::config::settings::Settings;
 use crate::domain::models::crawl::CrawlStatus;
 use crate::domain::models::scrape_result::ScrapeResult;

@@ -245,7 +245,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let create_scrape_use_case = Arc::new(
-        crawlrs::application::usecases::create_scrape::CreateScrapeUseCase::new(router.clone()),
+        crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(router.clone()),
     );
     let webhook_event_repository = Arc::new(WebhookEventRepoImpl::new(db.clone()));
     let webhook_repository = Arc::new(WebhookRepoImpl::new(db.clone()));

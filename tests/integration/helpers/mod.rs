@@ -9,7 +9,7 @@
 /// 包括测试应用创建、数据库设置、依赖注入等功能
 use axum::Extension;
 use axum_test::TestServer;
-use crawlrs::application::usecases::create_scrape::CreateScrapeUseCase;
+use crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase;
 use crawlrs::config::settings::Settings;
 use crawlrs::domain::search::engine::SearchEngine;
 use crawlrs::domain::services::rate_limiting_service::RateLimitingService;

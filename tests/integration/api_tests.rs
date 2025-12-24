@@ -702,7 +702,7 @@ async fn test_distributed_rate_limiting() {
 async fn create_test_app_with_low_rate_limit() -> super::helpers::TestApp {
     use axum::Extension;
     use axum_test::TestServer;
-    use crawlrs::application::usecases::create_scrape::CreateScrapeUseCase;
+    use crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase;
     use crawlrs::config::settings::Settings;
     use crawlrs::domain::search::engine::SearchEngine;
     use crawlrs::domain::services::team_service::TeamService;
