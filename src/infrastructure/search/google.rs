@@ -903,7 +903,7 @@ mod tests {
                         r.title.contains("鸿蒙")
                             || r.title.contains("星光")
                             || r.title.contains("大赏")
-                            || r.description.as_ref().map_or(false, |d| {
+                            || r.description.as_ref().is_some_and(|d| {
                                 d.contains("鸿蒙") || d.contains("星光") || d.contains("大赏")
                             })
                     });

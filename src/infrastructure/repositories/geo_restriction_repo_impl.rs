@@ -187,7 +187,7 @@ mod tests {
 
         let retrieved_restrictions = repo.get_team_restrictions(team_id).await.unwrap();
 
-        assert_eq!(retrieved_restrictions.enable_geo_restrictions, true);
+        assert!(retrieved_restrictions.enable_geo_restrictions);
         assert_eq!(
             retrieved_restrictions.allowed_countries,
             Some(vec!["US".to_string(), "GB".to_string()])

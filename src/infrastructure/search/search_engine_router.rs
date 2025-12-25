@@ -685,7 +685,7 @@ mod tests {
             ..Default::default()
         };
         let router = SearchEngineRouter::with_config(config.clone());
-        assert_eq!(router.config.enable_load_balancing, true);
+        assert!(router.config.enable_load_balancing);
     }
 
     #[tokio::test]
