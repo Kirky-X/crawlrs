@@ -43,9 +43,9 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
 use uuid::Uuid;
 
-pub mod search_engine_helpers;
 pub mod browser_helpers;
 pub mod google_helpers;
+pub mod search_engine_helpers;
 
 pub struct TestApp {
     pub server: TestServer,
@@ -115,7 +115,8 @@ async fn setup_test_app_internal(
 
     let start_port = rand::rng().random_range(10000..60000);
     let result =
-        crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true, 5).unwrap();
+        crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true, 5)
+            .unwrap();
     let redis_port = result.port;
     let redis_process = Command::new("redis-server")
         .arg("--port")
@@ -245,10 +246,9 @@ async fn setup_test_app_internal(
         .layer(Extension(team_service))
         .layer(axum::middleware::from_fn(
             |mut req: axum::extract::Request, next: axum::middleware::Next| async move {
-                req.extensions_mut().insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
-                    [127, 0, 0, 1],
-                    8080,
-                ))));
+                req.extensions_mut().insert(axum::extract::ConnectInfo(
+                    std::net::SocketAddr::from(([127, 0, 0, 1], 8080)),
+                ));
                 next.run(req).await
             },
         ));

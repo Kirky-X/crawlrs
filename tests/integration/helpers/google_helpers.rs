@@ -44,7 +44,14 @@ impl FlareSolverrGoogleEngine {
         }
     }
 
-    pub async fn search(&self, query: &str, max_results: usize) -> Result<Vec<crawlrs::domain::models::search_result::SearchResult>, crawlrs::domain::search::engine::SearchError> {
+    pub async fn search(
+        &self,
+        query: &str,
+        max_results: usize,
+    ) -> Result<
+        Vec<crawlrs::domain::models::search_result::SearchResult>,
+        crawlrs::domain::search::engine::SearchError,
+    > {
         let url = format!(
             "https://www.google.com/search?q={}&num={}",
             urlencoding::encode(query),
@@ -60,30 +67,48 @@ impl FlareSolverrGoogleEngine {
             }
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/v1", self.flaresolverr_url))
             .json(&request)
             .send()
             .await
-            .map_err(|e| crawlrs::domain::search::engine::SearchError::NetworkError(e.to_string()))?;
+            .map_err(|e| {
+                crawlrs::domain::search::engine::SearchError::NetworkError(e.to_string())
+            })?;
 
-        let json_response: serde_json::Value = response.json().await
-            .map_err(|e| crawlrs::domain::search::engine::SearchError::NetworkError(e.to_string()))?;
+        let json_response: serde_json::Value = response.json().await.map_err(|e| {
+            crawlrs::domain::search::engine::SearchError::NetworkError(e.to_string())
+        })?;
 
         if json_response["status"] == "ok" {
-            let html = json_response["solution"]["response"].as_str()
-                .ok_or_else(|| crawlrs::domain::search::engine::SearchError::NetworkError("No response content".to_string()))?
+            let html = json_response["solution"]["response"]
+                .as_str()
+                .ok_or_else(|| {
+                    crawlrs::domain::search::engine::SearchError::NetworkError(
+                        "No response content".to_string(),
+                    )
+                })?
                 .to_string();
 
             self.parse_search_results(&html)
         } else {
             Err(crawlrs::domain::search::engine::SearchError::EngineError(
-                json_response["message"].as_str().unwrap_or("Unknown error").to_string()
+                json_response["message"]
+                    .as_str()
+                    .unwrap_or("Unknown error")
+                    .to_string(),
             ))
         }
     }
 
-    fn parse_search_results(&self, html: &str) -> Result<Vec<crawlrs::domain::models::search_result::SearchResult>, crawlrs::domain::search::engine::SearchError> {
+    fn parse_search_results(
+        &self,
+        html: &str,
+    ) -> Result<
+        Vec<crawlrs::domain::models::search_result::SearchResult>,
+        crawlrs::domain::search::engine::SearchError,
+    > {
         use scraper::{Html, Selector};
 
         let document = Html::parse_document(html);
@@ -96,15 +121,19 @@ impl FlareSolverrGoogleEngine {
         for (idx, element) in document.select(&title_selector).enumerate().take(10) {
             let title = element.text().collect::<String>();
 
-            if let Some(link_elem) = element.ancestors()
+            if let Some(link_elem) = element
+                .ancestors()
                 .find(|anc| anc.value().as_element().is_some_and(|e| e.name() == "a"))
             {
-                let link = link_elem.value().as_element()
+                let link = link_elem
+                    .value()
+                    .as_element()
                     .and_then(|e| e.attr("href"))
                     .map(|s| s.to_string())
                     .unwrap_or_default();
 
-                let description = document.select(&snippet_selector)
+                let description = document
+                    .select(&snippet_selector)
                     .nth(idx)
                     .map(|e| e.text().collect::<String>())
                     .unwrap_or_default();

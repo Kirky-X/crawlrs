@@ -235,7 +235,8 @@ async fn test_search_engines_simple_mode() {
 async fn test_real_search_engines_connectivity() {
     println!("🚀 开始真实搜索引擎连接性测试，关键词: rust programming language");
 
-    let results = run_concurrent_search_tests("rust programming language", 5, 60, TestMode::Real).await;
+    let results =
+        run_concurrent_search_tests("rust programming language", 5, 60, TestMode::Real).await;
     generate_test_report(&results);
 
     println!("✅ 真实搜索引擎连接性测试完成");

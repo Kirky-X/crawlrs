@@ -3,7 +3,9 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use super::helpers::{create_test_app, create_test_app_with_low_rate_limit, create_test_app_with_rate_limit_options};
+use super::helpers::{
+    create_test_app, create_test_app_with_low_rate_limit, create_test_app_with_rate_limit_options,
+};
 use axum::http::StatusCode;
 use crawlrs::infrastructure::database::entities::task;
 use crawlrs::utils::telemetry::init_telemetry;
@@ -62,10 +64,7 @@ async fn test_scrape_rate_limit() {
 
     // Clean up any existing rate limit keys for this API key
     let prefix = format!("rate_limit:{}", app.api_key);
-    let keys: Vec<String> = app.redis
-        .scan_pattern(&prefix)
-        .await
-        .unwrap_or_default();
+    let keys: Vec<String> = app.redis.scan_pattern(&prefix).await.unwrap_or_default();
     for key in keys {
         let _: () = app.redis.del(&key).await.unwrap();
     }
@@ -846,7 +845,8 @@ async fn test_webhook_trigger() {
         .await;
 
     assert!(
-        webhook_response.status_code() == StatusCode::CREATED || webhook_response.status_code() == StatusCode::ACCEPTED,
+        webhook_response.status_code() == StatusCode::CREATED
+            || webhook_response.status_code() == StatusCode::ACCEPTED,
         "Expected 201 or 202, got {}",
         webhook_response.status_code()
     );
@@ -1081,7 +1081,8 @@ async fn test_extract_basic() {
         .await;
 
     assert!(
-        response.status_code() == StatusCode::CREATED || response.status_code() == StatusCode::ACCEPTED,
+        response.status_code() == StatusCode::CREATED
+            || response.status_code() == StatusCode::ACCEPTED,
         "Expected 201 or 202, got {}",
         response.status_code()
     );

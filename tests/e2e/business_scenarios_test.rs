@@ -14,10 +14,7 @@ async fn test_ecommerce_product_monitoring_scenario() {
     let app = create_test_app().await;
 
     // Scenario: Monitor product prices across multiple e-commerce sites
-    let product_urls = [
-        "https://httpbin.org/html",
-        "https://httpbin.org/json",
-    ];
+    let product_urls = ["https://httpbin.org/html", "https://httpbin.org/json"];
 
     // Step 1: Create monitoring tasks with specific selectors
     let mut task_ids = Vec::new();

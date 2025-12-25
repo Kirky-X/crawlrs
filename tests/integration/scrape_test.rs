@@ -32,8 +32,14 @@ async fn test_scrape_real_website() {
         }))
         .await;
 
-    if response.status_code() != StatusCode::CREATED && response.status_code() != StatusCode::ACCEPTED {
-        panic!("Failed to create task. Status: {}, Body: {:?}", response.status_code(), response.json::<serde_json::Value>());
+    if response.status_code() != StatusCode::CREATED
+        && response.status_code() != StatusCode::ACCEPTED
+    {
+        panic!(
+            "Failed to create task. Status: {}, Body: {:?}",
+            response.status_code(),
+            response.json::<serde_json::Value>()
+        );
     }
 
     let task_response: serde_json::Value = response.json();
@@ -71,5 +77,9 @@ async fn test_scrape_real_website() {
         sleep(Duration::from_secs(1)).await;
     }
 
-    assert!(task_completed, "Task did not complete in time (45s). Last status: {}", last_status);
+    assert!(
+        task_completed,
+        "Task did not complete in time (45s). Last status: {}",
+        last_status
+    );
 }

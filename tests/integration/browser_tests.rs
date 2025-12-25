@@ -10,11 +10,7 @@ use crawlrs::engines::traits::ScraperEngine;
 
 pub async fn test_simple_http_page() -> bool {
     println!("\n1. 测试访问 httpbin.org...");
-    let request = create_scrape_request(
-        "https://httpbin.org/html".to_string(),
-        false,
-        15,
-    );
+    let request = create_scrape_request("https://httpbin.org/html".to_string(), false, 15);
 
     match PlaywrightEngine.scrape(&request).await {
         Ok(response) => {
@@ -35,11 +31,7 @@ pub async fn test_simple_http_page() -> bool {
 
 pub async fn test_example_com(needs_js: bool, timeout_secs: u64) -> bool {
     println!("\n测试访问 example.com（不需要JS）...");
-    let request = create_scrape_request(
-        "https://example.com".to_string(),
-        needs_js,
-        timeout_secs,
-    );
+    let request = create_scrape_request("https://example.com".to_string(), needs_js, timeout_secs);
 
     match PlaywrightEngine.scrape(&request).await {
         Ok(response) => {
@@ -61,11 +53,8 @@ pub async fn test_example_com(needs_js: bool, timeout_secs: u64) -> bool {
 #[allow(dead_code)]
 pub async fn test_google_search(needs_js: bool, timeout_secs: u64) -> bool {
     println!("\n测试访问 Google（需要JS）...");
-    let request = create_scrape_request(
-        "https://www.google.com".to_string(),
-        needs_js,
-        timeout_secs,
-    );
+    let request =
+        create_scrape_request("https://www.google.com".to_string(), needs_js, timeout_secs);
 
     match PlaywrightEngine.scrape(&request).await {
         Ok(response) => {
@@ -85,7 +74,10 @@ pub async fn test_google_search(needs_js: bool, timeout_secs: u64) -> bool {
 }
 
 pub async fn test_google_search_with_query(query: &str, timeout_secs: u64) -> bool {
-    let url = format!("https://www.google.com/search?q={}", query.replace(' ', "+"));
+    let url = format!(
+        "https://www.google.com/search?q={}",
+        query.replace(' ', "+")
+    );
     println!("\n测试访问Google搜索: {}...", query);
     let request = create_scrape_request(url, true, timeout_secs);
 

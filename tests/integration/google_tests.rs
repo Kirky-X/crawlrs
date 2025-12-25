@@ -3,11 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use super::helpers::google_helpers::{
-    create_google_engine,
-    get_chrome_ws_url,
-    set_chrome_ws_url,
-};
+use super::helpers::google_helpers::{create_google_engine, get_chrome_ws_url, set_chrome_ws_url};
 use crawlrs::domain::search::engine::SearchEngine;
 use crawlrs::infrastructure::search::google::GoogleSearchEngine;
 use reqwest;
@@ -86,7 +82,10 @@ async fn test_flaresolverr_google_request(client: &reqwest::Client, query: &str)
 async fn test_google_with_google_engine(google_engine: &GoogleSearchEngine, query: &str) -> bool {
     println!("\n🔍 搜索关键词: {}", query);
 
-    match google_engine.search(query, 3, Some("zh-CN"), Some("CN")).await {
+    match google_engine
+        .search(query, 3, Some("zh-CN"), Some("CN"))
+        .await
+    {
         Ok(results) => {
             println!("✓ 搜索成功！找到 {} 个结果", results.len());
 
@@ -107,10 +106,16 @@ async fn test_google_with_google_engine(google_engine: &GoogleSearchEngine, quer
     }
 }
 
-async fn test_flaresolverr_google_engine(flaresolverr_engine: &FlareSolverrGoogleEngine, query: &str) -> bool {
+async fn test_flaresolverr_google_engine(
+    flaresolverr_engine: &FlareSolverrGoogleEngine,
+    query: &str,
+) -> bool {
     println!("\n🔍 使用FlareSolverr搜索关键词: {}", query);
 
-    match flaresolverr_engine.search(query, 5, Some("en"), Some("US")).await {
+    match flaresolverr_engine
+        .search(query, 5, Some("en"), Some("US"))
+        .await
+    {
         Ok(results) => {
             println!("✓ 搜索成功！找到 {} 个结果", results.len());
 
@@ -157,22 +162,24 @@ impl FlareSolverrGoogleEngine {
             }
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/v1", self.flaresolverr_url))
             .json(&request)
             .send()
             .await
             .map_err(|e| e.to_string())?;
 
-        let json_response: serde_json::Value = response.json().await
-            .map_err(|e| e.to_string())?;
+        let json_response: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
 
         if json_response["status"] == "ok" {
-            Ok(json_response["solution"]["response"].as_str()
+            Ok(json_response["solution"]["response"]
+                .as_str()
                 .ok_or_else(|| "No response content".to_string())?
                 .to_string())
         } else {
-            Err(json_response["message"].as_str()
+            Err(json_response["message"]
+                .as_str()
                 .unwrap_or("Unknown error")
                 .to_string())
         }
@@ -187,14 +194,19 @@ impl SearchEngine for FlareSolverrGoogleEngine {
         max_results: u32,
         _lang: Option<&str>,
         _country: Option<&str>,
-    ) -> Result<Vec<crawlrs::domain::models::search_result::SearchResult>, crawlrs::domain::search::engine::SearchError> {
+    ) -> Result<
+        Vec<crawlrs::domain::models::search_result::SearchResult>,
+        crawlrs::domain::search::engine::SearchError,
+    > {
         let url = format!(
             "https://www.google.com/search?q={}&num={}",
             query.replace(' ', "+"),
             max_results
         );
 
-        let html = self.flaresolverr_request(&url).await
+        let html = self
+            .flaresolverr_request(&url)
+            .await
             .map_err(crawlrs::domain::search::engine::SearchError::NetworkError)?;
 
         let results = self.parse_results(&html);
@@ -207,7 +219,10 @@ impl SearchEngine for FlareSolverrGoogleEngine {
 }
 
 impl FlareSolverrGoogleEngine {
-    fn parse_results(&self, html: &str) -> Vec<crawlrs::domain::models::search_result::SearchResult> {
+    fn parse_results(
+        &self,
+        html: &str,
+    ) -> Vec<crawlrs::domain::models::search_result::SearchResult> {
         use scraper::{Html, Selector};
         let document = Html::parse_document(html);
         let title_selector = Selector::parse("h3").unwrap();
@@ -224,7 +239,8 @@ impl FlareSolverrGoogleEngine {
                         let url = href.trim_start_matches("/url?q=").to_string();
                         let url = url.split('&').next().unwrap_or(href).to_string();
 
-                        let description = title.select(&snippet_selector)
+                        let description = title
+                            .select(&snippet_selector)
                             .next()
                             .map(|el| el.text().collect::<String>())
                             .unwrap_or_default();
@@ -343,7 +359,10 @@ async fn test_google_multiple_queries() {
     ];
 
     for (query, lang, country) in test_cases {
-        println!("\n🔍 搜索关键词: {} (lang={:?}, country={:?})", query, lang, country);
+        println!(
+            "\n🔍 搜索关键词: {} (lang={:?}, country={:?})",
+            query, lang, country
+        );
 
         match google_engine.search(query, 5, lang, country).await {
             Ok(results) => {

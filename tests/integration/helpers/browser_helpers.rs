@@ -7,11 +7,7 @@ use crawlrs::engines::playwright_engine::PlaywrightEngine;
 use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
 use std::time::Duration;
 
-pub fn create_scrape_request(
-    url: String,
-    needs_js: bool,
-    timeout_secs: u64,
-) -> ScrapeRequest {
+pub fn create_scrape_request(url: String, needs_js: bool, timeout_secs: u64) -> ScrapeRequest {
     ScrapeRequest {
         url,
         headers: std::collections::HashMap::new(),
