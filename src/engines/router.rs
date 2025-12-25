@@ -479,10 +479,12 @@ mod tests {
         let engines: Vec<Arc<dyn ScraperEngine>> = vec![];
         let router = EngineRouter::new(engines);
 
-        let mut stats = EngineStats::default();
-        stats.success_rate = 0.9;
-        stats.avg_response_time = Duration::from_millis(200);
-        stats.usage_count = 10;
+        let stats = EngineStats {
+            success_rate: 0.9,
+            avg_response_time: Duration::from_millis(200),
+            usage_count: 10,
+            last_used: None,
+        };
 
         let score = router.calculate_engine_score(1.0, &stats);
         assert!(score > 0.8 && score <= 1.0);
