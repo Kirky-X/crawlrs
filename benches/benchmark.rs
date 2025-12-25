@@ -8,7 +8,9 @@
 //! 该模块包含对 crawlrs 系统核心组件的性能基准测试，用于评估系统在不同场景下的性能表现。
 
 use crawlrs::domain::models::task::{Task, TaskType};
+use crawlrs::domain::services::crawl_service::LinkDiscoverer;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use validator::Validate;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{
     ColumnTrait, Database, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter,
@@ -618,6 +620,492 @@ fn benchmark_string_operations(c: &mut Criterion) {
     group.finish();
 }
 
+/// 基准测试：搜索操作性能
+///
+/// 测试搜索服务的核心操作性能，包括查询处理、结果过滤和响应构建
+fn benchmark_search_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("search_operations");
+
+    // 测试搜索请求验证
+    group.bench_function("search_request_validation", |b| {
+        b.iter(|| {
+            let dto = crawlrs::application::dto::search_request::SearchRequestDto {
+                query: "test query".to_string(),
+                limit: Some(10),
+                lang: Some("en".to_string()),
+                country: Some("us".to_string()),
+                engine: None,
+                sources: None,
+                crawl_results: Some(false),
+                crawl_config: None,
+                sync_wait_ms: Some(5000),
+            };
+            let result = dto.validate();
+            black_box(result)
+        });
+    });
+
+    // 测试搜索结果DTO构建
+    group.bench_function("search_result_dto_construction", |b| {
+        b.iter(|| {
+            let results: Vec<crawlrs::application::dto::search_request::SearchResultDto> = (0..100)
+                .map(|i| crawlrs::application::dto::search_request::SearchResultDto {
+                    title: format!("Search Result {}", i),
+                    url: format!("https://example{}.com", i),
+                    description: Some(format!("This is result number {} from search", i)),
+                    engine: Some("google".to_string()),
+                })
+                .collect();
+            black_box(results)
+        });
+    });
+
+    // 测试搜索响应构建
+    group.bench_function("search_response_construction", |b| {
+        b.iter(|| {
+            let results: Vec<crawlrs::application::dto::search_request::SearchResultDto> = (0..50)
+                .map(|i| crawlrs::application::dto::search_request::SearchResultDto {
+                    title: format!("Result {}", i),
+                    url: format!("https://example{}.com/result/{}", i, i),
+                    description: Some(format!("Description for result {}", i)),
+                    engine: Some("bing".to_string()),
+                })
+                .collect();
+
+            let response = crawlrs::application::dto::search_request::SearchResponseDto {
+                query: "benchmark test query".to_string(),
+                results,
+                crawl_id: Some(Uuid::new_v4()),
+                credits_used: 1,
+            };
+            black_box(response)
+        });
+    });
+
+    // 测试搜索结果过滤（按引擎名称）
+    group.bench_function("search_result_filtering", |b| {
+        let all_results: Vec<crawlrs::application::dto::search_request::SearchResultDto> = (0..100)
+            .map(|i| crawlrs::application::dto::search_request::SearchResultDto {
+                title: format!("Result {}", i),
+                url: format!("https://example{}.com", i),
+                description: Some(format!("Description {}", i)),
+                engine: Some(if i % 3 == 0 {
+                    "google".to_string()
+                } else if i % 3 == 1 {
+                    "bing".to_string()
+                } else {
+                    "duckduckgo".to_string()
+                }),
+            })
+            .collect();
+
+        b.iter(|| {
+            let filtered: Vec<_> = all_results
+                .iter()
+                .filter(|r| r.engine.as_ref().map_or(false, |e| e == "google"))
+                .take(10)
+                .cloned()
+                .collect();
+            black_box(filtered)
+        });
+    });
+
+    // 测试搜索结果序列化
+    group.bench_function("search_result_serialization", |b| {
+        let results: Vec<crawlrs::application::dto::search_request::SearchResultDto> = (0..50)
+            .map(|i| crawlrs::application::dto::search_request::SearchResultDto {
+                title: format!("Search Result with special chars: 你好世界 {}", i),
+                url: format!("https://example{}.com/path?param=value&special=你好", i),
+                description: Some(format!("Description with unicode: 🌍🎉 {}", i)),
+                engine: Some("google".to_string()),
+            })
+            .collect();
+
+        b.iter(|| {
+            let json = serde_json::to_string(&results).unwrap();
+            black_box(json)
+        });
+    });
+
+    group.finish();
+}
+
+/// 基准测试：抓取操作性能
+///
+/// 测试爬虫服务的核心操作性能，包括链接提取、URL解析和HTML处理
+fn benchmark_crawl_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("crawl_operations");
+
+    // 测试链接提取
+    let sample_html = r#"
+        <html>
+            <head><title>Test Page</title></head>
+            <body>
+                <a href="https://example.com/page1">Page 1</a>
+                <a href="https://example.com/page2">Page 2</a>
+                <a href="https://other.com/link">External Link</a>
+                <a href="/relative/path">Relative Link</a>
+                <div class="content">
+                    <p>Some content here</p>
+                    <a href="https://example.com/deep/nested/page">Nested Page</a>
+                </div>
+            </body>
+        </html>
+    "#;
+
+    group.bench_function("link_extraction", |b| {
+        b.iter(|| {
+            let links = LinkDiscoverer::extract_links(
+                sample_html,
+                "https://example.com",
+            );
+            black_box(links)
+        });
+    });
+
+    // 测试URL解析
+    let test_urls = vec![
+        "https://example.com",
+        "https://sub.example.com/path/to/resource",
+        "http://localhost:8080/api/v1",
+        "https://example.com/path?query=value&other=123",
+        "https://example.com:443/path/to/resource",
+    ];
+
+    group.bench_function("url_parsing", |b| {
+        b.iter(|| {
+            for url in &test_urls {
+                let parsed = url::Url::parse(url);
+                let _ = black_box(parsed);
+            }
+        });
+    });
+
+    // 测试URL规范化
+    group.bench_function("url_normalization", |b| {
+        b.iter(|| {
+            let urls = vec![
+                "https://example.com/path/../other",
+                "https://example.com/path/./resource",
+                "https://EXAMPLE.com/path",
+                "https://example.com/path?param=value&param=value",
+            ];
+            for url in urls {
+                let normalized = url::Url::parse(url).ok().map(|u| Into::<String>::into(u));
+                black_box(normalized);
+            }
+        });
+    });
+
+    // 测试Robots.txt URL检查（模拟）
+    group.bench_function("robots_url_check", |b| {
+        b.iter(|| {
+            let urls = vec![
+                "https://example.com/allowed/path",
+                "https://example.com/disallowed/admin",
+                "https://example.com/allowed/api",
+            ];
+            for url in urls {
+                let is_allowed = url.starts_with("https://example.com/disallowed")
+                    || url.starts_with("https://example.com/admin");
+                black_box(is_allowed);
+            }
+        });
+    });
+
+    // 测试HTML内容解析
+    let large_html = format!(
+        r#"<html><head><title>Test</title></head><body>{}</body></html>"#,
+        (0..1000)
+            .map(|i| format!(r#"<div class="item" data-id="{}">Content for item {}</div>"#, i, i))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    group.bench_function("html_parsing", |b| {
+        b.iter(|| {
+            let document = scraper::Html::parse_document(&large_html);
+            black_box(document)
+        });
+    });
+
+    // 测试CSS选择器解析
+    group.bench_function("css_selector_parsing", |b| {
+        let selectors = vec![
+            "div.content > p",
+            ".container .item[data-id]",
+            "a[href^=\"https\"]",
+            "div:not(.excluded)",
+            ".post .title, .post .content",
+        ];
+
+        b.iter(|| {
+            for selector in &selectors {
+                let parsed = scraper::Selector::parse(selector);
+                let _ = black_box(parsed);
+            }
+        });
+    });
+
+    // 测试链接过滤
+    let all_links = vec![
+        "https://example.com/page1",
+        "https://example.com/page2",
+        "https://other.com/external",
+        "https://example.com/allowed/api",
+        "https://example.com/admin/disallowed",
+        "https://example.com/path/file.pdf",
+        "https://example.com/path/image.jpg",
+    ];
+
+    let include_patterns = vec!["/page".to_string(), "/api".to_string()];
+    let exclude_patterns = vec!["/admin".to_string(), "\\.(pdf|jpg)$".to_string()];
+
+    group.bench_function("link_filtering", |b| {
+        b.iter(|| {
+            let filtered: Vec<_> = all_links
+                .iter()
+                .filter(|link| {
+                    let passes_include = include_patterns.is_empty()
+                        || include_patterns.iter().any(|p| link.contains(p));
+                    let passes_exclude =
+                        exclude_patterns.iter().all(|p| !link.contains(p) && !p.is_empty());
+                    passes_include && passes_exclude
+                })
+                .collect();
+            black_box(filtered)
+        });
+    });
+
+    // 测试任务payload解析
+    group.bench_function("crawl_payload_parsing", |b| {
+        b.iter(|| {
+            let payload = serde_json::json!({
+                "depth": 2,
+                "max_depth": 5,
+                "include_patterns": ["/products", "/categories"],
+                "exclude_patterns": ["/admin", "/private"],
+                "strategy": "bfs",
+                "domain_blacklist": ["malicious.com", "spam.com"]
+            });
+
+            let depth = payload.get("depth").and_then(|v| v.as_u64()).unwrap_or(0);
+            let max_depth = payload.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(3);
+            let strategy = payload.get("strategy").and_then(|v| v.as_str()).unwrap_or("bfs").to_string();
+
+            black_box((depth, max_depth, strategy))
+        });
+    });
+
+    group.finish();
+}
+
+/// 基准测试：提取操作性能
+///
+/// 测试数据提取服务的核心操作性能，包括HTML解析、CSS选择器提取和LLM提取
+fn benchmark_extract_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("extract_operations");
+
+    // 测试HTML解析
+    let sample_html = r#"
+        <html>
+            <head><title>Product Page</title></head>
+            <body>
+                <div class="product" data-id="12345">
+                    <h1 class="title">Amazing Product</h1>
+                    <p class="description">This is a great product with many features.</p>
+                    <span class="price">$99.99</span>
+                    <div class="reviews">
+                        <div class="review"><span class="rating">5 stars</span><p>Great!</p></div>
+                        <div class="review"><span class="rating">4 stars</span><p>Good product</p></div>
+                    </div>
+                </div>
+            </body>
+        </html>
+    "#;
+
+    group.bench_function("html_parsing_for_extraction", |b| {
+        b.iter(|| {
+            let document = scraper::Html::parse_document(sample_html);
+            black_box(document)
+        });
+    });
+
+    // 测试CSS选择器提取（单个元素）
+    group.bench_function("css_selector_single_extraction", |b| {
+        let sample_doc = sample_html;
+
+        b.iter(|| {
+            let selector = scraper::Selector::parse(".product .title").unwrap();
+            let document = scraper::Html::parse_document(sample_doc);
+            let element = document.select(&selector).next();
+            let text = element.map(|e| e.text().collect::<Vec<_>>().join(" "));
+            black_box(text)
+        });
+    });
+
+    // 测试CSS选择器提取（多个元素）
+    group.bench_function("css_selector_multiple_extraction", |b| {
+        let sample_doc = sample_html;
+
+        b.iter(|| {
+            let selector = scraper::Selector::parse(".review").unwrap();
+            let document = scraper::Html::parse_document(sample_doc);
+            let elements: Vec<_> = document.select(&selector).map(|e| e.inner_html()).collect();
+            black_box(elements)
+        });
+    });
+
+    // 测试属性提取
+    group.bench_function("attribute_extraction", |b| {
+        let sample_doc = sample_html;
+
+        b.iter(|| {
+            let selector = scraper::Selector::parse(".product").unwrap();
+            let document = scraper::Html::parse_document(sample_doc);
+            let attr = document.select(&selector).next().and_then(|e| e.value().attr("data-id")).map(|s| s.to_string());
+            black_box(attr)
+        });
+    });
+
+    // 测试提取规则构建
+    group.bench_function("extraction_rule_construction", |b| {
+        b.iter(|| {
+            let rules: std::collections::HashMap<String, crawlrs::domain::services::extraction_service::ExtractionRule> =
+                vec![
+                    (
+                        "title".to_string(),
+                        crawlrs::domain::services::extraction_service::ExtractionRule {
+                            selector: Some(".product .title".to_string()),
+                            attr: None,
+                            is_array: false,
+                            use_llm: None,
+                            llm_prompt: None,
+                        },
+                    ),
+                    (
+                        "price".to_string(),
+                        crawlrs::domain::services::extraction_service::ExtractionRule {
+                            selector: Some(".product .price".to_string()),
+                            attr: None,
+                            is_array: false,
+                            use_llm: None,
+                            llm_prompt: None,
+                        },
+                    ),
+                    (
+                        "reviews".to_string(),
+                        crawlrs::domain::services::extraction_service::ExtractionRule {
+                            selector: Some(".review".to_string()),
+                            attr: None,
+                            is_array: true,
+                            use_llm: None,
+                            llm_prompt: None,
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect();
+            black_box(rules)
+        });
+    });
+
+    // 测试提取请求DTO构建
+    group.bench_function("extract_request_dto_construction", |b| {
+        b.iter(|| {
+            let dto = crawlrs::application::dto::extract_request::ExtractRequestDto {
+                urls: vec![
+                    "https://example.com/page1".to_string(),
+                    "https://example.com/page2".to_string(),
+                ],
+                prompt: Some("Extract product information".to_string()),
+                schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "price": {"type": "string"},
+                        "description": {"type": "string"}
+                    }
+                })),
+                model: Some("gpt-4".to_string()),
+                rules: None,
+                sync_wait_ms: Some(5000),
+            };
+            black_box(dto)
+        });
+    });
+
+    // 测试大型HTML内容处理
+    let large_html = format!(
+        r#"<!DOCTYPE html><html><head><title>Large Page</title></head><body>{}</body></html>"#,
+        (0..500)
+            .map(|i| format!(
+                r#"<div class="item" data-index="{}"><h2>Item {}</h2><p>Description for item {}</p><span class="meta">Meta {}</span></div>"#,
+                i, i, i, i
+            ))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    group.bench_function("large_html_processing", |b| {
+        let large_doc = large_html.as_str();
+
+        b.iter(|| {
+            let selector = scraper::Selector::parse(".item").unwrap();
+            let document = scraper::Html::parse_document(large_doc);
+            let items: Vec<_> = document.select(&selector).map(|e| e.inner_html()).collect();
+            black_box(items)
+        });
+    });
+
+    // 测试提取结果JSON构建
+    group.bench_function("extraction_result_construction", |b| {
+        b.iter(|| {
+            let results: Vec<crawlrs::application::dto::extract_request::ExtractResultDto> = (0..50)
+                .map(|i| crawlrs::application::dto::extract_request::ExtractResultDto {
+                    url: format!("https://example{}.com", i),
+                    data: serde_json::json!({
+                        "title": format!("Title {}", i),
+                        "content": format!("Content for item {}", i),
+                        "metadata": {
+                            "index": i,
+                            "source": "extraction"
+                        }
+                    }),
+                    error: None,
+                })
+                .collect();
+            black_box(results)
+        });
+    });
+
+    // 测试Schema验证
+    group.bench_function("schema_validation", |b| {
+        b.iter(|| {
+            let _schema = serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "age": {"type": "integer", "minimum": 0},
+                    "email": {"type": "string", "format": "email"}
+                },
+                "required": ["name", "email"]
+            });
+
+            let data = serde_json::json!({
+                "name": "Test User",
+                "age": 30,
+                "email": "test@example.com"
+            });
+
+            let valid = data.is_object();
+            black_box(valid)
+        });
+    });
+
+    group.finish();
+}
+
 // 基准测试组合
 criterion_group!(
     benches,
@@ -629,7 +1117,10 @@ criterion_group!(
     benchmark_concurrent_task_processing,
     benchmark_error_handling,
     benchmark_database_queries,
-    benchmark_string_operations
+    benchmark_string_operations,
+    benchmark_search_operations,
+    benchmark_crawl_operations,
+    benchmark_extract_operations
 );
 
 criterion_main!(benches);

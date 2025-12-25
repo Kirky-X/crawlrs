@@ -39,7 +39,7 @@ pub struct SearchResponseDto {
     pub credits_used: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SearchResultDto {
     pub title: String,
     pub url: String,
