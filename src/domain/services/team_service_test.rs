@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod team_service_tests {
     use crate::domain::services::team_service::{
         GeoRestrictionResult, TeamGeoRestrictions, TeamService,
     };

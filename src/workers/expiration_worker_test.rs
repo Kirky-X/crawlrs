@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod expiration_worker_tests {
     use crate::domain::models::task::{TaskStatus, TaskType};
     use crate::infrastructure::database::entities::{task, team};
     use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
