@@ -830,6 +830,10 @@ async fn test_uat012_resource_exhaustion_handling() {
 /// 测试步骤:
 /// 1. 使用 PlaywrightEngine 抓取一个模拟的 JS 渲染页面
 /// 2. 验证动态内容是否被成功捕获
+///
+/// 注意：此测试需要Chrome远程调试服务（CHROMIUM_REMOTE_DEBUGGING_URL）。
+/// 如需运行此测试，请使用: cargo test --test integration_tests -- test_uat004_javascript_rendering -- --include-ignored
+#[ignore]
 #[tokio::test]
 async fn test_uat004_javascript_rendering() {
     // 检查是否配置了 Chrome 远程调试，如果没有则跳过（因为 CI 环境可能没有 Chrome）
