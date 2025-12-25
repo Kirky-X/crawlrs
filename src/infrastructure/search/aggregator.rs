@@ -119,7 +119,12 @@ impl SearchEngine for SearchAggregator {
         if let Some(entry) = self.cache.get(&cache_key) {
             if entry.1.elapsed() < self.cache_ttl {
                 info!("Cache hit for query: {}", query);
-                return Ok(entry.0.clone());
+                let mut cached_results = entry.0.clone();
+                // Apply limit to cached results
+                if cached_results.len() > limit as usize {
+                    cached_results.truncate(limit as usize);
+                }
+                return Ok(cached_results);
             }
         }
 

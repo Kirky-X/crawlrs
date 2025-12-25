@@ -375,6 +375,7 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(ScrapeResults::TaskId).uuid().not_null())
+                    .col(ColumnDef::new(ScrapeResults::Url).string().not_null())
                     .col(
                         ColumnDef::new(ScrapeResults::StatusCode)
                             .integer()
@@ -717,6 +718,7 @@ enum ScrapeResults {
     Screenshot,
     ResponseTimeMs,
     CreatedAt,
+    Url,
 }
 
 #[derive(DeriveIden)]

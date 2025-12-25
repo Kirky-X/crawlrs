@@ -100,10 +100,7 @@ impl TaskRepository for TaskRepositoryImpl {
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
         let model: task_entity::ActiveModel = task.clone().into();
 
-        println!(
-            "DEBUG: Creating task {} with status {}",
-            task.id, task.status
-        );
+        tracing::debug!("Creating task {} with status {}", task.id, task.status);
 
         model.insert(self.db.as_ref()).await?;
         Ok(task.clone())
@@ -133,9 +130,9 @@ impl TaskRepository for TaskRepositoryImpl {
     async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
         let txn = self.db.begin().await?;
 
-        println!("DEBUG: acquire_next called by worker {}", worker_id);
+        tracing::debug!("acquire_next called by worker {}", worker_id);
         let now = Utc::now();
-        println!("DEBUG: Current time: {}", now);
+        tracing::debug!("Current time: {}", now);
 
         let task = task_entity::Entity::find()
             .filter(
@@ -158,11 +155,12 @@ impl TaskRepository for TaskRepositoryImpl {
             .one(&txn)
             .await?;
 
-        println!("DEBUG: Found task: {:?}", task.as_ref().map(|t| t.id));
+        tracing::debug!("Found task: {:?}", task.as_ref().map(|t| t.id));
         if let Some(ref t) = task {
-            println!(
-                "DEBUG: Task status: {}, lock_expires_at: {:?}",
-                t.status, t.lock_expires_at
+            tracing::debug!(
+                "Task status: {}, lock_expires_at: {:?}",
+                t.status,
+                t.lock_expires_at
             );
         }
 
@@ -188,7 +186,7 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn mark_completed(&self, id: Uuid) -> Result<(), RepositoryError> {
-        println!("DEBUG: mark_completed called for task {}", id);
+        tracing::debug!("mark_completed called for task {}", id);
         let task = self
             .find_by_id(id)
             .await?
@@ -196,12 +194,9 @@ impl TaskRepository for TaskRepositoryImpl {
         let mut updated_task = task.clone();
         updated_task.status = TaskStatus::Completed;
         updated_task.completed_at = Some(Utc::now().into());
-        println!(
-            "DEBUG: Updating task {} to status {:?}",
-            id, updated_task.status
-        );
+        tracing::debug!("Updating task {} to status {:?}", id, updated_task.status);
         self.update(&updated_task).await?;
-        println!("DEBUG: Successfully updated task {} to completed", id);
+        tracing::debug!("Successfully updated task {} to completed", id);
         Ok(())
     }
 
@@ -353,7 +348,7 @@ impl TaskRepository for TaskRepositoryImpl {
         &self,
         params: TaskQueryParams,
     ) -> Result<(Vec<Task>, u64), RepositoryError> {
-        println!("DEBUG: query_tasks params: {:?}", params);
+        tracing::debug!("query_tasks params: {:?}", params);
         let mut query =
             task_entity::Entity::find().filter(task_entity::Column::TeamId.eq(params.team_id));
 
@@ -377,7 +372,7 @@ impl TaskRepository for TaskRepositoryImpl {
             if !status_list.is_empty() {
                 let status_strings: Vec<String> =
                     status_list.iter().map(|s| s.to_string()).collect();
-                println!("DEBUG: Filtering by status: {:?}", status_strings);
+                tracing::debug!("Filtering by status: {:?}", status_strings);
                 query = query.filter(task_entity::Column::Status.is_in(status_strings));
             }
         }
@@ -396,9 +391,9 @@ impl TaskRepository for TaskRepositoryImpl {
         }
 
         // 获取总数
-        println!("DEBUG: About to count total with current filters");
+        tracing::debug!("About to count total with current filters");
         let total = query.clone().count(self.db.as_ref()).await?;
-        println!("DEBUG: Total count result: {}", total);
+        tracing::debug!("Total count result: {}", total);
 
         // 应用分页
         let models = query
@@ -534,22 +529,22 @@ impl TaskRepository for TaskRepositoryImpl {
             }
         }
 
-        // 执行级联取消：取消所有与已取消任务关联的爬取任务
+        // 执行级联取消：批量取消所有与已取消任务关联的爬取任务
         if !crawl_ids_to_cancel.is_empty() {
-            // 去重crawl_id以避免重复取消
             crawl_ids_to_cancel.sort_unstable();
             crawl_ids_to_cancel.dedup();
 
             for crawl_id in crawl_ids_to_cancel {
                 match self.cancel_tasks_by_crawl_id(crawl_id).await {
                     Ok(cancelled_count) => {
-                        println!(
+                        tracing::info!(
                             "Cancelled {} tasks for crawl_id: {}",
-                            cancelled_count, crawl_id
+                            cancelled_count,
+                            crawl_id
                         );
                     }
                     Err(e) => {
-                        eprintln!("Failed to cancel tasks for crawl_id {}: {}", crawl_id, e);
+                        tracing::error!("Failed to cancel tasks for crawl_id {}: {}", crawl_id, e);
                     }
                 }
             }

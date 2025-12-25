@@ -57,14 +57,16 @@ impl EnhancedSearchAggregator {
     ) -> Result<Vec<SearchResult>, SearchError> {
         let cache_key = self.generate_cache_key(query, limit, lang, country);
 
-        // 首先检查缓存
         match self.cache_manager.get(&cache_key).await {
-            Ok(Some(cached_results)) => {
+            Ok(Some(mut cached_results)) => {
                 info!(
                     "Cache hit for query: {} ({} results)",
                     query,
                     cached_results.len()
                 );
+                if cached_results.len() > limit as usize {
+                    cached_results.truncate(limit as usize);
+                }
                 return Ok(cached_results);
             }
             Ok(None) => {
@@ -153,11 +155,17 @@ impl EnhancedSearchAggregator {
         // 合并所有结果
         all_results.extend(results.into_iter().flatten().flatten());
 
+        // 应用全局结果限制
+        if all_results.len() > limit as usize {
+            all_results.truncate(limit as usize);
+        }
+
         let search_time = start_time.elapsed();
         info!(
-            "Search completed in {:?}, total results: {}",
+            "Search completed in {:?}, total results: {} (limited to {})",
             search_time,
-            all_results.len()
+            all_results.len(),
+            limit
         );
 
         Ok(all_results)

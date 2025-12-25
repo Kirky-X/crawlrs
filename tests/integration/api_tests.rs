@@ -71,9 +71,11 @@ async fn test_scrape_rate_limit() {
     }
 
     // Set a specific rate limit for this test's API key
+    // The key format must match what RateLimiter expects: rate_limit_config:{api_key}
     let rate_limit_key = format!("rate_limit_config:{}", app.api_key);
+    let rate_limit_config = "10"; // Simple string value as expected by RateLimiter
     app.redis
-        .set(&rate_limit_key, "10", 60) // 10 requests per minute
+        .set(&rate_limit_key, rate_limit_config, 60)
         .await
         .unwrap();
 

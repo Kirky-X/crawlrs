@@ -253,6 +253,48 @@ impl RateLimitingServiceImpl {
 
         Ok(current as u32)
     }
+
+    /// 获取自定义速率限制配置
+    async fn get_custom_rate_limit_config(&self, api_key: &str) -> Option<RateLimitConfig> {
+        let config_key = format!("{}:config:{}", self.config.redis_key_prefix, api_key);
+
+        let mut conn = match self.get_redis_conn().await {
+            Ok(conn) => conn,
+            Err(_) => return None,
+        };
+
+        let config_str: Option<String> = conn.get(&config_key).await.ok().flatten()?;
+        let config_value: serde_json::Value = match config_str {
+            Some(s) => serde_json::from_str(&s).ok()?,
+            None => return None,
+        };
+
+        let requests_per_minute = config_value
+            .get("requests_per_minute")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+
+        let bucket_capacity = config_value
+            .get("capacity")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+
+        let requests_per_hour = config_value
+            .get("requests_per_hour")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+
+        Some(RateLimitConfig {
+            enabled: true,
+            strategy: self.config.rate_limit.strategy,
+            bucket_capacity,
+            requests_per_second: self.config.rate_limit.requests_per_second,
+            requests_per_minute: requests_per_minute
+                .unwrap_or(self.config.rate_limit.requests_per_minute),
+            requests_per_hour: requests_per_hour
+                .unwrap_or(self.config.rate_limit.requests_per_hour),
+        })
+    }
 }
 
 #[async_trait]
@@ -266,12 +308,30 @@ impl RateLimitingService for RateLimitingServiceImpl {
             return Ok(RateLimitResult::Allowed);
         }
 
+        // Try to get custom rate limit config from Redis
+        let custom_config = self.get_custom_rate_limit_config(api_key).await;
+
+        let (bucket_capacity, requests_per_minute, requests_per_hour) = match custom_config {
+            Some(config) => (
+                config
+                    .bucket_capacity
+                    .unwrap_or(self.config.rate_limit.bucket_capacity.unwrap_or(100)),
+                config.requests_per_minute,
+                config.requests_per_hour,
+            ),
+            None => (
+                self.config.rate_limit.bucket_capacity.unwrap_or(100),
+                self.config.rate_limit.requests_per_minute,
+                self.config.rate_limit.requests_per_hour,
+            ),
+        };
+
         // 检查每秒限流
         let per_second_key = self.build_api_rate_limit_key(api_key, endpoint, "per_second");
         let per_second_result = self
             .check_token_bucket_rate_limit(
                 per_second_key,
-                self.config.rate_limit.bucket_capacity.unwrap_or(100),
+                bucket_capacity,
                 self.config.rate_limit.requests_per_second as f64,
                 1,
             )
@@ -286,8 +346,8 @@ impl RateLimitingService for RateLimitingServiceImpl {
         let per_minute_result = self
             .check_token_bucket_rate_limit(
                 per_minute_key,
-                self.config.rate_limit.requests_per_minute,
-                self.config.rate_limit.requests_per_minute as f64 / 60.0,
+                requests_per_minute,
+                requests_per_minute as f64 / 60.0,
                 60,
             )
             .await?;
@@ -301,8 +361,8 @@ impl RateLimitingService for RateLimitingServiceImpl {
         let per_hour_result = self
             .check_token_bucket_rate_limit(
                 per_hour_key,
-                self.config.rate_limit.requests_per_hour,
-                self.config.rate_limit.requests_per_hour as f64 / 3600.0,
+                requests_per_hour,
+                requests_per_hour as f64 / 3600.0,
                 3600,
             )
             .await?;

@@ -53,8 +53,11 @@ pub async fn create_scrape(
     }
 
     if is_internal_url(&payload.url) {
+        let ssrf_disabled = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default();
+        tracing::error!("SSRF Check: url={}, ssrf_disabled={}, is_internal=true", payload.url, ssrf_disabled);
         // Allow disabling SSRF protection via environment variable (for testing)
-        if std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default() != "true" {
+        if ssrf_disabled != "true" {
+            tracing::error!("SSRF Protection: Blocking internal URL {}", payload.url);
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -64,6 +67,8 @@ pub async fn create_scrape(
             )
                 .into_response();
         }
+    } else {
+        tracing::error!("SSRF Check: url={}, is_internal=false", payload.url);
     }
 
     // 1. 检查限流
@@ -275,14 +280,18 @@ fn is_internal_url(url_str: &str) -> bool {
                 return true;
             }
             if host.starts_with("172.") {
-                // Check 172.16.0.0/12
-                if let Some(second_octet) = host.split('.').nth(1) {
-                    if let Ok(num) = second_octet.parse::<u8>() {
+                let parts: Vec<&str> = host.split('.').collect();
+                if parts.len() >= 2 {
+                    if let Ok(num) = parts[1].parse::<u8>() {
                         if (16..=31).contains(&num) {
                             return true;
                         }
                     }
                 }
+            }
+            // Check for IPv6 link-local
+            if host.starts_with("fe80::") || host.starts_with("fe00::") {
+                return true;
             }
         }
     }

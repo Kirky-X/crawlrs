@@ -251,10 +251,8 @@ impl HtmlCleaner {
                 .expect("Failed to compile style regex"),
             comment_regex: Regex::new(r#"(?is)<!--.*?-->"#)
                 .expect("Failed to compile comment regex"),
-            tag_regex: Regex::new(r#"(?is)<[^>]+>"#)
-                .expect("Failed to compile tag regex"),
-            whitespace_regex: Regex::new(r#"\s+"#)
-                .expect("Failed to compile whitespace regex"),
+            tag_regex: Regex::new(r#"(?is)<[^>]+>"#).expect("Failed to compile tag regex"),
+            whitespace_regex: Regex::new(r#"\s+"#).expect("Failed to compile whitespace regex"),
         }
     }
 

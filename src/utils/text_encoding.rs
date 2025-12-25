@@ -58,7 +58,9 @@ impl TextEncodingProcessor {
     /// 创建新的文本编码处理器
     pub fn new() -> Self {
         Self {
-            encoding_cache: Mutex::new(LruCache::new(std::num::NonZeroUsize::new(1000).unwrap())),
+            encoding_cache: Mutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(1000).expect("Cache size must be non-zero"),
+            )),
             short_text_threshold: 1000, // 1KB阈值，用于区分长短文本
         }
     }
