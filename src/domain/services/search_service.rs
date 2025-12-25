@@ -90,6 +90,7 @@ where
                 dto.limit.unwrap_or(10),
                 dto.lang.as_deref(),
                 dto.country.as_deref(),
+                dto.engine.as_deref(),
             )
             .await?;
 
@@ -185,6 +186,7 @@ where
         limit: u32,
         lang: Option<&str>,
         country: Option<&str>,
+        engine: Option<&str>,
     ) -> Result<Vec<SearchResultDto>, SearchServiceError> {
         let results = self
             .search_engine
@@ -192,14 +194,32 @@ where
             .await
             .map_err(|e| SearchServiceError::SearchEngine(e.to_string()))?;
 
-        Ok(results
-            .into_iter()
-            .map(|item| SearchResultDto {
-                title: item.title,
-                url: item.url,
-                description: item.description,
-                engine: Some(item.engine),
-            })
-            .collect())
+        // Filter by engine if specified
+        let filtered_results: Vec<SearchResultDto> = if let Some(engine_name) = engine {
+            results
+                .into_iter()
+                .filter(|r| r.engine.eq_ignore_ascii_case(engine_name))
+                .take(limit as usize)
+                .map(|item| SearchResultDto {
+                    title: item.title,
+                    url: item.url,
+                    description: item.description,
+                    engine: Some(item.engine),
+                })
+                .collect()
+        } else {
+            results
+                .into_iter()
+                .take(limit as usize)
+                .map(|item| SearchResultDto {
+                    title: item.title,
+                    url: item.url,
+                    description: item.description,
+                    engine: Some(item.engine),
+                })
+                .collect()
+        };
+
+        Ok(filtered_results)
     }
 }
