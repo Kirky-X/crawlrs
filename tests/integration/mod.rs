@@ -9,21 +9,21 @@
 /// 测试各个组件之间的交互和整体功能
 pub mod api;
 pub mod api_tests;
+pub mod browser_tests;
 pub mod crawl_service_test;
 pub mod extract_credit_deduction_test;
+pub mod google_tests;
 pub mod health_check;
 pub mod health_monitor_test;
 pub mod helpers;
 pub mod page_interactions_test;
 pub mod real_components_test;
 pub mod real_interactions_test;
-pub mod real_search_engines_test;
 pub mod real_world_test;
 pub mod repositories;
 pub mod scheduler_test;
 pub mod scrape_handler_test;
 pub mod scrape_test;
-pub mod search_engines_simple_test;
 pub mod search_engines_test;
 pub mod search_uat_test;
 pub mod uat_scenarios_test;
