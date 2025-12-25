@@ -1,0 +1,8 @@
+[advisories]
+version = 2
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "No fixed upgrade available for RSA SSH key handling in sqlx-mysql. MySQL connections are internal and not exposed to external attackers." },
+    { id = "RUSTSEC-2025-0052", reason = "async-std is a transitive dependency of sea-orm-migration 1.0.0. No alternative migration framework available. This only affects development-time migration running, not production security." },
+    { id = "RUSTSEC-2024-0384", reason = "instant is a transitive dependency of wiremock dev-dependency used only for testing. No runtime impact on production code." },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile is a transitive dependency of testcontainers dev-dependency used only for testing. No runtime impact on production code." },
+]
