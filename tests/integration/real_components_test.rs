@@ -196,7 +196,7 @@ async fn test_real_llm_service_error_handling() {
 
     assert!(result.is_err());
     let error = result.unwrap_err();
-    println!("Actual error: {}", error.to_string());
+    println!("Actual error: {}", error);
 
     // Check if the error message contains our expected text
     let error_string = error.to_string();

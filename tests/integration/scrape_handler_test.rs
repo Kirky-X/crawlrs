@@ -36,7 +36,7 @@ async fn test_create_scrape_handler_real_queue() {
         response.status_code()
     );
     let json_response = response.json::<serde_json::Value>();
-    assert_eq!(json_response["success"], true);
+    assert!(json_response["success"].as_bool().unwrap_or(false));
 
     let task_id_str = json_response["id"]
         .as_str()

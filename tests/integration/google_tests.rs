@@ -153,7 +153,7 @@ impl FlareSolverrGoogleEngine {
         });
 
         let response = self.client
-            .post(&format!("{}/v1", self.flaresolverr_url))
+            .post(format!("{}/v1", self.flaresolverr_url))
             .json(&request)
             .send()
             .await
@@ -190,7 +190,7 @@ impl SearchEngine for FlareSolverrGoogleEngine {
         );
 
         let html = self.flaresolverr_request(&url).await
-            .map_err(|e| crawlrs::domain::search::engine::SearchError::NetworkError(e))?;
+            .map_err(crawlrs::domain::search::engine::SearchError::NetworkError)?;
 
         let results = self.parse_results(&html);
         Ok(results)

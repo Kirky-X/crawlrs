@@ -429,7 +429,7 @@ async fn test_uat008_robots_txt_compliance() {
         .any(|url| url == "https://example.com/blog/article1"));
 
     // 验证任务创建成功（即使某些路径被robots.txt禁止，系统仍然正常工作）
-    assert!(new_tasks.len() > 0, "应该创建至少一些任务");
+    assert!(!new_tasks.is_empty(), "应该创建至少一些任务");
 
     println!("✓ UAT-008 robots.txt遵守测试通过");
     println!("  - 创建任务数: {}", new_tasks.len());
@@ -487,7 +487,7 @@ async fn test_uat008_robots_txt_caching() {
         .expect("处理爬取结果失败");
 
     // 验证任务创建成功
-    assert!(new_tasks.len() > 0, "应该创建至少一些任务");
+    assert!(!new_tasks.is_empty(), "应该创建至少一些任务");
 
     println!("✓ UAT-008 robots.txt缓存测试通过");
     println!("  - 使用httpbin.org验证真实robots.txt处理");
@@ -1524,7 +1524,6 @@ async fn test_uat027_task_mgmt_perf() {
     let start_create = Instant::now();
     for i in 0..(task_count / batch_size) {
         let repo_clone = repo.clone();
-        let team_id = team_id;
         handles.push(tokio::spawn(async move {
             let mut created_ids = Vec::new();
             for j in 0..batch_size {
@@ -1895,7 +1894,7 @@ async fn test_uat017_task_management_api() {
     let team_id = Uuid::new_v4();
 
     // 1. 准备数据
-    let statuses = vec![
+    let statuses = [
         TaskStatus::Queued,
         TaskStatus::Active,
         TaskStatus::Completed,
@@ -1911,7 +1910,7 @@ async fn test_uat017_task_management_api() {
             let task = Task {
                 id: Uuid::new_v4(),
                 task_type: TaskType::Scrape,
-                status: status.clone(),
+                status: *status,
                 priority: i as i32,
                 team_id,
                 url: format!("http://example.com/{}/{}", i, j),

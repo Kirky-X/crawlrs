@@ -116,18 +116,18 @@ async fn test_real_world_playwright_engine() {
 
     // Defensively stop and remove any existing container
     std::process::Command::new("docker")
-        .args(&["stop", "chromium-test"])
+        .args(["stop", "chromium-test"])
         .output()
         .ok();
     std::process::Command::new("docker")
-        .args(&["rm", "chromium-test"])
+        .args(["rm", "chromium-test"])
         .output()
         .ok();
 
     // Use Docker to run a container with Chromium pre-installed and remote debugging enabled
     info!("Starting Chromium container with remote debugging...");
     let output = std::process::Command::new("docker")
-        .args(&[
+        .args([
             "run",
             "-d",
             "--rm",
@@ -177,7 +177,7 @@ async fn test_real_world_playwright_engine() {
 
     // Clean up container
     std::process::Command::new("docker")
-        .args(&["stop", &container_id])
+        .args(["stop", &container_id])
         .output()
         .ok();
 
