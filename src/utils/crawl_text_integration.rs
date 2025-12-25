@@ -303,7 +303,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.processing_success, false);
+        assert!(!result.processing_success);
         assert_eq!(result.original_content, "Hello, 世界!");
         assert_eq!(result.processed_content, "Hello, 世界!");
     }
@@ -318,10 +318,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.processing_success, true);
+        assert!(result.processing_success);
         assert!(result.processed_content.contains("测试页面"));
         assert!(result.processed_content.contains("中文和English内容"));
-        assert_eq!(result.is_html, true);
+        assert!(result.is_html);
     }
 
     #[tokio::test]
@@ -350,12 +350,12 @@ mod tests {
 
         // 第一个结果应该是HTML处理
         let first_result = results[0].as_ref().unwrap();
-        assert_eq!(first_result.is_html, true);
+        assert!(first_result.is_html);
         assert!(first_result.processed_content.contains("页面1"));
 
         // 第二个结果应该是纯文本
         let second_result = results[1].as_ref().unwrap();
-        assert_eq!(second_result.is_html, false);
+        assert!(!second_result.is_html);
         assert_eq!(second_result.processed_content, "Plain text content");
     }
 }
