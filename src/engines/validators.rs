@@ -97,6 +97,22 @@ fn is_private_ip(ip: IpAddr) -> bool {
     }
 }
 
+/// 验证 URL 是否在黑名单域名中
+pub fn validate_domain_blacklist(url_str: &str, blacklist: &[String]) -> anyhow::Result<()> {
+    let url = Url::parse(url_str)?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing host"))?;
+
+    for domain in blacklist {
+        if host == domain || host.ends_with(&format!(".{}", domain)) {
+            return Err(anyhow::anyhow!("Domain {} is in blacklist", host));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,20 +164,4 @@ mod tests {
         // Current implementation: host.ends_with(".example.com")
         assert!(validate_domain_blacklist("http://myexample.com", &blacklist).is_ok());
     }
-}
-
-/// 验证 URL 是否在黑名单域名中
-pub fn validate_domain_blacklist(url_str: &str, blacklist: &[String]) -> anyhow::Result<()> {
-    let url = Url::parse(url_str)?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("Missing host"))?;
-
-    for domain in blacklist {
-        if host == domain || host.ends_with(&format!(".{}", domain)) {
-            return Err(anyhow::anyhow!("Domain {} is in blacklist", host));
-        }
-    }
-
-    Ok(())
 }

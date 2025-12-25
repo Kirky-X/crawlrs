@@ -113,6 +113,29 @@ impl RetryPolicy {
     }
 }
 
+/// 判断错误是否可重试
+pub fn is_retryable_error(error: &anyhow::Error) -> bool {
+    let error_string = error.to_string().to_lowercase();
+
+    // 网络相关错误可重试
+    let retryable_patterns = [
+        "timeout",
+        "connection reset",
+        "connection refused",
+        "dns error",
+        "500 internal server error",
+        "502 bad gateway",
+        "503 service unavailable",
+        "504 gateway timeout",
+        "network is unreachable",
+        "broken pipe",
+        "too many connections",
+        "rate limit",
+    ];
+
+    retryable_patterns.iter().any(|&p| error_string.contains(p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,27 +211,4 @@ mod tests {
 
         assert_eq!(next_retry, expected);
     }
-}
-
-/// 判断错误是否可重试
-pub fn is_retryable_error(error: &anyhow::Error) -> bool {
-    let error_string = error.to_string().to_lowercase();
-
-    // 网络相关错误可重试
-    let retryable_patterns = [
-        "timeout",
-        "connection reset",
-        "connection refused",
-        "dns error",
-        "500 internal server error",
-        "502 bad gateway",
-        "503 service unavailable",
-        "504 gateway timeout",
-        "network is unreachable",
-        "broken pipe",
-        "too many connections",
-        "rate limit",
-    ];
-
-    retryable_patterns.iter().any(|&p| error_string.contains(p))
 }
