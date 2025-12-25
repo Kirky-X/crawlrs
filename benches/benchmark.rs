@@ -465,7 +465,7 @@ fn benchmark_database_queries(c: &mut Criterion) {
                 } else {
                     "queued".to_string()
                 }),
-                priority: sea_orm::Set((i % 5) as i32),
+                priority: sea_orm::Set(i % 5),
                 team_id: sea_orm::Set(Uuid::new_v4()),
                 url: sea_orm::Set(format!("https://example{}.com", i)),
                 payload: sea_orm::Set(serde_json::json!({"test": true, "index": i})),
