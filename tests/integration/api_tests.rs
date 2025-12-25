@@ -60,6 +60,16 @@ async fn test_create_scrape_task_success() {
 async fn test_scrape_rate_limit() {
     let app = create_test_app_with_rate_limit_options(true, true).await;
 
+    // Clean up any existing rate limit keys for this API key
+    let prefix = format!("rate_limit:{}", app.api_key);
+    let keys: Vec<String> = app.redis
+        .scan_pattern(&prefix)
+        .await
+        .unwrap_or_default();
+    for key in keys {
+        let _: () = app.redis.del(&key).await.unwrap();
+    }
+
     // Set a specific rate limit for this test's API key
     let rate_limit_key = format!("rate_limit_config:{}", app.api_key);
     app.redis
@@ -417,7 +427,7 @@ async fn test_team_data_isolation() {
 /// 验证系统是否正确阻止内部 URL 和私有 IP 访问。
 #[tokio::test]
 async fn test_ssrf_protection() {
-    // Enable SSRF protection for this test by unsetting the disable flag
+    // 必须先于任何应用创建设置环境变量，因为在 helpers/mod.rs 中会默认设置为 "true"
     std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "false");
 
     // Disable rate limiting for this test to avoid 429 Too Many Requests

@@ -158,4 +158,40 @@ impl RedisClient {
         con.del::<_, ()>(key).await?;
         Ok(())
     }
+
+    /// 扫描匹配模式的键
+    ///
+    /// # 参数
+    ///
+    /// * `pattern` - 键模式 (例如 "rate_limit:*")
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(Vec<String>)` - 匹配的键列表
+    /// * `Err(anyhow::Error)` - 扫描过程中出现的错误
+    pub async fn scan_pattern(&self, pattern: &str) -> Result<Vec<String>> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        let mut cursor = 0i64;
+        let mut keys = Vec::new();
+
+        loop {
+            let (new_cursor, batch): (i64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut con)
+                .await?;
+
+            keys.extend(batch);
+            cursor = new_cursor;
+
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        Ok(keys)
+    }
 }
