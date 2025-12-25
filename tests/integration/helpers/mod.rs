@@ -53,6 +53,7 @@ pub struct TestApp {
     pub api_key: String,
     pub team_id: uuid::Uuid,
     pub task_repo: Arc<TaskRepositoryImpl>,
+    #[allow(dead_code)]
     pub worker_manager: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub redis_process: Option<std::process::Child>,
     pub redis_url: String,
@@ -112,7 +113,7 @@ async fn setup_test_app_internal(
     let db = Database::connect("sqlite::memory:").await.unwrap();
     let db_pool = Arc::new(db);
 
-    let start_port = rand::thread_rng().gen_range(10000..60000);
+    let start_port = rand::rng().random_range(10000..60000);
     let result =
         crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true, 5).unwrap();
     let redis_port = result.port;
@@ -196,8 +197,7 @@ async fn setup_test_app_internal(
     let _create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(router.clone()));
     let _robots_checker = Arc::new(RobotsChecker::new(Some(Arc::new(redis_client.clone()))));
 
-    let mut search_engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
-    search_engines.push(Arc::new(GoogleSearchEngine::new()));
+    let search_engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(GoogleSearchEngine::new())];
     let search_engine_service: Arc<dyn SearchEngine> =
         Arc::new(SearchAggregator::new(search_engines, 10000));
 

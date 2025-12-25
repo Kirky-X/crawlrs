@@ -10,6 +10,7 @@ use crawlrs::infrastructure::search::google::GoogleSearchEngine;
 use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 use std::sync::Arc;
 
+#[allow(dead_code)]
 pub fn create_search_engines() -> Vec<(&'static str, Arc<dyn SearchEngine>)> {
     vec![
         ("Google", Arc::new(GoogleSearchEngine::new())),
@@ -19,6 +20,7 @@ pub fn create_search_engines() -> Vec<(&'static str, Arc<dyn SearchEngine>)> {
     ]
 }
 
+#[allow(dead_code)]
 pub fn create_single_engine(engine_name: &str) -> Option<Arc<dyn SearchEngine>> {
     match engine_name {
         "Google" => Some(Arc::new(GoogleSearchEngine::new())),
@@ -29,6 +31,7 @@ pub fn create_single_engine(engine_name: &str) -> Option<Arc<dyn SearchEngine>> 
     }
 }
 
+#[allow(dead_code)]
 pub fn enable_test_mode_full() {
     std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "true");
     std::env::set_var("BING_TEST_RESULTS", "true");
@@ -36,10 +39,12 @@ pub fn enable_test_mode_full() {
     std::env::set_var("SOGOU_TEST_RESULTS", "true");
 }
 
+#[allow(dead_code)]
 pub fn enable_test_mode_simple() {
     std::env::set_var("USE_TEST_DATA", "1");
 }
 
+#[allow(dead_code)]
 pub fn disable_test_mode() {
     std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
     std::env::remove_var("BING_TEST_RESULTS");
@@ -48,6 +53,7 @@ pub fn disable_test_mode() {
     std::env::remove_var("USE_TEST_DATA");
 }
 
+#[allow(dead_code)]
 pub fn apply_test_mode(mode: &str) {
     match mode {
         "full" => enable_test_mode_full(),

@@ -29,6 +29,7 @@ pub fn create_scrape_request(
     }
 }
 
+#[allow(dead_code)]
 pub async fn test_page_access(url: &str, needs_js: bool, timeout_secs: u64) -> bool {
     let engine = PlaywrightEngine;
     let request = create_scrape_request(url.to_string(), needs_js, timeout_secs);
@@ -47,11 +48,13 @@ pub async fn test_page_access(url: &str, needs_js: bool, timeout_secs: u64) -> b
     }
 }
 
+#[allow(dead_code)]
 pub fn get_remote_chrome_ws_url() -> String {
     std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL")
         .unwrap_or_else(|_| "ws://localhost:9222/devtools/browser/default".to_string())
 }
 
+#[allow(dead_code)]
 pub fn set_remote_chrome_url(url: &str) {
     std::env::set_var("CHROMIUM_REMOTE_DEBUGGING_URL", url);
 }

@@ -5,28 +5,34 @@
 
 use crawlrs::infrastructure::search::google::GoogleSearchEngine;
 
+#[allow(dead_code)]
 pub fn create_google_engine() -> GoogleSearchEngine {
     GoogleSearchEngine::new()
 }
 
+#[allow(dead_code)]
 pub fn get_chrome_ws_url() -> String {
     std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL")
         .unwrap_or_else(|_| "ws://localhost:9222/devtools/browser/default".to_string())
 }
 
+#[allow(dead_code)]
 pub fn set_chrome_ws_url(url: &str) {
     std::env::set_var("CHROMIUM_REMOTE_DEBUGGING_URL", url);
 }
 
+#[allow(dead_code)]
 pub fn create_flaresolverr_google_engine(flaresolverr_url: &str) -> FlareSolverrGoogleEngine {
     FlareSolverrGoogleEngine::new(flaresolverr_url.to_string())
 }
 
+#[allow(dead_code)]
 pub struct FlareSolverrGoogleEngine {
     flaresolverr_url: String,
     client: reqwest::Client,
 }
 
+#[allow(dead_code)]
 impl FlareSolverrGoogleEngine {
     pub fn new(flaresolverr_url: String) -> Self {
         Self {
@@ -55,7 +61,7 @@ impl FlareSolverrGoogleEngine {
         });
 
         let response = self.client
-            .post(&format!("{}/v1", self.flaresolverr_url))
+            .post(format!("{}/v1", self.flaresolverr_url))
             .json(&request)
             .send()
             .await
@@ -91,7 +97,7 @@ impl FlareSolverrGoogleEngine {
             let title = element.text().collect::<String>();
 
             if let Some(link_elem) = element.ancestors()
-                .find(|anc| anc.value().as_element().map_or(false, |e| e.name() == "a"))
+                .find(|anc| anc.value().as_element().is_some_and(|e| e.name() == "a"))
             {
                 let link = link_elem.value().as_element()
                     .and_then(|e| e.attr("href"))
