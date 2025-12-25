@@ -14,8 +14,24 @@ use std::time::Duration;
 use tokio::time::sleep;
 use uuid::Uuid;
 
+fn skip_if_no_chrome() {
+    if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
+        println!("Skipping test: CHROMIUM_REMOTE_DEBUGGING_URL not set (Chrome not available)");
+    }
+}
+
+/// 测试页面交互功能 - 滚动和等待
+///
+/// 注意：此测试需要Chrome浏览器和worker进程来执行页面交互操作。
+/// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_page_interactions -- --include-ignored
+#[ignore]
 #[tokio::test]
 async fn test_scrape_with_page_interactions() {
+    skip_if_no_chrome();
+    if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
+        return;
+    }
+
     let app = create_test_app().await;
 
     // Test with a simple HTML page that has interactive elements
@@ -96,8 +112,18 @@ async fn test_scrape_with_page_interactions() {
     );
 }
 
+/// 测试点击交互功能
+///
+/// 注意：此测试需要Chrome浏览器和worker进程来执行点击操作。
+/// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_click_action -- --include-ignored
+#[ignore]
 #[tokio::test]
 async fn test_scrape_with_click_action() {
+    skip_if_no_chrome();
+    if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
+        return;
+    }
+
     let app = create_test_app().await;
 
     // Test with a page that has clickable elements
@@ -171,8 +197,18 @@ async fn test_scrape_with_click_action() {
     assert!(task_completed, "Task did not complete in time");
 }
 
+/// 测试输入交互功能
+///
+/// 注意：此测试需要Chrome浏览器和worker进程来执行表单输入操作。
+/// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_input_action -- --include-ignored
+#[ignore]
 #[tokio::test]
 async fn test_scrape_with_input_action() {
+    skip_if_no_chrome();
+    if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
+        return;
+    }
+
     let app = create_test_app().await;
 
     // Test with a page that has input elements
@@ -249,8 +285,18 @@ async fn test_scrape_with_input_action() {
     assert!(task_completed, "Task did not complete in time");
 }
 
+/// 测试截图交互功能
+///
+/// 注意：此测试需要Chrome浏览器和worker进程来执行截图操作。
+/// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_screenshot_action -- --include-ignored
+#[ignore]
 #[tokio::test]
 async fn test_scrape_with_screenshot_action() {
+    skip_if_no_chrome();
+    if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
+        return;
+    }
+
     let app = create_test_app().await;
 
     // Test with screenshot action
@@ -323,8 +369,18 @@ async fn test_scrape_with_screenshot_action() {
     assert!(task_completed, "Task did not complete in time");
 }
 
+/// 测试复杂交互功能 - 多个操作的组合
+///
+/// 注意：此测试需要Chrome浏览器和worker进程来执行复杂的页面交互操作序列。
+/// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_complex_interactions -- --include-ignored
+#[ignore]
 #[tokio::test]
 async fn test_scrape_with_complex_interactions() {
+    skip_if_no_chrome();
+    if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
+        return;
+    }
+
     let app = create_test_app().await;
 
     // Test with a sequence of different actions
