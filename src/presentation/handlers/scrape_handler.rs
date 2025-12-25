@@ -54,7 +54,11 @@ pub async fn create_scrape(
 
     if is_internal_url(&payload.url) {
         let ssrf_disabled = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default();
-        tracing::error!("SSRF Check: url={}, ssrf_disabled={}, is_internal=true", payload.url, ssrf_disabled);
+        tracing::error!(
+            "SSRF Check: url={}, ssrf_disabled={}, is_internal=true",
+            payload.url,
+            ssrf_disabled
+        );
         // Allow disabling SSRF protection via environment variable (for testing)
         if ssrf_disabled != "true" {
             tracing::error!("SSRF Protection: Blocking internal URL {}", payload.url);
