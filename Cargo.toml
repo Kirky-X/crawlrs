@@ -110,6 +110,7 @@ futures = "0.3"
 tempfile = "3.8"
 uuid = { version = "1.0", features = ["v4"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [[test]]
 name = "integration_tests"
