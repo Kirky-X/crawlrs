@@ -53,6 +53,7 @@ impl PortSniffer {
     ///
     /// * `start_port` - 起始端口号
     /// * `enable_detection` - 是否启用自动嗅探功能
+    /// * `max_attempts` - 最大尝试次数
     ///
     /// # 返回值
     ///
@@ -60,6 +61,7 @@ impl PortSniffer {
     pub fn find_available_port(
         start_port: u16,
         enable_detection: bool,
+        max_attempts: u16,
     ) -> Result<PortSnifferResult, PortSnifferError> {
         let mut logs = Vec::new();
         logs.push(format!("开始端口检测，起始端口: {}", start_port));
@@ -72,10 +74,6 @@ impl PortSniffer {
                     start_port
                 ));
                 warn!("端口 {} 已被占用，且自动嗅探功能未启用", start_port);
-                // 虽然被占用，但根据需求，如果不启用检测，可能应该直接返回配置的端口让系统去报错，
-                // 或者在这里就报错。根据题目要求 "当设置为false时，程序直接使用配置的默认端口而不进行嗅探"，
-                // 这意味着我们应该直接返回该端口，让后续流程处理绑定失败的情况，或者在这里返回成功但注明端口。
-                // 但为了保持API一致性，这里我们返回该端口，但在日志中记录。
                 return Ok(PortSnifferResult {
                     success: true,
                     port: start_port,
@@ -90,8 +88,6 @@ impl PortSniffer {
         }
 
         let mut current_port = start_port;
-        // 设置最大尝试范围，最多尝试50个端口
-        let max_attempts = 50;
         let mut attempts = 0;
 
         while attempts < max_attempts {
@@ -161,7 +157,7 @@ mod tests {
         // 释放该端口
         drop(listener);
 
-        let result = PortSniffer::find_available_port(port, true).unwrap();
+        let result = PortSniffer::find_available_port(port, true, 50).unwrap();
         assert_eq!(result.port, port);
         assert!(result.success);
     }
@@ -173,7 +169,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         // 尝试从该端口开始查找，应该找到下一个可用端口
-        let result = PortSniffer::find_available_port(port, true).unwrap();
+        let result = PortSniffer::find_available_port(port, true, 50).unwrap();
 
         assert!(result.port > port);
         assert!(result.success);
@@ -187,7 +183,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         // 禁用检测，应该直接返回原端口
-        let result = PortSniffer::find_available_port(port, false).unwrap();
+        let result = PortSniffer::find_available_port(port, false, 50).unwrap();
         assert_eq!(result.port, port);
     }
 }

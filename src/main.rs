@@ -122,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
     let port_result = crawlrs::utils::port_sniffer::PortSniffer::find_available_port(
         settings.server.port,
         settings.server.enable_port_detection,
+        50,
     );
 
     match port_result {
