@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use crawlrs::engines::router::EngineRouter;
 use crawlrs::engines::engine::{ReqwestEngine, PlaywrightEngine};
 use crawlrs::infrastructure::search::smart_search;

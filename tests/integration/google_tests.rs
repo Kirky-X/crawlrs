@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use super::helpers::google_helpers::{
     create_google_engine,
     get_chrome_ws_url,

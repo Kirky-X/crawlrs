@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
 use super::helpers::browser_helpers::create_scrape_request;
 use super::helpers::google_helpers::{get_chrome_ws_url, set_chrome_ws_url};
 use crawlrs::engines::playwright_engine::PlaywrightEngine;
