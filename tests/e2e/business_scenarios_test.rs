@@ -14,9 +14,9 @@ async fn test_ecommerce_product_monitoring_scenario() {
     let app = create_test_app().await;
 
     // Scenario: Monitor product prices across multiple e-commerce sites
-    let product_urls = vec![
-        "https://httpbin.org/html", // Simulating product page
-        "https://httpbin.org/json", // Simulating API endpoint
+    let product_urls = [
+        "https://httpbin.org/html",
+        "https://httpbin.org/json",
     ];
 
     // Step 1: Create monitoring tasks with specific selectors
@@ -104,7 +104,7 @@ async fn test_ecommerce_product_monitoring_scenario() {
 
     for result in &results {
         assert_eq!(result["status"], "completed");
-        assert!(result["result"]["content"].as_str().unwrap().len() > 0);
+        assert!(!result["result"]["content"].as_str().unwrap().is_empty());
 
         // Verify metadata is preserved
         let metadata = &result["metadata"];
@@ -202,7 +202,7 @@ async fn test_content_aggregation_scenario() {
 
         // Verify content extraction
         let content = result["content"].as_str().unwrap().to_string();
-        assert!(content.len() > 0, "Source {} should have content", index);
+        assert!(!content.is_empty(), "Source {} should have content", index);
     }
 
     // Step 4: Validate metadata preservation
@@ -216,7 +216,7 @@ async fn test_competitive_analysis_scenario() {
     let app = create_test_app().await;
 
     // Scenario: Competitive analysis of multiple competitor websites
-    let competitor_sites = vec!["https://httpbin.org/html", "https://httpbin.org/json"];
+    let competitor_sites = ["https://httpbin.org/html", "https://httpbin.org/json"];
 
     // Step 1: Create parallel analysis tasks
     let mut analysis_tasks = Vec::new();

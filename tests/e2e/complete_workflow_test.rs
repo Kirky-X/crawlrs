@@ -125,7 +125,7 @@ async fn test_complete_scrape_workflow() {
 
     assert!(final_data["result"].is_object());
     assert!(final_data["result"]["content"].is_string());
-    assert!(final_data["result"]["content"].as_str().unwrap().len() > 0);
+    assert!(!final_data["result"]["content"].as_str().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -209,7 +209,7 @@ async fn test_batch_scrape_workflow() {
         let final_data: serde_json::Value = final_response.json();
 
         assert_eq!(final_data["status"], "completed");
-        assert!(final_data["result"]["content"].as_str().unwrap().len() > 0);
+        assert!(!final_data["result"]["content"].as_str().unwrap().is_empty());
     }
 }
 
@@ -275,7 +275,7 @@ async fn test_crawl_with_webhook_workflow() {
     let final_data: serde_json::Value = final_response.json();
 
     assert!(final_data["results"].is_array());
-    assert!(final_data["results"].as_array().unwrap().len() > 0);
+    assert!(!final_data["results"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
