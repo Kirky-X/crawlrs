@@ -10,7 +10,6 @@
 use crawlrs::domain::models::task::{Task, TaskType};
 use crawlrs::domain::services::crawl_service::LinkDiscoverer;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use validator::Validate;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{
     ColumnTrait, Database, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter,
@@ -19,6 +18,7 @@ use sea_orm::{
 use std::hint::black_box;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
+use validator::Validate;
 
 /// 创建测试数据库连接并运行迁移
 async fn create_test_db() -> Result<DatabaseConnection, DbErr> {
@@ -649,12 +649,14 @@ fn benchmark_search_operations(c: &mut Criterion) {
     group.bench_function("search_result_dto_construction", |b| {
         b.iter(|| {
             let results: Vec<crawlrs::application::dto::search_request::SearchResultDto> = (0..100)
-                .map(|i| crawlrs::application::dto::search_request::SearchResultDto {
-                    title: format!("Search Result {}", i),
-                    url: format!("https://example{}.com", i),
-                    description: Some(format!("This is result number {} from search", i)),
-                    engine: Some("google".to_string()),
-                })
+                .map(
+                    |i| crawlrs::application::dto::search_request::SearchResultDto {
+                        title: format!("Search Result {}", i),
+                        url: format!("https://example{}.com", i),
+                        description: Some(format!("This is result number {} from search", i)),
+                        engine: Some("google".to_string()),
+                    },
+                )
                 .collect();
             black_box(results)
         });
@@ -664,12 +666,14 @@ fn benchmark_search_operations(c: &mut Criterion) {
     group.bench_function("search_response_construction", |b| {
         b.iter(|| {
             let results: Vec<crawlrs::application::dto::search_request::SearchResultDto> = (0..50)
-                .map(|i| crawlrs::application::dto::search_request::SearchResultDto {
-                    title: format!("Result {}", i),
-                    url: format!("https://example{}.com/result/{}", i, i),
-                    description: Some(format!("Description for result {}", i)),
-                    engine: Some("bing".to_string()),
-                })
+                .map(
+                    |i| crawlrs::application::dto::search_request::SearchResultDto {
+                        title: format!("Result {}", i),
+                        url: format!("https://example{}.com/result/{}", i, i),
+                        description: Some(format!("Description for result {}", i)),
+                        engine: Some("bing".to_string()),
+                    },
+                )
                 .collect();
 
             let response = crawlrs::application::dto::search_request::SearchResponseDto {
@@ -685,18 +689,20 @@ fn benchmark_search_operations(c: &mut Criterion) {
     // 测试搜索结果过滤（按引擎名称）
     group.bench_function("search_result_filtering", |b| {
         let all_results: Vec<crawlrs::application::dto::search_request::SearchResultDto> = (0..100)
-            .map(|i| crawlrs::application::dto::search_request::SearchResultDto {
-                title: format!("Result {}", i),
-                url: format!("https://example{}.com", i),
-                description: Some(format!("Description {}", i)),
-                engine: Some(if i % 3 == 0 {
-                    "google".to_string()
-                } else if i % 3 == 1 {
-                    "bing".to_string()
-                } else {
-                    "duckduckgo".to_string()
-                }),
-            })
+            .map(
+                |i| crawlrs::application::dto::search_request::SearchResultDto {
+                    title: format!("Result {}", i),
+                    url: format!("https://example{}.com", i),
+                    description: Some(format!("Description {}", i)),
+                    engine: Some(if i % 3 == 0 {
+                        "google".to_string()
+                    } else if i % 3 == 1 {
+                        "bing".to_string()
+                    } else {
+                        "duckduckgo".to_string()
+                    }),
+                },
+            )
             .collect();
 
         b.iter(|| {
@@ -713,12 +719,14 @@ fn benchmark_search_operations(c: &mut Criterion) {
     // 测试搜索结果序列化
     group.bench_function("search_result_serialization", |b| {
         let results: Vec<crawlrs::application::dto::search_request::SearchResultDto> = (0..50)
-            .map(|i| crawlrs::application::dto::search_request::SearchResultDto {
-                title: format!("Search Result with special chars: 你好世界 {}", i),
-                url: format!("https://example{}.com/path?param=value&special=你好", i),
-                description: Some(format!("Description with unicode: 🌍🎉 {}", i)),
-                engine: Some("google".to_string()),
-            })
+            .map(
+                |i| crawlrs::application::dto::search_request::SearchResultDto {
+                    title: format!("Search Result with special chars: 你好世界 {}", i),
+                    url: format!("https://example{}.com/path?param=value&special=你好", i),
+                    description: Some(format!("Description with unicode: 🌍🎉 {}", i)),
+                    engine: Some("google".to_string()),
+                },
+            )
             .collect();
 
         b.iter(|| {
@@ -755,10 +763,7 @@ fn benchmark_crawl_operations(c: &mut Criterion) {
 
     group.bench_function("link_extraction", |b| {
         b.iter(|| {
-            let links = LinkDiscoverer::extract_links(
-                sample_html,
-                "https://example.com",
-            );
+            let links = LinkDiscoverer::extract_links(sample_html, "https://example.com");
             black_box(links)
         });
     });
@@ -817,7 +822,10 @@ fn benchmark_crawl_operations(c: &mut Criterion) {
     let large_html = format!(
         r#"<html><head><title>Test</title></head><body>{}</body></html>"#,
         (0..1000)
-            .map(|i| format!(r#"<div class="item" data-id="{}">Content for item {}</div>"#, i, i))
+            .map(|i| format!(
+                r#"<div class="item" data-id="{}">Content for item {}</div>"#,
+                i, i
+            ))
             .collect::<Vec<_>>()
             .join("\n")
     );
@@ -868,8 +876,9 @@ fn benchmark_crawl_operations(c: &mut Criterion) {
                 .filter(|link| {
                     let passes_include = include_patterns.is_empty()
                         || include_patterns.iter().any(|p| link.contains(p));
-                    let passes_exclude =
-                        exclude_patterns.iter().all(|p| !link.contains(p) && !p.is_empty());
+                    let passes_exclude = exclude_patterns
+                        .iter()
+                        .all(|p| !link.contains(p) && !p.is_empty());
                     passes_include && passes_exclude
                 })
                 .collect();
@@ -890,8 +899,15 @@ fn benchmark_crawl_operations(c: &mut Criterion) {
             });
 
             let depth = payload.get("depth").and_then(|v| v.as_u64()).unwrap_or(0);
-            let max_depth = payload.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(3);
-            let strategy = payload.get("strategy").and_then(|v| v.as_str()).unwrap_or("bfs").to_string();
+            let max_depth = payload
+                .get("max_depth")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3);
+            let strategy = payload
+                .get("strategy")
+                .and_then(|v| v.as_str())
+                .unwrap_or("bfs")
+                .to_string();
 
             black_box((depth, max_depth, strategy))
         });
@@ -963,7 +979,11 @@ fn benchmark_extract_operations(c: &mut Criterion) {
         b.iter(|| {
             let selector = scraper::Selector::parse(".product").unwrap();
             let document = scraper::Html::parse_document(sample_doc);
-            let attr = document.select(&selector).next().and_then(|e| e.value().attr("data-id")).map(|s| s.to_string());
+            let attr = document
+                .select(&selector)
+                .next()
+                .and_then(|e| e.value().attr("data-id"))
+                .map(|s| s.to_string());
             black_box(attr)
         });
     });
@@ -971,41 +991,43 @@ fn benchmark_extract_operations(c: &mut Criterion) {
     // 测试提取规则构建
     group.bench_function("extraction_rule_construction", |b| {
         b.iter(|| {
-            let rules: std::collections::HashMap<String, crawlrs::domain::services::extraction_service::ExtractionRule> =
-                vec![
-                    (
-                        "title".to_string(),
-                        crawlrs::domain::services::extraction_service::ExtractionRule {
-                            selector: Some(".product .title".to_string()),
-                            attr: None,
-                            is_array: false,
-                            use_llm: None,
-                            llm_prompt: None,
-                        },
-                    ),
-                    (
-                        "price".to_string(),
-                        crawlrs::domain::services::extraction_service::ExtractionRule {
-                            selector: Some(".product .price".to_string()),
-                            attr: None,
-                            is_array: false,
-                            use_llm: None,
-                            llm_prompt: None,
-                        },
-                    ),
-                    (
-                        "reviews".to_string(),
-                        crawlrs::domain::services::extraction_service::ExtractionRule {
-                            selector: Some(".review".to_string()),
-                            attr: None,
-                            is_array: true,
-                            use_llm: None,
-                            llm_prompt: None,
-                        },
-                    ),
-                ]
-                .into_iter()
-                .collect();
+            let rules: std::collections::HashMap<
+                String,
+                crawlrs::domain::services::extraction_service::ExtractionRule,
+            > = vec![
+                (
+                    "title".to_string(),
+                    crawlrs::domain::services::extraction_service::ExtractionRule {
+                        selector: Some(".product .title".to_string()),
+                        attr: None,
+                        is_array: false,
+                        use_llm: None,
+                        llm_prompt: None,
+                    },
+                ),
+                (
+                    "price".to_string(),
+                    crawlrs::domain::services::extraction_service::ExtractionRule {
+                        selector: Some(".product .price".to_string()),
+                        attr: None,
+                        is_array: false,
+                        use_llm: None,
+                        llm_prompt: None,
+                    },
+                ),
+                (
+                    "reviews".to_string(),
+                    crawlrs::domain::services::extraction_service::ExtractionRule {
+                        selector: Some(".review".to_string()),
+                        attr: None,
+                        is_array: true,
+                        use_llm: None,
+                        llm_prompt: None,
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect();
             black_box(rules)
         });
     });
@@ -1061,19 +1083,22 @@ fn benchmark_extract_operations(c: &mut Criterion) {
     // 测试提取结果JSON构建
     group.bench_function("extraction_result_construction", |b| {
         b.iter(|| {
-            let results: Vec<crawlrs::application::dto::extract_request::ExtractResultDto> = (0..50)
-                .map(|i| crawlrs::application::dto::extract_request::ExtractResultDto {
-                    url: format!("https://example{}.com", i),
-                    data: serde_json::json!({
-                        "title": format!("Title {}", i),
-                        "content": format!("Content for item {}", i),
-                        "metadata": {
-                            "index": i,
-                            "source": "extraction"
-                        }
-                    }),
-                    error: None,
-                })
+            let results: Vec<crawlrs::application::dto::extract_request::ExtractResultDto> = (0
+                ..50)
+                .map(
+                    |i| crawlrs::application::dto::extract_request::ExtractResultDto {
+                        url: format!("https://example{}.com", i),
+                        data: serde_json::json!({
+                            "title": format!("Title {}", i),
+                            "content": format!("Content for item {}", i),
+                            "metadata": {
+                                "index": i,
+                                "source": "extraction"
+                            }
+                        }),
+                        error: None,
+                    },
+                )
                 .collect();
             black_box(results)
         });
