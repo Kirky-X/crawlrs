@@ -6,6 +6,7 @@
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::domain::services::relevance_scorer::RelevanceScorer;
+use crate::utils::text_encoding::process_string;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,10 +15,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 const MIN_REQUEST_INTERVAL_MS: u64 = 3000;
 const MAX_REQUEST_INTERVAL_MS: u64 = 8000;
+const MOBILE_UA_RATIO: f32 = 0.3;
 
 #[allow(dead_code)]
 const MAX_RETRIES: u32 = 3;
@@ -208,31 +210,55 @@ struct BaiduTestConfig {
 
 /// 加载测试结果配置
 fn load_test_config() -> Option<BaiduTestConfig> {
-    // 优先从配置文件读取
+    debug!("Attempting to load test data configuration...");
+
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    debug!("Current working directory: {:?}", current_dir);
+
     let config_paths = vec![
         PathBuf::from("test-data/search-engines/test-results.yaml"),
         PathBuf::from("../test-data/search-engines/test-results.yaml"),
         PathBuf::from("../../test-data/search-engines/test-results.yaml"),
     ];
 
-    for config_path in config_paths {
+    for config_path in &config_paths {
+        debug!("Checking config path: {:?}", config_path);
         if config_path.exists() {
-            match fs::read_to_string(&config_path) {
+            debug!("Config file exists: {:?}", config_path);
+            match fs::read_to_string(config_path) {
                 Ok(content) => {
-                    // 解析 YAML 配置文件
-                    let config: HashMap<String, BaiduTestConfig> =
-                        serde_yaml::from_str(&content).ok()?;
-
-                    // 返回百度搜索测试配置
-                    if let Some(baidu_config) = config.get("baidu") {
-                        return Some(baidu_config.clone());
+                    debug!(
+                        "Successfully read config file, content length: {}",
+                        content.len()
+                    );
+                    match serde_yaml::from_str::<HashMap<String, BaiduTestConfig>>(&content) {
+                        Ok(config) => {
+                            debug!("Successfully parsed YAML, found {} engine(s)", config.len());
+                            if let Some(baidu_config) = config.get("baidu") {
+                                debug!(
+                                    "Found baidu config with {} results",
+                                    baidu_config.results.len()
+                                );
+                                return Some(baidu_config.clone());
+                            } else {
+                                warn!("YAML parsed but no 'baidu' key found");
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse YAML: {}", e);
+                        }
                     }
                 }
-                Err(_) => continue,
+                Err(e) => {
+                    warn!("Failed to read config file: {}", e);
+                }
             }
+        } else {
+            debug!("Config file does not exist: {:?}", config_path);
         }
     }
 
+    warn!("Failed to load test data configuration from any path");
     None
 }
 
@@ -434,22 +460,78 @@ impl BaiduSearchEngine {
 
         let (url, params) = self.build_baidu_url(query, page, category);
 
-        let use_mobile = rand::random::<f32>() < 0.2;
+        let use_mobile = rand::random::<f32>() < MOBILE_UA_RATIO;
         let user_agent = if use_mobile {
-            "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36".to_string()
+            self.user_agent_manager.get_random_mobile_ua()
         } else {
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string()
+            self.user_agent_manager.get_random_pc_ua()
+        };
+
+        let (sec_ch_ua, sec_ch_ua_platform) = if use_mobile {
+            (
+                "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"",
+                "\"Android\"",
+            )
+        } else {
+            (
+                "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"",
+                "\"Windows\"",
+            )
         };
 
         let result: Result<Vec<SearchResult>, SearchError> = async move {
             let mut headers = reqwest::header::HeaderMap::new();
             headers.insert(
                 "Accept",
-                reqwest::header::HeaderValue::from_static("application/json, text/plain, */*"),
+                reqwest::header::HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"),
             );
             headers.insert(
                 "Accept-Language",
-                reqwest::header::HeaderValue::from_static("zh-CN,zh;q=0.9"),
+                reqwest::header::HeaderValue::from_static("zh-CN,zh;q=0.9,en;q=0.8"),
+            );
+            headers.insert(
+                "Accept-Encoding",
+                reqwest::header::HeaderValue::from_static("gzip, deflate, br"),
+            );
+            headers.insert(
+                "Cache-Control",
+                reqwest::header::HeaderValue::from_static("no-cache"),
+            );
+            headers.insert(
+                "Pragma",
+                reqwest::header::HeaderValue::from_static("no-cache"),
+            );
+            headers.insert(
+                "Sec-Ch-Ua",
+                reqwest::header::HeaderValue::from_static(sec_ch_ua),
+            );
+            headers.insert(
+                "Sec-Ch-Ua-Mobile",
+                reqwest::header::HeaderValue::from_static(if use_mobile { "?1" } else { "?0" }),
+            );
+            headers.insert(
+                "Sec-Ch-Ua-Platform",
+                reqwest::header::HeaderValue::from_static(sec_ch_ua_platform),
+            );
+            headers.insert(
+                "Sec-Fetch-Dest",
+                reqwest::header::HeaderValue::from_static("document"),
+            );
+            headers.insert(
+                "Sec-Fetch-Mode",
+                reqwest::header::HeaderValue::from_static("navigate"),
+            );
+            headers.insert(
+                "Sec-Fetch-Site",
+                reqwest::header::HeaderValue::from_static("none"),
+            );
+            headers.insert(
+                "Sec-Fetch-User",
+                reqwest::header::HeaderValue::from_static("?1"),
+            );
+            headers.insert(
+                "Upgrade-Insecure-Requests",
+                reqwest::header::HeaderValue::from_static("1"),
             );
             headers.insert(
                 "Referer",
@@ -463,14 +545,11 @@ impl BaiduSearchEngine {
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .default_headers(headers)
+                .cookie_store(true)
                 .build()
                 .map_err(|e| SearchError::EngineError(e.to_string()))?;
 
-            let request = client.get(&url).query(&params);
-
-            let response = request
-                .send()
-                .await
+            let response = client.get(&url).query(&params).send().await
                 .map_err(|e| SearchError::EngineError(e.to_string()))?;
 
             let status = response.status();
@@ -486,62 +565,36 @@ impl BaiduSearchEngine {
                 return Err(SearchError::EngineError(format!("HTTP error: {}", status)));
             }
 
-            let json_content = response
-                .text()
-                .await
+            let response_text = response.text().await
                 .map_err(|e| SearchError::EngineError(e.to_string()))?;
 
-            if json_content.contains("captcha")
-                || json_content.contains("wappass.baidu.com")
-                || json_content.contains("验证码")
-                || json_content.contains("请输入验证码")
-            {
-                return Err(SearchError::EngineError("CAPTCHA required".to_string()));
+            tracing::debug!("Baidu response received, content length: {}", response_text.len());
+            tracing::debug!("Response starts with: {}", &response_text[..std::cmp::min(response_text.len(), 500)]);
+
+            let debug_dir = std::env::var("DEBUG_HTML_DIR").unwrap_or_else(|_| "/tmp/crawlrs_debug".to_string());
+            let debug_path = format!("{}/baidu_response_{}.html", debug_dir, chrono::Utc::now().timestamp_millis());
+            if let Err(e) = std::fs::create_dir_all(&debug_dir) {
+                tracing::warn!("Failed to create debug directory: {}", e);
+            } else if let Err(e) = std::fs::write(&debug_path, &response_text) {
+                tracing::warn!("Failed to write debug HTML: {}", e);
+            } else {
+                tracing::debug!("Debug HTML saved to: {}", debug_path);
             }
 
-            if json_content.trim_start().starts_with('<') {
-                return Err(SearchError::EngineError(
-                    "Received HTML instead of JSON".to_string(),
-                ));
+            if self.is_captcha_page(&response_text) {
+                tracing::warn!("CAPTCHA or security verification page detected");
+                return Err(SearchError::EngineError("CAPTCHA or security verification required".to_string()));
             }
 
-            let results = serde_json::from_str::<BaiduResponse>(&json_content)
-                .map_err(|e| SearchError::EngineError(format!("JSON parsing error: {}", e)))?;
-
-            let mut search_results = Vec::new();
-
-            if let Some(feed) = results.feed {
-                if let Some(entries) = feed.entry {
-                    for entry in entries {
-                        if let (Some(title), Some(url)) = (entry.title, entry.url) {
-                            let decoded_title =
-                                html_escape::decode_html_entities(&title).to_string();
-                            let decoded_content = entry
-                                .abs
-                                .as_ref()
-                                .map(|abs| html_escape::decode_html_entities(abs).to_string());
-
-                            let scorer = RelevanceScorer::new("");
-                            let relevance_score = scorer.calculate_score(
-                                &decoded_title,
-                                decoded_content.as_deref(),
-                                &url,
-                            );
-
-                            let mut search_result = SearchResult::new(
-                                decoded_title,
-                                url.clone(),
-                                decoded_content,
-                                "baidu".to_string(),
-                            );
-                            search_result.score = relevance_score;
-                            search_results.push(search_result);
-                        }
-                    }
-                }
+            if response_text.trim_start().starts_with('{') {
+                let results = self.parse_json_response(&response_text)?;
+                tracing::debug!("Parsed {} results from JSON response", results.len());
+                Ok(results)
+            } else {
+                let results = self.parse_html_response(&response_text, query)?;
+                tracing::debug!("Parsed {} results from HTML response", results.len());
+                Ok(results)
             }
-
-            Ok(search_results)
         }
         .await;
 
@@ -555,6 +608,101 @@ impl BaiduSearchEngine {
                 Err(e)
             }
         }
+    }
+
+    fn parse_json_response(&self, json_text: &str) -> Result<Vec<SearchResult>, SearchError> {
+        let data: BaiduResponse = serde_json::from_str(json_text)
+            .map_err(|e| SearchError::EngineError(format!("JSON parsing error: {}", e)))?;
+
+        let mut results = Vec::new();
+
+        if let Some(feed) = data.feed {
+            if let Some(entries) = feed.entry {
+                for entry in entries {
+                    if let (Some(title), Some(url)) = (entry.title, entry.url) {
+                        let decoded_title = html_escape::decode_html_entities(&title).to_string();
+                        let decoded_title = process_string(&decoded_title).unwrap_or(decoded_title);
+
+                        let decoded_content = entry
+                            .abs
+                            .as_ref()
+                            .map(|abs| html_escape::decode_html_entities(abs).to_string())
+                            .map(|s| process_string(&s).unwrap_or(s));
+
+                        let scorer = RelevanceScorer::new("");
+                        let relevance_score = scorer.calculate_score(
+                            &decoded_title,
+                            decoded_content.as_deref(),
+                            &url,
+                        );
+
+                        let mut search_result = SearchResult::new(
+                            decoded_title,
+                            url.clone(),
+                            decoded_content,
+                            "baidu".to_string(),
+                        );
+                        search_result.score = relevance_score;
+                        results.push(search_result);
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn parse_html_response(
+        &self,
+        html: &str,
+        _query: &str,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        use scraper::{Html, Selector};
+
+        let document = Html::parse_document(html);
+        let result_selector = Selector::parse("div.c-container")
+            .unwrap_or_else(|_| Selector::parse("div.result").unwrap());
+        let title_selector =
+            Selector::parse("h3 a").unwrap_or_else(|_| Selector::parse("a").unwrap());
+        let link_selector = Selector::parse("a").unwrap();
+        let snippet_selector =
+            Selector::parse("div.c-abstract").unwrap_or_else(|_| Selector::parse("div").unwrap());
+
+        let mut results = Vec::new();
+        let scorer = RelevanceScorer::new("baidu_search");
+
+        for element in document.select(&result_selector) {
+            let title = element
+                .select(&title_selector)
+                .next()
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
+
+            let url = element
+                .select(&link_selector)
+                .next()
+                .and_then(|el| el.value().attr("href"))
+                .map(|href| href.to_string())
+                .unwrap_or_default();
+
+            let description = element
+                .select(&snippet_selector)
+                .next()
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
+            let description = process_string(&description).unwrap_or(description);
+
+            if !title.is_empty() && !url.is_empty() {
+                let relevance_score = scorer.calculate_score(&title, Some(&description), &url);
+
+                let mut search_result =
+                    SearchResult::new(title, url, Some(description), "baidu".to_string());
+                search_result.score = relevance_score;
+                results.push(search_result);
+            }
+        }
+
+        Ok(results)
     }
 
     /// 从配置创建搜索结果
@@ -633,10 +781,13 @@ impl BaiduSearchEngine {
                     if let (Some(title), Some(url)) = (entry.title, entry.url) {
                         // HTML转义字符解码
                         let decoded_title = html_escape::decode_html_entities(&title).to_string();
+                        let decoded_title = process_string(&decoded_title).unwrap_or(decoded_title);
+
                         let decoded_content = entry
                             .abs
                             .as_ref()
-                            .map(|abs| html_escape::decode_html_entities(abs).to_string());
+                            .map(|abs| html_escape::decode_html_entities(abs).to_string())
+                            .map(|s| process_string(&s).unwrap_or(s));
 
                         // 计算相关性分数
                         let scorer = RelevanceScorer::new(""); // 将在search方法中设置正确的查询词

@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use async_trait::async_trait;
+use rand::prelude::*;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -16,6 +17,7 @@ use crate::domain::services::relevance_scorer::RelevanceScorer;
 use crate::engines::router::EngineRouter;
 use crate::engines::traits::EngineError;
 use crate::engines::traits::ScrapeRequest;
+use crate::utils::text_encoding::process_string;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -294,25 +296,107 @@ impl SmartSearchEngine {
         needs_tls_fingerprint: bool,
     ) -> ScrapeRequest {
         use crate::engines::traits::ScrapeAction;
+        use rand::rng;
 
         let mut headers = HashMap::new();
 
-        if needs_js {
-            headers.insert("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8".to_string());
-            headers.insert("Accept-Language".to_string(), "en-US,en;q=0.5".to_string());
-            headers.insert("DNT".to_string(), "1".to_string());
-            headers.insert("Connection".to_string(), "keep-alive".to_string());
-            headers.insert("Upgrade-Insecure-Requests".to_string(), "1".to_string());
-            headers.insert("Sec-Fetch-Dest".to_string(), "document".to_string());
-            headers.insert("Sec-Fetch-Mode".to_string(), "navigate".to_string());
-            headers.insert("Sec-Fetch-Site".to_string(), "none".to_string());
-            headers.insert("Sec-Fetch-User".to_string(), "?1".to_string());
-            headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
+        // 为所有请求类型添加完整的浏览器指纹
+        let user_agents = vec![
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+        ];
+
+        let (user_agent, is_mobile) = match self.config.engine_type {
+            SearchEngineType::Baidu => {
+                // 百度使用PC端User-Agent更不容易被检测
+                let ua = user_agents.choose(&mut rng()).unwrap_or(&user_agents[0]);
+                (ua.to_string(), false)
+            }
+            _ => {
+                let ua = user_agents.choose(&mut rng()).unwrap_or(&user_agents[0]);
+                (ua.to_string(), false)
+            }
+        };
+
+        headers.insert("User-Agent".to_string(), user_agent.clone());
+        headers.insert("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8".to_string());
+        headers.insert(
+            "Accept-Language".to_string(),
+            "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7".to_string(),
+        );
+        headers.insert(
+            "Accept-Encoding".to_string(),
+            "gzip, deflate, br".to_string(),
+        );
+        headers.insert("DNT".to_string(), "1".to_string());
+        headers.insert("Connection".to_string(), "keep-alive".to_string());
+        headers.insert("Upgrade-Insecure-Requests".to_string(), "1".to_string());
+        headers.insert("Sec-Fetch-Dest".to_string(), "document".to_string());
+        headers.insert("Sec-Fetch-Mode".to_string(), "navigate".to_string());
+        headers.insert("Sec-Fetch-Site".to_string(), "none".to_string());
+        headers.insert("Sec-Fetch-User".to_string(), "?1".to_string());
+        headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
+
+        let (sec_ch_ua, sec_ch_ua_platform) = if user_agent.contains("Edg") {
+            (
+                "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Edge\";v=\"120\"".to_string(),
+                "\"Windows\"".to_string(),
+            )
+        } else if user_agent.contains("Firefox") {
+            (
+                "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Firefox\";v=\"121\""
+                    .to_string(),
+                if is_mobile {
+                    "\"Android\"".to_string()
+                } else {
+                    "\"Windows\"".to_string()
+                },
+            )
+        } else if user_agent.contains("Safari") && user_agent.contains("Apple") {
+            (
+                "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Safari\";v=\"605.1\""
+                    .to_string(),
+                "\"macOS\"".to_string(),
+            )
+        } else {
+            (
+                "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\""
+                    .to_string(),
+                "\"Windows\"".to_string(),
+            )
+        };
+
+        headers.insert("sec-ch-ua".to_string(), sec_ch_ua);
+        headers.insert(
+            "sec-ch-ua-mobile".to_string(),
+            if is_mobile {
+                "?1".to_string()
+            } else {
+                "?0".to_string()
+            },
+        );
+        headers.insert("sec-ch-ua-platform".to_string(), sec_ch_ua_platform);
+
+        // 搜索引擎特定的额外头
+        match self.config.engine_type {
+            SearchEngineType::Baidu => {
+                headers.insert("Referer".to_string(), "https://www.baidu.com/".to_string());
+                headers.insert("Origin".to_string(), "https://www.baidu.com".to_string());
+            }
+            SearchEngineType::Google => {
+                headers.insert("Referer".to_string(), "https://www.google.com/".to_string());
+            }
+            SearchEngineType::Bing => {
+                headers.insert("Referer".to_string(), "https://www.bing.com/".to_string());
+            }
         }
 
         let actions = if needs_js {
             vec![
-                ScrapeAction::Wait { milliseconds: 2000 },
+                ScrapeAction::Wait { milliseconds: 3000 },
                 ScrapeAction::Scroll {
                     direction: "top".to_string(),
                 },
@@ -328,10 +412,11 @@ impl SmartSearchEngine {
                 ScrapeAction::Scroll {
                     direction: "bottom".to_string(),
                 },
-                ScrapeAction::Wait { milliseconds: 2000 },
+                ScrapeAction::Wait { milliseconds: 3000 },
             ]
         } else {
-            Vec::new()
+            // 即使不需要JS，也为搜索引擎添加短暂等待
+            vec![ScrapeAction::Wait { milliseconds: 2000 }]
         };
 
         ScrapeRequest {
@@ -347,7 +432,7 @@ impl SmartSearchEngine {
             needs_tls_fingerprint,
             use_fire_engine: needs_js,
             actions,
-            sync_wait_ms: if needs_js { 8000 } else { 0 },
+            sync_wait_ms: if needs_js { 10000 } else { 0 },
         }
     }
 
@@ -447,6 +532,7 @@ impl SmartSearchEngine {
             if let Ok(selector) = Selector::parse(selector_str) {
                 if let Some(el) = element.select(&selector).next() {
                     description = el.text().collect::<String>().trim().to_string();
+                    description = process_string(&description).unwrap_or(description);
                     if !description.is_empty() {
                         break;
                     }
@@ -456,8 +542,8 @@ impl SmartSearchEngine {
 
         if !title.is_empty() && !url.is_empty() {
             let scorer = RelevanceScorer::new("google_search");
-            let mut result =
-                SearchResult::new(title, url, Some(description), "google_smart".to_string());
+            let engine_name = self.get_engine_name();
+            let mut result = SearchResult::new(title, url, Some(description), engine_name);
             result.score =
                 scorer.calculate_score(&result.title, result.description.as_deref(), &result.url);
             Some(result)
@@ -501,10 +587,11 @@ impl SmartSearchEngine {
                 .next()
                 .map(|el| el.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
+            let description = process_string(&description).unwrap_or(description);
 
             if !title.is_empty() && !url.is_empty() {
-                let mut result =
-                    SearchResult::new(title, url, Some(description), "bing_smart".to_string());
+                let engine_name = self.get_engine_name();
+                let mut result = SearchResult::new(title, url, Some(description), engine_name);
                 result.score = scorer.calculate_score(
                     &result.title,
                     result.description.as_deref(),
@@ -552,10 +639,11 @@ impl SmartSearchEngine {
                 .next()
                 .map(|el| el.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
+            let description = process_string(&description).unwrap_or(description);
 
             if !title.is_empty() && !url.is_empty() {
-                let mut result =
-                    SearchResult::new(title, url, Some(description), "baidu_smart".to_string());
+                let engine_name = self.get_engine_name();
+                let mut result = SearchResult::new(title, url, Some(description), engine_name);
                 result.score = scorer.calculate_score(
                     &result.title,
                     result.description.as_deref(),
@@ -566,6 +654,36 @@ impl SmartSearchEngine {
         }
 
         Ok(results)
+    }
+
+    /// 保存HTML用于调试分析
+    fn save_html_for_debug(&self, html: &str, query: &str) {
+        if std::env::var("DEBUG_SAVE_HTML").is_ok() {
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+            let engine_name = match self.config.engine_type {
+                SearchEngineType::Google => "google",
+                SearchEngineType::Bing => "bing",
+                SearchEngineType::Baidu => "baidu",
+            };
+            let filename = format!(
+                "/tmp/search_debug_{}_{}_{}.html",
+                engine_name,
+                query.replace(" ", "_"),
+                timestamp
+            );
+
+            // 同时保存查询信息
+            let debug_info = format!(
+                "<!-- Search Query: {} -->\n<!-- Engine: {} -->\n<!-- Timestamp: {} -->\n{}\n",
+                query, engine_name, timestamp, html
+            );
+
+            if let Err(e) = std::fs::write(&filename, &debug_info) {
+                warn!("保存调试HTML失败: {}", e);
+            } else {
+                info!("已保存调试HTML到: {}", filename);
+            }
+        }
     }
 
     /// 应用相关性评分和新鲜度计算
@@ -607,10 +725,15 @@ impl SmartSearchEngine {
     #[allow(dead_code)]
     fn engine_name(&self) -> &'static str {
         match self.config.engine_type {
-            SearchEngineType::Google => "google_smart",
-            SearchEngineType::Bing => "bing_smart",
-            SearchEngineType::Baidu => "baidu_smart",
+            SearchEngineType::Google => "google",
+            SearchEngineType::Bing => "bing",
+            SearchEngineType::Baidu => "baidu",
         }
+    }
+
+    /// 获取引擎名称字符串
+    fn get_engine_name(&self) -> String {
+        self.engine_name().to_string()
     }
 
     /// 判断是否应该重试
@@ -709,6 +832,9 @@ impl SearchEngine for SmartSearchEngine {
         let html = scrape_response.content;
         info!("搜索返回HTML长度: {} bytes", html.len());
 
+        // 保存HTML用于调试分析
+        self.save_html_for_debug(&html, query);
+
         // 如果HTML内容太少，可能是被拦截了
         if html.len() < 1000 {
             warn!("搜索返回的HTML内容过少，可能被反爬虫拦截");
@@ -732,7 +858,7 @@ impl SearchEngine for SmartSearchEngine {
     }
 
     fn name(&self) -> &'static str {
-        "smart_search"
+        self.engine_name()
     }
 }
 

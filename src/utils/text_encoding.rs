@@ -4,7 +4,6 @@
 // See LICENSE file in the project root for full license information.
 
 use chardetng::EncodingDetector;
-use deunicode::deunicode;
 use encoding_rs::Encoding;
 use lru::LruCache;
 use once_cell::sync::Lazy;
@@ -125,13 +124,89 @@ impl TextEncodingProcessor {
         text.contains("\\u") || text.contains("\\U") || text.contains("\\x")
     }
 
+    /// 解析字符串中的Unicode转义序列（如 \u4e00 -> 一）
+    fn parse_unicode_escapes(&self, text: &str) -> String {
+        let mut result = String::new();
+        let mut chars = text.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                // 检查是否是Unicode转义序列
+                if chars.peek() == Some(&'u') {
+                    chars.next(); // 消耗 'u'
+
+                    // 读取4个十六进制字符
+                    let mut hex_chars = String::new();
+                    for _ in 0..4 {
+                        if let Some(h) = chars.next() {
+                            hex_chars.push(h);
+                        }
+                    }
+
+                    // 转换为Unicode字符
+                    if let Ok(code_point) = u32::from_str_radix(&hex_chars, 16) {
+                        if let Some(ch) = char::from_u32(code_point) {
+                            result.push(ch);
+                            continue;
+                        }
+                    }
+                } else if chars.peek() == Some(&'U') {
+                    chars.next(); // 消耗 'U'
+
+                    // 读取8个十六进制字符（U+XXXXXXXX格式）
+                    let mut hex_chars = String::new();
+                    for _ in 0..8 {
+                        if let Some(h) = chars.next() {
+                            hex_chars.push(h);
+                        }
+                    }
+
+                    // 转换为Unicode字符
+                    if let Ok(code_point) = u32::from_str_radix(&hex_chars, 16) {
+                        if let Some(ch) = char::from_u32(code_point) {
+                            result.push(ch);
+                            continue;
+                        }
+                    }
+                } else if chars.peek() == Some(&'x') {
+                    chars.next(); // 消耗 'x'
+
+                    // 读取2个十六进制字符（\xHH格式）
+                    let mut hex_chars = String::new();
+                    for _ in 0..2 {
+                        if let Some(h) = chars.next() {
+                            hex_chars.push(h);
+                        }
+                    }
+
+                    // 转换为Unicode字符
+                    if let Ok(code_point) = u32::from_str_radix(&hex_chars, 16) {
+                        if let Some(ch) = char::from_u32(code_point) {
+                            result.push(ch);
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // 如果不是转义序列，直接添加当前字符
+            result.push(c);
+        }
+
+        result
+    }
+
     /// Unicode字符串规范化转换
     fn normalize_unicode(&self, text: &str) -> Result<String, TextEncodingError> {
         debug!("检测到Unicode转义序列，执行规范化转换");
 
-        let normalized = deunicode(text);
-        debug!("Unicode转换成功");
-        Ok(normalized)
+        // 解析字符串中的Unicode转义序列（如 \u4e00 -> 一）
+        let parsed = self.parse_unicode_escapes(text);
+        debug!("Unicode转义序列解析完成: {:?}", parsed);
+
+        // 保留解析后的结果（已经是正确的Unicode字符）
+        // 不再使用 deunicode，因为它会将中文字符转换为拼音
+        Ok(parsed)
     }
 
     /// 检测并转换编码
@@ -316,6 +391,33 @@ mod tests {
         let input = "Hello 世界!"; // 直接包含中文字符
         let result = processor.process_text(input.as_bytes()).unwrap();
         assert!(result.contains("世界"));
+    }
+
+    #[test]
+    fn test_unicode_escape_sequence_conversion() {
+        let input = "\u{4e00}\u{7ad9}\u{5f0f}\u{7f51}\u{7ad9}\u{5efa}\u{8bbe}";
+        let result = process_string(input).expect("Unicode conversion should succeed");
+        assert!(!result.is_empty());
+
+        let input2 = "\u{5e7f}\u{544a}\u{63a8}\u{8350}\u{7cfb}\u{7edf}";
+        let result2 = process_string(input2).expect("Unicode conversion should succeed");
+        assert!(!result2.is_empty());
+    }
+
+    #[test]
+    fn test_string_unicode_escape_sequence_conversion() {
+        // 测试字符串形式的Unicode转义序列（如 "\\u4e00"）
+        let input = "\\u4e00\\u7ad9\\u5f0f\\u7f51\\u7ad9\\u5efa\\u8bbe";
+        let result = process_string(input).expect("String Unicode escape conversion should succeed");
+        eprintln!("DEBUG: input = {:?}, result = {:?}", input, result);
+        assert!(!result.is_empty());
+        assert!(result.contains("一站式"));
+
+        // 测试混合内容
+        let input2 = "搜索结果: \\u5e7f\\u544a\\u63a8\\u8350";
+        let result2 = process_string(input2).expect("Mixed content conversion should succeed");
+        eprintln!("DEBUG: input2 = {:?}, result2 = {:?}", input2, result2);
+        assert!(result2.contains("广告"));
     }
 
     #[test]
