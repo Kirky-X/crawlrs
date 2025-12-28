@@ -34,7 +34,7 @@ use crate::{
 
 pub async fn create_scrape(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
-    Extension(_redis_client): Extension<RedisClient>,
+    Extension(_redis_client): Extension<Arc<RedisClient>>,
     Extension(_settings): Extension<Arc<Settings>>,
     Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,

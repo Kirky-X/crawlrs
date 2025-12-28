@@ -6,7 +6,6 @@
 use crate::infrastructure::cache::redis_client::RedisClient;
 use anyhow::Result;
 use thiserror::Error;
-use tracing::error;
 
 /// 速率限制错误类型
 #[derive(Error, Debug)]
