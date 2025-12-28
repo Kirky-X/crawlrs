@@ -24,7 +24,10 @@ use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResult
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::storage::LocalStorage;
 
-use crawlrs::domain::services::rate_limiting_service::{ConcurrencyConfig, ConcurrencyStrategy};
+use crawlrs::domain::services::rate_limiting_service::{
+    ConcurrencyConfig, ConcurrencyStrategy, RateLimitingService,
+};
+use crawlrs::domain::services::team_service::TeamService;
 use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
@@ -34,7 +37,8 @@ use crawlrs::infrastructure::services::rate_limiting_service_impl::{
 };
 use crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl;
 use crawlrs::presentation::handlers::{
-    crawl_handler, extract_handler, scrape_handler, search_handler, webhook_handler,
+    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
+    webhook_handler,
 };
 use crawlrs::presentation::middleware::auth_middleware::AuthState;
 use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
@@ -224,6 +228,9 @@ async fn main() -> anyhow::Result<()> {
     // 创建百度智能搜索引擎
     search_engines.push(smart_search::create_baidu_smart_search(router.clone()));
 
+    // 创建搜狗智能搜索引擎
+    search_engines.push(smart_search::create_sogou_smart_search(router.clone()));
+
     let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
 
     // 集成 A/B 测试引擎 (TASK-036)
@@ -253,6 +260,10 @@ async fn main() -> anyhow::Result<()> {
     let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.clone()));
     let _credits_repo_unused = credits_repo.clone();
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.clone()));
+    let team_service = Arc::new(TeamService::new(
+        crawlrs::infrastructure::geolocation::GeoLocationService::new(),
+        geo_restriction_repo.clone(),
+    ));
     let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(
         redis_client.clone(),
     )));
@@ -279,13 +290,14 @@ async fn main() -> anyhow::Result<()> {
         backlog_process_interval_seconds: 30,
         rate_limit_ttl_seconds: 3600,
     };
-    let rate_limiting_service = Arc::new(RateLimitingServiceImpl::new(
-        redis_client.clone(),
-        task_repo.clone(),
-        tasks_backlog_repo.clone(),
-        credits_repo.clone(),
-        rate_limiting_config,
-    ));
+    let rate_limiting_service: Arc<dyn RateLimitingService> =
+        Arc::new(RateLimitingServiceImpl::new(
+            redis_client.clone(),
+            task_repo.clone(),
+            tasks_backlog_repo.clone(),
+            credits_repo.clone(),
+            rate_limiting_config,
+        ));
     info!("Rate limiting service initialized");
 
     // 8. 根据启动参数选择服务类型
@@ -327,6 +339,7 @@ async fn main() -> anyhow::Result<()> {
 
             let public_routes = Router::new()
                 .route("/health", get(routes::health_check))
+                .route("/metrics", get(metrics_handler::metrics))
                 .route("/v1/version", get(routes::version));
 
             let protected_routes = Router::new()
@@ -394,7 +407,24 @@ async fn main() -> anyhow::Result<()> {
                         >,
                     ),
                 )
-                .layer(Extension(geo_restriction_repo.clone()));
+                .layer(axum::middleware::from_fn_with_state(
+                    _auth_state.clone(),
+                    crawlrs::presentation::middleware::auth_middleware::auth_middleware,
+                ))
+                .layer(Extension(geo_restriction_repo.clone()))
+                .layer(Extension(team_semaphore.clone()))
+                .layer(Extension(queue.clone()))
+                .layer(Extension(task_repo.clone()))
+                .layer(Extension(result_repo.clone()))
+                .layer(Extension(redis_client.clone()))
+                .layer(Extension(rate_limiter.clone()))
+                .layer(Extension(settings.clone()))
+                .layer(Extension(rate_limiting_service.clone()))
+                .layer(Extension(crawl_repo.clone()))
+                .layer(Extension(webhook_repository.clone()))
+                .layer(Extension(tasks_backlog_repo.clone()))
+                .layer(Extension(search_engine_service.clone()))
+                .layer(Extension(team_service.clone()));
 
             let v2_routes = task_routes()
                 .layer(Extension(task_repo.clone()))
@@ -435,7 +465,11 @@ async fn main() -> anyhow::Result<()> {
             let addr = format!("{}:{}", settings.server.host, settings.server.port);
             let listener = TcpListener::bind(&addr).await?;
             info!("Server listening on {}", addr);
-            axum::serve(listener, app).await?;
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await?;
         }
         "worker" => {
             info!("Starting Worker service...");
