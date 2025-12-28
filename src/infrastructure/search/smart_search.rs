@@ -32,6 +32,8 @@ pub enum SearchEngineType {
     Bing,
     /// 百度搜索引擎
     Baidu,
+    /// 搜狗搜索引擎
+    Sogou,
 }
 
 /// 智能搜索引擎配置
@@ -175,6 +177,7 @@ impl SmartSearchEngine {
             SearchEngineType::Google => (true, false),
             SearchEngineType::Bing => (true, false),
             SearchEngineType::Baidu => (false, false),
+            SearchEngineType::Sogou => (false, false),
         }
     }
 
@@ -184,6 +187,7 @@ impl SmartSearchEngine {
             SearchEngineType::Google => self.build_google_search_url(query, lang, country),
             SearchEngineType::Bing => self.build_bing_search_url(query, lang, country),
             SearchEngineType::Baidu => self.build_baidu_search_url(query, lang, country),
+            SearchEngineType::Sogou => self.build_sogou_search_url(query, lang, country),
         }
     }
 
@@ -301,7 +305,7 @@ impl SmartSearchEngine {
         let mut headers = HashMap::new();
 
         // 为所有请求类型添加完整的浏览器指纹
-        let user_agents = vec![
+        let user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
@@ -392,6 +396,9 @@ impl SmartSearchEngine {
             SearchEngineType::Bing => {
                 headers.insert("Referer".to_string(), "https://www.bing.com/".to_string());
             }
+            SearchEngineType::Sogou => {
+                headers.insert("Referer".to_string(), "https://www.sogou.com/".to_string());
+            }
         }
 
         let actions = if needs_js {
@@ -436,12 +443,39 @@ impl SmartSearchEngine {
         }
     }
 
+    /// 构建搜狗搜索URL
+    fn build_sogou_search_url(
+        &self,
+        query: &str,
+        lang: Option<&str>,
+        _country: Option<&str>,
+    ) -> String {
+        let mut query_params: Vec<(&str, String)> = vec![("query", query.to_string())];
+
+        if let Some(l) = lang {
+            if l.starts_with("zh") {
+                query_params.push(("safp", "d".to_string()));
+            }
+        }
+
+        let mut url = "https://www.sogou.com/web?".to_string();
+        let query_string = query_params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        url.push_str(&query_string);
+
+        url
+    }
+
     /// 解析搜索结果（根据搜索引擎类型使用不同的解析器）
     fn parse_search_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
         match self.config.engine_type {
             SearchEngineType::Google => self.parse_google_results(html),
             SearchEngineType::Bing => self.parse_bing_results(html),
             SearchEngineType::Baidu => self.parse_baidu_results(html),
+            SearchEngineType::Sogou => self.parse_sogou_results(html),
         }
     }
 
@@ -656,6 +690,58 @@ impl SmartSearchEngine {
         Ok(results)
     }
 
+    /// 解析搜狗搜索结果
+    fn parse_sogou_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
+        use scraper::{Html, Selector};
+
+        let document = Html::parse_document(html);
+        let result_selector =
+            Selector::parse("div.rc").unwrap_or_else(|_| Selector::parse("div.result").unwrap());
+        let title_selector =
+            Selector::parse("h3 a").unwrap_or_else(|_| Selector::parse("a").unwrap());
+        let link_selector = Selector::parse("a").unwrap();
+        let snippet_selector =
+            Selector::parse("div.ft").unwrap_or_else(|_| Selector::parse("div").unwrap());
+
+        let mut results = Vec::new();
+        let scorer = RelevanceScorer::new("sogou_search");
+
+        for element in document.select(&result_selector) {
+            let title = element
+                .select(&title_selector)
+                .next()
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
+
+            let url = element
+                .select(&link_selector)
+                .next()
+                .and_then(|el| el.value().attr("href"))
+                .map(|href| href.to_string())
+                .unwrap_or_default();
+
+            let description = element
+                .select(&snippet_selector)
+                .next()
+                .map(|el| el.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
+            let description = process_string(&description).unwrap_or(description);
+
+            if !title.is_empty() && !url.is_empty() {
+                let engine_name = self.get_engine_name();
+                let mut result = SearchResult::new(title, url, Some(description), engine_name);
+                result.score = scorer.calculate_score(
+                    &result.title,
+                    result.description.as_deref(),
+                    &result.url,
+                );
+                results.push(result);
+            }
+        }
+
+        Ok(results)
+    }
+
     /// 保存HTML用于调试分析
     fn save_html_for_debug(&self, html: &str, query: &str) {
         if std::env::var("DEBUG_SAVE_HTML").is_ok() {
@@ -664,6 +750,7 @@ impl SmartSearchEngine {
                 SearchEngineType::Google => "google",
                 SearchEngineType::Bing => "bing",
                 SearchEngineType::Baidu => "baidu",
+                SearchEngineType::Sogou => "sogou",
             };
             let filename = format!(
                 "/tmp/search_debug_{}_{}_{}.html",
@@ -724,11 +811,7 @@ impl SmartSearchEngine {
     /// 获取引擎名称
     #[allow(dead_code)]
     fn engine_name(&self) -> &'static str {
-        match self.config.engine_type {
-            SearchEngineType::Google => "google",
-            SearchEngineType::Bing => "bing",
-            SearchEngineType::Baidu => "baidu",
-        }
+        "smart_search"
     }
 
     /// 获取引擎名称字符串
@@ -896,6 +979,21 @@ pub fn create_bing_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEngi
 pub fn create_baidu_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEngine> {
     let config = SmartSearchEngineConfig {
         engine_type: SearchEngineType::Baidu,
+        rate_limiting_enabled: true,
+        rate_limiting_service: None,
+        timeout_seconds: 60,
+        test_data_enabled: false,
+        test_data_path: None,
+        max_retries: 3,
+        retry_delay_ms: 1000,
+    };
+    Arc::new(SmartSearchEngine::new(router, config))
+}
+
+/// 创建搜狗智能搜索引擎
+pub fn create_sogou_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEngine> {
+    let config = SmartSearchEngineConfig {
+        engine_type: SearchEngineType::Sogou,
         rate_limiting_enabled: true,
         rate_limiting_service: None,
         timeout_seconds: 60,

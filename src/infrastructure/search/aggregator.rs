@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::future::join_all;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -24,6 +25,16 @@ pub struct SearchAggregator {
     failures: std::sync::Arc<DashMap<String, u32>>,
 }
 
+impl fmt::Debug for SearchAggregator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SearchAggregator")
+            .field("engine_count", &self.engines.len())
+            .field("timeout_ms", &self.timeout.as_millis())
+            .field("cache_size", &self.cache.len())
+            .finish()
+    }
+}
+
 impl SearchAggregator {
     pub fn new(engines: Vec<Arc<dyn SearchEngine>>, timeout_ms: u64) -> Self {
         Self {
@@ -32,6 +43,45 @@ impl SearchAggregator {
             cache: DashMap::new(),
             cache_ttl: Duration::from_secs(300),
             failures: std::sync::Arc::new(DashMap::new()),
+        }
+    }
+
+    pub fn get_engine(&self, name: &str) -> Option<Arc<dyn SearchEngine>> {
+        self.engines
+            .iter()
+            .find(|e| e.name().eq_ignore_ascii_case(name))
+            .cloned()
+    }
+
+    pub fn engine_names(&self) -> Vec<&'static str> {
+        self.engines.iter().map(|e| e.name()).collect()
+    }
+
+    pub async fn search_with_engine(
+        &self,
+        query: &str,
+        limit: u32,
+        lang: Option<&str>,
+        country: Option<&str>,
+        engine: Option<&str>,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        if let Some(engine_name) = engine {
+            let target_engine = self.get_engine(engine_name);
+            match target_engine {
+                Some(engine) => {
+                    info!("Directly calling search engine: {}", engine_name);
+                    engine.search(query, limit, lang, country).await
+                }
+                None => {
+                    warn!(
+                        "Engine '{}' not found, falling back to aggregator",
+                        engine_name
+                    );
+                    self.search(query, limit, lang, country).await
+                }
+            }
+        } else {
+            self.search(query, limit, lang, country).await
         }
     }
 
@@ -191,5 +241,63 @@ impl SearchEngine for SearchAggregator {
 
     fn name(&self) -> &'static str {
         "aggregator"
+    }
+
+    async fn search_with_engine(
+        &self,
+        query: &str,
+        limit: u32,
+        lang: Option<&str>,
+        country: Option<&str>,
+        engine: Option<&str>,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        let query = query.to_string();
+
+        // Check cache first (including engine in cache key if specified)
+        let cache_key = format!(
+            "{}:{}:{}:{}:{}",
+            query,
+            limit,
+            lang.unwrap_or(""),
+            country.unwrap_or(""),
+            engine.unwrap_or("")
+        );
+
+        if let Some(entry) = self.cache.get(&cache_key) {
+            if entry.1.elapsed() < self.cache_ttl {
+                info!("Cache hit for query: {} (engine: {:?})", query, engine);
+                let mut cached_results = entry.0.clone();
+                if cached_results.len() > limit as usize {
+                    cached_results.truncate(limit as usize);
+                }
+                return Ok(cached_results);
+            }
+        }
+
+        // Cache miss, proceed with search
+        let results = if let Some(engine_name) = engine {
+            let target_engine = self.get_engine(engine_name);
+            match target_engine {
+                Some(engine) => {
+                    info!("Directly calling search engine: {}", engine_name);
+                    engine.search(&query, limit, lang, country).await
+                }
+                None => {
+                    warn!(
+                        "Engine '{}' not found, falling back to aggregator",
+                        engine_name
+                    );
+                    self.search(&query, limit, lang, country).await
+                }
+            }
+        } else {
+            self.search(&query, limit, lang, country).await
+        }?;
+
+        // Cache the results
+        self.cache
+            .insert(cache_key, (results.clone(), Instant::now()));
+
+        Ok(results)
     }
 }

@@ -27,6 +27,7 @@ static SYSTEM: Lazy<Arc<Mutex<System>>> = Lazy::new(|| {
 pub fn init_metrics() {
     let builder = PrometheusBuilder::new();
     builder
+        .with_http_listener(([0, 0, 0, 0], 9100))
         .install()
         .expect("failed to install Prometheus recorder");
 

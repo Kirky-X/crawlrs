@@ -547,6 +547,34 @@ impl SearchEngineRouter {
     }
 }
 
+#[async_trait]
+impl SearchEngine for SearchEngineRouter {
+    async fn search(
+        &self,
+        query: &str,
+        limit: u32,
+        lang: Option<&str>,
+        country: Option<&str>,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        self.search(query, limit, lang, country, None).await
+    }
+
+    fn name(&self) -> &'static str {
+        "smart_router"
+    }
+
+    async fn search_with_engine(
+        &self,
+        query: &str,
+        limit: u32,
+        lang: Option<&str>,
+        country: Option<&str>,
+        engine: Option<&str>,
+    ) -> Result<Vec<SearchResult>, SearchError> {
+        self.search(query, limit, lang, country, engine).await
+    }
+}
+
 /// 路由器统计信息
 #[derive(Debug, Clone)]
 pub struct RouterStats {
