@@ -65,7 +65,7 @@ crawlrs 是一个用 Rust 开发的企业级网页数据采集平台，提供搜
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-org/crawlrs.git
+git clone https://github.com/Kirky-X/crawlrs.git
 cd crawlrs
 
 # 编译
@@ -105,10 +105,16 @@ REDIS_URL=redis://localhost:6380
 # 服务配置
 HOST=0.0.0.0
 PORT=8899
-RUST_LOG=info
+ENABLE_PORT_DETECTION=true
 
-# 引擎配置
-PLAYWRIGHT_SERVICE_URL=http://localhost:3000
+# 搜索引擎配置
+BING_SEARCH_API_KEY=your-bing-api-key
+GOOGLE_SEARCH_API_KEY=your-google-api-key
+GOOGLE_SEARCH_CX=your-google-cx
+
+# 搜索 A/B 测试配置
+SEARCH_AB_TEST_ENABLED=false
+SEARCH_VARIANT_B_WEIGHT=0.1
 ```
 
 ### 存储配置
@@ -190,11 +196,7 @@ curl -X POST http://localhost:8899/v2/tasks/cancel \
 
 ## 📚 文档
 
-- [📖 使用手册](./docs/USER_MANUAL.md) - 完整功能说明和示例
-- [🔌 API 文档](./docs/API.md) - RESTful API 参考
-- [🏗️ 架构设计](./docs/TDD.md) - 技术设计文档
-- [📋 产品需求](./docs/PRD.md) - 产品功能定义
-- [🧪 测试文档](./docs/TEST.md) - 测试策略和用例
+- [ API 文档](./docs/API.md) - RESTful API 参考
 
 ---
 
@@ -239,7 +241,8 @@ curl -X POST http://localhost:8899/v2/tasks/cancel \
 | **数据库**      | PostgreSQL    | 15+    |
 | **缓存**       | Redis         | 7+     |
 | **HTTP 客户端** | reqwest       | 0.12+  |
-| **限流**       | Redis INCR/EXPIRE | 0.24+  |
+| **浏览器自动化** | chromiumoxide | 0.8+   |
+| **限流**       | governor      | 0.10+  |
 | **日志**       | tracing       | 0.1+   |
 
 ---
@@ -275,57 +278,11 @@ curl -X POST http://localhost:8899/v2/tasks/cancel \
 docker-compose up -d
 ```
 
-### 集群部署
-
-使用 Kubernetes + Helm（生产环境）：
-
-```bash
-# 安装 Helm Chart
-helm install crawlrs ./chart \
-  --set api.replicas=3 \
-  --set worker.replicas=5
-
-# 配置 HPA 自动扩缩容
-kubectl apply -f k8s/hpa.yaml
-```
-
-详见 [部署指南](./docs/DEPLOYMENT.md)
-
 ---
 
-## 🔐 安全
+##  贡献
 
-- **SSRF 防护**: 自动检测和拒绝内网 IP
-- **Robots.txt 遵守**: 尊重网站爬虫规则
-- **速率限制**: 防止 API 滥用
-- **签名校验**: Webhook HMAC-SHA256 签名
-- **多租户隔离**: 团队数据完全隔离
-
----
-
-## 🧪 测试
-
-```bash
-# 单元测试
-cargo test --lib
-
-# 集成测试
-cargo test --test '*'
-
-# 覆盖率报告
-cargo tarpaulin --out Html
-
-# 压力测试
-k6 run tests/load/stress_test.js
-```
-
-测试覆盖率: **80%+**
-
----
-
-## 🤝 贡献
-
-欢迎贡献！请查看 [贡献指南](./CONTRIBUTING.md)
+欢迎贡献！
 
 ### 开发流程
 
@@ -366,10 +323,8 @@ cargo test
 
 ## 📮 联系方式
 
-- **问题反馈**: [GitHub Issues](https://github.com/your-org/crawlrs/issues)
-- **功能建议**: [GitHub Discussions](https://github.com/your-org/crawlrs/discussions)
-- **邮件**: support@crawlrs.com
-- **文档**: https://docs.crawlrs.com
+- **问题反馈**: [GitHub Issues](https://github.com/Kirky-X/crawlrs/issues)
+- **功能建议**: [GitHub Discussions](https://github.com/Kirky-X/crawlrs/discussions)
 
 ---
 

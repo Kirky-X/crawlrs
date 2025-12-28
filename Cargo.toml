@@ -118,6 +118,7 @@ path = "tests/integration/mod.rs"
 [[bench]]
 name = "benchmark"
 harness = false
+path = "benches/benchmark.rs"
 
 [[bin]]
 name = "crawlrs"

@@ -16,19 +16,45 @@
 
 ## 快速开始
 
-### 1. 获取 API Key
+### 1. 配置 API Key
 
-访问控制台创建 API Key：
+crawlrs 使用 Bearer Token 进行身份认证。编辑配置文件设置 API Key：
 
-```bash
-https://console.crawlrs.com/api-keys
+```toml
+# config/default.toml
+
+[server]
+# 服务配置
+host = "0.0.0.0"
+port = 8899
+
+# 认证配置
+[auth]
+# API Key 列表（支持多个 key）
+api_keys = [
+    "sk-your-api-key-1",
+    "sk-your-api-key-2"
+]
+
+# 可选的 Token 白名单（留空则接受所有 api_keys）
+# allowed_tokens = []
 ```
 
-### 2. 发起第一个请求
+### 2. 启动服务
+
+```bash
+# 开发模式运行
+cargo run
+
+# 或使用配置文件启动
+cargo run -- --config config/default.toml
+```
+
+### 3. 发起第一个请求
 
 ```bash
 curl -X POST http://localhost:8899/v1/scrape \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
@@ -36,7 +62,7 @@ curl -X POST http://localhost:8899/v1/scrape \
   }'
 ```
 
-### 3. 查看响应
+### 4. 查看响应
 
 ```json
 {
@@ -48,8 +74,7 @@ curl -X POST http://localhost:8899/v1/scrape \
       "status_code": 200,
       "response_time_ms": 234
     }
-  },
-  "credits_used": 1
+  }
 }
 ```
 
@@ -59,7 +84,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ### 搜索 (Search)
 
-> **注意**: 搜索功能基于 Google Custom Search API，需要配置 Google API Key 和 Custom Search Engine ID。
+crawlrs 支持多搜索引擎并发聚合搜索，包括 Google、Bing、Baidu 和 Sogou。
 
 #### 基本搜索
 
@@ -67,11 +92,10 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ```bash
 curl -X POST http://localhost:8899/v1/search \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "rust web scraping",
-    "sources": ["web"],
     "limit": 10
   }'
 ```
@@ -89,10 +113,30 @@ curl -X POST http://localhost:8899/v1/search \
         "description": "Learn how to build web scrapers with Rust..."
       }
     ]
-  },
-  "credits_used": 1
+  }
 }
 ```
+
+#### 多引擎配置
+
+指定搜索引擎（默认全部启用）：
+
+```bash
+curl -X POST http://localhost:8899/v1/search \
+  -H "Authorization: Bearer sk-your-api-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "rust programming",
+    "engines": ["google", "bing"],
+    "limit": 10
+  }'
+```
+
+**支持的引擎**:
+- `google` - Google 搜索（需要配置 Google API Key）
+- `bing` - Bing 搜索
+- `baidu` - Baidu 搜索
+- `sogou` - Sogou 搜索
 
 #### 搜索 + 异步抓取
 
@@ -100,12 +144,12 @@ curl -X POST http://localhost:8899/v1/search \
 
 ```bash
 curl -X POST http://localhost:8899/v1/search \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "rust programming",
     "limit": 5,
-    "async_scraping": true,
+    "scrape": true,
     "scrape_options": {
       "formats": ["markdown"]
     }
@@ -128,8 +172,7 @@ curl -X POST http://localhost:8899/v1/search \
   "scrape_ids": [
     "550e8400-e29b-41d4-a716-446655440000",
     "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
-  ],
-  "credits_used": 6
+  ]
 }
 ```
 
@@ -137,13 +180,8 @@ curl -X POST http://localhost:8899/v1/search \
 
 ```bash
 curl http://localhost:8899/v1/scrape/550e8400-e29b-41d4-a716-446655440000 \
-  -H "Authorization: Bearer YOUR_API_KEY"
+  -H "Authorization: Bearer sk-your-api-key-1"
 ```
-
-#### 计费说明
-
-- 搜索请求: **1 Credit**
-- 每个回填抓取: **1-5 Credits**（视内容复杂度）
 
 ---
 
@@ -155,7 +193,7 @@ curl http://localhost:8899/v1/scrape/550e8400-e29b-41d4-a716-446655440000 \
 
 ```bash
 curl -X POST http://localhost:8899/v1/scrape \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
@@ -168,14 +206,13 @@ curl -X POST http://localhost:8899/v1/scrape \
 - `markdown` - Markdown 格式（推荐）
 - `html` - 清理后的 HTML
 - `rawHtml` - 原始 HTML
-- `screenshot` - 页面截图（Base64）
 - `links` - 提取所有链接
 
 #### 自定义选项
 
 ```bash
 curl -X POST http://localhost:8899/v1/scrape \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
@@ -197,6 +234,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `headers` | Object  | {}    | 自定义 HTTP 头 |
 | `timeout` | Number  | 30    | 超时时间（秒）    |
 | `mobile`  | Boolean | false | 模拟移动端      |
+| `engine`  | String  | auto  | 爬虫引擎（reqwest/playwright） |
 
 #### 页面交互
 
@@ -204,7 +242,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ```bash
 curl -X POST http://localhost:8899/v1/scrape \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
@@ -215,16 +253,8 @@ curl -X POST http://localhost:8899/v1/scrape \
         "milliseconds": 2000
       },
       {
-        "type": "click",
-        "selector": "#load-more-button"
-      },
-      {
         "type": "scroll",
         "direction": "down"
-      },
-      {
-        "type": "screenshot",
-        "fullPage": true
       }
     ]
   }'
@@ -235,50 +265,6 @@ curl -X POST http://localhost:8899/v1/scrape \
 - `wait` - 等待指定时间
 - `click` - 点击元素
 - `scroll` - 滚动页面
-- `screenshot` - 截图
-
-#### 截图功能
-
-生成页面截图：
-
-```bash
-curl -X POST http://localhost:8899/v1/scrape \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://example.com",
-    "formats": ["screenshot"],
-    "options": {
-      "screenshot": {
-        "fullPage": true,
-        "type": "png"
-      }
-    }
-  }'
-```
-
-**响应**:
-
-```json
-{
-  "success": true,
-  "data": {
-    "screenshot": "iVBORw0KGgoAAAANSUhEUgAA...",
-    "metadata": {
-      "width": 1920,
-      "height": 1080,
-      "format": "png"
-    }
-  },
-  "credits_used": 3
-}
-```
-
-#### 计费说明
-
-- 基础抓取: **1 Credit**
-- 截图/PDF: **+2 Credits**
-- 使用代理: **+1 Credit**
 
 ---
 
@@ -290,7 +276,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ```bash
 curl -X POST http://localhost:8899/v1/crawl \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
@@ -313,8 +299,7 @@ curl -X POST http://localhost:8899/v1/crawl \
   "id": "crawl-550e8400-e29b-41d4-a716-446655440000",
   "status": "processing",
   "total": 0,
-  "completed": 0,
-  "expires_at": "2024-12-11T00:00:00Z"
+  "completed": 0
 }
 ```
 
@@ -324,7 +309,7 @@ curl -X POST http://localhost:8899/v1/crawl \
 
 ```bash
 curl -X POST http://localhost:8899/v1/crawl \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
@@ -339,14 +324,13 @@ curl -X POST http://localhost:8899/v1/crawl \
 **路径匹配规则**:
 
 - 支持通配符 `*`
-- 支持正则表达式
 - `include_paths` 优先于 `exclude_paths`
 
 #### 查询爬取状态
 
 ```bash
 curl http://localhost:8899/v1/crawl/crawl-550e8400-e29b-41d4-a716-446655440000 \
-  -H "Authorization: Bearer YOUR_API_KEY"
+  -H "Authorization: Bearer sk-your-api-key-1"
 ```
 
 **响应**:
@@ -358,8 +342,7 @@ curl http://localhost:8899/v1/crawl/crawl-550e8400-e29b-41d4-a716-446655440000 \
   "status": "processing",
   "total": 150,
   "completed": 75,
-  "failed": 2,
-  "created_at": "2024-12-10T10:00:00Z"
+  "failed": 2
 }
 ```
 
@@ -377,7 +360,7 @@ curl http://localhost:8899/v1/crawl/crawl-550e8400-e29b-41d4-a716-446655440000 \
 
 ```bash
 curl "http://localhost:8899/v1/crawl/crawl-550e8400/results?page=1&limit=50" \
-  -H "Authorization: Bearer YOUR_API_KEY"
+  -H "Authorization: Bearer sk-your-api-key-1"
 ```
 
 **响应**:
@@ -407,27 +390,25 @@ curl "http://localhost:8899/v1/crawl/crawl-550e8400/results?page=1&limit=50" \
 
 ```bash
 curl -X DELETE http://localhost:8899/v1/crawl/crawl-550e8400 \
-  -H "Authorization: Bearer YOUR_API_KEY"
+  -H "Authorization: Bearer sk-your-api-key-1"
 ```
 
 #### 并发控制
 
-爬取任务受团队套餐限制：
+```bash
+# config/default.toml
 
-| 套餐  | 最大并发 | 最大深度 | 最大页面数  |
-|-----|------|------|--------|
-| 免费版 | 5    | 5    | 100    |
-| 专业版 | 20   | 10   | 10,000 |
-| 企业版 | 100  | 不限   | 不限     |
+[concurrency]
+default_team_limit = 10
+```
 
 #### Robots.txt 遵守
 
 默认遵守网站的 robots.txt 规则：
 
 ```bash
-# 强制忽略 robots.txt
 curl -X POST http://localhost:8899/v1/crawl \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
@@ -449,7 +430,7 @@ curl -X POST http://localhost:8899/v1/crawl \
 
 ```bash
 curl -X POST http://localhost:8899/v1/extract \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "urls": [
@@ -465,18 +446,17 @@ curl -X POST http://localhost:8899/v1/extract \
 ```json
 {
   "success": true,
-  "data": [
+  "results": [
     {
       "url": "https://example.com/product1",
-      "extracted": {
+      "data": {
         "product_name": "Wireless Mouse",
         "price": 29.99,
         "availability": "in_stock"
-      }
+      },
+      "error": null
     }
-  ],
-  "tokens_used": 1234,
-  "credits_used": 12
+  ]
 }
 ```
 
@@ -486,10 +466,11 @@ curl -X POST http://localhost:8899/v1/extract \
 
 ```bash
 curl -X POST http://localhost:8899/v1/extract \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "urls": ["https://example.com/product"],
+    "prompt": "Extract product information",
     "schema": {
       "type": "object",
       "properties": {
@@ -514,68 +495,53 @@ curl -X POST http://localhost:8899/v1/extract \
 
 ```bash
 curl -X POST http://localhost:8899/v1/extract \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "urls": ["https://example.com"],
     "prompt": "Extract key information",
-    "options": {
-      "agent": "gpt-4",
-      "max_concurrency": 5
-    }
+    "model": "gpt-3.5-turbo"
   }'
 ```
 
 **支持的模型**:
 
-- `gpt-4` - OpenAI GPT-4（最准确）
-- `claude-3` - Anthropic Claude 3
-- `gemini-pro` - Google Gemini Pro
-
-#### 计费说明
-
-- 每 1000 tokens: **10 Credits**
-- 提取失败不扣费
+- `gpt-3.5-turbo` - OpenAI GPT-3.5
+- `gpt-4` - OpenAI GPT-4（需要配置）
+- 其他兼容 OpenAI API 的模型
 
 ---
 
 ## 高级特性
 
-### 环境变量配置
-
-#### FireEngine 配置
-
-FireEngine 使用 Flaresolverr 后端来处理需要 JavaScript 渲染的页面。您可以通过环境变量配置 Flaresolverr 服务地址：
-
-```bash
-# 设置 Flaresolverr 服务地址（默认: http://localhost:8191/v1）
-export FIRE_ENGINE_URL=http://your-flaresolverr-server:8191/v1
-```
-
-**配置说明**:
-
-- `FIRE_ENGINE_URL`: Flaresolverr 服务的完整 URL 地址
-- 如果未设置，默认使用 `http://localhost:8191/v1`
-- 确保 Flaresolverr 服务正在运行并可访问
-
-**示例**:
-
-```bash
-# 本地开发环境
-export FIRE_ENGINE_URL=http://localhost:8191/v1
-
-# 生产环境
-export FIRE_ENGINE_URL=http://flaresolverr.internal:8191/v1
-```
-
 ### Webhook 回调
 
 #### 配置 Webhook
 
-在控制台配置 Webhook URL：
+在配置文件中设置 Webhook：
 
+```toml
+# config/default.toml
+
+[webhook]
+timeout_seconds = 10
+max_retries = 3
+retry_interval_seconds = 60
+user_agent = "Crawlrs-Webhook/1.0"
+secret = "your-webhook-secret"
 ```
-https://console.crawlrs.com/webhooks
+
+#### 创建 Webhook
+
+```bash
+curl -X POST http://localhost:8899/v1/webhooks \
+  -H "Authorization: Bearer sk-your-api-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-server.com/webhook",
+    "events": ["scrape.completed", "crawl.completed"],
+    "secret": "optional-signing-secret"
+  }'
 ```
 
 #### 接收事件
@@ -627,13 +593,15 @@ def verify_signature(payload, signature, secret):
 
 ### 速率限制
 
-#### 限制规则
+#### 限制配置
 
-| 套餐  | RPM (请求/分钟) | 并发任务 |
-|-----|-------------|------|
-| 免费版 | 100         | 5    |
-| 专业版 | 1,000       | 20   |
-| 企业版 | 10,000      | 100  |
+```toml
+# config/default.toml
+
+[rate_limiting]
+enabled = true
+default_rpm = 60
+```
 
 #### 限流响应
 
@@ -656,51 +624,41 @@ X-RateLimit-Reset: 1702209600
 Retry-After: 60
 ```
 
-### 错误处理
+### 搜索引擎配置
 
-#### 错误响应格式
+#### Google 搜索配置
 
-```json
-{
-  "success": false,
-  "error": "Error message",
-  "error_code": "SSRF_DETECTED",
-  "details": {
-    "url": "http://192.168.1.1"
-  }
-}
+```toml
+# config/default.toml
+
+[google_search]
+api_key = "your-google-api-key"
+cx = "your-custom-search-engine-id"
 ```
 
-#### 常见错误码
+#### LLM 配置
 
-| 错误码                   | HTTP 状态 | 说明          |
-|-----------------------|---------|-------------|
-| `INVALID_URL`         | 400     | URL 格式错误    |
-| `SSRF_DETECTED`       | 400     | 检测到 SSRF 攻击 |
-| `UNAUTHORIZED`        | 401     | API Key 无效  |
-| `FORBIDDEN`           | 403     | 权限不足        |
-| `NOT_FOUND`           | 404     | 资源不存在       |
-| `RATE_LIMIT_EXCEEDED` | 429     | 速率限制        |
-| `SEMAPHORE_EXHAUSTED` | 503     | 并发槽位用尽      |
-| `INTERNAL_ERROR`      | 500     | 服务器内部错误     |
+```toml
+# config/default.toml
 
-#### 重试策略
+[llm]
+api_key = "your-openai-api-key"
+model = "gpt-3.5-turbo"
+api_base_url = "https://api.openai.com/v1"
+```
 
-建议使用指数退避重试：
+### 存储配置
 
-```python
-import time
-import requests
+```toml
+# config/default.toml
 
-def retry_with_backoff(func, max_retries=3):
-    for i in range(max_retries):
-        try:
-            return func()
-        except requests.exceptions.RequestException as e:
-            if i == max_retries - 1:
-                raise
-            wait_time = 2 ** i
-            time.sleep(wait_time)
+[storage]
+storage_type = "local"
+local_path = "storage"
+# s3_region = "us-east-1"
+# s3_bucket = "my-bucket"
+# s3_access_key = "access-key"
+# s3_secret_key = "secret-key"
 ```
 
 ---
@@ -711,9 +669,9 @@ def retry_with_backoff(func, max_retries=3):
 
 **使用正确的引擎**:
 
-- 静态页面 → 不指定（自动选择 ReqwestEngine）
-- SPA 应用 → 需要 JS 渲染
-- 需要截图 → 明确指定 `formats: ["screenshot"]`
+- 静态页面 → 使用默认 ReqwestEngine
+- SPA 应用 → 指定 PlaywrightEngine
+- 需要截图 → 明确指定格式
 
 **批量处理**:
 
@@ -736,11 +694,11 @@ crawl(root_url, limit=100)
 **选择合适的格式**:
 
 ```bash
-# 只需要文本 → 使用 markdown（1 Credit）
+# 只需要文本 → 使用 markdown
 "formats": ["markdown"]
 
-# 需要截图 → 额外消耗 2 Credits
-"formats": ["markdown", "screenshot"]
+# 不需要截图
+"formats": ["markdown", "html"]
 ```
 
 ### 3. 提高成功率
@@ -788,12 +746,12 @@ crawl(root_url, limit=100)
 
 #### 1. 任务一直处于 `queued` 状态
 
-**原因**: 团队并发槽位已用尽
+**原因**: 并发槽位已用尽
 
 **解决方案**:
 
 - 等待其他任务完成
-- 升级套餐增加并发限制
+- 调整 `concurrency.default_team_limit` 配置
 - 取消不需要的任务
 
 #### 2. 抓取返回空内容
@@ -803,11 +761,15 @@ crawl(root_url, limit=100)
 **解决方案**:
 
 ```bash
-# 让系统自动选择 PlaywrightEngine 引擎
+# 使用 Playwright 引擎
 curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -d '{
     "url": "https://spa-app.com",
-    "formats": ["markdown"]
+    "formats": ["markdown"],
+    "options": {
+      "engine": "playwright"
+    }
   }'
 ```
 
@@ -819,7 +781,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 - 减小 `max_depth` 和 `limit`
 - 使用 `include_paths` 过滤
-- 增加 `max_concurrency`（需要升级套餐）
+- 增加 `crawl_delay_ms` 间隔
 
 #### 4. Webhook 未收到回调
 
@@ -827,31 +789,17 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 - [ ] Webhook URL 可公网访问
 - [ ] 服务器返回 2xx 状态码
-- [ ] 检查 `webhook_events` 表状态
-- [ ] 查看错误日志
+- [ ] 查看服务端日志
+- [ ] 验证 secret 配置
 
 ### 调试技巧
 
 #### 查看详细日志
 
-在请求头中添加：
+启动服务时设置日志级别：
 
-```
-X-Debug: true
-```
-
-响应会包含详细的执行信息：
-
-```json
-{
-  "success": true,
-  "data": { ... },
-  "debug": {
-    "engine_used": "playwright",
-    "execution_time_ms": 2345,
-    "retry_count": 0
-  }
-}
+```bash
+RUST_LOG=debug cargo run
 ```
 
 #### 测试 Webhook
@@ -860,6 +808,7 @@ X-Debug: true
 
 ```bash
 curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer sk-your-api-key-1" \
   -d '{
     "url": "https://example.com",
     "webhook_url": "https://webhook.site/your-unique-id"
@@ -870,12 +819,9 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ## 获取帮助
 
-- **文档**: https://docs.crawlrs.com
-- **API 参考**: https://docs.crawlrs.com/api
-- **问题反馈**: https://github.com/your-org/crawlrs/issues
-- **邮件支持**: support@crawlrs.com
-- **社区论坛**: https://community.crawlrs.com
+- **GitHub Issues**: https://github.com/your-org/crawlrs/issues
+- **文档**: 查看项目 README 和源码注释
 
 ---
 
-**最后更新**: 2024-12-10
+**最后更新**: 2025-01

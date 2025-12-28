@@ -54,6 +54,7 @@ storage/
 
 # Test data
 test-data/
+tests/crate/
 
 # Documentation files that should not be tracked
 docs/prd.md

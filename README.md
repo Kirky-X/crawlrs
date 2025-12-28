@@ -33,7 +33,7 @@ crawlrs is an enterprise-grade web scraping platform developed in Rust, providin
 
 ### Core Functionality
 
-- **Search**: Integrated Google Custom Search API with asynchronous backfilling support
+- **Search**: Multi-engine concurrent aggregation (Google/Bing/Baidu/Sogou), smart deduplication, asynchronous backfilling
 - **Scrape**: Single-page content acquisition supporting multiple output formats (Markdown/HTML/Screenshot)
 - **Crawl**: Full-site recursive crawling with depth control and path filtering
 - **Extract**: LLM-based structured data extraction
@@ -63,7 +63,7 @@ crawlrs is an enterprise-grade web scraping platform developed in Rust, providin
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/crawlrs.git
+git clone https://github.com/Kirky-X/crawlrs.git
 cd crawlrs
 
 # Build
@@ -144,12 +144,6 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ## 📚 Documentation
 
-- [📖 User Manual](./docs/USER_MANUAL.md) - Complete feature guide and examples
-- [🔌 API Documentation](./docs/API.md) - RESTful API reference
-- [🏗️ Architecture Design](./docs/TDD.md) - Technical design documentation
-- [📋 Product Requirements](./docs/PRD.md) - Product feature definitions
-- [🧪 Test Documentation](./docs/TEST.md) - Test strategy and cases
-
 ---
 
 ## 🏗️ Architecture
@@ -192,9 +186,10 @@ curl -X POST http://localhost:8899/v1/scrape \
 | **Async Runtime** | Tokio 1.42 |
 | **Database** | PostgreSQL 15 |
 | **Cache** | Redis 7 |
-| **HTTP Client** | reqwest 0.12 |
-| **Rate Limiting** | governor 0.10 |
-| **Logging** | tracing 0.1 |
+| **HTTP Client** | reqwest | 0.12 |
+| **Browser Automation** | chromiumoxide | 0.8 |
+| **Rate Limiting** | governor | 0.10 |
+| **Logging** | tracing | 0.1 |
 
 ---
 
@@ -222,57 +217,11 @@ Using Docker Compose (Development/Test Environment):
 docker-compose -f docker-compose.yml up -d
 ```
 
-### Cluster Deployment
-
-Using Kubernetes + Helm (Production Environment):
-
-```bash
-# Install Helm Chart
-helm install crawlrs ./chart \
-  --set api.replicas=3 \
-  --set worker.replicas=5
-
-# Configure HPA Autoscaling
-kubectl apply -f k8s/hpa.yaml
-```
-
-See [Deployment Guide](./docs/DEPLOYMENT.md) for details.
-
----
-
-## 🔐 Security
-
-- **SSRF Protection**: Automatic detection and rejection of internal IPs
-- **Robots.txt Compliance**: Respects website crawler rules
-- **Rate Limiting**: Prevents API abuse
-- **Signature Verification**: Webhook HMAC-SHA256 signatures
-- **Multi-Tenant Isolation**: Complete data isolation between teams
-
----
-
-## 🧪 Testing
-
-```bash
-# Unit Tests
-cargo test --lib
-
-# Integration Tests
-cargo test --test '*'
-
-# Coverage Report
-cargo tarpaulin --out Html
-
-# Stress Testing
-k6 run tests/load/stress_test.js
-```
-
-Test Coverage: **80%+**
-
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please check the [Contributing Guide](./CONTRIBUTING.md).
+Contributions are welcome!
 
 ### Development Process
 
@@ -313,10 +262,8 @@ This project is licensed under the [MIT License](./LICENSE).
 
 ## 📮 Contact
 
-- **Issues**: [GitHub Issues](https://github.com/your-org/crawlrs/issues)
-- **Suggestions**: [GitHub Discussions](https://github.com/your-org/crawlrs/discussions)
-- **Email**: support@crawlrs.com
-- **Docs**: https://docs.crawlrs.com
+- **Issues**: [GitHub Issues](https://github.com/Kirky-X/crawlrs/issues)
+- **Suggestions**: [GitHub Discussions](https://github.com/Kirky-X/crawlrs/discussions)
 
 ---
 

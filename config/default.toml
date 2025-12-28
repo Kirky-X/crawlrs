@@ -1,14 +1,27 @@
 # Database Configuration
 [database]
-url = "postgres://weaver:weaver_password@localhost:5432/weaver_db"
+url = "postgres://crawlrs:password@localhost:5432/crawlrs_test"
 max_connections = 20
 min_connections = 5
 connect_timeout = 30
 idle_timeout = 600
 
+# Docker Database Configuration (overridden by environment variables)
+[database.docker]
+host = "db"
+port = 5432
+user = "crawlrs"
+password = "password"
+name = "crawlrs"
+
 # Redis Configuration
 [redis]
 url = "redis://localhost:6379"
+
+# Docker Redis Configuration (overridden by environment variables)
+[redis.docker]
+host = "redis"
+port = 6379
 
 # Server Configuration
 [server]
@@ -18,12 +31,34 @@ enable_port_detection = true
 
 # Rate Limiting Configuration
 [rate_limiting]
-enabled = true
+enabled = false
 default_rpm = 60
 
 # Concurrency Configuration
 [concurrency]
 default_team_limit = 10
+task_lock_duration_seconds = 300
+
+# Search Configuration
+[search]
+ab_test_enabled = false
+variant_b_weight = 0.1
+default_engine = "baidu"
+
+# Search Engine Enable/Disable Configuration
+[search.engines]
+google_enabled = false
+bing_enabled = true
+baidu_enabled = true
+sogou_enabled = true
+
+# FlareSolverr Configuration (for Google search proxy)
+[search.flaresolverr]
+enabled = true
+url = "http://flaresolverr:8191/v1"
+auto_start = true
+timeout_seconds = 30
+max_retries = 3
 
 # Storage Configuration
 [storage]
