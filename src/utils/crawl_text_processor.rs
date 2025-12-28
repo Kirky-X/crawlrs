@@ -8,7 +8,7 @@ use crate::utils::web_content_processor::{
     process_web_content, ProcessedWebContent, WebContentError,
 };
 use std::time::{Duration, Instant};
-use tracing::{error, info};
+use tracing::info;
 
 /// 爬虫文本处理集成器
 pub struct CrawlTextProcessor {

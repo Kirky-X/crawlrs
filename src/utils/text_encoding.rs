@@ -9,7 +9,7 @@ use lru::LruCache;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 /// 文本编码处理错误类型
 #[derive(Error, Debug, Clone)]
@@ -408,7 +408,8 @@ mod tests {
     fn test_string_unicode_escape_sequence_conversion() {
         // 测试字符串形式的Unicode转义序列（如 "\\u4e00"）
         let input = "\\u4e00\\u7ad9\\u5f0f\\u7f51\\u7ad9\\u5efa\\u8bbe";
-        let result = process_string(input).expect("String Unicode escape conversion should succeed");
+        let result =
+            process_string(input).expect("String Unicode escape conversion should succeed");
         eprintln!("DEBUG: input = {:?}, result = {:?}", input, result);
         assert!(!result.is_empty());
         assert!(result.contains("一站式"));
