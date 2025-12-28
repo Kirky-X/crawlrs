@@ -40,7 +40,7 @@ async fn test_performance_single_url_benchmark() {
             }))
             .await;
 
-        assert_eq!(create_response.status_code(), StatusCode::CREATED);
+        assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
         let task_id = task_data["id"].as_str().unwrap().to_string();
 
@@ -123,7 +123,7 @@ async fn test_performance_concurrent_scraping() {
             }))
             .await;
 
-        assert_eq!(create_response.status_code(), StatusCode::CREATED);
+        assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
         task_ids.push(task_data["id"].as_str().unwrap().to_string());
     }
@@ -206,7 +206,7 @@ async fn test_performance_batch_crawl() {
         }))
         .await;
 
-    assert_eq!(crawl_response.status_code(), StatusCode::CREATED);
+    assert_eq!(crawl_response.status_code(), StatusCode::ACCEPTED);
     let crawl_data: serde_json::Value = crawl_response.json();
     let crawl_id = crawl_data["id"].as_str().unwrap().to_string();
 
@@ -348,7 +348,10 @@ async fn test_performance_error_recovery() {
         }))
         .await;
 
-    assert_eq!(invalid_url_response.status_code(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid_url_response.status_code(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
     let invalid_duration = start_time.elapsed();
 
     // Test 2: SSRF protection (should fail fast)
@@ -379,7 +382,7 @@ async fn test_performance_error_recovery() {
         }))
         .await;
 
-    assert_eq!(timeout_response.status_code(), StatusCode::CREATED);
+    assert_eq!(timeout_response.status_code(), StatusCode::ACCEPTED);
     let timeout_task_data: serde_json::Value = timeout_response.json();
     let timeout_task_id = timeout_task_data["id"].as_str().unwrap().to_string();
 

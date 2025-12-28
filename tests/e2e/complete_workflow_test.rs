@@ -31,11 +31,11 @@ async fn test_complete_scrape_workflow() {
         }))
         .await;
 
-    if create_response.status_code() != StatusCode::CREATED {
+    if create_response.status_code() != StatusCode::ACCEPTED {
         println!("Response status: {}", create_response.status_code());
         println!("Response body: {}", create_response.text());
         panic!(
-            "Expected 201 CREATED, got {}",
+            "Expected 202 ACCEPTED, got {}",
             create_response.status_code()
         );
     }
@@ -155,7 +155,7 @@ async fn test_batch_scrape_workflow() {
             }))
             .await;
 
-        assert_eq!(create_response.status_code(), StatusCode::CREATED);
+        assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
         task_ids.push(task_data["id"].as_str().unwrap().to_string());
     }
@@ -234,7 +234,7 @@ async fn test_crawl_with_webhook_workflow() {
         }))
         .await;
 
-    assert_eq!(create_response.status_code(), StatusCode::CREATED);
+    assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
     let crawl_data: serde_json::Value = create_response.json();
     let crawl_id = crawl_data["id"].as_str().unwrap();
 
@@ -282,7 +282,7 @@ async fn test_crawl_with_webhook_workflow() {
 async fn test_error_handling_workflow() {
     let app = create_test_app().await;
 
-    // Test 1: Invalid URL
+    // Test 1: Invalid URL (validation error returns 422)
     let invalid_response = app
         .server
         .post("/v1/scrape")
@@ -292,7 +292,10 @@ async fn test_error_handling_workflow() {
         }))
         .await;
 
-    assert_eq!(invalid_response.status_code(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid_response.status_code(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
 
     // Test 2: SSRF protection
     let ssrf_response = app
@@ -316,7 +319,7 @@ async fn test_error_handling_workflow() {
         }))
         .await;
 
-    assert_eq!(domain_response.status_code(), StatusCode::CREATED);
+    assert_eq!(domain_response.status_code(), StatusCode::ACCEPTED);
     let task_data: serde_json::Value = domain_response.json();
     let task_id = task_data["id"].as_str().unwrap();
 

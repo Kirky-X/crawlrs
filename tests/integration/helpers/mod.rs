@@ -161,10 +161,11 @@ async fn setup_test_app_internal(
         .await
         .unwrap();
 
-    let redis_client = RedisClient::new(&redis_url).await.unwrap();
+    let redis_client_raw = RedisClient::new(&redis_url).await.unwrap();
+    let redis_client = Arc::new(redis_client_raw.clone());
 
     let rpm = rate_limit_rpm.unwrap_or(1000);
-    let rate_limiter = Arc::new(RateLimiter::new(redis_client.clone(), rpm));
+    let rate_limiter = Arc::new(RateLimiter::new(redis_client_raw, rpm));
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db_pool.clone(),
@@ -176,7 +177,7 @@ async fn setup_test_app_internal(
     let rate_limiting_service: Arc<
         dyn crawlrs::domain::services::rate_limiting_service::RateLimitingService,
     > = Arc::new(RateLimitingServiceImpl::new(
-        Arc::new(redis_client.clone()),
+        Arc::clone(&redis_client),
         task_repo.clone(),
         backlog_repo,
         credits_repo.clone(),
@@ -196,7 +197,7 @@ async fn setup_test_app_internal(
     let router = Arc::new(EngineRouter::new(engines));
 
     let _create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(router.clone()));
-    let _robots_checker = Arc::new(RobotsChecker::new(Some(Arc::new(redis_client.clone()))));
+    let _robots_checker = Arc::new(RobotsChecker::new(Some(Arc::clone(&redis_client))));
 
     let search_engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(GoogleSearchEngine::new())];
     let search_engine_service: Arc<dyn SearchEngine> =
@@ -239,7 +240,7 @@ async fn setup_test_app_internal(
         .layer(Extension(result_repo))
         .layer(Extension(webhook_repo))
         .layer(Extension(geo_restriction_repo.clone()))
-        .layer(Extension(redis_client.clone()))
+        .layer(Extension(Arc::clone(&redis_client)))
         .layer(Extension(rate_limiter))
         .layer(Extension(settings))
         .layer(Extension(search_engine_service))
@@ -264,7 +265,7 @@ async fn setup_test_app_internal(
         worker_manager: None,
         redis_process: Some(redis_process),
         redis_url,
-        redis: Arc::new(redis_client),
+        redis: redis_client,
     }
 }
 

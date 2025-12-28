@@ -55,7 +55,7 @@ async fn test_new_user_onboarding_journey() {
         }))
         .await;
 
-    assert_eq!(first_scrape_response.status_code(), StatusCode::CREATED);
+    assert_eq!(first_scrape_response.status_code(), StatusCode::ACCEPTED);
     let scrape_data: serde_json::Value = first_scrape_response.json();
     let task_id = scrape_data["id"].as_str().unwrap().to_string();
 
@@ -95,7 +95,7 @@ async fn test_new_user_onboarding_journey() {
         }))
         .await;
 
-    assert_eq!(batch_response.status_code(), StatusCode::CREATED);
+    assert_eq!(batch_response.status_code(), StatusCode::ACCEPTED);
 
     // Step 8: User checks metrics to understand service usage
     let metrics_response = app.server.get("/metrics").await;
@@ -128,7 +128,7 @@ async fn test_developer_integration_journey() {
         }))
         .await;
 
-    assert_eq!(auth_test_response.status_code(), StatusCode::CREATED);
+    assert_eq!(auth_test_response.status_code(), StatusCode::ACCEPTED);
 
     // Step 3: Developer tests error handling
     let error_response = app
@@ -187,7 +187,7 @@ async fn test_developer_integration_journey() {
         }))
         .await;
 
-    assert_eq!(webhook_response.status_code(), StatusCode::CREATED);
+    assert_eq!(webhook_response.status_code(), StatusCode::ACCEPTED);
 
     // Step 6: Developer tests task cancellation
     let cancel_test_response = app
@@ -202,7 +202,7 @@ async fn test_developer_integration_journey() {
         }))
         .await;
 
-    assert_eq!(cancel_test_response.status_code(), StatusCode::CREATED);
+    assert_eq!(cancel_test_response.status_code(), StatusCode::ACCEPTED);
     let cancel_data: serde_json::Value = cancel_test_response.json();
     let cancel_task_id = cancel_data["id"].as_str().unwrap().to_string();
 
@@ -256,7 +256,7 @@ async fn test_power_user_advanced_features_journey() {
 
     assert_eq!(
         complex_extraction_response.status_code(),
-        StatusCode::CREATED
+        StatusCode::ACCEPTED
     );
 
     // Step 2: Power user tests different engines
@@ -277,7 +277,7 @@ async fn test_power_user_advanced_features_journey() {
             }))
             .await;
 
-        assert_eq!(engine_response.status_code(), StatusCode::CREATED);
+        assert_eq!(engine_response.status_code(), StatusCode::ACCEPTED);
     }
 
     // Step 3: Power user tests concurrent processing
@@ -296,7 +296,7 @@ async fn test_power_user_advanced_features_journey() {
             }))
             .await;
 
-        assert_eq!(task_response.status_code(), StatusCode::CREATED);
+        assert_eq!(task_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = task_response.json();
         concurrent_tasks.push(task_data["id"].as_str().unwrap().to_string());
     }

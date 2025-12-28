@@ -42,7 +42,7 @@ async fn test_ecommerce_product_monitoring_scenario() {
             }))
             .await;
 
-        assert_eq!(create_response.status_code(), StatusCode::CREATED);
+        assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
         task_ids.push(task_data["id"].as_str().unwrap().to_string());
     }
@@ -144,7 +144,7 @@ async fn test_content_aggregation_scenario() {
         }))
         .await;
 
-    assert_eq!(crawl_response.status_code(), StatusCode::CREATED);
+    assert_eq!(crawl_response.status_code(), StatusCode::ACCEPTED);
     let crawl_data: serde_json::Value = crawl_response.json();
     let crawl_id = crawl_data["id"].as_str().unwrap().to_string();
 
@@ -243,7 +243,7 @@ async fn test_competitive_analysis_scenario() {
             }))
             .await;
 
-        assert_eq!(create_response.status_code(), StatusCode::CREATED);
+        assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
         analysis_tasks.push(task_data["id"].as_str().unwrap().to_string());
     }
