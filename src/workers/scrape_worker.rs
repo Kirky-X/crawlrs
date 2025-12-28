@@ -1367,7 +1367,7 @@ where
                 "task_id": task.id,
                 "status": if error_msg.is_some() { "failed" } else { "completed" },
                 "url": task.url,
-                "timestamp": Utc::now()
+                "timestamp": Utc::now().timestamp()
             });
 
             if let Some(msg) = error_msg {
