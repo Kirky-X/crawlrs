@@ -207,7 +207,13 @@ pub async fn create_test_app() -> TestApp {
 }
 
 pub async fn create_test_app_with_low_rate_limit() -> TestApp {
-    create_test_app_with_rate_limit_options(true, false).await
+    let app = create_test_app_with_rate_limit_options(true, false).await;
+
+    // Set a low rate limit of 1 request per minute for this API key
+    let rate_limit_key = format!("rate_limit_config:{}", app.api_key);
+    let _ = app.redis.set(&rate_limit_key, "1", 60).await;
+
+    app
 }
 
 pub async fn create_test_app_with_rate_limit_options(
@@ -371,7 +377,7 @@ fn create_router(
     search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine>,
     geo_restriction_repo: Arc<DatabaseGeoRestrictionRepository>,
     team_service: Arc<crawlrs::domain::services::team_service::TeamService>,
-    _rate_limiter: Arc<crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter>,
+    rate_limiter: Arc<crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter>,
     team_id: Uuid,
     redis_client: Arc<RedisClient>,
 ) -> axum::Router<()> {
@@ -486,6 +492,10 @@ fn create_router(
             put(handlers::team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
         )
         .layer(axum::middleware::from_fn_with_state(
+            rate_limiter.clone(),
+            crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
             crawlrs::presentation::middleware::auth_middleware::auth_middleware,
         ));
@@ -513,6 +523,7 @@ fn create_router(
         .layer(axum::Extension(auth_state))
         .layer(axum::Extension(team_id))
         .layer(axum::Extension(redis_client))
+        .layer(axum::Extension(rate_limiter))
 }
 
 pub async fn create_test_app_no_worker() -> TestApp {
