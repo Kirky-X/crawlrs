@@ -1137,7 +1137,14 @@ async fn test_get_task_status() {
 /// 验证DELETE /v1/scrape/:id端点的任务取消功能
 #[tokio::test]
 async fn test_cancel_task() {
-    let app = create_test_app().await;
+    let app = create_test_app_with_rate_limit_options(false, true).await;
+
+    // Clean up any existing rate limit keys for this API key
+    let prefix = format!("rate_limit:{}", app.api_key);
+    let keys: Vec<String> = app.redis.scan_pattern(&prefix).await.unwrap_or_default();
+    for key in keys {
+        let _: () = app.redis.del(&key).await.unwrap();
+    }
 
     // 首先创建一个任务
     let create_response = app
