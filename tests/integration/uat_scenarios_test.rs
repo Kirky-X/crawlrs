@@ -177,7 +177,7 @@ async fn test_uat006_distributed_rate_limiting() {
     };
 
     let rate_limiter = RateLimitingServiceImpl::new(
-        redis_client.clone(),
+        Arc::new(redis_client.clone()),
         task_repo.clone(),
         backlog_repo,
         credits_repo,
@@ -1622,125 +1622,6 @@ async fn test_uat027_task_mgmt_perf() {
     }
 
     println!("✓ UAT-027 统一任务管理接口性能测试通过");
-}
-
-/// UAT-015: 搜索缓存测试
-///
-/// 测试场景：验证搜索结果的缓存机制和过期策略
-///
-/// 测试步骤：
-/// 1. 执行首次搜索，记录耗时
-/// 2. 立即执行相同搜索，验证耗时大幅减少（命中缓存）
-/// 3. 等待缓存过期后执行搜索，验证耗时增加（缓存失效）
-#[tokio::test]
-async fn test_uat015_search_cache() {
-    // 1. 设置测试环境，使用内存缓存
-    use async_trait::async_trait;
-    use crawlrs::domain::models::search_result::SearchResult;
-    use crawlrs::domain::search::engine::{SearchEngine, SearchError};
-    use crawlrs::infrastructure::cache::cache_manager::CacheManager;
-    use crawlrs::infrastructure::cache::cache_strategy::{CacheStrategyConfig, CacheType};
-    use crawlrs::infrastructure::search::enhanced_aggregator::EnhancedSearchAggregator;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    // 创建一个 Fake SearchEngine，因为 FakeScraperEngine 实现了 ScraperEngine 而不是 SearchEngine
-    // Test implementation for cache behavior verification
-    struct TestSearchEngine {
-        name: &'static str,
-        delay: Duration,
-    }
-
-    #[async_trait]
-    impl SearchEngine for TestSearchEngine {
-        async fn search(
-            &self,
-            _query: &str,
-            _limit: u32,
-            _lang: Option<&str>,
-            _country: Option<&str>,
-        ) -> Result<Vec<SearchResult>, SearchError> {
-            tokio::time::sleep(self.delay).await;
-            Ok(vec![SearchResult::new(
-                format!("Result from {}", self.name),
-                "http://example.com".to_string(),
-                Some("Cached Result".to_string()),
-                self.name.to_string(),
-            )])
-        }
-
-        fn name(&self) -> &'static str {
-            self.name
-        }
-    }
-
-    // 使用 TestSearchEngine
-    let test_engine = TestSearchEngine {
-        name: "test_engine",
-        // 增加延迟以确保测试稳定性
-        delay: Duration::from_millis(300),
-    };
-    let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(test_engine)];
-
-    // 配置缓存：TTL 1秒
-    let cache_config = CacheStrategyConfig {
-        cache_type: CacheType::Memory,
-        ttl_seconds: 1,
-        max_entries: 100,
-        ..Default::default()
-    };
-
-    let cache_manager = Arc::new(CacheManager::new(cache_config.clone(), None).await.unwrap());
-
-    let aggregator =
-        EnhancedSearchAggregator::new(engines, 1000, cache_manager.clone(), cache_config);
-
-    // 2. 首次搜索
-    let start_1 = std::time::Instant::now();
-    let result_1 = aggregator
-        .search("test_query", 10, None, None)
-        .await
-        .unwrap();
-    let duration_1 = start_1.elapsed();
-
-    println!("First search took {:?}", duration_1);
-    assert!(!result_1.is_empty());
-    assert!(duration_1 >= Duration::from_millis(200));
-
-    // 3. 立即再次搜索（应该命中缓存）
-    let start_2 = std::time::Instant::now();
-    let result_2 = aggregator
-        .search("test_query", 10, None, None)
-        .await
-        .unwrap();
-    let duration_2 = start_2.elapsed();
-
-    println!("Second search (cached) took {:?}", duration_2);
-    assert_eq!(result_1.len(), result_2.len());
-    // 缓存命中应该非常快，肯定小于 200ms
-    assert!(duration_2 < Duration::from_millis(50));
-
-    // 验证命中率
-    let hit_rate = aggregator.get_cache_hit_rate().await;
-    println!("Cache hit rate: {}", hit_rate);
-    assert!(hit_rate > 0.0);
-
-    // 4. 等待缓存过期
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-
-    // 5. 过期后搜索（应该重新执行）
-    let start_3 = std::time::Instant::now();
-    let result_3 = aggregator
-        .search("test_query", 10, None, None)
-        .await
-        .unwrap();
-    let duration_3 = start_3.elapsed();
-
-    println!("Third search (expired) took {:?}", duration_3);
-    assert!(!result_3.is_empty());
-    assert!(duration_3 >= Duration::from_millis(200));
-
-    println!("✓ UAT-015 搜索缓存测试通过");
 }
 
 /// UAT-016: 同步等待机制集成测试

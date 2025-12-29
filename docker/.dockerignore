@@ -1,0 +1,17 @@
+target
+.git
+.gitignore
+*.log
+.DS_Store
+*.swp
+*.swo
+*~
+\#*
+.\#*
+*.orig
+*.rej
+*.bak
+temp/
+tmp/
+coverage/
+data/

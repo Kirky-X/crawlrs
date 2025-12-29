@@ -1,144 +1,397 @@
-version: '3.8'
+# =============================================================================
+# Crawlrs 统一 Docker Compose 配置
+# =============================================================================
+# 支持一键启动完整项目环境，包括：
+# - 应用服务 (API + 引擎)
+# - 基础设施 (PostgreSQL, Redis)
+# - 浏览器服务 (Chrome, FlareSolverr)
+# - 监控服务 (Prometheus)
+#
+# 使用方法:
+#   全部启动:     docker-compose up -d
+#   仅基础设施:   docker-compose up -d infrastructure
+#   仅监控:       docker-compose up -d monitoring
+#   仅应用:       docker-compose up -d app
+#   关闭全部:     docker-compose down
+# =============================================================================
 
 services:
-  # API Gateway Service
-  api-gateway:
+  # ==========================================================================
+  # 应用服务层
+  # ==========================================================================
+
+  # Crawlrs 主应用服务
+  crawlrs:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    command: ["api"]
+    image: crawlrs:latest
+    container_name: crawlrs
+    command: ["./crawlrs", "api"]
     ports:
-      - "3000:3000"
+      - "${APP_PORT:-3000}:3000"
     environment:
-      - DATABASE_URL=postgres://user:password@db:5432/crawlrs_db
-      - REDIS_URL=redis://redis:6379
-      - RUST_LOG=info
-      - SERVICE_TYPE=api
-    depends_on:
-      - db
-      - redis
-      - crawl-engine
-      - extraction-service
-    restart: unless-stopped
+      # 基础配置 (使用 CRAWLRS__ 前缀以匹配配置加载逻辑)
+      - CRAWLRS__RUST_LOG=${RUST_LOG:-debug}
+      - CRAWLRS__ENV_MODE=${ENV_MODE:-docker}
 
-  # Crawl Engine Service
-  crawl-engine:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    command: ["engine"]
-    environment:
-      - RUST_LOG=info
-      - SERVICE_TYPE=engine
-      # Connects to the standalone chromium service defined below
-      - CHROMIUM_REMOTE_DEBUGGING_URL=http://chromium:9222
-      - FIRE_ENGINE_CDP_URL=http://flaresolverr:8191/v1
-      - FIRE_ENGINE_TLS_URL=http://flaresolverr:8191/v1
-    depends_on:
-      - flaresolverr
-      - chromium
-      - db
-      - redis
-    restart: unless-stopped
+      # 代理配置（解决国内网络访问问题）
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,.local,.corp}
 
-  # Data Extraction Service
-  extraction-service:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    command: ["extraction"]
-    environment:
-      - RUST_LOG=info
-      - SERVICE_TYPE=extraction
-      # LLM Configuration - expects these to be set in .env or passed via environment
-      - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_MODEL=${LLM_MODEL:-gpt-3.5-turbo}
-      - LLM_API_BASE_URL=${LLM_API_BASE_URL:-https://api.openai.com/v1}
-    depends_on:
-      - db
-      - redis
-    restart: unless-stopped
+      # 数据库配置 (使用服务名而非localhost)
+      - CRAWLRS__DATABASE__URL=postgres://${DB_USER:-crawlrs}:${DB_PASSWORD:-password}@${DB_HOST:-db}:5432/${DB_NAME:-crawlrs}
+      - CRAWLRS__DATABASE__HOST=${DB_HOST:-db}
+      - CRAWLRS__DATABASE__PORT=5432
+      - CRAWLRS__DATABASE__NAME=${DB_NAME:-crawlrs}
+      - CRAWLRS__DATABASE__USER=${DB_USER:-crawlrs}
+      - CRAWLRS__DATABASE__PASSWORD=${DB_PASSWORD:-password}
+      - CRAWLRS__DATABASE__MAX_CONNECTIONS=${DATABASE_MAX_CONNECTIONS:-20}
+      - CRAWLRS__DATABASE__CONNECT_TIMEOUT=60
 
-  # Task Queue Worker
-  worker:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    command: ["worker"]
-    environment:
-      - DATABASE_URL=postgres://user:password@db:5432/crawlrs_db
-      - REDIS_URL=redis://redis:6379
-      - RUST_LOG=info
-      - SERVICE_TYPE=worker
-    depends_on:
-      - db
-      - redis
-      - crawl-engine
-    restart: unless-stopped
+      # Redis配置
+      - CRAWLRS__REDIS__URL=redis://${REDIS_HOST:-redis}:6379
+      - CRAWLRS__REDIS__HOST=${REDIS_HOST:-redis}
 
-  # PostgreSQL Database
-  db:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=crawlrs_db
-    ports:
-      - "5433:5432"
+      # 服务器配置
+      - CRAWLRS__SERVER__HOST=0.0.0.0
+      - CRAWLRS__SERVER__PORT=3000
+      - CRAWLRS__SERVER__ENABLE_PORT_DETECTION=false
+
+      # 服务类型
+      - CRAWLRS__SERVICE_TYPE=${SERVICE_TYPE:-api}
+
+      # 搜索引擎配置
+      - CRAWLRS__SEARCH__ENGINES__GOOGLE_ENABLED=${SEARCH_ENGINE_GOOGLE_ENABLED:-false}
+      - CRAWLRS__SEARCH__ENGINES__BING_ENABLED=${SEARCH_ENGINE_BING_ENABLED:-true}
+      - CRAWLRS__SEARCH__ENGINES__BAIDU_ENABLED=${SEARCH_ENGINE_BAIDU_ENABLED:-true}
+      - CRAWLRS__SEARCH__ENGINES__SOGOU_ENABLED=${SEARCH_ENGINE_SOGOU_ENABLED:-true}
+      - CRAWLRS__SEARCH__DEFAULT_ENGINE=${SEARCH_ENGINE_DEFAULT:-baidu}
+
+      # Google搜索配置
+      - CRAWLRS__GOOGLE_SEARCH__API_KEY=${GOOGLE_SEARCH_API_KEY:-}
+      - CRAWLRS__GOOGLE_SEARCH__CX=${GOOGLE_SEARCH_CX:-}
+
+      # FlareSolverr配置 (用于Google搜索)
+      - CRAWLRS__SEARCH__FLARESOLVERR__URL=http://${FLARESOLVERR_HOST:-flaresolverr}:8191/v1
+      - CRAWLRS__SEARCH__FLARESOLVERR__HOST=${FLARESOLVERR_HOST:-flaresolverr}
+      - CRAWLRS__SEARCH__FLARESOLVERR__PORT=8191
+      - CRAWLRS__SEARCH__FLARESOLVERR__AUTO_START=${FLARESOLVERR_AUTO_START:-true}
+
+      # Chrome配置
+      - CRAWLRS__CHROME_REMOTE_DEBUGGING_URL=http://${CHROME_HOST:-chrome}:9222
+      - CRAWLRS__CHROME_HOST=${CHROME_HOST:-chrome}
+
+      # 速率限制配置
+      - CRAWLRS__RATE_LIMITING__ENABLED=${RATE_LIMITING_ENABLED:-false}
+      - CRAWLRS__RATE_LIMITING__DEFAULT_RPM=${RATE_LIMITING_DEFAULT_RPM:-60}
+
+      # 并发配置
+      - CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT=${CONCURRENCY_DEFAULT_TEAM_LIMIT:-10}
+      - CRAWLRS__CONCURRENCY__TASK_LOCK_DURATION=${CONCURRENCY_TASK_LOCK_DURATION:-300}
+
+      # 监控配置
+      - CRAWLRS__METRICS__ENABLED=${METRICS_ENABLED:-true}
+      - CRAWLRS__METRICS__PORT=3001
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - ../storage:/app/storage
+      - ../logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d crawlrs_db"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - crawlrs-network
+    dns:
+      - 8.8.8.8
+      - 114.114.114.114
+    profiles:
+      - app
+      - all
+
+  # ==========================================================================
+  # 基础设施层
+  # ==========================================================================
+
+  # PostgreSQL 数据库
+  db:
+    image: postgres:15-alpine
+    container_name: crawlrs-db
+    environment:
+      - POSTGRES_USER=${DB_USER:-crawlrs}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-password}
+      - POSTGRES_DB=${DB_NAME:-crawlrs}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-crawlrs} -d ${DB_NAME:-crawlrs}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    networks:
+      - crawlrs-network
+    profiles:
+      - infrastructure
+      - all
 
-  # Redis Cache
+  # Redis 缓存
   redis:
     image: redis:7-alpine
+    container_name: crawlrs-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
-      - "6380:6379"
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - crawlrs-network
+    profiles:
+      - infrastructure
+      - all
 
-  # Flaresolverr (for bypassing Cloudflare)
+  # ==========================================================================
+  # 浏览器服务层 (用于搜索引擎爬取)
+  # ==========================================================================
+
+  # FlareSolverr (反爬虫解决方案，用于Google搜索)
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: crawlrs-flaresolverr
     environment:
-      - LOG_LEVEL=info
+      - LOG_LEVEL=${FLARESOLVERR_LOG_LEVEL:-info}
+      - CAPTCHA_SOLVER=${FLARESOLVERR_CAPTCHA_SOLVER:-none}
+      - TZ=UTC
     ports:
-      - "8191:8191"
+      - "${FLARESOLVERR_PORT:-8191}:8191"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8191/health"]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - flaresolverr_data:/tmp
+    networks:
+      - crawlrs-network
+    profiles:
+      - browser
+      - all
+    labels:
+      - "crawlrs.service=flaresolverr"
+      - "crawlrs.dependency=google"
 
-  # Headless Chromium (for rendering)
-  chromium:
-    image: zenika/alpine-chrome:latest
-    container_name: chromium
+  # Headless Chrome (用于渲染动态网页)
+  chrome:
+    image: browserless/chrome:latest
+    container_name: crawlrs-chrome
+    environment:
+      - MAX_CONCURRENT_SESSIONS=10
+      - MAX_QUEUE_LENGTH=50
+      - CONNECTION_TIMEOUT=30000
+      - CHROME_REFRESH_TIME=600000
     ports:
-      - "9222:9222"
-    command: [
-      "chromium-browser",
-      "--headless",
-      "--disable-gpu",
-      "--disable-dev-shm-usage",
-      "--remote-debugging-address=0.0.0.0",
-      "--remote-debugging-port=9222",
-      "--no-sandbox",
-      "--disable-setuid-sandbox"
-    ]
-    cap_add:
-      - SYS_ADMIN
+      - "${CHROME_PORT:-9222}:3000"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/json/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - chrome_data:/tmp
+    networks:
+      - crawlrs-network
+    profiles:
+      - browser
+      - all
+    labels:
+      - "crawlrs.service=chrome"
+      - "crawlrs.dependency=google"
 
+  # ==========================================================================
+  # 监控层
+  # ==========================================================================
+
+  # Prometheus 监控
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: crawlrs-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - crawlrs-network
+    profiles:
+      - monitoring
+      - all
+    labels:
+      - "crawlrs.service=prometheus"
+
+  # Grafana 可视化 (可选)
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: crawlrs-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    networks:
+      - crawlrs-network
+    profiles:
+      - monitoring
+      - all
+    labels:
+      - "crawlrs.service=grafana"
+
+  # ==========================================================================
+  # 工具服务
+  # ==========================================================================
+
+  # 数据库管理工具 (pgAdmin - 可选)
+  pgadmin:
+    image: dpage/pgadmin8:latest
+    container_name: crawlrs-pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@crawlrs.local
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:-admin}
+      - PGADMIN_CONFIG_SERVER_MODE=True
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    restart: unless-stopped
+    networks:
+      - crawlrs-network
+    profiles:
+      - tools
+    labels:
+      - "crawlrs.service=pgadmin"
+
+# =============================================================================
+# 网络配置
+# =============================================================================
+networks:
+  crawlrs-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
+
+# =============================================================================
+# 数据卷配置
+# =============================================================================
 volumes:
   db_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_VOLUME_PATH:-./data}/postgres
+
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_VOLUME_PATH:-./data}/redis
+
+  chrome_data:
+    driver: local
+
+  flaresolverr_data:
+    driver: local
+
+  prometheus_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_VOLUME_PATH:-./data}/prometheus
+
+  grafana_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_VOLUME_PATH:-./data}/grafana
+
+  pgadmin_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_VOLUME_PATH:-./data}/pgadmin
+
+# =============================================================================
+# 服务健康状态说明
+# =============================================================================
+# 所有服务均配置了健康检查，确保依赖服务启动顺序正确
+#
+# 启动顺序:
+# 1. 基础设施层: db, redis (并行启动)
+# 2. 浏览器服务层: flaresolverr, chrome (并行启动)
+# 3. 应用层: crawlrs (等待基础设施就绪)
+# 4. 监控层: prometheus, grafana (可选)
+#
+# 端口分配策略:
+# - 应用API: 3000 (可配置)
+# - PostgreSQL: 5432 (可配置)
+# - Redis: 6379 (可配置)
+# - FlareSolverr: 8191 (可配置)
+# - Chrome: 9222 (可配置, 内部端口3000)
+# - Prometheus: 9090 (可配置)
+# - Grafana: 3001 (可配置)
+# - pgAdmin: 5050 (可配置)
+#
+# 环境变量说明:
+# - SEARCH_ENGINE_*_enabled: 控制各搜索引擎启用状态
+# - FLARESOLVERR_AUTO_START: 当Google启用时是否自动启动FlareSolverr
+# - ENV_MODE: docker 或 production, 用于区分运行环境
+# =============================================================================

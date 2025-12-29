@@ -1,0 +1,22 @@
+FROM debian:bullseye-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY target/release/crawlrs /app/crawlrs
+
+RUN chmod +x /app/crawlrs
+
+COPY config /app/config
+
+ENV RUST_LOG=info
+ENV APP_ENVIRONMENT=docker
+
+EXPOSE 3000
+
+ENTRYPOINT ["./crawlrs"]

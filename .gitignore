@@ -62,3 +62,10 @@ docs/task.md
 docs/tdd.md
 docs/test.md
 docs/uat.md
+
+# IDE and editor
+.qoder/
+.cargo/
+
+# Docker environment
+docker/.env

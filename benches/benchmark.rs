@@ -708,7 +708,7 @@ fn benchmark_search_operations(c: &mut Criterion) {
         b.iter(|| {
             let filtered: Vec<_> = all_results
                 .iter()
-                .filter(|r| r.engine.as_ref().map_or(false, |e| e == "google"))
+                .filter(|r| r.engine.as_ref().is_some_and(|e| e == "google"))
                 .take(10)
                 .cloned()
                 .collect();
@@ -796,7 +796,7 @@ fn benchmark_crawl_operations(c: &mut Criterion) {
                 "https://example.com/path?param=value&param=value",
             ];
             for url in urls {
-                let normalized = url::Url::parse(url).ok().map(|u| Into::<String>::into(u));
+                let normalized = url::Url::parse(url).ok().map(Into::<String>::into);
                 black_box(normalized);
             }
         });
@@ -856,7 +856,7 @@ fn benchmark_crawl_operations(c: &mut Criterion) {
     });
 
     // 测试链接过滤
-    let all_links = vec![
+    let all_links = [
         "https://example.com/page1",
         "https://example.com/page2",
         "https://other.com/external",
@@ -866,8 +866,8 @@ fn benchmark_crawl_operations(c: &mut Criterion) {
         "https://example.com/path/image.jpg",
     ];
 
-    let include_patterns = vec!["/page".to_string(), "/api".to_string()];
-    let exclude_patterns = vec!["/admin".to_string(), "\\.(pdf|jpg)$".to_string()];
+    let include_patterns = ["/page".to_string(), "/api".to_string()];
+    let exclude_patterns = ["/admin".to_string(), "\\.(pdf|jpg)$".to_string()];
 
     group.bench_function("link_filtering", |b| {
         b.iter(|| {
