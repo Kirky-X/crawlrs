@@ -1,0 +1,85 @@
+# =============================================================================
+# MinIO Docker Compose 配置
+# =============================================================================
+# 用于测试 S3 兼容对象存储功能
+#
+# 使用方法:
+#   启动 MinIO: docker-compose -f docker-compose.minio.yml up -d
+#   停止 MinIO: docker-compose -f docker-compose.minio.yml down
+#   查看日志: docker-compose -f docker-compose.minio.yml logs -f minio
+#
+# MinIO 控制台:
+#   URL: http://localhost:9001
+#   用户名: minioadmin
+#   密码: minioadmin123
+#
+# S3 API:
+#   URL: http://localhost:9000
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # MinIO 对象存储服务
+  minio:
+    image: minio/minio:latest
+    container_name: crawlrs-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"  # S3 API 端口
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # Web 控制台端口
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    networks:
+      - minio-network
+
+  # MinIO 客户端 (用于创建 bucket)
+  minio-init:
+    image: minio/mc:latest
+    container_name: crawlrs-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      until /usr/bin/mc alias set minio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin123}; do
+        echo 'Waiting for MinIO to be ready...';
+        sleep 5;
+      done;
+      /usr/bin/mc mb minio/crawlrs --ignore-existing;
+      /usr/bin/mc anonymous set download minio/crawlrs;
+      echo 'MinIO bucket created successfully!';
+      "
+
+networks:
+  minio-network:
+    driver: bridge
+
+volumes:
+  minio_data:
+    driver: local
+
+# =============================================================================
+# 环境变量说明
+# =============================================================================
+# MINIO_ROOT_USER: MinIO 管理员用户名 (默认: minioadmin)
+# MINIO_ROOT_PASSWORD: MinIO 管理员密码 (默认: minioadmin123)
+# MINIO_API_PORT: S3 API 端口 (默认: 9000)
+# MINIO_CONSOLE_PORT: Web 控制台端口 (默认: 9001)
+#
+# 配置示例 (保存到 .env 文件):
+# MINIO_ROOT_USER=minioadmin
+# MINIO_ROOT_PASSWORD=minioadmin123
+# MINIO_API_PORT=9000
+# MINIO_CONSOLE_PORT=9001
+# =============================================================================
