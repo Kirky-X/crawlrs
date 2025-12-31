@@ -84,13 +84,25 @@ where
         }
 
         // 1. Perform Search using configured engine
+        // Use sources if provided, otherwise use engine
+        let engine_param = if let Some(sources) = &dto.sources {
+            if sources.len() == 1 {
+                Some(sources[0].as_str())
+            } else {
+                // Multiple sources - use aggregator (None means query all engines)
+                None
+            }
+        } else {
+            dto.engine.as_deref()
+        };
+
         let results = self
             .perform_search(
                 &dto.query,
                 dto.limit.unwrap_or(10),
                 dto.lang.as_deref(),
                 dto.country.as_deref(),
-                dto.engine.as_deref(),
+                engine_param,
             )
             .await?;
 
