@@ -22,7 +22,7 @@ use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crawlrs::infrastructure::storage::LocalStorage;
+use crawlrs::domain::repositories::storage_repository::StorageRepository;
 
 use crawlrs::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitingService,
@@ -190,16 +190,17 @@ async fn main() -> anyhow::Result<()> {
     let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db.clone()));
     let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db.clone()));
     let _webhook_event_repository = Arc::new(WebhookEventRepoImpl::new(db.clone()));
-    let storage_repo = if settings.storage.storage_type == "local" {
-        let path = settings
-            .storage
-            .local_path
-            .clone()
-            .unwrap_or_else(|| "storage".to_string());
-        Some(Arc::new(LocalStorage::new(path)))
-    } else {
-        None
-    };
+    let storage_repo: Option<Arc<dyn StorageRepository + Send + Sync>> =
+        match crawlrs::infrastructure::storage::create_storage_repository(&settings.storage) {
+            Ok(repo) => {
+                // 将 Box<dyn StorageRepository> 转换为 Arc<dyn StorageRepository>
+                Some(Arc::from(repo))
+            },
+            Err(e) => {
+                error!("Failed to initialize storage repository: {}", e);
+                return Err(anyhow::anyhow!("Failed to initialize storage repository: {}", e));
+            }
+        };
     let reqwest_engine = Arc::new(ReqwestEngine);
     let playwright_engine = Arc::new(PlaywrightEngine);
     let fire_engine_tls = Arc::new(FireEngineTls::new());
@@ -478,7 +479,7 @@ async fn main() -> anyhow::Result<()> {
                 task_repo.clone(),
                 result_repo.clone(),
                 crawl_repo.clone(),
-                storage_repo.clone(),
+                storage_repo,
                 webhook_event_repository.clone(),
                 credits_repo.clone(),
                 router.clone(),

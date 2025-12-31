@@ -40,18 +40,17 @@ use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 
 /// 抓取工作者
-pub struct ScrapeWorker<R, S, C, ST, CRR>
+pub struct ScrapeWorker<R, S, C, CRR>
 where
     R: TaskRepository + Send + Sync,
     S: ScrapeResultRepository + Send + Sync,
     C: CrawlRepository + Send + Sync,
-    ST: StorageRepository + Send + Sync,
     CRR: CreditsRepository + Send + Sync,
 {
     repository: Arc<R>,
     result_repository: Arc<S>,
     crawl_repository: Arc<C>,
-    storage_repository: Option<Arc<ST>>,
+    storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
     webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
     credits_repository: Arc<CRR>,
     router: Arc<EngineRouter>,
@@ -64,12 +63,11 @@ where
     retry_policy: RetryPolicy,
 }
 
-impl<R, S, C, ST, CRR> ScrapeWorker<R, S, C, ST, CRR>
+impl<R, S, C, CRR> ScrapeWorker<R, S, C, CRR>
 where
     R: TaskRepository + Send + Sync,
     S: ScrapeResultRepository + Send + Sync,
     C: CrawlRepository + Send + Sync,
-    ST: StorageRepository + Send + Sync,
     CRR: CreditsRepository + Send + Sync,
 {
     /// 创建新的抓取工作器实例
@@ -78,7 +76,7 @@ where
         repository: Arc<R>,
         result_repository: Arc<S>,
         crawl_repository: Arc<C>,
-        storage_repository: Option<Arc<ST>>,
+        storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
         webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
         credits_repository: Arc<CRR>,
         router: Arc<EngineRouter>,
@@ -1085,6 +1083,7 @@ where
                     "depth": current_depth + 1,
                     "config": config
                 }),
+                retry_count: 0,
                 attempt_count: 0,
                 max_retries: 3,
                 scheduled_at: None,
