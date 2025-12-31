@@ -23,11 +23,12 @@ pub async fn create_webhook<R: WebhookRepository>(
     Extension(repo): Extension<Arc<R>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(team_id): Extension<Uuid>,
+    Extension(api_key): Extension<String>,
     Json(payload): Json<CreateWebhookPayload>,
 ) -> Result<(StatusCode, Json<Webhook>), AppError> {
     // 1. 检查限流
     match rate_limiting_service
-        .check_rate_limit("default_api_key", "/v1/webhooks")
+        .check_rate_limit(&api_key, "/v1/webhooks")
         .await
     {
         Ok(RateLimitResult::Denied { reason }) => {

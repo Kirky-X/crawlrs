@@ -39,6 +39,7 @@ pub async fn create_scrape(
     Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(team_id): Extension<Uuid>,
+    Extension(api_key): Extension<String>,
     Json(payload): Json<ScrapeRequestDto>,
 ) -> impl IntoResponse {
     if let Err(e) = payload.validate() {
@@ -77,7 +78,7 @@ pub async fn create_scrape(
 
     // 1. 检查限流
     match rate_limiting_service
-        .check_rate_limit("default_api_key", "/v1/scrape")
+        .check_rate_limit(&api_key, "/v1/scrape")
         .await
     {
         Ok(RateLimitResult::Denied { reason }) => {

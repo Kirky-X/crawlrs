@@ -37,6 +37,7 @@ pub async fn search<CR, TR, CRR>(
     Extension(search_engine): Extension<Arc<dyn SearchEngine>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(team_id): Extension<uuid::Uuid>,
+    Extension(api_key): Extension<String>,
     Json(payload): Json<SearchRequestDto>,
 ) -> impl IntoResponse
 where
@@ -46,7 +47,7 @@ where
 {
     // 1. 检查限流
     match rate_limiting_service
-        .check_rate_limit("default_api_key", "/v1/search")
+        .check_rate_limit(&api_key, "/v1/search")
         .await
     {
         Ok(RateLimitResult::Denied { reason }) => {

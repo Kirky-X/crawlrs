@@ -55,6 +55,7 @@ pub async fn create_crawl<CR, TR, WR, SRR, GR>(
     Extension(task_repository_impl): Extension<Arc<TaskRepositoryImpl>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(team_id): Extension<Uuid>,
+    Extension(api_key): Extension<String>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<CrawlRequestDto>,
 ) -> impl IntoResponse
@@ -89,7 +90,7 @@ where
 
     // 1. 检查限流
     match rate_limiting_service
-        .check_rate_limit("default_api_key", "/v1/crawl")
+        .check_rate_limit(&api_key, "/v1/crawl")
         .await
     {
         Ok(RateLimitResult::Denied { reason }) => {
