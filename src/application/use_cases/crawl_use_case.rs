@@ -283,7 +283,8 @@ where
                 "depth": 0,
                 "config": dto.config,
                 "domain_blacklist": restrictions.domain_blacklist
-            }), // 任务载荷
+}),
+            retry_count: 0, // 重试次数 0
             attempt_count: 0, // 尝试次数 0
             max_retries: 3, // 最大重试次数 3
             scheduled_at: None, // 尚未调度

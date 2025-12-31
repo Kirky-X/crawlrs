@@ -227,6 +227,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
                 team_id: parent_task.team_id,
                 url: link,
                 payload,
+                retry_count: 0,
                 attempt_count: 0,
                 max_retries: parent_task.max_retries,
                 scheduled_at,

@@ -143,6 +143,7 @@ where
                     team_id,
                     url: result.url.clone(),
                     payload: json!({ "crawl_id": cid, "depth": 0, "config": config }),
+                    retry_count: 0,
                     attempt_count: 0,
                     max_retries: 3,
                     scheduled_at: None,

@@ -21,6 +21,7 @@ pub struct Model {
     pub status: String,
     pub priority: i32,
     pub payload: Json,
+    pub retry_count: i32,
     pub max_retries: i32,
     pub scheduled_at: Option<ChronoDateTimeWithTimeZone>,
     pub expires_at: Option<ChronoDateTimeWithTimeZone>,

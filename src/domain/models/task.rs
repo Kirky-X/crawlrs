@@ -31,6 +31,8 @@ pub struct Task {
     pub url: String,
     /// 任务负载数据，包含任务执行所需的参数和配置
     pub payload: serde_json::Value,
+    /// 重试次数（累计重试次数）
+    pub retry_count: i32,
     /// 已重试次数，记录任务已经尝试执行的次数
     pub attempt_count: i32,
     /// 最大重试次数，任务失败时的最大重试限制
@@ -188,6 +190,7 @@ impl Task {
             team_id,
             url,
             payload,
+            retry_count: 0,
             attempt_count: 0,
             max_retries: 3,
             scheduled_at: None,
