@@ -64,8 +64,8 @@ async fn test_uat_001_single_engine_search() {
 /// - data.engines_used.length >= 2（至少 2 个引擎成功）
 /// - 结果无重复 URL
 /// - 相似标题已去重
-#[tokio::test]
 #[ignore] // Ignoring this test because it requires multiple search engines to return results, but test environment may only have Google accessible
+#[tokio::test]
 async fn test_uat_002_multi_engine_aggregation() {
     // Enable test mode for search engines to ensure reliable testing without network issues
     std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "true");

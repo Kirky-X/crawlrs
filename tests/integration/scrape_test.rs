@@ -13,7 +13,6 @@ use tokio::time::sleep;
 use uuid::Uuid;
 
 #[tokio::test]
-#[ignore] // Ignoring this test because it requires worker processes to complete the task
 async fn test_scrape_real_website() {
     let app = create_test_app().await;
 

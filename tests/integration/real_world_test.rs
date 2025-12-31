@@ -152,7 +152,6 @@ async fn test_real_world_playwright_engine() {
 }
 
 #[tokio::test]
-#[ignore] // Ignoring this test because it requires FlareSolverr Docker container
 async fn test_real_world_fire_engine_cdp() {
     info!("Starting FlareSolverr container for CDP test...");
     let flaresolverr = GenericImage::new("ghcr.io/flaresolverr/flaresolverr", "latest")
