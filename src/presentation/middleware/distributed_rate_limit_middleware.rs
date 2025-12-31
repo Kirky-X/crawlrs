@@ -3,6 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+use crate::presentation::middleware::rate_limit_middleware::RateLimiter;
 use axum::{
     extract::{Request, State},
     http::StatusCode,
@@ -10,9 +11,7 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
-use tracing::{error, warn};
-
-use crate::presentation::middleware::rate_limit_middleware::RateLimiter;
+use tracing::{debug, error, info, warn};
 
 /// 分布式速率限制中间件
 ///
@@ -33,32 +32,40 @@ pub async fn distributed_rate_limit_middleware(
     request: Request,
     next: Next,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // Allow public endpoints
     let path = request.uri().path();
+    debug!("DistributedRateLimitMiddleware: Path = {}", path);
+
+    // Allow public endpoints (no rate limiting for these)
     if path == "/health"
         || path == "/metrics"
         || path == "/v1/version"
         || path == "/v1/extract"
         || path.starts_with("/v1/crawl")
-        || path.starts_with("/v1/scrape/")
     {
+        debug!("DistributedRateLimitMiddleware: Skipping public endpoint {}", path);
         return Ok(next.run(request).await);
     }
 
+    debug!("DistributedRateLimitMiddleware: Checking for API key in extensions");
     let api_key = request.extensions().get::<String>().cloned().ok_or_else(|| {
         error!("API Key not found in request extensions. Ensure AuthMiddleware is applied before DistributedRateLimitMiddleware.");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    tracing::info!(
-        "DistributedRateLimitMiddleware checking rate limit for API Key: {}",
+    info!(
+        "DistributedRateLimitMiddleware: Checking rate limit for API Key: {}",
         api_key
     );
 
-    rate_limiter.check(&api_key).await.map_err(|e| {
-        warn!("Rate limit check failed for API Key {}: {}", api_key, e);
-        StatusCode::TOO_MANY_REQUESTS
-    })?;
-
-    Ok(next.run(request).await)
+    debug!("DistributedRateLimitMiddleware: Calling rate_limiter.check()");
+    match rate_limiter.check(&api_key).await {
+        Ok(()) => {
+            debug!("DistributedRateLimitMiddleware: Rate limit check passed");
+            Ok(next.run(request).await)
+        }
+        Err(e) => {
+            warn!("Rate limit check failed for API Key {}: {}", api_key, e);
+            Err(StatusCode::TOO_MANY_REQUESTS)
+        }
+    }
 }

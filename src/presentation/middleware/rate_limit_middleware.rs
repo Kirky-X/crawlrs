@@ -106,15 +106,52 @@ impl RateLimiter {
     /// * `Err(RateLimitError)` - 获取配置失败
     async fn get_rate_limit(&self, api_key: &str) -> Result<u32, RateLimitError> {
         let key = format!("rate_limit_config:{}", api_key);
+        tracing::debug!("[RateLimiter] Getting rate limit for key: {}", key);
+        
         match self.redis_client.get(&key).await {
-            Ok(Some(limit_str)) => limit_str.parse::<u32>().map_err(|e| {
-                RateLimitError::InternalError(format!("Failed to parse rate limit: {}", e))
-            }),
-            Ok(None) => Ok(self.default_limit_per_minute),
-            Err(e) => Err(RateLimitError::InternalError(format!(
-                "Redis GET failed: {}",
-                e
-            ))),
+            Ok(Some(limit_str)) => {
+                tracing::debug!("[RateLimiter] Found config string: {}", limit_str);
+                
+                // Try to parse as JSON first (new format: {"requests_per_minute": N, ...})
+                if limit_str.starts_with('{') {
+                    match serde_json::from_str::<serde_json::Value>(&limit_str) {
+                        Ok(json) => {
+                            tracing::debug!("[RateLimiter] Parsed JSON config: {:?}", json);
+                            let limit = json
+                                .get("requests_per_minute")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32)
+                                .unwrap_or(self.default_limit_per_minute);
+                            tracing::debug!("[RateLimiter] Extracted limit from JSON: {}", limit);
+                            Ok(limit)
+                        }
+                        Err(e) => {
+                            tracing::warn!("[RateLimiter] Failed to parse JSON config: {}", e);
+                            // Fall back to parsing as plain number
+                            limit_str.parse::<u32>().map_err(|e| {
+                                RateLimitError::InternalError(format!("Failed to parse rate limit: {}", e))
+                            })
+                        }
+                    }
+                } else {
+                    // Plain number format (legacy)
+                    tracing::debug!("[RateLimiter] Using legacy plain number format");
+                    limit_str.parse::<u32>().map_err(|e| {
+                        RateLimitError::InternalError(format!("Failed to parse rate limit: {}", e))
+                    })
+                }
+            }
+            Ok(None) => {
+                tracing::debug!("[RateLimiter] No config found, using default: {}", self.default_limit_per_minute);
+                Ok(self.default_limit_per_minute)
+            }
+            Err(e) => {
+                tracing::error!("[RateLimiter] Redis GET failed: {}", e);
+                Err(RateLimitError::InternalError(format!(
+                    "Redis GET failed: {}",
+                    e
+                )))
+            }
         }
     }
 
