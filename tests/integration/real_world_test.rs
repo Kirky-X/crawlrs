@@ -5,6 +5,7 @@
 
 use crawlrs::engines::fire_engine_cdp::FireEngineCdp;
 use crawlrs::engines::fire_engine_tls::FireEngineTls;
+use crawlrs::engines::playwright_engine::PlaywrightEngine;
 use crawlrs::engines::reqwest_engine::ReqwestEngine;
 use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
 use std::collections::HashMap;
@@ -18,7 +19,7 @@ fn create_base_request() -> ScrapeRequest {
     ScrapeRequest {
         url: TEST_URL.to_string(),
         headers: HashMap::new(),
-        timeout: Duration::from_secs(60), // Increased timeout for Flaresolverr
+        timeout: Duration::from_secs(60), // Increased timeout for FlareSolverr
         needs_js: false,
         needs_screenshot: false,
         screenshot_config: None,
@@ -42,7 +43,7 @@ async fn wait_for_flaresolverr(base_url: &str) {
         format!("{}/v1", base_url),
     ];
 
-    info!("Checking Flaresolverr health at multiple endpoints");
+    info!("Checking FlareSolverr health at multiple endpoints");
     let mut found = false;
 
     for i in 0..30 {
@@ -50,12 +51,12 @@ async fn wait_for_flaresolverr(base_url: &str) {
             match reqwest::get(endpoint).await {
                 Ok(resp) => {
                     if resp.status().is_success() {
-                        info!("Flaresolverr is ready! Responding to: {}", endpoint);
+                        info!("FlareSolverr is ready! Responding to: {}", endpoint);
                         found = true;
                         break;
                     } else {
                         info!(
-                            "Flaresolverr endpoint {} returned status: {}",
+                            "FlareSolverr endpoint {} returned status: {}",
                             endpoint,
                             resp.status()
                         );
@@ -69,12 +70,12 @@ async fn wait_for_flaresolverr(base_url: &str) {
             break;
         }
 
-        info!("Waiting for Flaresolverr... attempt {}", i);
+        info!("Waiting for FlareSolverr... attempt {}", i);
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
     if !found {
-        panic!("Flaresolverr failed to start after 30 seconds");
+        panic!("FlareSolverr failed to start after 30 seconds");
     }
 }
 
@@ -108,60 +109,14 @@ async fn test_real_world_reqwest_engine() {
 }
 
 #[tokio::test]
-#[ignore] // Ignoring this test because Docker is not available in the current environment
 async fn test_real_world_playwright_engine() {
-    use crawlrs::engines::playwright_engine::PlaywrightEngine;
+    info!("Testing PlaywrightEngine with existing Chrome container...");
 
-    info!("Testing PlaywrightEngine with Docker-based Chromium setup...");
+    // Check if Chrome is available via environment variable
+    let chrome_url = std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL")
+        .unwrap_or_else(|_| "http://localhost:9222".to_string());
 
-    // Defensively stop and remove any existing container
-    std::process::Command::new("docker")
-        .args(["stop", "chromium-test"])
-        .output()
-        .ok();
-    std::process::Command::new("docker")
-        .args(["rm", "chromium-test"])
-        .output()
-        .ok();
-
-    // Use Docker to run a container with Chromium pre-installed and remote debugging enabled
-    info!("Starting Chromium container with remote debugging...");
-    let output = std::process::Command::new("docker")
-        .args([
-            "run",
-            "-d",
-            "--rm",
-            "--name",
-            "chromium-test",
-            "-p",
-            "9222:9222",
-            "--cap-add=SYS_ADMIN",
-            "zenika/alpine-chrome",
-            "chromium-browser",
-            "--headless",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--remote-debugging-address=0.0.0.0",
-            "--remote-debugging-port=9222",
-            "--no-sandbox",
-        ])
-        .output()
-        .expect("Failed to execute docker command");
-
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        panic!(
-            "Failed to start Chromium container. Status: {}. Stdout: {}. Stderr: {}",
-            output.status, stdout, stderr
-        );
-    }
-
-    let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    info!("Started Chromium container: {}", container_id);
-
-    // Wait for container to be ready
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    info!("Using Chrome at: {}", chrome_url);
 
     let engine = PlaywrightEngine;
     let mut request = create_base_request();
@@ -170,16 +125,10 @@ async fn test_real_world_playwright_engine() {
     info!("Testing PlaywrightEngine with URL: {}", TEST_URL);
 
     let result = crawlrs::engines::playwright_engine::REMOTE_URL_OVERRIDE
-        .scope("http://localhost:9222".to_string(), async {
+        .scope(chrome_url.clone(), async {
             engine.scrape(&request).await
         })
         .await;
-
-    // Clean up container
-    std::process::Command::new("docker")
-        .args(["stop", &container_id])
-        .output()
-        .ok();
 
     match result {
         Ok(response) => {
@@ -203,9 +152,9 @@ async fn test_real_world_playwright_engine() {
 }
 
 #[tokio::test]
-#[ignore] // Ignoring this test because it requires Flaresolverr Docker container
+#[ignore] // Ignoring this test because it requires FlareSolverr Docker container
 async fn test_real_world_fire_engine_cdp() {
-    info!("Starting Flaresolverr container for CDP test...");
+    info!("Starting FlareSolverr container for CDP test...");
     let flaresolverr = GenericImage::new("ghcr.io/flaresolverr/flaresolverr", "latest")
         .with_exposed_port(testcontainers::core::ContainerPort::Tcp(8191))
         .start()
@@ -215,9 +164,9 @@ async fn test_real_world_fire_engine_cdp() {
     let port = flaresolverr.get_host_port_ipv4(8191).await.expect("port");
     let base_url = format!("http://127.0.0.1:{}", port);
     let api_url = format!("{}/v1", base_url);
-    info!("Flaresolverr started at {}", base_url);
+    info!("FlareSolverr started at {}", base_url);
 
-    // Wait for Flaresolverr to be ready
+    // Wait for FlareSolverr to be ready
     wait_for_flaresolverr(&base_url).await;
 
     std::env::set_var("FIRE_ENGINE_CDP_URL", &api_url);
@@ -255,7 +204,7 @@ async fn test_real_world_fire_engine_cdp() {
 
 #[tokio::test]
 async fn test_real_world_fire_engine_tls() {
-    info!("Starting Flaresolverr container for TLS test...");
+    info!("Starting FlareSolverr container for TLS test...");
     let flaresolverr = GenericImage::new("ghcr.io/flaresolverr/flaresolverr", "latest")
         .with_exposed_port(testcontainers::core::ContainerPort::Tcp(8191))
         .start()
@@ -265,9 +214,9 @@ async fn test_real_world_fire_engine_tls() {
     let port = flaresolverr.get_host_port_ipv4(8191).await.expect("port");
     let base_url = format!("http://127.0.0.1:{}", port);
     let api_url = format!("{}/v1", base_url);
-    info!("Flaresolverr started at {}", base_url);
+    info!("FlareSolverr started at {}", base_url);
 
-    // Wait for Flaresolverr to be ready
+    // Wait for FlareSolverr to be ready
     wait_for_flaresolverr(&base_url).await;
 
     std::env::set_var("FIRE_ENGINE_TLS_URL", &api_url);
