@@ -21,7 +21,7 @@ use uuid::Uuid;
 /// 对应文档章节：3.1.1
 #[tokio::test]
 async fn test_create_scrape_task_success() {
-    let app = create_test_app().await;
+    let app = create_test_app_with_rate_limit_options(false, true).await;
 
     let response = app
         .server
@@ -31,6 +31,13 @@ async fn test_create_scrape_task_success() {
             "url": "https://example.com"
         }))
         .await;
+
+    // Print response for debugging
+    if response.status_code() != StatusCode::CREATED && response.status_code() != StatusCode::ACCEPTED {
+        let response_text: String = response.text();
+        eprintln!("Response status: {}", response.status_code());
+        eprintln!("Response body: {}", response_text);
+    }
 
     assert!(
         response.status_code() == StatusCode::CREATED
@@ -214,13 +221,21 @@ async fn test_circuit_breaker_and_engine_fallback() {
         }),
     );
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    // 绑定到 0.0.0.0 以便从 Docker 容器访问
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         axum::serve(listener, app_server).await.unwrap();
     });
 
-    let test_url = format!("http://{}/conditional", addr);
+    // 如果在 Docker 环境中运行（通过 CHROMIUM_REMOTE_DEBUGGING_URL 检测），
+    // 使用 host.docker.internal 替换地址，否则使用 127.0.0.1
+    let host = if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_ok() {
+        "host.docker.internal"
+    } else {
+        "127.0.0.1"
+    };
+    let test_url = format!("http://{}:{}/conditional", host, addr.port());
 
     let engine_a = Arc::new(ReqwestEngine);
     let engine_b = Arc::new(PlaywrightEngine);
@@ -350,7 +365,8 @@ async fn test_create_scrape_task_validation() {
 #[tokio::test]
 async fn test_team_data_isolation() {
     // Disable rate limiting for this test
-    let app = create_test_app_with_rate_limit_options(false, false).await;
+    // Enable Redis (second parameter true) to avoid connection errors
+    let app = create_test_app_with_rate_limit_options(false, true).await;
 
     // 1. Create Team A's task
     let response_a = app
@@ -433,7 +449,8 @@ async fn test_ssrf_protection() {
     std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "false");
 
     // Disable rate limiting for this test to avoid 429 Too Many Requests
-    let app = super::helpers::create_test_app_with_rate_limit_options(false, false).await;
+    // Enable Redis (second parameter true) to avoid connection errors
+    let app = super::helpers::create_test_app_with_rate_limit_options(false, true).await;
 
     // 1. Localhost Access (Default: Blocked)
     let response = app
@@ -727,7 +744,7 @@ async fn test_distributed_rate_limiting() {
 /// 验证非法访问是否被拦截。
 #[tokio::test]
 async fn test_invalid_api_key_v2() {
-    let app = create_test_app().await;
+    let app = create_test_app_with_rate_limit_options(false, true).await;
 
     // 1. 使用无效的 API Key
     let response = app
@@ -1219,7 +1236,7 @@ async fn test_cancel_crawl() {
 /// 验证无效API密钥的处理
 #[tokio::test]
 async fn test_invalid_api_key() {
-    let app = create_test_app().await;
+    let app = create_test_app_with_rate_limit_options(false, true).await;
 
     let response = app
         .server
