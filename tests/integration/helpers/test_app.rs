@@ -9,6 +9,7 @@ use axum::response::Response;
 use axum::routing::{delete, get, post, put};
 use axum_test::TestServer;
 use futures::future::BoxFuture;
+use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -207,11 +208,13 @@ pub async fn create_test_app() -> TestApp {
 }
 
 pub async fn create_test_app_with_low_rate_limit() -> TestApp {
-    let app = create_test_app_with_rate_limit_options(true, false).await;
+    let app = create_test_app_with_rate_limit_options(true, true).await;
 
     // Set a low rate limit of 1 request per minute for this API key
+    // Must use the same key format as RateLimiter in rate_limit_middleware.rs: "rate_limit_config:{api_key}"
     let rate_limit_key = format!("rate_limit_config:{}", app.api_key);
-    let _ = app.redis.set(&rate_limit_key, "1", 60).await;
+    let rate_limit_value = json!({"requests_per_minute": 1, "capacity": 1});
+    let _ = app.redis.set(&rate_limit_key, &rate_limit_value.to_string(), 60).await;
 
     app
 }
@@ -220,7 +223,10 @@ pub async fn create_test_app_with_rate_limit_options(
     _rate_limit_enabled: bool,
     use_redis: bool,
 ) -> TestApp {
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    // 强制使用PostgreSQL数据库，与Worker共享
+    let db_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5433/crawlrs_test".to_string());
+    let db = Database::connect(&db_url).await.unwrap();
     let db_pool = Arc::new(db);
 
     Migrator::up(db_pool.as_ref(), None).await.unwrap();
@@ -257,32 +263,71 @@ pub async fn create_test_app_with_rate_limit_options(
     let api_key = Uuid::new_v4().to_string();
     let team_id = Uuid::new_v4();
 
-    db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, 'test-team', datetime('now'), datetime('now'))",
-            vec![team_id.into()],
-        ))
-        .await
-        .unwrap();
+    // 根据数据库URL确定数据库后端类型
+    let db_backend = if db_url.starts_with("postgres://") {
+        DbBackend::Postgres
+    } else {
+        DbBackend::Sqlite
+    };
 
-    db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
-        ))
-        .await
-        .unwrap();
+    // 使用适合当前数据库后端的语法插入测试数据
+    if db_backend == DbBackend::Postgres {
+        // PostgreSQL语法
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO teams (id, name, created_at, updated_at) VALUES ($1, 'test-team', NOW(), NOW())",
+                vec![team_id.into()],
+            ))
+            .await
+            .unwrap();
 
-    db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, 1000, datetime('now'), datetime('now'))",
-            vec![Uuid::new_v4().into(), team_id.into()],
-        ))
-        .await
-        .unwrap();
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
+                vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES ($1, $2, 1000, NOW(), NOW())",
+                vec![Uuid::new_v4().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+    } else {
+        // SQLite语法
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, 'test-team', datetime('now'), datetime('now'))",
+                vec![team_id.into()],
+            ))
+            .await
+            .unwrap();
+
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+                vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, 1000, datetime('now'), datetime('now'))",
+                vec![Uuid::new_v4().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+    }
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db_pool.clone(),
@@ -345,6 +390,8 @@ pub async fn create_test_app_with_rate_limit_options(
         rate_limiter,
         team_id,
         Arc::new(redis_client.clone()),
+        api_key.clone(),
+        _rate_limit_enabled,
     );
 
     let mock_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
@@ -380,6 +427,8 @@ fn create_router(
     rate_limiter: Arc<crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter>,
     team_id: Uuid,
     redis_client: Arc<RedisClient>,
+    api_key: String,
+    rate_limit_enabled: bool,
 ) -> axum::Router<()> {
     let crawl_repo = Arc::new(
         crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl::new(
@@ -414,7 +463,7 @@ fn create_router(
 
     let team_semaphore = Arc::new(tokio::sync::Semaphore::new(100));
 
-    let protected_routes = axum::Router::new()
+    let mut protected_routes = axum::Router::new()
         .route(
             "/v1/scrape",
             post(handlers::scrape_handler::create_scrape),
@@ -492,13 +541,16 @@ fn create_router(
             put(handlers::team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
         )
         .layer(axum::middleware::from_fn_with_state(
-            rate_limiter.clone(),
-            crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
             crawlrs::presentation::middleware::auth_middleware::auth_middleware,
         ));
+
+    if rate_limit_enabled {
+        protected_routes = protected_routes.layer(axum::middleware::from_fn_with_state(
+            rate_limiter.clone(),
+            crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware,
+        ));
+    }
 
     axum::Router::new()
         .merge(public_routes)
@@ -522,19 +574,23 @@ fn create_router(
         .layer(axum::Extension(queue))
         .layer(axum::Extension(auth_state))
         .layer(axum::Extension(team_id))
+        .layer(axum::Extension(api_key))
         .layer(axum::Extension(redis_client))
         .layer(axum::Extension(rate_limiter))
 }
 
 pub async fn create_test_app_no_worker() -> TestApp {
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    // 强制使用PostgreSQL数据库，与Worker共享
+    let db_url = std::env::var("TEST_DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5433/crawlrs_test".to_string());
+    let db = Database::connect(&db_url).await.unwrap();
     let db_pool = Arc::new(db);
 
     Migrator::up(db_pool.as_ref(), None).await.unwrap();
 
     let start_port = 8000;
     let result =
-        crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true, 10)
+        crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true, 100)
             .unwrap();
     let redis_port = result.port;
     let redis_process = Some(
@@ -554,32 +610,71 @@ pub async fn create_test_app_no_worker() -> TestApp {
     let api_key = Uuid::new_v4().to_string();
     let team_id = Uuid::new_v4();
 
-    db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, 'test-team', datetime('now'), datetime('now'))",
-            vec![team_id.into()],
-        ))
-        .await
-        .unwrap();
+    // 根据数据库URL确定数据库后端类型
+    let db_backend = if db_url.starts_with("postgres://") {
+        DbBackend::Postgres
+    } else {
+        DbBackend::Sqlite
+    };
 
-    db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-            vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
-        ))
-        .await
-        .unwrap();
+    // 使用适合当前数据库后端的语法插入测试数据
+    if db_backend == DbBackend::Postgres {
+        // PostgreSQL语法
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO teams (id, name, created_at, updated_at) VALUES ($1, 'test-team', NOW(), NOW())",
+                vec![team_id.into()],
+            ))
+            .await
+            .unwrap();
 
-    db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, 1000, datetime('now'), datetime('now'))",
-            vec![Uuid::new_v4().into(), team_id.into()],
-        ))
-        .await
-        .unwrap();
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
+                vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES ($1, $2, 1000, NOW(), NOW())",
+                vec![Uuid::new_v4().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+    } else {
+        // SQLite语法
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, 'test-team', datetime('now'), datetime('now'))",
+                vec![team_id.into()],
+            ))
+            .await
+            .unwrap();
+
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+                vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, 1000, datetime('now'), datetime('now'))",
+                vec![Uuid::new_v4().into(), team_id.into()],
+            ))
+            .await
+            .unwrap();
+    }
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db_pool.clone(),
@@ -642,6 +737,8 @@ pub async fn create_test_app_no_worker() -> TestApp {
         rate_limiter,
         team_id,
         Arc::new(redis_client.clone()),
+        api_key.clone(),
+        true,
     );
 
     let mock_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
