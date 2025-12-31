@@ -198,7 +198,6 @@ fn generate_test_report(results: &[(String, bool, String)]) {
 ///
 /// 注意：此测试需要真实搜索引擎连接能力。
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_all_search_engines_with_gemini -- --include-ignored
-#[ignore]
 #[tokio::test]
 async fn test_all_search_engines_with_gemini() {
     println!("🚀 开始测试四个搜索引擎，关键词: gemini");
@@ -215,7 +214,6 @@ async fn test_all_search_engines_with_gemini() {
 }
 
 #[tokio::test]
-#[ignore] // Ignoring this test because it requires real search engine connectivity
 async fn test_search_engines_simple_mode() {
     println!("🚀 开始测试搜索引擎（简化模式），关键词: gemini");
 
