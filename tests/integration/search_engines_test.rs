@@ -219,7 +219,7 @@ async fn test_all_search_engines_with_gemini() {
 async fn test_search_engines_simple_mode() {
     println!("🚀 开始测试搜索引擎（简化模式），关键词: gemini");
 
-    let results = run_concurrent_search_tests("gemini", 10, 30, TestMode::Simple).await;
+    let results = run_concurrent_search_tests("gemini", 10, 30, TestMode::Full).await;
     generate_test_report(&results);
 
     let failed_count = results.iter().filter(|(_, success, _)| !success).count();

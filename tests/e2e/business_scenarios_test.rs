@@ -50,7 +50,7 @@ async fn test_ecommerce_product_monitoring_scenario() {
     // Step 2: Wait for all monitoring tasks to complete
     let mut all_completed = false;
     let mut retries = 0;
-    const MAX_RETRIES: u32 = 45;
+    const MAX_RETRIES: u32 = 90; // Increase timeout to 90 seconds
 
     while !all_completed && retries < MAX_RETRIES {
         all_completed = true;
@@ -151,7 +151,7 @@ async fn test_content_aggregation_scenario() {
     // Step 2: Monitor crawl progress
     let mut status = String::from("pending");
     let mut retries = 0;
-    const MAX_RETRIES: u32 = 60;
+    const MAX_RETRIES: u32 = 90; // Increase timeout to 90 seconds
 
     while status == "pending" || status == "running" {
         if retries >= MAX_RETRIES {

@@ -48,7 +48,8 @@ async fn test_uat007_path_filtering() {
             "exclude_patterns": ["/admin/*", "/api/*"],
             "strategy": "bfs"
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -227,6 +228,7 @@ async fn test_uat006_distributed_rate_limiting() {
                 team_id,
                 url: "https://example.com".to_string(),
                 payload: serde_json::json!({}),
+                retry_count: 0,
                 attempt_count: 0,
                 max_retries: 3,
                 scheduled_at: None,
@@ -323,7 +325,8 @@ async fn test_uat007_path_filtering_empty_rules() {
             "exclude_patterns": [],
             "strategy": "bfs"
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -385,7 +388,8 @@ async fn test_uat008_robots_txt_compliance() {
             "max_depth": 2,
             "strategy": "bfs"
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -457,7 +461,8 @@ async fn test_uat008_robots_txt_caching() {
             "max_depth": 2,
             "strategy": "bfs"
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -527,6 +532,7 @@ async fn test_uat009_concurrent_task_processing() {
                     "max_depth": 1,
                     "strategy": "bfs"
                 }),
+                retry_count: 0,
                 attempt_count: 0,
                 max_retries: 3,
                 scheduled_at: None,
@@ -611,7 +617,8 @@ async fn test_uat010_error_recovery_and_retry() {
             "max_depth": 2,
             "strategy": "bfs"
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -683,7 +690,8 @@ async fn test_uat011_timeout_handling() {
                 "crawl_delay_ms": 100  // 100ms延迟
             }
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -785,7 +793,8 @@ async fn test_uat012_resource_exhaustion_handling() {
             "max_depth": 1,
             "strategy": "bfs"
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -915,7 +924,8 @@ async fn test_uat025_degradation_strategy() {
             "max_depth": 10,
             "strategy": "bfs"
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -1101,7 +1111,7 @@ async fn test_uat018_rate_limiting() {
     use super::helpers::create_test_app_with_rate_limit_options;
 
     // 创建启用了速率限制的应用
-    let app = create_test_app_with_rate_limit_options(false, true).await;
+    let app = create_test_app_with_rate_limit_options(true, true).await;
 
     // Set a specific rate limit for this test's API key (10 RPM)
     let rate_limit_key = format!("rate_limit_config:{}", app.api_key);
@@ -1220,7 +1230,8 @@ async fn test_uat019_team_concurrency_limit() {
             team_id,
             url: format!("https://example.com/{}", i),
             payload: json!({}),
-            attempt_count: 0,
+            retry_count: 0,
+                attempt_count: 0,
             max_retries: 3,
             scheduled_at: None,
             created_at: chrono::Utc::now().into(),
@@ -1410,7 +1421,8 @@ async fn test_uat026_sync_wait_perf() {
             team_id,
             url: "http://example.com".to_string(),
             payload: json!({}),
-            attempt_count: 0,
+            retry_count: 0,
+                attempt_count: 0,
             max_retries: 3,
             scheduled_at: None,
             created_at: Utc::now().into(), // Convert Utc::now() to FixedOffset
@@ -1539,7 +1551,8 @@ async fn test_uat027_task_mgmt_perf() {
                     team_id,
                     url: format!("http://example.com/{}", i * batch_size + j),
                     payload: json!({}),
-                    attempt_count: 0,
+                    retry_count: 0,
+                attempt_count: 0,
                     max_retries: 3,
                     scheduled_at: None,
                     created_at: Utc::now().into(),
@@ -1665,7 +1678,8 @@ async fn test_uat016_sync_wait_integration() {
         team_id,
         url: "http://example.com/uat016".to_string(),
         payload: json!({}),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: Utc::now().into(),
@@ -1796,6 +1810,7 @@ async fn test_uat017_task_management_api() {
                 team_id,
                 url: format!("http://example.com/{}/{}", i, j),
                 payload: json!({}),
+                retry_count: 0,
                 attempt_count: 0,
                 max_retries: 3,
                 scheduled_at: None,

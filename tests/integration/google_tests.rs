@@ -284,11 +284,8 @@ async fn test_flaresolverr_google_search() {
 
     let engine = FlareSolverrGoogleEngine::new("http://localhost:8191".to_string());
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let result = test_flaresolverr_google_engine(&engine, "rust programming").await;
-        assert!(result, "FlareSolverr Google搜索测试失败");
-    });
+    let result = test_flaresolverr_google_engine(&engine, "rust programming").await;
+    assert!(result, "FlareSolverr Google搜索测试失败");
 
     println!("🎉 FlareSolverr Google搜索测试通过！");
 }
@@ -304,11 +301,8 @@ async fn test_google_with_remote_chrome() {
 
     let google_engine = create_google_engine();
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let result = test_google_with_google_engine(&google_engine, "鸿蒙星光大赏").await;
-        assert!(result, "使用远程Chrome的Google搜索测试失败");
-    });
+    let result = test_google_with_google_engine(&google_engine, "鸿蒙星光大赏").await;
+    assert!(result, "使用远程Chrome的Google搜索测试失败");
 
     println!("🎉 使用远程Chrome的Google搜索测试通过！");
 }
@@ -324,17 +318,14 @@ async fn test_google_with_timeout() {
 
     let google_engine = create_google_engine();
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let test_queries = vec!["鸿蒙星光大赏", "HarmonyOS", "华为"];
+    let test_queries = vec!["鸿蒙星光大赏", "HarmonyOS", "华为"];
 
-        for query in test_queries {
-            let result = test_google_with_google_engine(&google_engine, query).await;
-            assert!(result, "搜索关键词 '{}' 测试失败", query);
+    for query in test_queries {
+        let result = test_google_with_google_engine(&google_engine, query).await;
+        assert!(result, "搜索关键词 '{}' 测试失败", query);
 
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        }
-    });
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
 
     println!("🎉 使用远程Chrome的Google搜索（超时测试）通过！");
 }

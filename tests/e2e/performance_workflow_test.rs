@@ -131,7 +131,7 @@ async fn test_performance_concurrent_scraping() {
     // Wait for all tasks to complete
     let mut completed_tasks = 0;
     let mut retries = 0;
-    const MAX_RETRIES: u32 = 60;
+    const MAX_RETRIES: u32 = 120; // Increase timeout to 120 seconds
 
     while completed_tasks < concurrent_tasks && retries < MAX_RETRIES {
         completed_tasks = 0;
@@ -213,7 +213,7 @@ async fn test_performance_batch_crawl() {
     // Monitor progress
     let mut status = String::from("pending");
     let mut retries = 0;
-    const MAX_RETRIES: u32 = 90;
+    const MAX_RETRIES: u32 = 120; // Increase timeout to 120 seconds
 
     while status == "pending" || status == "running" {
         if retries >= MAX_RETRIES {

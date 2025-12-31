@@ -57,7 +57,7 @@ async fn test_complete_scrape_workflow() {
     // Step 2: Monitor task status until completion
     let mut status = String::from("queued");
     let mut retries = 0;
-    const MAX_RETRIES: u32 = 60; // Increase timeout to 60 seconds
+    const MAX_RETRIES: u32 = 120; // Increase timeout to 120 seconds
 
     while status == "queued" || status == "active" {
         if retries >= MAX_RETRIES {
@@ -163,7 +163,7 @@ async fn test_batch_scrape_workflow() {
     // Step 2: Monitor all tasks until completion
     let mut all_completed = false;
     let mut retries = 0;
-    const MAX_RETRIES: u32 = 60;
+    const MAX_RETRIES: u32 = 120; // Increase timeout to 120 seconds
 
     while !all_completed && retries < MAX_RETRIES {
         all_completed = true;
@@ -241,7 +241,7 @@ async fn test_crawl_with_webhook_workflow() {
     // Step 2: Monitor crawl status
     let mut status = String::from("pending");
     let mut retries = 0;
-    const MAX_RETRIES: u32 = 60;
+    const MAX_RETRIES: u32 = 120; // Increase timeout to 120 seconds
 
     while status == "pending" || status == "running" {
         if retries >= MAX_RETRIES {

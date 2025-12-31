@@ -53,7 +53,8 @@ async fn test_real_task_lifecycle_with_search_integration() {
             "search_query": "rust programming",
             "engine": "bing"
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         expires_at: None,
@@ -77,7 +78,8 @@ async fn test_real_task_lifecycle_with_search_integration() {
             "search_query": "python tutorial",
             "engine": "bing"
         }),
-        attempt_count: 0,
+        retry_count: 0,
+                attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         expires_at: None,
@@ -247,7 +249,8 @@ async fn test_real_concurrent_task_processing() {
                 "page_number": i,
                 "query": "concurrent test"
             }),
-            attempt_count: 0,
+            retry_count: 0,
+                attempt_count: 0,
             max_retries: 3,
             scheduled_at: None,
             expires_at: None,

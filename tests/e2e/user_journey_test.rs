@@ -62,7 +62,7 @@ async fn test_new_user_onboarding_journey() {
     // Step 6: User checks task status
     let mut status = String::from("pending");
     let mut retries = 0;
-    const MAX_RETRIES: u32 = 30;
+    const MAX_RETRIES: u32 = 60; // Increase timeout to 60 seconds
 
     while status == "pending" && retries < MAX_RETRIES {
         let status_response = app

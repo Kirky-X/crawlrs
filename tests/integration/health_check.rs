@@ -3,19 +3,19 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use super::helpers::create_test_app;
+use super::helpers::create_test_app_with_rate_limit_options;
 use axum::http::StatusCode;
 
 #[tokio::test]
 async fn health_check_works() {
-    let app = create_test_app().await;
+    let app = create_test_app_with_rate_limit_options(false, true).await;
     let response = app.server.get("/health").await;
     response.assert_status(StatusCode::OK);
 }
 
 #[tokio::test]
 async fn scrape_endpoint_returns_401_without_auth() {
-    let app = create_test_app().await;
+    let app = create_test_app_with_rate_limit_options(false, true).await;
     let response = app
         .server
         .post("/v1/scrape")
