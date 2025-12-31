@@ -22,7 +22,6 @@ use super::helpers::create_test_app;
 /// 注意：此测试需要完整的运行时环境（包括worker）来执行排队的任务。
 /// 在纯测试环境中，任务会保持在"queued"状态不会被处理。
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- extract_with_rules_credit_deduction -- --include-ignored
-#[ignore] // Ignoring this test because it requires LLM API key
 #[tokio::test]
 async fn test_extract_with_rules_credit_deduction() {
     let app = create_test_app().await;

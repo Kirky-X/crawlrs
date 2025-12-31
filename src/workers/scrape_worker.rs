@@ -688,6 +688,11 @@ where
             serde_json::from_value(task.payload.clone())
                 .context("Failed to parse extract task input")?;
 
+        println!("DEBUG: Parsed payload, rules present: {}", payload.rules.is_some());
+        if let Some(ref rules) = payload.rules {
+            println!("DEBUG: Rules count: {}", rules.len());
+        }
+
         let url = payload.urls.first().context("No URL provided")?.clone();
 
         // 1. Scrape Content

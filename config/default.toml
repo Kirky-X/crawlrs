@@ -85,5 +85,5 @@ cx = ""
 # LLM Configuration
 [llm]
 api_key = "ollama"
-model = "qwen3:1:7"
+model = "qwen3:1.7b"
 api_base_url = "http://172.24.160.1:11434/v1"

@@ -96,7 +96,7 @@ services:
       - CRAWLRS__RATE_LIMITING__ENABLED=false
       - CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT=10
       - CRAWLRS__LLM__API_KEY=ollama
-      - CRAWLRS__LLM__MODEL=qwen3:1:7
+      - CRAWLRS__LLM__MODEL=qwen3:1.7b
       - CRAWLRS__LLM__API_BASE_URL=http://host.docker.internal:11434/v1
     depends_on:
       postgres:

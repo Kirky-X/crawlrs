@@ -111,7 +111,8 @@ impl ExtractionService {
                         total_usage.completion_tokens += usage.completion_tokens;
                         total_usage.total_tokens += usage.total_tokens;
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        tracing::error!("LLM extraction failed for key '{}': {}", key, e);
                         result.insert(key.clone(), Value::Null);
                     }
                 }

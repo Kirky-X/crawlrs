@@ -89,6 +89,9 @@ use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+use crawlrs::infrastructure::search::bing::BingSearchEngine;
+use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
+use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingConfig;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl;
 use crawlrs::presentation::handlers;
@@ -236,24 +239,11 @@ pub async fn create_test_app_with_rate_limit_options(
     let redis_process: Option<std::process::Child>;
 
     if use_redis {
-        let start_port = 8000;
-        let result =
-            crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true, 100)
-                .unwrap();
-        let redis_port = result.port;
-        redis_process = Some(
-            Command::new("redis-server")
-                .arg("--port")
-                .arg(redis_port.to_string())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .expect("Failed to start redis-server"),
-        );
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        redis_url = format!("redis://127.0.0.1:{}", redis_port);
+        // Use Docker Redis instance (mapped to port 6381 on host)
+        // This ensures the test app and worker use the same Redis instance
+        redis_url = "redis://127.0.0.1:6381".to_string();
         redis_client = RedisClient::new(&redis_url).await.unwrap();
+        redis_process = None;
     } else {
         redis_url = "redis://127.0.0.1:6379".to_string();
         redis_client = RedisClient::new(&redis_url).await.unwrap();
@@ -357,7 +347,7 @@ pub async fn create_test_app_with_rate_limit_options(
 
     let search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine> = Arc::new(
         crawlrs::infrastructure::search::aggregator::SearchAggregator::new(
-            vec![Arc::new(GoogleSearchEngine::new())],
+            vec![Arc::new(GoogleSearchEngine::new()), Arc::new(BingSearchEngine::new()), Arc::new(BaiduSearchEngine::new()), Arc::new(SogouSearchEngine::new())],
             10000,
         ),
     );
@@ -447,7 +437,7 @@ fn create_router(
         ),
     );
     let settings = Arc::new(Settings::new().unwrap());
-    let queue: Arc<dyn TaskQueue> = Arc::new(InMemoryQueue::new(task_repo.clone()));
+    let queue: Arc<dyn TaskQueue> = Arc::new(crawlrs::queue::task_queue::PostgresTaskQueue::new(task_repo.clone()));
     let auth_state = AuthState {
         db: db_pool.clone(),
         team_id,
@@ -704,7 +694,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
 
     let search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine> = Arc::new(
         crawlrs::infrastructure::search::aggregator::SearchAggregator::new(
-            vec![Arc::new(GoogleSearchEngine::new())],
+            vec![Arc::new(GoogleSearchEngine::new()), Arc::new(BingSearchEngine::new()), Arc::new(BaiduSearchEngine::new()), Arc::new(SogouSearchEngine::new())],
             10000,
         ),
     );
