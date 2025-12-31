@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: crawlrs_test
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U crawlrs -d crawlrs_test"]
       interval: 5s
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6381:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -28,7 +28,7 @@ services:
   chrome:
     image: browserless/chrome:latest
     ports:
-      - "3000:3000"
+      - "9222:3000"
     environment:
       - MAX_CONCURRENT_SESSIONS=10
     healthcheck:
@@ -50,3 +50,59 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  crawlrs-api:
+    image: crawlrs:latest
+    container_name: crawlrs-api
+    command: ["./crawlrs", "api"]
+    ports:
+      - "3000:3000"
+    environment:
+      - RUST_LOG=debug
+      - CRAWLRS__DATABASE__URL=postgres://crawlrs:password@postgres:5432/crawlrs_test
+      - CRAWLRS__REDIS__URL=redis://redis:6379
+      - CRAWLRS__SERVER__HOST=0.0.0.0
+      - CRAWLRS__SERVER__PORT=3000
+      - CRAWLRS__CHROME_REMOTE_DEBUGGING_URL=http://chrome:9222
+      - CRAWLRS__RATE_LIMITING__ENABLED=false
+      - CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT=10
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chrome:
+        condition: service_healthy
+    volumes:
+      - ../storage:/app/storage
+      - ../logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  crawlrs-worker:
+    image: crawlrs:latest
+    container_name: crawlrs-worker
+    command: ["./crawlrs", "worker"]
+    environment:
+      - RUST_LOG=debug
+      - CRAWLRS__DATABASE__URL=postgres://crawlrs:password@postgres:5432/crawlrs_test
+      - CRAWLRS__REDIS__URL=redis://redis:6379
+      - CRAWLRS__CHROME_REMOTE_DEBUGGING_URL=http://chrome:9222
+      - CRAWLRS__RATE_LIMITING__ENABLED=false
+      - CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT=10
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chrome:
+        condition: service_healthy
+    volumes:
+      - ../storage:/app/storage
+      - ../logs:/app/logs
+    restart: unless-stopped
