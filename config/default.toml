@@ -84,6 +84,6 @@ cx = ""
 
 # LLM Configuration
 [llm]
-api_key = ""
-model = "gpt-3.5-turbo"
-api_base_url = "https://api.openai.com/v1"
+api_key = "ollama"
+model = "qwen3:1:7"
+api_base_url = "http://172.24.160.1:11434/v1"
