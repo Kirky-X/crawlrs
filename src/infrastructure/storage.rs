@@ -31,7 +31,8 @@ impl S3Storage {
 
         let mut config_builder = aws_sdk_s3::config::Builder::new()
             .region(aws_sdk_s3::config::Region::new(region))
-            .credentials_provider(credentials);
+            .credentials_provider(credentials)
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest());
 
         if let Some(ep) = endpoint {
             config_builder = config_builder.endpoint_url(ep).force_path_style(true);
@@ -194,9 +195,25 @@ pub fn create_storage_repository(
                 .unwrap_or_else(|| "./storage".to_string());
             Ok(Box::new(LocalStorage::new(base_path)))
         }
+        "s3" => {
+            let region = settings.s3_region.as_ref()
+                .ok_or_else(|| StorageError::Other("Missing s3_region configuration".to_string()))?
+                .clone();
+            let bucket = settings.s3_bucket.as_ref()
+                .ok_or_else(|| StorageError::Other("Missing s3_bucket configuration".to_string()))?
+                .clone();
+            let access_key = settings.s3_access_key.as_ref()
+                .ok_or_else(|| StorageError::Other("Missing s3_access_key configuration".to_string()))?
+                .clone();
+            let secret_key = settings.s3_secret_key.as_ref()
+                .ok_or_else(|| StorageError::Other("Missing s3_secret_key configuration".to_string()))?
+                .clone();
+            let endpoint = settings.s3_endpoint.clone();
 
+            Ok(Box::new(S3Storage::new(region, bucket, access_key, secret_key, endpoint)))
+        }
         other => Err(StorageError::Other(format!(
-            "Unsupported storage type: {}",
+            "Unsupported storage type: {}. Supported types: local, s3",
             other
         ))),
     }
