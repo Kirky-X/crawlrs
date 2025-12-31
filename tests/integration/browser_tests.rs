@@ -10,7 +10,7 @@ use crawlrs::engines::traits::ScraperEngine;
 
 pub async fn test_simple_http_page() -> bool {
     println!("\n1. 测试访问 httpbin.org...");
-    let request = create_scrape_request("https://httpbin.org/html".to_string(), false, 15);
+    let request = create_scrape_request("https://httpbin.org/html".to_string(), true, 15);
 
     match PlaywrightEngine.scrape(&request).await {
         Ok(response) => {
@@ -109,11 +109,8 @@ async fn test_browser_connection_simple() {
 
     set_chrome_ws_url("http://localhost:9222");
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let result = test_simple_http_page().await;
-        assert!(result, "简单HTTP页面访问测试失败");
-    });
+    let result = test_simple_http_page().await;
+    assert!(result, "简单HTTP页面访问测试失败");
 
     println!("🎉 简单浏览器连接测试通过！");
 }
@@ -125,37 +122,32 @@ async fn test_browser_connection_debug() {
 
     set_chrome_ws_url("http://localhost:9222");
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let result1 = test_example_com(false, 10).await;
-        let result2 = test_example_com(true, 15).await;
+    // 只测试需要JS渲染的情况，因为Playwright引擎只在needs_js=true时执行
+    let result1 = test_example_com(true, 15).await;
+    let result2 = test_google_search_with_query("rust programming", 30).await;
 
-        assert!(result1, "example.com 访问测试失败");
-        assert!(result2, "example.com JS访问测试失败");
-    });
+    assert!(result1, "example.com JS访问测试失败");
+    assert!(result2, "Google搜索访问测试失败");
 
     println!("🎉 浏览器连接调试测试通过！");
 }
 
 /// 直接测试Playwright连接
 ///
-/// 注意：此测试需要Chrome DevTools Protocol可用（ws://localhost:9222/devtools/browser/default）。
+/// 注意：此测试需要Chrome DevTools Protocol可用（http://localhost:9222）。
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_playwright_direct -- --include-ignored
 #[ignore]
 #[tokio::test]
 async fn test_playwright_direct() {
     println!("=== 直接测试Playwright连接 ===");
 
-    set_chrome_ws_url("ws://localhost:9222/devtools/browser/default");
+    set_chrome_ws_url("http://localhost:9222");
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let result1 = test_example_com(true, 30).await;
-        let result2 = test_google_search_with_query("rust programming", 45).await;
+    let result1 = test_example_com(true, 30).await;
+    let result2 = test_google_search_with_query("rust programming", 45).await;
 
-        assert!(result1, "example.com 访问测试失败");
-        assert!(result2, "Google搜索访问测试失败");
-    });
+    assert!(result1, "example.com 访问测试失败");
+    assert!(result2, "Google搜索访问测试失败");
 
     println!("🎉 Playwright直接测试通过！");
 }
@@ -173,11 +165,8 @@ async fn test_browser_with_remote_chrome() {
     println!("使用远程Chrome: {}", ws_url);
     set_chrome_ws_url(&ws_url);
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let result = test_example_com(true, 30).await;
-        assert!(result, "使用远程Chrome访问example.com失败");
-    });
+    let result = test_example_com(true, 30).await;
+    assert!(result, "使用远程Chrome访问example.com失败");
 
     println!("🎉 远程Chrome浏览器测试通过！");
 }
