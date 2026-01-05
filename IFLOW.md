@@ -15,7 +15,7 @@
 - **搜索 (Search)**: 多引擎并发聚合（Google/Bing/Baidu/Sogou），智能去重排序，支持异步回填
 - **抓取 (Scrape)**: 单页面内容获取，支持多格式输出（Markdown/HTML/截图/JSON）
 - **爬取 (Crawl)**: 全站递归爬取，支持深度控制和路径过滤
-- **提取 (Extract)**: 基础 CSS 选择器结构化数据提取
+- **提取 (Extract)**: 基于 CSS 选择器和 LLM 的结构化数据提取
 
 ### 技术栈
 | 组件 | 技术 | 版本 |
@@ -29,6 +29,7 @@
 | **浏览器自动化** | chromiumoxide | 0.8 |
 | **限流** | governor | 0.10 |
 | **日志** | tracing | 0.1 |
+| **AWS SDK** | aws-sdk-s3 | 1.118 |
 
 ## 项目结构
 
@@ -48,27 +49,58 @@ crawlrs/
 │   │   ├── services/       # 领域服务
 │   │   └── use_cases/      # 领域用例
 │   ├── engines/            # 抓取引擎实现
+│   │   ├── reqwest_engine.rs      # HTTP 引擎
+│   │   ├── playwright_engine.rs   # 浏览器引擎
+│   │   ├── fire_engine_tls.rs     # TLS 指纹绕过
+│   │   ├── fire_engine_cdp.rs     # CDP 协议引擎
+│   │   ├── router.rs              # 智能引擎路由器
+│   │   ├── circuit_breaker.rs     # 熔断器
+│   │   ├── health_monitor.rs      # 健康监控
+│   │   └── validators.rs          # 验证器
 │   ├── infrastructure/     # 基础设施层
 │   │   ├── cache/          # 缓存实现
 │   │   ├── database/       # 数据库连接
 │   │   ├── repositories/   # 仓储实现
 │   │   ├── search/         # 搜索实现
-│   │   └── services/       # 基础设施服务
+│   │   │   ├── aggregator.rs      # 搜索聚合器
+│   │   │   ├── ab_test.rs         # A/B 测试引擎
+│   │   │   └── smart_search.rs    # 智能搜索引擎
+│   │   ├── services/       # 基础设施服务
+│   │   ├── observability/  # 可观测性
+│   │   ├── geolocation.rs  # 地理位置服务
+│   │   ├── metrics.rs      # 指标收集
+│   │   └── storage.rs      # 存储抽象
 │   ├── presentation/       # 表现层
 │   │   ├── handlers/       # HTTP 处理器
 │   │   ├── middleware/     # 中间件
+│   │   ├── extractors/     # 请求提取器
 │   │   └── routes/         # 路由定义
 │   ├── queue/              # 任务队列
+│   │   ├── task_queue.rs   # 任务队列接口
+│   │   └── scheduler.rs    # 任务调度器
 │   ├── utils/              # 工具函数
+│   │   ├── telemetry.rs    # 遥测初始化
+│   │   ├── robots.rs       # Robots.txt 解析
+│   │   ├── port_sniffer.rs # 端口嗅探
+│   │   ├── retry_policy.rs # 重试策略
+│   │   └── url_utils.rs    # URL 工具
 │   └── workers/            # 后台工作器
+│       ├── manager.rs      # 工作器管理器
+│       ├── scrape_worker.rs    # 抓取工作器
+│       ├── webhook_worker.rs   # Webhook 工作器
+│       ├── backlog_worker.rs   # 积压任务工作器
+│       └── expiration_worker.rs # 过期任务工作器
 ├── migration/              # 数据库迁移
 ├── config/                 # 配置文件
 ├── docker/                 # Docker 配置
 ├── examples/               # 示例代码
+│   ├── search/             # 搜索引擎示例
+│   └── browser/            # 浏览器引擎示例
 ├── tests/                  # 测试文件
 │   ├── integration/        # 集成测试
 │   ├── e2e/               # 端到端测试
-│   └── unit/              # 单元测试
+│   ├── unit/              # 单元测试
+│   └── handlers/          # 处理器测试
 ├── benches/                # 性能测试
 └── docs/                   # 文档
 ```
@@ -111,6 +143,9 @@ cargo run -- worker
 [database]
 url = "postgres://crawlrs:password@localhost:5432/crawlrs_test"
 max_connections = 20
+min_connections = 5
+connect_timeout = 30
+idle_timeout = 600
 
 [redis]
 url = "redis://localhost:6379"
@@ -127,6 +162,40 @@ default_rpm = 60
 [concurrency]
 default_team_limit = 10
 task_lock_duration_seconds = 300
+
+[search]
+ab_test_enabled = false
+variant_b_weight = 0.1
+default_engine = "baidu"
+
+[search.engines]
+google_enabled = false
+bing_enabled = true
+baidu_enabled = true
+sogou_enabled = true
+
+[search.flaresolverr]
+enabled = true
+url = "http://flaresolverr:8191/v1"
+auto_start = true
+timeout_seconds = 30
+max_retries = 3
+
+[storage]
+storage_type = "local"
+local_path = "storage"
+
+[webhook]
+timeout_seconds = 10
+max_retries = 3
+retry_interval_seconds = 60
+user_agent = "Crawlrs-Webhook/1.0"
+secret = "your-webhook-secret"
+
+[llm]
+api_key = "ollama"
+model = "qwen3:1.7b"
+api_base_url = "http://172.24.160.1:11434/v1"
 ```
 
 ### Docker 部署
@@ -188,6 +257,11 @@ SEARCH_ENGINE_SOGOU_ENABLED=true
 # Google 搜索 API
 GOOGLE_SEARCH_API_KEY=your-api-key
 GOOGLE_SEARCH_CX=your-cx-id
+
+# LLM 配置
+LLM_API_KEY=your-llm-api-key
+LLM_MODEL=gpt-3.5-turbo
+LLM_API_BASE_URL=https://api.openai.com/v1
 ```
 
 ### 服务类型
@@ -195,7 +269,14 @@ GOOGLE_SEARCH_CX=your-cx-id
 项目支持两种服务模式：
 
 1. **API 服务** (`cargo run -- api`): 提供 HTTP API 接口，包含 Webhook 处理
+   - 启动 Webhook Worker 处理事件
+   - 启动 Backlog Worker 处理积压任务
+   - 提供完整的 REST API
+
 2. **Worker 服务** (`cargo run -- worker`): 后台任务处理，执行抓取任务
+   - 启动多个 Scrape Worker 并行处理任务
+   - 执行实际的网页抓取和内容提取
+   - 处理结果存储和通知
 
 ### 数据库迁移
 
@@ -249,23 +330,27 @@ cargo bench
 项目采用六边形架构（Hexagonal Architecture）：
 
 1. **领域层 (Domain)**: 核心业务逻辑，不依赖外部框架
-   - `models/`: 领域模型
+   - `models/`: 领域模型（Task, ScrapeResult, Crawl, Webhook 等）
    - `repositories/`: 仓储接口
-   - `services/`: 领域服务接口
+   - `search/`: 搜索引擎接口
+   - `services/`: 领域服务接口（RateLimitingService, TeamService 等）
 
 2. **应用层 (Application)**: 编排领域对象执行用例
-   - `use_cases/`: 具体用例实现
+   - `use_cases/`: 具体用例实现（CreateScrapeUseCase 等）
    - `dto/`: 数据传输对象
 
 3. **基础设施层 (Infrastructure)**: 外部依赖实现
-   - `repositories/`: 仓储实现
-   - `cache/`: 缓存实现
-   - `services/`: 基础设施服务
+   - `repositories/`: 仓储实现（TaskRepositoryImpl, ScrapeResultRepositoryImpl 等）
+   - `cache/`: 缓存实现（RedisClient）
+   - `search/`: 搜索实现（SearchAggregator, SearchABTestEngine, SmartSearch）
+   - `services/`: 基础设施服务（RateLimitingServiceImpl, WebhookServiceImpl）
+   - `observability/`: 可观测性组件
 
 4. **表现层 (Presentation)**: HTTP 接口
-   - `handlers/`: 请求处理器
-   - `middleware/`: 中间件
+   - `handlers/`: 请求处理器（scrape_handler, crawl_handler, search_handler 等）
+   - `middleware/`: 中间件（auth_middleware, rate_limit_middleware, team_semaphore_middleware）
    - `routes/`: 路由定义
+   - `extractors/`: 请求提取器
 
 #### 依赖注入
 
@@ -279,7 +364,9 @@ let task_repo = Arc::new(TaskRepositoryImpl::new(db.clone()));
 let rate_limiting_service = Arc::new(RateLimitingServiceImpl::new(
     redis_client.clone(),
     task_repo.clone(),
-    // ...
+    tasks_backlog_repo.clone(),
+    credits_repo.clone(),
+    rate_limiting_config,
 ));
 
 // 注入到处理器
@@ -314,6 +401,21 @@ cargo test -- --nocapture
 # 运行性能测试
 cargo bench
 ```
+
+#### 测试状态
+
+根据最新的测试报告（2025-12-31）：
+- **总测试数**: 118
+- **通过**: 92
+- **失败**: 4
+- **忽略**: 22
+- **通过率**: 78.0%
+
+**仍需修复的测试**:
+1. `test_task_status_transitions` - 间歇性失败
+2. `test_uat016_sync_wait_integration` - 任务状态转换问题
+3. `test_extract_css_only_no_credit_deduction` - 间歇性超时
+4. `test_extract_with_rules_credit_deduction` - 间歇性超时
 
 ### 错误处理
 
@@ -428,76 +530,344 @@ task.status = Set(TaskStatus::Completed);
 task.update(db.as_ref()).await?;
 ```
 
-### 搜索引擎集成
+## 核心功能实现
 
-#### 智能搜索引擎
+### 智能搜索引擎
 
-使用 `EngineRouter` 自动选择最优抓取引擎：
+#### SearchAggregator
+
+多搜索引擎并发聚合，支持智能去重和排序：
 
 ```rust
-// 引擎优先级
-// 1. ReqwestEngine - 静态页面
-// 2. PlaywrightEngine - 动态页面
-// 3. FireEngineTls - TLS 指纹绕过
-// 4. FireEngineCdp - CDP 协议
+use crawlrs::infrastructure::search::aggregator::SearchAggregator;
 
-let router = Arc::new(EngineRouter::new(engines));
+// 创建搜索引擎
+let search_engines: Vec<Arc<dyn SearchEngine>> = vec![
+    smart_search::create_google_smart_search(router.clone()),
+    smart_search::create_bing_smart_search(router.clone()),
+    smart_search::create_baidu_smart_search(router.clone()),
+    smart_search::create_sogou_smart_search(router.clone()),
+];
+
+// 创建聚合器
+let aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
 ```
 
-#### 搜索引擎配置
+#### SearchABTestEngine
 
-```toml
-[search.engines]
-google_enabled = false
-bing_enabled = true
-baidu_enabled = true
-sogou_enabled = true
+A/B 测试引擎，支持流量分配和结果对比：
 
-[search.flaresolverr]
-enabled = true
-url = "http://flaresolverr:8191/v1"
+```rust
+use crawlrs::infrastructure::search::ab_test::SearchABTestEngine;
+
+// 创建 A/B 测试引擎
+let ab_test_engine = Arc::new(SearchABTestEngine::new(
+    variant_a,  // 控制组引擎
+    variant_b,  // 实验组引擎
+    0.1,        // variant_b 的流量权重 (10%)
+));
+```
+
+#### SmartSearch
+
+智能搜索引擎，根据页面类型自动选择最优抓取引擎：
+
+```rust
+use crawlrs::infrastructure::search::smart_search;
+
+// 创建 Google 智能搜索引擎
+let google_search = smart_search::create_google_smart_search(router.clone());
+
+// 智能搜索引擎会自动选择：
+// - ReqwestEngine: 静态页面
+// - PlaywrightEngine: 动态页面
+// - FireEngineTls: TLS 指纹绕过
+// - FireEngineCdp: CDP 协议
+```
+
+### 智能抓取引擎
+
+#### EngineRouter
+
+智能引擎路由器，根据页面特征自动选择最优引擎：
+
+```rust
+use crawlrs::engines::router::EngineRouter;
+
+// 引擎优先级
+// 1. ReqwestEngine - 静态页面（最快）
+// 2. PlaywrightEngine - 动态页面（支持 JS）
+// 3. FireEngineTls - TLS 指纹绕过（反爬虫）
+// 4. FireEngineCdp - CDP 协议（高级场景）
+
+let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+    Arc::new(ReqwestEngine),
+    Arc::new(PlaywrightEngine),
+    Arc::new(FireEngineTls::new()),
+    Arc::new(FireEngineCdp::new()),
+];
+
+let router = Arc::new(EngineRouter::new(engines));
+
+// 负载均衡策略
+// - RoundRobin: 轮询
+// - WeightedRoundRobin: 加权轮询（基于成功率）
+// - LeastConnections: 最少连接
+// - FastestResponse: 最快响应时间
+// - Random: 随机
+// - SmartMixed: 智能混合（默认）
+```
+
+#### CircuitBreaker
+
+熔断器，自动降级保护系统：
+
+```rust
+use crawlrs::engines::circuit_breaker::CircuitBreaker;
+
+// 熔断器状态
+// - Closed: 正常状态
+// - Open: 熔断状态，拒绝请求
+// - HalfOpen: 半开状态，尝试恢复
+
+// 熔断器配置
+let breaker = CircuitBreaker::new(
+    failure_threshold,  // 失败阈值
+    success_threshold,  // 成功阈值
+    timeout,            // 熔断超时
+);
+```
+
+### 任务队列系统
+
+#### PostgresTaskQueue
+
+基于 PostgreSQL 的任务队列实现：
+
+```rust
+use crawlrs::queue::task_queue::PostgresTaskQueue;
+
+let queue = Arc::new(PostgresTaskQueue::new(task_repo.clone()));
+
+// 任务调度器
+let scheduler = Arc::new(Scheduler::new(queue.clone()));
+
+// 支持优先级队列
+// 支持任务锁定
+// 支持任务超时
+```
+
+#### BacklogWorker
+
+积压任务处理 Worker，自动处理因限流而延迟的任务：
+
+```rust
+use crawlrs::workers::backlog_worker::BacklogWorker;
+
+let backlog_worker = BacklogWorker::new(
+    tasks_backlog_repo.clone(),
+    task_repo.clone(),
+    rate_limiting_service.clone(),
+    Duration::from_secs(30),  // 处理间隔
+    10,                       // 每次处理的最大任务数
+);
+
+tokio::spawn(async move {
+    let _ = backlog_worker.run().await;
+});
+```
+
+### 限流和并发控制
+
+#### 两层限流机制
+
+1. **API 层限流**: 使用 Redis 实现令牌桶算法
+2. **团队并发控制**: 使用分布式信号量控制并发数
+
+```rust
+use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl;
+
+let rate_limiting_config = RateLimitingConfig {
+    redis_key_prefix: "crawlrs".to_string(),
+    rate_limit: RateLimitConfig {
+        strategy: RateLimitStrategy::TokenBucket,
+        requests_per_second: 1,
+        requests_per_minute: 60,
+        requests_per_hour: 3600,
+        bucket_capacity: Some(60),
+        enabled: true,
+    },
+    concurrency: ConcurrencyConfig {
+        strategy: ConcurrencyStrategy::DistributedSemaphore,
+        max_concurrent_tasks: 10,
+        max_concurrent_per_team: 10,
+        lock_timeout_seconds: 300,
+        enabled: true,
+    },
+    backlog_process_interval_seconds: 30,
+    rate_limit_ttl_seconds: 3600,
+};
+
+let rate_limiting_service = Arc::new(RateLimitingServiceImpl::new(
+    redis_client.clone(),
+    task_repo.clone(),
+    tasks_backlog_repo.clone(),
+    credits_repo.clone(),
+    rate_limiting_config,
+));
+```
+
+### 地理位置限制
+
+#### GeoLocationService
+
+地理位置服务，支持基于地理位置的访问控制：
+
+```rust
+use crawlrs::infrastructure::geolocation::GeoLocationService;
+
+let geo_service = GeoLocationService::new();
+
+// 检查 IP 地址的地理位置
+let location = geo_service.get_location("8.8.8.8").await?;
+
+// 使用 GeoRestrictionRepository 检查限制
+let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.clone()));
+
+let team_service = Arc::new(TeamService::new(
+    geo_service,
+    geo_restriction_repo.clone(),
+));
 ```
 
 ### Webhook 集成
 
-#### 配置 Webhook
+#### WebhookServiceImpl
 
-```toml
-[webhook]
-timeout_seconds = 10
-max_retries = 3
-retry_interval_seconds = 60
-secret = "your-webhook-secret"
+Webhook 服务，支持可靠的事件通知：
+
+```rust
+use crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl;
+
+let webhook_service = Arc::new(WebhookServiceImpl::new(secret.clone()));
+
+// Outbox 模式确保可靠性
+// 指数退避重试
+// 支持多种事件类型
 ```
 
-#### 接收事件
+#### WebhookWorker
 
-系统会 POST 到配置的 Webhook URL，事件类型包括：
-- `scrape.completed` - 抓取完成
-- `scrape.failed` - 抓取失败
-- `crawl.completed` - 爬取完成
-- `crawl.failed` - 爬取失败
+Webhook 事件处理 Worker：
 
-### 性能优化
+```rust
+use crawlrs::workers::webhook_worker::WebhookWorker;
 
-#### 缓存策略
+let webhook_worker = WebhookWorker::new(
+    webhook_event_repository.clone(),
+    webhook_service,
+    RetryPolicy::default(),
+);
+
+tokio::spawn(async move {
+    let _ = webhook_worker.run().await;
+});
+```
+
+### 存储服务
+
+#### 存储抽象
+
+支持本地存储和 S3 存储：
+
+```rust
+use crawlrs::infrastructure::storage;
+
+// 创建存储仓库
+let storage_repo: Option<Arc<dyn StorageRepository + Send + Sync>> =
+    match storage::create_storage_repository(&settings.storage) {
+        Ok(repo) => Some(Arc::from(repo)),
+        Err(e) => {
+            error!("Failed to initialize storage repository: {}", e);
+            return Err(e.into());
+        }
+    };
+
+// 配置
+[storage]
+storage_type = "local"  # 或 "s3"
+local_path = "storage"
+s3_region = "us-east-1"
+s3_bucket = "my-bucket"
+s3_access_key = "access-key"
+s3_secret_key = "secret-key"
+```
+
+### LLM 集成
+
+#### LLM API 调用
+
+支持集成 LLM 进行智能提取：
+
+```rust
+// 配置
+[llm]
+api_key = "your-llm-api-key"
+model = "gpt-3.5-turbo"
+api_base_url = "https://api.openai.com/v1"
+
+# 或使用本地 Ollama
+[llm]
+api_key = "ollama"
+model = "qwen3:1.7b"
+api_base_url = "http://localhost:11434/v1"
+```
+
+### FlareSolverr 集成
+
+#### 绕过 Cloudflare 保护
+
+使用 FlareSolverr 代理绕过 Cloudflare 等反爬虫保护：
+
+```toml
+[search.flaresolverr]
+enabled = true
+url = "http://flaresolverr:8191/v1"
+auto_start = true
+timeout_seconds = 30
+max_retries = 3
+```
+
+## 性能优化
+
+### 缓存策略
 
 - 使用 Redis 缓存 robots.txt
 - 使用 LRU 缓存热点数据
 - 使用 CDN 缓存静态资源
 
-#### 并发优化
+### 并发优化
 
 - 使用 Tokio 异步运行时
 - 使用连接池复用数据库连接
 - 使用信号量控制并发数
+- 使用任务队列异步处理
 
-#### 引擎选择
+### 引擎选择
 
 根据页面类型选择合适的引擎：
 - 静态页面 → ReqwestEngine
 - SPA 应用 → PlaywrightEngine
 - 反爬虫站点 → FireEngineTls/CDP
+
+### 负载均衡
+
+使用 EngineRouter 实现智能负载均衡：
+- 轮询（RoundRobin）
+- 加权轮询（WeightedRoundRobin）
+- 最少连接（LeastConnections）
+- 最快响应（FastestResponse）
+- 智能混合（SmartMixed）
 
 ## 常见问题
 
@@ -539,6 +909,30 @@ default_team_limit = 10
 task_lock_duration_seconds = 300
 ```
 
+### 搜索引擎失败
+
+检查搜索引擎配置和网络连接：
+
+```bash
+# 检查 FlareSolverr 状态
+curl http://localhost:8191/v1
+
+# 查看搜索引擎日志
+docker-compose logs -f crawlrs | grep search
+```
+
+### 限流触发
+
+检查限流配置和团队配额：
+
+```bash
+# 查看当前限流状态
+redis-cli GET crawlrs:rate_limit:team:{team_id}
+
+# 重置限流
+redis-cli DEL crawlrs:rate_limit:team:{team_id}
+```
+
 ## 贡献指南
 
 ### 开发流程
@@ -556,11 +950,19 @@ task_lock_duration_seconds = 300
 - 运行 `cargo clippy` 检查代码质量
 - 更新相关文档
 
+### 测试要求
+
+- 单元测试覆盖率 > 80%
+- 集成测试必须通过
+- 新功能需要添加相应的测试
+- 性能测试不能出现退化
+
 ## 相关文档
 
 - [README.md](./README.md) - 项目介绍
 - [README_zh.md](./README_zh.md) - 中文版项目介绍
 - [USER_GUIDE.md](./USER_GUIDE.md) - 用户使用手册
+- [TEST_STATUS_REPORT.md](./TEST_STATUS_REPORT.md) - 测试状态报告
 - [API 文档](./docs/API.md) - API 参考
 - [架构文档](./docs/architecture.md) - 系统架构说明
 

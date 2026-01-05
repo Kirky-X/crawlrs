@@ -193,7 +193,12 @@ async fn test_real_llm_service_error_handling() {
     });
 
     // This should fail because no API key is configured
-    let result = ctx.llm_service.extract_data(test_text, &schema).await;
+    // 临时清空 API key 以测试错误处理
+    let mut settings = Settings::new().expect("Failed to load settings");
+    settings.llm.api_key = None;
+    let llm_service = LLMService::new(&settings);
+
+    let result = llm_service.extract_data(test_text, &schema).await;
 
     assert!(result.is_err());
     let error = result.unwrap_err();

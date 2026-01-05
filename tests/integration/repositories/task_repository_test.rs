@@ -22,7 +22,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     let app = create_test_app_no_worker().await;
     let repo = Arc::new(TaskRepositoryImpl::new(
         app.db_pool.clone(),
-        chrono::Duration::seconds(10),
+        chrono::Duration::seconds(30),
     ));
     let team_id = Uuid::new_v4();
     let worker1_id = Uuid::new_v4();
@@ -90,9 +90,23 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     assert!(result2.is_none());
 
     // --- Lock Timeout and Re-acquisition ---
-    // The default lock timeout is 10 seconds in the test environment.
-    // We wait for 11 seconds to ensure the lock expires.
-    tokio::time::sleep(tokio::time::Duration::from_secs(11)).await;
+    // The default lock timeout is 30 seconds in this test.
+    // We need to manually expire the lock to test re-acquisition.
+    // Instead of waiting 30+ seconds, we'll update the task's lock_expires_at to the past.
+    let now = chrono::Utc::now();
+    let expired_time = now - chrono::Duration::seconds(1);
+
+    use sea_orm::{ActiveModelTrait, Set};
+
+    let task_model = task_entity::Entity::find_by_id(task.id)
+        .one(app.db_pool.as_ref())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut task_active: task_entity::ActiveModel = task_model.into();
+    task_active.lock_expires_at = Set(Some(expired_time.into()));
+    task_active.update(app.db_pool.as_ref()).await.unwrap();
 
     // Worker 2 should now be able to acquire the task
     let reacquired_task = repo.acquire_next(worker2_id).await.unwrap();
@@ -108,7 +122,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
 #[tokio::test]
 async fn test_repository_crud_operations() {
     let app = create_test_app().await;
-    let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
+    let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(30));
     let team_id = Uuid::new_v4();
 
     let new_task = Task {

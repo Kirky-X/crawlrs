@@ -175,32 +175,72 @@ impl TestApp {
         let team_id = Uuid::new_v4();
         let api_key = Uuid::new_v4().to_string();
 
-        self.db_pool
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
-                vec![team_id.into(), team_name.into()],
-            ))
-            .await
-            .unwrap();
+        // 检测数据库类型并使用对应的语法
+        let db_backend = if self.db_pool.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
+            DbBackend::Postgres
+        } else {
+            DbBackend::Sqlite
+        };
 
-        self.db_pool
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-                vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
-            ))
-            .await
-            .unwrap();
+        if db_backend == DbBackend::Postgres {
+            self.db_pool
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "INSERT INTO teams (id, name, created_at, updated_at) VALUES ($1, $2, NOW(), NOW())",
+                    vec![team_id.into(), team_name.into()],
+                ))
+                .await
+                .unwrap();
+        } else {
+            self.db_pool
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
+                    vec![team_id.into(), team_name.into()],
+                ))
+                .await
+                .unwrap();
+        }
 
-        self.db_pool
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, 1000, datetime('now'), datetime('now'))",
-                vec![Uuid::new_v4().into(), team_id.into()],
-            ))
-            .await
-            .unwrap();
+        if db_backend == DbBackend::Postgres {
+            self.db_pool
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
+                    vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+                ))
+                .await
+                .unwrap();
+        } else {
+            self.db_pool
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+                    vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+                ))
+                .await
+                .unwrap();
+        }
+
+        if db_backend == DbBackend::Postgres {
+            self.db_pool
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES ($1, $2, 1000, NOW(), NOW())",
+                    vec![Uuid::new_v4().into(), team_id.into()],
+                ))
+                .await
+                .unwrap();
+        } else {
+            self.db_pool
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, 1000, datetime('now'), datetime('now'))",
+                    vec![Uuid::new_v4().into(), team_id.into()],
+                ))
+                .await
+                .unwrap();
+        }
 
         (api_key, team_id)
     }
@@ -577,6 +617,53 @@ pub async fn create_test_app_no_worker() -> TestApp {
     let db_pool = Arc::new(db);
 
     Migrator::up(db_pool.as_ref(), None).await.unwrap();
+
+    // 清理测试相关的表数据
+    let db_backend = if db_url.starts_with("postgres://") {
+        DbBackend::Postgres
+    } else {
+        DbBackend::Sqlite
+    };
+
+    if db_backend == DbBackend::Postgres {
+        // PostgreSQL语法
+        db_pool.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM tasks WHERE url LIKE 'https://example.com/%'",
+            vec![],
+        )).await.unwrap();
+
+        db_pool.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM tasks_backlog WHERE payload->>'url' LIKE 'https://example.com/%'",
+            vec![],
+        )).await.unwrap();
+
+        db_pool.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM scrape_results WHERE url LIKE 'https://example.com/%'",
+            vec![],
+        )).await.unwrap();
+    } else {
+        // SQLite语法
+        db_pool.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM tasks WHERE url LIKE 'https://example.com/%'",
+            vec![],
+        )).await.unwrap();
+
+        db_pool.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM tasks_backlog WHERE payload->>'url' LIKE 'https://example.com/%'",
+            vec![],
+        )).await.unwrap();
+
+        db_pool.execute(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "DELETE FROM scrape_results WHERE url LIKE 'https://example.com/%'",
+            vec![],
+        )).await.unwrap();
+    }
 
     let start_port = 8000;
     let result =

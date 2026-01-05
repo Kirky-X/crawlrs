@@ -31,7 +31,7 @@ fn create_test_task_with_status(id: Uuid, team_id: Uuid, status: TaskStatus, tas
         scheduled_at: None,
         expires_at: None,
         created_at: fixed_now,
-        started_at: if status == TaskStatus::Processing { Some(fixed_now) } else { None },
+        started_at: if status == TaskStatus::Active { Some(fixed_now) } else { None },
         completed_at: if status == TaskStatus::Completed { Some(fixed_now) } else { None },
         crawl_id: None,
         updated_at: fixed_now,
@@ -74,7 +74,7 @@ async fn test_sync_wait_smart_logic_timeout() {
     let task_id = Uuid::new_v4();
     let team_id = Uuid::new_v4();
     
-    let processing_task = create_test_task_with_status(task_id, team_id, TaskStatus::Processing, TaskType::Scrape);
+    let processing_task = create_test_task_with_status(task_id, team_id, TaskStatus::Active, TaskType::Scrape);
     repo.create(&processing_task).await.unwrap();
 
     // When: 调用同步等待函数，设置较短的超时时间
@@ -94,9 +94,9 @@ async fn test_sync_wait_multiple_tasks_mixed_status() {
     let team_id = Uuid::new_v4();
     let task_ids = vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
 
-    // 创建：1个已完成，1个处理中，1个排队
+    // 创建：1个已完成，1个活跃中，1个排队
     let completed_task = create_test_task_with_status(task_ids[0], team_id, TaskStatus::Completed, TaskType::Scrape);
-    let processing_task = create_test_task_with_status(task_ids[1], team_id, TaskStatus::Processing, TaskType::Scrape);
+    let processing_task = create_test_task_with_status(task_ids[1], team_id, TaskStatus::Active, TaskType::Scrape);
     let queued_task = create_test_task_with_status(task_ids[2], team_id, TaskStatus::Queued, TaskType::Scrape);
     
     repo.create(&completed_task).await.unwrap();
@@ -144,7 +144,7 @@ async fn test_sync_wait_task_type_variations() {
     let crawl_task_id = Uuid::new_v4();
 
     let scrape_task = create_test_task_with_status(scrape_task_id, team_id, TaskStatus::Completed, TaskType::Scrape);
-    let search_task = create_test_task_with_status(search_task_id, team_id, TaskStatus::Completed, TaskType::Search);
+    let search_task = create_test_task_with_status(search_task_id, team_id, TaskStatus::Completed, TaskType::Scrape);
     let crawl_task = create_test_task_with_status(crawl_task_id, team_id, TaskStatus::Completed, TaskType::Crawl);
     
     repo.create(&scrape_task).await.unwrap();
