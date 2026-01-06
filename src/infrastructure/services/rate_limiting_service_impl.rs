@@ -626,6 +626,10 @@ impl RateLimitingService for RateLimitingServiceImpl {
                 if let Some(mut task) = task {
                     if task.status == crate::domain::models::task::TaskStatus::Queued {
                         task.status = crate::domain::models::task::TaskStatus::Active;
+                        task.started_at = Some(chrono::Utc::now().into());
+                        // 清除 lock_token 并设置 lock_expires_at，以便新的 Worker 可以获取此任务
+                        task.lock_token = None;
+                        task.lock_expires_at = Some((chrono::Utc::now() + chrono::Duration::seconds(300)).into());
                         self.task_repository
                             .update(&task)
                             .await

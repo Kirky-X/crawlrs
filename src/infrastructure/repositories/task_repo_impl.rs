@@ -132,10 +132,12 @@ impl TaskRepository for TaskRepositoryImpl {
     async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
         let txn = self.db.begin().await?;
 
-        tracing::debug!("acquire_next called by worker {}", worker_id);
         let now = Utc::now();
-        tracing::debug!("Current time: {}", now);
 
+        // Find a task to process:
+        // 1. "queued" tasks (not started yet)
+        // 2. "active" tasks with expired locks (lock_expires_at <= now)
+        // 3. "active" tasks with NO lock_token set (just activated by BacklogWorker)
         let task = task_entity::Entity::find()
             .filter(
                 Condition::any()
@@ -143,7 +145,11 @@ impl TaskRepository for TaskRepositoryImpl {
                     .add(
                         Condition::all()
                             .add(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
-                            .add(task_entity::Column::LockExpiresAt.lt(now)),
+                            .add(
+                                Condition::any()
+                                    .add(task_entity::Column::LockExpiresAt.lte(now))
+                                    .add(task_entity::Column::LockExpiresAt.is_null()),
+                            ),
                     ),
             )
             .filter(

@@ -85,7 +85,10 @@ impl LLMService {
                 .api_base_url
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
-            client: reqwest::Client::new(),
+            client: reqwest::ClientBuilder::new()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 

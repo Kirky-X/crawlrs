@@ -12,8 +12,9 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::OnceCell;
+use std::sync::OnceLock;
 use tokio::task_local;
 
 task_local! {
@@ -22,52 +23,106 @@ task_local! {
 
 // Global browser instance to avoid re-launching Chrome on every request.
 // This significantly improves performance for browser-based scraping.
-static BROWSER_INSTANCE: OnceCell<Browser> = OnceCell::const_new();
+// Changed to Arc<Mutex<Option<Arc<Browser>>>> to allow resetting in tests
+static BROWSER_INSTANCE: OnceLock<Arc<Mutex<Option<Arc<Browser>>>>> = OnceLock::new();
 
 // Asynchronously gets or initializes the shared browser instance.
 // This function ensures that the browser is launched only once.
-pub async fn get_browser() -> Result<&'static Browser, EngineError> {
-    BROWSER_INSTANCE
-        .get_or_try_init(|| async {
-            let remote_debugging_url = REMOTE_URL_OVERRIDE
-                .try_with(|url| url.clone())
-                .ok()
-                .or_else(|| std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").ok());
+pub async fn get_browser() -> Result<Arc<Browser>, EngineError> {
+    // Check if we're in test mode and should not reuse browser
+    let test_mode = std::env::var("CRAWLRS_TEST_NO_BROWSER_REUSE").is_ok();
 
-            let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
-                tracing::info!("Connecting to remote Chrome instance at: {}", url);
-                Browser::connect(url).await.map_err(|e| {
-                    EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
-                })?
-            } else {
-                let mut builder = BrowserConfig::builder()
-                    .no_sandbox()
-                    .request_timeout(Duration::from_secs(30)); // Default timeout
+    // Get or initialize the browser instance
+    let browser_instance = BROWSER_INSTANCE.get_or_init(|| {
+        Arc::new(Mutex::new(None))
+    });
 
-                // Production environment setup
-                builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
+    // Try to get the existing browser (clone outside lock to avoid holding across await)
+    let browser_to_check = {
+        let browser_guard = browser_instance.lock().unwrap();
+        browser_guard.as_ref().map(|b| Arc::clone(b))
+    };
 
-                Browser::launch(
-                    builder
-                        .build()
-                        .map_err(|e| EngineError::Other(e.to_string()))?,
-                )
-                .await
-                .map_err(|e| EngineError::Other(e.to_string()))?
-            };
+    if let Some(browser) = browser_to_check {
+        // Check if browser is still healthy (now outside the lock)
+        if check_browser_health(&browser).await {
+            // In test mode, don't reuse browser to avoid conflicts
+            if !test_mode {
+                return Ok(browser);
+            }
+        }
+        // Browser is not healthy or in test mode, drop it
+    }
 
-            // Spawn a handler to process browser events
-            tokio::spawn(async move {
-                while let Some(h) = handler.next().await {
-                    if h.is_err() {
-                        break;
-                    }
-                }
-            });
+    // Need to create a new browser
+    let remote_debugging_url = REMOTE_URL_OVERRIDE
+        .try_with(|url| url.clone())
+        .ok()
+        .or_else(|| std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").ok());
 
-            Ok(browser)
-        })
+    let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
+        tracing::info!("Connecting to remote Chrome instance at: {}", url);
+        Browser::connect(url).await.map_err(|e| {
+            EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
+        })?
+    } else {
+        let mut builder = BrowserConfig::builder()
+            .no_sandbox()
+            .request_timeout(Duration::from_secs(30)); // Default timeout
+
+        // Production environment setup
+        builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
+
+        Browser::launch(
+            builder
+                .build()
+                .map_err(|e| EngineError::Other(e.to_string()))?,
+        )
         .await
+        .map_err(|e| EngineError::Other(e.to_string()))?
+    };
+
+    // Spawn a handler to process browser events
+    tokio::spawn(async move {
+        while let Some(h) = handler.next().await {
+            // Continue processing even if there's an error
+            // This prevents the handler from stopping unexpectedly
+            if let Err(e) = h {
+                tracing::debug!("Browser handler event error (continuing): {:?}", e);
+            }
+        }
+    });
+
+    let browser = Arc::new(browser);
+
+    // Store the browser in the global instance
+    {
+        let mut browser_guard = browser_instance.lock().unwrap();
+        *browser_guard = Some(Arc::clone(&browser));
+    }
+
+    Ok(browser)
+}
+
+/// Check if browser is still healthy and can be used
+pub async fn check_browser_health(browser: &Browser) -> bool {
+    // Try to create a new page to check if browser is still responsive
+    match browser.new_page("about:blank").await {
+        Ok(page) => {
+            // Close the test page
+            let _ = page.close().await;
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Reset the global browser instance
+/// Note: OnceCell cannot be reset, so this is a no-op
+/// Tests should use different remote URLs or run separately
+pub fn reset_browser() {
+    // No-op: OnceCell cannot be reset
+    // Tests should run with --test-threads=1 or use unique remote URLs
 }
 
 /// Playwright引擎

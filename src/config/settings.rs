@@ -31,7 +31,7 @@ use serde::Deserialize;
 ///     Ok(())
 /// }
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Settings {
     /// 数据库配置
     pub database: DatabaseSettings,
@@ -68,7 +68,7 @@ pub struct Settings {
 /// * `min_connections` - 连接池中最小连接数，默认 10
 /// * `connect_timeout` - 连接超时时间（秒），默认 10 秒
 /// * `idle_timeout` - 空闲连接超时时间（秒），默认 300 秒
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseSettings {
     /// 数据库连接URL
     pub url: String,
@@ -89,7 +89,7 @@ pub struct DatabaseSettings {
 /// # 字段说明
 ///
 /// * `url` - Redis 连接字符串，格式为 redis://host:port/db
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RedisSettings {
     /// Redis连接URL
     pub url: String,
@@ -103,7 +103,7 @@ pub struct RedisSettings {
 ///
 /// * `host` - 服务器监听的主机地址，通常为 "0.0.0.0" 或 "127.0.0.1"
 /// * `port` - 服务器监听的端口号，默认 3000
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ServerSettings {
     /// 服务器监听主机地址
     pub host: String,
@@ -158,7 +158,7 @@ pub struct ConcurrencySettings {
 /// * `s3_access_key` - S3 访问密钥，当 storage_type="s3" 时使用
 /// * `s3_secret_key` - S3 密钥，当 storage_type="s3" 时使用
 /// * `s3_endpoint` - S3 端点（可选），用于 MinIO 等兼容服务
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct StorageSettings {
     /// 存储类型 (local, s3)
     pub storage_type: String,
@@ -183,7 +183,7 @@ pub struct StorageSettings {
 /// # 字段说明
 ///
 /// * `secret` - Webhook 签名密钥，用于验证请求真实性，默认 "your-secret-key"
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct WebhookSettings {
     /// Webhook签名密钥
     pub secret: String,
@@ -197,7 +197,7 @@ pub struct WebhookSettings {
 ///
 /// * `api_key` - Google Search API 密钥
 /// * `cx` - Google Custom Search Engine ID
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct GoogleSearchSettings {
     /// Google Search API 密钥
     pub api_key: Option<String>,
@@ -206,7 +206,7 @@ pub struct GoogleSearchSettings {
 }
 
 /// Bing Search API 配置设置
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BingSearchSettings {
     /// Bing Search API 密钥
     pub api_key: Option<String>,
@@ -230,7 +230,7 @@ pub struct SearchSettings {
 /// * `api_key` - LLM API 密钥
 /// * `model` - 使用的模型名称，默认 "gpt-3.5-turbo"
 /// * `api_base_url` - LLM API 基础 URL，默认 "https://api.openai.com/v1"
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LLMSettings {
     /// LLM API 密钥
     pub api_key: Option<String>,

@@ -145,3 +145,19 @@ where
         info!("Workers shut down successfully");
     }
 }
+
+impl<Q, R, S, C, CRR> Drop for WorkerManager<Q, R, S, C, CRR>
+where
+    Q: TaskQueue + Clone + Send + Sync + 'static,
+    R: TaskRepository + Send + Sync + 'static,
+    S: ScrapeResultRepository + Send + Sync + 'static,
+    C: CrawlRepository + Send + Sync + 'static,
+    CRR: CreditsRepository + Send + Sync + 'static,
+{
+    fn drop(&mut self) {
+        // Abort all worker handles to prevent them from running after the manager is dropped
+        for handle in &self.handles {
+            handle.abort();
+        }
+    }
+}

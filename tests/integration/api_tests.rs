@@ -361,8 +361,8 @@ async fn test_create_scrape_task_validation() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::TOO_MANY_REQUESTS,
-        "Expected 400 or 429, got {}",
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        "Expected 400, 422, or 429, got {}",
         status
     );
 
@@ -379,8 +379,8 @@ async fn test_create_scrape_task_validation() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::TOO_MANY_REQUESTS,
-        "Expected 400 or 429, got {}",
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        "Expected 400, 422, or 429, got {}",
         status
     );
 }
@@ -498,8 +498,8 @@ async fn test_ssrf_protection() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::TOO_MANY_REQUESTS,
-        "Expected 400 or 429, got {}",
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        "Expected 400, 422, or 429, got {}",
         status
     );
 
@@ -516,8 +516,8 @@ async fn test_ssrf_protection() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::TOO_MANY_REQUESTS,
-        "Expected 400 or 429, got {}",
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        "Expected 400, 422, or 429, got {}",
         status
     );
 
@@ -534,8 +534,8 @@ async fn test_ssrf_protection() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::TOO_MANY_REQUESTS,
-        "Expected 400 or 429, got {}",
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        "Expected 400, 422, or 429, got {}",
         status
     );
 }

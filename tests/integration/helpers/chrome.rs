@@ -47,7 +47,7 @@ pub async fn test_page_access(url: &str, needs_js: bool, timeout_secs: u64) -> b
 #[allow(dead_code)]
 pub fn get_chrome_ws_url() -> String {
     std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL")
-        .unwrap_or_else(|_| "ws://localhost:9222/devtools/browser/default".to_string())
+        .unwrap_or_else(|_| "ws://localhost:9222".to_string())
 }
 
 #[allow(dead_code)]

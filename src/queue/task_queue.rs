@@ -87,7 +87,9 @@ impl<R: TaskRepository> TaskQueue for PostgresTaskQueue<R> {
     /// * `Ok(None)` - 没有可出队的任务
     /// * `Err(QueueError)` - 出队失败
     async fn dequeue(&self, worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+        eprintln!("DEBUG: Queue.dequeue called by worker {}", worker_id);
         let task = self.repository.acquire_next(worker_id).await?;
+        eprintln!("DEBUG: Queue.dequeue returned: {:?}", task.as_ref().map(|t| t.id));
         Ok(task)
     }
 

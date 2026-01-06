@@ -474,6 +474,19 @@ async fn main() -> anyhow::Result<()> {
         }
         "worker" => {
             info!("Starting Worker service...");
+
+            // 创建 Webhook 服务和 Worker (需要在 Worker 模式下也运行)
+            let webhook_service =
+                Arc::new(WebhookServiceImpl::new(settings.webhook.secret.clone()));
+            let webhook_worker = WebhookWorker::new(
+                webhook_event_repository.clone(),
+                webhook_service.clone(),
+                RetryPolicy::default(),
+            );
+            tokio::spawn(async move {
+                let _ = webhook_worker.run().await;
+            });
+
             let mut worker_manager = WorkerManager::new(
                 queue.clone(),
                 task_repo.clone(),
@@ -492,6 +505,18 @@ async fn main() -> anyhow::Result<()> {
 
             // 启动 N 个工作器进程
             worker_manager.start_workers(5).await;
+
+            // 启动积压任务处理Worker
+            let backlog_worker = BacklogWorker::new(
+                tasks_backlog_repo.clone(),
+                task_repo.clone(),
+                rate_limiting_service.clone(),
+                std::time::Duration::from_secs(30), // 每30秒处理一次积压任务
+                settings.concurrency.default_team_limit as usize,
+            );
+            tokio::spawn(async move {
+                let _ = backlog_worker.run().await;
+            });
 
             // 等待关闭信号
             worker_manager.wait_for_shutdown().await;

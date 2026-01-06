@@ -143,6 +143,8 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         let mut created_tasks = Vec::new();
 
         for link in filtered {
+            println!("DEBUG: Processing link: {}", link);
+
             // Domain blacklist check
             if let Ok(url) = Url::parse(&link) {
                 if let Some(domain) = url.domain() {
@@ -152,6 +154,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
                             domain,
                             link
                         );
+                        println!("DEBUG: Skipping blacklisted domain: {}", domain);
                         continue;
                     }
                 }
@@ -159,8 +162,10 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
 
             // Deduplication check
             if self.repo.exists_by_url(&link).await? {
+                println!("DEBUG: URL already exists in database: {}", link);
                 continue;
             }
+            println!("DEBUG: URL not in database, proceeding: {}", link);
 
             // Create new task payload
             let mut payload = parent_task.payload.clone();
@@ -189,9 +194,13 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
 
             let user_agent = "Crawlrs/0.1.0";
             // Robots.txt check - Move AFTER deduplication check to save network requests
-            if !self.robots_checker.is_allowed(&link, user_agent).await? {
+            let allowed = self.robots_checker.is_allowed(&link, user_agent).await?;
+            println!("DEBUG: Robots.txt check for {}: {}", link, allowed);
+            if !allowed {
+                println!("DEBUG: Skipping URL due to robots.txt: {}", link);
                 continue;
             }
+            println!("DEBUG: URL allowed by robots.txt: {}", link);
 
             let robots_delay = self
                 .robots_checker

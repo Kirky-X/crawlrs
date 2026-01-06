@@ -175,6 +175,14 @@ async fn test_repository_acquire_next_task() {
     let team_id = Uuid::new_v4();
     let worker_id = Uuid::new_v4();
 
+    // Clean up any existing tasks
+    use crawlrs::infrastructure::database::entities::task as task_entity;
+    use sea_orm::EntityTrait;
+    task_entity::Entity::delete_many()
+        .exec(app.db_pool.as_ref())
+        .await
+        .unwrap();
+
     // Create a couple of tasks
     let task1 = Task {
         id: Uuid::new_v4(),
@@ -360,9 +368,17 @@ async fn test_exists_by_url() {
 /// 对应文档章节：3.3.6
 #[tokio::test]
 async fn test_reset_stuck_tasks() {
-    let app = create_test_app().await;
+    let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = Uuid::new_v4();
+
+    // Clean up any existing tasks
+    use crawlrs::infrastructure::database::entities::task as task_entity;
+    use sea_orm::EntityTrait;
+    task_entity::Entity::delete_many()
+        .exec(app.db_pool.as_ref())
+        .await
+        .unwrap();
 
     // Create a stuck task (Active but old)
     let stuck_task = Task {

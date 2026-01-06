@@ -97,9 +97,13 @@ use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingS
 use crawlrs::presentation::handlers;
 use crawlrs::presentation::middleware::auth_middleware::AuthState;
 use crawlrs::queue::task_queue::TaskQueue;
+use crawlrs::workers::manager::WorkerManager;
+use crawlrs::workers::scrape_worker::ScrapeWorker;
+use crawlrs::workers::expiration_worker::ExpirationWorker;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use std::process::Command;
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 struct InMemoryQueue {
@@ -160,10 +164,20 @@ pub struct TestApp {
     pub redis: RedisClient,
     pub redis_url: String,
     pub redis_process: Option<std::process::Child>,
+    pub _shutdown_tx: Option<broadcast::Sender<()>>,
+    pub _worker_join_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl Drop for TestApp {
     fn drop(&mut self) {
+        // Signal workers to shutdown
+        if let Some(tx) = self._shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        // Just abort handles without blocking
+        for handle in self._worker_join_handles.drain(..) {
+            handle.abort();
+        }
         if let Some(mut process) = self.redis_process.take() {
             let _ = process.kill();
         }
@@ -268,7 +282,7 @@ pub async fn create_test_app_with_rate_limit_options(
 ) -> TestApp {
     // 强制使用PostgreSQL数据库，与Worker共享
     let db_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5433/crawlrs_test".to_string());
+        .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string());
     let db = Database::connect(&db_url).await.unwrap();
     let db_pool = Arc::new(db);
 
@@ -279,13 +293,14 @@ pub async fn create_test_app_with_rate_limit_options(
     let redis_process: Option<std::process::Child>;
 
     if use_redis {
-        // Use Docker Redis instance (mapped to port 6381 on host)
-        // This ensures the test app and worker use the same Redis instance
-        redis_url = "redis://127.0.0.1:6381".to_string();
+        // Use external Redis instance - try different ports if default fails
+        let redis_port = std::env::var("TEST_REDIS_PORT")
+            .unwrap_or_else(|_| "6380".to_string());
+        redis_url = format!("redis://127.0.0.1:{}", redis_port);
         redis_client = RedisClient::new(&redis_url).await.unwrap();
         redis_process = None;
     } else {
-        redis_url = "redis://127.0.0.1:6379".to_string();
+        redis_url = "redis://127.0.0.1:6380".to_string();
         redis_client = RedisClient::new(&redis_url).await.unwrap();
         redis_process = None;
     }
@@ -410,10 +425,10 @@ pub async fn create_test_app_with_rate_limit_options(
         db_pool.clone(),
         task_repo.clone(),
         backlog_repo.clone(),
-        credits_repo,
+        credits_repo.clone(),
         rate_limiting_service,
-        router,
-        robots_checker,
+        router.clone(),
+        robots_checker.clone(),
         search_engine_service,
         geo_restriction_repo,
         team_service,
@@ -428,6 +443,106 @@ pub async fn create_test_app_with_rate_limit_options(
     let app = app.layer(ConnectInfoLayer::new(mock_addr));
     let server = TestServer::new(app).unwrap();
 
+    // 启动 WorkerManager 来处理任务
+    let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
+    let crawl_repo = Arc::new(
+        crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl::new(
+            db_pool.clone(),
+        ),
+    );
+    let result_repo = Arc::new(
+        crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl::new(db_pool.clone())
+    );
+    let webhook_event_repo = Arc::new(
+        crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl::new(
+            db_pool.clone(),
+        ),
+    );
+    let storage_repo: Option<Arc<dyn crawlrs::domain::repositories::storage_repository::StorageRepository + Send + Sync>> = None;
+    let settings = Arc::new(Settings::new().unwrap());
+
+    // 创建 LLM 服务（用于提取功能）
+    let llm_service = Box::new(crawlrs::domain::services::llm_service::LLMService::new(&settings));
+    let extraction_service = Arc::new(crawlrs::domain::services::extraction_service::ExtractionService::new(llm_service));
+    let create_scrape_use_case = Arc::new(
+        crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(
+            router.clone(),
+        ),
+    );
+
+    // 创建 Webhook 服务
+    let webhook_service = Arc::new(
+        crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl::new(
+            "test-secret".to_string(),
+        ),
+    );
+
+    let queue: Arc<dyn TaskQueue> = Arc::new(
+        crawlrs::queue::task_queue::PostgresTaskQueue::new(task_repo.clone())
+    );
+
+    // 启动 worker（在后台）- 直接 spawn workers 而不是通过 start_workers
+    let worker_task_repo = task_repo.clone();
+    let worker_result_repo = result_repo.clone();
+    let worker_crawl_repo = crawl_repo.clone();
+    let worker_webhook_event_repo = webhook_event_repo.clone();
+    let worker_credits_repo = credits_repo.clone();
+    let worker_router = router.clone();
+    let worker_create_scrape_use_case = create_scrape_use_case.clone();
+    let worker_redis = redis_client.clone();
+    let worker_robots_checker = robots_checker.clone();
+    let worker_settings = settings.clone();
+    let worker_queue = queue.clone();
+    let worker_default_concurrency_limit = 5;
+    
+    // Clone storage_repo for worker
+    let worker_storage_repo = storage_repo.clone();
+    
+    let worker_join_handle = tokio::spawn(async move {
+        // Spawn workers directly
+        for i in 0..2 {
+            let queue = worker_queue.clone();
+            let task_repo = worker_task_repo.clone();
+            let result_repo = worker_result_repo.clone();
+            let crawl_repo = worker_crawl_repo.clone();
+            let storage_repo = worker_storage_repo.clone();
+            let webhook_event_repo = worker_webhook_event_repo.clone();
+            let credits_repo = worker_credits_repo.clone();
+            let router = worker_router.clone();
+            let create_scrape_use_case = worker_create_scrape_use_case.clone();
+            let redis = worker_redis.clone();
+            let robots_checker = worker_robots_checker.clone();
+            let settings = worker_settings.clone();
+            
+            tokio::spawn(async move {
+                let worker = ScrapeWorker::new(
+                    task_repo,
+                    result_repo,
+                    crawl_repo,
+                    storage_repo,
+                    webhook_event_repo,
+                    credits_repo,
+                    router,
+                    create_scrape_use_case,
+                    redis,
+                    robots_checker,
+                    settings,
+                    worker_default_concurrency_limit,
+                );
+                eprintln!("DEBUG: Worker {} started", i);
+                worker.run(queue).await;
+            });
+        }
+        
+        // Also start expiration worker
+        let expiration_worker = ExpirationWorker::new(worker_task_repo.clone());
+        expiration_worker.start();
+        
+        // Wait for shutdown signal
+        shutdown_rx.recv().await.ok();
+        tracing::info!("Test worker manager workers completed");
+    });
+
     TestApp {
         server,
         api_key,
@@ -437,6 +552,8 @@ pub async fn create_test_app_with_rate_limit_options(
         redis: redis_client,
         redis_url,
         redis_process,
+        _shutdown_tx: Some(shutdown_tx),
+        _worker_join_handles: vec![worker_join_handle],
     }
 }
 
@@ -612,7 +729,7 @@ fn create_router(
 pub async fn create_test_app_no_worker() -> TestApp {
     // 强制使用PostgreSQL数据库，与Worker共享
     let db_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5433/crawlrs_test".to_string());
+        .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string());
     let db = Database::connect(&db_url).await.unwrap();
     let db_pool = Arc::new(db);
 
@@ -626,41 +743,41 @@ pub async fn create_test_app_no_worker() -> TestApp {
     };
 
     if db_backend == DbBackend::Postgres {
-        // PostgreSQL语法
+        // PostgreSQL语法 - 清理所有任务和相关数据
         db_pool.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "DELETE FROM tasks WHERE url LIKE 'https://example.com/%'",
+            "DELETE FROM tasks",
             vec![],
         )).await.unwrap();
 
         db_pool.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "DELETE FROM tasks_backlog WHERE payload->>'url' LIKE 'https://example.com/%'",
+            "DELETE FROM tasks_backlog",
             vec![],
         )).await.unwrap();
 
         db_pool.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "DELETE FROM scrape_results WHERE url LIKE 'https://example.com/%'",
+            "DELETE FROM scrape_results",
             vec![],
         )).await.unwrap();
     } else {
-        // SQLite语法
+        // SQLite语法 - 清理所有任务和相关数据
         db_pool.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "DELETE FROM tasks WHERE url LIKE 'https://example.com/%'",
+            "DELETE FROM tasks",
             vec![],
         )).await.unwrap();
 
         db_pool.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "DELETE FROM tasks_backlog WHERE payload->>'url' LIKE 'https://example.com/%'",
+            "DELETE FROM tasks_backlog",
             vec![],
         )).await.unwrap();
 
         db_pool.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
-            "DELETE FROM scrape_results WHERE url LIKE 'https://example.com/%'",
+            "DELETE FROM scrape_results",
             vec![],
         )).await.unwrap();
     }
@@ -670,6 +787,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
         crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true, 100)
             .unwrap();
     let redis_port = result.port;
+    eprintln!("DEBUG: Starting Redis on port {}", redis_port);
     let redis_process = Some(
         Command::new("redis-server")
             .arg("--port")
@@ -682,7 +800,9 @@ pub async fn create_test_app_no_worker() -> TestApp {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let redis_url = format!("redis://127.0.0.1:{}", redis_port);
+    eprintln!("DEBUG: Connecting to Redis at {}", redis_url);
     let redis_client = RedisClient::new(&redis_url).await.unwrap();
+    eprintln!("DEBUG: Redis connection established");
 
     let api_key = Uuid::new_v4().to_string();
     let team_id = Uuid::new_v4();
@@ -831,5 +951,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
         redis: redis_client,
         redis_url,
         redis_process,
+        _shutdown_tx: None,
+        _worker_join_handles: vec![],
     }
 }
