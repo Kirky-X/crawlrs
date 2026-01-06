@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 use url::Url;
 use uuid::Uuid;
 
@@ -196,10 +196,7 @@ where
 
     #[instrument(skip(self, task), fields(task_id = %task.id, url = %task.url, task_type = %task.task_type))]
     async fn process_task(&self, mut task: Task) -> Result<()> {
-        println!(
-            "DEBUG: Processing task {} of type {:?}",
-            task.id, task.task_type
-        );
+        debug!(task_id = %task.id, task_type = ?task.task_type);
         info!("Processing task");
 
         // Check Task Expiration
@@ -255,19 +252,16 @@ where
         }
 
         if let Err(ref e) = result {
-            println!("DEBUG: Task processing failed: {}", e);
+            debug!(error = %e);
         } else {
-            println!("DEBUG: Task processing completed successfully");
+            debug!("Task processing completed successfully");
         }
 
         result
     }
 
     async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
-        println!(
-            "DEBUG: Processing scrape task {} with payload: {}",
-            task.id, task.payload
-        );
+        debug!(task_id = %task.id);
 
         // Create ScrapeRequestDto from task fields
         let request_dto: ScrapeRequestDto = serde_json::from_value(task.payload.clone())
@@ -319,7 +313,7 @@ where
 
         match response {
             Ok(response) => {
-                println!("DEBUG: Scrape successful, status: {}", response.status_code);
+                debug!(status_code = response.status_code);
                 info!("Scrape successful, status: {}", response.status_code);
 
                 // Map ScrapeResponse to ScrapeResult
@@ -340,10 +334,10 @@ where
 
                 if let Err(e) = self.handle_scrape_success(task.clone(), &response).await {
                     error!("Scrape success handler failed: {}", e);
-                    println!("DEBUG: Scrape success handler failed: {}", e);
+                    debug!(error = %e);
                     self.handle_failure(&mut task).await?;
                 } else {
-                    println!("DEBUG: Scrape success handler completed successfully");
+                    debug!("Scrape success handler completed successfully");
                     // 扣除基础费用及高级功能费用 (PRD-253)
                     let mut extra_credits = 0;
 
@@ -382,7 +376,7 @@ where
             }
             Err(e) => {
                 error!("Scrape failed: {}", e);
-                println!("DEBUG: Scrape failed: {}", e);
+                debug!(error = %e);
 
                 // If it's a timeout error, mark as failed immediately instead of rescheduling
                 let err_str = e.to_string().to_lowercase();
@@ -390,7 +384,7 @@ where
                     || err_str.contains("expired")
                     || err_str.contains("all engines failed")
                 {
-                    println!("DEBUG: Timeout or AllEnginesFailed detected, marking task as failed");
+                    debug!("Timeout or AllEnginesFailed detected, marking task as failed");
                     // Fetch task to ensure we have latest state
                     if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
                         t.status = TaskStatus::Failed;
@@ -688,9 +682,9 @@ where
             serde_json::from_value(task.payload.clone())
                 .context("Failed to parse extract task input")?;
 
-        println!("DEBUG: Parsed payload, rules present: {}", payload.rules.is_some());
+        debug!(has_rules = payload.rules.is_some());
         if let Some(ref rules) = payload.rules {
-            println!("DEBUG: Rules count: {}", rules.len());
+            debug!(rules_count = rules.len());
         }
 
         let url = payload.urls.first().context("No URL provided")?.clone();
@@ -734,7 +728,7 @@ where
 
         // Handle extraction rules if provided
         if let Some(rules) = payload.rules {
-            println!("DEBUG: Processing extraction rules: {:?}", rules);
+            debug!(?rules);
             // Use provided extraction rules with potential LLM usage
             let (extracted_data, usage) =
                 crate::domain::services::extraction_service::ExtractionService::extract(
@@ -744,12 +738,12 @@ where
                 )
                 .await?;
 
-            println!("DEBUG: Extraction completed, usage: {:?}", usage);
-            println!("DEBUG: Extracted data: {:?}", extracted_data);
+            debug!(?usage);
+            debug!(?extracted_data);
 
             // Record usage and deduct credits for LLM usage
             if usage.total_tokens > 0 {
-                println!("DEBUG: Token usage detected: {} tokens", usage.total_tokens);
+                debug!(tokens = usage.total_tokens);
                 // 1. Record in Redis for real-time tracking
                 let key = format!("team:{}:token_usage", task.team_id);
                 if let Err(e) = self.redis.incr_by(&key, usage.total_tokens as i64).await {
@@ -760,12 +754,9 @@ where
                 // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
                 let credits_to_deduct =
                     std::cmp::max(1, (usage.total_tokens as i64 * 10 + 999) / 1000);
-                println!("DEBUG: Credits to deduct: {}", credits_to_deduct);
+                debug!(credits_to_deduct);
                 if credits_to_deduct > 0 {
-                    println!(
-                        "DEBUG: Attempting to deduct {} credits for team {}",
-                        credits_to_deduct, task.team_id
-                    );
+                    debug!(credits = credits_to_deduct, team_id = %task.team_id);
                     match self
                         .credits_repository
                         .deduct_credits(
@@ -785,15 +776,15 @@ where
                                 "Deducted {} credits for {} tokens for team {}",
                                 credits_to_deduct, usage.total_tokens, task.team_id
                             );
-                            println!("DEBUG: Successfully deducted {} credits", credits_to_deduct);
+                            debug!(credits = credits_to_deduct);
                         }
                         Err(e) => {
                             error!("Failed to deduct credits for token usage: {}", e);
-                            println!("DEBUG: Failed to deduct credits: {}", e);
+                            debug!(error = %e);
                         }
                     }
                 } else {
-                    println!("DEBUG: No credits to deduct (credits_to_deduct <= 0)");
+                    debug!("No credits to deduct (credits_to_deduct <= 0)");
                 }
             }
 
@@ -1149,7 +1140,7 @@ where
     }
 
     async fn handle_scrape_success(&self, task: Task, response: &ScrapeResponse) -> Result<()> {
-        println!("DEBUG: handle_scrape_success called for task {}", task.id);
+        debug!(task_id = %task.id);
 
         // 文本编码处理 - 集成文本处理功能
         let processed_content = match self.process_text_encoding(&task, response).await {
@@ -1224,9 +1215,9 @@ where
 
         self.save_result(&task, &processed_response, extracted_data)
             .await?;
-        println!("DEBUG: About to mark task {} as completed", task.id);
+        debug!(task_id = %task.id, "About to mark task as completed");
         self.repository.mark_completed(task.id).await?;
-        println!("DEBUG: Successfully marked task {} as completed", task.id);
+        debug!(task_id = %task.id, "Successfully marked task as completed");
 
         self.trigger_webhook(&task, WebhookEventType::ScrapeCompleted, None)
             .await;

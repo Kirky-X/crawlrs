@@ -122,6 +122,12 @@ async fn main() -> anyhow::Result<()> {
     let mut settings = Settings::new()?;
     info!("Configuration loaded");
 
+    // 验证配置安全性
+    let security_warnings = settings.validate_security();
+    for warning in security_warnings {
+        tracing::warn!("{}", warning);
+    }
+
     // 端口嗅探
     let port_result = crawlrs::utils::port_sniffer::PortSniffer::find_available_port(
         settings.server.port,
@@ -333,10 +339,15 @@ async fn main() -> anyhow::Result<()> {
                 let _ = backlog_worker.run().await;
             });
 
+            // ⚠️ SECURITY WARNING: Using nil UUID as development placeholder
+            // In production, this MUST be replaced with actual team_id from JWT token or API key
             let _auth_state = AuthState {
                 db: db.clone(),
                 team_id: uuid::Uuid::nil(),
             };
+            tracing::warn!(
+                "SECURITY: Using nil UUID for team_id. Authentication is disabled - ALL requests get full access!"
+            );
 
             let public_routes = Router::new()
                 .route("/health", get(routes::health_check))
@@ -461,7 +472,7 @@ async fn main() -> anyhow::Result<()> {
                 .layer(Extension(search_engine_service))
                 .layer(Extension(tasks_backlog_repo.clone()))
                 .layer(Extension(rate_limiting_service.clone()))
-                .layer(Extension(uuid::Uuid::nil())); // TODO: Real team_id from auth
+                .layer(Extension(uuid::Uuid::nil())); // TODO: Real team_id from auth - ⚠️ SECURITY: Authentication disabled
 
             let addr = format!("{}:{}", settings.server.host, settings.server.port);
             let listener = TcpListener::bind(&addr).await?;

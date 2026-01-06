@@ -27,14 +27,10 @@ impl ScraperEngine for ReqwestEngine {
     /// * `Ok(ScrapeResponse)` - 抓取响应
     /// * `Err(EngineError)` - 抓取过程中出现的错误
     async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
-        // SSRF protection
-        // Allow private IPs for testing purposes
-        // In a real production environment, this should be configurable
-        if !request.url.contains("127.0.0.1") && !request.url.contains("localhost") {
-            validators::validate_url(&request.url)
-                .await
-                .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
-        }
+        // SSRF protection: validate all URLs to prevent access to internal services
+        validators::validate_url(&request.url)
+            .await
+            .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
 
         // Build headers
         let mut headers = HeaderMap::new();

@@ -8,6 +8,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use async_trait::async_trait;
 use std::sync::Arc;
 use thiserror::Error;
+use tracing::debug;
 use uuid::Uuid;
 
 /// 队列错误类型
@@ -87,9 +88,9 @@ impl<R: TaskRepository> TaskQueue for PostgresTaskQueue<R> {
     /// * `Ok(None)` - 没有可出队的任务
     /// * `Err(QueueError)` - 出队失败
     async fn dequeue(&self, worker_id: Uuid) -> Result<Option<Task>, QueueError> {
-        eprintln!("DEBUG: Queue.dequeue called by worker {}", worker_id);
+        debug!(worker_id = %worker_id);
         let task = self.repository.acquire_next(worker_id).await?;
-        eprintln!("DEBUG: Queue.dequeue returned: {:?}", task.as_ref().map(|t| t.id));
+        debug!(has_task = task.is_some());
         Ok(task)
     }
 

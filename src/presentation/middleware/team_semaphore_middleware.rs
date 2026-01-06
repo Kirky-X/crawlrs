@@ -19,7 +19,8 @@ pub async fn team_semaphore_middleware(
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    // Temporarily hardcode team_id to nil for testing
+    // ⚠️ SECURITY WARNING: Using nil UUID - all requests share the same concurrency slot
+    // In production, extract team_id from JWT token or API key
     let team_id = uuid::Uuid::nil();
     let _permit = semaphore.acquire(team_id).await;
     Ok(next.run(request).await)

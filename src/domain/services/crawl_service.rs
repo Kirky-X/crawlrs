@@ -13,6 +13,7 @@ use regex::Regex;
 use scraper::{Html, Selector};
 use std::collections::HashSet;
 use std::sync::Arc;
+use tracing::debug;
 use url::Url;
 use uuid::Uuid;
 
@@ -143,7 +144,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         let mut created_tasks = Vec::new();
 
         for link in filtered {
-            println!("DEBUG: Processing link: {}", link);
+            debug!(link);
 
             // Domain blacklist check
             if let Ok(url) = Url::parse(&link) {
@@ -154,7 +155,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
                             domain,
                             link
                         );
-                        println!("DEBUG: Skipping blacklisted domain: {}", domain);
+                        debug!(domain);
                         continue;
                     }
                 }
@@ -162,10 +163,10 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
 
             // Deduplication check
             if self.repo.exists_by_url(&link).await? {
-                println!("DEBUG: URL already exists in database: {}", link);
+                debug!(url_exists = link);
                 continue;
             }
-            println!("DEBUG: URL not in database, proceeding: {}", link);
+            debug!(url_new = link);
 
             // Create new task payload
             let mut payload = parent_task.payload.clone();
@@ -195,12 +196,12 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
             let user_agent = "Crawlrs/0.1.0";
             // Robots.txt check - Move AFTER deduplication check to save network requests
             let allowed = self.robots_checker.is_allowed(&link, user_agent).await?;
-            println!("DEBUG: Robots.txt check for {}: {}", link, allowed);
+            debug!(link, allowed);
             if !allowed {
-                println!("DEBUG: Skipping URL due to robots.txt: {}", link);
+                debug!(robots_blocked = link);
                 continue;
             }
-            println!("DEBUG: URL allowed by robots.txt: {}", link);
+            debug!(robots_allowed = link);
 
             let robots_delay = self
                 .robots_checker
@@ -297,7 +298,7 @@ impl LinkDiscoverer {
     /// * `Ok(HashSet<String>)` - 提取到的链接集合
     /// * `Err(anyhow::Error)` - 提取过程中出现的错误
     pub fn extract_links(html_content: &str, base_url: &str) -> Result<HashSet<String>> {
-        println!("DEBUG: extract_links called with base_url: {}", base_url);
+        debug!(base_url);
         let fragment = Html::parse_document(html_content);
         let selector =
             Selector::parse("a").map_err(|e| anyhow::anyhow!("Invalid selector: {:?}", e))?;
@@ -306,7 +307,7 @@ impl LinkDiscoverer {
 
         for element in fragment.select(&selector) {
             if let Some(href) = element.value().attr("href") {
-                println!("DEBUG: Found href: {}", href);
+                debug!(href);
                 // Ignore fragment identifiers, mailto and javascript links
                 if href.starts_with('#')
                     || href.starts_with("mailto:")
@@ -317,26 +318,26 @@ impl LinkDiscoverer {
 
                 match base.join(href) {
                     Ok(url) => {
-                        println!("DEBUG: Successfully joined URL: {}", url);
+                        debug!(url = %url);
                         // Only keep http/https links
                         if url.scheme() == "http" || url.scheme() == "https" {
                             // Remove fragment to improve deduplication
                             let mut url_clean = url.clone();
                             url_clean.set_fragment(None);
                             links.insert(url_clean.to_string());
-                            println!("DEBUG: Added URL to links: {}", url_clean);
+                            debug!(url = %url_clean);
                         } else {
-                            println!("DEBUG: Skipped URL due to scheme: {}", url.scheme());
+                            debug!(skipped_scheme = url.scheme());
                         }
                     }
                     Err(e) => {
-                        println!("DEBUG: Failed to join URL: {:?}", e);
+                        debug!(error = ?e);
                     }
                 }
             }
         }
 
-        println!("DEBUG: Total links extracted: {}", links.len());
+        debug!(total = links.len());
         Ok(links)
     }
 
@@ -358,9 +359,7 @@ impl LinkDiscoverer {
         include_patterns: &[String],
         exclude_patterns: &[String],
     ) -> HashSet<String> {
-        println!("DEBUG: filter_links called with {} links", links.len());
-        println!("DEBUG: include_patterns: {:?}", include_patterns);
-        println!("DEBUG: exclude_patterns: {:?}", exclude_patterns);
+        debug!(total_links = links.len(), ?include_patterns, ?exclude_patterns);
 
         // Convert glob patterns to regex patterns
         let include_regexes: Vec<Regex> = include_patterns
@@ -376,46 +375,36 @@ impl LinkDiscoverer {
         let filtered: HashSet<String> = links
             .into_iter()
             .filter(|link| {
-                println!("DEBUG: Processing link: {}", link);
+                debug!(link);
                 // If include patterns are provided, link must match at least one
                 let matches_include = if include_regexes.is_empty() {
-                    println!("DEBUG: No include patterns, allowing all");
+                    debug!("No include patterns, allowing all");
                     true
                 } else {
                     let matched = include_regexes.iter().any(|regex| {
                         let matches = regex.is_match(link);
-                        println!(
-                            "DEBUG: Checking if '{}' matches include pattern '{}': {}",
-                            link,
-                            regex.as_str(),
-                            matches
-                        );
+                        debug!(link, pattern = regex.as_str(), matches);
                         matches
                     });
-                    println!("DEBUG: matches_include: {}", matched);
+                    debug!(matches_include = matched);
                     matched
                 };
 
                 // Link must NOT match any exclude pattern
                 let matches_exclude = exclude_regexes.iter().any(|regex| {
                     let matches = regex.is_match(link);
-                    println!(
-                        "DEBUG: Checking if '{}' matches exclude pattern '{}': {}",
-                        link,
-                        regex.as_str(),
-                        matches
-                    );
+                    debug!(link, pattern = regex.as_str(), matches);
                     matches
                 });
-                println!("DEBUG: matches_exclude: {}", matches_exclude);
+                debug!(matches_exclude = matches_exclude);
 
                 let result = matches_include && !matches_exclude;
-                println!("DEBUG: Final result for '{}': {}", link, result);
+                debug!(link, result);
                 result
             })
             .collect();
 
-        println!("DEBUG: Filtered links count: {}", filtered.len());
+        debug!(filtered_count = filtered.len());
         filtered
     }
 }

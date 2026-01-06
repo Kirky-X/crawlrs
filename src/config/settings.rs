@@ -327,4 +327,44 @@ impl Settings {
         // 构建并反序列化配置
         builder.build()?.try_deserialize()
     }
+
+    /// 验证配置安全性
+    ///
+    /// 检查是否存在弱默认配置，并返回警告
+    ///
+    /// # 返回值
+    ///
+    /// * `Vec<String>` - 安全警告列表（为空表示配置安全）
+    pub fn validate_security(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        // 检查 webhook secret 是否使用默认值
+        if self.webhook.secret == "your-secret-key" || self.webhook.secret.is_empty() {
+            warnings.push(
+                "SECURITY WARNING: Webhook secret is using default value 'your-secret-key'! \
+                Set CRAWLRS__WEBHOOK__SECRET environment variable to a strong random value."
+                    .to_string(),
+            );
+        }
+
+        // 检查 S3 凭据安全性
+        if self.storage.storage_type == "s3" {
+            if self.storage.s3_access_key.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                warnings.push(
+                    "SECURITY WARNING: S3 access key is not configured but storage type is 's3'."
+                        .to_string(),
+                );
+            }
+        }
+
+        // 检查速率限制是否禁用
+        if !self.rate_limiting.enabled {
+            warnings.push(
+                "SECURITY WARNING: Rate limiting is disabled. This may expose the service to abuse."
+                    .to_string(),
+            );
+        }
+
+        warnings
+    }
 }

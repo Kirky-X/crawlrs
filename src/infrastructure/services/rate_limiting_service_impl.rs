@@ -8,6 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Utc;
 use redis::AsyncCommands;
+use tracing::debug;
 use uuid::Uuid;
 
 use crate::domain::repositories::{
@@ -339,25 +340,25 @@ impl RateLimitingService for RateLimitingServiceImpl {
         api_key: &str,
         endpoint: &str,
     ) -> Result<RateLimitResult, RateLimitingError> {
-        eprintln!("[DEBUG] ========== RATE LIMIT CHECK ==========");
-        eprintln!("[DEBUG] check_rate_limit called with api_key: {}", api_key);
-        eprintln!("[DEBUG] endpoint: {}", endpoint);
-        eprintln!("[DEBUG] global rate_limit.enabled: {}", self.config.rate_limit.enabled);
+        debug!("========== RATE LIMIT CHECK ==========");
+        debug!(api_key);
+        debug!(endpoint);
+        debug!(enabled = self.config.rate_limit.enabled);
 
         if !self.config.rate_limit.enabled {
-            eprintln!("[DEBUG] Rate limiting is DISABLED globally, allowing request");
+            debug!("Rate limiting is DISABLED globally, allowing request");
             return Ok(RateLimitResult::Allowed);
         }
 
         // Try to get custom rate limit config from Redis
-        eprintln!("[DEBUG] Attempting to get custom rate limit config from Redis...");
+        debug!("Attempting to get custom rate limit config from Redis...");
         let custom_config = self.get_custom_rate_limit_config(api_key).await;
 
-        eprintln!("[DEBUG] Custom config result: {:?}", custom_config);
+        debug!(?custom_config);
 
         let (bucket_capacity, requests_per_minute, requests_per_hour) = match custom_config {
             Some(config) => {
-                eprintln!("[DEBUG] Using custom config");
+                debug!("Using custom config");
                 (
                     config.bucket_capacity.unwrap_or(self.config.rate_limit.bucket_capacity.unwrap_or(100)),
                     config.requests_per_minute,
@@ -365,7 +366,7 @@ impl RateLimitingService for RateLimitingServiceImpl {
                 )
             }
             None => {
-                eprintln!("[DEBUG] No custom config found, using defaults");
+                debug!("No custom config found, using defaults");
                 (
                     self.config.rate_limit.bucket_capacity.unwrap_or(100),
                     self.config.rate_limit.requests_per_minute,
@@ -374,11 +375,10 @@ impl RateLimitingService for RateLimitingServiceImpl {
             }
         };
 
-        eprintln!("[DEBUG] Final values - bucket_capacity: {}, rpm: {}, rph: {}",
-            bucket_capacity, requests_per_minute, requests_per_hour);
+        debug!(bucket_capacity, rpm = requests_per_minute, rph = requests_per_hour);
 
         // 检查每秒限流
-        eprintln!("[DEBUG] Checking per-second rate limit...");
+        debug!("Checking per-second rate limit...");
         let per_second_key = self.build_api_rate_limit_key(api_key, endpoint, "per_second");
         let per_second_result = self
             .check_token_bucket_rate_limit(
@@ -389,15 +389,15 @@ impl RateLimitingService for RateLimitingServiceImpl {
             )
             .await?;
 
-        eprintln!("[DEBUG] Per-second check result: {:?}", per_second_result);
+        debug!(?per_second_result);
 
         if !matches!(per_second_result, RateLimitResult::Allowed) {
-            eprintln!("[DEBUG] Per-second rate limit exceeded");
+            debug!("Per-second rate limit exceeded");
             return Ok(per_second_result);
         }
 
         // 检查每分钟限流
-        eprintln!("[DEBUG] Checking per-minute rate limit...");
+        debug!("Checking per-minute rate limit...");
         let per_minute_key = self.build_api_rate_limit_key(api_key, endpoint, "per_minute");
         let per_minute_result = self
             .check_token_bucket_rate_limit(
@@ -408,15 +408,15 @@ impl RateLimitingService for RateLimitingServiceImpl {
             )
             .await?;
 
-        eprintln!("[DEBUG] Per-minute check result: {:?}", per_minute_result);
+        debug!(?per_minute_result);
 
         if !matches!(per_minute_result, RateLimitResult::Allowed) {
-            eprintln!("[DEBUG] Per-minute rate limit exceeded");
+            debug!("Per-minute rate limit exceeded");
             return Ok(per_minute_result);
         }
 
         // 检查每小时限流
-        eprintln!("[DEBUG] Checking per-hour rate limit...");
+        debug!("Checking per-hour rate limit...");
         let per_hour_key = self.build_api_rate_limit_key(api_key, endpoint, "per_hour");
         let per_hour_result = self
             .check_token_bucket_rate_limit(
@@ -427,8 +427,8 @@ impl RateLimitingService for RateLimitingServiceImpl {
             )
             .await?;
 
-        eprintln!("[DEBUG] Per-hour check result: {:?}", per_hour_result);
-        eprintln!("[DEBUG] ========== RATE LIMIT CHECK COMPLETE ==========");
+        debug!(?per_hour_result);
+        debug!("========== RATE LIMIT CHECK COMPLETE ==========");
 
         Ok(per_hour_result)
     }
