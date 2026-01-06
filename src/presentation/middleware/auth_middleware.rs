@@ -89,6 +89,16 @@ pub async fn auth_middleware(
         .await
     {
         Ok(Some(key)) => {
+            // SECURITY: Reject nil UUID explicitly
+            // Nil UUID (00000000-0000-0000-0000-000000000000) should never be a valid team_id
+            if key.team_id == Uuid::nil() {
+                tracing::error!(
+                    "SECURITY: API key {} is associated with nil UUID team_id! This indicates a data integrity issue.",
+                    token_str
+                );
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+
             // Inject Team ID and API Key into extensions
             req.extensions_mut().insert(key.team_id);
             req.extensions_mut().insert(token_str);

@@ -3,5 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-pub mod handlers;
-pub mod middleware;
+/// 中间件单元测试
+///
+/// 测试认证、限流等中间件功能
+pub mod auth_middleware_test;

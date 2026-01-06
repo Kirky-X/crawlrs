@@ -13,17 +13,33 @@ use url::Url;
 pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
     // 允许通过环境变量禁用 SSRF 保护（用于测试）
     if std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default() == "true" {
+        tracing::warn!("SSRF protection is DISABLED via environment variable");
         return Ok(());
     }
 
     let url = Url::parse(url_str)?;
+
+    // 检查协议：只允许 http 和 https
+    match url.scheme() {
+        "http" | "https" => {},
+        scheme => {
+            return Err(anyhow::anyhow!(
+                "SSRF protection: Only http and https protocols are allowed, got: {}",
+                scheme
+            ));
+        }
+    }
+
     let host = url
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("Missing host"))?;
 
-    // 如果是 localhost 或 127.0.0.1 等，直接拒绝
-    if host == "localhost" {
-        return Err(anyhow::anyhow!("SSRF protection: localhost is not allowed"));
+    // 基于域名的预检查（在 DNS 解析之前）
+    if is_blocked_hostname(host) {
+        return Err(anyhow::anyhow!(
+            "SSRF protection: Hostname '{}' is not allowed",
+            host
+        ));
     }
 
     // 解析 DNS
@@ -31,7 +47,7 @@ pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
     let port = url.port_or_known_default().unwrap_or(80);
     let addr_str = format!("{}:{}", host, port);
 
-    let addrs = lookup_host(addr_str).await?;
+    let addrs = lookup_host(&addr_str).await?;
 
     // 检查所有解析出的 IP
     for addr in addrs {
@@ -44,6 +60,39 @@ pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// 检查主机名是否在阻止列表中
+fn is_blocked_hostname(host: &str) -> bool {
+    let host_lower = host.to_lowercase();
+
+    // 阻止的主机名列表
+    let blocked = [
+        "localhost",
+        "localhost.localdomain",
+        "ip6-localhost",
+        "ip6-loopback",
+        "0.0.0.0",
+        "::",
+        // AWS 元数据端点
+        "169.254.169.254",
+        "metadata.google.internal",
+        // Azure 元数据端点
+        "169.254.169.254",
+        // GCP 元数据端点
+        "metadata.google.internal",
+    ];
+
+    if blocked.contains(&host_lower.as_str()) {
+        return true;
+    }
+
+    // 检查是否为纯 IP 地址形式的字符串
+    if let Ok(ip) = host_lower.parse::<std::net::IpAddr>() {
+        return is_private_ip(ip);
+    }
+
+    false
 }
 
 fn is_private_ip(ip: IpAddr) -> bool {
@@ -119,19 +168,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_url_ssrf() {
-        // Localhost should be blocked
+        // Localhost 变体应该被阻止
         assert!(validate_url("http://localhost").await.is_err());
+        assert!(validate_url("http://localhost.localdomain").await.is_err());
         assert!(validate_url("http://127.0.0.1").await.is_err());
+        assert!(validate_url("http://0.0.0.0").await.is_err());
 
-        // Private IPs should be blocked
-        // Note: These tests depend on DNS resolution, which might fail in some environments
-        // We simulate DNS resolution behavior by testing is_private_ip directly if needed,
-        // but here we test the public API.
+        // 私有 IP 应该被阻止
+        assert!(validate_url("http://10.0.0.1").await.is_err());
+        assert!(validate_url("http://192.168.1.1").await.is_err());
+        assert!(validate_url("http://172.16.0.1").await.is_err());
 
-        // Valid public URL (example.com usually resolves to public IP)
-        // We skip this in CI if no network access
+        // 云元数据端点应该被阻止
+        assert!(validate_url("http://169.254.169.254").await.is_err());
+        assert!(validate_url("http://metadata.google.internal").await.is_err());
+
+        // 不允许的协议
+        assert!(validate_url("file:///etc/passwd").await.is_err());
+        assert!(validate_url("ftp://example.com").await.is_err());
+        assert!(validate_url("gopher://localhost").await.is_err());
+
+        // 有效的公共 URL
         if std::env::var("CI").is_err() {
             assert!(validate_url("http://example.com").await.is_ok());
+            assert!(validate_url("https://google.com").await.is_ok());
         }
     }
 

@@ -339,11 +339,37 @@ impl Settings {
         let mut warnings = Vec::new();
 
         // 检查 webhook secret 是否使用默认值
-        if self.webhook.secret == "your-secret-key" || self.webhook.secret.is_empty() {
+        let weak_secrets = [
+            "your-webhook-secret",
+            "your-secret-key",
+            "secret",
+            "webhook-secret",
+            "change-me",
+            "password",
+        ];
+
+        if self.webhook.secret.is_empty() {
             warnings.push(
-                "SECURITY WARNING: Webhook secret is using default value 'your-secret-key'! \
+                "CRITICAL: Webhook secret is empty! Webhook signature verification will fail. \
                 Set CRAWLRS__WEBHOOK__SECRET environment variable to a strong random value."
                     .to_string(),
+            );
+        } else if weak_secrets.contains(&self.webhook.secret.as_str()) {
+            warnings.push(
+                format!(
+                    "CRITICAL: Webhook secret is using a weak default value '{}'! \
+                    This allows attackers to forge webhook payloads. \
+                    Set CRAWLRS__WEBHOOK__SECRET environment variable to a strong random value (min 32 bytes).",
+                    self.webhook.secret
+                )
+            );
+        } else if self.webhook.secret.len() < 32 {
+            warnings.push(
+                format!(
+                    "WARNING: Webhook secret is too short ({} bytes). \
+                    Recommend using at least 32 bytes for better security.",
+                    self.webhook.secret.len()
+                )
             );
         }
 
@@ -355,12 +381,28 @@ impl Settings {
                         .to_string(),
                 );
             }
+
+            if self.storage.s3_secret_key.as_ref().map(|s| s.len() < 32).unwrap_or(false) {
+                warnings.push(
+                    "WARNING: S3 secret key appears to be short (< 32 characters). Use a strong secret key."
+                        .to_string(),
+                );
+            }
         }
 
         // 检查速率限制是否禁用
         if !self.rate_limiting.enabled {
             warnings.push(
-                "SECURITY WARNING: Rate limiting is disabled. This may expose the service to abuse."
+                "WARNING: Rate limiting is disabled. This may expose the service to abuse."
+                    .to_string(),
+            );
+        }
+
+        // 检查数据库连接是否使用默认密码
+        if self.database.url.contains("password") {
+            warnings.push(
+                "SECURITY WARNING: Database URL appears to use default password 'password'. \
+                Change the database password in production."
                     .to_string(),
             );
         }

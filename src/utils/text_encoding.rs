@@ -96,7 +96,8 @@ impl TextEncodingProcessor {
         }
 
         // UTF-8解析失败，进行编码检测
-        self.detect_and_convert_encoding(input)
+        let (result, _detection) = self.detect_and_convert_encoding(input);
+        result
     }
 
     /// 处理长文本（完整处理流程）
@@ -111,12 +112,14 @@ impl TextEncodingProcessor {
         }
 
         // 完整的编码检测和转换流程
-        let result = self.detect_and_convert_encoding(input)?;
+        let (result, detection) = self.detect_and_convert_encoding(input);
 
-        // 缓存结果
-        self.cache_detection_result(&cache_key, &result);
+        // 缓存检测结果（仅在检测成功时）
+        if result.is_ok() {
+            self.cache_detection_result(&cache_key, &detection);
+        }
 
-        Ok(result)
+        result
     }
 
     /// 检测文本是否包含Unicode转义序列
@@ -210,7 +213,11 @@ impl TextEncodingProcessor {
     }
 
     /// 检测并转换编码
-    fn detect_and_convert_encoding(&self, input: &[u8]) -> Result<String, TextEncodingError> {
+    /// 返回 (转换后的文本, 编码检测结果)
+    fn detect_and_convert_encoding(
+        &self,
+        input: &[u8],
+    ) -> (Result<String, TextEncodingError>, EncodingDetection) {
         debug!("开始编码检测");
 
         // 使用chardetng进行编码检测
@@ -219,18 +226,28 @@ impl TextEncodingProcessor {
 
         let encoding = detector.guess(None, true);
         let encoding_name = encoding.name();
+        let is_utf8 = encoding_name == "utf-8";
+        let confidence = if is_utf8 { 1.0 } else { 0.9 };
 
-        debug!("检测到编码: {}", encoding_name);
+        let detection = EncodingDetection {
+            encoding: encoding_name.to_string(),
+            confidence,
+            is_utf8,
+        };
+
+        debug!("检测到编码: {}, 置信度: {:.2}", encoding_name, confidence);
 
         // 如果已经是UTF-8且置信度高，直接返回
-        if encoding_name == "utf-8" {
-            return std::str::from_utf8(input)
+        if is_utf8 {
+            let result = std::str::from_utf8(input)
                 .map(|s| s.to_string())
                 .map_err(|e| TextEncodingError::ConversionFailed(e.to_string()));
+            return (result, detection);
         }
 
         // 进行编码转换
-        self.convert_encoding(input, encoding, 0.9)
+        let result = self.convert_encoding(input, encoding, confidence);
+        (result, detection)
     }
 
     /// 去除字符串的首位换行符（保留中间换行符）
@@ -297,17 +314,11 @@ impl TextEncodingProcessor {
     }
 
     /// 缓存检测结果
-    fn cache_detection_result(&self, key: &str, _result: &str) {
-        let detection = EncodingDetection {
-            encoding: "utf-8".to_string(),
-            confidence: 1.0,
-            is_utf8: true,
-        };
-
+    fn cache_detection_result(&self, key: &str, detection: &EncodingDetection) {
         self.encoding_cache
             .lock()
             .unwrap()
-            .put(key.to_string(), detection);
+            .put(key.to_string(), detection.clone());
     }
 
     /// 应用缓存的转换结果
@@ -321,8 +332,10 @@ impl TextEncodingProcessor {
                 .map(|s| s.to_string())
                 .map_err(|e| TextEncodingError::ConversionFailed(e.to_string()))
         } else {
-            // 如果不是UTF-8，需要重新检测转换
-            self.detect_and_convert_encoding(input)
+            // 如果不是UTF-8，使用缓存的编码信息重新转换
+            let encoding = Encoding::for_label(detection.encoding.as_bytes())
+                .ok_or_else(|| TextEncodingError::InvalidEncoding(detection.encoding.clone()))?;
+            self.convert_encoding(input, encoding, detection.confidence)
         }
     }
 
@@ -410,14 +423,14 @@ mod tests {
         let input = "\\u4e00\\u7ad9\\u5f0f\\u7f51\\u7ad9\\u5efa\\u8bbe";
         let result =
             process_string(input).expect("String Unicode escape conversion should succeed");
-        eprintln!("DEBUG: input = {:?}, result = {:?}", input, result);
+        tracing::debug!("input = {:?}, result = {:?}", input, result);
         assert!(!result.is_empty());
         assert!(result.contains("一站式"));
 
         // 测试混合内容
         let input2 = "搜索结果: \\u5e7f\\u544a\\u63a8\\u8350";
         let result2 = process_string(input2).expect("Mixed content conversion should succeed");
-        eprintln!("DEBUG: input2 = {:?}, result2 = {:?}", input2, result2);
+        tracing::debug!("input2 = {:?}, result2 = {:?}", input2, result2);
         assert!(result2.contains("广告"));
     }
 

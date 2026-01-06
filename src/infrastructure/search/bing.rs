@@ -385,7 +385,7 @@ impl BingSearchEngine {
 
         // Log parsing statistics for debugging
         if parse_errors > 0 {
-            eprintln!(
+            tracing::warn!(
                 "Bing search parsing: {} valid results, {} parse errors",
                 valid_results, parse_errors
             );
@@ -684,7 +684,7 @@ impl SearchEngine for BingSearchEngine {
                             Ok(page_results) => {
                                 let results_count = page_results.len();
                                 all_results.extend(page_results);
-                                eprintln!(
+                                tracing::debug!(
                                     "Bing page {}: {} results, total: {}",
                                     page,
                                     results_count,
@@ -692,7 +692,7 @@ impl SearchEngine for BingSearchEngine {
                                 );
                             }
                             Err(e) => {
-                                eprintln!("Parse error on page {}: {}", page, e);
+                                tracing::error!("Parse error on page {}: {}", page, e);
                                 // Consider implementing a retry mechanism or different error handling
                                 // For now, we'll just log the error and continue
                             }
@@ -700,7 +700,7 @@ impl SearchEngine for BingSearchEngine {
                     }
                     Err(e) => {
                         consecutive_errors += 1;
-                        eprintln!("Error in batch: {}", e);
+                        tracing::error!("Error in batch: {}", e);
 
                         if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
                             return Err(SearchError::NetworkError(format!(

@@ -443,8 +443,8 @@ impl TaskRepository for TaskRepositoryImpl {
                 let current_status =
                     TaskStatus::from_str(&task_model.status).unwrap_or(TaskStatus::Queued);
 
-                println!(
-                    "DEBUG: Processing task {} with status {:?}",
+                tracing::debug!(
+                    "Processing task {} with status {:?}",
                     task_id, current_status
                 );
 

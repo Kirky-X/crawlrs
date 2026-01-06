@@ -5,7 +5,7 @@ services:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: crawlrs
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: crawlrs_test
     ports:
       - "5443:5432"
@@ -59,7 +59,7 @@ services:
       - "3000:3000"
     environment:
       - RUST_LOG=debug
-      - CRAWLRS__DATABASE__URL=postgres://crawlrs:password@postgres:5432/crawlrs_test
+      - CRAWLRS__DATABASE__URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/crawlrs_test
       - CRAWLRS__REDIS__URL=redis://redis:6379
       - CRAWLRS__SERVER__HOST=0.0.0.0
       - CRAWLRS__SERVER__PORT=3000
@@ -90,7 +90,7 @@ services:
     command: ["./crawlrs", "worker"]
     environment:
       - RUST_LOG=debug
-      - CRAWLRS__DATABASE__URL=postgres://crawlrs:password@postgres:5432/crawlrs_test
+      - CRAWLRS__DATABASE__URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/crawlrs_test
       - CRAWLRS__REDIS__URL=redis://redis:6379
       - CRAWLRS__CHROME_REMOTE_DEBUGGING_URL=http://chrome:9222
       - CRAWLRS__RATE_LIMITING__ENABLED=false

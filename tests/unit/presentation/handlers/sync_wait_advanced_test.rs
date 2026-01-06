@@ -10,6 +10,7 @@ use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use chrono::{DateTime, FixedOffset, Utc};
+use sea_orm::Database;
 use uuid::Uuid;
 use std::sync::Arc;
 
