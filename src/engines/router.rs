@@ -464,7 +464,7 @@ impl EngineRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::reqwest_engine::ReqwestEngine;
+    use crate::engines::client::reqwest::ReqwestEngine;
 
     #[tokio::test]
     async fn test_engine_router_creation() {

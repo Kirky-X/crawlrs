@@ -21,7 +21,7 @@ pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
 
     // 检查协议：只允许 http 和 https
     match url.scheme() {
-        "http" | "https" => {},
+        "http" | "https" => {}
         scheme => {
             return Err(anyhow::anyhow!(
                 "SSRF protection: Only http and https protocols are allowed, got: {}",
@@ -181,7 +181,9 @@ mod tests {
 
         // 云元数据端点应该被阻止
         assert!(validate_url("http://169.254.169.254").await.is_err());
-        assert!(validate_url("http://metadata.google.internal").await.is_err());
+        assert!(validate_url("http://metadata.google.internal")
+            .await
+            .is_err());
 
         // 不允许的协议
         assert!(validate_url("file:///etc/passwd").await.is_err());

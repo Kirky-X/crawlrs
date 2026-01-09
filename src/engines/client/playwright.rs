@@ -12,9 +12,9 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::sync::OnceLock;
 use tokio::task_local;
 
 task_local! {
@@ -33,9 +33,7 @@ pub async fn get_browser() -> Result<Arc<Browser>, EngineError> {
     let test_mode = std::env::var("CRAWLRS_TEST_NO_BROWSER_REUSE").is_ok();
 
     // Get or initialize the browser instance
-    let browser_instance = BROWSER_INSTANCE.get_or_init(|| {
-        Arc::new(Mutex::new(None))
-    });
+    let browser_instance = BROWSER_INSTANCE.get_or_init(|| Arc::new(Mutex::new(None)));
 
     // Try to get the existing browser (clone outside lock to avoid holding across await)
     let browser_to_check = {
@@ -62,9 +60,9 @@ pub async fn get_browser() -> Result<Arc<Browser>, EngineError> {
 
     let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
         tracing::info!("Connecting to remote Chrome instance at: {}", url);
-        Browser::connect(url).await.map_err(|e| {
-            EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
-        })?
+        Browser::connect(url)
+            .await
+            .map_err(|e| EngineError::Other(format!("Failed to connect to remote Chrome: {}", e)))?
     } else {
         let mut builder = BrowserConfig::builder()
             .no_sandbox()
