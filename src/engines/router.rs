@@ -423,10 +423,12 @@ impl EngineRouter {
             self.circuit_breaker.record_success(&name);
         }
 
-        for (name, _) in errors {
+        for (name, error) in errors {
             self.update_engine_stats(&name, false, Duration::from_millis(0));
-            // 注意：这里没有检查是否可重试，简单记录失败
-            self.circuit_breaker.record_failure(&name);
+            // 只对可重试的错误触发熔断器
+            if error.is_retryable() {
+                self.circuit_breaker.record_failure(&name);
+            }
         }
 
         Ok(primary_response)
@@ -499,14 +501,17 @@ mod tests_impl {
     use crate::engines::traits::ScrapeResponse;
     use crate::engines::traits::ScraperEngine;
     use async_trait::async_trait;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     // A simple test engine that is a controllable implementation
     struct TestScraperEngineImpl {
         name: &'static str,
         _supported_domains: Vec<String>,
         _weight: u8,
-        response_result: Mutex<Option<Result<ScrapeResponse, EngineError>>>,
+        response_content: String,
+        is_error: bool,
+        call_count: AtomicU32,
+        max_calls: u32,
     }
 
     impl TestScraperEngineImpl {
@@ -515,12 +520,27 @@ mod tests_impl {
             supported_domains: Vec<String>,
             weight: u8,
             result: Result<ScrapeResponse, EngineError>,
+            max_calls: u32,
         ) -> Self {
-            Self {
-                name,
-                _supported_domains: supported_domains,
-                _weight: weight,
-                response_result: Mutex::new(Some(result)),
+            match result {
+                Ok(resp) => Self {
+                    name,
+                    _supported_domains: supported_domains,
+                    _weight: weight,
+                    response_content: resp.content,
+                    is_error: false,
+                    call_count: AtomicU32::new(0),
+                    max_calls,
+                },
+                Err(_) => Self {
+                    name,
+                    _supported_domains: supported_domains,
+                    _weight: weight,
+                    response_content: String::new(),
+                    is_error: true,
+                    call_count: AtomicU32::new(0),
+                    max_calls,
+                },
             }
         }
     }
@@ -528,17 +548,16 @@ mod tests_impl {
     #[async_trait]
     impl ScraperEngine for TestScraperEngineImpl {
         async fn scrape(&self, _request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
-            let mut lock = self.response_result.lock().unwrap();
-            if let Some(res) = lock.take() {
-                // For concurrent tests, we might want to clone if we needed multiple calls,
-                // but here we just return the pre-configured result.
-                // Since Result is not Clone by default for EngineError, we have to be careful.
-                // For this simple test implementation, we just consume it.
-                // In a real scenario we might clone data.
-                return res;
+            let call_count = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
+
+            if call_count <= self.max_calls {
+                if self.is_error {
+                    return Err(EngineError::Timeout);
+                }
+                Ok(ScrapeResponse::new("http://example.com", &self.response_content))
+            } else {
+                Ok(ScrapeResponse::new("http://example.com", "Default Result"))
             }
-            // Default if called more times than configured
-            Ok(ScrapeResponse::new("http://example.com", "Default Result"))
         }
 
         fn support_score(&self, _request: &ScrapeRequest) -> u8 {
@@ -557,6 +576,7 @@ mod tests_impl {
             vec!["example.com".to_string()],
             1,
             Ok(ScrapeResponse::new("http://example.com", "Result 1")),
+            10, // max_calls
         );
 
         let engine2 = TestScraperEngineImpl::new(
@@ -564,6 +584,7 @@ mod tests_impl {
             vec!["example.com".to_string()],
             1,
             Ok(ScrapeResponse::new("http://example.com", "Result 2")),
+            10, // max_calls
         );
 
         let router = EngineRouter::new(vec![Arc::new(engine1), Arc::new(engine2)]);
@@ -583,6 +604,7 @@ mod tests_impl {
             vec!["example.com".to_string()],
             1,
             Err(EngineError::Timeout),
+            10, // max_calls
         );
 
         let engine2 = TestScraperEngineImpl::new(
@@ -590,6 +612,7 @@ mod tests_impl {
             vec!["example.com".to_string()],
             1,
             Ok(ScrapeResponse::new("http://example.com", "Result 2")),
+            10, // max_calls
         );
 
         let router = EngineRouter::new(vec![Arc::new(engine1), Arc::new(engine2)]);
