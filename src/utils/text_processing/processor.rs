@@ -3,29 +3,22 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crate::utils::text_encoding::{TextEncodingError, TextEncodingProcessor};
+use crate::utils::text_processing::encoding::{
+    process_text_encoding, TextEncodingError, TextEncodingProcessor,
+};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
-/// 网页内容处理器，专门处理爬虫抓取的内容
+/// 网页内容处理器
 pub struct WebContentProcessor {
     text_processor: &'static TextEncodingProcessor,
     html_cleaner: HtmlCleaner,
     encoding_patterns: HashMap<String, Regex>,
 }
 
-/// HTML清理器
-struct HtmlCleaner {
-    script_regex: Regex,
-    style_regex: Regex,
-    comment_regex: Regex,
-    tag_regex: Regex,
-    whitespace_regex: Regex,
-}
-
-/// 全局网页内容处理器实例
 static WEB_PROCESSOR: Lazy<WebContentProcessor> = Lazy::new(WebContentProcessor::new);
 
 impl Default for WebContentProcessor {
@@ -35,7 +28,6 @@ impl Default for WebContentProcessor {
 }
 
 impl WebContentProcessor {
-    /// 创建新的网页内容处理器
     pub fn new() -> Self {
         Self {
             text_processor: TextEncodingProcessor::global(),
@@ -44,72 +36,50 @@ impl WebContentProcessor {
         }
     }
 
-    /// 获取全局处理器实例
     pub fn global() -> &'static Self {
         &WEB_PROCESSOR
     }
 
-    /// 初始化编码检测模式
     fn init_encoding_patterns() -> HashMap<String, Regex> {
         let mut patterns = HashMap::new();
-
-        // HTML meta标签编码声明
         patterns.insert(
             "html_meta".to_string(),
             Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#)
                 .expect("Failed to compile HTML meta charset regex"),
         );
-
-        // XML声明编码
         patterns.insert(
             "xml_declaration".to_string(),
             Regex::new(r#"(?i)<\?xml[^>]*encoding\s*=\s*["']?([^"'>\s]+)["']?[^>]*\?>"#)
                 .expect("Failed to compile XML encoding regex"),
         );
-
-        // HTTP Content-Type头编码
         patterns.insert(
             "http_content_type".to_string(),
             Regex::new(r#"(?i)charset\s*=\s*([^;\s]+)"#)
                 .expect("Failed to compile HTTP content-type charset regex"),
         );
-
         patterns
     }
 
-    /// 处理完整的网页内容
     pub fn process_web_content(
         &self,
         content: &[u8],
         content_type: Option<&str>,
     ) -> Result<ProcessedWebContent, WebContentError> {
         info!("开始处理网页内容，大小: {} 字节", content.len());
-
-        // 1. 检测和转换编码
         let text_content = self.process_encoding(content)?;
-
-        // 2. 检测HTML/XML结构
         let is_html = self.detect_html_structure(&text_content);
         let declared_encoding = self.extract_declared_encoding(&text_content);
-
         debug!(
             "检测到HTML结构: {}, 声明编码: {:?}",
             is_html, declared_encoding
         );
-
-        // 3. 提取文本内容
         let extracted_text = if is_html {
             self.extract_text_from_html(&text_content)?
         } else {
             text_content.clone()
         };
-
-        // 4. 清理和规范化文本
         let cleaned_text = self.clean_text(&extracted_text);
-
-        // 5. 检测语言
         let detected_language = self.detect_language(&cleaned_text);
-
         Ok(ProcessedWebContent {
             original_content: text_content,
             extracted_text: cleaned_text,
@@ -121,7 +91,6 @@ impl WebContentProcessor {
         })
     }
 
-    /// 处理文本编码
     fn process_encoding(&self, content: &[u8]) -> Result<String, WebContentError> {
         match self.text_processor.process_text(content) {
             Ok(text) => {
@@ -135,9 +104,7 @@ impl WebContentProcessor {
         }
     }
 
-    /// 检测HTML结构
     fn detect_html_structure(&self, content: &str) -> bool {
-        // 检查是否包含HTML标签
         content.contains("<html")
             || content.contains("<!DOCTYPE")
             || content.contains("<head")
@@ -147,16 +114,12 @@ impl WebContentProcessor {
             || content.contains("<a ")
     }
 
-    /// 提取声明的编码信息
     fn extract_declared_encoding(&self, content: &str) -> Option<String> {
-        // 检查HTML meta标签
         if let Some(captures) = self.encoding_patterns.get("html_meta")?.captures(content) {
             if let Some(encoding) = captures.get(1) {
                 return Some(encoding.as_str().to_lowercase());
             }
         }
-
-        // 检查XML声明
         if let Some(captures) = self
             .encoding_patterns
             .get("xml_declaration")?
@@ -166,53 +129,38 @@ impl WebContentProcessor {
                 return Some(encoding.as_str().to_lowercase());
             }
         }
-
         None
     }
 
-    /// 从HTML中提取文本内容
     fn extract_text_from_html(&self, html: &str) -> Result<String, WebContentError> {
         self.html_cleaner.extract_text(html)
     }
 
-    /// 清理和规范化文本
     fn clean_text(&self, text: &str) -> String {
         let mut cleaned = text.to_string();
-
-        // 解码HTML实体
         cleaned = html_escape::decode_html_entities(&cleaned).to_string();
-
-        // 移除不可见字符（但保留空白字符）
         cleaned = cleaned
             .chars()
             .filter(|c| !c.is_control() || c.is_whitespace())
             .collect();
-
-        // 去除首位换行符
         cleaned = self.text_processor.trim_newlines(&cleaned);
-
         cleaned.trim().to_string()
     }
 
-    /// 检测语言（简单实现，可以扩展为使用更复杂的库）
     fn detect_language(&self, text: &str) -> Option<String> {
         if text.is_empty() {
             return None;
         }
-
-        // 简单的语言检测逻辑
         let chinese_ratio = text
             .chars()
             .filter(|c| {
                 let code = *c as u32;
-                // CJK Unified Ideographs, CJK Unified Ideographs Extension A, CJK Compatibility Ideographs
                 (0x4E00..=0x9FFF).contains(&code)
                     || (0x3400..=0x4DBF).contains(&code)
                     || (0xF900..=0xFAFF).contains(&code)
             })
             .count() as f32
             / text.len() as f32;
-
         if chinese_ratio > 0.3 {
             Some("zh".to_string())
         } else if text.chars().filter(|c| c.is_ascii()).count() as f32 / text.len() as f32 > 0.8 {
@@ -222,7 +170,6 @@ impl WebContentProcessor {
         }
     }
 
-    /// 批量处理网页内容
     pub fn process_batch(
         &self,
         contents: Vec<(&[u8], Option<&str>)>,
@@ -232,17 +179,17 @@ impl WebContentProcessor {
             .map(|(content, content_type)| self.process_web_content(content, content_type))
             .collect()
     }
+}
 
-    /// 获取处理器统计信息
-    pub fn get_stats(&self) -> WebProcessorStats {
-        WebProcessorStats {
-            text_processor_stats: self.text_processor.get_stats(),
-        }
-    }
+struct HtmlCleaner {
+    script_regex: Regex,
+    style_regex: Regex,
+    comment_regex: Regex,
+    tag_regex: Regex,
+    whitespace_regex: Regex,
 }
 
 impl HtmlCleaner {
-    /// 创建新的HTML清理器
     fn new() -> Self {
         Self {
             script_regex: Regex::new(r#"(?is)<script[^>]*>.*?</script>"#)
@@ -256,35 +203,21 @@ impl HtmlCleaner {
         }
     }
 
-    /// 从HTML中提取文本
     fn extract_text(&self, html: &str) -> Result<String, WebContentError> {
         let mut text = html.to_string();
-
-        // 移除script标签
         text = self.script_regex.replace_all(&text, "").to_string();
-
-        // 移除style标签
         text = self.style_regex.replace_all(&text, "").to_string();
-
-        // 移除HTML注释
         text = self.comment_regex.replace_all(&text, "").to_string();
-
-        // 替换HTML标签为空格
         text = self.tag_regex.replace_all(&text, " ").to_string();
-
-        // 规范化空白字符
         text = self.normalize_whitespace(&text);
-
         Ok(text.trim().to_string())
     }
 
-    /// 规范化空白字符
     fn normalize_whitespace(&self, text: &str) -> String {
         self.whitespace_regex.replace_all(text, " ").to_string()
     }
 }
 
-/// 处理后的网页内容
 #[derive(Debug, Clone)]
 pub struct ProcessedWebContent {
     pub original_content: String,
@@ -296,26 +229,16 @@ pub struct ProcessedWebContent {
     pub content_length: usize,
 }
 
-/// 网页内容处理错误
 #[derive(Debug, thiserror::Error)]
 pub enum WebContentError {
     #[error("编码处理错误: {0}")]
     EncodingError(#[from] TextEncodingError),
-
     #[error("HTML解析错误: {0}")]
     HtmlParseError(String),
-
     #[error("内容提取错误: {0}")]
     ContentExtractionError(String),
 }
 
-/// 处理器统计信息
-#[derive(Debug, Clone)]
-pub struct WebProcessorStats {
-    pub text_processor_stats: crate::utils::text_encoding::TextProcessorStats,
-}
-
-/// 便捷函数：处理网页内容
 pub fn process_web_content(
     content: &[u8],
     content_type: Option<&str>,
@@ -323,11 +246,221 @@ pub fn process_web_content(
     WebContentProcessor::global().process_web_content(content, content_type)
 }
 
-/// 便捷函数：批量处理网页内容
-pub fn process_web_content_batch(
-    contents: Vec<(&[u8], Option<&str>)>,
-) -> Vec<Result<ProcessedWebContent, WebContentError>> {
-    WebContentProcessor::global().process_batch(contents)
+/// 爬虫文本处理器
+pub struct CrawlTextProcessor {
+    max_processing_time: Duration,
+    max_content_size: usize,
+}
+
+impl Default for CrawlTextProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CrawlTextProcessor {
+    pub fn new() -> Self {
+        Self {
+            max_processing_time: Duration::from_secs(30),
+            max_content_size: 10 * 1024 * 1024,
+        }
+    }
+
+    pub fn process_crawled_content(
+        &self,
+        content: &[u8],
+        url: &str,
+        content_type: Option<&str>,
+    ) -> Result<ProcessedCrawlContent, CrawlProcessingError> {
+        let start_time = Instant::now();
+        let content_size = content.len();
+        info!(
+            "开始处理抓取的内容: URL={}, 大小={} 字节",
+            url, content_size
+        );
+        if content_size > self.max_content_size {
+            return Err(CrawlProcessingError::ContentTooLarge {
+                size: content_size,
+                max_size: self.max_content_size,
+            });
+        }
+        if start_time.elapsed() > self.max_processing_time {
+            return Err(CrawlProcessingError::ProcessingTimeout);
+        }
+        let processed_content = self.process_content_with_timeout(content, content_type)?;
+        let processing_time = start_time.elapsed();
+        info!(
+            "内容处理完成: URL={}, 耗时={:?}, 提取文本长度={}",
+            url,
+            processing_time,
+            processed_content.extracted_text.len()
+        );
+        Ok(ProcessedCrawlContent {
+            url: url.to_string(),
+            processed_content: processed_content.clone(),
+            processing_time,
+            original_size: content_size,
+            processed_size: processed_content.extracted_text.len(),
+        })
+    }
+
+    fn process_content_with_timeout(
+        &self,
+        content: &[u8],
+        content_type: Option<&str>,
+    ) -> Result<ProcessedWebContent, CrawlProcessingError> {
+        use std::sync::mpsc;
+        use std::thread;
+        let (tx, rx) = mpsc::channel();
+        let content = content.to_vec();
+        let content_type = content_type.map(|s| s.to_string());
+        thread::spawn(move || {
+            let result = process_web_content(&content, content_type.as_deref());
+            let _ = tx.send(result);
+        });
+        match rx.recv_timeout(self.max_processing_time) {
+            Ok(result) => result.map_err(CrawlProcessingError::WebContentError),
+            Err(_) => Err(CrawlProcessingError::ProcessingTimeout),
+        }
+    }
+
+    pub fn process_batch(
+        &self,
+        batch: Vec<(&[u8], &str, Option<&str>)>,
+    ) -> Vec<Result<ProcessedCrawlContent, CrawlProcessingError>> {
+        let mut results = Vec::with_capacity(batch.len());
+        for (content, url, content_type) in batch {
+            let result = self.process_crawled_content(content, url, content_type);
+            results.push(result);
+        }
+        results
+    }
+
+    pub fn process_simple_text(&self, text: &str) -> Result<String, CrawlProcessingError> {
+        if text.is_empty() {
+            return Ok(String::new());
+        }
+        match process_text_encoding(text.as_bytes()) {
+            Ok(processed) => Ok(processed),
+            Err(e) => Err(CrawlProcessingError::TextEncodingError(e)),
+        }
+    }
+
+    pub fn validate_content_quality(&self, content: &ProcessedCrawlContent) -> ContentQuality {
+        let text_length = content.processed_content.extracted_text.len();
+        let word_count = content
+            .processed_content
+            .extracted_text
+            .split_whitespace()
+            .count();
+        if text_length < 50 {
+            return ContentQuality::Poor("文本内容过短".to_string());
+        }
+        if word_count < 10 {
+            return ContentQuality::Poor("单词数量过少".to_string());
+        }
+        let text_ratio = text_length as f64 / content.original_size as f64;
+        if text_ratio < 0.01 && content.original_size > 1000 {
+            return ContentQuality::Poor("有效内容比例过低".to_string());
+        }
+        let repetitive_ratio =
+            self.calculate_repetitive_ratio(&content.processed_content.extracted_text);
+        if repetitive_ratio > 0.8 {
+            return ContentQuality::Poor("内容重复度过高".to_string());
+        }
+        if content.processing_time.as_secs() > 10 {
+            ContentQuality::Good
+        } else {
+            ContentQuality::Excellent
+        }
+    }
+
+    fn calculate_repetitive_ratio(&self, text: &str) -> f64 {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.len() < 10 {
+            return 0.0;
+        }
+        let mut word_counts = std::collections::HashMap::new();
+        for word in &words {
+            *word_counts.entry(word.to_lowercase()).or_insert(0) += 1;
+        }
+        let max_count = *word_counts.values().max().unwrap_or(&1);
+        let total_words = words.len();
+        (max_count as f64 / total_words as f64).min(1.0)
+    }
+
+    pub fn get_config(&self) -> CrawlProcessorConfig {
+        CrawlProcessorConfig {
+            max_processing_time_secs: self.max_processing_time.as_secs(),
+            max_content_size_mb: self.max_content_size / (1024 * 1024),
+        }
+    }
+
+    pub fn update_config(&mut self, config: CrawlProcessorConfig) {
+        self.max_processing_time = Duration::from_secs(config.max_processing_time_secs);
+        self.max_content_size = config.max_content_size_mb * 1024 * 1024;
+        info!("更新爬虫文本处理器配置: {:?}", config);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProcessedCrawlContent {
+    pub url: String,
+    pub processed_content: ProcessedWebContent,
+    pub processing_time: Duration,
+    pub original_size: usize,
+    pub processed_size: usize,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CrawlProcessingError {
+    #[error("文本编码处理错误: {0}")]
+    TextEncodingError(#[from] TextEncodingError),
+    #[error("网页内容处理错误: {0}")]
+    WebContentError(#[from] WebContentError),
+    #[error("内容过大: {size} 字节 (最大允许: {max_size} 字节)")]
+    ContentTooLarge { size: usize, max_size: usize },
+    #[error("处理超时")]
+    ProcessingTimeout,
+    #[error("内容质量过低: {0}")]
+    PoorContentQuality(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContentQuality {
+    Excellent,
+    Good,
+    Fair,
+    Poor(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct CrawlProcessorConfig {
+    pub max_processing_time_secs: u64,
+    pub max_content_size_mb: usize,
+}
+
+impl Default for CrawlProcessorConfig {
+    fn default() -> Self {
+        Self {
+            max_processing_time_secs: 30,
+            max_content_size_mb: 10,
+        }
+    }
+}
+
+pub fn process_crawled_content(
+    content: &[u8],
+    url: &str,
+    content_type: Option<&str>,
+) -> Result<ProcessedCrawlContent, CrawlProcessingError> {
+    CrawlTextProcessor::new().process_crawled_content(content, url, content_type)
+}
+
+pub fn process_crawled_batch(
+    batch: Vec<(&[u8], &str, Option<&str>)>,
+) -> Vec<Result<ProcessedCrawlContent, CrawlProcessingError>> {
+    CrawlTextProcessor::new().process_batch(batch)
 }
 
 #[cfg(test)]
@@ -337,17 +470,8 @@ mod tests {
     #[test]
     fn test_html_detection() {
         let processor = WebContentProcessor::new();
-
-        let html_content = r#"
-        <!DOCTYPE html>
-        <html>
-        <head><title>Test</title></head>
-        <body><p>Hello World</p></body>
-        </html>
-        "#;
-
+        let html_content = r#"<!DOCTYPE html><html><head><title>Test</title></head><body><p>Hello World</p></body></html>"#;
         assert!(processor.detect_html_structure(html_content));
-
         let plain_text = "This is plain text without any HTML tags.";
         assert!(!processor.detect_html_structure(plain_text));
     }
@@ -355,17 +479,7 @@ mod tests {
     #[test]
     fn test_encoding_extraction() {
         let processor = WebContentProcessor::new();
-
-        let html_with_meta = r#"
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <title>Test</title>
-        </head>
-        <body>Content</body>
-        </html>
-        "#;
-
+        let html_with_meta = r#"<html><head><meta charset="utf-8"><title>Test</title></head><body>Content</body></html>"#;
         let encoding = processor.extract_declared_encoding(html_with_meta);
         assert_eq!(encoding, Some("utf-8".to_string()));
     }
@@ -373,23 +487,10 @@ mod tests {
     #[test]
     fn test_html_text_extraction() {
         let processor = WebContentProcessor::new();
-
-        let html_content = r#"
-        <html>
-        <head><title>Test Page</title></head>
-        <body>
-            <h1>Main Title</h1>
-            <p>This is a <strong>test</strong> paragraph.</p>
-            <script>alert('test');</script>
-            <style>body { color: red; }</style>
-        </body>
-        </html>
-        "#;
-
+        let html_content = r#"<html><head><title>Test Page</title></head><body><h1>Main Title</h1><p>This is a <strong>test</strong> paragraph.</p><script>alert('test');</script><style>body { color: red; }</style></body></html>"#;
         let result = processor
             .process_web_content(html_content.as_bytes(), Some("text/html"))
             .unwrap();
-
         assert!(result.is_html);
         assert!(result.extracted_text.contains("Main Title"));
         assert!(result.extracted_text.contains("test paragraph"));
@@ -398,88 +499,32 @@ mod tests {
     }
 
     #[test]
-    fn test_plain_text_processing() {
-        let processor = WebContentProcessor::new();
-
-        let plain_text = "This is plain text content.\nWith multiple lines.";
-        let result = processor
-            .process_web_content(plain_text.as_bytes(), Some("text/plain"))
-            .unwrap();
-
-        assert!(!result.is_html);
-        assert_eq!(result.extracted_text, plain_text);
-    }
-
-    #[test]
     fn test_language_detection() {
         let processor = WebContentProcessor::new();
-
         let english_text = "This is English text content.";
         let lang = processor.detect_language(english_text);
         assert_eq!(lang, Some("en".to_string()));
-
         let chinese_text = "这是中文内容";
         let lang = processor.detect_language(chinese_text);
         assert_eq!(lang, Some("zh".to_string()));
     }
 
     #[test]
-    fn test_batch_processing() {
-        let processor = WebContentProcessor::new();
-
-        let contents = vec![
-            ("Text 1".as_bytes(), Some("text/plain")),
-            ("Text 2".as_bytes(), Some("text/plain")),
-        ];
-
-        let results = processor.process_batch(contents);
-        assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|r| r.is_ok()));
+    fn test_simple_text_processing() {
+        let processor = CrawlTextProcessor::new();
+        let text = "Hello, 世界! This is a test.";
+        let result = processor.process_simple_text(text).unwrap();
+        assert_eq!(result, text);
     }
 
     #[test]
-    fn test_newline_trimming_in_html() {
-        let processor = WebContentProcessor::new();
-
-        // 测试HTML内容中的首位换行符去除
-        let html_with_newlines = r#"
-
-<html>
-<head><title>Test</title></head>
-<body>
-<p>Hello World</p>
-</body>
-</html>
-
-"#;
-
-        let result = processor
-            .process_web_content(html_with_newlines.as_bytes(), Some("text/html"))
-            .unwrap();
-
-        // 验证提取的文本没有首位换行符
-        assert!(!result.extracted_text.starts_with('\n'));
-        assert!(!result.extracted_text.ends_with('\n'));
-        assert!(result.extracted_text.contains("Hello World"));
-    }
-
-    #[test]
-    fn test_newline_trimming_in_plain_text() {
-        let processor = WebContentProcessor::new();
-
-        // 测试纯文本中的首位换行符去除
-        let text_with_newlines = "\n\nThis is plain text.\nWith multiple lines.\n\n";
-        let result = processor
-            .process_web_content(text_with_newlines.as_bytes(), Some("text/plain"))
-            .unwrap();
-
-        // 验证处理后的文本没有首位换行符
-        assert!(!result.extracted_text.starts_with('\n'));
-        assert!(!result.extracted_text.ends_with('\n'));
-        assert!(result.extracted_text.contains("plain text"));
-        assert!(result.extracted_text.contains("multiple lines"));
-
-        // 验证中间换行符被保留
-        assert!(result.extracted_text.contains("text.\nWith")); // 中间换行符被保留
+    fn test_repetitive_content_detection() {
+        let processor = CrawlTextProcessor::new();
+        let repetitive_text = "spam spam spam spam spam spam spam spam spam spam";
+        let ratio = processor.calculate_repetitive_ratio(repetitive_text);
+        assert!(ratio > 0.5);
+        let normal_text = "This is normal text with different words and meaningful content.";
+        let ratio = processor.calculate_repetitive_ratio(normal_text);
+        assert!(ratio < 0.5);
     }
 }

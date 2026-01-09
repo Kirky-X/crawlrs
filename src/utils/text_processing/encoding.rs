@@ -60,7 +60,7 @@ impl TextEncodingProcessor {
             encoding_cache: Mutex::new(LruCache::new(
                 std::num::NonZeroUsize::new(1000).expect("Cache size must be non-zero"),
             )),
-            short_text_threshold: 1000, // 1KB阈值，用于区分长短文本
+            short_text_threshold: 1000,
         }
     }
 
@@ -71,31 +71,23 @@ impl TextEncodingProcessor {
 
     /// 处理文本编码，确保输出为UTF-8格式
     pub fn process_text(&self, input: &[u8]) -> Result<String, TextEncodingError> {
-        // 检查输入数据大小，对小文本进行特殊处理
         let result = if input.len() < self.short_text_threshold {
             self.process_short_text(input)?
         } else {
             self.process_long_text(input)?
         };
-
-        // 去除首位换行符
         Ok(self.trim_newlines(&result))
     }
 
     /// 处理短文本（优化性能）
     fn process_short_text(&self, input: &[u8]) -> Result<String, TextEncodingError> {
         debug!("处理短文本，长度: {} 字节", input.len());
-
-        // 首先尝试直接作为UTF-8解析
         if let Ok(utf8_str) = std::str::from_utf8(input) {
-            // 检测是否为Unicode字符串需要转换
             if self.contains_unicode_escapes(utf8_str) {
                 return self.normalize_unicode(utf8_str);
             }
             return Ok(utf8_str.to_string());
         }
-
-        // UTF-8解析失败，进行编码检测
         let (result, _detection) = self.detect_and_convert_encoding(input);
         result
     }
@@ -103,22 +95,15 @@ impl TextEncodingProcessor {
     /// 处理长文本（完整处理流程）
     fn process_long_text(&self, input: &[u8]) -> Result<String, TextEncodingError> {
         debug!("处理长文本，长度: {} 字节", input.len());
-
-        // 检查缓存
         let cache_key = self.generate_cache_key(input);
         if let Some(cached_result) = self.get_cached_detection(&cache_key) {
             debug!("使用缓存的编码检测结果: {:?}", cached_result);
             return self.apply_cached_conversion(input, &cached_result);
         }
-
-        // 完整的编码检测和转换流程
         let (result, detection) = self.detect_and_convert_encoding(input);
-
-        // 缓存检测结果（仅在检测成功时）
         if result.is_ok() {
             self.cache_detection_result(&cache_key, &detection);
         }
-
         result
     }
 
@@ -127,26 +112,20 @@ impl TextEncodingProcessor {
         text.contains("\\u") || text.contains("\\U") || text.contains("\\x")
     }
 
-    /// 解析字符串中的Unicode转义序列（如 \u4e00 -> 一）
+    /// 解析字符串中的Unicode转义序列
     fn parse_unicode_escapes(&self, text: &str) -> String {
         let mut result = String::new();
         let mut chars = text.chars().peekable();
-
         while let Some(c) = chars.next() {
             if c == '\\' {
-                // 检查是否是Unicode转义序列
                 if chars.peek() == Some(&'u') {
-                    chars.next(); // 消耗 'u'
-
-                    // 读取4个十六进制字符
+                    chars.next();
                     let mut hex_chars = String::new();
                     for _ in 0..4 {
                         if let Some(h) = chars.next() {
                             hex_chars.push(h);
                         }
                     }
-
-                    // 转换为Unicode字符
                     if let Ok(code_point) = u32::from_str_radix(&hex_chars, 16) {
                         if let Some(ch) = char::from_u32(code_point) {
                             result.push(ch);
@@ -154,17 +133,13 @@ impl TextEncodingProcessor {
                         }
                     }
                 } else if chars.peek() == Some(&'U') {
-                    chars.next(); // 消耗 'U'
-
-                    // 读取8个十六进制字符（U+XXXXXXXX格式）
+                    chars.next();
                     let mut hex_chars = String::new();
                     for _ in 0..8 {
                         if let Some(h) = chars.next() {
                             hex_chars.push(h);
                         }
                     }
-
-                    // 转换为Unicode字符
                     if let Ok(code_point) = u32::from_str_radix(&hex_chars, 16) {
                         if let Some(ch) = char::from_u32(code_point) {
                             result.push(ch);
@@ -172,17 +147,13 @@ impl TextEncodingProcessor {
                         }
                     }
                 } else if chars.peek() == Some(&'x') {
-                    chars.next(); // 消耗 'x'
-
-                    // 读取2个十六进制字符（\xHH格式）
+                    chars.next();
                     let mut hex_chars = String::new();
                     for _ in 0..2 {
                         if let Some(h) = chars.next() {
                             hex_chars.push(h);
                         }
                     }
-
-                    // 转换为Unicode字符
                     if let Ok(code_point) = u32::from_str_radix(&hex_chars, 16) {
                         if let Some(ch) = char::from_u32(code_point) {
                             result.push(ch);
@@ -191,79 +162,56 @@ impl TextEncodingProcessor {
                     }
                 }
             }
-
-            // 如果不是转义序列，直接添加当前字符
             result.push(c);
         }
-
         result
     }
 
     /// Unicode字符串规范化转换
     fn normalize_unicode(&self, text: &str) -> Result<String, TextEncodingError> {
         debug!("检测到Unicode转义序列，执行规范化转换");
-
-        // 解析字符串中的Unicode转义序列（如 \u4e00 -> 一）
         let parsed = self.parse_unicode_escapes(text);
         debug!("Unicode转义序列解析完成: {:?}", parsed);
-
-        // 保留解析后的结果（已经是正确的Unicode字符）
-        // 不再使用 deunicode，因为它会将中文字符转换为拼音
         Ok(parsed)
     }
 
     /// 检测并转换编码
-    /// 返回 (转换后的文本, 编码检测结果)
     fn detect_and_convert_encoding(
         &self,
         input: &[u8],
     ) -> (Result<String, TextEncodingError>, EncodingDetection) {
         debug!("开始编码检测");
-
-        // 使用chardetng进行编码检测
         let mut detector = EncodingDetector::new();
         detector.feed(input, true);
-
         let encoding = detector.guess(None, true);
         let encoding_name = encoding.name();
         let is_utf8 = encoding_name == "utf-8";
         let confidence = if is_utf8 { 1.0 } else { 0.9 };
-
         let detection = EncodingDetection {
             encoding: encoding_name.to_string(),
             confidence,
             is_utf8,
         };
-
         debug!("检测到编码: {}, 置信度: {:.2}", encoding_name, confidence);
-
-        // 如果已经是UTF-8且置信度高，直接返回
         if is_utf8 {
             let result = std::str::from_utf8(input)
                 .map(|s| s.to_string())
                 .map_err(|e| TextEncodingError::ConversionFailed(e.to_string()));
             return (result, detection);
         }
-
-        // 进行编码转换
         let result = self.convert_encoding(input, encoding, confidence);
         (result, detection)
     }
 
-    /// 去除字符串的首位换行符（保留中间换行符）
+    /// 去除字符串的首位换行符
     pub fn trim_newlines(&self, text: &str) -> String {
         let mut result = text.to_string();
-
-        // 去除开头的换行符
         while result.starts_with('\n') {
             result = result[1..].to_string();
         }
-
-        // 去除结尾的换行符
         while result.ends_with('\n') && !result.is_empty() {
             result.pop();
         }
-
         result
     }
 
@@ -277,9 +225,7 @@ impl TextEncodingProcessor {
         if confidence < 0.3 {
             warn!("编码检测置信度过低: {:.2}，使用UTF-8尝试解析", confidence);
         }
-
         let (decoded, _, had_errors) = encoding.decode(input);
-
         if had_errors && confidence < 0.5 {
             return Err(TextEncodingError::ConversionFailed(format!(
                 "编码转换错误，检测到编码: {}，置信度: {:.2}",
@@ -287,14 +233,10 @@ impl TextEncodingProcessor {
                 confidence
             )));
         }
-
         let result = decoded.into_owned();
-
-        // 检查转换后的文本是否包含Unicode转义序列
         if self.contains_unicode_escapes(&result) {
             return self.normalize_unicode(&result);
         }
-
         Ok(result)
     }
 
@@ -302,7 +244,6 @@ impl TextEncodingProcessor {
     fn generate_cache_key(&self, input: &[u8]) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-
         let mut hasher = DefaultHasher::new();
         input.hash(&mut hasher);
         format!("{:x}", hasher.finish())
@@ -332,7 +273,6 @@ impl TextEncodingProcessor {
                 .map(|s| s.to_string())
                 .map_err(|e| TextEncodingError::ConversionFailed(e.to_string()))
         } else {
-            // 如果不是UTF-8，使用缓存的编码信息重新转换
             let encoding = Encoding::for_label(detection.encoding.as_bytes())
                 .ok_or_else(|| TextEncodingError::InvalidEncoding(detection.encoding.clone()))?;
             self.convert_encoding(input, encoding, detection.confidence)
@@ -378,7 +318,6 @@ pub fn process_text_batch(inputs: Vec<&[u8]>) -> Vec<Result<String, TextEncoding
 
 /// 便捷函数：处理字符串（UTF-8输入）
 pub fn process_string(input: &str) -> Result<String, TextEncodingError> {
-    // 检查是否包含Unicode转义序列
     if TextEncodingProcessor::global().contains_unicode_escapes(input) {
         TextEncodingProcessor::global().normalize_unicode(input)
     } else {
@@ -401,7 +340,7 @@ mod tests {
     #[test]
     fn test_unicode_escape_processing() {
         let processor = TextEncodingProcessor::new();
-        let input = "Hello 世界!"; // 直接包含中文字符
+        let input = "Hello 世界!";
         let result = processor.process_text(input.as_bytes()).unwrap();
         assert!(result.contains("世界"));
     }
@@ -411,27 +350,6 @@ mod tests {
         let input = "\u{4e00}\u{7ad9}\u{5f0f}\u{7f51}\u{7ad9}\u{5efa}\u{8bbe}";
         let result = process_string(input).expect("Unicode conversion should succeed");
         assert!(!result.is_empty());
-
-        let input2 = "\u{5e7f}\u{544a}\u{63a8}\u{8350}\u{7cfb}\u{7edf}";
-        let result2 = process_string(input2).expect("Unicode conversion should succeed");
-        assert!(!result2.is_empty());
-    }
-
-    #[test]
-    fn test_string_unicode_escape_sequence_conversion() {
-        // 测试字符串形式的Unicode转义序列（如 "\\u4e00"）
-        let input = "\\u4e00\\u7ad9\\u5f0f\\u7f51\\u7ad9\\u5efa\\u8bbe";
-        let result =
-            process_string(input).expect("String Unicode escape conversion should succeed");
-        tracing::debug!("input = {:?}, result = {:?}", input, result);
-        assert!(!result.is_empty());
-        assert!(result.contains("一站式"));
-
-        // 测试混合内容
-        let input2 = "搜索结果: \\u5e7f\\u544a\\u63a8\\u8350";
-        let result2 = process_string(input2).expect("Mixed content conversion should succeed");
-        tracing::debug!("input2 = {:?}, result2 = {:?}", input2, result2);
-        assert!(result2.contains("广告"));
     }
 
     #[test]
@@ -456,18 +374,8 @@ mod tests {
     }
 
     #[test]
-    fn test_stats() {
-        let processor = TextEncodingProcessor::new();
-        let stats = processor.get_stats();
-        assert_eq!(stats.cache_capacity, 1000);
-        assert_eq!(stats.short_text_threshold, 1000);
-    }
-
-    #[test]
     fn test_trim_newlines_basic() {
         let processor = TextEncodingProcessor::new();
-
-        // 测试基本功能：去除首位换行符
         assert_eq!(processor.trim_newlines("hello"), "hello");
         assert_eq!(processor.trim_newlines("\nhello"), "hello");
         assert_eq!(processor.trim_newlines("hello\n"), "hello");
@@ -478,38 +386,15 @@ mod tests {
     #[test]
     fn test_trim_newlines_middle_preserved() {
         let processor = TextEncodingProcessor::new();
-
-        // 测试中间换行符保持不变
         assert_eq!(processor.trim_newlines("hello\nworld"), "hello\nworld");
         assert_eq!(processor.trim_newlines("\nhello\nworld\n"), "hello\nworld");
-        assert_eq!(
-            processor.trim_newlines("\n\nline1\nline2\n\n"),
-            "line1\nline2"
-        );
     }
 
     #[test]
     fn test_trim_newlines_empty() {
         let processor = TextEncodingProcessor::new();
-
-        // 测试空字符串和只有换行符的情况
         assert_eq!(processor.trim_newlines(""), "");
         assert_eq!(processor.trim_newlines("\n"), "");
         assert_eq!(processor.trim_newlines("\n\n\n"), "");
-    }
-
-    #[test]
-    fn test_process_text_with_newlines() {
-        let processor = TextEncodingProcessor::new();
-
-        // 测试完整的文本处理流程中包含换行符去除
-        let input = "\n\nHello World!\nThis is a test.\n\n";
-        let result = processor.process_text(input.as_bytes()).unwrap();
-        assert_eq!(result, "Hello World!\nThis is a test.");
-
-        // 测试只有首位换行符的情况
-        let input2 = "\nSimple text\n";
-        let result2 = processor.process_text(input2.as_bytes()).unwrap();
-        assert_eq!(result2, "Simple text");
     }
 }

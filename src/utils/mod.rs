@@ -4,18 +4,23 @@
 // See LICENSE file in the project root for full license information.
 
 pub mod crawl_text_integration;
-pub mod crawl_text_processor;
-pub mod errors;
-pub mod port_sniffer;
 /// 工具模块
 ///
 /// 提供通用的工具函数和辅助功能
-/// 包括机器人检测、遥测监控等功能
+/// 包括文本处理、URL工具、错误处理等功能
+pub mod errors;
+pub mod port_sniffer;
 pub mod retry_policy;
 pub mod robots;
-pub mod search_test;
 pub mod telemetry;
-pub mod text_encoding;
-pub mod text_encoding_examples;
 pub mod text_processing;
-pub mod web_content_processor;
+pub mod url;
+
+// 向后兼容的重新导出
+pub use crate::utils::text_processing::{
+    process_crawled_content, process_text_encoding, process_web_content, CrawlProcessingError,
+    CrawlTextProcessor, ProcessedCrawlContent, ProcessedWebContent, TextEncodingError,
+    TextEncodingProcessor, WebContentError, WebContentProcessor,
+};
+
+pub use crate::utils::url::{is_safe_ip, resolve_url, validate_url, ValidationError};

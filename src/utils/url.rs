@@ -3,30 +3,24 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+//! URL处理工具模块
+//!
+//! 提供URL验证、解析和安全检查功能
+
 use std::net::IpAddr;
 use thiserror::Error;
-use url::Url;
+use url::{ParseError, Url};
 
 /// 验证错误类型
 #[derive(Error, Debug)]
 pub enum ValidationError {
-    /// URL无效
     #[error("Invalid URL")]
     InvalidUrl,
-    /// 检测到SSRF攻击
     #[error("SSRF detected")]
     SsrfDetected,
 }
 
 /// 检查IP地址是否安全
-///
-/// # 参数
-///
-/// * `ip` - IP地址
-///
-/// # 返回值
-///
-/// 如果IP地址是安全的则返回true，否则返回false
 pub fn is_safe_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
@@ -41,36 +35,64 @@ pub fn is_safe_ip(ip: IpAddr) -> bool {
 }
 
 /// 验证URL
-///
-/// # 参数
-///
-/// * `url` - URL字符串
-///
-/// # 返回值
-///
-/// * `Ok(())` - URL有效
-/// * `Err(ValidationError)` - URL无效或存在安全风险
 pub async fn validate_url(url: &str) -> Result<(), ValidationError> {
     let parsed = Url::parse(url).map_err(|_| ValidationError::InvalidUrl)?;
-
-    // Check scheme
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err(ValidationError::InvalidUrl);
     }
-
-    // Resolve domain to IP
     let host = parsed.host_str().ok_or(ValidationError::InvalidUrl)?;
     let addrs = tokio::net::lookup_host((host, 0))
         .await
         .map_err(|_| ValidationError::InvalidUrl)?
         .collect::<Vec<_>>();
-
-    // Check all resolved IPs
     for addr in addrs {
         if !is_safe_ip(addr.ip()) {
             return Err(ValidationError::SsrfDetected);
         }
     }
-
     Ok(())
+}
+
+/// 将可能为相对路径的URL转换为绝对路径URL
+pub fn resolve_url(base_url: &Url, path: &str) -> Result<Url, ParseError> {
+    base_url.join(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_absolute_url() {
+        let base = Url::parse("http://example.com/a/b").unwrap();
+        let path = "http://t.co/c";
+        assert_eq!(resolve_url(&base, path).unwrap().as_str(), "http://t.co/c");
+    }
+
+    #[test]
+    fn test_resolve_protocol_relative_url() {
+        let base = Url::parse("https://example.com/a/b").unwrap();
+        let path = "//t.co/c";
+        assert_eq!(resolve_url(&base, path).unwrap().as_str(), "https://t.co/c");
+    }
+
+    #[test]
+    fn test_resolve_root_relative_url() {
+        let base = Url::parse("http://example.com/a/b").unwrap();
+        let path = "/c";
+        assert_eq!(
+            resolve_url(&base, path).unwrap().as_str(),
+            "http://example.com/c"
+        );
+    }
+
+    #[test]
+    fn test_resolve_relative_url() {
+        let base = Url::parse("http://example.com/a/b").unwrap();
+        let path = "c";
+        assert_eq!(
+            resolve_url(&base, path).unwrap().as_str(),
+            "http://example.com/a/c"
+        );
+    }
 }
