@@ -78,28 +78,28 @@ where
 }
 
 use crawlrs::config::settings::Settings;
-use crawlrs::engines::playwright_engine::PlaywrightEngine;
-use crawlrs::engines::reqwest_engine::ReqwestEngine;
+use crawlrs::domain::repositories::task_repository::TaskRepository;
+use crawlrs::engines::client::playwright::PlaywrightEngine;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::geolocation::GeoLocationService;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
 use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
+use crawlrs::infrastructure::search::bing::BingSearchEngine;
+use crawlrs::infrastructure::search::google::GoogleSearchEngine;
 use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingConfig;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl;
 use crawlrs::presentation::handlers;
 use crawlrs::presentation::middleware::auth_middleware::AuthState;
 use crawlrs::queue::task_queue::TaskQueue;
+use crawlrs::workers::expiration_worker::ExpirationWorker;
 use crawlrs::workers::manager::WorkerManager;
 use crawlrs::workers::scrape_worker::ScrapeWorker;
-use crawlrs::workers::expiration_worker::ExpirationWorker;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use std::process::Command;
@@ -153,6 +153,12 @@ impl TaskQueue for InMemoryQueue {
         task_repo.mark_failed(task_id).await?;
         Ok(())
     }
+
+    async fn cancel(&self, task_id: Uuid) -> Result<(), crawlrs::queue::task_queue::QueueError> {
+        let task_repo = self.task_repo.as_ref();
+        task_repo.mark_cancelled(task_id).await?;
+        Ok(())
+    }
 }
 
 pub struct TestApp {
@@ -190,11 +196,12 @@ impl TestApp {
         let api_key = Uuid::new_v4().to_string();
 
         // 检测数据库类型并使用对应的语法
-        let db_backend = if self.db_pool.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
-            DbBackend::Postgres
-        } else {
-            DbBackend::Sqlite
-        };
+        let db_backend =
+            if self.db_pool.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
+                DbBackend::Postgres
+            } else {
+                DbBackend::Sqlite
+            };
 
         if db_backend == DbBackend::Postgres {
             self.db_pool
@@ -271,7 +278,10 @@ pub async fn create_test_app_with_low_rate_limit() -> TestApp {
     // Must use the same key format as RateLimiter in rate_limit_middleware.rs: "rate_limit_config:{api_key}"
     let rate_limit_key = format!("rate_limit_config:{}", app.api_key);
     let rate_limit_value = json!({"requests_per_minute": 1, "capacity": 1});
-    let _ = app.redis.set(&rate_limit_key, &rate_limit_value.to_string(), 60).await;
+    let _ = app
+        .redis
+        .set(&rate_limit_key, &rate_limit_value.to_string(), 60)
+        .await;
 
     app
 }
@@ -294,8 +304,7 @@ pub async fn create_test_app_with_rate_limit_options(
 
     if use_redis {
         // Use external Redis instance - try different ports if default fails
-        let redis_port = std::env::var("TEST_REDIS_PORT")
-            .unwrap_or_else(|_| "6380".to_string());
+        let redis_port = std::env::var("TEST_REDIS_PORT").unwrap_or_else(|_| "6380".to_string());
         redis_url = format!("redis://127.0.0.1:{}", redis_port);
         redis_client = RedisClient::new(&redis_url).await.unwrap();
         redis_process = None;
@@ -402,7 +411,12 @@ pub async fn create_test_app_with_rate_limit_options(
 
     let search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine> = Arc::new(
         crawlrs::infrastructure::search::aggregator::SearchAggregator::new(
-            vec![Arc::new(GoogleSearchEngine::new()), Arc::new(BingSearchEngine::new()), Arc::new(BaiduSearchEngine::new()), Arc::new(SogouSearchEngine::new())],
+            vec![
+                Arc::new(GoogleSearchEngine::new()),
+                Arc::new(BingSearchEngine::new()),
+                Arc::new(BaiduSearchEngine::new()),
+                Arc::new(SogouSearchEngine::new()),
+            ],
             10000,
         ),
     );
@@ -458,16 +472,20 @@ pub async fn create_test_app_with_rate_limit_options(
             db_pool.clone(),
         ),
     );
-    let storage_repo: Option<Arc<dyn crawlrs::domain::repositories::storage_repository::StorageRepository + Send + Sync>> = None;
+    let storage_repo: Option<
+        Arc<dyn crawlrs::domain::repositories::storage_repository::StorageRepository + Send + Sync>,
+    > = None;
     let settings = Arc::new(Settings::new().unwrap());
 
     // 创建 LLM 服务（用于提取功能）
-    let llm_service = Box::new(crawlrs::domain::services::llm_service::LLMService::new(&settings));
-    let extraction_service = Arc::new(crawlrs::domain::services::extraction_service::ExtractionService::new(llm_service));
+    let llm_service = Box::new(crawlrs::domain::services::llm_service::LLMService::new(
+        &settings,
+    ));
+    let extraction_service = Arc::new(
+        crawlrs::domain::services::extraction_service::ExtractionService::new(llm_service),
+    );
     let create_scrape_use_case = Arc::new(
-        crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(
-            router.clone(),
-        ),
+        crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(router.clone()),
     );
 
     // 创建 Webhook 服务
@@ -477,9 +495,9 @@ pub async fn create_test_app_with_rate_limit_options(
         ),
     );
 
-    let queue: Arc<dyn TaskQueue> = Arc::new(
-        crawlrs::queue::task_queue::PostgresTaskQueue::new(task_repo.clone())
-    );
+    let queue: Arc<dyn TaskQueue> = Arc::new(crawlrs::queue::task_queue::PostgresTaskQueue::new(
+        task_repo.clone(),
+    ));
 
     // 启动 worker（在后台）- 直接 spawn workers 而不是通过 start_workers
     let worker_task_repo = task_repo.clone();
@@ -494,10 +512,10 @@ pub async fn create_test_app_with_rate_limit_options(
     let worker_settings = settings.clone();
     let worker_queue = queue.clone();
     let worker_default_concurrency_limit = 5;
-    
+
     // Clone storage_repo for worker
     let worker_storage_repo = storage_repo.clone();
-    
+
     let worker_join_handle = tokio::spawn(async move {
         // Spawn workers directly
         for i in 0..2 {
@@ -513,7 +531,7 @@ pub async fn create_test_app_with_rate_limit_options(
             let redis = worker_redis.clone();
             let robots_checker = worker_robots_checker.clone();
             let settings = worker_settings.clone();
-            
+
             tokio::spawn(async move {
                 let worker = ScrapeWorker::new(
                     task_repo,
@@ -533,11 +551,11 @@ pub async fn create_test_app_with_rate_limit_options(
                 worker.run(queue).await;
             });
         }
-        
+
         // Also start expiration worker
         let expiration_worker = ExpirationWorker::new(worker_task_repo.clone());
         expiration_worker.start();
-        
+
         // Wait for shutdown signal
         shutdown_rx.recv().await.ok();
         tracing::info!("Test worker manager workers completed");
@@ -594,7 +612,9 @@ fn create_router(
         ),
     );
     let settings = Arc::new(Settings::new().unwrap());
-    let queue: Arc<dyn TaskQueue> = Arc::new(crawlrs::queue::task_queue::PostgresTaskQueue::new(task_repo.clone()));
+    let queue: Arc<dyn TaskQueue> = Arc::new(crawlrs::queue::task_queue::PostgresTaskQueue::new(
+        task_repo.clone(),
+    ));
     let auth_state = AuthState {
         db: db_pool.clone(),
         team_id,
@@ -744,42 +764,60 @@ pub async fn create_test_app_no_worker() -> TestApp {
 
     if db_backend == DbBackend::Postgres {
         // PostgreSQL语法 - 清理所有任务和相关数据
-        db_pool.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "DELETE FROM tasks",
-            vec![],
-        )).await.unwrap();
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM tasks",
+                vec![],
+            ))
+            .await
+            .unwrap();
 
-        db_pool.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "DELETE FROM tasks_backlog",
-            vec![],
-        )).await.unwrap();
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM tasks_backlog",
+                vec![],
+            ))
+            .await
+            .unwrap();
 
-        db_pool.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "DELETE FROM scrape_results",
-            vec![],
-        )).await.unwrap();
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM scrape_results",
+                vec![],
+            ))
+            .await
+            .unwrap();
     } else {
         // SQLite语法 - 清理所有任务和相关数据
-        db_pool.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "DELETE FROM tasks",
-            vec![],
-        )).await.unwrap();
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "DELETE FROM tasks",
+                vec![],
+            ))
+            .await
+            .unwrap();
 
-        db_pool.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "DELETE FROM tasks_backlog",
-            vec![],
-        )).await.unwrap();
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "DELETE FROM tasks_backlog",
+                vec![],
+            ))
+            .await
+            .unwrap();
 
-        db_pool.execute(Statement::from_sql_and_values(
-            DbBackend::Sqlite,
-            "DELETE FROM scrape_results",
-            vec![],
-        )).await.unwrap();
+        db_pool
+            .execute(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "DELETE FROM scrape_results",
+                vec![],
+            ))
+            .await
+            .unwrap();
     }
 
     let start_port = 8000;
@@ -901,7 +939,12 @@ pub async fn create_test_app_no_worker() -> TestApp {
 
     let search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine> = Arc::new(
         crawlrs::infrastructure::search::aggregator::SearchAggregator::new(
-            vec![Arc::new(GoogleSearchEngine::new()), Arc::new(BingSearchEngine::new()), Arc::new(BaiduSearchEngine::new()), Arc::new(SogouSearchEngine::new())],
+            vec![
+                Arc::new(GoogleSearchEngine::new()),
+                Arc::new(BingSearchEngine::new()),
+                Arc::new(BaiduSearchEngine::new()),
+                Arc::new(SogouSearchEngine::new()),
+            ],
             10000,
         ),
     );

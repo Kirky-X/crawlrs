@@ -117,6 +117,25 @@ impl TaskQueue for InMemoryTestQueue {
         }
         Ok(())
     }
+
+    async fn cancel(&self, task_id: Uuid) -> Result<(), crawlrs::queue::QueueError> {
+        let mut dequeued = self.dequeued_tasks.lock().unwrap();
+        if let Some(pos) = dequeued.iter().position(|t| t.id == task_id) {
+            let mut task = dequeued.remove(pos);
+            task.status = TaskStatus::Cancelled;
+            self.completed_tasks.lock().unwrap().push(task);
+            return Ok(());
+        }
+        drop(dequeued);
+
+        let mut tasks = self.tasks.lock().unwrap();
+        if let Some(pos) = tasks.iter().position(|t| t.id == task_id) {
+            let mut task = tasks.remove(pos);
+            task.status = TaskStatus::Cancelled;
+            self.completed_tasks.lock().unwrap().push(task);
+        }
+        Ok(())
+    }
 }
 
 #[tokio::test]
@@ -407,7 +426,7 @@ async fn test_update_status_cancel() {
         .update_status(StatusUpdateRequest::cancel(task_id))
         .await;
     assert!(result.is_ok());
-    assert_eq!(queue_ref.task_status(task_id), Some(TaskStatus::Completed));
+    assert_eq!(queue_ref.task_status(task_id), Some(TaskStatus::Cancelled));
 }
 
 #[tokio::test]

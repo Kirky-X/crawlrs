@@ -36,6 +36,8 @@ pub trait TaskQueue: Send + Sync {
     async fn complete(&self, task_id: Uuid) -> Result<(), QueueError>;
     /// 失败任务
     async fn fail(&self, task_id: Uuid) -> Result<(), QueueError>;
+    /// 取消任务
+    async fn cancel(&self, task_id: Uuid) -> Result<(), QueueError>;
 }
 
 /// PostgreSQL任务队列实现
@@ -123,6 +125,21 @@ impl<R: TaskRepository> TaskQueue for PostgresTaskQueue<R> {
         self.repository.mark_failed(task_id).await?;
         Ok(())
     }
+
+    /// 取消任务
+    ///
+    /// # 参数
+    ///
+    /// * `task_id` - 任务ID
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(())` - 成功
+    /// * `Err(QueueError)` - 失败
+    async fn cancel(&self, task_id: Uuid) -> Result<(), QueueError> {
+        self.repository.mark_cancelled(task_id).await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -141,5 +158,9 @@ impl<T: TaskQueue + ?Sized> TaskQueue for Arc<T> {
 
     async fn fail(&self, task_id: Uuid) -> Result<(), QueueError> {
         (**self).fail(task_id).await
+    }
+
+    async fn cancel(&self, task_id: Uuid) -> Result<(), QueueError> {
+        (**self).cancel(task_id).await
     }
 }

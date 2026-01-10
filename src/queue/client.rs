@@ -638,7 +638,7 @@ impl<T: TaskQueue> QueueClient<T> {
         let result = match request.status {
             StatusUpdateType::Completed => self.inner.complete(request.task_id).await,
             StatusUpdateType::Failed => self.inner.fail(request.task_id).await,
-            StatusUpdateType::Cancelled => self.inner.complete(request.task_id).await,
+            StatusUpdateType::Cancelled => self.inner.cancel(request.task_id).await,
         };
 
         match result {
