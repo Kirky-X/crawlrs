@@ -107,11 +107,11 @@ impl RateLimiter {
     async fn get_rate_limit(&self, api_key: &str) -> Result<u32, RateLimitError> {
         let key = format!("rate_limit_config:{}", api_key);
         tracing::debug!("[RateLimiter] Getting rate limit for key: {}", key);
-        
+
         match self.redis_client.get(&key).await {
             Ok(Some(limit_str)) => {
                 tracing::debug!("[RateLimiter] Found config string: {}", limit_str);
-                
+
                 // Try to parse as JSON first (new format: {"requests_per_minute": N, ...})
                 if limit_str.starts_with('{') {
                     match serde_json::from_str::<serde_json::Value>(&limit_str) {
@@ -129,7 +129,10 @@ impl RateLimiter {
                             tracing::warn!("[RateLimiter] Failed to parse JSON config: {}", e);
                             // Fall back to parsing as plain number
                             limit_str.parse::<u32>().map_err(|e| {
-                                RateLimitError::InternalError(format!("Failed to parse rate limit: {}", e))
+                                RateLimitError::InternalError(format!(
+                                    "Failed to parse rate limit: {}",
+                                    e
+                                ))
                             })
                         }
                     }
@@ -142,7 +145,10 @@ impl RateLimiter {
                 }
             }
             Ok(None) => {
-                tracing::debug!("[RateLimiter] No config found, using default: {}", self.default_limit_per_minute);
+                tracing::debug!(
+                    "[RateLimiter] No config found, using default: {}",
+                    self.default_limit_per_minute
+                );
                 Ok(self.default_limit_per_minute)
             }
             Err(e) => {

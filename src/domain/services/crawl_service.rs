@@ -359,7 +359,11 @@ impl LinkDiscoverer {
         include_patterns: &[String],
         exclude_patterns: &[String],
     ) -> HashSet<String> {
-        debug!(total_links = links.len(), ?include_patterns, ?exclude_patterns);
+        debug!(
+            total_links = links.len(),
+            ?include_patterns,
+            ?exclude_patterns
+        );
 
         // Convert glob patterns to regex patterns
         let include_regexes: Vec<Regex> = include_patterns

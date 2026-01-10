@@ -81,7 +81,11 @@ async fn test_s3_storage_exists() {
 
     // 检查不存在的文件
     let result = storage.exists(key).await;
-    assert!(result.is_ok(), "Failed to check existence: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to check existence: {:?}",
+        result.err()
+    );
     assert!(!result.unwrap(), "File should not exist yet");
 
     // 保存文件
@@ -89,7 +93,11 @@ async fn test_s3_storage_exists() {
 
     // 检查存在的文件
     let result = storage.exists(key).await;
-    assert!(result.is_ok(), "Failed to check existence: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to check existence: {:?}",
+        result.err()
+    );
     assert!(result.unwrap(), "File should exist now");
 
     // 清理
@@ -143,18 +151,22 @@ async fn test_s3_storage_large_file() {
 
     // 保存大文件
     let result = storage.save(key, &data).await;
-    assert!(result.is_ok(), "Failed to save large file: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to save large file: {:?}",
+        result.err()
+    );
 
     // 获取大文件
     let result = storage.get(key).await;
-    assert!(result.is_ok(), "Failed to get large file: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to get large file: {:?}",
+        result.err()
+    );
 
     let retrieved_data = result.unwrap();
-    assert_eq!(
-        retrieved_data,
-        Some(data),
-        "Large file data does not match"
-    );
+    assert_eq!(retrieved_data, Some(data), "Large file data does not match");
 
     // 清理
     let _ = storage.delete(key).await;
@@ -175,7 +187,11 @@ async fn test_create_storage_repository_s3() {
     };
 
     let result = create_storage_repository(&settings);
-    assert!(result.is_ok(), "Failed to create S3 repository: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to create S3 repository: {:?}",
+        result.err()
+    );
 
     let storage = result.unwrap();
 

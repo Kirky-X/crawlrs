@@ -9,11 +9,12 @@ use axum::{
     Router,
 };
 use crawlrs::config::settings::Settings;
+use crawlrs::domain::repositories::storage_repository::StorageRepository;
 use crawlrs::domain::services::rate_limiting_service::{RateLimitConfig, RateLimitStrategy};
-use crawlrs::engines::fire_engine_cdp::FireEngineCdp;
-use crawlrs::engines::fire_engine_tls::FireEngineTls;
-use crawlrs::engines::playwright_engine::PlaywrightEngine;
-use crawlrs::engines::reqwest_engine::ReqwestEngine;
+use crawlrs::engines::client::fire_cdp::FireEngineCdp;
+use crawlrs::engines::client::fire_tls::FireEngineTls;
+use crawlrs::engines::client::playwright::PlaywrightEngine;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::router::EngineRouter;
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
@@ -22,7 +23,6 @@ use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crawlrs::domain::repositories::storage_repository::StorageRepository;
 
 use crawlrs::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitingService,
@@ -201,10 +201,13 @@ async fn main() -> anyhow::Result<()> {
             Ok(repo) => {
                 // 将 Box<dyn StorageRepository> 转换为 Arc<dyn StorageRepository>
                 Some(Arc::from(repo))
-            },
+            }
             Err(e) => {
                 error!("Failed to initialize storage repository: {}", e);
-                return Err(anyhow::anyhow!("Failed to initialize storage repository: {}", e));
+                return Err(anyhow::anyhow!(
+                    "Failed to initialize storage repository: {}",
+                    e
+                ));
             }
         };
     let reqwest_engine = Arc::new(ReqwestEngine);

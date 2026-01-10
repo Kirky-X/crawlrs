@@ -10,14 +10,14 @@
 
 #[cfg(test)]
 mod tests {
-    use crawlrs::engines::reqwest_engine::ReqwestEngine;
-    use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
     use axum::{
         http::StatusCode,
         response::{IntoResponse, Response},
         routing::get,
         Router,
     };
+    use crawlrs::engines::client::reqwest::ReqwestEngine;
+    use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
     use std::collections::HashMap;
     use std::time::Duration;
     use tokio::net::TcpListener;

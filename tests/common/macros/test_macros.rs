@@ -11,9 +11,9 @@
 #[macro_export]
 macro_rules! test_setup {
     () => {
-        use crate::common::fixtures::*;
-        use crate::common::factories::*;
         use crate::common::assertions::*;
+        use crate::common::factories::*;
+        use crate::common::fixtures::*;
         use crate::common::helpers::*;
     };
 }
@@ -45,8 +45,7 @@ macro_rules! assert_http_created_or_accepted {
     ($response:expr) => {
         let status = $response.status_code();
         assert!(
-            status == axum::http::StatusCode::CREATED
-                || status == axum::http::StatusCode::ACCEPTED,
+            status == axum::http::StatusCode::CREATED || status == axum::http::StatusCode::ACCEPTED,
             "Expected 201 or 202, got {}",
             status
         );

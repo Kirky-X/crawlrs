@@ -26,11 +26,11 @@ static SYSTEM: Lazy<Arc<Mutex<System>>> = Lazy::new(|| {
 /// 配置并注册应用所需的各类监控指标
 pub fn init_metrics() {
     let builder = PrometheusBuilder::new();
-    if let Err(e) = builder
-        .with_http_listener(([0, 0, 0, 0], 9100))
-        .install()
-    {
-        tracing::warn!("Failed to install Prometheus recorder: {}. Metrics will be disabled.", e);
+    if let Err(e) = builder.with_http_listener(([0, 0, 0, 0], 9100)).install() {
+        tracing::warn!(
+            "Failed to install Prometheus recorder: {}. Metrics will be disabled.",
+            e
+        );
         return;
     }
 

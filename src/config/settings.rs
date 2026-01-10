@@ -364,25 +364,35 @@ impl Settings {
                 )
             );
         } else if self.webhook.secret.len() < 32 {
-            warnings.push(
-                format!(
-                    "WARNING: Webhook secret is too short ({} bytes). \
+            warnings.push(format!(
+                "WARNING: Webhook secret is too short ({} bytes). \
                     Recommend using at least 32 bytes for better security.",
-                    self.webhook.secret.len()
-                )
-            );
+                self.webhook.secret.len()
+            ));
         }
 
         // 检查 S3 凭据安全性
         if self.storage.storage_type == "s3" {
-            if self.storage.s3_access_key.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+            if self
+                .storage
+                .s3_access_key
+                .as_ref()
+                .map(|s| s.is_empty())
+                .unwrap_or(true)
+            {
                 warnings.push(
                     "SECURITY WARNING: S3 access key is not configured but storage type is 's3'."
                         .to_string(),
                 );
             }
 
-            if self.storage.s3_secret_key.as_ref().map(|s| s.len() < 32).unwrap_or(false) {
+            if self
+                .storage
+                .s3_secret_key
+                .as_ref()
+                .map(|s| s.len() < 32)
+                .unwrap_or(false)
+            {
                 warnings.push(
                     "WARNING: S3 secret key appears to be short (< 32 characters). Use a strong secret key."
                         .to_string(),

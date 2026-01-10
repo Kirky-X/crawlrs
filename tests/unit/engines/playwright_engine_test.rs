@@ -10,7 +10,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crawlrs::engines::playwright_engine::PlaywrightEngine;
+    use crawlrs::engines::client::playwright::PlaywrightEngine;
     use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
     use std::collections::HashMap;
     use std::time::Duration;
@@ -18,7 +18,7 @@ mod tests {
     #[tokio::test]
     async fn test_playwright_engine_support_score() {
         let engine = PlaywrightEngine;
-        
+
         // 基础请求应该获得中等分数
         let basic_request = ScrapeRequest {
             url: "https://example.com".to_string(),

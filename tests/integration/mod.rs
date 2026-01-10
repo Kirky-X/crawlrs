@@ -18,6 +18,7 @@ pub mod health_monitor_test;
 pub mod helpers;
 pub mod optimized_tests;
 pub mod page_interactions_test;
+pub mod queue_client_test;
 pub mod real_components_test;
 pub mod real_interactions_test;
 pub mod real_world_test;

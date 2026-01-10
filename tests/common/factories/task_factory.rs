@@ -6,7 +6,6 @@
 /// 任务数据工厂
 ///
 /// 提供测试任务创建的便捷函数
-
 use crawlrs::domain::models::task::{TaskStatus, TaskType};
 use crawlrs::infrastructure::database::entities::task::{self, Entity as TaskEntity};
 use sea_orm::{DatabaseConnection, EntityTrait, Set};
@@ -17,10 +16,7 @@ pub struct TaskFactory;
 
 impl TaskFactory {
     /// 创建抓取任务
-    pub async fn create_scrape_task(
-        db: &DatabaseConnection,
-        url: &str,
-    ) -> task::Model {
+    pub async fn create_scrape_task(db: &DatabaseConnection, url: &str) -> task::Model {
         let task_model = task::ActiveModel {
             id: Set(Uuid::new_v4()),
             url: Set(url.to_string()),
@@ -31,10 +27,7 @@ impl TaskFactory {
             ..Default::default()
         };
 
-        let result = TaskEntity::insert(task_model)
-            .exec(db)
-            .await
-            .unwrap();
+        let result = TaskEntity::insert(task_model).exec(db).await.unwrap();
 
         // 获取插入的记录
         TaskEntity::find_by_id(result.last_insert_id)
@@ -45,11 +38,7 @@ impl TaskFactory {
     }
 
     /// 创建爬取任务
-    pub async fn create_crawl_task(
-        db: &DatabaseConnection,
-        url: &str,
-        depth: u32,
-    ) -> task::Model {
+    pub async fn create_crawl_task(db: &DatabaseConnection, url: &str, depth: u32) -> task::Model {
         let task_model = task::ActiveModel {
             id: Set(Uuid::new_v4()),
             url: Set(url.to_string()),
@@ -63,10 +52,7 @@ impl TaskFactory {
             ..Default::default()
         };
 
-        let result = TaskEntity::insert(task_model)
-            .exec(db)
-            .await
-            .unwrap();
+        let result = TaskEntity::insert(task_model).exec(db).await.unwrap();
 
         TaskEntity::find_by_id(result.last_insert_id)
             .one(db)
@@ -76,10 +62,7 @@ impl TaskFactory {
     }
 
     /// 创建搜索任务
-    pub async fn create_search_task(
-        db: &DatabaseConnection,
-        query: &str,
-    ) -> task::Model {
+    pub async fn create_search_task(db: &DatabaseConnection, query: &str) -> task::Model {
         let task_model = task::ActiveModel {
             id: Set(Uuid::new_v4()),
             url: Set(format!("search:{}", query)),
@@ -93,10 +76,7 @@ impl TaskFactory {
             ..Default::default()
         };
 
-        let result = TaskEntity::insert(task_model)
-            .exec(db)
-            .await
-            .unwrap();
+        let result = TaskEntity::insert(task_model).exec(db).await.unwrap();
 
         TaskEntity::find_by_id(result.last_insert_id)
             .one(db)
@@ -122,10 +102,7 @@ impl TaskFactory {
             ..Default::default()
         };
 
-        let result = TaskEntity::insert(task_model)
-            .exec(db)
-            .await
-            .unwrap();
+        let result = TaskEntity::insert(task_model).exec(db).await.unwrap();
 
         TaskEntity::find_by_id(result.last_insert_id)
             .one(db)

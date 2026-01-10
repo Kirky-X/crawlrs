@@ -49,7 +49,7 @@ async fn test_uat007_path_filtering() {
             "strategy": "bfs"
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -326,7 +326,7 @@ async fn test_uat007_path_filtering_empty_rules() {
             "strategy": "bfs"
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -389,7 +389,7 @@ async fn test_uat008_robots_txt_compliance() {
             "strategy": "bfs"
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -462,7 +462,7 @@ async fn test_uat008_robots_txt_caching() {
             "strategy": "bfs"
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -618,7 +618,7 @@ async fn test_uat010_error_recovery_and_retry() {
             "strategy": "bfs"
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -691,7 +691,7 @@ async fn test_uat011_timeout_handling() {
             }
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -794,7 +794,7 @@ async fn test_uat012_resource_exhaustion_handling() {
             "strategy": "bfs"
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -851,7 +851,7 @@ async fn test_uat004_javascript_rendering() {
         return;
     }
 
-    use crawlrs::engines::playwright_engine::PlaywrightEngine;
+    use crawlrs::engines::client::playwright::PlaywrightEngine;
     use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
     use std::collections::HashMap;
     use std::time::Duration;
@@ -924,7 +924,7 @@ async fn test_uat025_degradation_strategy() {
             "strategy": "bfs"
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: chrono::Utc::now().into(),
@@ -1238,7 +1238,7 @@ async fn test_uat019_team_concurrency_limit() {
             url: format!("https://example.com/{}", i),
             payload: json!({}),
             retry_count: 0,
-                attempt_count: 0,
+            attempt_count: 0,
             max_retries: 3,
             scheduled_at: None,
             created_at: chrono::Utc::now().into(),
@@ -1429,7 +1429,7 @@ async fn test_uat026_sync_wait_perf() {
             url: "http://example.com".to_string(),
             payload: json!({}),
             retry_count: 0,
-                attempt_count: 0,
+            attempt_count: 0,
             max_retries: 3,
             scheduled_at: None,
             created_at: Utc::now().into(), // Convert Utc::now() to FixedOffset
@@ -1559,7 +1559,7 @@ async fn test_uat027_task_mgmt_perf() {
                     url: format!("http://example.com/{}", i * batch_size + j),
                     payload: json!({}),
                     retry_count: 0,
-                attempt_count: 0,
+                    attempt_count: 0,
                     max_retries: 3,
                     scheduled_at: None,
                     created_at: Utc::now().into(),
@@ -1686,7 +1686,7 @@ async fn test_uat016_sync_wait_integration() {
         url: "http://example.com/uat016".to_string(),
         payload: json!({}),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: Utc::now().into(),
@@ -1746,7 +1746,7 @@ async fn test_uat016_sync_wait_integration() {
         url: "http://example.com/uat016-timeout".to_string(),
         payload: json!({}),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         created_at: Utc::now().into(),

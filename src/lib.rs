@@ -47,3 +47,14 @@ pub mod utils;
 ///
 /// 实现后台任务处理和工作器管理
 pub mod workers;
+
+/// 搜索模块
+///
+/// 提供统一的搜索引擎客户端和多种搜索引擎实现
+#[cfg(all(
+    feature = "search-google",
+    feature = "search-bing",
+    feature = "search-baidu",
+    feature = "search-sogou"
+))]
+pub mod search;

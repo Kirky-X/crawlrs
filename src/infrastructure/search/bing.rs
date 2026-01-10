@@ -387,7 +387,8 @@ impl BingSearchEngine {
         if parse_errors > 0 {
             tracing::warn!(
                 "Bing search parsing: {} valid results, {} parse errors",
-                valid_results, parse_errors
+                valid_results,
+                parse_errors
             );
         }
 

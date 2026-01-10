@@ -205,10 +205,16 @@ async fn test_all_search_engines_with_gemini() {
     }
 
     if failed_count > 0 {
-        println!("⚠️  警告: {} 个引擎测试未通过（可能是网络限制或反爬虫机制）", failed_count);
+        println!(
+            "⚠️  警告: {} 个引擎测试未通过（可能是网络限制或反爬虫机制）",
+            failed_count
+        );
     }
 
-    println!("✅ 搜索引擎测试完成！成功: {}, 失败: {}", passed_count, failed_count);
+    println!(
+        "✅ 搜索引擎测试完成！成功: {}, 失败: {}",
+        passed_count, failed_count
+    );
 }
 
 #[tokio::test]
@@ -227,10 +233,16 @@ async fn test_search_engines_simple_mode() {
     }
 
     if failed_count > 0 {
-        println!("⚠️  警告: {} 个引擎测试未通过（可能是网络限制或反爬虫机制）", failed_count);
+        println!(
+            "⚠️  警告: {} 个引擎测试未通过（可能是网络限制或反爬虫机制）",
+            failed_count
+        );
     }
 
-    println!("✅ 搜索引擎测试完成！成功: {}, 失败: {}", passed_count, failed_count);
+    println!(
+        "✅ 搜索引擎测试完成！成功: {}, 失败: {}",
+        passed_count, failed_count
+    );
 }
 
 #[tokio::test]

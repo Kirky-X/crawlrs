@@ -86,7 +86,7 @@ async fn test_extract_with_rules_credit_deduction() {
     let extract_response: serde_json::Value = response.json();
     let task_id = extract_response["id"].as_str().unwrap();
     println!("Task ID: {}", task_id);
-    
+
     // 直接从数据库检查任务状态
     use crawlrs::infrastructure::database::entities::task::{self, Entity as TaskEntity};
     use sea_orm::EntityTrait;
@@ -98,7 +98,10 @@ async fn test_extract_with_rules_credit_deduction() {
         .await;
     match task_model {
         Ok(Some(task)) => {
-            println!("DEBUG: DB task status: {}, lock_expires_at: {:?}", task.status, task.lock_expires_at);
+            println!(
+                "DEBUG: DB task status: {}, lock_expires_at: {:?}",
+                task.status, task.lock_expires_at
+            );
         }
         Ok(None) => {
             println!("DEBUG: Task not found in DB");
@@ -187,7 +190,10 @@ async fn test_extract_with_rules_credit_deduction() {
     let token_usage_key = format!("team:{}:token_usage", app.team_id);
     let token_usage_str: Option<String> = redis_client.get(&token_usage_key).await.unwrap_or(None);
     let token_usage: i64 = token_usage_str.and_then(|s| s.parse().ok()).unwrap_or(0);
-    assert_eq!(token_usage, 0, "Token usage should be 0 for CSS-only extraction");
+    assert_eq!(
+        token_usage, 0,
+        "Token usage should be 0 for CSS-only extraction"
+    );
 }
 
 /// 测试传统CSS选择器提取（无LLM使用）不应扣除信用点

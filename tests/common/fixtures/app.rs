@@ -6,7 +6,6 @@
 /// TestApp 测试固件
 ///
 /// 提供测试应用程序的创建和管理功能
-
 use crate::common::fixtures::database::DatabaseFixture;
 use crate::common::fixtures::database::DatabaseOptions;
 use axum::body::Body;
@@ -24,19 +23,19 @@ use tower::Service;
 use uuid::Uuid;
 
 use crawlrs::config::settings::Settings;
-use crawlrs::engines::playwright_engine::PlaywrightEngine;
-use crawlrs::engines::reqwest_engine::ReqwestEngine;
+use crawlrs::domain::repositories::task_repository::TaskRepository;
+use crawlrs::engines::client::playwright::PlaywrightEngine;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::geolocation::GeoLocationService;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
 use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
+use crawlrs::infrastructure::search::bing::BingSearchEngine;
+use crawlrs::infrastructure::search::google::GoogleSearchEngine;
 use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingConfig;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl;
@@ -124,11 +123,12 @@ impl TestApp {
         let team_id = Uuid::new_v4();
         let api_key = Uuid::new_v4().to_string();
 
-        let db_backend = if self.db_pool.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
-            DbBackend::Postgres
-        } else {
-            DbBackend::Sqlite
-        };
+        let db_backend =
+            if self.db_pool.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
+                DbBackend::Postgres
+            } else {
+                DbBackend::Sqlite
+            };
 
         if db_backend == DbBackend::Postgres {
             self.db_pool
@@ -276,14 +276,15 @@ impl TestAppFixture {
         let credits_repo = Arc::new(CreditsRepositoryImpl::new(db_pool.clone()));
         let backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db_pool.clone()));
 
-        let rate_limiting_service: Arc<dyn crawlrs::domain::services::rate_limiting_service::RateLimitingService> =
-            Arc::new(RateLimitingServiceImpl::new(
-                Arc::new(redis_client.clone()),
-                task_repo.clone(),
-                backlog_repo.clone(),
-                credits_repo.clone(),
-                RateLimitingConfig::default(),
-            ));
+        let rate_limiting_service: Arc<
+            dyn crawlrs::domain::services::rate_limiting_service::RateLimitingService,
+        > = Arc::new(RateLimitingServiceImpl::new(
+            Arc::new(redis_client.clone()),
+            task_repo.clone(),
+            backlog_repo.clone(),
+            credits_repo.clone(),
+            RateLimitingConfig::default(),
+        ));
 
         let reqwest_engine = Arc::new(ReqwestEngine);
         let playwright_engine = Arc::new(PlaywrightEngine);
@@ -294,17 +295,18 @@ impl TestAppFixture {
             redis_client.clone(),
         ))));
 
-        let search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine> = Arc::new(
-            crawlrs::infrastructure::search::aggregator::SearchAggregator::new(
-                vec![
-                    Arc::new(GoogleSearchEngine::new()),
-                    Arc::new(BingSearchEngine::new()),
-                    Arc::new(BaiduSearchEngine::new()),
-                    Arc::new(SogouSearchEngine::new()),
-                ],
-                10000,
-            ),
-        );
+        let search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine> =
+            Arc::new(
+                crawlrs::infrastructure::search::aggregator::SearchAggregator::new(
+                    vec![
+                        Arc::new(GoogleSearchEngine::new()),
+                        Arc::new(BingSearchEngine::new()),
+                        Arc::new(BaiduSearchEngine::new()),
+                        Arc::new(SogouSearchEngine::new()),
+                    ],
+                    10000,
+                ),
+            );
 
         let geo_location_service = GeoLocationService::new();
         let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
@@ -384,7 +386,9 @@ fn create_router(
     task_repo: Arc<TaskRepositoryImpl>,
     backlog_repo: Arc<TasksBacklogRepositoryImpl>,
     credits_repo: Arc<CreditsRepositoryImpl>,
-    rate_limiting_service: Arc<dyn crawlrs::domain::services::rate_limiting_service::RateLimitingService>,
+    rate_limiting_service: Arc<
+        dyn crawlrs::domain::services::rate_limiting_service::RateLimitingService,
+    >,
     router: Arc<crawlrs::engines::router::EngineRouter>,
     robots_checker: Arc<crawlrs::utils::robots::RobotsChecker>,
     search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine>,
@@ -396,18 +400,26 @@ fn create_router(
     api_key: String,
     rate_limit_enabled: bool,
 ) -> axum::Router<()> {
-    let crawl_repo = Arc::new(crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl::new(
-        db_pool.clone(),
-    ));
+    let crawl_repo = Arc::new(
+        crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl::new(
+            db_pool.clone(),
+        ),
+    );
     let result_repo = Arc::new(crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl::new(db_pool.clone()));
-    let webhook_repo = Arc::new(crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl::new(
-        db_pool.clone(),
-    ));
-    let webhook_event_repo = Arc::new(crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl::new(
-        db_pool.clone(),
-    ));
+    let webhook_repo = Arc::new(
+        crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl::new(
+            db_pool.clone(),
+        ),
+    );
+    let webhook_event_repo = Arc::new(
+        crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl::new(
+            db_pool.clone(),
+        ),
+    );
     let settings = Arc::new(Settings::new().unwrap());
-    let queue: Arc<dyn crawlrs::queue::task_queue::TaskQueue> = Arc::new(crawlrs::queue::task_queue::PostgresTaskQueue::new(task_repo.clone()));
+    let queue: Arc<dyn crawlrs::queue::task_queue::TaskQueue> = Arc::new(
+        crawlrs::queue::task_queue::PostgresTaskQueue::new(task_repo.clone()),
+    );
     let auth_state = AuthState {
         db: db_pool.clone(),
         team_id,

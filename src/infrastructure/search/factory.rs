@@ -4,8 +4,8 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::search::engine::SearchEngine;
-use crate::engines::fire_engine_cdp::FireEngineCdp;
-use crate::engines::fire_engine_tls::FireEngineTls;
+use crate::engines::client::fire_cdp::FireEngineCdp;
+use crate::engines::client::fire_tls::FireEngineTls;
 use crate::engines::router::EngineRouter;
 use crate::infrastructure::search::baidu::BaiduSearchEngine;
 use crate::infrastructure::search::bing::BingSearchEngine;

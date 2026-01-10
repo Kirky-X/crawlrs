@@ -54,7 +54,7 @@ async fn test_real_task_lifecycle_with_search_integration() {
             "engine": "bing"
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         expires_at: None,
@@ -79,7 +79,7 @@ async fn test_real_task_lifecycle_with_search_integration() {
             "engine": "bing"
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         expires_at: None,
@@ -250,7 +250,7 @@ async fn test_real_concurrent_task_processing() {
                 "query": "concurrent test"
             }),
             retry_count: 0,
-                attempt_count: 0,
+            attempt_count: 0,
             max_retries: 3,
             scheduled_at: None,
             expires_at: None,

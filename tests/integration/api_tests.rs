@@ -33,7 +33,9 @@ async fn test_create_scrape_task_success() {
         .await;
 
     // Print response for debugging
-    if response.status_code() != StatusCode::CREATED && response.status_code() != StatusCode::ACCEPTED {
+    if response.status_code() != StatusCode::CREATED
+        && response.status_code() != StatusCode::ACCEPTED
+    {
         let response_text: String = response.text();
         eprintln!("Response status: {}", response.status_code());
         eprintln!("Response body: {}", response_text);
@@ -99,7 +101,9 @@ async fn test_scrape_rate_limit() {
         if i < 10 {
             let status = response.status_code();
             assert!(
-                status == StatusCode::CREATED || status == StatusCode::ACCEPTED || status == StatusCode::TOO_MANY_REQUESTS,
+                status == StatusCode::CREATED
+                    || status == StatusCode::ACCEPTED
+                    || status == StatusCode::TOO_MANY_REQUESTS,
                 "Request {} failed with status {}",
                 i,
                 status
@@ -206,8 +210,8 @@ async fn test_team_concurrency_limit() {
 #[ignore] // Ignoring this test because it requires Playwright/Chrome
 async fn test_circuit_breaker_and_engine_fallback() {
     use crawlrs::engines::circuit_breaker::{CircuitBreaker, CircuitConfig};
-    use crawlrs::engines::playwright_engine::PlaywrightEngine;
-    use crawlrs::engines::reqwest_engine::ReqwestEngine;
+    use crawlrs::engines::client::playwright::PlaywrightEngine;
+    use crawlrs::engines::client::reqwest::ReqwestEngine;
     use crawlrs::engines::router::{EngineRouter, LoadBalancingStrategy};
     use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
     use std::collections::HashMap;
@@ -361,7 +365,9 @@ async fn test_create_scrape_task_validation() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        status == StatusCode::BAD_REQUEST
+            || status == StatusCode::UNPROCESSABLE_ENTITY
+            || status == StatusCode::TOO_MANY_REQUESTS,
         "Expected 400, 422, or 429, got {}",
         status
     );
@@ -379,7 +385,9 @@ async fn test_create_scrape_task_validation() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        status == StatusCode::BAD_REQUEST
+            || status == StatusCode::UNPROCESSABLE_ENTITY
+            || status == StatusCode::TOO_MANY_REQUESTS,
         "Expected 400, 422, or 429, got {}",
         status
     );
@@ -430,7 +438,9 @@ async fn test_team_data_isolation() {
         .await;
     let status_b = response_b.status_code();
     assert!(
-        status_b == StatusCode::CREATED || status_b == StatusCode::ACCEPTED || status_b == StatusCode::TOO_MANY_REQUESTS,
+        status_b == StatusCode::CREATED
+            || status_b == StatusCode::ACCEPTED
+            || status_b == StatusCode::TOO_MANY_REQUESTS,
         "Expected 201, 202 or 429, got {}",
         status_b
     );
@@ -498,7 +508,9 @@ async fn test_ssrf_protection() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        status == StatusCode::BAD_REQUEST
+            || status == StatusCode::UNPROCESSABLE_ENTITY
+            || status == StatusCode::TOO_MANY_REQUESTS,
         "Expected 400, 422, or 429, got {}",
         status
     );
@@ -516,7 +528,9 @@ async fn test_ssrf_protection() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        status == StatusCode::BAD_REQUEST
+            || status == StatusCode::UNPROCESSABLE_ENTITY
+            || status == StatusCode::TOO_MANY_REQUESTS,
         "Expected 400, 422, or 429, got {}",
         status
     );
@@ -534,7 +548,9 @@ async fn test_ssrf_protection() {
     // 可能返回 400 (Bad Request) 或 429 (Rate Limit)
     let status = response.status_code();
     assert!(
-        status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::TOO_MANY_REQUESTS,
+        status == StatusCode::BAD_REQUEST
+            || status == StatusCode::UNPROCESSABLE_ENTITY
+            || status == StatusCode::TOO_MANY_REQUESTS,
         "Expected 400, 422, or 429, got {}",
         status
     );

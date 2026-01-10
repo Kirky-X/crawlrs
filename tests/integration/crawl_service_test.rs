@@ -49,7 +49,7 @@ async fn test_process_crawl_result_creates_tasks_integration() {
             "max_depth": 3,
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         expires_at: None,
@@ -123,7 +123,7 @@ async fn test_process_crawl_result_respects_domain_blacklist() {
             "domain_blacklist": ["malicious.com"]
         }),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         expires_at: None,

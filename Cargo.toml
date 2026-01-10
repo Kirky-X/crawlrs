@@ -10,6 +10,10 @@ autoexamples = false
 [features]
 default = []
 playwright = []
+search-google = []
+search-bing = []
+search-baidu = []
+search-sogou = []
 
 [dependencies]
 # Async runtime and web framework

@@ -6,7 +6,6 @@
 /// 等待辅助函数
 ///
 /// 提供任务等待和轮询功能
-
 use crawlrs::domain::models::task::Task;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use std::time::Duration;
@@ -35,8 +34,9 @@ impl WaitHelpers {
             }
 
             if let Ok(Some(task)) = task_repo.find_by_id(task_id).await {
-                if task.status == crawlrs::domain::models::task::TaskStatus::Completed 
-                    || task.status == crawlrs::domain::models::task::TaskStatus::Failed {
+                if task.status == crawlrs::domain::models::task::TaskStatus::Completed
+                    || task.status == crawlrs::domain::models::task::TaskStatus::Failed
+                {
                     return Ok(task);
                 }
             }
@@ -79,7 +79,13 @@ impl WaitHelpers {
         task_id: Uuid,
         timeout_secs: u64,
     ) -> Result<Task, String> {
-        Self::wait_for_task_status(task_repo, task_id, crawlrs::domain::models::task::TaskStatus::Queued, timeout_secs).await
+        Self::wait_for_task_status(
+            task_repo,
+            task_id,
+            crawlrs::domain::models::task::TaskStatus::Queued,
+            timeout_secs,
+        )
+        .await
     }
 
     /// 等待任务状态变为 Active
@@ -88,7 +94,13 @@ impl WaitHelpers {
         task_id: Uuid,
         timeout_secs: u64,
     ) -> Result<Task, String> {
-        Self::wait_for_task_status(task_repo, task_id, crawlrs::domain::models::task::TaskStatus::Active, timeout_secs).await
+        Self::wait_for_task_status(
+            task_repo,
+            task_id,
+            crawlrs::domain::models::task::TaskStatus::Active,
+            timeout_secs,
+        )
+        .await
     }
 
     /// 等待任务状态变为 Completed
@@ -97,7 +109,13 @@ impl WaitHelpers {
         task_id: Uuid,
         timeout_secs: u64,
     ) -> Result<Task, String> {
-        Self::wait_for_task_status(task_repo, task_id, crawlrs::domain::models::task::TaskStatus::Completed, timeout_secs).await
+        Self::wait_for_task_status(
+            task_repo,
+            task_id,
+            crawlrs::domain::models::task::TaskStatus::Completed,
+            timeout_secs,
+        )
+        .await
     }
 
     /// 等待任务状态变为 Failed
@@ -106,7 +124,13 @@ impl WaitHelpers {
         task_id: Uuid,
         timeout_secs: u64,
     ) -> Result<Task, String> {
-        Self::wait_for_task_status(task_repo, task_id, crawlrs::domain::models::task::TaskStatus::Failed, timeout_secs).await
+        Self::wait_for_task_status(
+            task_repo,
+            task_id,
+            crawlrs::domain::models::task::TaskStatus::Failed,
+            timeout_secs,
+        )
+        .await
     }
 
     /// 等待任务状态变为 Cancelled
@@ -115,7 +139,13 @@ impl WaitHelpers {
         task_id: Uuid,
         timeout_secs: u64,
     ) -> Result<Task, String> {
-        Self::wait_for_task_status(task_repo, task_id, crawlrs::domain::models::task::TaskStatus::Cancelled, timeout_secs).await
+        Self::wait_for_task_status(
+            task_repo,
+            task_id,
+            crawlrs::domain::models::task::TaskStatus::Cancelled,
+            timeout_secs,
+        )
+        .await
     }
 
     /// 轮询直到条件满足

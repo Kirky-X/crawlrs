@@ -131,7 +131,7 @@ pub async fn simple_text_processing_example() {
 pub async fn batch_processing_example() {
     println!("\n=== 批量处理示例 ===");
 
-    use crawlrs::utils::text_encoding::process_text_batch;
+    use crawlrs::utils::text_processing::process_text_batch;
 
     let inputs = vec![
         "测试内容1 - 普通文本".as_bytes(),
@@ -176,7 +176,7 @@ pub async fn batch_processing_example() {
 pub async fn performance_optimization_example() {
     println!("\n=== 性能优化示例 ===");
 
-    use crawlrs::utils::text_encoding::TextEncodingProcessor;
+    use crawlrs::utils::text_processing::TextEncodingProcessor;
 
     let processor = TextEncodingProcessor::new();
 

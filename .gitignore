@@ -45,8 +45,11 @@ build/
 
 # Temporary files
 *.tmp
+*.temp
+*.bak
+*~
 *.cache
-dump.rdb
+*.rdb
 
 # App specific
 data/
@@ -69,3 +72,5 @@ tests/crate/
 
 # Docker environment
 docker/.env
+docker/.env.test
+Thumbs.db

@@ -3,7 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crawlrs::engines::playwright_engine::PlaywrightEngine;
+use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
 use std::time::Duration;
 

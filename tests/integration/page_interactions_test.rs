@@ -261,7 +261,7 @@ async fn test_scrape_with_input_action() {
         }))
         .await;
 
-let status = response.status_code();
+    let status = response.status_code();
     assert!(
         status == StatusCode::CREATED
             || status == StatusCode::ACCEPTED
@@ -355,7 +355,7 @@ async fn test_scrape_with_screenshot_action() {
         }))
         .await;
 
-let status = response.status_code();
+    let status = response.status_code();
     assert!(
         status == StatusCode::CREATED
             || status == StatusCode::ACCEPTED

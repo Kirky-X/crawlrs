@@ -10,9 +10,9 @@
 //! - 搜索引擎测试：随机选择 10 个关键词，每次测试随机一个关键词
 //! - 反爬虫保护：增加随机延迟、User-Agent轮换、请求间隔随机化
 
-use crawlrs::engines::reqwest_engine::ReqwestEngine;
-use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
 use crawlrs::domain::search::engine::SearchEngine;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
 use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
 use crawlrs::infrastructure::search::bing::BingSearchEngine;
 use crawlrs::infrastructure::search::google::GoogleSearchEngine;
@@ -126,9 +126,18 @@ fn random_news_page() -> &'static str {
 fn create_scrape_request(url: &str) -> ScrapeRequest {
     let mut headers = HashMap::new();
     headers.insert("User-Agent".to_string(), random_user_agent().to_string());
-    headers.insert("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string());
-    headers.insert("Accept-Language".to_string(), "zh-CN,zh;q=0.9,en;q=0.8".to_string());
-    headers.insert("Accept-Encoding".to_string(), "gzip, deflate, br".to_string());
+    headers.insert(
+        "Accept".to_string(),
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string(),
+    );
+    headers.insert(
+        "Accept-Language".to_string(),
+        "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
+    );
+    headers.insert(
+        "Accept-Encoding".to_string(),
+        "gzip, deflate, br".to_string(),
+    );
     headers.insert("DNT".to_string(), "1".to_string());
     headers.insert("Connection".to_string(), "keep-alive".to_string());
     headers.insert("Upgrade-Insecure-Requests".to_string(), "1".to_string());
@@ -185,7 +194,7 @@ async fn test_random_news_scrape() {
                 "状态码应为 200 或 404，实际为 {}",
                 response.status_code
             );
-            
+
             // 如果是 404，跳过内容验证
             if response.status_code == 200 {
                 assert!(!response.content.is_empty(), "内容不应为空");
@@ -249,14 +258,10 @@ async fn test_multiple_random_news_scrape() {
                     i + 1,
                     response.status_code
                 );
-                
+
                 // 如果是 404，跳过内容检查
                 if response.status_code == 200 {
-                    assert!(
-                        !response.content.is_empty(),
-                        "第 {} 次内容不应为空",
-                        i + 1
-                    );
+                    assert!(!response.content.is_empty(), "第 {} 次内容不应为空", i + 1);
                 }
             }
             Ok(Err(error)) => {
@@ -331,11 +336,7 @@ async fn run_single_engine_search_test(
 
             if search_results.is_empty() {
                 println!("⚠️  {} 未返回任何搜索结果", engine_name);
-                return (
-                    engine_name.to_string(),
-                    false,
-                    "无搜索结果".to_string(),
-                );
+                return (engine_name.to_string(), false, "无搜索结果".to_string());
             }
 
             // 显示前 3 个结果
@@ -356,11 +357,7 @@ async fn run_single_engine_search_test(
                 .count();
 
             if valid_results == 0 {
-                return (
-                    engine_name.to_string(),
-                    false,
-                    "无有效结果".to_string(),
-                );
+                return (engine_name.to_string(), false, "无有效结果".to_string());
             }
 
             (
@@ -499,16 +496,12 @@ async fn test_multiple_random_keyword_search() {
     let max_results = 5;
     let timeout_secs = 30;
 
-    println!(
-        "🚀 开始测试多次随机关键词搜索（{} 次）",
-        iterations
-    );
+    println!("🚀 开始测试多次随机关键词搜索（{} 次）", iterations);
     println!("⚠️  每次搜索之间将随机等待 3-8 秒以避免触发反爬虫机制");
 
     // 只测试1个搜索引擎，降低并发压力
-    let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
-        ("Baidu", Arc::new(BaiduSearchEngine::new())),
-    ];
+    let engines: Vec<(&str, Arc<dyn SearchEngine>)> =
+        vec![("Baidu", Arc::new(BaiduSearchEngine::new()))];
 
     for i in 0..iterations {
         println!("\n📌 第 {} 次搜索", i + 1);
@@ -546,7 +539,9 @@ async fn test_multiple_random_keyword_search() {
 
         println!(
             "第 {} 次搜索统计: 成功 {}, 失败 {}",
-            i + 1, iteration_passed, iteration_failed
+            i + 1,
+            iteration_passed,
+            iteration_failed
         );
 
         // 至少需要 1 个引擎成功
@@ -588,9 +583,7 @@ async fn test_search_results_deduplication() {
     println!("🔍 关键词: {}", keyword);
 
     // 只测试1个搜索引擎，降低并发压力
-    let engines: Vec<Arc<dyn SearchEngine>> = vec![
-        Arc::new(BaiduSearchEngine::new()),
-    ];
+    let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(BaiduSearchEngine::new())];
 
     let mut all_urls = std::collections::HashMap::new();
 
@@ -663,21 +656,25 @@ async fn test_combined_random_scrape_and_search() {
 
     println!("📍 目标 URL: {}", url);
 
-    let scrape_result = timeout(Duration::from_secs(30), scrape_engine.scrape(&scrape_request)).await;
+    let scrape_result = timeout(
+        Duration::from_secs(30),
+        scrape_engine.scrape(&scrape_request),
+    )
+    .await;
 
     match scrape_result {
         Ok(Ok(response)) => {
             println!("✅ 网页采集成功");
             println!("📊 状态码: {}", response.status_code);
             println!("📝 内容长度: {} 字符", response.content.len());
-            
+
             // 接受 200 或 404（新闻网站可能返回 404）
             assert!(
                 response.status_code == 200 || response.status_code == 404,
                 "状态码应为 200 或 404，实际为 {}",
                 response.status_code
             );
-            
+
             // 如果是 404，跳过内容检查
             if response.status_code == 200 {
                 assert!(!response.content.is_empty());

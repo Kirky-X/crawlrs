@@ -6,7 +6,7 @@
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::domain::services::relevance_scorer::RelevanceScorer;
-use crate::engines::playwright_engine::get_browser;
+use crate::engines::client::playwright::get_browser;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rand::Rng;

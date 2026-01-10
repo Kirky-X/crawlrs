@@ -6,7 +6,7 @@
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::domain::services::relevance_scorer::RelevanceScorer;
-use crate::utils::text_encoding::process_string;
+use crate::utils::text_processing::process_string;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

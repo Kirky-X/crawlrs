@@ -6,9 +6,10 @@
 /// 数据库测试固件
 ///
 /// 提供内存数据库和PostgreSQL数据库的设置和清理功能
-
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{
+    ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, DbBackend, Statement,
+};
 use std::sync::Arc;
 
 /// 数据库连接选项
@@ -25,8 +26,9 @@ pub struct DatabaseOptions {
 impl Default for DatabaseOptions {
     fn default() -> Self {
         Self {
-            url: std::env::var("TEST_DATABASE_URL")
-                .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5433/crawlrs_test".to_string()),
+            url: std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+                "postgres://crawlrs:password@localhost:5433/crawlrs_test".to_string()
+            }),
             use_redis: true,
             redis_port: 6381,
         }

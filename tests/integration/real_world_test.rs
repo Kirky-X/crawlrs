@@ -3,10 +3,10 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crawlrs::engines::fire_engine_cdp::FireEngineCdp;
-use crawlrs::engines::fire_engine_tls::FireEngineTls;
-use crawlrs::engines::playwright_engine::PlaywrightEngine;
-use crawlrs::engines::reqwest_engine::ReqwestEngine;
+use crawlrs::engines::client::fire_cdp::FireEngineCdp;
+use crawlrs::engines::client::fire_tls::FireEngineTls;
+use crawlrs::engines::client::playwright::PlaywrightEngine;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -124,10 +124,8 @@ async fn test_real_world_playwright_engine() {
 
     info!("Testing PlaywrightEngine with URL: {}", TEST_URL);
 
-    let result = crawlrs::engines::playwright_engine::REMOTE_URL_OVERRIDE
-        .scope(chrome_url.clone(), async {
-            engine.scrape(&request).await
-        })
+    let result = crawlrs::engines::client::playwright::REMOTE_URL_OVERRIDE
+        .scope(chrome_url.clone(), async { engine.scrape(&request).await })
         .await;
 
     match result {

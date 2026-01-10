@@ -5,7 +5,7 @@
 
 use super::helpers::browser_helpers::create_scrape_request;
 use super::helpers::google_helpers::{get_chrome_ws_url, set_chrome_ws_url};
-use crawlrs::engines::playwright_engine::PlaywrightEngine;
+use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::traits::ScraperEngine;
 
 pub async fn test_simple_http_page() -> bool {
@@ -109,9 +109,9 @@ async fn test_browser_connection_simple() {
 
     // Set environment variable to avoid browser reuse conflicts
     std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
-    
+
     set_chrome_ws_url("ws://localhost:9222");
-    
+
     // Add a delay to ensure browser connection is stable
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
@@ -128,9 +128,9 @@ async fn test_browser_connection_debug() {
 
     // Set environment variable to avoid browser reuse conflicts
     std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
-    
+
     set_chrome_ws_url("ws://localhost:9222");
-    
+
     // Add a delay to ensure browser connection is stable
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
@@ -153,9 +153,9 @@ async fn test_playwright_direct() {
 
     // Set environment variable to avoid browser reuse conflicts
     std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
-    
+
     set_chrome_ws_url("ws://localhost:9222");
-    
+
     // Add a delay to ensure browser connection is stable
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
@@ -177,11 +177,11 @@ async fn test_browser_with_remote_chrome() {
 
     // Set environment variable to avoid browser reuse conflicts
     std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
-    
+
     let ws_url = get_chrome_ws_url();
     println!("使用远程Chrome: {}", ws_url);
     set_chrome_ws_url(&ws_url);
-    
+
     // Add a delay to ensure browser connection is stable
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 

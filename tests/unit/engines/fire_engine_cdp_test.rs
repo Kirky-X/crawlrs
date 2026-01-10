@@ -10,7 +10,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crawlrs::engines::fire_engine_cdp::FireEngineCdp;
+    use crawlrs::engines::client::fire_cdp::FireEngineCdp;
     use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
     use std::collections::HashMap;
     use std::time::Duration;

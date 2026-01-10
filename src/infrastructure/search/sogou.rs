@@ -7,7 +7,6 @@ use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::domain::services::relevance_scorer::RelevanceScorer;
 use async_trait::async_trait;
-use chrono::Utc;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::fs;

@@ -554,7 +554,10 @@ mod tests_impl {
                 if self.is_error {
                     return Err(EngineError::Timeout);
                 }
-                Ok(ScrapeResponse::new("http://example.com", &self.response_content))
+                Ok(ScrapeResponse::new(
+                    "http://example.com",
+                    &self.response_content,
+                ))
             } else {
                 Ok(ScrapeResponse::new("http://example.com", "Default Result"))
             }

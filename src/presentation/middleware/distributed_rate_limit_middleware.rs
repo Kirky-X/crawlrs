@@ -43,7 +43,10 @@ pub async fn distributed_rate_limit_middleware(
         || path.starts_with("/v1/crawl")
         || path.starts_with("/v1/scrape")
     {
-        debug!("DistributedRateLimitMiddleware: Skipping public endpoint {}", path);
+        debug!(
+            "DistributedRateLimitMiddleware: Skipping public endpoint {}",
+            path
+        );
         return Ok(next.run(request).await);
     }
 

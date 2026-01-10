@@ -260,7 +260,11 @@ impl RateLimitingServiceImpl {
         let config_key = format!("{}:config:{}", self.config.redis_key_prefix, api_key);
         let fallback_key = format!("rate_limit_config:{}", api_key);
 
-        tracing::debug!("Looking for rate limit config with keys: primary={}, fallback={}", config_key, fallback_key);
+        tracing::debug!(
+            "Looking for rate limit config with keys: primary={}, fallback={}",
+            config_key,
+            fallback_key
+        );
 
         let mut conn = match self.get_redis_conn().await {
             Ok(conn) => conn,
@@ -360,7 +364,9 @@ impl RateLimitingService for RateLimitingServiceImpl {
             Some(config) => {
                 debug!("Using custom config");
                 (
-                    config.bucket_capacity.unwrap_or(self.config.rate_limit.bucket_capacity.unwrap_or(100)),
+                    config
+                        .bucket_capacity
+                        .unwrap_or(self.config.rate_limit.bucket_capacity.unwrap_or(100)),
                     config.requests_per_minute,
                     config.requests_per_hour,
                 )
@@ -375,7 +381,11 @@ impl RateLimitingService for RateLimitingServiceImpl {
             }
         };
 
-        debug!(bucket_capacity, rpm = requests_per_minute, rph = requests_per_hour);
+        debug!(
+            bucket_capacity,
+            rpm = requests_per_minute,
+            rph = requests_per_hour
+        );
 
         // 检查每秒限流
         debug!("Checking per-second rate limit...");
@@ -629,7 +639,8 @@ impl RateLimitingService for RateLimitingServiceImpl {
                         task.started_at = Some(chrono::Utc::now().into());
                         // 清除 lock_token 并设置 lock_expires_at，以便新的 Worker 可以获取此任务
                         task.lock_token = None;
-                        task.lock_expires_at = Some((chrono::Utc::now() + chrono::Duration::seconds(300)).into());
+                        task.lock_expires_at =
+                            Some((chrono::Utc::now() + chrono::Duration::seconds(300)).into());
                         self.task_repository
                             .update(&task)
                             .await

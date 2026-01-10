@@ -4,8 +4,8 @@
 // See LICENSE file in the project root for full license information.
 
 use axum::{http::StatusCode, routing::get, Router};
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::health_monitor::{EngineHealth, EngineHealthMonitor, HealthCheckConfig};
-use crawlrs::engines::reqwest_engine::ReqwestEngine;
 use crawlrs::engines::traits::ScraperEngine;
 use std::sync::Arc;
 use tokio::net::TcpListener;

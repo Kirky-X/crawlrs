@@ -17,7 +17,7 @@ use crate::domain::services::relevance_scorer::RelevanceScorer;
 use crate::engines::router::EngineRouter;
 use crate::engines::traits::EngineError;
 use crate::engines::traits::ScrapeRequest;
-use crate::utils::text_encoding::process_string;
+use crate::utils::text_processing::process_string;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -1016,8 +1016,8 @@ pub fn create_smart_search_engine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::playwright_engine::PlaywrightEngine;
-    use crate::engines::reqwest_engine::ReqwestEngine;
+    use crate::engines::client::playwright::PlaywrightEngine;
+    use crate::engines::client::reqwest::ReqwestEngine;
     use crate::engines::traits::ScraperEngine;
 
     fn create_test_router() -> Arc<EngineRouter> {

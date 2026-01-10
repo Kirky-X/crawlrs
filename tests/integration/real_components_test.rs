@@ -75,7 +75,7 @@ impl RealTestContext {
             url: url.to_string(),
             payload: json!({}),
             retry_count: 0,
-                attempt_count: 0,
+            attempt_count: 0,
             max_retries: 3,
             scheduled_at: None,
             expires_at: None,

@@ -29,7 +29,7 @@ fn create_test_task(id: Uuid, team_id: Uuid, status: TaskStatus) -> Task {
         url: "https://example.com".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
-                attempt_count: 0,
+        attempt_count: 0,
         max_retries: 3,
         scheduled_at: None,
         expires_at: None,

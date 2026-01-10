@@ -445,7 +445,8 @@ impl TaskRepository for TaskRepositoryImpl {
 
                 tracing::debug!(
                     "Processing task {} with status {:?}",
-                    task_id, current_status
+                    task_id,
+                    current_status
                 );
 
                 match current_status {
