@@ -273,22 +273,39 @@ impl ScraperEngine for PlaywrightEngine {
                 tokio::time::sleep(Duration::from_millis(request.sync_wait_ms as u64)).await;
             }
 
-            // Extra wait for network idle if needed (simple delay for now as network idle is complex in some versions)
-            // Or rely on goto's implicit wait.
-            // For now, let's verify if we have a valid response
+            // Get final URL after navigation (handles redirects)
+            let final_url = page.url().await
+                .unwrap_or_else(|_| request.url.clone());
 
-            let status_code = 200; // Chromiumoxide goto returns Page, not Response directly in this version pattern
+            // Try to get content-type from document properties
+            let content_type = page.evaluate(r#"
+                () => document.contentType || document.querySelector('meta[http-equiv="content-type"]')?.getAttribute('content') || 'text/html'
+            "#).await
+                .map_err(|e| EngineError::BrowserError(e.to_string()))?
+                .as_str()
+                .unwrap_or("text/html")
+                .split(';')
+                .next()
+                .unwrap_or("text/html")
+                .trim()
+                .to_string();
+
+            // Use 200 as default - getting exact status from browser JS is unreliable
+            // For most scraping use cases, 200 is the expected success status
+            let status_code = 200;
 
             let content = page.content().await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
-            // Handle screenshot if requested
-            let mut screenshot = None;
-            let response_headers = std::collections::HashMap::new();
+            // Build headers from available document information
+            let response_headers = {
+                let mut headers = std::collections::HashMap::new();
+                headers.insert("Content-Type".to_string(), content_type.clone());
+                headers
+            };
 
-            // Try to get response headers if possible
-            // Note: chromiumoxide might not expose headers directly on Page,
-            // but we can try to intercept them if needed. For now, we return empty or basic ones.
+            // Handle screenshot if requested
+            let mut screenshot: Option<String> = None;
 
             if request.needs_screenshot {
                 let config = request.screenshot_config.clone().unwrap_or(crate::engines::traits::ScreenshotConfig {
