@@ -11,14 +11,23 @@ pub mod circuit_breaker;
 pub mod client;
 pub mod health_monitor;
 pub mod router;
+#[allow(deprecated)]
 pub mod traits;
 pub mod validators;
 
-/// User agent rotation utilities
-pub mod user_agent;
+/// User agent rotation utilities (internal)
+mod user_agent;
 
-/// Search engine health checking
-pub mod search_health;
+/// Search engine health checking (internal)
+mod search_health;
 
-/// Unified search client
-pub mod http_client;
+/// Unified HTTP client (internal)
+mod http_client;
+
+// New unified EngineClient API
+pub mod engine_client;
+
+pub use engine_client::{
+    EngineClient, EngineError, EngineHealthStatus, PageAction, ScrapeOptions, ScrapeRequest,
+    ScrapeResponse, ScreenshotConfig, ScrollDirection,
+};

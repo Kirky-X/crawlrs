@@ -479,6 +479,12 @@ impl EngineRouter {
     pub fn registered_engines(&self) -> Vec<String> {
         self.engines.iter().map(|e| e.name().to_string()).collect()
     }
+
+    /// Get all registered engines (internal use only)
+    #[doc(hidden)]
+    pub fn get_engines(&self) -> &Vec<Arc<dyn ScraperEngine>> {
+        &self.engines
+    }
 }
 
 #[cfg(test)]

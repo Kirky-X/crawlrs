@@ -265,6 +265,62 @@ impl EngineHealthMonitor {
             .cloned()
             .collect()
     }
+
+    /// 执行所有引擎的健康检查
+    pub async fn perform_all_health_checks(&self) {
+        self.perform_health_check().await;
+    }
+
+    /// 获取聚合的健康状态
+    pub async fn get_aggregate_status(&self) -> AggregateHealthStatus {
+        let status = self.health_status.read().await;
+
+        let mut healthy_count = 0;
+        let mut degraded_count = 0;
+        let mut unhealthy_count = 0;
+        let mut unhealthy_engines = Vec::new();
+
+        for engine in &self.engines {
+            if let Some(info) = status.get(engine.name()) {
+                match info.health {
+                    EngineHealth::Healthy => healthy_count += 1,
+                    EngineHealth::Degraded => {
+                        degraded_count += 1;
+                        unhealthy_engines.push(engine.name().to_string());
+                    }
+                    EngineHealth::Unhealthy => {
+                        unhealthy_count += 1;
+                        unhealthy_engines.push(engine.name().to_string());
+                    }
+                }
+            } else {
+                // Engine not in status map, count as unknown
+                healthy_count += 1;
+            }
+        }
+
+        if unhealthy_count > 0 && healthy_count == 0 {
+            AggregateHealthStatus::Unavailable
+        } else if degraded_count > 0 || unhealthy_count > 0 {
+            AggregateHealthStatus::Degraded(unhealthy_engines)
+        } else {
+            AggregateHealthStatus::Healthy
+        }
+    }
+}
+
+/// Aggregate health status for EngineClient
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AggregateHealthStatus {
+    Healthy,
+    Degraded(Vec<String>),
+    Unavailable,
+}
+
+impl Default for AggregateHealthStatus {
+    fn default() -> Self {
+        Self::Healthy
+    }
 }
 
 #[async_trait]

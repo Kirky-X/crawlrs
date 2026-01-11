@@ -3,6 +3,12 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+#![deprecated(
+    since = "1.0.0",
+    note = "Use engine_client::EngineClient, ScrapeRequest, and ScrapeResponse instead. \
+            See https://github.com/Kirky-X/crawlrs/blob/main/docs/migration.md for migration guide."
+)]
+
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -206,4 +212,90 @@ pub trait ScraperEngine: Send + Sync {
 
     /// 引擎名称
     fn name(&self) -> &'static str;
+}
+
+// Conversion methods for EngineClient
+impl ScrapeRequest {
+    /// Convert from public ScrapeRequest to internal ScrapeRequest
+    #[inline]
+    pub fn from_public(request: &super::engine_client::ScrapeRequest) -> Self {
+        use super::engine_client::{PageAction, ScrollDirection};
+
+        let options = &request.options;
+
+        // Convert page actions
+        let actions: Vec<ScrapeAction> = options
+            .actions
+            .iter()
+            .map(|action| match action {
+                PageAction::Wait { milliseconds } => ScrapeAction::Wait {
+                    milliseconds: *milliseconds,
+                },
+                PageAction::Click { selector } => ScrapeAction::Click {
+                    selector: selector.clone(),
+                },
+                PageAction::Scroll { direction } => {
+                    let direction_str = match direction {
+                        ScrollDirection::Down => "down",
+                        ScrollDirection::Up => "up",
+                        ScrollDirection::Bottom => "bottom",
+                        ScrollDirection::Top => "top",
+                    };
+                    ScrapeAction::Scroll {
+                        direction: direction_str.to_string(),
+                    }
+                }
+                PageAction::Input { selector, text } => ScrapeAction::Input {
+                    selector: selector.clone(),
+                    text: text.clone(),
+                },
+            })
+            .collect();
+
+        // Convert screenshot config
+        let screenshot_config = options
+            .screenshot_config
+            .as_ref()
+            .map(|config| ScreenshotConfig {
+                full_page: config.full_page,
+                selector: config.selector.clone(),
+                quality: config.quality,
+                format: config.format.clone(),
+            });
+
+        Self {
+            url: request.url.clone(),
+            headers: HashMap::new(), // Public API doesn't expose headers directly
+            timeout: options.timeout,
+            needs_js: options.needs_js,
+            needs_screenshot: options.needs_screenshot,
+            screenshot_config,
+            mobile: options.mobile,
+            proxy: options.proxy.clone(),
+            skip_tls_verification: options.skip_tls_verification,
+            needs_tls_fingerprint: false, // Not exposed in public API yet
+            use_fire_engine: false,       // Not exposed in public API yet
+            actions,
+            sync_wait_ms: options.sync_wait_ms,
+        }
+    }
+}
+
+impl ScrapeResponse {
+    /// Convert from internal ScrapeResponse to public ScrapeResponse
+    #[inline]
+    pub fn from_internal(
+        internal: ScrapeResponse,
+        original_url: &str,
+    ) -> super::engine_client::ScrapeResponse {
+        super::engine_client::ScrapeResponse {
+            status_code: internal.status_code,
+            content: internal.content,
+            screenshot: internal.screenshot,
+            content_type: internal.content_type,
+            headers: internal.headers,
+            response_time_ms: internal.response_time_ms,
+            final_url: Some(original_url.to_string()),
+        }
+    }
 }
