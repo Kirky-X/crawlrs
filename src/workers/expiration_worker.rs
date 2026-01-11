@@ -4,10 +4,10 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::repositories::task_repository::TaskRepository;
+use crate::workers::worker::{ProcessResult, WorkerProcess};
+use async_trait::async_trait;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::info;
 
 /// 任务过期清理工作器
 ///
@@ -17,7 +17,6 @@ where
     R: TaskRepository + Send + Sync + 'static,
 {
     repository: Arc<R>,
-    interval: Duration,
 }
 
 impl<R> ExpirationWorker<R>
@@ -25,39 +24,7 @@ where
     R: TaskRepository + Send + Sync + 'static,
 {
     pub fn new(repository: Arc<R>) -> Self {
-        Self {
-            repository,
-            interval: Duration::from_secs(60 * 60), // 每小时运行一次
-        }
-    }
-
-    /// 运行工作器
-    pub async fn run(&self) {
-        info!("Task expiration worker started");
-
-        let mut interval = tokio::time::interval(self.interval);
-
-        loop {
-            interval.tick().await;
-
-            match self.cleanup_expired_tasks().await {
-                Ok(count) => {
-                    if count > 0 {
-                        info!("Cleaned up {} expired tasks", count);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to cleanup expired tasks: {}", e);
-                }
-            }
-        }
-    }
-
-    /// 启动后台运行
-    pub fn start(self) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            self.run().await;
-        })
+        Self { repository }
     }
 
     async fn cleanup_expired_tasks(&self) -> Result<u64, String> {
@@ -65,6 +32,28 @@ where
             .expire_tasks()
             .await
             .map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait]
+impl<R> WorkerProcess for ExpirationWorker<R>
+where
+    R: TaskRepository + Send + Sync + 'static,
+{
+    fn name(&self) -> &str {
+        "expiration-worker"
+    }
+
+    async fn process(&self) -> ProcessResult {
+        match self.cleanup_expired_tasks().await {
+            Ok(count) => {
+                if count > 0 {
+                    info!("Cleaned up {} expired tasks", count);
+                }
+                ProcessResult::Completed
+            }
+            Err(e) => ProcessResult::Error(format!("Failed to cleanup expired tasks: {}", e)),
+        }
     }
 }
 

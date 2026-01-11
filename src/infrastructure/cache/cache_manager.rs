@@ -181,14 +181,8 @@ impl CacheManager {
 
     /// 批量获取缓存
     pub async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>> {
-        let mut results = Vec::new();
-
-        for key in keys {
-            let result = self.get(key).await?;
-            results.push(result);
-        }
-
-        Ok(results)
+        let strategy = self.strategy.read().await;
+        strategy.get_batch(keys).await
     }
 
     /// 批量设置缓存
@@ -197,11 +191,8 @@ impl CacheManager {
         entries: Vec<(String, Vec<SearchResult>)>,
         ttl: Option<Duration>,
     ) -> Result<()> {
-        for (key, value) in entries {
-            self.set(&key, value, ttl).await?;
-        }
-
-        Ok(())
+        let strategy = self.strategy.write().await;
+        strategy.set_batch(entries, ttl).await
     }
 
     /// 获取热门查询模式

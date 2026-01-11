@@ -100,9 +100,12 @@ use crawlrs::queue::task_queue::TaskQueue;
 use crawlrs::workers::expiration_worker::ExpirationWorker;
 use crawlrs::workers::manager::WorkerManager;
 use crawlrs::workers::scrape_worker::ScrapeWorker;
+use crawlrs::workers::worker::AbstractWorker;
+use crawlrs::workers::worker::Worker;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use std::process::Command;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -553,8 +556,15 @@ pub async fn create_test_app_with_rate_limit_options(
         }
 
         // Also start expiration worker
-        let expiration_worker = ExpirationWorker::new(worker_task_repo.clone());
-        expiration_worker.start();
+        let expiration_worker = Arc::new(ExpirationWorker::new(worker_task_repo.clone()));
+        let expiration_worker = Arc::new(AbstractWorker::new(
+            expiration_worker,
+            Duration::from_secs(60),
+        ));
+        let exp_worker_clone = expiration_worker.clone();
+        tokio::spawn(async move {
+            exp_worker_clone.run().await;
+        });
 
         // Wait for shutdown signal
         shutdown_rx.recv().await.ok();

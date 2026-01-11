@@ -11,7 +11,7 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 /// 分布式速率限制中间件
 ///
@@ -56,9 +56,10 @@ pub async fn distributed_rate_limit_middleware(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    info!(
-        "DistributedRateLimitMiddleware: Checking rate limit for API Key: {}",
-        api_key
+    let api_key_prefix = &api_key[..std::cmp::min(8, api_key.len())];
+    debug!(
+        "DistributedRateLimitMiddleware: Checking rate limit for API Key starting with: {}",
+        api_key_prefix
     );
 
     debug!("DistributedRateLimitMiddleware: Calling rate_limiter.check()");
@@ -68,7 +69,10 @@ pub async fn distributed_rate_limit_middleware(
             Ok(next.run(request).await)
         }
         Err(e) => {
-            warn!("Rate limit check failed for API Key {}: {}", api_key, e);
+            warn!(
+                "Rate limit check failed for API Key starting with {}: {}",
+                api_key_prefix, e
+            );
             Err(StatusCode::TOO_MANY_REQUESTS)
         }
     }

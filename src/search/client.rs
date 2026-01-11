@@ -14,14 +14,14 @@ use super::{
     types::{EngineHealth, SearchEngineType},
 };
 
-mod google;
-mod bing;
 mod baidu;
+mod bing;
+mod google;
 mod sogou;
 
-pub use google::GoogleSearchEngine;
-pub use bing::BingSearchEngine;
 pub use baidu::BaiduSearchEngine;
+pub use bing::BingSearchEngine;
+pub use google::GoogleSearchEngine;
 pub use sogou::SogouSearchEngine;
 
 #[derive(Clone)]
@@ -50,10 +50,18 @@ impl SearchClient {
 
             // 注册所有支持的搜索引擎（真实实现）
             // 默认注册所有引擎
-            inner.engines.push(Arc::new(GoogleSearchEngine::new()) as Arc<dyn SearchEngine>);
-            inner.engines.push(Arc::new(BingSearchEngine::new()) as Arc<dyn SearchEngine>);
-            inner.engines.push(Arc::new(BaiduSearchEngine::new()) as Arc<dyn SearchEngine>);
-            inner.engines.push(Arc::new(SogouSearchEngine::new()) as Arc<dyn SearchEngine>);
+            inner
+                .engines
+                .push(Arc::new(GoogleSearchEngine::new()) as Arc<dyn SearchEngine>);
+            inner
+                .engines
+                .push(Arc::new(BingSearchEngine::new()) as Arc<dyn SearchEngine>);
+            inner
+                .engines
+                .push(Arc::new(BaiduSearchEngine::new()) as Arc<dyn SearchEngine>);
+            inner
+                .engines
+                .push(Arc::new(SogouSearchEngine::new()) as Arc<dyn SearchEngine>);
 
             SearchClient {
                 inner: Arc::new(inner),

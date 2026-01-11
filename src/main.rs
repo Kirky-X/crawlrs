@@ -51,7 +51,7 @@ use crawlrs::utils::retry_policy::RetryPolicy;
 use crawlrs::workers::backlog_worker::BacklogWorker;
 use crawlrs::workers::manager::WorkerManager;
 use crawlrs::workers::webhook_worker::WebhookWorker;
-use crawlrs::workers::Worker;
+use crawlrs::workers::{AbstractWorker, Worker};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::info;
@@ -321,35 +321,38 @@ async fn main() -> anyhow::Result<()> {
             // 启动 Webhook 工作器 (也需要在 API 服务中运行以处理事件)
             let webhook_service =
                 Arc::new(WebhookServiceImpl::new(settings.webhook.secret.clone()));
-            let webhook_worker = WebhookWorker::new(
+            let webhook_processor = Arc::new(WebhookWorker::new(
                 webhook_event_repository.clone(),
                 webhook_service,
                 RetryPolicy::default(),
-            );
+            ));
+            let webhook_worker =
+                AbstractWorker::new(webhook_processor, std::time::Duration::from_secs(5));
             tokio::spawn(async move {
-                let _ = webhook_worker.run().await;
+                webhook_worker.run().await;
             });
 
             // 启动积压任务处理Worker
-            let backlog_worker = BacklogWorker::new(
+            let backlog_processor = Arc::new(BacklogWorker::new(
                 tasks_backlog_repo.clone(),
                 task_repo.clone(),
                 rate_limiting_service.clone(),
-                std::time::Duration::from_secs(30), // 每30秒处理一次积压任务
                 settings.concurrency.default_team_limit as usize,
-            );
+            ));
+            let backlog_worker =
+                AbstractWorker::new(backlog_processor, std::time::Duration::from_secs(30));
             tokio::spawn(async move {
-                let _ = backlog_worker.run().await;
+                backlog_worker.run().await;
             });
 
-            // ⚠️ SECURITY WARNING: Using nil UUID as development placeholder
-            // In production, this MUST be replaced with actual team_id from JWT token or API key
+            // AuthState用于向认证中间件提供数据库连接
+            // 真实的team_id由认证中间件从API key验证后注入到请求扩展中
             let _auth_state = AuthState {
                 db: db.clone(),
-                team_id: uuid::Uuid::nil(),
+                team_id: uuid::Uuid::nil(), // 占位值，实际team_id由中间件从API key获取
             };
-            tracing::warn!(
-                "SECURITY: Using nil UUID for team_id. Authentication is disabled - ALL requests get full access!"
+            tracing::info!(
+                "Authentication middleware configured - team_id extracted from API key validation"
             );
 
             let public_routes = Router::new()
@@ -444,7 +447,12 @@ async fn main() -> anyhow::Result<()> {
             let v2_routes = task_routes()
                 .layer(Extension(task_repo.clone()))
                 .layer(Extension(result_repo.clone()))
-                //
+                // 认证中间件：验证 API key 并注入 team_id 到请求扩展
+                .layer(axum::middleware::from_fn_with_state(
+                    _auth_state.clone(),
+                    crawlrs::presentation::middleware::auth_middleware::auth_middleware,
+                ))
+                // 并发控制中间件：从请求扩展提取真实的 team_id
                 .layer(axum::middleware::from_fn_with_state(
                     team_semaphore.clone(),
                     team_semaphore_middleware,
@@ -474,8 +482,7 @@ async fn main() -> anyhow::Result<()> {
                 .layer(Extension(settings.clone()))
                 .layer(Extension(search_engine_service))
                 .layer(Extension(tasks_backlog_repo.clone()))
-                .layer(Extension(rate_limiting_service.clone()))
-                .layer(Extension(uuid::Uuid::nil())); // TODO: Real team_id from auth - ⚠️ SECURITY: Authentication disabled
+                .layer(Extension(rate_limiting_service.clone()));
 
             let addr = format!("{}:{}", settings.server.host, settings.server.port);
             let listener = TcpListener::bind(&addr).await?;
@@ -492,13 +499,15 @@ async fn main() -> anyhow::Result<()> {
             // 创建 Webhook 服务和 Worker (需要在 Worker 模式下也运行)
             let webhook_service =
                 Arc::new(WebhookServiceImpl::new(settings.webhook.secret.clone()));
-            let webhook_worker = WebhookWorker::new(
+            let webhook_processor = Arc::new(WebhookWorker::new(
                 webhook_event_repository.clone(),
                 webhook_service.clone(),
                 RetryPolicy::default(),
-            );
+            ));
+            let webhook_worker =
+                AbstractWorker::new(webhook_processor, std::time::Duration::from_secs(5));
             tokio::spawn(async move {
-                let _ = webhook_worker.run().await;
+                webhook_worker.run().await;
             });
 
             let mut worker_manager = WorkerManager::new(
@@ -521,15 +530,16 @@ async fn main() -> anyhow::Result<()> {
             worker_manager.start_workers(5).await;
 
             // 启动积压任务处理Worker
-            let backlog_worker = BacklogWorker::new(
+            let backlog_processor = Arc::new(BacklogWorker::new(
                 tasks_backlog_repo.clone(),
                 task_repo.clone(),
                 rate_limiting_service.clone(),
-                std::time::Duration::from_secs(30), // 每30秒处理一次积压任务
                 settings.concurrency.default_team_limit as usize,
-            );
+            ));
+            let backlog_worker =
+                AbstractWorker::new(backlog_processor, std::time::Duration::from_secs(30));
             tokio::spawn(async move {
-                let _ = backlog_worker.run().await;
+                backlog_worker.run().await;
             });
 
             // 等待关闭信号

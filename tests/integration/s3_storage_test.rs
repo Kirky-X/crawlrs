@@ -12,7 +12,7 @@
 //! docker-compose -f docker/docker-compose.minio.yml up -d
 //! ```
 
-use crawlrs::config::settings::StorageSettings;
+use crawlrs::config::storage::StorageSettings;
 use crawlrs::domain::repositories::storage_repository::StorageRepository;
 use crawlrs::infrastructure::storage::{create_storage_repository, S3Storage};
 

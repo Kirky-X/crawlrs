@@ -11,11 +11,19 @@ use super::{
 };
 use async_trait::async_trait;
 use scraper::{Html, Selector};
+use std::time::Duration;
 
 /// Baidu Search Engine implementation
-pub struct BaiduSearchEngine {
-    client: reqwest::Client,
-}
+pub struct BaiduSearchEngine;
+
+/// Shared HTTP client for connection pooling
+static HTTP_CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
+    reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 impl Default for BaiduSearchEngine {
     fn default() -> Self {
@@ -25,13 +33,7 @@ impl Default for BaiduSearchEngine {
 
 impl BaiduSearchEngine {
     pub fn new() -> Self {
-        let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap_or_default();
-
-        Self { client }
+        Self
     }
 
     async fn parse_search_results(
@@ -42,11 +44,11 @@ impl BaiduSearchEngine {
         let document = Html::parse_document(html);
         let result_selector = Selector::parse("div.c-container")
             .unwrap_or_else(|_| Selector::parse("div.result").unwrap());
-        let title_selector = Selector::parse("h3 a")
-            .unwrap_or_else(|_| Selector::parse("a").unwrap());
+        let title_selector =
+            Selector::parse("h3 a").unwrap_or_else(|_| Selector::parse("a").unwrap());
         let link_selector = Selector::parse("a").unwrap();
-        let snippet_selector = Selector::parse("div.c-abstract")
-            .unwrap_or_else(|_| Selector::parse("div").unwrap());
+        let snippet_selector =
+            Selector::parse("div.c-abstract").unwrap_or_else(|_| Selector::parse("div").unwrap());
 
         let mut results = Vec::new();
 
@@ -89,28 +91,26 @@ impl SearchEngine for BaiduSearchEngine {
     fn get_name(&self) -> &'static str {
         "Baidu"
     }
-
     fn engine_type(&self) -> SearchEngineType {
         SearchEngineType::Baidu
     }
-
     fn health(&self) -> EngineHealth {
         EngineHealth::Healthy
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         let url = "https://www.baidu.com/s";
-        let limit_str = request.limit.to_string();
 
-        let query_params = vec![("wd", request.query.clone()), ("rn", limit_str), ("tn", "json".to_string())];
-
-        let response = self
-            .client
+        let response = HTTP_CLIENT
             .get(url)
-            .query(&query_params)
+            .query(&[
+                ("wd", request.query.clone()),
+                ("rn", request.limit.to_string()),
+                ("tn", "json"),
+            ])
             .send()
             .await
-            .map_err(|e| SearchError::Network(e.to_string())))?;
+            .map_err(|e| SearchError::Network(e.to_string()))?;
 
         if !response.status().is_success() {
             return Err(SearchError::Engine(format!(
@@ -123,7 +123,6 @@ impl SearchEngine for BaiduSearchEngine {
             .text()
             .await
             .map_err(|e| SearchError::Network(e.to_string()))?;
-
         let items = self.parse_search_results(&html, &request.query).await?;
 
         Ok(Response {

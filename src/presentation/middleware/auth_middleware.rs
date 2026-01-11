@@ -109,7 +109,7 @@ pub async fn auth_middleware(
             Ok(next.run(req).await)
         }
         Ok(None) => {
-            tracing::warn!("API Key not found: {}", token_str);
+            tracing::warn!("API Key authentication failed");
             Err(StatusCode::UNAUTHORIZED)
         }
         Err(e) => {

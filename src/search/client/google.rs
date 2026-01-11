@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under MIT License
 // See LICENSE file in the project root for full license information.
 
 use super::{
@@ -14,19 +14,29 @@ use chrono::{DateTime, Utc};
 use rand::Rng;
 use reqwest::Client;
 use scraper::{ElementRef, Html, Selector};
-use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-/// Google ARC_ID 缓存结构
+/// Google HTTP client - reused across requests for connection pooling
+static HTTP_CLIENT: once_cell::sync::Lazy<Client> = once_cell::sync::Lazy::new(|| {
+    Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .build()
+        .unwrap_or_else(|_| Client::new())
+});
+
+/// Google ARC_ID cache structure
 struct ArcIdCache {
     arc_id: String,
     generated_at: i64,
 }
 
-/// Google 搜索引擎实现
+/// Google Search Engine implementation
 pub struct GoogleSearchEngine {
     arc_id_cache: Arc<RwLock<ArcIdCache>>,
 }
@@ -47,10 +57,9 @@ impl GoogleSearchEngine {
         }
     }
 
-    /// 生成 23 位随机 ARC_ID
+    /// Generate 23-character random ARC_ID
     fn generate_random_id() -> String {
         const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
-
         let mut rng = rand::rng();
         (0..23)
             .map(|_| {
@@ -60,12 +69,11 @@ impl GoogleSearchEngine {
             .collect()
     }
 
-    /// 获取 ARC_ID（每小时自动刷新）
+    /// Get ARC_ID (auto-refreshes every hour)
     pub async fn get_arc_id(&self, start_offset: usize) -> String {
         let mut cache = self.arc_id_cache.write().await;
         let now = Utc::now().timestamp();
 
-        // 超过 1 小时重新生成
         if now - cache.generated_at > 3600 {
             cache.arc_id = Self::generate_random_id();
             cache.generated_at = now;
@@ -78,161 +86,114 @@ impl GoogleSearchEngine {
         )
     }
 
-    /// 解析 Google HTML 结果
+    /// Parse Google HTML results with XSS protection
     fn parse_results(&self, html: &str) -> Result<Vec<ResponseItem>, SearchError> {
         let document = Html::parse_document(html);
-
         let mut results = Vec::new();
 
-        info!("开始解析 Google 搜索结果...");
+        info!("Parsing Google search results...");
 
-        // 策略 1: 使用 jscontroller 选择器
-        let selector_v1 = Selector::parse("div[jscontroller*='SC7lYd']").unwrap();
-        let selector_v2 = Selector::parse("div.g").unwrap();
-        let selector_v3 = Selector::parse("div[data-hveid]").unwrap();
-        let selector_v4 = Selector::parse("div:has(> a > h3)").unwrap();
+        // Multiple selector strategies for robustness
+        let selectors = [
+            Selector::parse("div[jscontroller*='SC7lYd']").unwrap(),
+            Selector::parse("div.g").unwrap(),
+            Selector::parse("div[data-hveid]").unwrap(),
+            Selector::parse("div:has(> a > h3)").unwrap(),
+        ];
 
-        // 尝试不同的选择器策略
-        let mut result_elements: Vec<_> = document.select(&selector_v1).collect();
-        if result_elements.is_empty() {
-            result_elements = document.select(&selector_v2).collect();
-        }
+        let result_elements = selectors
+            .iter()
+            .find_map(|s| {
+                let elements: Vec<_> = document.select(s).collect();
+                if !elements.is_empty() {
+                    Some(elements)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
 
-        if result_elements.is_empty() {
-            result_elements = document.select(&selector_v3).collect();
-        }
-
-        if result_elements.is_empty() {
-            result_elements = document.select(&selector_v4).collect();
-        }
-
-        // 标题选择器
         let title_selector = Selector::parse("h3").unwrap();
-
-        // 链接选择器
         let link_selector = Selector::parse("a[href]").unwrap();
-
-        // 摘要选择器
-        let snippet_selector_1 = Selector::parse("[data-sncf], div[data-snc]").unwrap();
-        let snippet_selector_2 = Selector::parse("span.st, div.st, p.st").unwrap();
-        let snippet_selector_3 =
-            Selector::parse("div[class*='snippet'], div[class*='desc']").unwrap();
+        let snippet_selectors = [
+            Selector::parse("[data-sncf], div[data-snc]").unwrap(),
+            Selector::parse("span.st, div.st, p.st").unwrap(),
+            Selector::parse("div[class*='snippet'], div[class*='desc']").unwrap(),
+        ];
 
         for element in result_elements {
-            // 提取标题
-            let title = {
-                let mut title_text = String::new();
-
-                if let Some(a) = element.select(&link_selector).next() {
-                    if let Some(h3) = a.select(&title_selector).next() {
-                        let text = h3.text().collect::<String>();
-                        if !text.is_empty() {
-                            title_text = text;
-                        }
-                    }
-                }
-
-                if title_text.is_empty() {
-                    if let Some(h3) = element.select(&title_selector).next() {
-                        let text = h3.text().collect::<String>();
-                        if !text.is_empty() {
-                            title_text = text;
-                        }
-                    }
-                }
-
-                title_text
-            };
+            // Extract title
+            let title = element
+                .select(&title_selector)
+                .next()
+                .map(|e| e.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
 
             if title.is_empty() {
                 continue;
             }
 
-            // 提取 URL
-            let url = {
-                let mut found_url = String::new();
-
-                if let Some(a) = element.select(&link_selector).next() {
-                    if let Some(_h3) = a.select(&title_selector).next() {
-                        if let Some(href) = a.value().attr("href") {
-                            if !href.is_empty() {
-                                found_url = href.to_string();
-                            }
+            // Extract URL
+            let mut found_url = String::new();
+            if let Some(a) = element.select(&link_selector).next() {
+                if a.select(&title_selector).next().is_some() {
+                    if let Some(href) = a.value().attr("href") {
+                        if !href.is_empty() {
+                            found_url = href.to_string();
                         }
                     }
                 }
-
-                if found_url.is_empty() {
-                    for a in element.select(&link_selector) {
-                        if let Some(href) = a.value().attr("href") {
-                            if !href.is_empty() && href.starts_with("http") {
-                                found_url = href.to_string();
-                                break;
-                            }
+            }
+            if found_url.is_empty() {
+                for a in element.select(&link_selector) {
+                    if let Some(href) = a.value().attr("href") {
+                        if !href.is_empty() && href.starts_with("http") {
+                            found_url = href.to_string();
+                            break;
                         }
                     }
                 }
+            }
 
+            // Clean and validate URL
+            let clean_url = if found_url.starts_with("/url?q=") {
                 found_url
-            };
-
-            // 清理 URL
-            let clean_url = if url.starts_with("/url?q=") {
-                url.replace("/url?q=", "")
+                    .trim_start_matches("/url?q=")
                     .split('&')
                     .next()
-                    .unwrap_or(&url)
+                    .unwrap_or(&found_url)
                     .to_string()
-            } else if url.starts_with("/") && !url.starts_with("//") {
-                format!("https://www.google.com{}", url)
+            } else if found_url.starts_with("/") && !found_url.starts_with("//") {
+                format!("https://www.google.com{}", found_url)
             } else {
-                url
+                found_url
             };
 
             if clean_url.is_empty() || !clean_url.starts_with("http") {
                 continue;
             }
 
-            // 提取摘要
-            let mut description = String::new();
-            for selector in &[
-                &snippet_selector_1,
-                &snippet_selector_2,
-                &snippet_selector_3,
-            ] {
-                if let Some(e) = element.select(selector).next() {
-                    let text = e.text().collect::<String>();
-                    if !text.is_empty() {
-                        description = text;
-                        break;
-                    }
-                }
-            }
+            // Extract snippet
+            let description = snippet_selectors
+                .iter()
+                .find_map(|s| {
+                    element
+                        .select(s)
+                        .next()
+                        .map(|e| e.text().collect::<String>().trim().to_string())
+                        .filter(|t| !t.is_empty())
+                })
+                .unwrap_or_default();
 
-            if description.is_empty() {
-                for a in element.select(&link_selector) {
-                    if let Some(next_sibling) = a.next_sibling() {
-                        if let Some(elem_ref) = ElementRef::wrap(next_sibling) {
-                            let text = elem_ref.text().collect::<String>();
-                            let text = text.trim().to_string();
-                            if text.len() > 10 && text.len() < 500 {
-                                description = text;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 去重
+            // Deduplicate by URL
             if results.iter().any(|r: &ResponseItem| r.url == clean_url) {
                 continue;
             }
 
             results.push(ResponseItem {
-                title,
+                title: Self::escape_html(&title),
                 url: clean_url,
-                description,
+                description: Self::escape_html(&description),
                 engine: SearchEngineType::Google,
             });
 
@@ -241,9 +202,16 @@ impl GoogleSearchEngine {
             }
         }
 
-        info!("成功解析到 {} 个 Google 搜索结果", results.len());
-
+        info!(
+            "Successfully parsed {} Google search results",
+            results.len()
+        );
         Ok(results)
+    }
+
+    /// Escape HTML entities to prevent XSS
+    fn escape_html(text: &str) -> String {
+        html_escape::decode_html_entities(text).trim().to_string()
     }
 }
 
@@ -252,11 +220,9 @@ impl SearchEngine for GoogleSearchEngine {
     fn get_name(&self) -> &'static str {
         "Google"
     }
-
     fn engine_type(&self) -> SearchEngineType {
         SearchEngineType::Google
     }
-
     fn health(&self) -> EngineHealth {
         EngineHealth::Healthy
     }
@@ -264,43 +230,38 @@ impl SearchEngine for GoogleSearchEngine {
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         let page = 1;
         let start = (page - 1) * request.limit;
-        let start_str = start.to_string();
 
-        // 构建查询参数
+        // Build query parameters
         let mut query_params: Vec<(&str, String)> = vec![
             ("q", request.query.clone()),
             ("ie", "utf8".to_string()),
             ("oe", "utf8".to_string()),
-            ("start", start_str),
+            ("start", start.to_string()),
             ("num", request.limit.to_string()),
+            ("asearch", "arc".to_string()),
+            ("async", self.get_arc_id(start as usize).await),
         ];
 
-        // 添加异步搜索参数和 ARC_ID
-        query_params.push(("asearch", "arc".to_string()));
-        query_params.push(("async", self.get_arc_id(start as usize).await));
-
         info!(
-            "Google搜索请求: query={}, limit={}",
+            "Google search request: query={}, limit={}",
             request.query, request.limit
         );
 
-        // 构建 Google 搜索 URL
-        let mut google_url = "https://www.google.com/search?".to_string();
-        let query_string = query_params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        google_url.push_str(&query_string);
-        info!("Constructed Google Search URL: {}", google_url);
+        // Build Google search URL
+        let google_url = format!(
+            "https://www.google.com/search?{}",
+            query_params
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
+                .collect::<Vec<_>>()
+                .join("&")
+        );
+        info!(
+            "Constructed Google Search URL (length: {})",
+            google_url.len()
+        );
 
-        let client = Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| SearchError::Network(format!("Failed to create HTTP client: {}", e)))?;
-
-        let response = client
+        let response = HTTP_CLIENT
             .get(&google_url)
             .header(
                 "Accept",
@@ -312,7 +273,7 @@ impl SearchEngine for GoogleSearchEngine {
             .header("Upgrade-Insecure-Requests", "1")
             .send()
             .await
-            .map_err(|e| SearchError::Network(format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| SearchError::Network(e.to_string()))?;
 
         if !response.status().is_success() {
             return Err(SearchError::Engine(format!(
@@ -324,8 +285,7 @@ impl SearchEngine for GoogleSearchEngine {
         let html = response
             .text()
             .await
-            .map_err(|e| SearchError::Network(format!("Failed to read response body: {}", e)))?;
-
+            .map_err(|e| SearchError::Network(e.to_string()))?;
         info!("Google search returned HTML length: {} bytes", html.len());
 
         if html.len() < 1000 {
@@ -335,7 +295,6 @@ impl SearchEngine for GoogleSearchEngine {
             ));
         }
 
-        // 解析结果
         let items = self.parse_results(&html)?;
 
         Ok(Response {
@@ -354,7 +313,6 @@ mod tests {
     fn test_generate_random_id() {
         let id1 = GoogleSearchEngine::generate_random_id();
         let id2 = GoogleSearchEngine::generate_random_id();
-
         assert_eq!(id1.len(), 23);
         assert_eq!(id2.len(), 23);
         assert_ne!(id1, id2);
@@ -371,14 +329,12 @@ mod tests {
     #[tokio::test]
     async fn test_get_arc_id_refresh() {
         let engine = GoogleSearchEngine::new();
-
         let arc_id1 = engine.get_arc_id(0).await;
         assert!(arc_id1.contains("arc_id:srp_"));
         assert!(arc_id1.contains("use_ac:true"));
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let arc_id2 = engine.get_arc_id(10).await;
-
         assert!(arc_id2.contains("arc_id:srp_"));
         assert_ne!(arc_id1, arc_id2);
     }

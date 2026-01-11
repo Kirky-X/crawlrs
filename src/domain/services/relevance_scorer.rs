@@ -7,6 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 type DateParser = fn(&str) -> Option<DateTime<Utc>>;
 
@@ -47,6 +48,19 @@ static DATE_REGEXES: Lazy<Vec<(Regex, DateParser)>> = Lazy::new(|| {
         }),
     ]
 });
+
+static REGEX_CACHE: Lazy<Mutex<HashMap<String, Regex>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn get_cached_regex(term: &str) -> Regex {
+    let pattern = format!(r"\b{}\b", regex::escape(term));
+    let mut cache = REGEX_CACHE.lock().unwrap();
+    if let Some(regex) = cache.get(&pattern) {
+        return regex.clone();
+    }
+    let regex = Regex::new(&pattern).unwrap();
+    cache.insert(pattern.clone(), regex.clone());
+    regex
+}
 
 pub struct RelevanceScorer {
     query_terms: Vec<String>,
@@ -145,8 +159,8 @@ impl RelevanceScorer {
 
     /// Check if term appears at word boundaries
     fn has_word_boundary_match(&self, text: &str, term: &str) -> bool {
-        let pattern = format!(r"\b{}\b", regex::escape(term));
-        Regex::new(&pattern).unwrap().is_match(text)
+        let regex = get_cached_regex(term);
+        regex.is_match(text)
     }
 
     /// Check if domain is authoritative (simplified heuristic)

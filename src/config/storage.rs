@@ -1,0 +1,54 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the MIT License
+// See LICENSE file in the project root for full license information.
+
+//! 存储和安全配置
+//!
+//! 包含存储后端配置和 Webhook 安全配置
+
+use serde::Deserialize;
+
+/// 存储配置设置
+///
+/// 配置数据存储后端，支持本地文件系统和 S3 兼容存储
+///
+/// # 字段说明
+///
+/// * `storage_type` - 存储类型，支持 "local" 或 "s3"，默认 "local"
+/// * `local_path` - 本地存储路径，当 storage_type="local" 时使用，默认 "./storage"
+/// * `s3_region` - S3 区域，当 storage_type="s3" 时使用
+/// * `s3_bucket` - S3 存储桶名称，当 storage_type="s3" 时使用
+/// * `s3_access_key` - S3 访问密钥，当 storage_type="s3" 时使用
+/// * `s3_secret_key` - S3 密钥，当 storage_type="s3" 时使用
+/// * `s3_endpoint` - S3 端点（可选），用于 MinIO 等兼容服务
+#[derive(Debug, Clone, Deserialize)]
+pub struct StorageSettings {
+    /// 存储类型 (local, s3)
+    pub storage_type: String,
+    /// 本地存储路径 (当 type=local 时使用)
+    pub local_path: Option<String>,
+    /// S3 区域
+    pub s3_region: Option<String>,
+    /// S3 存储桶名称
+    pub s3_bucket: Option<String>,
+    /// S3 访问密钥
+    pub s3_access_key: Option<String>,
+    /// S3 密钥
+    pub s3_secret_key: Option<String>,
+    /// S3 端点 (可选，用于 MinIO 等兼容服务)
+    pub s3_endpoint: Option<String>,
+}
+
+/// Webhook配置设置
+///
+/// 配置 Webhook 功能的参数
+///
+/// # 字段说明
+///
+/// * `secret` - Webhook 签名密钥，用于验证请求真实性，默认 "your-secret-key"
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebhookSettings {
+    /// Webhook签名密钥
+    pub secret: String,
+}

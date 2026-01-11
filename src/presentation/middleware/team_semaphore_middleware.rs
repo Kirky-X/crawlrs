@@ -14,14 +14,24 @@ use axum::{
 
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 
+/// 从请求扩展中提取team_id
+/// 认证中间件会将team_id注入到请求扩展中
+fn extract_team_id(request: &Request) -> Option<uuid::Uuid> {
+    request.extensions().get::<uuid::Uuid>().copied()
+}
+
 pub async fn team_semaphore_middleware(
     State(semaphore): State<Arc<TeamSemaphore>>,
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    // ⚠️ SECURITY WARNING: Using nil UUID - all requests share the same concurrency slot
-    // In production, extract team_id from JWT token or API key
-    let team_id = uuid::Uuid::nil();
+    // 从请求扩展中获取team_id（由认证中间件注入）
+    let team_id = extract_team_id(&request).ok_or_else(|| {
+        tracing::warn!("No team_id found in request extensions - authentication may have failed");
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    // 使用真实的team_id获取并发许可
     let _permit = semaphore.acquire(team_id).await;
     Ok(next.run(request).await)
 }

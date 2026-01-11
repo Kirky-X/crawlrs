@@ -571,14 +571,18 @@ impl BaiduSearchEngine {
             tracing::debug!("Baidu response received, content length: {}", response_text.len());
             tracing::debug!("Response starts with: {}", &response_text[..std::cmp::min(response_text.len(), 500)]);
 
-            let debug_dir = std::env::var("DEBUG_HTML_DIR").unwrap_or_else(|_| "/tmp/crawlrs_debug".to_string());
-            let debug_path = format!("{}/baidu_response_{}.html", debug_dir, chrono::Utc::now().timestamp_millis());
-            if let Err(e) = std::fs::create_dir_all(&debug_dir) {
-                tracing::warn!("Failed to create debug directory: {}", e);
-            } else if let Err(e) = std::fs::write(&debug_path, &response_text) {
-                tracing::warn!("Failed to write debug HTML: {}", e);
-            } else {
-                tracing::debug!("Debug HTML saved to: {}", debug_path);
+            #[cfg(debug_assertions)]
+            if let Ok(debug_dir) = std::env::var("DEBUG_HTML_DIR") {
+                if !debug_dir.is_empty() && !debug_dir.contains("..") {
+                    let debug_path = format!("{}/baidu_response_{}.html", debug_dir, chrono::Utc::now().timestamp_millis());
+                    if let Err(e) = std::fs::create_dir_all(&debug_dir) {
+                        tracing::warn!("Failed to create debug directory: {}", e);
+                    } else if let Err(e) = std::fs::write(&debug_path, &response_text) {
+                        tracing::warn!("Failed to write debug HTML: {}", e);
+                    } else {
+                        tracing::debug!("Debug HTML saved to: {}", debug_path);
+                    }
+                }
             }
 
             if self.is_captcha_page(&response_text) {

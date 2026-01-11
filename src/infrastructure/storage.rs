@@ -9,7 +9,7 @@ use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::config::settings::StorageSettings;
+use crate::config::StorageSettings;
 use crate::domain::repositories::storage_repository::{StorageError, StorageRepository};
 
 /// S3 对象存储实现
@@ -131,18 +131,50 @@ impl LocalStorage {
         Self { base_path }
     }
 
-    fn get_full_path(&self, key: &str) -> String {
-        Path::new(&self.base_path)
-            .join(key)
-            .to_string_lossy()
-            .to_string()
+    fn validate_key(&self, key: &str) -> Result<(), StorageError> {
+        if key.is_empty() {
+            return Err(StorageError::InvalidKey("Key cannot be empty".to_string()));
+        }
+
+        if key.starts_with('/') || key.starts_with('\\') {
+            return Err(StorageError::InvalidKey(
+                "Key cannot start with absolute path".to_string(),
+            ));
+        }
+
+        if key.contains("..") || key.contains("./") || key.contains(".\\") {
+            return Err(StorageError::InvalidKey(
+                "Key contains invalid path traversal characters".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn get_full_path(&self, key: &str) -> Result<String, StorageError> {
+        self.validate_key(key)?;
+
+        let base = Path::new(&self.base_path);
+        let joined = base.join(key);
+
+        if let Ok(canonical) = joined.canonicalize() {
+            if let Ok(base_canonical) = base.canonicalize() {
+                if !canonical.starts_with(&base_canonical) {
+                    return Err(StorageError::InvalidKey(
+                        "Path escapes base directory".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(joined.to_string_lossy().to_string())
     }
 }
 
 #[async_trait]
 impl StorageRepository for LocalStorage {
     async fn save(&self, key: &str, data: &[u8]) -> Result<(), StorageError> {
-        let full_path = self.get_full_path(key);
+        let full_path = self.get_full_path(key)?;
 
         // 确保目录存在
         if let Some(parent) = Path::new(&full_path).parent() {
@@ -157,7 +189,7 @@ impl StorageRepository for LocalStorage {
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StorageError> {
-        let full_path = self.get_full_path(key);
+        let full_path = self.get_full_path(key)?;
 
         match fs::read(&full_path).await {
             Ok(data) => Ok(Some(data)),
@@ -167,7 +199,7 @@ impl StorageRepository for LocalStorage {
     }
 
     async fn delete(&self, key: &str) -> Result<(), StorageError> {
-        let full_path = self.get_full_path(key);
+        let full_path = self.get_full_path(key)?;
 
         match fs::remove_file(&full_path).await {
             Ok(()) => Ok(()),
@@ -177,7 +209,7 @@ impl StorageRepository for LocalStorage {
     }
 
     async fn exists(&self, key: &str) -> Result<bool, StorageError> {
-        let full_path = self.get_full_path(key);
+        let full_path = self.get_full_path(key)?;
         Ok(Path::new(&full_path).exists())
     }
 }

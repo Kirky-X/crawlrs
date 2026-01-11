@@ -15,6 +15,7 @@ use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::queue::task_queue::TaskQueue;
 use crate::workers::expiration_worker::ExpirationWorker;
 use crate::workers::scrape_worker::ScrapeWorker;
+use crate::workers::{AbstractWorker, Worker};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::task::JoinHandle;
@@ -98,9 +99,13 @@ where
     ///
     /// * `count` - 要启动的工作进程数量
     pub async fn start_workers(&mut self, count: usize) {
-        // 启动过期清理工作器
-        let expiration_worker = ExpirationWorker::new(self.repository.clone());
-        self.handles.push(expiration_worker.start());
+        // 启动过期清理工作器（使用新模板模式）
+        let expiration_processor = Arc::new(ExpirationWorker::new(self.repository.clone()));
+        let expiration_worker =
+            AbstractWorker::new(expiration_processor, std::time::Duration::from_secs(3600));
+        self.handles.push(tokio::spawn(async move {
+            expiration_worker.run().await;
+        }));
 
         for _ in 0..count {
             let worker = ScrapeWorker::new(

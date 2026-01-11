@@ -3,13 +3,11 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use tokio::time::interval;
 use tracing::{error, info, warn};
 
 use crate::domain::repositories::{
@@ -17,6 +15,7 @@ use crate::domain::repositories::{
 };
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::utils::errors::WorkerError;
+use crate::workers::worker::{ProcessResult, WorkerProcess};
 
 /// 积压任务处理Worker
 ///
@@ -26,8 +25,8 @@ pub struct BacklogWorker {
     tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
     task_repository: Arc<dyn TaskRepository>,
     rate_limiting_service: Arc<dyn RateLimitingService>,
-    process_interval: Duration,
     batch_size: usize,
+    cleanup_cycle_counter: AtomicU64,
 }
 
 impl BacklogWorker {
@@ -35,15 +34,14 @@ impl BacklogWorker {
         tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
         task_repository: Arc<dyn TaskRepository>,
         rate_limiting_service: Arc<dyn RateLimitingService>,
-        process_interval: Duration,
         batch_size: usize,
     ) -> Self {
         Self {
             tasks_backlog_repository,
             task_repository,
             rate_limiting_service,
-            process_interval,
             batch_size,
+            cleanup_cycle_counter: AtomicU64::new(0),
         }
     }
 
@@ -334,33 +332,25 @@ impl BacklogWorker {
 }
 
 #[async_trait]
-impl crate::workers::Worker for BacklogWorker {
-    async fn run(&self) -> Result<(), WorkerError> {
-        info!("积压任务处理Worker启动");
-
-        let mut interval = interval(self.process_interval);
-
-        loop {
-            interval.tick().await;
-
-            // 处理积压任务
-            if let Err(e) = self.process_backlog().await {
-                error!("处理积压任务时发生错误: {}", e);
-            }
-
-            // 定期清理过期任务（每10个周期清理一次）
-            static CLEANUP_COUNTER: std::sync::atomic::AtomicU64 =
-                std::sync::atomic::AtomicU64::new(0);
-            let counter = CLEANUP_COUNTER.fetch_add(1, Ordering::SeqCst);
-            if counter.is_multiple_of(10) {
-                if let Err(e) = self.cleanup_expired_tasks().await {
-                    error!("清理过期积压任务时发生错误: {}", e);
-                }
-            }
-        }
-    }
-
+impl WorkerProcess for BacklogWorker {
     fn name(&self) -> &str {
         "backlog-worker"
+    }
+
+    async fn process(&self) -> ProcessResult {
+        // 处理积压任务
+        if let Err(e) = self.process_backlog().await {
+            return ProcessResult::Error(format!("处理积压任务时发生错误: {}", e));
+        }
+
+        // 定期清理过期任务（每10个周期清理一次）
+        let counter = self.cleanup_cycle_counter.fetch_add(1, Ordering::SeqCst);
+        if counter.is_multiple_of(10) {
+            if let Err(e) = self.cleanup_expired_tasks().await {
+                return ProcessResult::Error(format!("清理过期积压任务时发生错误: {}", e));
+            }
+        }
+
+        ProcessResult::Completed
     }
 }

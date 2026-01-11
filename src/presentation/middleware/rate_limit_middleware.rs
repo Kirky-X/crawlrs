@@ -74,17 +74,18 @@ impl RateLimiter {
         }
 
         let limit = self.get_rate_limit(api_key).await?;
-        tracing::info!(
-            "RateLimiter: API Key {} - Current: {}, Limit: {}",
-            api_key,
+        let key_prefix = &api_key[..std::cmp::min(8, api_key.len())];
+        tracing::debug!(
+            "RateLimiter: API Key starting with {} - Current: {}, Limit: {}",
+            key_prefix,
             current_requests,
             limit
         );
 
         if current_requests > limit.into() {
             tracing::warn!(
-                "RateLimiter: API Key {} exceeded limit. Current: {}, Limit: {}",
-                api_key,
+                "RateLimiter: API Key starting with {} exceeded limit. Current: {}, Limit: {}",
+                key_prefix,
                 current_requests,
                 limit
             );

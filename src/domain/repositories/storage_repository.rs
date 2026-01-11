@@ -15,6 +15,9 @@ pub enum StorageError {
     /// 存储错误
     #[error("Storage error: {0}")]
     Other(String),
+    /// 无效的存储键
+    #[error("Invalid storage key: {0}")]
+    InvalidKey(String),
 }
 
 /// 存储仓库特质

@@ -223,17 +223,6 @@ impl GoogleSearchEngine {
             ));
         }
 
-        // DEBUG: Save HTML to file for analysis
-        if std::env::var("DEBUG_GOOGLE_HTML").is_ok() {
-            let timestamp = Utc::now().timestamp();
-            let filename = format!("google_search_{}.html", timestamp);
-            if let Err(e) = fs::write(&filename, &html) {
-                warn!("Failed to write debug HTML file: {}", e);
-            } else {
-                info!("Saved Google search HTML to {}", filename);
-            }
-        }
-
         // Try to parse results, but be more lenient with HTTP fallback
         match self.parse_results(&html) {
             Ok(results) => {

@@ -6,14 +6,12 @@
 use crate::domain::models::webhook::{WebhookEvent, WebhookStatus};
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::services::webhook_service::WebhookService;
-use crate::utils::{errors::WorkerError, retry_policy::RetryPolicy};
-use crate::workers::worker::Worker;
+use crate::utils::retry_policy::RetryPolicy;
+use crate::workers::worker::{ProcessResult, WorkerProcess};
 use anyhow::Result;
 use chrono::Utc;
 use metrics::counter;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 /// Webhook工作器
@@ -162,20 +160,15 @@ impl WebhookWorker {
 }
 
 #[async_trait::async_trait]
-impl Worker for WebhookWorker {
-    async fn run(&self) -> Result<(), WorkerError> {
-        info!("Starting webhook worker");
-
-        loop {
-            if let Err(e) = self.process_pending_webhooks().await {
-                error!("Error processing pending webhooks: {}", e);
-            }
-
-            sleep(Duration::from_secs(5)).await;
-        }
-    }
-
+impl WorkerProcess for WebhookWorker {
     fn name(&self) -> &str {
         "webhook_worker"
+    }
+
+    async fn process(&self) -> ProcessResult {
+        if let Err(e) = self.process_pending_webhooks().await {
+            return ProcessResult::Error(format!("Error processing pending webhooks: {}", e));
+        }
+        ProcessResult::Completed
     }
 }

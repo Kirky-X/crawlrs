@@ -14,4 +14,4 @@ pub mod scrape_worker;
 pub mod webhook_worker;
 pub mod worker;
 
-pub use worker::Worker;
+pub use worker::{AbstractWorker, ProcessResult, Worker, WorkerProcess};

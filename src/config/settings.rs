@@ -6,6 +6,13 @@
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 
+use super::app::{
+    ConcurrencySettings, DatabaseSettings, RateLimitingSettings, RedisSettings, ServerSettings,
+};
+use super::llm::LLMSettings;
+use super::search::{BingSearchSettings, GoogleSearchSettings, SearchSettings};
+use super::storage::{StorageSettings, WebhookSettings};
+
 /// 应用程序配置设置
 ///
 /// 包含数据库、Redis、服务器、速率限制和并发控制等所有配置项
@@ -23,7 +30,7 @@ use serde::Deserialize;
 /// # 示例
 ///
 /// ```rust
-/// use crawlrs::config::settings::Settings;
+/// use crawlrs::config::Settings;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let settings = Settings::new()?;
@@ -57,189 +64,6 @@ pub struct Settings {
     pub llm: LLMSettings,
 }
 
-/// 数据库配置设置
-///
-/// 配置数据库连接参数和连接池设置
-///
-/// # 字段说明
-///
-/// * `url` - PostgreSQL 数据库连接字符串
-/// * `max_connections` - 连接池中最大连接数，默认 100
-/// * `min_connections` - 连接池中最小连接数，默认 10
-/// * `connect_timeout` - 连接超时时间（秒），默认 10 秒
-/// * `idle_timeout` - 空闲连接超时时间（秒），默认 300 秒
-#[derive(Debug, Clone, Deserialize)]
-pub struct DatabaseSettings {
-    /// 数据库连接URL
-    pub url: String,
-    /// 最大连接数
-    pub max_connections: Option<u32>,
-    /// 最小连接数
-    pub min_connections: Option<u32>,
-    /// 连接超时时间（秒）
-    pub connect_timeout: Option<u64>,
-    /// 空闲连接超时时间（秒）
-    pub idle_timeout: Option<u64>,
-}
-
-/// Redis配置设置
-///
-/// 配置 Redis 连接参数
-///
-/// # 字段说明
-///
-/// * `url` - Redis 连接字符串，格式为 redis://host:port/db
-#[derive(Debug, Clone, Deserialize)]
-pub struct RedisSettings {
-    /// Redis连接URL
-    pub url: String,
-}
-
-/// 服务器配置设置
-///
-/// 配置 HTTP 服务器的监听参数
-///
-/// # 字段说明
-///
-/// * `host` - 服务器监听的主机地址，通常为 "0.0.0.0" 或 "127.0.0.1"
-/// * `port` - 服务器监听的端口号，默认 3000
-#[derive(Debug, Clone, Deserialize)]
-pub struct ServerSettings {
-    /// 服务器监听主机地址
-    pub host: String,
-    /// 服务器监听端口
-    pub port: u16,
-    /// 是否开启端口嗅探功能
-    pub enable_port_detection: bool,
-}
-
-/// 速率限制配置设置
-///
-/// 控制 API 请求的速率限制参数
-///
-/// # 字段说明
-///
-/// * `enabled` - 是否启用速率限制，默认 true
-/// * `default_rpm` - 默认每分钟请求数限制，默认 100
-#[derive(Debug, Clone, Deserialize)]
-pub struct RateLimitingSettings {
-    /// 是否启用速率限制
-    pub enabled: bool,
-    /// 默认每分钟请求数限制
-    pub default_rpm: u32,
-}
-
-/// 并发控制配置设置
-///
-/// 控制系统并发度和资源使用的参数
-///
-/// # 字段说明
-///
-/// * `default_team_limit` - 每个团队的最大并发任务数，默认 10
-/// * `task_lock_duration_seconds` - 任务锁持续时间，防止重复处理，默认 300 秒（5 分钟）
-#[derive(Debug, Clone, Deserialize)]
-pub struct ConcurrencySettings {
-    /// 默认团队并发限制
-    pub default_team_limit: i64,
-    /// 任务锁持续时间（秒）
-    pub task_lock_duration_seconds: i64,
-}
-
-/// 存储配置设置
-///
-/// 配置数据存储后端，支持本地文件系统和 S3 兼容存储
-///
-/// # 字段说明
-///
-/// * `storage_type` - 存储类型，支持 "local" 或 "s3"，默认 "local"
-/// * `local_path` - 本地存储路径，当 storage_type="local" 时使用，默认 "./storage"
-/// * `s3_region` - S3 区域，当 storage_type="s3" 时使用
-/// * `s3_bucket` - S3 存储桶名称，当 storage_type="s3" 时使用
-/// * `s3_access_key` - S3 访问密钥，当 storage_type="s3" 时使用
-/// * `s3_secret_key` - S3 密钥，当 storage_type="s3" 时使用
-/// * `s3_endpoint` - S3 端点（可选），用于 MinIO 等兼容服务
-#[derive(Debug, Clone, Deserialize)]
-pub struct StorageSettings {
-    /// 存储类型 (local, s3)
-    pub storage_type: String,
-    /// 本地存储路径 (当 type=local 时使用)
-    pub local_path: Option<String>,
-    /// S3 区域
-    pub s3_region: Option<String>,
-    /// S3 存储桶名称
-    pub s3_bucket: Option<String>,
-    /// S3 访问密钥
-    pub s3_access_key: Option<String>,
-    /// S3 密钥
-    pub s3_secret_key: Option<String>,
-    /// S3 端点 (可选，用于 MinIO 等兼容服务)
-    pub s3_endpoint: Option<String>,
-}
-
-/// Webhook配置设置
-///
-/// 配置 Webhook 功能的参数
-///
-/// # 字段说明
-///
-/// * `secret` - Webhook 签名密钥，用于验证请求真实性，默认 "your-secret-key"
-#[derive(Debug, Clone, Deserialize)]
-pub struct WebhookSettings {
-    /// Webhook签名密钥
-    pub secret: String,
-}
-
-/// Google Custom Search API 配置设置
-///
-/// 配置 Google Custom Search API 的参数
-///
-/// # 字段说明
-///
-/// * `api_key` - Google Search API 密钥
-/// * `cx` - Google Custom Search Engine ID
-#[derive(Debug, Clone, Deserialize)]
-pub struct GoogleSearchSettings {
-    /// Google Search API 密钥
-    pub api_key: Option<String>,
-    /// Google Custom Search Engine ID
-    pub cx: Option<String>,
-}
-
-/// Bing Search API 配置设置
-#[derive(Debug, Clone, Deserialize)]
-pub struct BingSearchSettings {
-    /// Bing Search API 密钥
-    pub api_key: Option<String>,
-}
-
-/// 搜索配置设置
-#[derive(Debug, Clone, Deserialize)]
-pub struct SearchSettings {
-    /// 是否启用 A/B 测试
-    pub ab_test_enabled: bool,
-    /// Variant B 的流量权重 (0.0 到 1.0)
-    pub variant_b_weight: f64,
-}
-
-/// LLM 配置设置
-///
-/// 配置 LLM（大语言模型）服务的参数
-///
-/// # 字段说明
-///
-/// * `api_key` - LLM API 密钥
-/// * `model` - 使用的模型名称，默认 "gpt-3.5-turbo"
-/// * `api_base_url` - LLM API 基础 URL，默认 "https://api.openai.com/v1"
-#[derive(Debug, Clone, Deserialize)]
-pub struct LLMSettings {
-    /// LLM API 密钥
-    pub api_key: Option<String>,
-    /// 使用的模型名称
-    pub model: Option<String>,
-    /// LLM API 基础 URL
-    pub api_base_url: Option<String>,
-}
-
 impl Settings {
     /// 创建新的配置实例
     ///
@@ -261,7 +85,7 @@ impl Settings {
     /// # 示例
     ///
     /// ```rust
-    /// use crawlrs::config::settings::Settings;
+    /// use crawlrs::config::Settings;
     ///
     /// fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     let settings = Settings::new()?;

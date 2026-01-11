@@ -4,9 +4,9 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::entities::search_result::SearchResult;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 /// 去重策略
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -221,12 +221,12 @@ impl ResultDeduplicator {
                 let url2 = self.normalize_url(&existing.url);
                 let title1 = self.normalize_title(&result.title);
                 let title2 = self.normalize_title(&existing.title);
-                
-                url1 == url2 || self.calculate_similarity(&title1, &title2) > self.config.title_similarity_threshold
+
+                url1 == url2
+                    || self.calculate_similarity(&title1, &title2)
+                        > self.config.title_similarity_threshold
             }
-            DeduplicationStrategy::Smart => {
-                self.is_smart_duplicate(result, existing)
-            }
+            DeduplicationStrategy::Smart => self.is_smart_duplicate(result, existing),
         }
     }
 
@@ -243,7 +243,7 @@ impl ResultDeduplicator {
         let title1 = self.normalize_title(&result.title);
         let title2 = self.normalize_title(&existing.title);
         let title_similarity = self.calculate_similarity(&title1, &title2);
-        
+
         if title_similarity > self.config.title_similarity_threshold {
             return true;
         }
@@ -253,10 +253,11 @@ impl ResultDeduplicator {
             if let (Some(content1), Some(content2)) = (&result.description, &existing.description) {
                 let fingerprint1 = self.generate_fingerprint(content1);
                 let fingerprint2 = self.generate_fingerprint(content2);
-                
+
                 // 计算指纹相似度（汉明距离）
-                let fingerprint_similarity = self.calculate_fingerprint_similarity(fingerprint1, fingerprint2);
-                
+                let fingerprint_similarity =
+                    self.calculate_fingerprint_similarity(fingerprint1, fingerprint2);
+
                 if fingerprint_similarity > self.config.content_similarity_threshold {
                     return true;
                 }
@@ -278,22 +279,50 @@ impl ResultDeduplicator {
         let mut unique_results = Vec::new();
 
         for result in results {
-            let is_duplicate = unique_results.iter().any(|existing| {
-                self.is_duplicate(&result, existing)
-            });
+            let normalized_url = self.normalize_url(&result.url);
+            let normalized_title = self.normalize_title(&result.title);
+
+            // 使用 HashSet 进行快速去重检测
+            let url_exists = self.seen_urls.contains(&normalized_url);
+            let title_exists = self.seen_titles.contains(&normalized_title);
+
+            // 根据策略判断是否重复
+            let is_duplicate = match self.config.strategy {
+                DeduplicationStrategy::UrlOnly => url_exists,
+                DeduplicationStrategy::TitleOnly => title_exists,
+                DeduplicationStrategy::UrlAndTitle => {
+                    url_exists
+                        || (title_exists
+                            && self.calculate_similarity(&normalized_title, &normalized_title)
+                                > self.config.title_similarity_threshold)
+                }
+                DeduplicationStrategy::Smart => {
+                    // URL 完全匹配
+                    url_exists
+                    // 标题相似且已存在（使用 HashSet 近似判断）
+                    || (title_exists && {
+                        // 只有当 HashSet 中存在时，才进一步检查
+                        unique_results.iter().any(|existing| {
+                            let existing_title = self.normalize_title(&existing.title);
+                            self.calculate_similarity(&normalized_title, &existing_title)
+                                > self.config.title_similarity_threshold
+                        })
+                    })
+                }
+            };
 
             if !is_duplicate {
                 // 添加到已见集合
-                self.seen_urls.insert(self.normalize_url(&result.url));
-                self.seen_titles.insert(self.normalize_title(&result.title));
-                
+                self.seen_urls.insert(normalized_url);
+                self.seen_titles.insert(normalized_title);
+
                 if self.config.fingerprint_config.enabled {
                     if let Some(content) = &result.description {
                         let fingerprint = self.generate_fingerprint(content);
                         self.seen_fingerprints.insert(fingerprint);
                     }
                 }
-                
+
                 unique_results.push(result);
             }
         }
@@ -302,9 +331,12 @@ impl ResultDeduplicator {
     }
 
     /// 批量去重多个引擎的结果
-    pub fn deduplicate_multi_engine(&mut self, engine_results: Vec<(String, Vec<SearchResult>)>) -> Vec<SearchResult> {
+    pub fn deduplicate_multi_engine(
+        &mut self,
+        engine_results: Vec<(String, Vec<SearchResult>)>,
+    ) -> Vec<SearchResult> {
         let mut all_results = Vec::new();
-        
+
         // 合并所有结果
         for (engine_name, results) in engine_results {
             for mut result in results {
@@ -312,7 +344,7 @@ impl ResultDeduplicator {
                 all_results.push(result);
             }
         }
-        
+
         // 去重
         self.deduplicate(all_results)
     }
@@ -384,7 +416,11 @@ mod tests {
         let results = vec![
             create_test_result("https://example.com/page1", "Rust Programming Guide", None),
             create_test_result("https://example.com/page2", "Rust Programming Guide", None), // 相同标题
-            create_test_result("https://example.com/page3", "Python Programming Guide", None),
+            create_test_result(
+                "https://example.com/page3",
+                "Python Programming Guide",
+                None,
+            ),
         ];
 
         let deduplicated = dedup.deduplicate(results);
@@ -399,9 +435,21 @@ mod tests {
         dedup.config.strategy = DeduplicationStrategy::Smart;
 
         let results = vec![
-            create_test_result("https://example.com/page1", "Rust Guide", Some("Learn Rust programming")),
-            create_test_result("https://example.com/page2", "Rust Programming Guide", Some("Learn Rust programming language")), // 相似标题
-            create_test_result("https://example.com/page3", "Python Guide", Some("Learn Python programming")),
+            create_test_result(
+                "https://example.com/page1",
+                "Rust Guide",
+                Some("Learn Rust programming"),
+            ),
+            create_test_result(
+                "https://example.com/page2",
+                "Rust Programming Guide",
+                Some("Learn Rust programming language"),
+            ), // 相似标题
+            create_test_result(
+                "https://example.com/page3",
+                "Python Guide",
+                Some("Learn Python programming"),
+            ),
         ];
 
         let deduplicated = dedup.deduplicate(results);

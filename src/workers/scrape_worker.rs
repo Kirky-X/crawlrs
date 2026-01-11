@@ -1372,7 +1372,7 @@ where
             let event = WebhookEvent {
                 id: Uuid::new_v4(),
                 team_id: task.team_id,
-                webhook_id: Uuid::nil(),
+                webhook_id: Uuid::nil(), // Direct webhook URL without associated webhook record
                 event_type,
                 payload,
                 webhook_url: url,

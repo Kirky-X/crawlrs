@@ -150,6 +150,16 @@ pub trait CacheStrategy: Send + Sync {
 
     /// 执行缓存预热
     async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()>;
+
+    /// 批量获取缓存
+    async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>>;
+
+    /// 批量设置缓存
+    async fn set_batch(
+        &self,
+        entries: Vec<(String, Vec<SearchResult>)>,
+        ttl: Option<Duration>,
+    ) -> Result<()>;
 }
 
 /// 内存缓存策略
@@ -274,6 +284,46 @@ impl CacheStrategy for MemoryCacheStrategy {
         info!("Memory cache preheating completed");
         Ok(())
     }
+
+    async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>> {
+        let mut results = Vec::with_capacity(keys.len());
+
+        for key in keys {
+            if let Some(mut entry) = self.cache.get_mut(key) {
+                if entry.is_expired() {
+                    self.cache.remove(key);
+                    self._stats.lock().unwrap().misses += 1;
+                    results.push(None);
+                } else {
+                    entry.touch();
+                    self._stats.lock().unwrap().hits += 1;
+                    results.push(Some(entry.data.clone()));
+                }
+            } else {
+                self._stats.lock().unwrap().misses += 1;
+                results.push(None);
+            }
+        }
+        Ok(results)
+    }
+
+    async fn set_batch(
+        &self,
+        entries: Vec<(String, Vec<SearchResult>)>,
+        ttl: Option<Duration>,
+    ) -> Result<()> {
+        let ttl = ttl.unwrap_or(Duration::from_secs(self.config.ttl_seconds));
+        let count = entries.len();
+
+        for (key, value) in entries {
+            let entry = CacheEntry::new(value, ttl);
+            self.cache.insert(key, entry);
+        }
+
+        self.evict_if_needed();
+        self._stats.lock().unwrap().stores += count as u64;
+        Ok(())
+    }
 }
 
 /// Redis缓存策略
@@ -377,6 +427,33 @@ impl CacheStrategy for RedisCacheStrategy {
         stats.preheat_hits += entry_count as u64;
 
         info!("Redis cache preheating completed");
+        Ok(())
+    }
+
+    async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>> {
+        let mut results = Vec::with_capacity(keys.len());
+
+        for key in keys {
+            match self.get(key).await {
+                Ok(result) => results.push(result),
+                Err(_) => results.push(None),
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn set_batch(
+        &self,
+        entries: Vec<(String, Vec<SearchResult>)>,
+        ttl: Option<Duration>,
+    ) -> Result<()> {
+        let ttl = ttl.unwrap_or(Duration::from_secs(self.config.ttl_seconds));
+
+        for (key, value) in entries {
+            self.set(&key, value, Some(ttl)).await?;
+        }
+
         Ok(())
     }
 }
@@ -493,6 +570,51 @@ impl CacheStrategy for LayeredCacheStrategy {
         tokio::try_join!(memory_future, redis_future)?;
 
         info!("Layered cache preheating completed");
+        Ok(())
+    }
+
+    async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>> {
+        let mut results = Vec::with_capacity(keys.len());
+
+        for key in keys {
+            if let Some(results_val) = self.memory_cache.get(key).await? {
+                results.push(Some(results_val));
+            } else if let Some(results_val) = self.redis_cache.get(key).await? {
+                let memory_ttl = Duration::from_secs(self.config.memory_ttl);
+                let _ = self
+                    .memory_cache
+                    .set(key, results_val.clone(), Some(memory_ttl))
+                    .await;
+                results.push(Some(results_val));
+            } else {
+                results.push(None);
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn set_batch(
+        &self,
+        entries: Vec<(String, Vec<SearchResult>)>,
+        ttl: Option<Duration>,
+    ) -> Result<()> {
+        let memory_ttl = Duration::from_secs(self.config.memory_ttl);
+        let redis_ttl = ttl.unwrap_or(Duration::from_secs(self.config.redis_ttl));
+
+        let memory_entries = entries
+            .iter()
+            .cloned()
+            .map(|(k, v)| (k, v.clone()))
+            .collect();
+        let redis_entries = entries;
+
+        let memory_future = self
+            .memory_cache
+            .set_batch(memory_entries, Some(memory_ttl));
+        let redis_future = self.redis_cache.set_batch(redis_entries, Some(redis_ttl));
+
+        tokio::try_join!(memory_future, redis_future)?;
         Ok(())
     }
 }
@@ -638,6 +760,20 @@ impl CacheStrategy for SmartCacheStrategy {
     async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()> {
         let current_index = *self.current_strategy.read().unwrap();
         self.strategies[current_index].preheat(hot_data).await
+    }
+
+    async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>> {
+        let current_index = *self.current_strategy.read().unwrap();
+        self.strategies[current_index].get_batch(keys).await
+    }
+
+    async fn set_batch(
+        &self,
+        entries: Vec<(String, Vec<SearchResult>)>,
+        ttl: Option<Duration>,
+    ) -> Result<()> {
+        let current_index = *self.current_strategy.read().unwrap();
+        self.strategies[current_index].set_batch(entries, ttl).await
     }
 }
 

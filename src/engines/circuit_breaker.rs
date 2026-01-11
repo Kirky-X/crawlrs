@@ -132,7 +132,10 @@ impl CircuitBreaker {
     /// * `engine_name` - 引擎名称
     /// * `config` - 配置
     pub fn set_config(&self, engine_name: &str, config: CircuitConfig) {
-        let mut configs = self.configs.write().unwrap();
+        let mut configs = self
+            .configs
+            .write()
+            .expect("Failed to acquire write lock for configs");
         configs.insert(engine_name.to_string(), config);
     }
 
@@ -146,7 +149,10 @@ impl CircuitBreaker {
     ///
     /// 引擎配置
     fn get_config(&self, engine_name: &str) -> CircuitConfig {
-        let configs = self.configs.read().unwrap();
+        let configs = self
+            .configs
+            .read()
+            .expect("Failed to acquire read lock for configs");
         configs
             .get(engine_name)
             .cloned()
@@ -165,7 +171,10 @@ impl CircuitBreaker {
     pub fn is_open(&self, engine_name: &str) -> bool {
         let config = self.get_config(engine_name);
 
-        let mut states = self.states.write().unwrap();
+        let mut states = self
+            .states
+            .write()
+            .expect("Failed to acquire write lock for states");
         let state = states
             .entry(engine_name.to_string())
             .or_insert(CircuitState {
@@ -201,7 +210,10 @@ impl CircuitBreaker {
     ///
     /// * `engine_name` - 引擎名称
     pub fn record_success(&self, engine_name: &str) {
-        let mut states = self.states.write().unwrap();
+        let mut states = self
+            .states
+            .write()
+            .expect("Failed to acquire write lock for states");
         if let Some(state) = states.get_mut(engine_name) {
             state.total_requests += 1;
             state.total_successes += 1;
@@ -227,7 +239,10 @@ impl CircuitBreaker {
     pub fn record_failure(&self, engine_name: &str) {
         let config = self.get_config(engine_name);
 
-        let mut states = self.states.write().unwrap();
+        let mut states = self
+            .states
+            .write()
+            .expect("Failed to acquire write lock for states");
         let state = states
             .entry(engine_name.to_string())
             .or_insert(CircuitState {
@@ -284,7 +299,10 @@ impl CircuitBreaker {
     ///
     /// 统计信息
     pub async fn get_stats(&self, engine_name: &str) -> CircuitStats {
-        let states = self.states.read().unwrap();
+        let states = self
+            .states
+            .read()
+            .expect("Failed to acquire read lock for states");
         if let Some(state) = states.get(engine_name) {
             CircuitStats {
                 is_open: state.status == Status::Open,

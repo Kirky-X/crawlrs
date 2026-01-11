@@ -127,6 +127,7 @@ pub async fn wait_for_tasks_completion<T: TaskRepository>(
 
 /// 统一任务查询处理器
 pub async fn query_tasks<T: TaskRepository>(
+    Extension(team_id): Extension<uuid::Uuid>, // 从认证中间件获取
     Extension(task_repo): Extension<Arc<T>>,
     Extension(scrape_result_repo): Extension<Arc<ScrapeResultRepositoryImpl>>,
     Json(request): Json<TaskQueryRequestDto>,
@@ -151,10 +152,10 @@ pub async fn query_tasks<T: TaskRepository>(
     let task_types_clone = request.task_types.clone();
     let statuses_clone = request.statuses.clone();
 
-    // 执行查询
+    // 执行查询（使用认证上下文中提取的 team_id）
     let (mut tasks, total) = task_repo
         .query_tasks(TaskQueryParams {
-            team_id: request.team_id,
+            team_id, // 使用认证上下文的 team_id，而非请求体的 team_id
             task_ids: request.task_ids.clone(),
             task_types: request.task_types,
             statuses: request.statuses,
@@ -179,7 +180,7 @@ pub async fn query_tasks<T: TaskRepository>(
         wait_for_tasks_completion(
             task_repo.as_ref(),
             &task_ids,
-            request.team_id,
+            team_id, // 使用认证上下文的 team_id
             sync_wait_ms,
             1000, // 基础轮询间隔1秒
         )
@@ -191,7 +192,7 @@ pub async fn query_tasks<T: TaskRepository>(
         if waited_time_ms > 0 {
             (tasks, _) = task_repo
                 .query_tasks(TaskQueryParams {
-                    team_id: request.team_id,
+                    team_id, // 使用认证上下文的 team_id
                     task_ids: request.task_ids.clone(),
                     task_types: task_types_clone,
                     statuses: statuses_clone,
@@ -281,6 +282,7 @@ pub async fn query_tasks<T: TaskRepository>(
 
 /// 统一任务取消处理器
 pub async fn cancel_tasks<T: TaskRepository>(
+    Extension(team_id): Extension<uuid::Uuid>, // 从认证中间件获取
     Extension(task_repo): Extension<Arc<T>>,
     Json(request): Json<TaskCancelRequestDto>,
 ) -> Result<Json<TaskCancelResponseDto>, AppError> {
@@ -302,9 +304,9 @@ pub async fn cancel_tasks<T: TaskRepository>(
     let force = request.force.unwrap_or(false);
     let sync_wait_ms = request.sync_wait_ms.unwrap_or(5000);
 
-    // 执行批量取消
+    // 执行批量取消（使用认证上下文的 team_id）
     let (cancelled_task_ids, failed_tasks) = task_repo
-        .batch_cancel(request.task_ids.clone(), request.team_id, force)
+        .batch_cancel(request.task_ids.clone(), team_id, force) // 使用认证上下文的 team_id
         .await?;
 
     // 同步等待机制：如果指定了sync_wait_ms且有任务被取消，等待取消操作完成

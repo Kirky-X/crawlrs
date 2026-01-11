@@ -11,11 +11,19 @@ use super::{
 };
 use async_trait::async_trait;
 use scraper::{Html, Selector};
+use std::time::Duration;
 
 /// Sogou Search Engine implementation
-pub struct SogouSearchEngine {
-    client: reqwest::Client,
-}
+pub struct SogouSearchEngine;
+
+/// Shared HTTP client for connection pooling
+static HTTP_CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
+    reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 impl Default for SogouSearchEngine {
     fn default() -> Self {
@@ -25,12 +33,7 @@ impl Default for SogouSearchEngine {
 
 impl SogouSearchEngine {
     pub fn new() -> Self {
-        let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-            .build()
-            .unwrap_or_default();
-
-        Self { client }
+        Self
     }
 
     fn parse_search_results(&self, html_content: &str) -> Result<Vec<ResponseItem>, SearchError> {
@@ -74,25 +77,22 @@ impl SearchEngine for SogouSearchEngine {
     fn get_name(&self) -> &'static str {
         "Sogou"
     }
-
     fn engine_type(&self) -> SearchEngineType {
         SearchEngineType::Sogou
     }
-
     fn health(&self) -> EngineHealth {
         EngineHealth::Healthy
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         let url = "https://www.sogou.com/web";
-        let limit_str = request.limit.to_string();
 
-        let query_params = vec![("query", request.query.clone()), ("num", limit_str)];
-
-        let response = self
-            .client
+        let response = HTTP_CLIENT
             .get(url)
-            .query(&query_params)
+            .query(&[
+                ("query", request.query.clone()),
+                ("num", request.limit.to_string()),
+            ])
             .send()
             .await
             .map_err(|e| SearchError::Network(e.to_string()))?;
@@ -108,7 +108,6 @@ impl SearchEngine for SogouSearchEngine {
             .text()
             .await
             .map_err(|e| SearchError::Network(e.to_string()))?;
-
         let items = self.parse_search_results(&html_content)?;
 
         Ok(Response {
