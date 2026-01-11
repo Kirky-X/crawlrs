@@ -17,8 +17,11 @@ use strsim::jaro_winkler;
 use tracing::{info, warn};
 
 use crate::domain::models::search_result::SearchResult;
-use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::domain::services::relevance_scorer::RelevanceScorer;
+use crate::search::engine_trait::{SearchEngine, SearchRequest};
+use crate::search::error::SearchError;
+use crate::search::response::{Response, ResponseItem};
+use crate::search::types::{EngineHealth, SearchEngineType};
 
 pub struct SearchAggregator {
     engines: Vec<Arc<dyn SearchEngine>>,
@@ -62,29 +65,60 @@ impl SearchAggregator {
 
     pub async fn search_with_engine(
         &self,
-        query: &str,
-        limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
-        engine: Option<&str>,
+        request: &SearchRequest,
+        engine_name: Option<&str>,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        if let Some(engine_name) = engine {
-            let target_engine = self.get_engine(engine_name);
+        if let Some(name) = engine_name {
+            let target_engine = self.get_engine(name);
             match target_engine {
                 Some(engine) => {
-                    info!("Directly calling search engine: {}", engine_name);
-                    engine.search(query, limit, lang, country).await
+                    info!("Directly calling search engine: {}", name);
+                    let response = engine.search(request).await?;
+                    Ok(self.convert_response_to_results(response))
                 }
                 None => {
-                    warn!(
-                        "Engine '{}' not found, falling back to aggregator",
-                        engine_name
-                    );
-                    self.search(query, limit, lang, country).await
+                    warn!("Engine '{}' not found, falling back to aggregator", name);
+                    // Convert Response<ResponseItem> to Vec<SearchResult>
+                    let response = self.search(request).await?;
+                    Ok(self.convert_response_to_results(response))
                 }
             }
         } else {
-            self.search(query, limit, lang, country).await
+            let response = self.search(request).await?;
+            Ok(self.convert_response_to_results(response))
+        }
+    }
+
+    fn convert_response_to_results(&self, response: Response<ResponseItem>) -> Vec<SearchResult> {
+        response
+            .items
+            .into_iter()
+            .map(|item| SearchResult {
+                title: item.title,
+                url: item.url,
+                description: Some(item.description),
+                engine: item.engine.name().to_string(),
+                score: 0.0,
+                published_time: None,
+            })
+            .collect()
+    }
+
+    fn convert_results_to_response(&self, results: Vec<SearchResult>) -> Response<ResponseItem> {
+        let items = results
+            .into_iter()
+            .map(|r| ResponseItem {
+                title: r.title,
+                url: r.url,
+                description: r.description.unwrap_or_default(),
+                engine: SearchEngineType::from_name(&r.engine).unwrap_or(SearchEngineType::Auto),
+            })
+            .collect();
+
+        Response {
+            items,
+            total_results: None,
+            engine: SearchEngineType::Auto,
         }
     }
 
@@ -154,38 +188,36 @@ impl SearchAggregator {
 
 #[async_trait]
 impl SearchEngine for SearchAggregator {
-    async fn search(
-        &self,
-        query: &str,
-        limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
-    ) -> Result<Vec<SearchResult>, SearchError> {
+    fn name(&self) -> &'static str {
+        "aggregator"
+    }
+
+    fn engine_type(&self) -> SearchEngineType {
+        SearchEngineType::Auto
+    }
+
+    fn health(&self) -> EngineHealth {
+        EngineHealth::Healthy
+    }
+
+    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         // Check cache
-        let cache_key = format!(
-            "{}:{}:{}:{}",
-            query,
-            limit,
-            lang.unwrap_or(""),
-            country.unwrap_or("")
-        );
+        let cache_key = format!("{}:{}:{}", request.query, request.limit, request.offset);
         if let Some(entry) = self.cache.get(&cache_key) {
             if entry.1.elapsed() < self.cache_ttl {
-                info!("Cache hit for query: {}", query);
+                info!("Cache hit for query: {}", request.query);
                 let mut cached_results = entry.0.clone();
                 // Apply limit to cached results
-                if cached_results.len() > limit as usize {
-                    cached_results.truncate(limit as usize);
+                if cached_results.len() > request.limit as usize {
+                    cached_results.truncate(request.limit as usize);
                 }
-                return Ok(cached_results);
+                return Ok(self.convert_results_to_response(cached_results));
             }
         }
 
         let futures = self.engines.iter().map(|engine| {
             let engine = engine.clone();
-            let query = query.to_string();
-            let lang = lang.map(|s| s.to_string());
-            let country = country.map(|s| s.to_string());
+            let request = request.clone();
             let failures = self.failures.clone();
 
             async move {
@@ -201,20 +233,20 @@ impl SearchEngine for SearchAggregator {
                     }
                 }
 
-                let result = tokio::time::timeout(
-                    self.timeout,
-                    engine.search(&query, limit, lang.as_deref(), country.as_deref()),
-                )
-                .await;
+                let result = tokio::time::timeout(self.timeout, engine.search(&request)).await;
 
                 match result {
-                    Ok(Ok(results)) => {
-                        info!("Engine {} returned {} results", engine_name, results.len());
+                    Ok(Ok(response)) => {
+                        info!(
+                            "Engine {} returned {} results",
+                            engine_name,
+                            response.items.len()
+                        );
                         // Reset failure count on success
                         if failures.contains_key(engine_name) {
                             failures.remove(engine_name);
                         }
-                        Some(results)
+                        Some(response)
                     }
                     Ok(Err(e)) => {
                         warn!("Engine {} failed: {}", engine_name, e);
@@ -232,75 +264,19 @@ impl SearchEngine for SearchAggregator {
             }
         });
 
-        let results: Vec<Vec<SearchResult>> =
+        let responses: Vec<Response<ResponseItem>> =
             join_all(futures).await.into_iter().flatten().collect();
 
-        let final_results = self.deduplicate_and_rank(results.concat(), query);
+        // Convert to SearchResult for deduplication
+        let mut all_results: Vec<SearchResult> = Vec::new();
+        for response in responses {
+            all_results.extend(self.convert_response_to_results(response));
+        }
+
+        let final_results = self.deduplicate_and_rank(all_results, &request.query);
         self.cache
             .insert(cache_key, (final_results.clone(), Instant::now()));
 
-        Ok(final_results)
-    }
-
-    fn name(&self) -> &'static str {
-        "aggregator"
-    }
-
-    async fn search_with_engine(
-        &self,
-        query: &str,
-        limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
-        engine: Option<&str>,
-    ) -> Result<Vec<SearchResult>, SearchError> {
-        let query = query.to_string();
-
-        // Check cache first (including engine in cache key if specified)
-        let cache_key = format!(
-            "{}:{}:{}:{}:{}",
-            query,
-            limit,
-            lang.unwrap_or(""),
-            country.unwrap_or(""),
-            engine.unwrap_or("")
-        );
-
-        if let Some(entry) = self.cache.get(&cache_key) {
-            if entry.1.elapsed() < self.cache_ttl {
-                info!("Cache hit for query: {} (engine: {:?})", query, engine);
-                let mut cached_results = entry.0.clone();
-                if cached_results.len() > limit as usize {
-                    cached_results.truncate(limit as usize);
-                }
-                return Ok(cached_results);
-            }
-        }
-
-        // Cache miss, proceed with search
-        let results = if let Some(engine_name) = engine {
-            let target_engine = self.get_engine(engine_name);
-            match target_engine {
-                Some(engine) => {
-                    info!("Directly calling search engine: {}", engine_name);
-                    engine.search(&query, limit, lang, country).await
-                }
-                None => {
-                    warn!(
-                        "Engine '{}' not found, falling back to aggregator",
-                        engine_name
-                    );
-                    self.search(&query, limit, lang, country).await
-                }
-            }
-        } else {
-            self.search(&query, limit, lang, country).await
-        }?;
-
-        // Cache the results
-        self.cache
-            .insert(cache_key, (results.clone(), Instant::now()));
-
-        Ok(results)
+        Ok(self.convert_results_to_response(final_results))
     }
 }

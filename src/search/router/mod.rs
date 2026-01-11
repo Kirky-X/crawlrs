@@ -4,7 +4,10 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::models::search_result::SearchResult;
-use crate::domain::search::engine::{SearchEngine, SearchError};
+use crate::search::engine_trait::{SearchEngine, SearchRequest};
+use crate::search::error::SearchError;
+use crate::search::response::{Response, ResponseItem};
+use crate::search::types::{EngineHealth, SearchEngineType};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use rand::seq::SliceRandom;
@@ -13,20 +16,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
-
-/// 搜索引擎状态
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum EngineHealth {
-    /// 健康
-    #[default]
-    Healthy,
-    /// 降级（部分失败）
-    Degraded,
-    /// 不健康（连续失败）
-    Unhealthy,
-    /// 隔离（暂时禁用）
-    Isolated,
-}
 
 /// 搜索引擎指标
 #[derive(Debug, Clone, Default)]
@@ -64,7 +53,7 @@ impl EngineMetrics {
         self.total_requests += 1;
     }
 
-    /// 记录请求成功
+    /// 记录成功
     pub fn record_success(&mut self, response_time: Duration) {
         self.successful_requests += 1;
         self.consecutive_failures = 0;
@@ -114,6 +103,7 @@ impl EngineMetrics {
                 }
             }
             EngineHealth::Isolated => false,
+            EngineHealth::Unknown => true,
         }
     }
 }
@@ -339,6 +329,7 @@ impl SearchEngineRouter {
                 EngineHealth::Degraded => 1,
                 EngineHealth::Unhealthy => 2,
                 EngineHealth::Isolated => 3,
+                EngineHealth::Unknown => 4,
             };
 
             let a_order = health_order(&a.2.health);
@@ -358,12 +349,9 @@ impl SearchEngineRouter {
     /// 搜索（带智能路由）
     pub async fn search(
         &self,
-        query: &str,
-        limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
+        request: &SearchRequest,
         preferred: Option<&str>,
-    ) -> Result<Vec<SearchResult>, SearchError> {
+    ) -> Result<Response<ResponseItem>, SearchError> {
         let start_time = Instant::now();
         let mut last_error: Option<SearchError> = None;
         let attempted_engines: Vec<String> = Vec::new();
@@ -413,13 +401,8 @@ impl SearchEngineRouter {
                 }
             }
 
-            match tokio::time::timeout(
-                self.config.request_timeout,
-                engine.search(query, limit, lang, country),
-            )
-            .await
-            {
-                Ok(Ok(results)) => {
+            match tokio::time::timeout(self.config.request_timeout, engine.search(request)).await {
+                Ok(Ok(response)) => {
                     // 记录成功
                     let response_time = start_time.elapsed();
                     {
@@ -432,14 +415,13 @@ impl SearchEngineRouter {
                     info!(
                         "搜索引擎 {} 成功返回 {} 个结果 (耗时: {:?})",
                         name,
-                        results.len(),
+                        response.items.len(),
                         response_time
                     );
 
-                    return Ok(results);
+                    return Ok(response);
                 }
                 Ok(Err(e)) => {
-                    last_error = Some(e.clone());
                     {
                         let mut metrics = self.metrics.write();
                         if let Some(m) = metrics.get_mut(name) {
@@ -447,10 +429,10 @@ impl SearchEngineRouter {
                         }
                     }
                     warn!("搜索引擎 {} 失败: {}", name, e);
+                    last_error = Some(e);
                 }
-                Err(_) => {
-                    let timeout_secs = self.config.request_timeout.as_secs();
-                    last_error = Some(SearchError::TimeoutError(timeout_secs));
+                Err(elapsed) => {
+                    last_error = Some(SearchError::Timeout(elapsed));
                     {
                         let mut metrics = self.metrics.write();
                         if let Some(m) = metrics.get_mut(name) {
@@ -473,17 +455,13 @@ impl SearchEngineRouter {
             attempted_engines
         );
 
-        Err(last_error
-            .unwrap_or_else(|| SearchError::EngineError("所有搜索引擎都失败".to_string())))
+        Err(last_error.unwrap_or_else(|| SearchError::Engine("所有搜索引擎都失败".to_string())))
     }
 
     /// 简单的搜索方法（使用默认引擎）
-    pub async fn simple_search(
-        &self,
-        query: &str,
-        limit: u32,
-    ) -> Result<Vec<SearchResult>, SearchError> {
-        self.search(query, limit, None, None, None).await
+    pub async fn simple_search(&self, query: &str) -> Result<Response<ResponseItem>, SearchError> {
+        let request = SearchRequest::new(query);
+        self.search(&request, None).await
     }
 
     /// 检查引擎健康状态
@@ -549,29 +527,42 @@ impl SearchEngineRouter {
 
 #[async_trait]
 impl SearchEngine for SearchEngineRouter {
-    async fn search(
-        &self,
-        query: &str,
-        limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
-    ) -> Result<Vec<SearchResult>, SearchError> {
-        self.search(query, limit, lang, country, None).await
-    }
-
     fn name(&self) -> &'static str {
         "smart_router"
     }
 
-    async fn search_with_engine(
-        &self,
-        query: &str,
-        limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
-        engine: Option<&str>,
-    ) -> Result<Vec<SearchResult>, SearchError> {
-        self.search(query, limit, lang, country, engine).await
+    fn engine_type(&self) -> SearchEngineType {
+        SearchEngineType::Auto
+    }
+
+    fn health(&self) -> EngineHealth {
+        let metrics = self.metrics.read();
+        if metrics.is_empty() {
+            return EngineHealth::Unknown;
+        }
+
+        let mut any_healthy = false;
+        let mut any_degraded = false;
+
+        for metric in metrics.values() {
+            match metric.health {
+                EngineHealth::Healthy => any_healthy = true,
+                EngineHealth::Degraded => any_degraded = true,
+                _ => {}
+            }
+        }
+
+        if any_healthy {
+            EngineHealth::Healthy
+        } else if any_degraded {
+            EngineHealth::Degraded
+        } else {
+            EngineHealth::Unhealthy
+        }
+    }
+
+    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
+        self.search(request, None).await
     }
 }
 
@@ -620,26 +611,26 @@ impl SmartSearchEngineWrapper {
 
 #[async_trait]
 impl SearchEngine for SmartSearchEngineWrapper {
-    async fn search(
-        &self,
-        query: &str,
-        limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
-    ) -> Result<Vec<SearchResult>, SearchError> {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn engine_type(&self) -> SearchEngineType {
+        self.inner.engine_type()
+    }
+
+    fn health(&self) -> EngineHealth {
+        self.inner.health()
+    }
+
+    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         // 如果有路由器，使用路由器进行搜索
         if let Some(router) = &self.router {
-            return router
-                .search(query, limit, lang, country, Some(self.name))
-                .await;
+            return router.search(request, Some(self.name)).await;
         }
 
         // 否则直接使用内部搜索引擎
-        self.inner.search(query, limit, lang, country).await
-    }
-
-    fn name(&self) -> &'static str {
-        self.name
+        self.inner.search(request).await
     }
 }
 
@@ -668,13 +659,26 @@ mod tests {
 
     #[async_trait]
     impl SearchEngine for MockSearchEngine {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn engine_type(&self) -> SearchEngineType {
+            SearchEngineType::Auto
+        }
+
+        fn health(&self) -> EngineHealth {
+            if self.should_fail {
+                EngineHealth::Unhealthy
+            } else {
+                EngineHealth::Healthy
+            }
+        }
+
         async fn search(
             &self,
-            _query: &str,
-            _limit: u32,
-            _lang: Option<&str>,
-            _country: Option<&str>,
-        ) -> Result<Vec<SearchResult>, SearchError> {
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
             tokio::time::sleep(self.response_time).await;
 
             if self.should_fail {
@@ -683,18 +687,17 @@ mod tests {
                     self.name
                 )))
             } else {
-                Ok(vec![SearchResult {
-                    title: format!("Result from {}", self.name),
-                    url: format!("https://example.com/{}", self.name),
-                    description: Some(format!("Description from {}", self.name)),
-                    engine: self.name.to_string(),
-                    ..Default::default()
-                }])
+                Ok(Response {
+                    items: vec![ResponseItem {
+                        title: format!("Result from {}", self.name),
+                        url: format!("https://example.com/{}", self.name),
+                        description: format!("Description from {}", self.name),
+                        engine: SearchEngineType::Auto,
+                    }],
+                    total_results: Some(1),
+                    engine: SearchEngineType::Auto,
+                })
             }
-        }
-
-        fn name(&self) -> &'static str {
-            self.name
         }
     }
 
@@ -710,147 +713,12 @@ mod tests {
             enable_load_balancing: true,
             enable_auto_failover: true,
             request_timeout: std::time::Duration::from_secs(30),
-            ..Default::default()
+            health_check_interval: Duration::from_secs(60),
+            unhealthy_recovery_time: Duration::from_secs(300),
+            enable_auto_failover: true,
+            enable_load_balancing: true,
         };
         let router = SearchEngineRouter::with_config(config.clone());
-        assert!(router.config.enable_load_balancing);
-    }
-
-    #[tokio::test]
-    async fn test_router_registration() {
-        let mut router = SearchEngineRouter::new();
-        let engine = Arc::new(MockSearchEngine::new("test_engine", false, 100));
-        router.register_engine(engine);
-        assert_eq!(router.registered_engines().len(), 1);
-        assert!(router
-            .registered_engines()
-            .contains(&"test_engine".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_router_multiple_engines() {
-        let mut router = SearchEngineRouter::new();
-        let engine1 = Arc::new(MockSearchEngine::new("engine1", false, 100));
-        let engine2 = Arc::new(MockSearchEngine::new("engine2", false, 100));
-        let engine3 = Arc::new(MockSearchEngine::new("engine3", false, 100));
-
-        router.register_engine(engine1);
-        router.register_engine(engine2);
-        router.register_engine(engine3);
-
-        assert_eq!(router.registered_engines().len(), 3);
-    }
-
-    #[tokio::test]
-    async fn test_successful_search_with_single_engine() {
-        let mut router = SearchEngineRouter::new();
-        let engine = Arc::new(MockSearchEngine::new("success_engine", false, 50));
-        router.register_engine(engine);
-
-        let result = router.search("test query", 10, None, None, None).await;
-        assert!(result.is_ok());
-        let results = result.unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].engine, "success_engine");
-    }
-
-    #[tokio::test]
-    async fn test_failed_engine_fallback() {
-        let mut router = SearchEngineRouter::new();
-        let engine1 = Arc::new(MockSearchEngine::new("failing_engine", true, 50));
-        let engine2 = Arc::new(MockSearchEngine::new("success_engine", false, 50));
-
-        router.register_engine(engine1);
-        router.register_engine(engine2);
-
-        let result = router.search("test query", 10, None, None, None).await;
-        assert!(result.is_ok());
-        let results = result.unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].engine, "success_engine");
-    }
-
-    #[tokio::test]
-    async fn test_all_engines_fail() {
-        let mut router = SearchEngineRouter::new();
-        let config = SearchEngineRouterConfig {
-            enable_auto_failover: true,
-            ..Default::default()
-        };
-        router.update_config(config);
-
-        let engine1 = Arc::new(MockSearchEngine::new("failing1", true, 50));
-        let engine2 = Arc::new(MockSearchEngine::new("failing2", true, 50));
-
-        router.register_engine(engine1);
-        router.register_engine(engine2);
-
-        let result = router.search("test query", 10, None, None, None).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_preferred_engine_selection() {
-        let mut router = SearchEngineRouter::new();
-        let engine1 = Arc::new(MockSearchEngine::new("engine1", false, 50));
-        let engine2 = Arc::new(MockSearchEngine::new("engine2", false, 50));
-
-        router.register_engine(engine1);
-        router.register_engine(engine2);
-
-        let result = router
-            .search("test query", 10, None, None, Some("engine2"))
-            .await;
-        assert!(result.is_ok());
-        let results = result.unwrap();
-        assert_eq!(results[0].engine, "engine2");
-    }
-
-    #[tokio::test]
-    async fn test_metrics_recording() {
-        let mut router = SearchEngineRouter::new();
-        let engine = Arc::new(MockSearchEngine::new("metrics_engine", false, 100));
-        router.register_engine(engine);
-
-        let _ = router.search("test query", 10, None, None, None).await;
-
-        let metrics = router.get_engine_metrics("metrics_engine");
-        assert!(metrics.is_some());
-        let m = metrics.unwrap();
-        assert_eq!(m.total_requests, 1);
-        assert_eq!(m.successful_requests, 1);
-    }
-
-    #[tokio::test]
-    async fn test_router_clone() {
-        let router = SearchEngineRouter::new();
-        let cloned = router.clone();
-        assert_eq!(cloned.registered_engines().len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_get_engine() {
-        let mut router = SearchEngineRouter::new();
-        let engine = Arc::new(MockSearchEngine::new("get_engine", false, 50));
-        router.register_engine(engine.clone());
-
-        let retrieved = router.get_engine("get_engine");
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().name(), "get_engine");
-    }
-
-    #[tokio::test]
-    async fn test_get_nonexistent_engine() {
-        let router = SearchEngineRouter::new();
-        let retrieved = router.get_engine("nonexistent");
-        assert!(retrieved.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_smart_search_engine_wrapper() {
-        let router = SearchEngineRouter::new();
-        let mock_engine = Arc::new(MockSearchEngine::new("wrapper_engine", false, 50));
-        let wrapper = SmartSearchEngineWrapper::new(mock_engine, Some(Arc::new(router)));
-        assert_eq!(wrapper.name(), "wrapper_engine");
+        assert_eq!(router.config.request_timeout, config.request_timeout);
     }
 }

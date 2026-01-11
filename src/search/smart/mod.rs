@@ -9,7 +9,6 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::domain::models::search_result::SearchResult;
-use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::domain::services::rate_limiting_service::{
     RateLimitResult, RateLimitingError, RateLimitingService,
 };
@@ -17,24 +16,15 @@ use crate::domain::services::relevance_scorer::RelevanceScorer;
 use crate::engines::router::EngineRouter;
 use crate::engines::traits::EngineError;
 use crate::engines::traits::ScrapeRequest;
+use crate::search::engine_trait::{SearchEngine, SearchRequest};
+use crate::search::error::SearchError;
+use crate::search::response::{Response, ResponseItem};
+use crate::search::types::{EngineHealth, SearchEngineType};
 use crate::utils::text_processing::process_string;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
-
-/// 搜索引擎类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchEngineType {
-    /// Google搜索引擎
-    Google,
-    /// Bing搜索引擎
-    Bing,
-    /// 百度搜索引擎
-    Baidu,
-    /// 搜狗搜索引擎
-    Sogou,
-}
 
 /// 智能搜索引擎配置
 pub struct SmartSearchEngineConfig {
@@ -178,6 +168,8 @@ impl SmartSearchEngine {
             SearchEngineType::Bing => (true, false),
             SearchEngineType::Baidu => (false, false),
             SearchEngineType::Sogou => (false, false),
+            // 对于非特定引擎类型，默认使用 Google 的配置
+            _ => (true, false),
         }
     }
 
@@ -188,6 +180,8 @@ impl SmartSearchEngine {
             SearchEngineType::Bing => self.build_bing_search_url(query, lang, country),
             SearchEngineType::Baidu => self.build_baidu_search_url(query, lang, country),
             SearchEngineType::Sogou => self.build_sogou_search_url(query, lang, country),
+            // 对于非特定引擎类型，默认使用 Google 的 URL 构建方式
+            _ => self.build_google_search_url(query, lang, country),
         }
     }
 

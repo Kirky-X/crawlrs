@@ -14,10 +14,10 @@ use super::{
     types::{EngineHealth, SearchEngineType},
 };
 
-mod baidu;
-mod bing;
-mod google;
-mod sogou;
+pub mod baidu;
+pub mod bing;
+pub mod google;
+pub mod sogou;
 
 pub use baidu::BaiduSearchEngine;
 pub use bing::BingSearchEngine;

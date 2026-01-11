@@ -3,7 +3,7 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::entities::search_result::SearchResult;
+use crate::domain::models::search_result::SearchResult;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -377,7 +377,7 @@ pub struct DeduplicationStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::entities::search_result::SearchResult;
+    use crate::domain::models::search_result::SearchResult;
 
     fn create_test_result(url: &str, title: &str, description: Option<&str>) -> SearchResult {
         SearchResult {

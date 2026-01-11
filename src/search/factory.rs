@@ -3,68 +3,22 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::search::engine::SearchEngine;
 use crate::engines::client::fire_cdp::FireEngineCdp;
 use crate::engines::client::fire_tls::FireEngineTls;
 use crate::engines::router::EngineRouter;
-use crate::search::baidu::BaiduSearchEngine;
-use crate::search::bing::BingSearchEngine;
-use crate::search::google::GoogleSearchEngine;
-use crate::search::search_engine_router::{SearchEngineRouter, SearchEngineRouterConfig};
-use crate::search::smart_search::{
+use crate::search::client::baidu::BaiduSearchEngine;
+use crate::search::client::bing::BingSearchEngine;
+use crate::search::client::google::GoogleSearchEngine;
+use crate::search::client::sogou::SogouSearchEngine;
+use crate::search::engine_trait::SearchEngine;
+use crate::search::router::{SearchEngineRouter, SearchEngineRouterConfig};
+use crate::search::smart::{
     create_baidu_smart_search, create_bing_smart_search, create_google_smart_search,
 };
-use crate::search::sogou::SogouSearchEngine;
+use crate::search::types::SearchEngineType;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::info;
-
-/// 搜索引擎类型枚举
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SearchEngineType {
-    /// Google 搜索引擎
-    Google,
-    /// Bing 搜索引擎
-    Bing,
-    /// 百度搜索引擎
-    Baidu,
-    /// 搜狗搜索引擎
-    Sogou,
-    /// 智能搜索（自动路由）
-    Smart,
-    /// A/B 测试搜索
-    ABTest,
-}
-
-impl SearchEngineType {
-    /// 获取引擎名称
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Google => "google",
-            Self::Bing => "bing",
-            Self::Baidu => "baidu",
-            Self::Sogou => "sogou",
-            Self::Smart => "smart",
-            Self::ABTest => "ab_test",
-        }
-    }
-}
-
-impl FromStr for SearchEngineType {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "google" => Ok(Self::Google),
-            "bing" => Ok(Self::Bing),
-            "baidu" => Ok(Self::Baidu),
-            "sogou" => Ok(Self::Sogou),
-            "smart" => Ok(Self::Smart),
-            "ab_test" | "abtest" => Ok(Self::ABTest),
-            _ => Err(()),
-        }
-    }
-}
 
 /// 搜索引擎工厂配置
 #[derive(Debug, Clone)]
@@ -317,7 +271,7 @@ impl SearchEngineFactory {
     }
 
     /// 获取工厂统计信息
-    pub fn stats(&self) -> crate::search::search_engine_router::RouterStats {
+    pub fn stats(&self) -> crate::search::router::RouterStats {
         self.router.stats()
     }
 

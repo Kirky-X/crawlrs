@@ -23,6 +23,12 @@ pub enum SearchEngineHealth {
     Unhealthy,
 }
 
+impl Default for SearchEngineHealth {
+    fn default() -> Self {
+        Self::Healthy
+    }
+}
+
 /// Per-domain health state to prevent cross-domain contamination
 #[derive(Debug, Clone, Default)]
 pub struct HealthState {

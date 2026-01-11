@@ -3,7 +3,8 @@
 // Licensed under MIT License
 // See LICENSE file in the project root for full license information.
 
-use super::{
+use crate::search::{
+    engine_trait::SearchEngine,
     error::SearchError,
     response::{Response, ResponseItem},
     types::{EngineHealth, SearchEngineType},
@@ -74,7 +75,7 @@ impl SogouSearchEngine {
 
 #[async_trait]
 impl SearchEngine for SogouSearchEngine {
-    fn get_name(&self) -> &'static str {
+    fn name(&self) -> &'static str {
         "Sogou"
     }
     fn engine_type(&self) -> SearchEngineType {

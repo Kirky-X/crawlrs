@@ -3,7 +3,8 @@
 // Licensed under MIT License
 // See LICENSE file in the project root for full license information.
 
-use super::{
+use crate::search::{
+    engine_trait::SearchEngine,
     error::SearchError,
     response::{Response, ResponseItem},
     types::{EngineHealth, SearchEngineType},
@@ -217,7 +218,7 @@ impl GoogleSearchEngine {
 
 #[async_trait]
 impl SearchEngine for GoogleSearchEngine {
-    fn get_name(&self) -> &'static str {
+    fn name(&self) -> &'static str {
         "Google"
     }
     fn engine_type(&self) -> SearchEngineType {
@@ -321,7 +322,7 @@ mod tests {
     #[tokio::test]
     async fn test_google_search_engine_creation() {
         let engine = GoogleSearchEngine::new();
-        assert_eq!(engine.get_name(), "Google");
+        assert_eq!(engine.name(), "Google");
         assert_eq!(engine.engine_type(), SearchEngineType::Google);
         assert_eq!(engine.health(), EngineHealth::Healthy);
     }

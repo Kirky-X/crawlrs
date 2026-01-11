@@ -13,6 +13,8 @@ pub enum SearchEngineType {
     Baidu,
     Sogou,
     Auto,
+    Smart,
+    ABTest,
 }
 
 impl SearchEngineType {
@@ -23,6 +25,8 @@ impl SearchEngineType {
             SearchEngineType::Baidu => "Baidu",
             SearchEngineType::Sogou => "Sogou",
             SearchEngineType::Auto => "Auto",
+            SearchEngineType::Smart => "Smart",
+            SearchEngineType::ABTest => "ABTest",
         }
     }
 
@@ -33,6 +37,8 @@ impl SearchEngineType {
             "Baidu" | "baidu" => Some(SearchEngineType::Baidu),
             "Sogou" | "sogou" => Some(SearchEngineType::Sogou),
             "Auto" | "auto" => Some(SearchEngineType::Auto),
+            "Smart" | "smart" => Some(SearchEngineType::Smart),
+            "ABTest" | "abtest" | "ab_test" => Some(SearchEngineType::ABTest),
             _ => None,
         }
     }
@@ -45,6 +51,13 @@ pub enum EngineHealth {
     Degraded,
     Unhealthy,
     Unknown,
+    Isolated,
+}
+
+impl Default for EngineHealth {
+    fn default() -> Self {
+        Self::Healthy
+    }
 }
 
 impl EngineHealth {

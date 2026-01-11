@@ -5,6 +5,8 @@
 
 use async_trait::async_trait;
 
+use super::response::ResponseItem;
+use super::types::EngineHealth;
 use super::{error::SearchError, response::Response, types::SearchEngineType};
 
 /// 搜索请求
@@ -45,11 +47,23 @@ impl SearchRequest {
 /// 搜索引擎 trait
 #[async_trait]
 pub trait SearchEngine: Send + Sync {
-    fn get_name(&self) -> &'static str;
+    fn name(&self) -> &'static str;
     fn engine_type(&self) -> SearchEngineType;
     fn health(&self) -> EngineHealth;
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError>;
-}
 
-use super::response::ResponseItem;
-use super::types::EngineHealth;
+    /// Search with a specific engine (if engine is None, search all engines)
+    /// Default implementation: searches without specific engine
+    async fn search_with_engine(
+        &self,
+        query: &str,
+        limit: u32,
+        _lang: Option<&str>,
+        _country: Option<&str>,
+        _engine: Option<&str>,
+    ) -> Result<Vec<ResponseItem>, SearchError> {
+        let request = SearchRequest::new(query).with_limit(limit);
+        let response = self.search(&request).await?;
+        Ok(response.items)
+    }
+}

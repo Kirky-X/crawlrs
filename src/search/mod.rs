@@ -34,7 +34,8 @@ pub mod types;
 
 pub use ab_test::SearchABTestEngine;
 pub use adapter::create_domain_adapter;
-pub use aggregator::{Deduplicator, SearchAggregator};
+pub use aggregator::deduplicator::ResultDeduplicator as Deduplicator;
+pub use aggregator::SearchAggregator;
 pub use client::{
     BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SearchClient, SogouSearchEngine,
 };
@@ -43,7 +44,7 @@ pub use error::SearchError;
 pub use factory::{create_default_router, SearchEngineFactory, SearchEngineFactoryConfig};
 pub use response::{Response, ResponseItem};
 pub use router::{
-    EngineHealth, EngineMetrics, RouterStats, SearchEngineRouter, SearchEngineRouterConfig,
+    EngineMetrics, RouterStats, SearchEngineRouter, SearchEngineRouterConfig,
     SmartSearchEngineWrapper,
 };
 pub use smart::{

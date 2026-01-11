@@ -7,9 +7,146 @@ use crate::engines::circuit_breaker::CircuitBreaker;
 use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use crate::engines::validators::validate_url;
 use rand::seq::SliceRandom;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
+
+/// 路由层指标收集器
+///
+/// 收集引擎路由过程中的各种指标，用于监控和优化
+#[derive(Debug, Default)]
+pub struct RouterMetrics {
+    /// 总请求数
+    pub total_requests: AtomicU64,
+    /// 成功请求数
+    pub successful_requests: AtomicU64,
+    /// 失败请求数
+    pub failed_requests: AtomicU64,
+    /// 候选引擎数量统计
+    pub candidate_count_total: AtomicU64,
+    /// 尝试次数统计
+    pub attempt_count_total: AtomicU64,
+    /// 引擎选择次数
+    pub engine_selection_total: AtomicU64,
+    /// 按引擎名称的延迟统计 (引擎名 -> 总延迟纳秒)
+    pub engine_latencies: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    /// 按引擎名称的成功次数
+    pub engine_success_count: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    /// 按引擎名称的失败次数
+    pub engine_failure_count: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    /// 失败类型统计 (错误类型 -> 次数)
+    pub failure_classification: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+}
+
+impl RouterMetrics {
+    /// 创建新的指标收集器
+    pub fn new() -> Self {
+        Self {
+            total_requests: AtomicU64::new(0),
+            successful_requests: AtomicU64::new(0),
+            failed_requests: AtomicU64::new(0),
+            candidate_count_total: AtomicU64::new(0),
+            attempt_count_total: AtomicU64::new(0),
+            engine_selection_total: AtomicU64::new(0),
+            engine_latencies: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            engine_success_count: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            engine_failure_count: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            failure_classification: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+        }
+    }
+
+    /// 记录候选引擎数量
+    pub fn record_candidates(&self, count: usize) {
+        self.candidate_count_total
+            .fetch_add(count as u64, Ordering::Relaxed);
+    }
+
+    /// 记录单次尝试
+    pub fn record_attempt(&self) {
+        self.attempt_count_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 记录引擎选择
+    pub fn record_engine_selection(&self, engine_name: &str) {
+        self.engine_selection_total.fetch_add(1, Ordering::Relaxed);
+        let mut latencies = self.engine_latencies.lock().unwrap();
+        if !latencies.contains_key(engine_name) {
+            latencies.insert(engine_name.to_string(), 0);
+        }
+    }
+
+    /// 记录引擎延迟
+    pub fn record_engine_latency(&self, engine_name: &str, duration: Duration) {
+        let mut latencies = self.engine_latencies.lock().unwrap();
+        if let Some(total) = latencies.get_mut(engine_name) {
+            *total += duration.as_nanos() as u64;
+        }
+    }
+
+    /// 记录引擎成功
+    pub fn record_engine_success(&self, engine_name: &str) {
+        let mut success_count = self.engine_success_count.lock().unwrap();
+        let count = success_count.entry(engine_name.to_string()).or_insert(0);
+        *count += 1;
+    }
+
+    /// 记录引擎失败
+    pub fn record_engine_failure(&self, engine_name: &str, error_type: &str) {
+        let mut failure_count = self.engine_failure_count.lock().unwrap();
+        let count = failure_count.entry(engine_name.to_string()).or_insert(0);
+        *count += 1;
+
+        // 记录失败类型分类
+        let mut classification = self.failure_classification.lock().unwrap();
+        let error_category = Self::classify_error(error_type);
+        let count = classification.entry(error_category).or_insert(0);
+        *count += 1;
+    }
+
+    /// 对错误进行分类
+    fn classify_error(error_type: &str) -> String {
+        if error_type.contains("timeout") || error_type.contains("Timeout") {
+            "timeout".to_string()
+        } else if error_type.contains("ssrf") || error_type.contains("SSRF") {
+            "ssrf_protection".to_string()
+        } else if error_type.contains("network") || error_type.contains("Network") {
+            "network_error".to_string()
+        } else if error_type.contains("circuit") || error_type.contains("Circuit") {
+            "circuit_breaker".to_string()
+        } else if error_type.contains("browser") || error_type.contains("Browser") {
+            "browser_error".to_string()
+        } else {
+            "other".to_string()
+        }
+    }
+
+    /// 获取按引擎名称的平均延迟（纳秒）
+    pub fn get_avg_latency_ns(&self, engine_name: &str) -> Option<u64> {
+        let latencies = self.engine_latencies.lock().unwrap();
+        let success_count = self.engine_success_count.lock().unwrap();
+
+        if let (Some(&total_ns), Some(&count)) =
+            (latencies.get(engine_name), success_count.get(engine_name))
+        {
+            if count > 0 {
+                return Some(total_ns / count);
+            }
+        }
+        None
+    }
+
+    /// 获取成功率
+    pub fn get_success_rate(&self) -> f64 {
+        let total = self.total_requests.load(Ordering::Relaxed);
+        if total == 0 {
+            return 1.0;
+        }
+        self.successful_requests.load(Ordering::Relaxed) as f64 / total as f64
+    }
+}
 
 /// 引擎性能统计
 #[derive(Debug, Clone)]
@@ -66,6 +203,8 @@ pub struct EngineRouter {
     round_robin_index: Arc<parking_lot::Mutex<usize>>,
     /// 负载均衡策略
     strategy: LoadBalancingStrategy,
+    /// 路由层指标
+    metrics: Arc<RouterMetrics>,
 }
 
 impl EngineRouter {
@@ -90,6 +229,7 @@ impl EngineRouter {
             engine_stats: Arc::new(parking_lot::RwLock::new(engine_stats)),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy: LoadBalancingStrategy::SmartHybrid,
+            metrics: Arc::new(RouterMetrics::new()),
         }
     }
 
@@ -120,12 +260,18 @@ impl EngineRouter {
             engine_stats: Arc::new(parking_lot::RwLock::new(engine_stats)),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy,
+            metrics: Arc::new(RouterMetrics::new()),
         }
     }
 
     /// 设置负载均衡策略
     pub fn set_strategy(&mut self, strategy: LoadBalancingStrategy) {
         self.strategy = strategy;
+    }
+
+    /// 获取路由层指标
+    pub fn metrics(&self) -> &Arc<RouterMetrics> {
+        &self.metrics
     }
 
     /// 选择最优引擎
@@ -323,8 +469,12 @@ impl EngineRouter {
         // 选择最优引擎
         let mut candidates = self.select_optimal_engines(request);
 
+        // 记录候选引擎数量
+        self.metrics.record_candidates(candidates.len());
+
         if candidates.is_empty() {
             warn!("No suitable engines available for request");
+            self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
             return Err(EngineError::AllEnginesFailed(
                 "No suitable engines available".to_string(),
             ));
@@ -345,6 +495,11 @@ impl EngineRouter {
         // 尝试每个引擎
         for (score, engine) in candidates {
             let engine_name = engine.name();
+
+            // 记录引擎选择
+            self.metrics.record_engine_selection(engine_name);
+            self.metrics.record_attempt();
+
             info!(
                 "Trying engine {} with score {:.2} for request to {}",
                 engine_name, score, request.url
@@ -356,6 +511,14 @@ impl EngineRouter {
                     let response_time = engine_start.elapsed();
                     self.update_engine_stats(engine_name, true, response_time);
                     self.circuit_breaker.record_success(engine_name);
+
+                    // 记录成功指标
+                    self.metrics
+                        .successful_requests
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .record_engine_latency(engine_name, response_time);
+                    self.metrics.record_engine_success(engine_name);
 
                     info!(
                         "Engine {} succeeded in {:?}, total time: {:?}",
@@ -369,6 +532,10 @@ impl EngineRouter {
                 Err(e) => {
                     let response_time = engine_start.elapsed();
                     self.update_engine_stats(engine_name, false, response_time);
+
+                    // 记录失败指标
+                    self.metrics
+                        .record_engine_failure(engine_name, &e.to_string());
 
                     if e.is_retryable() {
                         self.circuit_breaker.record_failure(engine_name);
@@ -390,6 +557,7 @@ impl EngineRouter {
         }
 
         warn!("All engines failed for request to {}", request.url);
+        self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
         Err(last_error
             .unwrap_or_else(|| EngineError::AllEnginesFailed("All engines failed".to_string())))
     }

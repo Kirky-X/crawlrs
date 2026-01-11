@@ -7,8 +7,10 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::domain::models::search_result::SearchResult;
-use crate::domain::search::engine::{SearchEngine, SearchError};
+use crate::search::engine_trait::{SearchEngine, SearchRequest};
+use crate::search::error::SearchError;
+use crate::search::response::{Response, ResponseItem};
+use crate::search::types::{EngineHealth, SearchEngineType};
 
 /// 搜索算法 A/B 测试框架
 ///
@@ -46,33 +48,47 @@ impl SearchABTestEngine {
 
 #[async_trait]
 impl SearchEngine for SearchABTestEngine {
-    async fn search(
-        &self,
-        query: &str,
-        limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
-    ) -> Result<Vec<SearchResult>, SearchError> {
+    fn name(&self) -> &'static str {
+        "ab_test_engine"
+    }
+
+    fn engine_type(&self) -> SearchEngineType {
+        SearchEngineType::ABTest
+    }
+
+    fn health(&self) -> EngineHealth {
+        let health_a = self.variant_a.health();
+        let health_b = self.variant_b.health();
+        if health_a == EngineHealth::Healthy && health_b == EngineHealth::Healthy {
+            EngineHealth::Healthy
+        } else if health_a == EngineHealth::Unhealthy && health_b == EngineHealth::Unhealthy {
+            EngineHealth::Unhealthy
+        } else {
+            EngineHealth::Degraded
+        }
+    }
+
+    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         let (engine, variant_name) = self.select_engine();
 
         info!(
             "A/B Test: Selected {} ({}) for query: {}",
             variant_name,
             engine.name(),
-            query
+            request.query
         );
 
         let start_time = std::time::Instant::now();
-        let result = engine.search(query, limit, lang, country).await;
+        let result = engine.search(request).await;
         let duration = start_time.elapsed();
 
         match &result {
-            Ok(results) => {
+            Ok(response) => {
                 info!(
                     "A/B Test: {} completed in {:?}, returned {} results",
                     variant_name,
                     duration,
-                    results.len()
+                    response.items.len()
                 );
             }
             Err(e) => {
@@ -85,17 +101,15 @@ impl SearchEngine for SearchABTestEngine {
 
         result
     }
-
-    fn name(&self) -> &'static str {
-        "ab_test_engine"
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::search_result::SearchResult;
-    use crate::domain::search::engine::SearchError;
+    use crate::search::engine_trait::{SearchEngine, SearchRequest};
+    use crate::search::error::SearchError;
+    use crate::search::response::{Response, ResponseItem};
+    use crate::search::types::{EngineHealth, SearchEngineType};
 
     struct SampleEngine {
         name: &'static str,
@@ -103,18 +117,27 @@ mod tests {
 
     #[async_trait]
     impl SearchEngine for SampleEngine {
-        async fn search(
-            &self,
-            _query: &str,
-            _limit: u32,
-            _lang: Option<&str>,
-            _country: Option<&str>,
-        ) -> Result<Vec<SearchResult>, SearchError> {
-            Ok(vec![])
-        }
-
         fn name(&self) -> &'static str {
             self.name
+        }
+
+        fn engine_type(&self) -> SearchEngineType {
+            SearchEngineType::Auto
+        }
+
+        fn health(&self) -> EngineHealth {
+            EngineHealth::Healthy
+        }
+
+        async fn search(
+            &self,
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            Ok(Response {
+                items: vec![],
+                total_results: Some(0),
+                engine: SearchEngineType::Auto,
+            })
         }
     }
 
