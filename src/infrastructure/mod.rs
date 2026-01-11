@@ -12,7 +12,7 @@
 /// - 缓存（cache）：提供缓存功能的实现，如Redis客户端
 /// - 数据库（database）：提供数据库连接和实体映射
 /// - 指标（metrics）：提供系统监控和性能指标收集
-/// - 仓库实现（repositories）：提供领域仓库接口的具体实现
+/// - 队列（queue）：提供任务队列和调度功能
 /// - 存储（storage）：提供文件和对象存储功能
 ///
 /// 基础设施层遵循依赖倒置原则，依赖于领域层的抽象接口，
@@ -22,7 +22,6 @@ pub mod database;
 pub mod geolocation;
 pub mod metrics;
 pub mod observability;
-pub mod repositories;
-pub mod search;
+pub mod queue;
 pub mod services;
 pub mod storage;

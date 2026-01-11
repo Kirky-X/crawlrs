@@ -9,3 +9,4 @@
 /// 包括数据库连接池和实体定义
 pub mod connection;
 pub mod entities;
+pub mod repositories;

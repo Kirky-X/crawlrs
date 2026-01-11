@@ -33,11 +33,6 @@ pub mod infrastructure;
 /// 处理HTTP请求和响应，包括路由、处理器和中间件
 pub mod presentation;
 
-/// 队列模块
-///
-/// 实现任务队列和调度功能
-pub mod queue;
-
 /// 工具模块
 ///
 /// 提供通用的工具函数和辅助功能
