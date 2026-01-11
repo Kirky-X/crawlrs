@@ -265,7 +265,7 @@ impl ScrapeRequest {
 
         Self {
             url: request.url.clone(),
-            headers: HashMap::new(), // Public API doesn't expose headers directly
+            headers: options.headers.clone(),
             timeout: options.timeout,
             needs_js: options.needs_js,
             needs_screenshot: options.needs_screenshot,
@@ -273,8 +273,8 @@ impl ScrapeRequest {
             mobile: options.mobile,
             proxy: options.proxy.clone(),
             skip_tls_verification: options.skip_tls_verification,
-            needs_tls_fingerprint: false, // Not exposed in public API yet
-            use_fire_engine: false,       // Not exposed in public API yet
+            needs_tls_fingerprint: options.needs_tls_fingerprint,
+            use_fire_engine: options.use_fire_engine,
             actions,
             sync_wait_ms: options.sync_wait_ms,
         }

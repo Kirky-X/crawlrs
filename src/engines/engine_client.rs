@@ -92,6 +92,12 @@ pub struct ScrapeOptions {
     pub proxy: Option<String>,
     /// Skip TLS verification (default: false)
     pub skip_tls_verification: bool,
+    /// Custom HTTP headers (default: empty)
+    pub headers: HashMap<String, String>,
+    /// Enable TLS fingerprinting for anti-fingerprinting (default: false)
+    pub needs_tls_fingerprint: bool,
+    /// Force use of Fire Engine (CDP) for this request (default: false)
+    pub use_fire_engine: bool,
 }
 
 impl Default for ScrapeOptions {
@@ -106,6 +112,9 @@ impl Default for ScrapeOptions {
             screenshot_config: None,
             proxy: None,
             skip_tls_verification: false,
+            headers: HashMap::new(),
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
         }
     }
 }
@@ -154,6 +163,21 @@ impl ScrapeOptionsBuilder {
 
     pub fn skip_tls_verification(mut self, skip: bool) -> Self {
         self.0.skip_tls_verification = skip;
+        self
+    }
+
+    pub fn headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.0.headers = headers;
+        self
+    }
+
+    pub fn needs_tls_fingerprint(mut self, enabled: bool) -> Self {
+        self.0.needs_tls_fingerprint = enabled;
+        self
+    }
+
+    pub fn use_fire_engine(mut self, enabled: bool) -> Self {
+        self.0.use_fire_engine = enabled;
         self
     }
 
@@ -459,9 +483,7 @@ impl Default for EngineClient {
 fn convert_error(e: crate::engines::traits::EngineError) -> EngineError {
     match e {
         crate::engines::traits::EngineError::RequestFailed(msg) => EngineError::RequestFailed(msg),
-        crate::engines::traits::EngineError::Timeout(_) => {
-            EngineError::Timeout(Duration::from_secs(30))
-        }
+        crate::engines::traits::EngineError::Timeout(duration) => EngineError::Timeout(duration),
         crate::engines::traits::EngineError::AllEnginesFailed(msg) => {
             if msg.contains("No suitable engines") {
                 EngineError::NoEnginesAvailable
