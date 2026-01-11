@@ -66,6 +66,7 @@ metrics-exporter-prometheus = { version = "0.18.1", default-features = false, fe
 scraper = "0.25.0"
 robotstxt = "0.3"
 chromiumoxide = { version = "0.8.0", default-features = false, features = ["tokio-runtime"] }
+fake-useragent = "0.1"
 
 # Text processing and encoding
 chardetng = "0.1"

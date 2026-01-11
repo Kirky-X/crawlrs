@@ -128,8 +128,6 @@ impl Settings {
             // 5. 设置并发控制默认配置
             .set_default("concurrency.default_team_limit", 10)? // 默认团队并发限制 10
             .set_default("concurrency.task_lock_duration_seconds", 300)? // 任务锁持续 300 秒（5 分钟）
-            // 6. 设置 Webhook 默认配置
-            .set_default("webhook.secret", "your-secret-key")? // Webhook 签名密钥
             // 7. 设置搜索 A/B 测试默认配置
             .set_default("search.ab_test_enabled", false)? // 默认关闭 A/B 测试
             .set_default("search.variant_b_weight", 0.1)? // 默认分配 10% 流量到 B 变体
@@ -149,7 +147,12 @@ impl Settings {
             .add_source(Environment::with_prefix("CRAWLRS").separator("__")); // 加载 CRAWLRS__ 前缀的环境变量
 
         // 构建并反序列化配置
-        builder.build()?.try_deserialize()
+        let settings: Settings = builder.build()?.try_deserialize()?;
+
+        // 验证配置值
+        settings.validate()?;
+
+        Ok(settings)
     }
 
     /// 验证配置安全性
@@ -232,15 +235,78 @@ impl Settings {
             );
         }
 
-        // 检查数据库连接是否使用默认密码
-        if self.database.url.contains("password") {
+        if self.database.url.contains("password=password")
+            || self.database.url.contains("password=postgres")
+            || self.database.url.contains("password=admin")
+        {
             warnings.push(
-                "SECURITY WARNING: Database URL appears to use default password 'password'. \
-                Change the database password in production."
+                "SECURITY WARNING: Database URL may use weak/default password. \
+                Use strong authentication in production."
                     .to_string(),
             );
         }
 
         warnings
+    }
+
+    /// 验证配置值有效性
+    ///
+    /// 检查配置值是否在合理范围内
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(())` - 配置有效
+    /// * `Err(ConfigError)` - 配置无效
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        // 验证端口范围
+        if self.server.port == 0 {
+            return Err(ConfigError::Message(
+                "Invalid port number: port must be between 1 and 65535",
+            ));
+        }
+
+        // 验证 A/B 测试权重范围
+        if self.search.variant_b_weight < 0.0 || self.search.variant_b_weight > 1.0 {
+            return Err(ConfigError::Message(
+                "Invalid variant_b_weight: must be between 0.0 and 1.0",
+            ));
+        }
+
+        // 验证数据库连接池配置
+        if let Some(max_conn) = self.database.max_connections {
+            if max_conn == 0 {
+                return Err(ConfigError::Message(
+                    "Invalid max_connections: must be greater than 0",
+                ));
+            }
+        }
+
+        if let Some(min_conn) = self.database.min_connections {
+            if min_conn == 0 {
+                return Err(ConfigError::Message(
+                    "Invalid min_connections: must be greater than 0",
+                ));
+            }
+        }
+
+        // 验证存储类型
+        if self.storage.storage_type != "local" && self.storage.storage_type != "s3" {
+            return Err(ConfigError::Message(
+                "Invalid storage_type: must be 'local' or 's3'",
+            ));
+        }
+
+        // 验证 S3 配置完整性
+        if self.storage.storage_type == "s3" {
+            if self.storage.s3_bucket.is_none()
+                || self.storage.s3_bucket.as_ref().unwrap().is_empty()
+            {
+                return Err(ConfigError::Message(
+                    "S3 bucket must be configured when storage_type is 's3'",
+                ));
+            }
+        }
+
+        Ok(())
     }
 }
