@@ -5,6 +5,7 @@
 
 use crate::engines::circuit_breaker::CircuitBreaker;
 use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+use crate::engines::validators::validate_url;
 use rand::seq::SliceRandom;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -301,6 +302,10 @@ impl EngineRouter {
     /// * `Ok(ScrapeResponse)` - 抓取响应
     /// * `Err(EngineError)` - 抓取过程中出现的错误
     pub async fn route(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+        if let Err(e) = validate_url(&request.url).await {
+            return Err(EngineError::SsrfProtection(e.to_string()));
+        }
+
         let timeout = request.timeout;
 
         // Wrap the entire operation with timeout
@@ -432,18 +437,13 @@ impl EngineRouter {
             results.len()
         );
 
-        // 更新统计信息
-        self.update_engine_stats(&primary_name, true, Duration::from_millis(0)); // 这里没有准确的时间，暂且忽略
         self.circuit_breaker.record_success(&primary_name);
 
         for (name, _) in results {
-            self.update_engine_stats(&name, true, Duration::from_millis(0));
             self.circuit_breaker.record_success(&name);
         }
 
         for (name, error) in errors {
-            self.update_engine_stats(&name, false, Duration::from_millis(0));
-            // 只对可重试的错误触发熔断器
             if error.is_retryable() {
                 self.circuit_breaker.record_failure(&name);
             }

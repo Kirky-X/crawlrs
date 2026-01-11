@@ -126,7 +126,6 @@ impl HttpClient {
 
     fn new() -> Self {
         let client = Client::builder()
-            .user_agent(&get_rotated_user_agent())
             .timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_else(|_| Client::new());
@@ -210,6 +209,8 @@ impl HttpClient {
         &self,
         input: &HttpInput,
     ) -> Result<(u16, Vec<(String, String)>, String), HttpError> {
+        let ua = get_rotated_user_agent();
+
         let mut request = match input.method {
             HttpMethod::GET => self.client.get(&input.url),
             HttpMethod::POST => self.client.post(&input.url),
@@ -217,6 +218,8 @@ impl HttpClient {
             HttpMethod::DELETE => self.client.delete(&input.url),
             HttpMethod::PATCH => self.client.patch(&input.url),
         };
+
+        request = request.header("User-Agent", ua);
 
         // Add headers
         if let Some(headers) = &input.headers {

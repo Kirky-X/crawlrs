@@ -4,8 +4,9 @@
 // See LICENSE file in the project root for full license information.
 
 use metrics::{counter, gauge};
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use std::collections::VecDeque;
@@ -132,10 +133,7 @@ impl CircuitBreaker {
     /// * `engine_name` - 引擎名称
     /// * `config` - 配置
     pub fn set_config(&self, engine_name: &str, config: CircuitConfig) {
-        let mut configs = self.configs.write().unwrap_or_else(|e| {
-            tracing::error!("Lock poisoned in set_config: {:?}", e);
-            e.into_inner()
-        });
+        let mut configs = self.configs.write();
         configs.insert(engine_name.to_string(), config);
     }
 
@@ -149,10 +147,7 @@ impl CircuitBreaker {
     ///
     /// 引擎配置
     fn get_config(&self, engine_name: &str) -> CircuitConfig {
-        let configs = self.configs.read().unwrap_or_else(|e| {
-            tracing::error!("Lock poisoned in get_config: {:?}", e);
-            e.into_inner()
-        });
+        let configs = self.configs.read();
         configs
             .get(engine_name)
             .cloned()
@@ -171,10 +166,7 @@ impl CircuitBreaker {
     pub fn is_open(&self, engine_name: &str) -> bool {
         let config = self.get_config(engine_name);
 
-        let mut states = self.states.write().unwrap_or_else(|e| {
-            tracing::error!("Lock poisoned in is_open: {:?}", e);
-            e.into_inner()
-        });
+        let mut states = self.states.write();
         let state = states
             .entry(engine_name.to_string())
             .or_insert(CircuitState {
@@ -210,10 +202,7 @@ impl CircuitBreaker {
     ///
     /// * `engine_name` - 引擎名称
     pub fn record_success(&self, engine_name: &str) {
-        let mut states = self.states.write().unwrap_or_else(|e| {
-            tracing::error!("Lock poisoned in record_success: {:?}", e);
-            e.into_inner()
-        });
+        let mut states = self.states.write();
         if let Some(state) = states.get_mut(engine_name) {
             state.total_requests += 1;
             state.total_successes += 1;
@@ -239,10 +228,7 @@ impl CircuitBreaker {
     pub fn record_failure(&self, engine_name: &str) {
         let config = self.get_config(engine_name);
 
-        let mut states = self.states.write().unwrap_or_else(|e| {
-            tracing::error!("Lock poisoned in record_failure: {:?}", e);
-            e.into_inner()
-        });
+        let mut states = self.states.write();
         let state = states
             .entry(engine_name.to_string())
             .or_insert(CircuitState {
@@ -299,10 +285,7 @@ impl CircuitBreaker {
     ///
     /// 统计信息
     pub async fn get_stats(&self, engine_name: &str) -> CircuitStats {
-        let states = self.states.read().unwrap_or_else(|e| {
-            tracing::error!("Lock poisoned in get_stats: {:?}", e);
-            e.into_inner()
-        });
+        let states = self.states.read();
         if let Some(state) = states.get(engine_name) {
             CircuitStats {
                 is_open: state.status == Status::Open,
