@@ -3,4 +3,5 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+pub mod engine_client_test;
 pub mod search;
