@@ -66,7 +66,8 @@ impl Default for HealthCheckConfig {
             max_consecutive_failures: 3,
             degraded_threshold_ms: 2000,
             unhealthy_threshold_ms: 5000,
-            target_url: "https://www.google.com".to_string(),
+            target_url: std::env::var("CRAWLRS_HEALTH_CHECK_URL")
+                .unwrap_or_else(|_| "https://www.google.com".to_string()),
         }
     }
 }

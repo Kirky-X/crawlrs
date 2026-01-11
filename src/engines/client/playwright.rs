@@ -38,7 +38,7 @@ pub async fn get_browser() -> Result<Arc<Browser>, EngineError> {
     // Try to get the existing browser (clone outside lock to avoid holding across await)
     let browser_to_check = {
         let browser_guard = browser_instance.lock().unwrap();
-        browser_guard.as_ref().map(|b| Arc::clone(b))
+        browser_guard.as_ref().map(Arc::clone)
     };
 
     if let Some(browser) = browser_to_check {
@@ -116,11 +116,26 @@ pub async fn check_browser_health(browser: &Browser) -> bool {
 }
 
 /// Reset the global browser instance
-/// Note: OnceCell cannot be reset, so this is a no-op
+/// Note: OnceLock cannot be reset, so this is a no-op
 /// Tests should use different remote URLs or run separately
 pub fn reset_browser() {
-    // No-op: OnceCell cannot be reset
+    // No-op: OnceLock cannot be reset
     // Tests should run with --test-threads=1 or use unique remote URLs
+}
+
+/// Clean up and close the global browser instance
+/// This should be called when shutting down the application
+pub async fn cleanup_browser() {
+    let browser_instance = BROWSER_INSTANCE.get();
+
+    if let Some(instance) = browser_instance {
+        let mut guard = instance.lock().unwrap();
+        if let Some(browser) = guard.take() {
+            // Close all pages and then browser
+            tracing::info!("Closing browser instance");
+            drop(browser);
+        }
+    }
 }
 
 /// Playwright引擎

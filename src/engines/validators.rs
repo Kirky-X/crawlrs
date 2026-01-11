@@ -190,8 +190,9 @@ mod tests {
         assert!(validate_url("ftp://example.com").await.is_err());
         assert!(validate_url("gopher://localhost").await.is_err());
 
-        // 有效的公共 URL
-        if std::env::var("CI").is_err() {
+        // 有效的公共 URL - 只在显式启用网络测试时运行
+        // 使用 CRAWLRS_ENABLE_NETWORK_TESTS 环境变量控制，而不是依赖 CI
+        if std::env::var("CRAWLRS_ENABLE_NETWORK_TESTS").is_ok() {
             assert!(validate_url("http://example.com").await.is_ok());
             assert!(validate_url("https://google.com").await.is_ok());
         }
