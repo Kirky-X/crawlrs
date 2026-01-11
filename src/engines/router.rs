@@ -3,6 +3,8 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+#![allow(deprecated)]
+
 use crate::engines::circuit_breaker::CircuitBreaker;
 use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use crate::engines::validators::validate_url;

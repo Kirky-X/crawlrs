@@ -3,7 +3,9 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+#![allow(deprecated)]
+
+use super::super::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;

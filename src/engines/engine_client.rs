@@ -9,6 +9,8 @@
 //! All internal implementation details (UA rotation, circuit breaker, engine selection)
 //! are encapsulated within EngineClient and not exposed to callers.
 
+#![allow(deprecated)]
+
 use crate::engines::health_monitor::{AggregateHealthStatus, EngineHealthMonitor};
 use crate::engines::router::EngineRouter;
 use crate::engines::traits::ScrapeRequest as InternalScrapeRequest;
@@ -181,6 +183,11 @@ impl ScrapeOptionsBuilder {
         self
     }
 
+    pub fn screenshot_config(mut self, config: ScreenshotConfig) -> Self {
+        self.0.screenshot_config = Some(config);
+        self
+    }
+
     pub fn build(self) -> ScrapeOptions {
         self.0
     }
@@ -201,21 +208,18 @@ pub enum PageAction {
 
 /// Scroll direction for PageAction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum ScrollDirection {
+    #[default]
     Down,
     Up,
     Bottom,
     Top,
 }
 
-impl Default for ScrollDirection {
-    fn default() -> Self {
-        ScrollDirection::Down
-    }
-}
 
 /// Screenshot configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenshotConfig {
     /// Capture full page (default: true)
     pub full_page: bool,
@@ -332,8 +336,10 @@ impl EngineError {
 
 /// Health status of the engine system.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum EngineHealthStatus {
     /// All engines are operational
+    #[default]
     Healthy,
     /// Some engines are degraded or unavailable
     Degraded {
@@ -349,11 +355,6 @@ pub enum EngineHealthStatus {
     },
 }
 
-impl Default for EngineHealthStatus {
-    fn default() -> Self {
-        Self::Healthy
-    }
-}
 
 /// Engine client - the single entry point for all scraping operations.
 ///
@@ -480,6 +481,7 @@ impl Default for EngineClient {
 }
 
 /// Convert internal errors to public EngineError
+#[allow(deprecated)]
 fn convert_error(e: crate::engines::traits::EngineError) -> EngineError {
     match e {
         crate::engines::traits::EngineError::RequestFailed(msg) => EngineError::RequestFailed(msg),

@@ -3,7 +3,9 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
-use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+#![allow(deprecated)]
+
+use super::super::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use crate::engines::validators;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
@@ -90,7 +92,7 @@ impl ScraperEngine for ReqwestEngine {
         request_builder = request_builder.headers(headers);
 
         // Handle proxy - proxy must be configured when building the client
-        if let Some(proxy_url) = &request.proxy {
+        if let Some(_proxy_url) = &request.proxy {
             tracing::warn!("Proxy support requires custom client configuration");
         }
 

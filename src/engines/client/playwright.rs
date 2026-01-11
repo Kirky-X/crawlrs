@@ -3,6 +3,8 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+#![allow(deprecated)]
+
 use crate::engines::traits::{
     EngineError, ScrapeAction, ScrapeRequest, ScrapeResponse, ScraperEngine,
 };
@@ -274,16 +276,18 @@ impl ScraperEngine for PlaywrightEngine {
             }
 
             // Get final URL after navigation (handles redirects)
-            let final_url = page.url().await
-                .unwrap_or_else(|_| request.url.clone());
+            let _final_url = page.url().await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| request.url.clone());
 
             // Try to get content-type from document properties
             let content_type = page.evaluate(r#"
                 () => document.contentType || document.querySelector('meta[http-equiv="content-type"]')?.getAttribute('content') || 'text/html'
             "#).await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?
-                .as_str()
-                .unwrap_or("text/html")
+                .into_value::<String>()
+                .unwrap_or_else(|_| "text/html".to_string())
                 .split(';')
                 .next()
                 .unwrap_or("text/html")

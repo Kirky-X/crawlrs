@@ -15,15 +15,6 @@ pub mod router;
 pub mod traits;
 pub mod validators;
 
-/// User agent rotation utilities (internal)
-mod user_agent;
-
-/// Search engine health checking (internal)
-mod search_health;
-
-/// Unified HTTP client (internal)
-mod http_client;
-
 // New unified EngineClient API
 pub mod engine_client;
 

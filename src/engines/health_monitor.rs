@@ -3,6 +3,8 @@
 // Licensed under the MIT License
 // See LICENSE file in the project root for full license information.
 
+#![allow(deprecated)]
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -311,17 +313,14 @@ impl EngineHealthMonitor {
 
 /// Aggregate health status for EngineClient
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum AggregateHealthStatus {
+    #[default]
     Healthy,
     Degraded(Vec<String>),
     Unavailable,
 }
 
-impl Default for AggregateHealthStatus {
-    fn default() -> Self {
-        Self::Healthy
-    }
-}
 
 #[async_trait]
 impl ScraperEngine for EngineHealthMonitor {
