@@ -14,6 +14,16 @@ use super::{
     types::{EngineHealth, SearchEngineType},
 };
 
+mod google;
+mod bing;
+mod baidu;
+mod sogou;
+
+pub use google::GoogleSearchEngine;
+pub use bing::BingSearchEngine;
+pub use baidu::BaiduSearchEngine;
+pub use sogou::SogouSearchEngine;
+
 #[derive(Clone)]
 struct SearchClientInner {
     engines: Vec<Arc<dyn SearchEngine>>,
@@ -38,39 +48,12 @@ impl SearchClient {
                 default_engine: default_engine_type(),
             };
 
-            // 注册所有支持的搜索引擎（使用 mock 实现）
-            // 实际使用时，应该通过 feature flags 条件编译注册真实引擎
-            #[cfg(feature = "search-google")]
-            inner
-                .engines
-                .push(Arc::new(MockSearchEngine::new(SearchEngineType::Google))
-                    as Arc<dyn SearchEngine>);
-
-            #[cfg(feature = "search-bing")]
-            inner
-                .engines
-                .push(Arc::new(MockSearchEngine::new(SearchEngineType::Bing))
-                    as Arc<dyn SearchEngine>);
-
-            #[cfg(feature = "search-baidu")]
-            inner
-                .engines
-                .push(Arc::new(MockSearchEngine::new(SearchEngineType::Baidu))
-                    as Arc<dyn SearchEngine>);
-
-            #[cfg(feature = "search-sogou")]
-            inner
-                .engines
-                .push(Arc::new(MockSearchEngine::new(SearchEngineType::Sogou))
-                    as Arc<dyn SearchEngine>);
-
-            // 如果没有配置任何搜索引擎，添加默认的 mock 引擎
-            if inner.engines.is_empty() {
-                inner
-                    .engines
-                    .push(Arc::new(MockSearchEngine::new(SearchEngineType::Google))
-                        as Arc<dyn SearchEngine>);
-            }
+            // 注册所有支持的搜索引擎（真实实现）
+            // 默认注册所有引擎
+            inner.engines.push(Arc::new(GoogleSearchEngine::new()) as Arc<dyn SearchEngine>);
+            inner.engines.push(Arc::new(BingSearchEngine::new()) as Arc<dyn SearchEngine>);
+            inner.engines.push(Arc::new(BaiduSearchEngine::new()) as Arc<dyn SearchEngine>);
+            inner.engines.push(Arc::new(SogouSearchEngine::new()) as Arc<dyn SearchEngine>);
 
             SearchClient {
                 inner: Arc::new(inner),
@@ -185,48 +168,6 @@ impl SearchCommand {
     }
 }
 
-/// Mock engine for development/testing
-struct MockSearchEngine {
-    engine_type: SearchEngineType,
-}
-
-impl MockSearchEngine {
-    fn new(engine_type: SearchEngineType) -> Self {
-        Self { engine_type }
-    }
-}
-
-#[async_trait::async_trait]
-impl SearchEngine for MockSearchEngine {
-    fn get_name(&self) -> &'static str {
-        self.engine_type.name()
-    }
-
-    fn engine_type(&self) -> SearchEngineType {
-        self.engine_type
-    }
-
-    fn health(&self) -> EngineHealth {
-        EngineHealth::Healthy
-    }
-
-    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
-        Ok(Response {
-            items: vec![ResponseItem {
-                title: format!("Mock result for {}", request.query),
-                url: "https://example.com".to_string(),
-                description: "This is a mock search result".to_string(),
-                engine: self.engine_type,
-            }],
-            total_results: Some(1),
-            engine: self.engine_type,
-        })
-    }
-}
-
-#[allow(dead_code)]
-struct MockEngine;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +192,11 @@ mod tests {
         assert_eq!(req.engine, Some(SearchEngineType::Bing));
         assert_eq!(req.limit, 20);
         assert_eq!(req.offset, 10);
+    }
+
+    #[tokio::test]
+    async fn test_all_engines_registered() {
+        let client = SearchClient::global();
+        assert_eq!(client.inner.engines.len(), 4);
     }
 }

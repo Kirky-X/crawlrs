@@ -28,7 +28,9 @@ pub mod response;
 pub mod types;
 
 pub use adapter::create_domain_adapter;
-pub use client::SearchClient;
+pub use client::{
+    BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SearchClient, SogouSearchEngine,
+};
 pub use engine_trait::{SearchEngine, SearchRequest};
 pub use error::SearchError;
 pub use response::{Response, ResponseItem};
