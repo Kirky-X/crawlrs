@@ -13,3 +13,12 @@ pub mod health_monitor;
 pub mod router;
 pub mod traits;
 pub mod validators;
+
+/// User agent rotation utilities
+pub mod user_agent;
+
+/// Search engine health checking
+pub mod search_health;
+
+/// Unified search client
+pub mod http_client;
