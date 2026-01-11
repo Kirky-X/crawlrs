@@ -15,6 +15,8 @@ pub enum SearchError {
     Timeout(#[from] Elapsed),
     #[error("解析错误: {0}")]
     Parse(String),
+    #[error("内容解析错误: {0}")]
+    ContentParsing(String),
     #[error("搜索引擎错误: {0}")]
     Engine(String),
     #[error("熔断器打开: {0}")]
