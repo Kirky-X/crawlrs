@@ -6,8 +6,8 @@
 //! Unified HTTP Client
 //! Provides a single, simple interface for HTTP requests
 
+use crate::engines::search_health::{SearchEngineHealth, SearchHealthChecker};
 use crate::engines::user_agent::get_rotated_user_agent;
-use crate::engines::search_health::SearchHealthChecker;
 use once_cell::sync::Lazy;
 use reqwest::Client;
 use std::sync::Arc;
@@ -63,7 +63,7 @@ impl HttpInput {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HttpMethod {
     GET,
     POST,
@@ -120,9 +120,7 @@ pub struct HttpClient {
 
 impl HttpClient {
     pub fn global() -> &'static Self {
-        static INSTANCE: Lazy<HttpClient> = Lazy::new(|| {
-            HttpClient::new()
-        });
+        static INSTANCE: Lazy<HttpClient> = Lazy::new(|| HttpClient::new());
         &INSTANCE
     }
 
@@ -141,17 +139,26 @@ impl HttpClient {
 
     pub async fn request(&self, input: &HttpInput) -> Result<HttpResponse, HttpError> {
         let start_time = std::time::Instant::now();
-        
+
         debug!("HTTP {} {}", input.method.as_str(), input.url);
 
         // Check URL health
         let domain = extract_domain(&input.url);
-        let health = self.health_checker
-            .check_health(&domain, &input.url)
-            .await;
-        
+        let health = self.health_checker.check_health(&domain, &input.url).await;
+
         if !health.is_healthy {
-            warn!("Domain {} is unhealthy: {:?}", domain, health.error_message);
+            // 根据健康状态严重程度使用不同日志级别
+            match health.status {
+                SearchEngineHealth::Unhealthy => {
+                    tracing::error!("Domain {} is unhealthy: {:?}", domain, health.error_message);
+                }
+                SearchEngineHealth::Degraded => {
+                    tracing::warn!("Domain {} is degraded: {:?}", domain, health.error_message);
+                }
+                SearchEngineHealth::Healthy => {
+                    tracing::debug!("Domain {} is healthy", domain);
+                }
+            }
         }
 
         // Execute with retry
@@ -196,8 +203,7 @@ impl HttpClient {
             }
         }
 
-        Err(last_error
-            .unwrap_or_else(|| HttpError::Failed("Unknown error".to_string())))
+        Err(last_error.unwrap_or_else(|| HttpError::Failed("Unknown error".to_string())))
     }
 
     async fn execute_once(
@@ -230,7 +236,9 @@ impl HttpClient {
         }
 
         // Send request
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .map_err(|e| HttpError::Connection(e.to_string()))?;
 
         let status = response.status().as_u16();
@@ -238,19 +246,24 @@ impl HttpClient {
         let headers: Vec<_> = response
             .headers()
             .iter()
-            .filter_map(|(k, v)| {
-                v.to_str().ok().map(|s| (k.to_string(), s.to_string()))
-            })
+            .filter_map(|(k, v)| v.to_str().ok().map(|s| (k.to_string(), s.to_string())))
             .collect();
 
-        let body = response.text().await
+        let body = response
+            .text()
+            .await
             .map_err(|e| HttpError::Failed(e.to_string()))?;
 
         Ok((status, headers, body))
     }
 
-    pub async fn get_domain_health(&self, domain: &str) -> crate::engines::search_health::SearchHealthCheckResult {
-        self.health_checker.check_health(domain, &format!("https://{}", domain)).await
+    pub async fn get_domain_health(
+        &self,
+        domain: &str,
+    ) -> crate::engines::search_health::SearchHealthCheckResult {
+        self.health_checker
+            .check_health(domain, &format!("https://{}", domain))
+            .await
     }
 }
 
@@ -288,7 +301,7 @@ mod tests {
             .with_method(HttpMethod::POST)
             .with_body("test")
             .with_timeout(10);
-        
+
         assert_eq!(input.url, "https://example.com");
         assert_eq!(input.method, HttpMethod::POST);
         assert_eq!(input.body, Some("test".to_string()));
@@ -303,6 +316,9 @@ mod tests {
     #[test]
     fn test_extract_domain() {
         assert_eq!(extract_domain("https://google.com/search"), "google.com");
-        assert_eq!(extract_domain("http://api.example.com/v1"), "api.example.com");
+        assert_eq!(
+            extract_domain("http://api.example.com/v1"),
+            "api.example.com"
+        );
     }
 }

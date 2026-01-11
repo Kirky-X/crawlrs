@@ -26,9 +26,39 @@ task_local! {
 // Changed to Arc<Mutex<Option<Arc<Browser>>>> to allow resetting in tests
 static BROWSER_INSTANCE: OnceLock<Arc<Mutex<Option<Arc<Browser>>>>> = OnceLock::new();
 
+// Maximum number of recovery attempts
+const MAX_RECOVERY_ATTEMPTS: u32 = 3;
+
 // Asynchronously gets or initializes the shared browser instance.
 // This function ensures that the browser is launched only once.
 pub async fn get_browser() -> Result<Arc<Browser>, EngineError> {
+    get_browser_with_recovery(MAX_RECOVERY_ATTEMPTS).await
+}
+
+/// Gets or creates browser with automatic recovery on failure
+async fn get_browser_with_recovery(max_attempts: u32) -> Result<Arc<Browser>, EngineError> {
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+
+        match get_or_init_browser().await {
+            Ok(browser) => return Ok(browser),
+            Err(e) if attempts < max_attempts => {
+                tracing::warn!(
+                    "Browser initialization attempt {} failed: {}, retrying...",
+                    attempts,
+                    e
+                );
+                cleanup_browser().await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Internal function to get or initialize browser
+async fn get_or_init_browser() -> Result<Arc<Browser>, EngineError> {
     // Check if we're in test mode and should not reuse browser
     let test_mode = std::env::var("CRAWLRS_TEST_NO_BROWSER_REUSE").is_ok();
 
@@ -163,7 +193,9 @@ impl ScraperEngine for PlaywrightEngine {
 
         // Only run if specifically requested for JS or screenshot
         if !request.needs_js && !request.needs_screenshot {
-            return Err(EngineError::AllEnginesFailed);
+            return Err(EngineError::AllEnginesFailed(
+                "PlaywrightEngine only supports JS and screenshot requests".to_string(),
+            ));
         }
 
         let start = Instant::now();
@@ -175,12 +207,12 @@ impl ScraperEngine for PlaywrightEngine {
 
             // Create new page and navigate
             let page = browser.new_page("about:blank").await
-                .map_err(|e| EngineError::Other(e.to_string()))?;
+                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
             // Set user agent if mobile
             if request.mobile {
                 page.set_user_agent("Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1").await
-                    .map_err(|e| EngineError::Other(e.to_string()))?;
+                    .map_err(|e| EngineError::BrowserError(e.to_string()))?;
             }
 
             // 设置自定义 Headers
@@ -193,7 +225,7 @@ impl ScraperEngine for PlaywrightEngine {
             // Navigate and wait for load
             // goto waits for the load event by default
             page.goto(&request.url).await
-                .map_err(|e| EngineError::Other(e.to_string()))?;
+                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
             // 执行页面交互动作
             for action in &request.actions {
@@ -204,10 +236,10 @@ impl ScraperEngine for PlaywrightEngine {
                     ScrapeAction::Click { selector } => {
                         page.find_element(selector)
                             .await
-                            .map_err(|e| EngineError::Other(format!("Click failed, element not found: {}", e)))?
+                            .map_err(|e| EngineError::BrowserError(format!("Click failed, element not found: {}", e)))?
                             .click()
                             .await
-                            .map_err(|e| EngineError::Other(format!("Click failed: {}", e)))?;
+                            .map_err(|e| EngineError::BrowserError(format!("Click failed: {}", e)))?;
                     }
                     ScrapeAction::Scroll { direction } => {
                         let script = match direction.as_str() {
@@ -219,7 +251,7 @@ impl ScraperEngine for PlaywrightEngine {
                         };
                         page.evaluate(script)
                             .await
-                            .map_err(|e| EngineError::Other(format!("Scroll failed: {}", e)))?;
+                            .map_err(|e| EngineError::BrowserError(format!("Scroll failed: {}", e)))?;
                     }
                     ScrapeAction::Screenshot { full_page: _ } => {
                         // 此处动作生成的截图暂不直接返回，仅作为交互过程的一部分
@@ -228,10 +260,10 @@ impl ScraperEngine for PlaywrightEngine {
                     ScrapeAction::Input { selector, text } => {
                         page.find_element(selector)
                             .await
-                            .map_err(|e| EngineError::Other(format!("Input failed, element not found: {}", e)))?
+                            .map_err(|e| EngineError::BrowserError(format!("Input failed, element not found: {}", e)))?
                             .type_str(text)
                             .await
-                            .map_err(|e| EngineError::Other(format!("Input failed: {}", e)))?;
+                            .map_err(|e| EngineError::BrowserError(format!("Input failed: {}", e)))?;
                     }
                 }
             }
@@ -248,7 +280,7 @@ impl ScraperEngine for PlaywrightEngine {
             let status_code = 200; // Chromiumoxide goto returns Page, not Response directly in this version pattern
 
             let content = page.content().await
-                .map_err(|e| EngineError::Other(e.to_string()))?;
+                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
             // Handle screenshot if requested
             let mut screenshot = None;
@@ -280,7 +312,7 @@ impl ScraperEngine for PlaywrightEngine {
                 let screenshot_bytes = if let Some(selector) = &config.selector {
                     // Find element and screenshot
                     let element = page.find_element(selector).await
-                        .map_err(|e| EngineError::Other(format!("Element not found: {}", e)))?;
+                        .map_err(|e| EngineError::BrowserError(format!("Element not found: {}", e)))?;
 
                     // Create new format instance for element screenshot since original was moved
                     let element_format = match config.format.as_deref() {
@@ -289,11 +321,11 @@ impl ScraperEngine for PlaywrightEngine {
                     };
 
                     element.screenshot(element_format).await
-                        .map_err(|e| EngineError::Other(format!("Element screenshot failed: {}", e)))?
+                        .map_err(|e| EngineError::BrowserError(format!("Element screenshot failed: {}", e)))?
                 } else {
                     // Page screenshot
                     page.screenshot(params).await
-                        .map_err(|e| EngineError::Other(format!("Page screenshot failed: {}", e)))?
+                        .map_err(|e| EngineError::BrowserError(format!("Page screenshot failed: {}", e)))?
                 };
 
                 screenshot = Some(BASE64.encode(screenshot_bytes));
@@ -312,7 +344,7 @@ impl ScraperEngine for PlaywrightEngine {
             })
         })
             .await
-            .map_err(|_| EngineError::Timeout)?
+            .map_err(|_| EngineError::Timeout(timeout_duration))?
     }
 
     /// 计算对请求的支持分数

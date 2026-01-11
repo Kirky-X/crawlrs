@@ -10,13 +10,8 @@ use url::Url;
 /// 验证 URL 是否安全 (防止 SSRF)
 ///
 /// 检查解析后的 IP 是否为私有地址或环回地址
+/// 包含 DNS Rebinding 攻击防护
 pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
-    // 允许通过环境变量禁用 SSRF 保护（用于测试）
-    if std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default() == "true" {
-        tracing::warn!("SSRF protection is DISABLED via environment variable");
-        return Ok(());
-    }
-
     let url = Url::parse(url_str)?;
 
     // 检查协议：只允许 http 和 https
@@ -43,20 +38,47 @@ pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
     }
 
     // 解析 DNS
-    // 注意：这里的端口处理可能需要根据 scheme 默认值调整，lookup_host 需要 host:port
     let port = url.port_or_known_default().unwrap_or(80);
     let addr_str = format!("{}:{}", host, port);
 
-    let addrs = lookup_host(&addr_str).await?;
+    let addrs: Vec<_> = lookup_host(&addr_str).await?.collect();
 
-    // 检查所有解析出的 IP
-    for addr in addrs {
+    // DNS Rebinding 防护：检查所有解析出的 IP
+    if addrs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "SSRF protection: No IP addresses resolved for host"
+        ));
+    }
+
+    // 检查是否存在混合的公网/私网 IP（DNS rebinding 特征）
+    let has_private = addrs.iter().any(|addr| is_private_ip(addr.ip()));
+    let has_public = addrs.iter().any(|addr| !is_private_ip(addr.ip()));
+
+    if has_private && has_public {
+        return Err(anyhow::anyhow!(
+            "SSRF protection: Mixed private and public IP addresses detected (possible DNS rebinding attack)"
+        ));
+    }
+
+    // 检查所有解析出的 IP 是否为私有地址
+    for addr in &addrs {
         if is_private_ip(addr.ip()) {
             return Err(anyhow::anyhow!(
                 "SSRF protection: Private IP access is not allowed: {}",
                 addr.ip()
             ));
         }
+    }
+
+    // DNS Rebinding 防护：验证所有 IP 是否一致
+    // 如果有多个 IP，确保它们都属于同一类别（公网）
+    if addrs.len() > 1 {
+        // 记录警告：多个 IP 解析可能表示 DNS 不稳定
+        tracing::warn!(
+            "DNS warning: Host {} resolved to {} IP addresses",
+            host,
+            addrs.len()
+        );
     }
 
     Ok(())
@@ -66,24 +88,33 @@ pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
 fn is_blocked_hostname(host: &str) -> bool {
     let host_lower = host.to_lowercase();
 
-    // 阻止的主机名列表
-    let blocked = [
+    // 使用 BTreeSet 避免重复并提供高效的查找
+    use std::collections::BTreeSet;
+    let blocked: BTreeSet<&str> = [
+        // 本地主机变体
         "localhost",
         "localhost.localdomain",
         "ip6-localhost",
         "ip6-loopback",
         "0.0.0.0",
+        "::1",
         "::",
         // AWS 元数据端点
         "169.254.169.254",
         "metadata.google.internal",
         // Azure 元数据端点
-        "169.254.169.254",
+        "metadata.azure.com",
+        "metadata.msftidentity.com",
         // GCP 元数据端点
         "metadata.google.internal",
-    ];
+        // 其他云服务元数据端点
+        "metadata.nova.canonical.com",
+        "metadata.packet.csi.com",
+    ]
+    .into_iter()
+    .collect();
 
-    if blocked.contains(&host_lower.as_str()) {
+    if blocked.contains(host_lower.as_str()) {
         return true;
     }
 
@@ -98,47 +129,79 @@ fn is_blocked_hostname(host: &str) -> bool {
 fn is_private_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
-            // 10.0.0.0/8
+            // 10.0.0.0/8 - RFC 1918 私有地址
             if ipv4.octets()[0] == 10 {
                 return true;
             }
-            // 172.16.0.0/12
+            // 172.16.0.0/12 - RFC 1918 私有地址
             if ipv4.octets()[0] == 172 && (ipv4.octets()[1] >= 16 && ipv4.octets()[1] <= 31) {
                 return true;
             }
-            // 192.168.0.0/16
+            // 192.168.0.0/16 - RFC 1918 私有地址
             if ipv4.octets()[0] == 192 && ipv4.octets()[1] == 168 {
                 return true;
             }
-            // 127.0.0.0/8 (Loopback)
+            // 127.0.0.0/8 - 环回地址
             if ipv4.is_loopback() {
                 return true;
             }
-            // 169.254.0.0/16 (Link-local)
+            // 169.254.0.0/16 -链路本地地址 (Link-local)
             if ipv4.is_link_local() {
                 return true;
             }
-            // 224.0.0.0/4 (Multicast)
+            // 224.0.0.0/4 - 多播地址
             if ipv4.octets()[0] >= 224 && ipv4.octets()[0] <= 239 {
+                return true;
+            }
+            // 100.64.0.0/10 - 共享地址空间 (Carrier-Grade NAT)
+            if ipv4.octets()[0] == 100 && ipv4.octets()[1] >= 64 && ipv4.octets()[1] <= 127 {
+                return true;
+            }
+            // 0.0.0.0/8 - 广播源地址
+            if ipv4.octets()[0] == 0 {
+                return true;
+            }
+            // 255.255.255.255 - 广播地址
+            if ipv4.octets()[0] == 255
+                && ipv4.octets()[1] == 255
+                && ipv4.octets()[2] == 255
+                && ipv4.octets()[3] == 255
+            {
                 return true;
             }
             false
         }
         IpAddr::V6(ipv6) => {
-            // Loopback
+            // ::1/128 - IPv6 环回地址
             if ipv6.is_loopback() {
                 return true;
             }
-            // Unique Local Address (fc00::/7)
+            // fc00::/7 - 唯一本地地址 (ULA)
             if (ipv6.segments()[0] & 0xfe00) == 0xfc00 {
                 return true;
             }
-            // Link-local (fe80::/10)
+            // fe80::/10 - 链路本地地址
             if (ipv6.segments()[0] & 0xffc0) == 0xfe80 {
                 return true;
             }
-            // Multicast (ff00::/8)
+            // ff00::/8 - 多播地址
             if (ipv6.segments()[0] & 0xff00) == 0xff00 {
+                return true;
+            }
+            // ::/128 - 未指定地址
+            if ipv6.segments()[0] == 0
+                && ipv6.segments()[1] == 0
+                && ipv6.segments()[2] == 0
+                && ipv6.segments()[3] == 0
+                && ipv6.segments()[4] == 0
+                && ipv6.segments()[5] == 0
+                && ipv6.segments()[6] == 0
+                && ipv6.segments()[7] == 0
+            {
+                return true;
+            }
+            // 2001:db8::/32 - 文档示例地址
+            if ipv6.segments()[0] == 0x2001 && ipv6.segments()[1] == 0x0db8 {
                 return true;
             }
             false

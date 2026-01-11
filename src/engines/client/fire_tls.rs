@@ -94,10 +94,12 @@ impl ScraperEngine for FireEngineTls {
             .json(&req_body)
             .send()
             .await
-            .map_err(EngineError::RequestFailed)?;
+            .map_err(|e| EngineError::RequestFailed(e.to_string()))?;
 
-        let flare_resp: FlaresolverrResponse =
-            resp.json().await.map_err(EngineError::RequestFailed)?;
+        let flare_resp: FlaresolverrResponse = resp
+            .json()
+            .await
+            .map_err(|e| EngineError::RequestFailed(e.to_string()))?;
 
         if flare_resp.status == "error" {
             return Err(EngineError::Other(format!(

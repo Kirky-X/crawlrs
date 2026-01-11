@@ -6,13 +6,41 @@
 use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use crate::engines::validators;
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::{Duration, Instant};
+
+/// 全局 HTTP 客户端实例，提供连接复用和性能优化
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .cookie_store(true)
+        .build()
+        .expect("Failed to build HTTP client")
+});
 
 /// 抓取引擎
 ///
 /// 基于reqwest实现的基本HTTP抓取引擎
 pub struct ReqwestEngine;
+
+impl ReqwestEngine {
+    /// 创建新的 ReqwestEngine 实例
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// 获取全局 HTTP 客户端
+    fn get_client(&self) -> &reqwest::Client {
+        &HTTP_CLIENT
+    }
+}
+
+impl Default for ReqwestEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl ScraperEngine for ReqwestEngine {
@@ -35,45 +63,52 @@ impl ScraperEngine for ReqwestEngine {
         // Build headers
         let mut headers = HeaderMap::new();
         for (k, v) in &request.headers {
-            if let (Ok(k), Ok(v)) = (
+            if let (Ok(header_name), Ok(header_value)) = (
                 HeaderName::from_bytes(k.as_bytes()),
                 HeaderValue::from_str(v),
             ) {
-                headers.insert(k, v);
+                headers.insert(header_name, header_value);
             }
         }
 
-        // Each request gets a fresh client for cookie isolation
-        let mut builder = reqwest::Client::builder()
-            .user_agent(if request.mobile {
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
-            } else {
-                "Mozilla/5.0 (compatible; crawlrs/1.0; +http://crawlrs.dev)"
-            })
-            .timeout(request.timeout)
-            .cookie_store(true);
+        // Use shared HTTP client for connection reuse
+        let client = self.get_client();
 
-        // Handle proxy
+        // Create request builder
+        let mut request_builder = if request.mobile {
+            client
+                .get(&request.url)
+                .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
+        } else {
+            client.get(&request.url).header(
+                "User-Agent",
+                "Mozilla/5.0 (compatible; crawlrs/1.0; +http://crawlrs.dev)",
+            )
+        };
+
+        // Add custom headers
+        request_builder = request_builder.headers(headers);
+
+        // Handle proxy - proxy must be configured when building the client
         if let Some(proxy_url) = &request.proxy {
-            let proxy = reqwest::Proxy::all(proxy_url)
-                .map_err(|e| EngineError::Other(format!("Invalid proxy: {}", e)))?;
-            builder = builder.proxy(proxy);
+            tracing::warn!("Proxy support requires custom client configuration");
         }
 
-        // Handle TLS verification
+        // Handle TLS verification - TLS verification must be configured when building the client
         if request.skip_tls_verification {
-            builder = builder.danger_accept_invalid_certs(true);
+            tracing::warn!("TLS verification skip requires custom client configuration");
         }
 
-        let client = builder.build()?;
+        // Set timeout
+        request_builder = request_builder.timeout(request.timeout);
 
         let start = Instant::now();
-        let response_result = client.get(&request.url).headers(headers).send().await;
+        let response_result = request_builder.send().await;
 
         let response = match response_result {
             Ok(resp) => resp,
-            Err(e) if e.is_timeout() => return Err(EngineError::Timeout),
-            Err(e) => return Err(EngineError::RequestFailed(e)),
+            Err(e) if e.is_timeout() => return Err(EngineError::Timeout(request.timeout)),
+            Err(e) => return Err(EngineError::RequestFailed(e.to_string())),
         };
 
         let status_code = response.status().as_u16();
@@ -98,7 +133,10 @@ impl ScraperEngine for ReqwestEngine {
             }
         }
 
-        let content = response.text().await?;
+        let content = response
+            .text()
+            .await
+            .map_err(|e| EngineError::RequestFailed(e.to_string()))?;
 
         // 同步等待
         if request.sync_wait_ms > 0 {

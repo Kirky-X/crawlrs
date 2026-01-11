@@ -9,20 +9,32 @@ use std::time::Duration;
 use thiserror::Error;
 
 /// 引擎错误类型
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum EngineError {
     /// 请求失败
     #[error("Request failed: {0}")]
-    RequestFailed(#[from] reqwest::Error),
+    RequestFailed(String),
+
+    /// 请求超时
+    #[error("Request timeout after {0:?}")]
+    Timeout(Duration),
+
     /// 所有引擎都失败
-    #[error("All engines failed")]
-    AllEnginesFailed,
-    /// 超时
-    #[error("Timeout")]
-    Timeout,
-    /// 状态过期
-    #[error("Status expired")]
+    #[error("All engines failed: {0}")]
+    AllEnginesFailed(String),
+
+    /// SSRF 保护错误
+    #[error("SSRF protection: {0}")]
+    SsrfProtection(String),
+
+    /// 浏览器错误
+    #[error("Browser error: {0}")]
+    BrowserError(String),
+
+    /// 任务过期
+    #[error("Task expired")]
     Expired,
+
     /// 其他错误
     #[error("Other error: {0}")]
     Other(String),
@@ -32,14 +44,30 @@ impl EngineError {
     /// 检查错误是否可以重试
     pub fn is_retryable(&self) -> bool {
         match self {
-            Self::RequestFailed(e) => {
-                // 网络错误、连接超时等可以重试
-                e.is_timeout() || e.is_connect() || e.is_request()
+            Self::RequestFailed(_) => true, // 网络错误通常可重试
+            Self::Timeout(_) => true,
+            Self::AllEnginesFailed(_) => false,
+            Self::SsrfProtection(_) => false, // SSRF 错误不应重试
+            Self::BrowserError(_) => true,    // 浏览器错误可能可重试
+            Self::Expired => false,
+            Self::Other(msg) => {
+                // 某些特定错误可以重试
+                !msg.contains("connection refused")
             }
-            Self::Timeout => true,
-            Self::Expired => false, // 任务过期不应重试
-            Self::AllEnginesFailed => false,
-            Self::Other(_) => false,
+        }
+    }
+
+    /// 从 reqwest 错误创建 EngineError
+    #[inline]
+    pub fn from_reqwest(e: reqwest::Error) -> Self {
+        if e.is_timeout() {
+            Self::Timeout(Duration::from_secs(30))
+        } else if e.is_connect() {
+            Self::RequestFailed(format!("Connection failed: {}", e))
+        } else if e.is_request() {
+            Self::RequestFailed(format!("Request error: {}", e))
+        } else {
+            Self::RequestFailed(e.to_string())
         }
     }
 }

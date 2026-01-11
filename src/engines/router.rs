@@ -301,6 +301,17 @@ impl EngineRouter {
     /// * `Ok(ScrapeResponse)` - 抓取响应
     /// * `Err(EngineError)` - 抓取过程中出现的错误
     pub async fn route(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+        let timeout = request.timeout;
+
+        // Wrap the entire operation with timeout
+        tokio::time::timeout(timeout, self.route_internal(request))
+            .await
+            .map_err(|_| EngineError::Timeout(timeout))
+            .and_then(|result| result)
+    }
+
+    /// Internal route implementation without timeout
+    async fn route_internal(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
         let start_time = Instant::now();
         let mut last_error = None;
 
@@ -309,7 +320,9 @@ impl EngineRouter {
 
         if candidates.is_empty() {
             warn!("No suitable engines available for request");
-            return Err(EngineError::AllEnginesFailed);
+            return Err(EngineError::AllEnginesFailed(
+                "No suitable engines available".to_string(),
+            ));
         }
 
         // 轮询策略特殊处理
@@ -372,7 +385,8 @@ impl EngineRouter {
         }
 
         warn!("All engines failed for request to {}", request.url);
-        Err(last_error.unwrap_or(EngineError::AllEnginesFailed))
+        Err(last_error
+            .unwrap_or_else(|| EngineError::AllEnginesFailed("All engines failed".to_string())))
     }
 
     /// 聚合多个引擎的搜索结果
@@ -388,7 +402,9 @@ impl EngineRouter {
     pub async fn aggregate(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
         let candidates = self.select_optimal_engines(request);
         if candidates.is_empty() {
-            return Err(EngineError::AllEnginesFailed);
+            return Err(EngineError::AllEnginesFailed(
+                "All engines failed".to_string(),
+            ));
         }
 
         let mut results = Vec::new();
@@ -402,7 +418,9 @@ impl EngineRouter {
         }
 
         if results.is_empty() {
-            return Err(EngineError::AllEnginesFailed);
+            return Err(EngineError::AllEnginesFailed(
+                "All engines failed in aggregate".to_string(),
+            ));
         }
 
         // 简单的结果聚合：取第一个成功的结果，但在实际应用中可以合并多个结果
@@ -552,7 +570,7 @@ mod tests_impl {
 
             if call_count <= self.max_calls {
                 if self.is_error {
-                    return Err(EngineError::Timeout);
+                    return Err(EngineError::Timeout(Duration::from_secs(30)));
                 }
                 Ok(ScrapeResponse::new(
                     "http://example.com",
@@ -606,7 +624,7 @@ mod tests_impl {
             "engine1",
             vec!["example.com".to_string()],
             1,
-            Err(EngineError::Timeout),
+            Err(EngineError::Timeout(Duration::from_secs(30))),
             10, // max_calls
         );
 
