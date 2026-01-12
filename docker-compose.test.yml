@@ -1,122 +1,167 @@
-version: '3.8'
+# =============================================================================
+# crawlrs 完整测试环境 Docker Compose 配置
+# =============================================================================
+# 包含所有测试所需的依赖服务：
+# - PostgreSQL (主数据库)
+# - Redis (缓存和队列)
+# - LocalStack (AWS S3 mock)
+# - WireMock (HTTP mock for webhooks)
+# =============================================================================
 
 services:
-  # PostgreSQL 数据库（测试数据）
-  postgres_test:
-    image: postgres:16-alpine
-    container_name: crawlrs_postgres_test
+  # ==========================================================================
+  # PostgreSQL 数据库
+  # ==========================================================================
+  test-db:
+    image: postgres:15-alpine
+    container_name: crawlrs-test-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: crawlrs_test
+      - POSTGRES_USER=crawlrs
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=crawlrs_test
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
-      - postgres_test_data:/var/lib/postgresql/data
+      - test_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U crawlrs -d crawlrs_test"]
       interval: 5s
       timeout: 5s
       retries: 5
-    command: >
-      postgres
-      -c max_connections=200
-      -c shared_buffers=256MB
-      -c effective_cache_size=512MB
-      -c work_mem=64MB
-      -c maintenance_work_mem=256MB
-      -c checkpoint_completion_target=0.9
-      -c wal_buffers=64MB
-      -c max_wal_size=2GB
-      -c min_wal_size=512MB
+      start_period: 10s
+    networks:
+      - test-network
+    restart: unless-stopped
 
-  # Redis 缓存（测试）
-  redis_test:
+  # ==========================================================================
+  # Redis 缓存和队列
+  # ==========================================================================
+  test-redis:
     image: redis:7-alpine
-    container_name: crawlrs_redis_test
+    container_name: crawlrs-test-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
-      - "6381:6379"
+      - "6379:6379"
     volumes:
-      - redis_test_data:/data
-    command: redis-server
-      --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
-      --appendonly yes
-      --appendfsync everysec
+      - test_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - test-network
+    restart: unless-stopped
 
-  # Chrome 浏览器（Playwright 引擎）
-  chromium:
-    image: browserless/chrome:latest
-    container_name: crawlrs_chromium
-    ports:
-      - "9222:3000"
+  # ==========================================================================
+  # LocalStack (AWS S3 Mock)
+  # ==========================================================================
+  test-localstack:
+    image: localstack/localstack:3.0
+    container_name: crawlrs-test-localstack
     environment:
-      - CONCURRENT_LIMIT=10
-      - TIMEOUT=30000
-      - MAX_QUEUE_LENGTH=50
+      - SERVICES=s3
+      - DEBUG=1
+      - EAGER_SERVICE_INIT=1
+    ports:
+      - "4566:4566"
+    volumes:
+      - test_localstack_data:/tmp/localstack
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/status"]
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
       interval: 10s
       timeout: 10s
-      retries: 3
+      retries: 10
+      start_period: 30s
+    networks:
+      - test-network
+    restart: unless-stopped
 
-  # FlareSolverr（Google 搜索代理）
-  flaresolverr:
-    image: flaresolverr/flaresolverr:latest
-    container_name: crawlrs_flaresolverr
+  # ==========================================================================
+  # WireMock (HTTP Mock for webhooks and APIs)
+  # ==========================================================================
+  test-wiremock:
+    image: wiremock/wiremock:3.3
+    container_name: crawlrs-test-wiremock
     ports:
-      - "8191:8191"
-    environment:
-      - TZ=UTC
-      - LOG_LEVEL=info
-      - CAPTCHA_SOLVER=basic
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8191"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Prometheus 指标收集
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: crawlrs_prometheus_test
-    ports:
-      - "9090:9090"
+      - "8080:8080"
     volumes:
-      - ./test-config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.enable-lifecycle'
+      - test_wiremock_data:/home/wiremock
+    networks:
+      - test-network
+    restart: unless-stopped
 
-  # Grafana 监控面板
-  grafana:
-    image: grafana/grafana:latest
-    container_name: crawlrs_grafana_test
-    ports:
-      - "3000:3000"
+  # ==========================================================================
+  # 测试应用运行器
+  # ==========================================================================
+  test-runner:
+    image: rust:1.75-alpine
+    container_name: crawlrs-test-runner
+    working_dir: /app
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
+      # 数据库配置
+      - DATABASE_URL=postgres://crawlrs:password@test-db:5432/crawlrs_test
+      - TEST_DATABASE_URL=postgres://crawlrs:password@test-db:5432/crawlrs_test
+      # Redis 配置
+      - REDIS_URL=redis://test-redis:6379
+      # LocalStack 配置
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - LOCALSTACK_URL=http://test-localstack:4566
+      # 测试配置
+      - RUST_LOG=error
+      - DATABASE_MAX_CONNECTIONS=20
+      - DATABASE_CONNECT_TIMEOUT=60
     volumes:
-      - ./test-config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - grafana_data:/var/lib/grafana
+      - .:/app
+      - test_cargo_cache:/root/.cargo
+    command: >
+      sh -c "
+        apk add --no-cache curl docker-cli &&
+        cargo install cargo-nextest 2>/dev/null || true &&
+        sleep 5 &&
+        echo 'Waiting for services...' &&
+        until pg_isready -h test-db -U crawlrs -d crawlrs_test; do sleep 1; done &&
+        until redis-cli -h test-redis ping | grep -q PONG; do sleep 1; done &&
+        echo 'All services ready!' &&
+        cargo test --features full --test main -- --test-threads=4
+      "
     depends_on:
-      - prometheus
+      test-db:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+      test-localstack:
+        condition: service_healthy
+      test-wiremock:
+        condition: service_started
+    networks:
+      - test-network
+    restart: "no"
 
-volumes:
-  postgres_test_data:
-  redis_test_data:
-  prometheus_data:
-  grafana_data:
-
+# =============================================================================
+# 网络配置
+# =============================================================================
 networks:
-  default:
-    name: crawlrs_test_network
+  test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.50.0.0/16
+          gateway: 172.50.0.1
+
+# =============================================================================
+# 数据卷配置
+# =============================================================================
+volumes:
+  test_db_data:
+    driver: local
+  test_redis_data:
+    driver: local
+  test_localstack_data:
+    driver: local
+  test_wiremock_data:
+    driver: local
+  test_cargo_cache:
+    driver: local

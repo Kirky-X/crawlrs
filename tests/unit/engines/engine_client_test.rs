@@ -205,15 +205,19 @@ mod engine_client_tests {
 
     #[test]
     fn test_scrape_response_is_success() {
+        // 2xx 状态码应该被认为是成功的
         let success_response = ScrapeResponse::new(200, "content", "text/html");
         assert!(success_response.is_success());
 
+        // 3xx 重定向不应该被认为是成功的（is_success 只检查 2xx）
         let redirect_response = ScrapeResponse::new(301, "redirect", "text/html");
-        assert!(redirect_response.is_success());
+        assert!(!redirect_response.is_success());
 
+        // 4xx 客户端错误不应该被认为是成功的
         let client_error = ScrapeResponse::new(404, "not found", "text/html");
         assert!(!client_error.is_success());
 
+        // 5xx 服务器错误不应该被认为是成功的
         let server_error = ScrapeResponse::new(500, "error", "text/html");
         assert!(!server_error.is_success());
     }

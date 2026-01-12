@@ -37,7 +37,7 @@ impl FeatureFlagRepository {
             description: f.description,
             enabled: f.enabled,
             rollout_percentage: f.rollout_percentage as u8,
-            metadata: serde_json::Value::from(f.metadata),
+            metadata: f.metadata,
             started_at: f.started_at.map(|t| t.with_timezone(&Utc)),
             stopped_at: f.stopped_at.map(|t| t.with_timezone(&Utc)),
         }))
@@ -51,7 +51,7 @@ impl FeatureFlagRepository {
             description: f.description,
             enabled: f.enabled,
             rollout_percentage: f.rollout_percentage as u8,
-            metadata: serde_json::Value::from(f.metadata),
+            metadata: f.metadata,
             started_at: f.started_at.map(|t| t.with_timezone(&Utc)),
             stopped_at: f.stopped_at.map(|t| t.with_timezone(&Utc)),
         }))
@@ -67,7 +67,7 @@ impl FeatureFlagRepository {
                 description: f.description,
                 enabled: f.enabled,
                 rollout_percentage: f.rollout_percentage as u8,
-                metadata: serde_json::Value::from(f.metadata),
+                metadata: f.metadata,
                 started_at: f.started_at.map(|t| t.with_timezone(&Utc)),
                 stopped_at: f.stopped_at.map(|t| t.with_timezone(&Utc)),
             })
