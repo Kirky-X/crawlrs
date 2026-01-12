@@ -15,7 +15,6 @@ use crate::search::{
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use std::collections::HashMap;
-use std::time::Duration;
 use url::Url;
 
 /// Bing Search Engine implementation with connection pooling

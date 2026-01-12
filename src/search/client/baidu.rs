@@ -15,7 +15,6 @@ use crate::search::{
 use async_trait::async_trait;
 use serde_json;
 use std::collections::HashMap;
-use std::time::Duration;
 
 /// Baidu Search Categories
 #[derive(Debug, Clone, Copy)]

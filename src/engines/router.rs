@@ -735,7 +735,7 @@ impl EngineRouter {
         let mut race_futures: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>> =
             Vec::new();
 
-        for (score, engine) in race_candidates {
+        for (_score, engine) in race_candidates {
             let engine_name = engine.name().to_string();
             let engine_clone = engine.clone();
 

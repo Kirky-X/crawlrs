@@ -13,7 +13,6 @@ use crate::search::{
 };
 use async_trait::async_trait;
 use scraper::{Html, Selector};
-use std::time::Duration;
 
 /// Sogou Search Engine implementation
 pub struct SogouSearchEngine;

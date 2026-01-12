@@ -105,8 +105,12 @@ impl Settings {
     ///
     /// 此函数不会 panic
     pub fn new() -> Result<Self, ConfigError> {
+        /// 常量定义 - 应用程序环境
+        const APP_ENVIRONMENT_DEFAULT: &str = "default";
+
         // 获取应用环境变量，默认为 "default"
-        let env = std::env::var("APP_ENVIRONMENT").unwrap_or_else(|_| "default".to_string());
+        let env = std::env::var("APP_ENVIRONMENT")
+            .unwrap_or_else(|_| APP_ENVIRONMENT_DEFAULT.to_string());
 
         // 构建配置构建器，按优先级顺序加载配置
         let builder = Config::builder()
@@ -260,15 +264,13 @@ impl Settings {
     pub fn validate(&self) -> Result<(), ConfigError> {
         // 验证端口范围
         if self.server.port == 0 {
-            return Err(ConfigError::Message(
-                "Invalid port number: port must be between 1 and 65535".to_string(),
-            ));
+            return Err(ConfigError::Message(ERROR_INVALID_PORT.to_string()));
         }
 
         // 验证 A/B 测试权重范围
         if self.search.variant_b_weight < 0.0 || self.search.variant_b_weight > 1.0 {
             return Err(ConfigError::Message(
-                "Invalid variant_b_weight: must be between 0.0 and 1.0".to_string(),
+                ERROR_INVALID_VARIANT_WEIGHT.to_string(),
             ));
         }
 
@@ -276,7 +278,7 @@ impl Settings {
         if let Some(max_conn) = self.database.max_connections {
             if max_conn == 0 {
                 return Err(ConfigError::Message(
-                    "Invalid max_connections: must be greater than 0".to_string(),
+                    ERROR_INVALID_MAX_CONNECTIONS.to_string(),
                 ));
             }
         }
@@ -284,26 +286,39 @@ impl Settings {
         if let Some(min_conn) = self.database.min_connections {
             if min_conn == 0 {
                 return Err(ConfigError::Message(
-                    "Invalid min_connections: must be greater than 0".to_string(),
+                    ERROR_INVALID_MIN_CONNECTIONS.to_string(),
                 ));
             }
         }
 
+        /// 常量定义 - 配置验证消息
+        const ERROR_INVALID_PORT: &str = "Invalid port number: port must be between 1 and 65535";
+        const ERROR_INVALID_VARIANT_WEIGHT: &str =
+            "Invalid variant_b_weight: must be between 0.0 and 1.0";
+        const ERROR_INVALID_MAX_CONNECTIONS: &str =
+            "Invalid max_connections: must be greater than 0";
+        const ERROR_INVALID_MIN_CONNECTIONS: &str =
+            "Invalid min_connections: must be greater than 0";
+        const ERROR_INVALID_STORAGE_TYPE: &str = "Invalid storage_type: must be 'local' or 's3'";
+        const ERROR_MISSING_S3_BUCKET: &str =
+            "S3 bucket must be configured when storage_type is 's3'";
+
         // 验证存储类型
-        if self.storage.storage_type != "local" && self.storage.storage_type != "s3" {
-            return Err(ConfigError::Message(
-                "Invalid storage_type: must be 'local' or 's3'".to_string(),
-            ));
+        const STORAGE_TYPE_LOCAL: &str = "local";
+        const STORAGE_TYPE_S3: &str = "s3";
+
+        if self.storage.storage_type != STORAGE_TYPE_LOCAL
+            && self.storage.storage_type != STORAGE_TYPE_S3
+        {
+            return Err(ConfigError::Message(ERROR_INVALID_STORAGE_TYPE.to_string()));
         }
 
         // 验证 S3 配置完整性
-        if self.storage.storage_type == "s3"
+        if self.storage.storage_type == STORAGE_TYPE_S3
             && (self.storage.s3_bucket.is_none()
                 || self.storage.s3_bucket.as_ref().unwrap().is_empty())
         {
-            return Err(ConfigError::Message(
-                "S3 bucket must be configured when storage_type is 's3'".to_string(),
-            ));
+            return Err(ConfigError::Message(ERROR_MISSING_S3_BUCKET.to_string()));
         }
 
         Ok(())

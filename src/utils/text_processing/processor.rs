@@ -12,11 +12,16 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
+/// 常量定义 - 编码检测模式键名
+const ENCODING_PATTERN_HTML_META: &str = "html_meta";
+const ENCODING_PATTERN_XML_DECLARATION: &str = "xml_declaration";
+const ENCODING_PATTERN_HTTP_CONTENT_TYPE: &str = "http_content_type";
+
 /// 网页内容处理器
 pub struct WebContentProcessor {
     text_processor: &'static TextEncodingProcessor,
     html_cleaner: HtmlCleaner,
-    encoding_patterns: HashMap<String, Regex>,
+    encoding_patterns: HashMap<&'static str, Regex>,
 }
 
 static WEB_PROCESSOR: Lazy<WebContentProcessor> = Lazy::new(WebContentProcessor::new);
@@ -40,20 +45,20 @@ impl WebContentProcessor {
         &WEB_PROCESSOR
     }
 
-    fn init_encoding_patterns() -> HashMap<String, Regex> {
+    fn init_encoding_patterns() -> HashMap<&'static str, Regex> {
         let mut patterns = HashMap::new();
         patterns.insert(
-            "html_meta".to_string(),
+            ENCODING_PATTERN_HTML_META,
             Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#)
                 .expect("Failed to compile HTML meta charset regex"),
         );
         patterns.insert(
-            "xml_declaration".to_string(),
+            ENCODING_PATTERN_XML_DECLARATION,
             Regex::new(r#"(?i)<\?xml[^>]*encoding\s*=\s*["']?([^"'>\s]+)["']?[^>]*\?>"#)
                 .expect("Failed to compile XML encoding regex"),
         );
         patterns.insert(
-            "http_content_type".to_string(),
+            ENCODING_PATTERN_HTTP_CONTENT_TYPE,
             Regex::new(r#"(?i)charset\s*=\s*([^;\s]+)"#)
                 .expect("Failed to compile HTTP content-type charset regex"),
         );

@@ -5,7 +5,6 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use regex::Regex;
 use scraper::{Html, Selector};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};

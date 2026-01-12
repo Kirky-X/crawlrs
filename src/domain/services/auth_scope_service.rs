@@ -147,7 +147,7 @@ impl AuthScopeService {
         custom_scope: Option<&ApiKeyScope>,
     ) -> ApiKeyScope {
         match (team_scope, custom_scope) {
-            (Some(team), Some(custom)) => {
+            (Some(_team), Some(custom)) => {
                 // Custom scope takes precedence
                 custom.clone()
             }

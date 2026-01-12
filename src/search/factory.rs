@@ -158,7 +158,7 @@ impl SearchEngineFactory {
     /// 创建 EngineClient 并注册 Fire Engines（用于智能搜索）
     #[allow(deprecated)]
     pub fn create_engine_client_with_fire_engines(&self) -> Arc<EngineClient> {
-        let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
+        let engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
 
         // 注册 Fire Engine CDP（用于需要完整浏览器自动化的网站）
         #[cfg(feature = "engine-fire-cdp")]
@@ -336,7 +336,7 @@ pub async fn create_default_router(
 /// 便捷函数：创建单一搜索引擎
 #[cfg(feature = "engine-playwright")]
 pub fn create_google_engine() -> Arc<dyn SearchEngine> {
-    let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
+    let engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
 
     #[cfg(feature = "engine-fire-cdp")]
     {
@@ -356,7 +356,7 @@ pub fn create_google_engine() -> Arc<dyn SearchEngine> {
 
 #[cfg(not(feature = "engine-playwright"))]
 pub fn create_google_engine() -> Arc<dyn SearchEngine> {
-    let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
+    let engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
 
     #[cfg(feature = "engine-fire-cdp")]
     {

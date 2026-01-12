@@ -9,6 +9,7 @@
             See https://github.com/Kirky-X/crawlrs/blob/main/docs/migration.md for migration guide."
 )]
 
+use crate::utils::constants::{content_types::TEXT_HTML, headers::CONTENT_TYPE};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -188,13 +189,13 @@ impl ScrapeResponse {
     /// 创建一个新的抓取响应
     pub fn new(_url: &str, content: &str) -> Self {
         let mut headers = HashMap::new();
-        headers.insert("Content-Type".to_string(), "text/html".to_string());
+        headers.insert(CONTENT_TYPE.to_string(), TEXT_HTML.to_string());
 
         Self {
             status_code: 200,
             content: content.to_string(),
             screenshot: None,
-            content_type: "text/html".to_string(),
+            content_type: TEXT_HTML.to_string(),
             headers,
             response_time_ms: 0,
         }
