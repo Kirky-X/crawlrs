@@ -1,0 +1,240 @@
+# =============================================================================
+# Crawlrs 测试环境 Docker Compose 配置
+# =============================================================================
+# 用于在 Docker 环境中运行集成测试
+#
+# 使用方法:
+#   启动测试环境:     docker-compose -f docker-compose.test.yml up -d
+#   运行测试:         docker-compose -f docker-compose.test.yml run test-runner
+#   查看日志:         docker-compose -f docker-compose.test.yml logs -f test-runner
+#   清理环境:         docker-compose -f docker-compose.test.yml down -v
+# =============================================================================
+
+services:
+  # ==========================================================================
+  # 测试数据库 (PostgreSQL)
+  # ==========================================================================
+  test-db:
+    image: postgres:15-alpine
+    container_name: crawlrs-test-db
+    environment:
+      - POSTGRES_USER=crawlrs
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=crawlrs_test
+    ports:
+      - "5443:5432"
+    volumes:
+      - test_db_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    restart: no
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crawlrs -d crawlrs_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - crawlrs-test-network
+
+  # ==========================================================================
+  # 测试 Redis
+  # ==========================================================================
+  test-redis:
+    image: redis:7-alpine
+    container_name: crawlrs-test-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6380:6379"
+    volumes:
+      - test_redis_data:/data
+    restart: no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - crawlrs-test-network
+
+  # ==========================================================================
+  # Chrome (用于搜索引擎测试 - 绕过反爬虫)
+  # ==========================================================================
+  chrome:
+    image: browserless/chrome:latest
+    container_name: crawlrs-test-chrome
+    ports:
+      - "9223:9222"
+    environment:
+      - CONNECTION_TIMEOUT=30000
+      - MAX_CONCURRENT_SESSIONS=5
+      - ENABLE_DEBUG_VIEW=false
+    volumes:
+      - chrome_data:/tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks:
+      - crawlrs-test-network
+    restart: no
+    profiles:
+      - browser
+
+  # ==========================================================================
+  # FlareSolverr (可选 - 增强反爬虫绕过能力)
+  # ==========================================================================
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: crawlrs-test-flaresolverr
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CAPTCHA_SOLVER=${CAPTCHA_SOLVER:-}
+    ports:
+      - "8192:8191"
+    volumes:
+      - flaresolverr_data:/tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8191/v1"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    networks:
+      - crawlrs-test-network
+    restart: no
+    profiles:
+      - browser
+
+  # ==========================================================================
+  # 测试运行器
+  # ==========================================================================
+  test-runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.test
+    image: crawlrs-test:latest
+    container_name: crawlrs-test-runner
+    command: ["cargo", "test", "--features", "full", "--test", "integration_tests"]
+    environment:
+      - CRAWLRS__DATABASE__URL=postgres://crawlrs:password@test-db:5432/crawlrs_test
+      - CRAWLRS__DATABASE__HOST=test-db
+      - CRAWLRS__DATABASE__PORT=5432
+      - CRAWLRS__DATABASE__NAME=crawlrs_test
+      - CRAWLRS__DATABASE__USER=crawlrs
+      - CRAWLRS__DATABASE__PASSWORD=password
+      - CRAWLRS__DATABASE__MAX_CONNECTIONS=20
+      - CRAWLRS__DATABASE__CONNECT_TIMEOUT=60
+
+      # Redis配置 (使用服务名)
+      - CRAWLRS__REDIS__URL=redis://test-redis:6379
+      - CRAWLRS__REDIS__HOST=test-redis
+
+      # 测试配置 - 启用浏览器和搜索测试
+      - TEST_DATABASE_URL=postgres://crawlrs:password@test-db:5432/crawlrs_test
+      - TEST_REDIS_PORT=6379
+      - SKIP_S3_TESTS=true
+
+      # Webhook secret (required for tests)
+      - CRAWLRS__WEBHOOK__SECRET=test-secret-key-for-testing-only
+
+      # Chrome 配置 (使用服务名)
+      - CHROMIUM_REMOTE_DEBUGGING_URL=http://chrome:9222
+      - CRAWLRS__CHROME_REMOTE_DEBUGGING_URL=http://chrome:9222
+      - CRAWLRS__CHROME_HOST=chrome
+
+      # FlareSolverr 配置
+      - CRAWLRS__SEARCH__FLARESOLVERR__URL=http://flaresolverr:8191/v1
+
+      # 服务器配置
+      - CRAWLRS__SERVER__HOST=0.0.0.0
+      - CRAWLRS__SERVER__PORT=3000
+      - CRAWLRS__SERVER__ENABLE_PORT_DETECTION=false
+
+      # 日志配置
+      - CRAWLRS__RUST_LOG=info
+
+      # 代理配置
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,.local,.corp}
+
+    depends_on:
+      test-db:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+      chrome:
+        condition: service_healthy
+    volumes:
+      - ../target:/usr/src/app/target
+      - ../tests:/usr/src/app/tests
+      - ../config:/usr/src/app/config
+      - ./test-results:/usr/src/app/test-results
+    networks:
+      - crawlrs-test-network
+    restart: no
+    profiles:
+      - test
+
+  # ==========================================================================
+  # MinIO (可选 - 用于 S3 存储测试)
+  # ==========================================================================
+  minio:
+    image: minio/minio:RELEASE.2024-01-01T00-00-00Z
+    container_name: crawlrs-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    networks:
+      - crawlrs-test-network
+    restart: no
+    profiles:
+      - minio
+
+# =============================================================================
+# 网络配置
+# =============================================================================
+networks:
+  crawlrs-test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/16
+          gateway: 172.31.0.1
+
+# =============================================================================
+# 数据卷配置
+# =============================================================================
+volumes:
+  test_db_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/test-postgres
+
+  test_redis_data:
+    driver: local
+
+  chrome_data:
+    driver: local
+
+  flaresolverr_data:
+    driver: local
+
+  minio_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/minio

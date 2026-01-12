@@ -1,0 +1,76 @@
+# =============================================================================
+# Test Environment Configuration
+# =============================================================================
+# 使用 Docker 容器化真实服务
+# =============================================================================
+
+# Database Configuration (使用 Docker 容器 nebula-postgres)
+[database]
+url = "postgres://idgen:idgen123@localhost:5432/crawlrs_test"
+max_connections = 20
+min_connections = 5
+connect_timeout = 60
+idle_timeout = 600
+
+# Redis Configuration (使用 Docker 容器 nebula-redis)
+[redis]
+url = "redis://localhost:6379"
+
+# Server Configuration
+[server]
+host = "0.0.0.0"
+port = 8899
+enable_port_detection = false
+
+# Rate Limiting Configuration
+[rate_limiting]
+enabled = false
+default_rpm = 60
+
+# Concurrency Configuration
+[concurrency]
+default_team_limit = 10
+task_lock_duration_seconds = 300
+
+# Search Configuration
+[search]
+default_engine = "baidu"
+
+# Search Engine Enable/Disable Configuration
+[search.engines]
+google_enabled = false
+bing_enabled = true
+baidu_enabled = true
+sogou_enabled = true
+
+# FlareSolverr Configuration
+[search.flaresolverr]
+enabled = false
+url = "http://flaresolverr:8191/v1"
+auto_start = false
+timeout_seconds = 30
+max_retries = 3
+
+# Storage Configuration
+[storage]
+storage_type = "local"
+local_path = "/tmp/crawlrs-storage"
+
+# Webhook Configuration
+[webhook]
+timeout_seconds = 10
+max_retries = 3
+retry_interval_seconds = 60
+user_agent = "Crawlrs-Webhook/1.0"
+secret = "test-webhook-secret-at-least-32-characters-long-for-security"
+
+# Google Custom Search API Configuration
+[google_search]
+api_key = ""
+cx = ""
+
+# LLM Configuration
+[llm]
+api_key = "ollama"
+model = "qwen3:1.7b"
+api_base_url = "http://localhost:11434/v1"

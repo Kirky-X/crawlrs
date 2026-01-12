@@ -3,6 +3,33 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! 搜索引擎集成测试
+//!
+//! 测试真实搜索引擎功能，使用 headless Chrome 绕过反爬虫：
+//! - Google: 直接爬取 HTML，无需 API 密钥
+//! - Bing: 直接爬取 HTML，无需 API 密钥
+//! - Baidu: 直接爬取 HTML，无需 API 密钥
+//! - Sogou: 直接爬取 HTML，无需 API 密钥
+//!
+//! 要求：
+//! 1. 必须有 Chrome 可用（通过 CHROMIUM_REMOTE_DEBUGGING_URL 配置）
+//! 2. 必须成功解析到搜索结果（不能被反爬虫阻断）
+//! 3. 结果必须包含有效标题和 URL
+//!
+//! 运行方式：
+//! ```bash
+//! # 启动 Chrome（必须）
+//! google-chrome --headless --disable-gpu --no-sandbox \
+//!   --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+//!
+//! # 运行测试
+//! export CHROMIUM_REMOTE_DEBUGGING_URL=http://127.0.0.1:9222
+//! cargo test --test integration_tests -- test_all_search_engines_with_gemini
+//!
+//! # 跳过这些测试
+//! export SKIP_SEARCH_TESTS=true
+//! ```
+
 #![allow(deprecated)]
 
 use crawlrs::engines::client::reqwest::ReqwestEngine;
@@ -12,9 +39,36 @@ use crawlrs::search::client::{
     BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SogouSearchEngine,
 };
 use crawlrs::search::{SearchEngine, SearchRequest};
+use std::env;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::time::{timeout, Duration};
+
+/// 检查是否应该跳过搜索测试
+fn should_skip_search_tests() -> bool {
+    env::var("SKIP_SEARCH_TESTS").is_ok()
+}
+
+/// 测试模式枚举
+enum TestMode {
+    Full,
+    Simple,
+}
+
+impl TestMode {
+    fn apply(&self) {
+        match self {
+            TestMode::Full | TestMode::Simple => {
+                // 移除所有测试数据环境变量，强制使用真实搜索引擎
+                std::env::remove_var("USE_TEST_DATA");
+                std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
+                std::env::remove_var("BING_TEST_RESULTS");
+                std::env::remove_var("BAIDU_TEST_RESULTS");
+                std::env::remove_var("SOGOU_TEST_RESULTS");
+            }
+        }
+    }
+}
 
 async fn run_concurrent_search_tests(
     test_query: &str,
@@ -113,12 +167,19 @@ async fn run_concurrent_search_tests(
                     }
                 }
                 Ok(Err(search_error)) => {
-                    println!("❌ {} 搜索失败: {}", engine_name, search_error);
-                    (
-                        engine_name.clone(),
-                        false,
-                        format!("搜索错误: {}", search_error),
-                    )
+                    let error_msg = format!("搜索错误: {}", search_error);
+
+                    // Check if this looks like anti-bot blocking
+                    if error_msg.contains("No engines available") || error_msg.contains("Chrome") {
+                        println!(
+                            "❌ {} 搜索失败: {} (Chrome 不可用)",
+                            engine_name, search_error
+                        );
+                        (engine_name.clone(), false, "Chrome 不可用".to_string())
+                    } else {
+                        println!("❌ {} 搜索失败: {}", engine_name, search_error);
+                        (engine_name.clone(), false, error_msg)
+                    }
                 }
                 Err(_) => {
                     println!(
@@ -142,26 +203,6 @@ async fn run_concurrent_search_tests(
     }
 
     results
-}
-
-enum TestMode {
-    Full,
-    Simple,
-}
-
-impl TestMode {
-    fn apply(&self) {
-        match self {
-            TestMode::Full | TestMode::Simple => {
-                // 移除所有测试数据环境变量，强制使用真实搜索引擎
-                std::env::remove_var("USE_TEST_DATA");
-                std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
-                std::env::remove_var("BING_TEST_RESULTS");
-                std::env::remove_var("BAIDU_TEST_RESULTS");
-                std::env::remove_var("SOGOU_TEST_RESULTS");
-            }
-        }
-    }
 }
 
 fn generate_test_report(results: &[(String, bool, String)]) {
@@ -192,13 +233,55 @@ fn generate_test_report(results: &[(String, bool, String)]) {
     );
 }
 
+/// 检查 Chrome 是否可用
+async fn is_chrome_available() -> bool {
+    if let Ok(url) = std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL") {
+        if url.is_empty() {
+            return false;
+        }
+        // Try to connect to Chrome
+        if let Ok(client) = reqwest::Client::new()
+            .get(&format!("{}/json/version", url))
+            .send()
+            .await
+        {
+            if client.status() == 200 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// 测试所有搜索引擎（关键词: gemini）
 ///
-/// 注意：此测试需要真实搜索引擎连接能力。
-/// 如需运行此测试，请使用: cargo test --test integration_tests -- test_all_search_engines_with_gemini -- --include-ignored
+/// 要求：
+/// 1. 必须有 Chrome 可用（通过 CHROMIUM_REMOTE_DEBUGGING_URL 配置）
+/// 2. 必须成功解析到搜索结果（不能被反爬虫阻断）
+/// 3. 结果必须包含有效标题和 URL
+///
+/// 运行方式：
+/// - 启动 Chrome: google-chrome --headless --remote-debugging-port=9222 ...
+/// - 跳过测试: export SKIP_SEARCH_TESTS=true
 #[tokio::test]
 async fn test_all_search_engines_with_gemini() {
-    println!("🚀 开始测试四个搜索引擎（真实连接），关键词: gemini");
+    // Check if we should skip tests
+    if should_skip_search_tests() {
+        println!("⚠️  Search tests skipped - SKIP_SEARCH_TESTS is set");
+        return;
+    }
+
+    // Check if Chrome is available
+    let chrome_available = is_chrome_available().await;
+
+    if !chrome_available {
+        println!("⚠️  Chrome not available at CHROMIUM_REMOTE_DEBUGGING_URL");
+        println!("   请启动 Chrome: google-chrome --headless --remote-debugging-port=9222 ...");
+        println!("   或设置 SKIP_SEARCH_TESTS=true 跳过测试");
+        panic!("需要 Chrome 浏览器才能运行搜索引擎测试");
+    }
+
+    println!("🚀 开始测试四个搜索引擎（使用 Chrome 绕过反爬虫），关键词: gemini");
 
     let results = run_concurrent_search_tests("gemini", 10, 30, TestMode::Full).await;
     generate_test_report(&results);
@@ -206,16 +289,28 @@ async fn test_all_search_engines_with_gemini() {
     let passed_count = results.iter().filter(|(_, success, _)| *success).count();
     let failed_count = results.iter().filter(|(_, success, _)| !success).count();
 
-    // 至少需要1个引擎成功通过测试（考虑到网络环境的不确定性）
-    if passed_count < 1 {
-        panic!("❌ 搜索引擎测试失败: 没有引擎测试通过");
+    // Check for anti-bot detection in failed tests
+    let anti_bot_count = results
+        .iter()
+        .filter(|(_, success, message)| {
+            !*success
+                && (message.contains("无搜索结果")
+                    || message.contains("anti-bot")
+                    || message.contains("captcha")
+                    || message.contains("blocked"))
+        })
+        .count();
+
+    if anti_bot_count > 0 {
+        println!(
+            "⚠️  警告: {} 个引擎被反爬虫机制阻断（不是正常失败）",
+            anti_bot_count
+        );
     }
 
-    if failed_count > 0 {
-        println!(
-            "⚠️  警告: {} 个引擎测试未通过（可能是网络限制或反爬虫机制）",
-            failed_count
-        );
+    // 必须至少1个引擎成功
+    if passed_count < 1 {
+        panic!("❌ 搜索引擎测试失败: 没有引擎成功解析到结果（可能被反爬虫阻断）");
     }
 
     println!(

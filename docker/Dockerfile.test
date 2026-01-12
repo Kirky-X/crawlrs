@@ -1,0 +1,62 @@
+# =============================================================================
+# Crawlrs 测试环境 Dockerfile
+# =============================================================================
+# 用于构建测试运行镜像，包含所有测试依赖
+
+# Stage 1: Builder
+FROM rust:1.92.0-bullseye as builder
+
+WORKDIR /usr/src/app
+
+# Configure Alibaba Cloud mirror for apt
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian*.sources 2>/dev/null || true
+
+# Install build dependencies
+RUN apt-get update -o Acquire::Retries=5 && apt-get install -y --no-install-recommends \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY . .
+
+# Build the application with all features
+RUN cargo build --release --features full --bin crawlrs
+
+# Stage 2: Runtime
+FROM rust:1.92.0-bullseye
+
+WORKDIR /app
+
+# Configure mirrors and install runtime dependencies
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian*.sources 2>/dev/null || true && \
+    apt-get update -o Acquire::Retries=5 && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl-dev \
+    curl \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/* && \
+    useradd -m testuser
+
+# Copy binary from builder
+COPY --from=builder /usr/src/app/target/release/crawlrs /app/crawlrs
+
+# Copy config directory
+COPY --chown=testuser:testuser config/ /app/config/
+COPY --chown=testuser:testuser docker/entrypoint.sh /app/entrypoint.sh
+
+# Create directories for test results
+RUN mkdir -p /app/test-results && chown -R testuser:testuser /app
+
+# Switch to non-root user
+USER testuser
+
+# Default command - run tests
+CMD ["cargo", "test", "--features", "full", "--test", "integration_tests"]

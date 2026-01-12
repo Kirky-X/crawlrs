@@ -1142,6 +1142,12 @@ async fn test_webhook_retry_policy() {
 /// 验证/v1/search端点的基本功能
 #[tokio::test]
 async fn test_search_basic() {
+    // Skip if search tests should be skipped (requires Chrome for anti-bot bypass)
+    if std::env::var("SKIP_SEARCH_TESTS").is_ok() {
+        println!("⚠️  Search test skipped due to SKIP_SEARCH_TESTS");
+        return;
+    }
+
     // Enable HTTP fallback for testing when browser is not available
     std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "1");
 

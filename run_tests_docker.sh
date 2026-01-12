@@ -1,180 +1,283 @@
 #!/bin/bash
 
 # =============================================================================
-# crawlrs 测试环境配置脚本
+# Crawlrs Docker 测试运行脚本
 # =============================================================================
-# 使用现有的 Docker 容器配置测试环境
+# 使用 Docker Compose 测试环境运行集成测试
+#
+# 使用方法:
+#   ./run_tests_docker.sh              # 运行所有测试
+#   ./run_tests_docker.sh api         # 仅运行 API 测试
+#   ./run_tests_docker.sh unit        # 仅运行单元测试
+#   ./run_tests_docker.sh full        # 运行所有测试 (包含被忽略的)
+#   ./run_tests_docker.sh cleanup     # 清理 Docker 测试环境
 # =============================================================================
 
-echo "========================================"
-echo "🔧 crawlrs 测试环境配置"
-echo "========================================"
+set -e
 
-# -----------------------------------------------------------------------------
-# 配置环境变量（使用现有容器）
-# -----------------------------------------------------------------------------
-echo ""
-echo "📦 配置测试环境变量..."
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
 
-# 使用现有的 Docker 容器
-export TEST_DATABASE_URL="postgres://idgen:idgen123@localhost:5432/crawlrs_test"
-export DATABASE_URL="postgres://idgen:idgen123@localhost:5432/crawlrs_test"
-export REDIS_URL="redis://localhost:6379"
+# 默认配置
+COMPOSE_FILE="docker/docker-compose.test.yml"
+RESULTS_DIR="docker/test-results"
 
-# AWS S3 配置（使用 LocalStack）
-export AWS_ACCESS_KEY_ID="test"
-export AWS_SECRET_ACCESS_KEY="test"
-export AWS_DEFAULT_REGION="us-east-1"
-export LOCALSTACK_URL="http://localhost:4566"
+# 日志函数
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
 
-# 测试超时配置
-export DATABASE_MAX_CONNECTIONS="20"
-export DATABASE_CONNECT_TIMEOUT="60"
-export TASK_ACQUISITION_TIMEOUT="30"
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
 
-echo "   DATABASE_URL=$DATABASE_URL"
-echo "   REDIS_URL=$REDIS_URL"
+log_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
 
-# -----------------------------------------------------------------------------
-# 验证服务状态
-# -----------------------------------------------------------------------------
-echo ""
-echo "🔍 验证服务状态..."
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
 
-# 检查 PostgreSQL
-if pg_isready -h localhost -p 5432 -U idgen > /dev/null 2>&1; then
-    echo "   ✅ PostgreSQL - 可用"
-else
-    echo "   ❌ PostgreSQL 不可用，尝试启动..."
-    docker start nebula-postgres 2>/dev/null || true
-    sleep 3
-    if pg_isready -h localhost -p 5432 -U idgen > /dev/null 2>&1; then
-        echo "   ✅ PostgreSQL - 已启动"
-    else
-        echo "   ⚠️  PostgreSQL 启动失败"
-    fi
-fi
+log_section() {
+    echo -e "\n${CYAN}========================================${NC}"
+    echo -e "${CYAN}$1${NC}"
+    echo -e "${CYAN}========================================${NC}\n"
+}
 
-# 检查 Redis
-if docker exec nebula-redis redis-cli ping > /dev/null 2>&1; then
-    echo "   ✅ Redis - 可用"
-else
-    echo "   ❌ Redis 不可用，尝试启动..."
-    docker start nebula-redis 2>/dev/null || true
-    sleep 3
-    if docker exec nebula-redis redis-cli ping > /dev/null 2>&1; then
-        echo "   ✅ Redis - 已启动"
-    else
-        echo "   ⚠️  Redis 启动失败"
-    fi
-fi
-
-# -----------------------------------------------------------------------------
-# 清理测试数据
-# -----------------------------------------------------------------------------
-echo ""
-echo "🧹 清理测试数据..."
-
-docker exec nebula-postgres psql -U idgen -d crawlrs_test -c "
-    DELETE FROM tasks WHERE url LIKE 'https://example.com/%' OR url LIKE 'http://test.%';
-" 2>/dev/null || echo "   ⚠️  清理命令部分失败（正常，如果表不存在）"
-
-echo "   ✅ 测试数据已清理"
-
-# -----------------------------------------------------------------------------
-# 运行测试
-# -----------------------------------------------------------------------------
-echo ""
-echo "========================================"
-echo "🚀 开始运行测试..."
-echo "========================================"
-
-cd /home/dev/crawlrs
-
-# 设置日志级别
-export RUST_LOG=error
-
-# 记录测试结果
-TEST_START_TIME=$(date +%s)
-
-# 运行单元测试
-echo ""
-echo "📗 运行单元测试..."
-cargo test --features full --lib 2>&1 | tee /tmp/test_unit.log
-
-UNIT_TOTAL=$(grep -oP 'test result:.*\K\d+(?= passed)' /tmp/test_unit.log | tail -1 || echo "0")
-UNIT_FAILED=$(grep -oP 'test result:.*\K\d+(?= failed)' /tmp/test_unit.log | tail -1 || echo "0")
-echo ""
-echo "   单元测试结果: $UNIT_TOTAL 通过, $UNIT_FAILED 失败"
-
-# 运行集成测试（排除需要真实外部服务的测试）
-echo ""
-echo "📘 运行集成测试..."
-
-cargo test --features full --test main \
-    --test-threads=4 \
-    --skip e2e:: \
-    --skip integration::api_tests:: \
-    --skip integration::api::tasks_management_test:: \
-    --skip integration::s3_storage_test:: \
-    --skip integration::real_world_test:: \
-    --skip integration::search_uat_test:: \
-    --skip integration::webhook_test:: \
-    --skip integration::health_check:: \
-    --skip integration::crawl_service_test:: \
-    --skip integration::repositories::task_repository_test:: \
-    --skip integration::scheduler_test:: \
-    --skip integration::uat_scenarios_test:: \
-    --skip integration::search_engines_test:: \
-    --skip integration::scrape_handler_test:: \
-    2>&1 | tee /tmp/test_integration.log
-
-INTEG_TOTAL=$(grep -oP 'test result:.*\K\d+(?= passed)' /tmp/test_integration.log | tail -1 || echo "0")
-INTEG_FAILED=$(grep -oP 'test result:.*\K\d+(?= failed)' /tmp/test_integration.log | tail -1 || echo "0")
-INTEG_IGNORED=$(grep -oP 'test result:.*\K\d+(?= ignored)' /tmp/test_integration.log | tail -1 || echo "0")
-
-echo ""
-echo "   集成测试结果: $INTEG_TOTAL 通过, $INTEG_FAILED 失败, $INTEG_IGNORED 忽略"
-
-TEST_END_TIME=$(date +%s)
-TEST_DURATION=$((TEST_END_TIME - TEST_START_TIME))
-
-# -----------------------------------------------------------------------------
-# 测试总结
-# -----------------------------------------------------------------------------
-echo ""
-echo "========================================"
-echo "📊 测试总结"
-echo "========================================"
-echo ""
-echo "   🕐 测试耗时: ${TEST_DURATION}秒"
-echo ""
-echo "   📗 单元测试: $UNIT_TOTAL 通过, $UNIT_FAILED 失败"
-echo "   📘 集成测试: $INTEG_TOTAL 通过, $INTEG_FAILED 失败, $INTEG_IGNORED 忽略"
-echo ""
-
-TOTAL_PASSED=$((UNIT_TOTAL + INTEG_TOTAL))
-TOTAL_FAILED=$((UNIT_FAILED + INTEG_FAILED))
-TOTAL_TESTS=$((UNIT_TOTAL + UNIT_FAILED + INTEG_TOTAL + INTEG_FAILED + INTEG_IGNORED))
-
-if [ "$TOTAL_FAILED" -eq 0 ]; then
-    echo "   🎉 所有运行测试 100% 通过!"
-else
-    echo "   ⚠️  部分测试失败 ($TOTAL_FAILED/$TOTAL_TESTS)"
+# 显示帮助信息
+show_help() {
+    echo "Crawlrs Docker 测试运行脚本"
     echo ""
-    echo "   失败的测试需要以下条件:"
-    echo "   - 有效的 API Key 认证"
-    echo "   - AWS S3 存储服务"
-    echo "   - 真实搜索引擎访问"
-    echo "   - 完整的 HTTP webhook 服务器"
-fi
+    echo "使用方法: $0 [命令] [选项]"
+    echo ""
+    echo "命令:"
+    echo "  api         仅运行 API 集成测试"
+    echo "  unit        仅运行单元测试"
+    echo "  full        运行所有测试 (包含被忽略的)"
+    echo "  cleanup      清理 Docker 测试环境"
+    echo "  help         显示此帮助信息"
+    echo ""
+    echo "选项:"
+    echo "  --with-minio     启动 MinIO (用于 S3 存储测试)"
+    echo "  --with-browser   启动浏览器服务 (用于浏览器测试)"
+    echo "  --with-search    启用搜索测试 (需要 API 密钥)"
+    echo "  --verbose        显示详细输出"
+    echo ""
+    echo "示例:"
+    echo "  $0 api                    # 运行 API 测试"
+    echo "  $0 full --with-minio      # 运行所有测试 (含 S3)"
+    echo "  $0 cleanup                # 清理环境"
+}
 
-echo ""
-echo "💡 完整测试报告保存在:"
-echo "   - 单元测试: /tmp/test_unit.log"
-echo "   - 集成测试: /tmp/test_integration.log"
+# 解析参数
+PARAMS=""
+WITH_MINIO=false
+WITH_BROWSER=false
+WITH_SEARCH=false
+VERBOSE=false
+COMMAND="all"
 
-echo ""
-echo "========================================"
-echo "✅ 测试完成"
-echo "========================================"
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        api|unit|full|cleanup|help)
+            COMMAND=$1
+            shift
+            ;;
+        --with-minio)
+            WITH_MINIO=true
+            shift
+            ;;
+        --with-browser)
+            WITH_BROWSER=true
+            shift
+            ;;
+        --with-search)
+            WITH_SEARCH=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        *)
+            log_error "未知参数: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+# 切换到项目根目录
+cd "$(dirname "$0")"
+
+# 创建必要目录
+mkdir -p "$RESULTS_DIR"
+mkdir -p docker/data/test-postgres
+mkdir -p docker/data/minio
+
+# 检查 Docker 是否运行
+check_docker() {
+    log_section "检查 Docker 环境"
+    if ! docker info &> /dev/null; then
+        log_error "Docker 未运行，请先启动 Docker"
+        exit 1
+    fi
+    log_success "Docker 运行正常"
+}
+
+# 停止并清理 Docker 测试环境
+cleanup() {
+    log_section "清理 Docker 测试环境"
+
+    # 停止服务
+    docker-compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+
+    # 清理数据卷
+    docker volume rm crawlrs-docker_test_db_data 2>/dev/null || true
+    docker volume rm crawlrs-docker_test_redis_data 2>/dev/null || true
+    docker volume rm crawlrs-docker_minio_data 2>/dev/null || true
+
+    # 清理目录
+    rm -rf docker/data/test-postgres/* 2>/dev/null || true
+    rm -rf docker/data/minio/* 2>/dev/null || true
+    rm -rf "$RESULTS_DIR"/* 2>/dev/null || true
+
+    log_success "清理完成"
+}
+
+# 启动测试环境
+start_environment() {
+    log_section "启动 Docker 测试环境"
+
+    # 启动基础设施
+    log_info "启动数据库和 Redis..."
+    docker-compose -f "$COMPOSE_FILE" up -d test-db test-redis
+
+    # 等待数据库就绪
+    log_info "等待数据库就绪..."
+    for i in {1..30}; do
+        if docker exec crawlrs-test-db pg_isready -U crawlrs &>/dev/null; then
+            log_success "数据库已就绪"
+            break
+        fi
+        if [ $i -eq 30 ]; then
+            log_error "数据库启动超时"
+            exit 1
+        fi
+        sleep 1
+    done
+
+    # 启动 MinIO (如果需要)
+    if [ "$WITH_MINIO" = true ]; then
+        log_info "启动 MinIO..."
+        docker-compose -f "$COMPOSE_FILE" up -d minio
+        sleep 3
+    fi
+
+    log_success "测试环境已启动"
+}
+
+# 构建测试镜像
+build_test_image() {
+    log_section "构建测试镜像"
+    docker-compose -f "$COMPOSE_FILE" build test-runner
+    log_success "测试镜像构建完成"
+}
+
+# 运行测试
+run_tests() {
+    local test_args="$1"
+    local test_name="$2"
+
+    log_section "运行 $test_name"
+
+    # 构建并运行测试
+    if [ "$VERBOSE" = true ]; then
+        docker-compose -f "$COMPOSE_FILE" run --rm test-runner cargo test --features full $test_args
+    else
+        docker-compose -f "$COMPOSE_FILE" run --rm test-runner cargo test --features full $test_args 2>&1 | tee "$RESULTS_DIR/test_output.log"
+    fi
+
+    local exit_code=$?
+
+    if [ $exit_code -eq 0 ]; then
+        log_success "$test_name 测试通过"
+    else
+        log_error "$test_name 测试失败"
+        log_warning "查看测试日志: $RESULTS_DIR/test_output.log"
+    fi
+
+    return $exit_code
+}
+
+# 显示测试结果摘要
+show_summary() {
+    log_section "测试结果摘要"
+
+    if [ -f "$RESULTS_DIR/test_output.log" ]; then
+        local passed=$(grep -c "test result:.*passed" "$RESULTS_DIR/test_output.log" 2>/dev/null || echo "0")
+        local failed=$(grep -c "test result:.*failed" "$RESULTS_DIR/test_output.log" 2>/dev/null || echo "0")
+        local ignored=$(grep -c "test result:.*ignored" "$RESULTS_DIR/test_output.log" 2>/dev/null || echo "0")
+
+        echo -e "通过: ${GREEN}$passed${NC}"
+        echo -e "失败: ${RED}$failed${NC}"
+        echo -e "忽略: ${YELLOW}$ignored${NC}"
+    else
+        log_warning "未找到测试结果日志"
+    fi
+
+    log_info "详细结果: $RESULTS_DIR/"
+}
+
+# 主函数
+main() {
+    echo ""
+    log_section "Crawlrs Docker 测试环境"
+    echo "命令: $COMMAND"
+    echo "MinIO: $WITH_MINIO, 浏览器: $WITH_BROWSER, 搜索: $WITH_SEARCH"
+    echo ""
+
+    case $COMMAND in
+        help)
+            show_help
+            exit 0
+            ;;
+        cleanup)
+            cleanup
+            exit 0
+            ;;
+        *)
+            check_docker
+            cleanup
+            start_environment
+            build_test_image
+
+            # 根据命令运行不同测试
+            case $COMMAND in
+                api)
+                    run_tests "--test integration_tests api_tests" "API 集成"
+                    ;;
+                unit)
+                    run_tests "--lib" "单元"
+                    ;;
+                full)
+                    run_tests "--test integration_tests -- --include-ignored" "完整集成"
+                    ;;
+                all)
+                    run_tests "--test integration_tests" "集成"
+                    ;;
+            esac
+
+            show_summary
+            ;;
+    esac
+}
+
+# 启动
+main
