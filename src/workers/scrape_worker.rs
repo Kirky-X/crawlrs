@@ -73,22 +73,40 @@ end
 
 // Regex cache for crawl pattern matching
 use once_cell::sync::Lazy;
+use thiserror::Error;
+
+/// Worker 错误类型
+#[derive(Error, Debug)]
+pub enum ScrapeWorkerError {
+    #[error("正则表达式编译错误: {0}")]
+    RegexError(String),
+
+    #[error("正则表达式缓存锁获取失败")]
+    CacheLockError,
+
+    #[error("选择器解析错误: {0}")]
+    SelectorError(String),
+
+    #[error("任务处理错误: {0}")]
+    TaskError(String),
+}
 use std::sync::Mutex;
 
 static REGEX_CACHE: Lazy<Mutex<HashMap<String, regex::Regex>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
-    let mut cache = REGEX_CACHE.lock().unwrap();
+fn get_cached_regex(pattern: &str) -> Result<regex::Regex, ScrapeWorkerError> {
+    let mut cache = REGEX_CACHE
+        .lock()
+        .map_err(|_| ScrapeWorkerError::CacheLockError)?;
     if let Some(regex) = cache.get(pattern) {
-        return Some(regex.clone());
+        return Ok(regex.clone());
     }
 
-    if let Ok(regex) = regex::Regex::new(pattern) {
-        cache.insert(pattern.to_string(), regex.clone());
-        return Some(regex);
-    }
-    None
+    let regex =
+        regex::Regex::new(pattern).map_err(|e| ScrapeWorkerError::RegexError(e.to_string()))?;
+    cache.insert(pattern.to_string(), regex.clone());
+    Ok(regex)
 }
 
 /// 抓取工作者
@@ -285,17 +303,25 @@ where
             return Ok(());
         }
 
-        let result = match task.task_type {
-            TaskType::Scrape => self.process_scrape_task(task.clone()).await,
-            TaskType::Crawl => self.process_crawl_task(task.clone()).await,
-            TaskType::Extract => self.process_extract_task(task.clone()).await,
+        // Extract values needed after task is moved
+        let task_id = task.id;
+        let team_id = task.team_id;
+
+        let task_type = task.task_type;
+
+        // Take task by value only for the specific branch that needs it
+        // This avoids 3 unnecessary clones in the match
+        let result = match task_type {
+            TaskType::Scrape => self.process_scrape_task(task).await,
+            TaskType::Crawl => self.process_crawl_task(task).await,
+            TaskType::Extract => self.process_extract_task(task).await,
         };
 
         // Always release permit
-        if let Err(e) = self.release_concurrency_permit(task.team_id, task.id).await {
+        if let Err(e) = self.release_concurrency_permit(team_id, task_id).await {
             error!(
                 "Failed to release concurrency permit for team {}: {}",
-                task.team_id, e
+                team_id, e
             );
         }
 
@@ -340,7 +366,7 @@ where
                     created_at: Utc::now(),
                 };
 
-                if let Err(e) = self.handle_scrape_success(task.clone(), &response).await {
+                if let Err(e) = self.handle_scrape_success(&task, &response).await {
                     error!("Scrape success handler failed: {}", e);
                     debug!(error = %e);
                     self.handle_failure(&mut task).await?;
@@ -896,7 +922,8 @@ where
 
         let unique_links = {
             let document = Html::parse_document(&response.content);
-            let selector = Selector::parse("a").unwrap();
+            let selector = Selector::parse("a")
+                .map_err(|e| ScrapeWorkerError::SelectorError(e.to_string()))?;
             let base_url = Url::parse(&task.url)?;
 
             let mut links = HashSet::new();
@@ -987,7 +1014,7 @@ where
         if let Some(includes) = &config.include_patterns {
             let mut matched = false;
             for pattern in includes {
-                if let Some(re) = get_cached_regex(pattern) {
+                if let Ok(re) = get_cached_regex(pattern) {
                     if re.is_match(url) {
                         matched = true;
                         break;
@@ -1006,7 +1033,7 @@ where
         // 2. 检查排除模式 (如果有配置，不能匹配任何一个)
         if let Some(excludes) = &config.exclude_patterns {
             for pattern in excludes {
-                if let Some(re) = get_cached_regex(pattern) {
+                if let Ok(re) = get_cached_regex(pattern) {
                     if re.is_match(url) {
                         return false;
                     }
@@ -1019,11 +1046,11 @@ where
         true
     }
 
-    async fn handle_scrape_success(&self, task: Task, response: &ScrapeResponse) -> Result<()> {
+    async fn handle_scrape_success(&self, task: &Task, response: &ScrapeResponse) -> Result<()> {
         debug!(task_id = %task.id);
 
         // 文本编码处理 - 集成文本处理功能
-        let processed_content = match self.process_text_encoding(&task, response).await {
+        let processed_content = match self.process_text_encoding(task, response).await {
             Ok(content) => content,
             Err(e) => {
                 warn!("文本编码处理失败，使用原始内容: {}", e);
@@ -1094,13 +1121,13 @@ where
             }
         }
 
-        self.save_result(&task, &processed_response, extracted_data)
+        self.save_result(task, &processed_response, extracted_data)
             .await?;
         debug!(task_id = %task.id, "About to mark task as completed");
         self.repository.mark_completed(task.id).await?;
         debug!(task_id = %task.id, "Successfully marked task as completed");
 
-        self.trigger_webhook(&task, WebhookEventType::ScrapeCompleted, None)
+        self.trigger_webhook(task, WebhookEventType::ScrapeCompleted, None)
             .await;
         Ok(())
     }
@@ -1473,5 +1500,200 @@ where
                 sync_wait_ms: scrape_request.sync_wait_ms.unwrap_or(0),
             },
         })
+    }
+}
+
+/// ScrapeWorker 构建器
+///
+/// 使用 Builder 模式简化复杂对象的创建过程
+pub struct ScrapeWorkerBuilder<R, S, C, CRR>
+where
+    R: TaskRepository + Send + Sync,
+    S: ScrapeResultRepository + Send + Sync,
+    C: CrawlRepository + Send + Sync,
+    CRR: CreditsRepository + Send + Sync,
+{
+    repository: Option<Arc<R>>,
+    result_repository: Option<Arc<S>>,
+    crawl_repository: Option<Arc<C>>,
+    storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
+    webhook_event_repository: Option<Arc<dyn WebhookEventRepository + Send + Sync>>,
+    credits_repository: Option<Arc<CRR>>,
+    engine_client: Option<Arc<EngineClient>>,
+    create_scrape_use_case: Option<Arc<CreateScrapeUseCase>>,
+    redis: Option<RedisClient>,
+    robots_checker: Option<Arc<RobotsChecker>>,
+    settings: Option<Arc<Settings>>,
+    default_concurrency_limit: usize,
+}
+
+impl<R, S, C, CRR> Default for ScrapeWorkerBuilder<R, S, C, CRR>
+where
+    R: TaskRepository + Send + Sync,
+    S: ScrapeResultRepository + Send + Sync,
+    C: CrawlRepository + Send + Sync,
+    CRR: CreditsRepository + Send + Sync,
+{
+    fn default() -> Self {
+        Self {
+            repository: None,
+            result_repository: None,
+            crawl_repository: None,
+            storage_repository: None,
+            webhook_event_repository: None,
+            credits_repository: None,
+            engine_client: None,
+            create_scrape_use_case: None,
+            redis: None,
+            robots_checker: None,
+            settings: None,
+            default_concurrency_limit: 10,
+        }
+    }
+}
+
+impl<R, S, C, CRR> ScrapeWorkerBuilder<R, S, C, CRR>
+where
+    R: TaskRepository + Send + Sync,
+    S: ScrapeResultRepository + Send + Sync,
+    C: CrawlRepository + Send + Sync,
+    CRR: CreditsRepository + Send + Sync,
+{
+    /// 创建新的构建器
+    pub fn new() -> Self {
+        Self {
+            repository: None,
+            result_repository: None,
+            crawl_repository: None,
+            storage_repository: None,
+            webhook_event_repository: None,
+            credits_repository: None,
+            engine_client: None,
+            create_scrape_use_case: None,
+            redis: None,
+            robots_checker: None,
+            settings: None,
+            default_concurrency_limit: 10,
+        }
+    }
+
+    /// 设置任务仓储 (必需)
+    pub fn with_repository(mut self, repository: Arc<R>) -> Self {
+        self.repository = Some(repository);
+        self
+    }
+
+    /// 设置结果仓储 (必需)
+    pub fn with_result_repository(mut self, result_repository: Arc<S>) -> Self {
+        self.result_repository = Some(result_repository);
+        self
+    }
+
+    /// 设置爬取仓储 (必需)
+    pub fn with_crawl_repository(mut self, crawl_repository: Arc<C>) -> Self {
+        self.crawl_repository = Some(crawl_repository);
+        self
+    }
+
+    /// 设置存储仓储 (可选)
+    pub fn with_storage_repository(
+        mut self,
+        storage_repository: Arc<dyn StorageRepository + Send + Sync>,
+    ) -> Self {
+        self.storage_repository = Some(storage_repository);
+        self
+    }
+
+    /// 设置 Webhook 事件仓储 (必需)
+    pub fn with_webhook_event_repository(
+        mut self,
+        webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
+    ) -> Self {
+        self.webhook_event_repository = Some(webhook_event_repository);
+        self
+    }
+
+    /// 设置积分仓储 (必需)
+    pub fn with_credits_repository(mut self, credits_repository: Arc<CRR>) -> Self {
+        self.credits_repository = Some(credits_repository);
+        self
+    }
+
+    /// 设置引擎客户端 (必需)
+    pub fn with_engine_client(mut self, engine_client: Arc<EngineClient>) -> Self {
+        self.engine_client = Some(engine_client);
+        self
+    }
+
+    /// 设置创建抓取用例 (必需)
+    pub fn with_create_scrape_use_case(
+        mut self,
+        create_scrape_use_case: Arc<CreateScrapeUseCase>,
+    ) -> Self {
+        self.create_scrape_use_case = Some(create_scrape_use_case);
+        self
+    }
+
+    /// 设置 Redis 客户端 (必需)
+    pub fn with_redis(mut self, redis: RedisClient) -> Self {
+        self.redis = Some(redis);
+        self
+    }
+
+    /// 设置 Robots 检查器 (必需)
+    pub fn with_robots_checker(mut self, robots_checker: Arc<RobotsChecker>) -> Self {
+        self.robots_checker = Some(robots_checker);
+        self
+    }
+
+    /// 设置配置 (必需)
+    pub fn with_settings(mut self, settings: Arc<Settings>) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
+    /// 设置默认并发限制
+    pub fn with_default_concurrency_limit(mut self, limit: usize) -> Self {
+        self.default_concurrency_limit = limit;
+        self
+    }
+
+    /// 构建 ScrapeWorker 实例
+    pub fn build(self) -> Result<ScrapeWorker<R, S, C, CRR>, &'static str> {
+        let repository = self.repository.ok_or("repository is required")?;
+        let result_repository = self
+            .result_repository
+            .ok_or("result_repository is required")?;
+        let crawl_repository = self
+            .crawl_repository
+            .ok_or("crawl_repository is required")?;
+        let webhook_event_repository = self
+            .webhook_event_repository
+            .ok_or("webhook_event_repository is required")?;
+        let credits_repository = self
+            .credits_repository
+            .ok_or("credits_repository is required")?;
+        let engine_client = self.engine_client.ok_or("engine_client is required")?;
+        let create_scrape_use_case = self
+            .create_scrape_use_case
+            .ok_or("create_scrape_use_case is required")?;
+        let redis = self.redis.ok_or("redis is required")?;
+        let robots_checker = self.robots_checker.ok_or("robots_checker is required")?;
+        let settings = self.settings.ok_or("settings is required")?;
+
+        Ok(ScrapeWorker::new(
+            repository,
+            result_repository,
+            crawl_repository,
+            self.storage_repository,
+            webhook_event_repository,
+            credits_repository,
+            engine_client,
+            create_scrape_use_case,
+            redis,
+            robots_checker,
+            settings,
+            self.default_concurrency_limit,
+        ))
     }
 }

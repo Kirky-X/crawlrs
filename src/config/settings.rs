@@ -316,7 +316,11 @@ impl Settings {
         // 验证 S3 配置完整性
         if self.storage.storage_type == STORAGE_TYPE_S3
             && (self.storage.s3_bucket.is_none()
-                || self.storage.s3_bucket.as_ref().unwrap().is_empty())
+                || self
+                    .storage
+                    .s3_bucket
+                    .as_ref()
+                    .is_some_and(|b| b.is_empty()))
         {
             return Err(ConfigError::Message(ERROR_MISSING_S3_BUCKET.to_string()));
         }

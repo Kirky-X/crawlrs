@@ -8,6 +8,17 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use thiserror::Error;
+
+/// Relevance scorer errors
+#[derive(Error, Debug)]
+pub enum RelevanceScorerError {
+    #[error("Regex cache lock error: {0}")]
+    CacheLockError(String),
+
+    #[error("Regex compilation error: {0}")]
+    RegexError(String),
+}
 
 type DateParser = fn(&str) -> Option<DateTime<Utc>>;
 
@@ -51,15 +62,18 @@ static DATE_REGEXES: Lazy<Vec<(Regex, DateParser)>> = Lazy::new(|| {
 
 static REGEX_CACHE: Lazy<Mutex<HashMap<String, Regex>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
-fn get_cached_regex(term: &str) -> Regex {
+fn get_cached_regex(term: &str) -> Result<Regex, RelevanceScorerError> {
     let pattern = format!(r"\b{}\b", regex::escape(term));
-    let mut cache = REGEX_CACHE.lock().unwrap();
+    let mut cache = REGEX_CACHE
+        .lock()
+        .map_err(|e| RelevanceScorerError::CacheLockError(e.to_string()))?;
     if let Some(regex) = cache.get(&pattern) {
-        return regex.clone();
+        return Ok(regex.clone());
     }
-    let regex = Regex::new(&pattern).unwrap();
+    let regex =
+        Regex::new(&pattern).map_err(|e| RelevanceScorerError::RegexError(e.to_string()))?;
     cache.insert(pattern.clone(), regex.clone());
-    regex
+    Ok(regex)
 }
 
 pub struct RelevanceScorer {
@@ -159,8 +173,10 @@ impl RelevanceScorer {
 
     /// Check if term appears at word boundaries
     fn has_word_boundary_match(&self, text: &str, term: &str) -> bool {
-        let regex = get_cached_regex(term);
-        regex.is_match(text)
+        match get_cached_regex(term) {
+            Ok(regex) => regex.is_match(text),
+            Err(_) => text.contains(term), // Fallback to simple contains
+        }
     }
 
     /// Check if domain is authoritative (simplified heuristic)

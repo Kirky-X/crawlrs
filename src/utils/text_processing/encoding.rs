@@ -28,6 +28,9 @@ pub enum TextEncodingError {
 
     #[error("文本处理超时")]
     ProcessingTimeout,
+
+    #[error("缓存锁获取失败: {0}")]
+    CacheLockError(String),
 }
 
 /// 编码检测结果
@@ -251,15 +254,14 @@ impl TextEncodingProcessor {
 
     /// 获取缓存的检测结果
     fn get_cached_detection(&self, key: &str) -> Option<EncodingDetection> {
-        self.encoding_cache.lock().unwrap().get(key).cloned()
+        self.encoding_cache.lock().ok()?.get(key).cloned()
     }
 
     /// 缓存检测结果
     fn cache_detection_result(&self, key: &str, detection: &EncodingDetection) {
-        self.encoding_cache
-            .lock()
-            .unwrap()
-            .put(key.to_string(), detection.clone());
+        if let Ok(mut cache) = self.encoding_cache.lock() {
+            cache.put(key.to_string(), detection.clone());
+        }
     }
 
     /// 应用缓存的转换结果
@@ -289,7 +291,12 @@ impl TextEncodingProcessor {
 
     /// 获取处理器统计信息
     pub fn get_stats(&self) -> TextProcessorStats {
-        let cache_size = self.encoding_cache.lock().unwrap().len();
+        let cache_size = self
+            .encoding_cache
+            .lock()
+            .ok()
+            .map(|c| c.len())
+            .unwrap_or(0);
         TextProcessorStats {
             cache_size,
             cache_capacity: 1000,

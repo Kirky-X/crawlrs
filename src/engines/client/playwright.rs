@@ -69,7 +69,9 @@ async fn get_or_init_browser() -> Result<Arc<Browser>, EngineError> {
 
     // Try to get the existing browser (clone outside lock to avoid holding across await)
     let browser_to_check = {
-        let browser_guard = browser_instance.lock().unwrap();
+        let browser_guard = browser_instance
+            .lock()
+            .map_err(|e| EngineError::Other(format!("Browser lock poisoned: {}", e)))?;
         browser_guard.as_ref().map(Arc::clone)
     };
 
@@ -127,7 +129,9 @@ async fn get_or_init_browser() -> Result<Arc<Browser>, EngineError> {
 
     // Store the browser in the global instance
     {
-        let mut browser_guard = browser_instance.lock().unwrap();
+        let mut browser_guard = browser_instance
+            .lock()
+            .map_err(|e| EngineError::Other(format!("Browser lock poisoned: {}", e)))?;
         *browser_guard = Some(Arc::clone(&browser));
     }
 
@@ -161,12 +165,14 @@ pub async fn cleanup_browser() {
     let browser_instance = BROWSER_INSTANCE.get();
 
     if let Some(instance) = browser_instance {
-        let mut guard = instance.lock().unwrap();
-        if let Some(browser) = guard.take() {
-            // Close all pages and then browser
-            tracing::info!("Closing browser instance");
-            drop(browser);
+        if let Ok(mut guard) = instance.lock() {
+            if let Some(browser) = guard.take() {
+                // Close all pages and then browser
+                tracing::info!("Closing browser instance");
+                drop(browser);
+            }
         }
+        // If lock fails during cleanup, it's best-effort anyway
     }
 }
 

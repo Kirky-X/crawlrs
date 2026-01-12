@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use rand::prelude::*;
+use scraper::Selector;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -25,6 +26,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
+
+/// 安全解析CSS选择器，如果解析失败则记录警告并返回None
+fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
+    Selector::parse(selector_str).ok()
+}
 
 /// 智能搜索引擎配置
 pub struct SmartSearchEngineConfig {
@@ -542,7 +548,7 @@ impl SmartSearchEngine {
         for selector_str in &title_selectors {
             if let Ok(selector) = Selector::parse(selector_str) {
                 if let Some(el) = element.select(&selector).next() {
-                    title = self.escape_html(&el.text().collect::<String>().trim().to_string());
+                    title = self.escape_html(el.text().collect::<String>().trim());
                     if !title.is_empty() {
                         break;
                     }
@@ -575,8 +581,7 @@ impl SmartSearchEngine {
         for selector_str in &snippet_selectors {
             if let Ok(selector) = Selector::parse(selector_str) {
                 if let Some(el) = element.select(&selector).next() {
-                    description =
-                        self.escape_html(&el.text().collect::<String>().trim().to_string());
+                    description = self.escape_html(el.text().collect::<String>().trim());
                     description = process_string(&description).unwrap_or(description);
                     if !description.is_empty() {
                         break;
@@ -599,16 +604,19 @@ impl SmartSearchEngine {
 
     /// 解析 Bing 搜索结果
     fn parse_bing_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        use scraper::{Html, Selector};
+        use scraper::Html;
 
         let document = Html::parse_document(html);
-        let result_selector =
-            Selector::parse("li.b_algo").unwrap_or_else(|_| Selector::parse("div.sb_add").unwrap());
-        let title_selector =
-            Selector::parse("h2").unwrap_or_else(|_| Selector::parse("a").unwrap());
-        let link_selector = Selector::parse("a").unwrap();
-        let snippet_selector =
-            Selector::parse("p").unwrap_or_else(|_| Selector::parse("div").unwrap());
+        let result_selector = safe_parse_selector("li.b_algo")
+            .or_else(|| safe_parse_selector("div.sb_add"))
+            .expect("Failed to parse Bing result selector");
+        let title_selector = safe_parse_selector("h2")
+            .or_else(|| safe_parse_selector("a"))
+            .expect("Failed to parse Bing title selector");
+        let link_selector = safe_parse_selector("a").expect("Failed to parse Bing link selector");
+        let snippet_selector = safe_parse_selector("p")
+            .or_else(|| safe_parse_selector("div"))
+            .expect("Failed to parse Bing snippet selector");
 
         let mut results = Vec::new();
         let scorer = RelevanceScorer::new("bing_search");
@@ -617,7 +625,7 @@ impl SmartSearchEngine {
             let title = element
                 .select(&title_selector)
                 .next()
-                .map(|el| self.escape_html(&el.text().collect::<String>().trim().to_string()))
+                .map(|el| self.escape_html(el.text().collect::<String>().trim()))
                 .unwrap_or_default();
 
             let url = element
@@ -630,7 +638,7 @@ impl SmartSearchEngine {
             let description = element
                 .select(&snippet_selector)
                 .next()
-                .map(|el| self.escape_html(&el.text().collect::<String>().trim().to_string()))
+                .map(|el| self.escape_html(el.text().collect::<String>().trim()))
                 .unwrap_or_default();
             let description = process_string(&description).unwrap_or(description);
 
@@ -651,16 +659,19 @@ impl SmartSearchEngine {
 
     /// 解析百度搜索结果
     fn parse_baidu_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        use scraper::{Html, Selector};
+        use scraper::Html;
 
         let document = Html::parse_document(html);
-        let result_selector = Selector::parse("div.c-container")
-            .unwrap_or_else(|_| Selector::parse("div.result").unwrap());
-        let title_selector =
-            Selector::parse("h3 a").unwrap_or_else(|_| Selector::parse("a").unwrap());
-        let link_selector = Selector::parse("a").unwrap();
-        let snippet_selector =
-            Selector::parse("div.c-abstract").unwrap_or_else(|_| Selector::parse("div").unwrap());
+        let result_selector = safe_parse_selector("div.c-container")
+            .or_else(|| safe_parse_selector("div.result"))
+            .expect("Failed to parse Baidu result selector");
+        let title_selector = safe_parse_selector("h3 a")
+            .or_else(|| safe_parse_selector("a"))
+            .expect("Failed to parse Baidu title selector");
+        let link_selector = safe_parse_selector("a").expect("Failed to parse Baidu link selector");
+        let snippet_selector = safe_parse_selector("div.c-abstract")
+            .or_else(|| safe_parse_selector("div"))
+            .expect("Failed to parse Baidu snippet selector");
 
         let mut results = Vec::new();
         let scorer = RelevanceScorer::new("baidu_search");
@@ -669,7 +680,7 @@ impl SmartSearchEngine {
             let title = element
                 .select(&title_selector)
                 .next()
-                .map(|el| self.escape_html(&el.text().collect::<String>().trim().to_string()))
+                .map(|el| self.escape_html(el.text().collect::<String>().trim()))
                 .unwrap_or_default();
 
             let url = element
@@ -703,16 +714,19 @@ impl SmartSearchEngine {
 
     /// 解析搜狗搜索结果
     fn parse_sogou_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        use scraper::{Html, Selector};
+        use scraper::Html;
 
         let document = Html::parse_document(html);
-        let result_selector =
-            Selector::parse("div.rc").unwrap_or_else(|_| Selector::parse("div.result").unwrap());
-        let title_selector =
-            Selector::parse("h3 a").unwrap_or_else(|_| Selector::parse("a").unwrap());
-        let link_selector = Selector::parse("a").unwrap();
-        let snippet_selector =
-            Selector::parse("div.ft").unwrap_or_else(|_| Selector::parse("div").unwrap());
+        let result_selector = safe_parse_selector("div.rc")
+            .or_else(|| safe_parse_selector("div.result"))
+            .expect("Failed to parse Sogou result selector");
+        let title_selector = safe_parse_selector("h3 a")
+            .or_else(|| safe_parse_selector("a"))
+            .expect("Failed to parse Sogou title selector");
+        let link_selector = safe_parse_selector("a").expect("Failed to parse Sogou link selector");
+        let snippet_selector = safe_parse_selector("div.ft")
+            .or_else(|| safe_parse_selector("div"))
+            .expect("Failed to parse Sogou snippet selector");
 
         let mut results = Vec::new();
         let scorer = RelevanceScorer::new("sogou_search");
@@ -721,7 +735,7 @@ impl SmartSearchEngine {
             let title = element
                 .select(&title_selector)
                 .next()
-                .map(|el| self.escape_html(&el.text().collect::<String>().trim().to_string()))
+                .map(|el| self.escape_html(el.text().collect::<String>().trim()))
                 .unwrap_or_default();
 
             let url = element

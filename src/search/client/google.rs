@@ -21,6 +21,11 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+/// 安全解析CSS选择器，如果解析失败则返回None
+fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
+    Selector::parse(selector_str).ok()
+}
+
 /// Google HTTP client - reused across requests for connection pooling
 #[allow(dead_code)]
 static HTTP_CLIENT: once_cell::sync::Lazy<Client> = once_cell::sync::Lazy::new(|| {
@@ -105,12 +110,15 @@ impl GoogleSearchEngine {
 
         info!("Parsing Google search results...");
 
-        // Multiple selector strategies for robustness
+        // Multiple selector strategies for robustness with safe parsing
         let selectors = [
-            Selector::parse("div[jscontroller*='SC7lYd']").unwrap(),
-            Selector::parse("div.g").unwrap(),
-            Selector::parse("div[data-hveid]").unwrap(),
-            Selector::parse("div:has(> a > h3)").unwrap(),
+            safe_parse_selector("div[jscontroller*='SC7lYd']")
+                .expect("Failed to parse Google selector: div[jscontroller*='SC7lYd']"),
+            safe_parse_selector("div.g").expect("Failed to parse Google selector: div.g"),
+            safe_parse_selector("div[data-hveid]")
+                .expect("Failed to parse Google selector: div[data-hveid]"),
+            safe_parse_selector("div:has(> a > h3)")
+                .expect("Failed to parse Google selector: div:has(> a > h3)"),
         ];
 
         let result_elements = selectors
@@ -125,12 +133,17 @@ impl GoogleSearchEngine {
             })
             .unwrap_or_default();
 
-        let title_selector = Selector::parse("h3").unwrap();
-        let link_selector = Selector::parse("a[href]").unwrap();
+        let title_selector =
+            safe_parse_selector("h3").expect("Failed to parse Google title selector");
+        let link_selector =
+            safe_parse_selector("a[href]").expect("Failed to parse Google link selector");
         let snippet_selectors = [
-            Selector::parse("[data-sncf], div[data-snc]").unwrap(),
-            Selector::parse("span.st, div.st, p.st").unwrap(),
-            Selector::parse("div[class*='snippet'], div[class*='desc']").unwrap(),
+            safe_parse_selector("[data-sncf], div[data-snc]")
+                .expect("Failed to parse Google snippet selector"),
+            safe_parse_selector("span.st, div.st, p.st")
+                .expect("Failed to parse Google snippet selector"),
+            safe_parse_selector("div[class*='snippet'], div[class*='desc']")
+                .expect("Failed to parse Google snippet selector"),
         ];
 
         for element in result_elements {

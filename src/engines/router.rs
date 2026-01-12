@@ -41,6 +41,13 @@ pub struct RouterMetrics {
     pub failure_classification: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
 }
 
+/// 路由指标错误
+#[derive(Debug, thiserror::Error)]
+pub enum RouterMetricsError {
+    #[error("Metrics lock poisoned: {0}")]
+    LockPoisoned(String),
+}
+
 impl RouterMetrics {
     /// 创建新的指标收集器
     pub fn new() -> Self {
@@ -60,6 +67,46 @@ impl RouterMetrics {
         }
     }
 
+    /// 安全获取 latencies 锁
+    fn latencies_mut(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>>, RouterMetricsError>
+    {
+        self.engine_latencies
+            .lock()
+            .map_err(|e| RouterMetricsError::LockPoisoned(e.to_string()))
+    }
+
+    /// 安全获取 success_count 锁
+    fn success_count_mut(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>>, RouterMetricsError>
+    {
+        self.engine_success_count
+            .lock()
+            .map_err(|e| RouterMetricsError::LockPoisoned(e.to_string()))
+    }
+
+    /// 安全获取 failure_count 锁
+    fn failure_count_mut(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>>, RouterMetricsError>
+    {
+        self.engine_failure_count
+            .lock()
+            .map_err(|e| RouterMetricsError::LockPoisoned(e.to_string()))
+    }
+
+    /// 安全获取 classification 锁
+    fn classification_mut(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>>, RouterMetricsError>
+    {
+        self.failure_classification
+            .lock()
+            .map_err(|e| RouterMetricsError::LockPoisoned(e.to_string()))
+    }
+
     /// 记录候选引擎数量
     pub fn record_candidates(&self, count: usize) {
         self.candidate_count_total
@@ -74,38 +121,43 @@ impl RouterMetrics {
     /// 记录引擎选择
     pub fn record_engine_selection(&self, engine_name: &str) {
         self.engine_selection_total.fetch_add(1, Ordering::Relaxed);
-        let mut latencies = self.engine_latencies.lock().unwrap();
-        if !latencies.contains_key(engine_name) {
-            latencies.insert(engine_name.to_string(), 0);
+        if let Ok(mut latencies) = self.latencies_mut() {
+            if !latencies.contains_key(engine_name) {
+                latencies.insert(engine_name.to_string(), 0);
+            }
         }
+        // 忽略锁错误，只记录日志
     }
 
     /// 记录引擎延迟
     pub fn record_engine_latency(&self, engine_name: &str, duration: Duration) {
-        let mut latencies = self.engine_latencies.lock().unwrap();
-        if let Some(total) = latencies.get_mut(engine_name) {
-            *total += duration.as_nanos() as u64;
+        if let Ok(mut latencies) = self.latencies_mut() {
+            if let Some(total) = latencies.get_mut(engine_name) {
+                *total += duration.as_nanos() as u64;
+            }
         }
     }
 
     /// 记录引擎成功
     pub fn record_engine_success(&self, engine_name: &str) {
-        let mut success_count = self.engine_success_count.lock().unwrap();
-        let count = success_count.entry(engine_name.to_string()).or_insert(0);
-        *count += 1;
+        if let Ok(mut success_count) = self.success_count_mut() {
+            let count = success_count.entry(engine_name.to_string()).or_insert(0);
+            *count += 1;
+        }
     }
 
     /// 记录引擎失败
     pub fn record_engine_failure(&self, engine_name: &str, error_type: &str) {
-        let mut failure_count = self.engine_failure_count.lock().unwrap();
-        let count = failure_count.entry(engine_name.to_string()).or_insert(0);
-        *count += 1;
+        if let Ok(mut failure_count) = self.failure_count_mut() {
+            let count = failure_count.entry(engine_name.to_string()).or_insert(0);
+            *count += 1;
+        }
 
-        // 记录失败类型分类
-        let mut classification = self.failure_classification.lock().unwrap();
-        let error_category = Self::classify_error(error_type);
-        let count = classification.entry(error_category).or_insert(0);
-        *count += 1;
+        if let Ok(mut classification) = self.classification_mut() {
+            let error_category = Self::classify_error(error_type);
+            let count = classification.entry(error_category).or_insert(0);
+            *count += 1;
+        }
     }
 
     /// 对错误进行分类
@@ -127,8 +179,8 @@ impl RouterMetrics {
 
     /// 获取按引擎名称的平均延迟（纳秒）
     pub fn get_avg_latency_ns(&self, engine_name: &str) -> Option<u64> {
-        let latencies = self.engine_latencies.lock().unwrap();
-        let success_count = self.engine_success_count.lock().unwrap();
+        let latencies = self.latencies_mut().ok()?;
+        let success_count = self.success_count_mut().ok()?;
 
         if let (Some(&total_ns), Some(&count)) =
             (latencies.get(engine_name), success_count.get(engine_name))
@@ -307,7 +359,7 @@ impl EngineRouter {
 
     /// 设置动态阈值因子
     pub fn set_dynamic_threshold_factor(&mut self, factor: f64) {
-        self.dynamic_threshold_factor = factor.max(0.1).min(2.0);
+        self.dynamic_threshold_factor = factor.clamp(0.1, 2.0);
     }
 
     /// 设置负载均衡策略

@@ -10,9 +10,29 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use thiserror::Error;
 use url::Url;
 
 use async_trait::async_trait;
+
+/// Robots.txt 检查器错误
+#[derive(Error, Debug)]
+pub enum RobotsCheckerError {
+    #[error("缓存锁获取失败: {0}")]
+    CacheLockError(String),
+
+    #[error("URL解析失败: {0}")]
+    UrlParseError(String),
+
+    #[error("验证失败: {0}")]
+    ValidationError(String),
+}
+
+impl From<anyhow::Error> for RobotsCheckerError {
+    fn from(err: anyhow::Error) -> Self {
+        RobotsCheckerError::ValidationError(err.to_string())
+    }
+}
 
 /// Robots.txt缓存统计
 struct CacheStats {
@@ -113,11 +133,12 @@ impl RobotsChecker {
     }
 
     /// 获取Robots.txt内容（带缓存）
-    async fn get_robots_content(&self, url_str: &str) -> Result<String> {
-        let url = Url::parse(url_str)?;
+    async fn get_robots_content(&self, url_str: &str) -> Result<String, RobotsCheckerError> {
+        let url =
+            Url::parse(url_str).map_err(|e| RobotsCheckerError::UrlParseError(e.to_string()))?;
         let host = url
             .host_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid URL"))?;
+            .ok_or_else(|| RobotsCheckerError::UrlParseError("Invalid URL: no host".to_string()))?;
         let scheme = url.scheme();
         let port = url.port_or_known_default().unwrap_or(80);
 
@@ -125,7 +146,10 @@ impl RobotsChecker {
 
         // 1. Check memory cache
         {
-            let mut cache = self.memory_cache.lock().unwrap();
+            let mut cache = self
+                .memory_cache
+                .lock()
+                .map_err(|e| RobotsCheckerError::CacheLockError(e.to_string()))?;
             if let Some(cached) = cache.get(&robots_url) {
                 if cached.expires_at > Instant::now() {
                     CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
@@ -143,7 +167,10 @@ impl RobotsChecker {
         if let Some(ref redis) = self.redis_client {
             if let Ok(Some(content)) = redis.get(&redis_key).await {
                 // Update memory cache
-                let mut cache = self.memory_cache.lock().unwrap();
+                let mut cache = self
+                    .memory_cache
+                    .lock()
+                    .map_err(|e| RobotsCheckerError::CacheLockError(e.to_string()))?;
                 cache.insert(
                     robots_url.clone(),
                     CachedRobots {
@@ -213,7 +240,10 @@ impl RobotsChecker {
 
         // 4. Update memory cache
         {
-            let mut cache = self.memory_cache.lock().unwrap();
+            let mut cache = self
+                .memory_cache
+                .lock()
+                .map_err(|e| RobotsCheckerError::CacheLockError(e.to_string()))?;
             cache.insert(
                 robots_url.clone(),
                 CachedRobots {

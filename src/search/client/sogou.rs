@@ -14,6 +14,11 @@ use crate::search::{
 use async_trait::async_trait;
 use scraper::{Html, Selector};
 
+/// 安全解析CSS选择器，如果解析失败则返回None
+fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
+    Selector::parse(selector_str).ok()
+}
+
 /// Sogou Search Engine implementation
 pub struct SogouSearchEngine;
 
@@ -33,9 +38,12 @@ impl SogouSearchEngine {
         html_content: &str,
     ) -> Result<Vec<ResponseItem>, SearchError> {
         let document = Html::parse_document(html_content);
-        let result_selector = Selector::parse(".vrwrap, .rb").unwrap();
-        let title_selector = Selector::parse("h3").unwrap();
-        let link_selector = Selector::parse("h3 > a").unwrap();
+        let result_selector =
+            safe_parse_selector(".vrwrap, .rb").expect("Failed to parse Sogou result selector");
+        let title_selector =
+            safe_parse_selector("h3").expect("Failed to parse Sogou title selector");
+        let link_selector =
+            safe_parse_selector("h3 > a").expect("Failed to parse Sogou link selector");
 
         let mut results = Vec::new();
 

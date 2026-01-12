@@ -9,6 +9,11 @@
 use super::{ResponseItem, SearchEngineType};
 use scraper::{Html, Selector};
 
+/// 安全解析CSS选择器，如果解析失败则返回None
+fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
+    Selector::parse(selector_str).ok()
+}
+
 /// Common HTML result parser for search engines
 pub struct HtmlParser {
     // Compiled selectors for reuse
@@ -27,17 +32,28 @@ impl HtmlParser {
         snippet_selectors: Vec<&str>,
     ) -> Self {
         Self {
-            title_selector: Selector::parse(title_selector)
-                .unwrap_or_else(|_| Selector::parse("h3").unwrap()),
-            link_selector: Selector::parse(link_selector)
-                .unwrap_or_else(|_| Selector::parse("a[href]").unwrap()),
+            title_selector: safe_parse_selector(title_selector).unwrap_or_else(|| {
+                safe_parse_selector("h3").expect("Failed to parse fallback title selector")
+            }),
+            link_selector: safe_parse_selector(link_selector).unwrap_or_else(|| {
+                safe_parse_selector("a[href]").expect("Failed to parse fallback link selector")
+            }),
             snippet_selectors: snippet_selectors
                 .iter()
-                .map(|s| Selector::parse(s).unwrap_or_else(|_| Selector::parse("p").unwrap()))
+                .map(|s| {
+                    safe_parse_selector(s).unwrap_or_else(|| {
+                        safe_parse_selector("p").expect("Failed to parse fallback snippet selector")
+                    })
+                })
                 .collect(),
             result_selectors: result_selectors
                 .iter()
-                .map(|s| Selector::parse(s).unwrap_or_else(|_| Selector::parse("div").unwrap()))
+                .map(|s| {
+                    safe_parse_selector(s).unwrap_or_else(|| {
+                        safe_parse_selector("div")
+                            .expect("Failed to parse fallback result selector")
+                    })
+                })
                 .collect(),
         }
     }

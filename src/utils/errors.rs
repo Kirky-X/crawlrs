@@ -93,3 +93,49 @@ impl axum::response::IntoResponse for AppError {
         (status, axum::Json(body)).into_response()
     }
 }
+
+// From implementations for AppError
+impl From<String> for AppError {
+    fn from(msg: String) -> Self {
+        AppError::Internal(msg)
+    }
+}
+
+impl From<&str> for AppError {
+    fn from(msg: &str) -> Self {
+        AppError::Internal(msg.to_string())
+    }
+}
+
+impl From<anyhow::Error> for AppError {
+    fn from(err: anyhow::Error) -> Self {
+        AppError::Internal(err.to_string())
+    }
+}
+
+impl From<RepositoryError> for AppError {
+    fn from(err: RepositoryError) -> Self {
+        match err {
+            RepositoryError::DatabaseError(msg) => AppError::Internal(msg),
+            RepositoryError::NotFound => AppError::NotFound("Resource not found".to_string()),
+            RepositoryError::AlreadyExists => {
+                AppError::Validation("Resource already exists".to_string())
+            }
+            RepositoryError::InvalidParameter(msg) => AppError::Validation(msg),
+            RepositoryError::InternalError(msg) => AppError::Internal(msg),
+        }
+    }
+}
+
+impl From<crate::domain::repositories::task_repository::RepositoryError> for AppError {
+    fn from(err: crate::domain::repositories::task_repository::RepositoryError) -> Self {
+        match err {
+            crate::domain::repositories::task_repository::RepositoryError::Database(db_err) => {
+                AppError::Internal(db_err.to_string())
+            }
+            crate::domain::repositories::task_repository::RepositoryError::NotFound => {
+                AppError::NotFound("Resource not found".to_string())
+            }
+        }
+    }
+}

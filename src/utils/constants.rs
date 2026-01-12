@@ -6,7 +6,7 @@
 /// 全局常量定义 - 避免代码中的魔法字符串和重复调用
 ///
 /// 这些常量用于在整个项目中保持一致性和可维护性
-
+///
 /// HTTP 内容类型常量
 pub mod content_types {
     pub const TEXT_HTML: &str = "text/html";
