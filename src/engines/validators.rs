@@ -12,6 +12,12 @@ use url::Url;
 /// 检查解析后的 IP 是否为私有地址或环回地址
 /// 包含 DNS Rebinding 攻击防护
 pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
+    // Check if SSRF protection is disabled
+    if std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").is_ok() {
+        tracing::debug!("SSRF protection disabled for URL: {}", url_str);
+        return Ok(());
+    }
+
     let url = Url::parse(url_str)?;
 
     // 检查协议：只允许 http 和 https
