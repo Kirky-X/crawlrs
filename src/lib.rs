@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 /// 应用程序模块
@@ -46,10 +46,9 @@ pub mod workers;
 /// 搜索模块
 ///
 /// 提供统一的搜索引擎客户端和多种搜索引擎实现
-#[cfg(all(
-    feature = "search-google",
-    feature = "search-bing",
-    feature = "search-baidu",
-    feature = "search-sogou"
-))]
 pub mod search;
+
+/// 队列模块
+///
+/// 提供任务队列接口和实现
+pub mod queue;

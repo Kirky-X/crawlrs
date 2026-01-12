@@ -1,7 +1,9 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+
+#![allow(deprecated)]
 
 //! UAT场景集成测试
 //!
@@ -852,31 +854,26 @@ async fn test_uat004_javascript_rendering() {
     }
 
     use crawlrs::engines::client::playwright::PlaywrightEngine;
-    use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
-    use std::collections::HashMap;
+    use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
+
+    use std::sync::Arc;
     use std::time::Duration;
 
     let engine = PlaywrightEngine;
+    let client = EngineClient::with_engines(vec![Arc::new(engine)]);
 
     // 我们使用 httpbin.org/delay 来模拟加载时间，或者使用一个已知的 JS 渲染测试页
     // 这里的关键是验证 PlaywrightEngine 能够被正确调用并返回内容
-    let request = ScrapeRequest {
-        url: "https://httpbin.org/html".to_string(), // 这是一个简单的 HTML 页面，但在 Playwright 下它会通过浏览器加载
-        headers: HashMap::new(),
-        timeout: Duration::from_secs(30),
-        needs_js: true,
-        needs_screenshot: false,
-        screenshot_config: None,
-        mobile: false,
-        proxy: None,
-        skip_tls_verification: true,
-        needs_tls_fingerprint: false,
-        use_fire_engine: false,
-        actions: vec![],
-        sync_wait_ms: 1000,
-    };
+    let options = ScrapeOptions::builder()
+        .needs_js(true)
+        .timeout(Duration::from_secs(30))
+        .sync_wait_ms(1000)
+        .skip_tls_verification(true)
+        .build();
 
-    let result = engine.scrape(&request).await;
+    let request = ScrapeRequest::new("https://httpbin.org/html").with_options(options);
+
+    let result = client.scrape(&request).await;
 
     match result {
         Ok(response) => {
@@ -987,16 +984,25 @@ async fn test_uat025_degradation_strategy() {
 #[tokio::test]
 async fn test_uat005_engine_degradation() {
     use async_trait::async_trait;
-    use crawlrs::domain::models::search_result::SearchResult;
-    use crawlrs::domain::search::engine::{SearchEngine, SearchError};
-    use crawlrs::infrastructure::search::aggregator::SearchAggregator;
-    use crawlrs::infrastructure::search::bing::BingSearchEngine;
-    use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+    use crawlrs::engines::client::reqwest::ReqwestEngine;
+    use crawlrs::engines::engine_client::EngineClient;
+    use crawlrs::engines::traits::ScraperEngine;
+    use crawlrs::search::aggregator::SearchAggregator;
+    use crawlrs::search::client::bing::BingSearchEngine;
+    use crawlrs::search::client::google::GoogleSearchEngine;
+    use crawlrs::search::engine_trait::SearchEngine;
+    use crawlrs::search::engine_trait::SearchRequest;
+    use crawlrs::search::response::{Response, ResponseItem};
+    use crawlrs::search::types::{EngineHealth, SearchEngineType};
+    use crawlrs::search::SearchError;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
     // 1. 创建真实引擎
-    let google_engine = Arc::new(GoogleSearchEngine::new());
+    let reqwest_engine = Arc::new(ReqwestEngine);
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+    let engine_client = Arc::new(EngineClient::with_engines(engines));
+    let google_engine = Arc::new(GoogleSearchEngine::new(engine_client));
     let bing_engine = Arc::new(BingSearchEngine::new());
 
     // 为了测试降级，我们需要一种方法来模拟真实引擎的失败。
@@ -1013,27 +1019,25 @@ async fn test_uat005_engine_degradation() {
     impl SearchEngine for FaultyEngineWrapper {
         async fn search(
             &self,
-            query: &str,
-            limit: u32,
-            lang: Option<&str>,
-            country: Option<&str>,
-        ) -> Result<Vec<SearchResult>, SearchError> {
+            request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             if self.fail {
-                return Err(SearchError::NetworkError("Simulated failure".to_string()));
+                return Err(SearchError::Engine("Simulated failure".to_string()));
             }
-            // 如果不失败，调用真实引擎（虽然在测试环境中真实引擎可能也无法联网，
-            // 但这里主要测试的是聚合器对 Err 的处理逻辑，以及对成功结果的聚合）
-            // 注意：如果真实引擎因网络原因失败，效果是一样的。
-            // 为了保证测试的确定性，我们在 success case 下也返回模拟数据，
-            // 或者我们可以假设测试环境有网络。
-            // 考虑到题目要求"禁止mock实现，改为真实的"，我们应该调用 inner.search。
-            // 在实际网络测试中，可能会遇到网络错误，这是预期的行为。
-            self.inner.search(query, limit, lang, country).await
+            self.inner.search(request).await
         }
 
         fn name(&self) -> &'static str {
             self.inner.name()
+        }
+
+        fn engine_type(&self) -> SearchEngineType {
+            self.inner.engine_type()
+        }
+
+        fn health(&self) -> EngineHealth {
+            self.inner.health()
         }
     }
 
@@ -1058,10 +1062,15 @@ async fn test_uat005_engine_degradation() {
 
     // 3. 执行搜索 (第一次)
     // 注意：如果 Bing 也因为网络原因失败，结果可能为空，但断言逻辑需要调整
+    let request = SearchRequest::new("test");
     let results = aggregator
-        .search("test", 10, None, None)
+        .search(&request)
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|_| Response {
+            items: vec![],
+            total_results: None,
+            engine: crawlrs::search::types::SearchEngineType::Auto,
+        });
 
     // 验证：Google 肯定失败了
     assert_eq!(google_calls.load(Ordering::SeqCst), 1);
@@ -1070,11 +1079,17 @@ async fn test_uat005_engine_degradation() {
     assert_eq!(bing_calls.load(Ordering::SeqCst), 1);
 
     // 验证结果中不包含 Google (因为失败了)
-    assert!(!results.iter().any(|r| r.engine == "google"));
+    assert!(!results
+        .items
+        .iter()
+        .any(|r| r.engine == crawlrs::search::types::SearchEngineType::Google));
 
     // 如果 Bing 成功了，结果应该包含 Bing
-    if !results.is_empty() {
-        assert!(results.iter().any(|r| r.engine == "bing"));
+    if !results.items.is_empty() {
+        assert!(results
+            .items
+            .iter()
+            .any(|r| r.engine == crawlrs::search::types::SearchEngineType::Bing));
     } else {
         println!("⚠ Bing search failed (likely network issue), but degradation logic verified via call counts.");
     }
@@ -1082,14 +1097,14 @@ async fn test_uat005_engine_degradation() {
     // 4. 触发断路器 (SearchAggregator 默认 3 次失败触发)
     for i in 0..2 {
         let query = format!("test-{}", i);
-        let _ = aggregator.search(&query, 10, None, None).await;
+        let request = SearchRequest::new(&query);
+        let _ = aggregator.search(&request).await;
     }
     assert_eq!(google_calls.load(Ordering::SeqCst), 3);
 
     // 5. 第 4 次搜索，Google 应该被断路，不再被调用
-    let _ = aggregator
-        .search("test-circuit-break", 10, None, None)
-        .await;
+    let request = SearchRequest::new("test-circuit-break");
+    let _ = aggregator.search(&request).await;
     assert_eq!(google_calls.load(Ordering::SeqCst), 3); // 依然是 3，说明没被调用
                                                         // Bing 应该继续被调用
                                                         // assert!(bing_calls.load(Ordering::SeqCst) >= 4); // 原始断言
@@ -1114,7 +1129,7 @@ async fn test_uat018_rate_limiting() {
 
     // Set a specific rate limit for this test's API key (10 RPM)
     let rate_limit_key = format!("rate_limit_config:{}", app.api_key);
-    if let Err(_) = app.redis.set(&rate_limit_key, "10", 60).await {
+    if app.redis.set(&rate_limit_key, "10", 60).await.is_err() {
         println!("⚠️  UAT-018 rate limiting test skipped - Redis connection failed");
         return;
     }
@@ -1278,16 +1293,24 @@ async fn test_uat019_team_concurrency_limit() {
 /// 3. 验证聚合结果的正确性和响应时间
 #[tokio::test]
 async fn test_uat025_search_concurrency_perf() {
-    use crawlrs::domain::search::engine::SearchEngine;
-    use crawlrs::infrastructure::search::aggregator::SearchAggregator;
-    use crawlrs::infrastructure::search::bing::BingSearchEngine;
-    use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+    use crawlrs::engines::client::reqwest::ReqwestEngine;
+    use crawlrs::engines::engine_client::EngineClient;
+    use crawlrs::engines::traits::ScraperEngine;
+    use crawlrs::search::aggregator::SearchAggregator;
+    use crawlrs::search::client::bing::BingSearchEngine;
+    use crawlrs::search::client::google::GoogleSearchEngine;
+    use crawlrs::search::engine_trait::SearchEngine;
+
+    use crawlrs::search::SearchRequest;
 
     use std::sync::Arc;
     use std::time::Instant;
 
     // 1. 创建真实引擎
-    let google_engine = Arc::new(GoogleSearchEngine::new());
+    let reqwest_engine = Arc::new(ReqwestEngine);
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+    let engine_client = Arc::new(EngineClient::with_engines(engines));
+    let google_engine = Arc::new(GoogleSearchEngine::new(engine_client));
     let bing_engine = Arc::new(BingSearchEngine::new());
 
     // 使用包装器来模拟耗时（如果需要）或直接使用真实引擎
@@ -1320,7 +1343,8 @@ async fn test_uat025_search_concurrency_perf() {
         let handle = tokio::spawn(async move {
             let query = format!("rust lang {}", i);
             // 真实搜索
-            let result = aggregator.search(&query, 5, None, None).await;
+            let request = SearchRequest::new(&query);
+            let result = aggregator.search(&request).await;
             result
         });
         handles.push(handle);
@@ -1336,7 +1360,7 @@ async fn test_uat025_search_concurrency_perf() {
                 // 在测试环境中，真实请求可能会因为网络或限制而失败
                 match search_result {
                     Ok(results) => {
-                        if !results.is_empty() {
+                        if !results.items.is_empty() {
                             success_count += 1;
                         } else {
                             // 可能是没搜到，或者所有引擎都失败了（返回空列表）

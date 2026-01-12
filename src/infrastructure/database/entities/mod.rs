@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 /// 数据库实体模块
@@ -9,6 +9,7 @@
 /// 使用SeaORM框架进行对象关系映射
 /// 包含所有业务实体的数据库表示
 pub mod api_key;
+pub mod auth;
 pub mod crawl;
 pub mod credits;
 pub mod credits_transactions;

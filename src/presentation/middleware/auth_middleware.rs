@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 // Copyright 2025 Kirky.X
@@ -93,8 +93,8 @@ pub async fn auth_middleware(
             // Nil UUID (00000000-0000-0000-0000-000000000000) should never be a valid team_id
             if key.team_id == Uuid::nil() {
                 tracing::error!(
-                    "SECURITY: API key {} is associated with nil UUID team_id! This indicates a data integrity issue.",
-                    token_str
+                    "SECURITY: API key associated with nil UUID team_id detected! Data integrity issue - API key ID: {}",
+                    key.id
                 );
                 return Err(StatusCode::UNAUTHORIZED);
             }

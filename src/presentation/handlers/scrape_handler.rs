@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use axum::{
@@ -32,6 +32,7 @@ use crate::{
     queue::task_queue::TaskQueue,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_scrape(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
     Extension(_redis_client): Extension<Arc<RedisClient>>,

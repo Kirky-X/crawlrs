@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use crate::domain::search::engine::{
 };
 
 use super::client::SearchClient;
-use super::types::SearchEngineType;
+use super::engine_trait::{SearchEngine as TraitSearchEngine, SearchRequest};
 
 /// 域适配器 - 将新的 SearchEngine trait 适配到现有的 domain::search::engine::SearchEngine
 pub struct SearchEngineAdapter {
@@ -33,8 +33,7 @@ impl DomainSearchEngine for SearchEngineAdapter {
         limit: u32,
         _lang: Option<&str>,
         _country: Option<&str>,
-    ) -> Result<Vec<super::super::domain::models::search_result::SearchResult>, DomainSearchError>
-    {
+    ) -> Result<Vec<crate::domain::models::search_result::SearchResult>, DomainSearchError> {
         let result = self
             .client
             .search(query)
@@ -46,64 +45,68 @@ impl DomainSearchEngine for SearchEngineAdapter {
         let search_results = result
             .items
             .into_iter()
-            .map(
-                |item| super::super::domain::models::search_result::SearchResult {
-                    title: item.title,
-                    url: item.url,
-                    description: Some(item.description),
-                    engine: item.engine.name().to_string(),
-                    score: 0.0,
-                    published_time: None,
-                },
-            )
+            .map(|item| crate::domain::models::search_result::SearchResult {
+                title: item.title,
+                url: item.url,
+                description: Some(item.description),
+                engine: format!("{:?}", item.engine),
+                score: 0.0,
+                published_time: None,
+            })
             .collect();
 
         Ok(search_results)
     }
 
     fn name(&self) -> &'static str {
-        "SearchClientAdapter"
+        "SearchEngineAdapter"
     }
+}
 
-    async fn search_with_engine(
+/// 通用适配器 - 将 SearchEngine trait (src/search) 适配到 domain::search::engine::SearchEngine
+pub struct GenericSearchEngineAdapter {
+    engine: Arc<dyn TraitSearchEngine>,
+}
+
+impl GenericSearchEngineAdapter {
+    pub fn new(engine: Arc<dyn TraitSearchEngine>) -> Self {
+        Self { engine }
+    }
+}
+
+#[async_trait]
+impl DomainSearchEngine for GenericSearchEngineAdapter {
+    async fn search(
         &self,
         query: &str,
         limit: u32,
         _lang: Option<&str>,
         _country: Option<&str>,
-        engine: Option<&str>,
-    ) -> Result<Vec<super::super::domain::models::search_result::SearchResult>, DomainSearchError>
-    {
-        let result = if let Some(e) = engine {
-            let engine_type = SearchEngineType::from_name(e)
-                .ok_or_else(|| DomainSearchError::EngineError(format!("Unknown engine: {}", e)))?;
-            self.client.search_with_engine(query, engine_type).await
-        } else {
-            self.client.search(query).limit(limit).execute().await
-        }
-        .map_err(|e| DomainSearchError::EngineError(e.to_string()))?;
+    ) -> Result<Vec<crate::domain::models::search_result::SearchResult>, DomainSearchError> {
+        let request = SearchRequest::new(query).with_limit(limit);
+        let result = self
+            .engine
+            .search(&request)
+            .await
+            .map_err(|e| DomainSearchError::EngineError(e.to_string()))?;
 
         let search_results = result
             .items
             .into_iter()
-            .map(
-                |item| super::super::domain::models::search_result::SearchResult {
-                    title: item.title,
-                    url: item.url,
-                    description: Some(item.description),
-                    engine: item.engine.name().to_string(),
-                    score: 0.0,
-                    published_time: None,
-                },
-            )
+            .map(|item| crate::domain::models::search_result::SearchResult {
+                title: item.title,
+                url: item.url,
+                description: Some(item.description),
+                engine: format!("{:?}", item.engine),
+                score: 0.0,
+                published_time: None,
+            })
             .collect();
 
         Ok(search_results)
     }
-}
 
-/// 创建适配器的便捷函数
-pub fn create_domain_adapter() -> Arc<dyn DomainSearchEngine> {
-    let client = SearchClient::global().clone();
-    Arc::new(SearchEngineAdapter::new(client))
+    fn name(&self) -> &'static str {
+        self.engine.name()
+    }
 }

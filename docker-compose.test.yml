@@ -1,0 +1,158 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库（测试数据）
+  postgres_test:
+    image: postgres:16-alpine
+    container_name: crawlrs_postgres_test
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: crawlrs_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=512MB
+      -c work_mem=64MB
+      -c maintenance_work_mem=256MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=64MB
+      -c max_wal_size=2GB
+      -c min_wal_size=512MB
+
+  # Redis 缓存（测试）
+  redis_test:
+    image: redis:7-alpine
+    container_name: crawlrs_redis_test
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_test_data:/data
+    command: redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Chrome 浏览器（Playwright 引擎）
+  chromium:
+    image: browserless/chrome:latest
+    container_name: crawlrs_chromium
+    ports:
+      - "9222:3000"
+    environment:
+      - CONCURRENT_LIMIT=10
+      - TIMEOUT=30000
+      - MAX_QUEUE_LENGTH=50
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/status"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+
+  # FlareSolverr（Google 搜索代理）
+  flaresolverr:
+    image: flaresolverr/flaresolverr:latest
+    container_name: crawlrs_flaresolverr
+    ports:
+      - "8191:8191"
+    environment:
+      - TZ=UTC
+      - LOG_LEVEL=info
+      - CAPTCHA_SOLVER=basic
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8191"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # API 服务器
+  api_server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crawlrs_api_test
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info
+      - DATABASE_URL=postgres://postgres:postgres@postgres_test:5432/crawlrs_test
+      - REDIS_URL=redis://redis_test:6379
+      - CHROMIUM_REMOTE_DEBUGGING_URL=http://chromium:3000
+      - FLARESOLVERR_URL=http://flaresolverr:8191
+      - API_HOST=0.0.0.0
+      - API_PORT=8080
+      - WORKER_COUNT=4
+      - SYNC_WAIT_DEFAULT_MS=5000
+      - SYNC_WAIT_MAX_MS=30000
+      - RATE_LIMIT_RPM=1000
+      - TEAM_CONCURRENT_LIMIT=20
+    depends_on:
+      postgres_test:
+        condition: service_healthy
+      redis_test:
+        condition: service_healthy
+      chromium:
+        condition: service_healthy
+      flaresolverr:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus 指标收集
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: crawlrs_prometheus_test
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./test-config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+
+  # Grafana 监控面板
+  grafana:
+    image: grafana/grafana:latest
+    container_name: crawlrs_grafana_test
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./test-config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_test_data:
+  redis_test_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: crawlrs_test_network

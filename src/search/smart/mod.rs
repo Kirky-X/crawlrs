@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use async_trait::async_trait;
@@ -13,9 +13,9 @@ use crate::domain::services::rate_limiting_service::{
     RateLimitResult, RateLimitingError, RateLimitingService,
 };
 use crate::domain::services::relevance_scorer::RelevanceScorer;
-use crate::engines::router::EngineRouter;
-use crate::engines::traits::EngineError;
-use crate::engines::traits::ScrapeRequest;
+use crate::engines::engine_client::{
+    EngineClient, EngineError, PageAction, ScrapeOptions, ScrapeRequest, ScrollDirection,
+};
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
@@ -78,16 +78,19 @@ impl Default for SmartSearchEngineConfig {
 
 /// 智能搜索引擎
 ///
-/// 使用EngineRouter智能路由，根据目标网站的特征自动选择最适合的抓取引擎
+/// 使用EngineClient智能路由，根据目标网站的特征自动选择最适合的抓取引擎
 /// 支持速率限制、超时控制和测试数据加载
 pub struct SmartSearchEngine {
-    router: Arc<EngineRouter>,
+    engine_client: Arc<EngineClient>,
     config: SmartSearchEngineConfig,
 }
 
 impl SmartSearchEngine {
-    pub fn new(router: Arc<EngineRouter>, config: SmartSearchEngineConfig) -> Self {
-        Self { router, config }
+    pub fn new(engine_client: Arc<EngineClient>, config: SmartSearchEngineConfig) -> Self {
+        Self {
+            engine_client,
+            config,
+        }
     }
 
     /// 检查速率限制
@@ -104,7 +107,10 @@ impl SmartSearchEngine {
                 }
                 Ok(RateLimitResult::Denied { reason }) => {
                     warn!("速率限制被拒绝: {}", reason);
-                    Err(SearchError::RateLimitExceeded(reason))
+                    Err(SearchError::Engine(format!(
+                        "Rate limit exceeded: {}",
+                        reason
+                    )))
                 }
                 Ok(RateLimitResult::RetryAfter {
                     retry_after_seconds,
@@ -171,6 +177,11 @@ impl SmartSearchEngine {
             // 对于非特定引擎类型，默认使用 Google 的配置
             _ => (true, false),
         }
+    }
+
+    /// HTML 转义以防止 XSS 攻击
+    fn escape_html(&self, text: &str) -> String {
+        html_escape::encode_text(text).trim().to_string()
     }
 
     /// 构建搜索URL
@@ -293,7 +304,6 @@ impl SmartSearchEngine {
         needs_js: bool,
         needs_tls_fingerprint: bool,
     ) -> ScrapeRequest {
-        use crate::engines::traits::ScrapeAction;
         use rand::rng;
 
         let mut headers = HashMap::new();
@@ -393,47 +403,52 @@ impl SmartSearchEngine {
             SearchEngineType::Sogou => {
                 headers.insert("Referer".to_string(), "https://www.sogou.com/".to_string());
             }
+            _ => {
+                headers.insert("Referer".to_string(), "https://www.google.com/".to_string());
+            }
         }
 
         let actions = if needs_js {
             vec![
-                ScrapeAction::Wait { milliseconds: 3000 },
-                ScrapeAction::Scroll {
-                    direction: "top".to_string(),
+                PageAction::Wait { milliseconds: 3000 },
+                PageAction::Scroll {
+                    direction: ScrollDirection::Top,
                 },
-                ScrapeAction::Wait { milliseconds: 1000 },
-                ScrapeAction::Scroll {
-                    direction: "down".to_string(),
+                PageAction::Wait { milliseconds: 1000 },
+                PageAction::Scroll {
+                    direction: ScrollDirection::Down,
                 },
-                ScrapeAction::Wait { milliseconds: 1500 },
-                ScrapeAction::Scroll {
-                    direction: "down".to_string(),
+                PageAction::Wait { milliseconds: 1500 },
+                PageAction::Scroll {
+                    direction: ScrollDirection::Down,
                 },
-                ScrapeAction::Wait { milliseconds: 1000 },
-                ScrapeAction::Scroll {
-                    direction: "bottom".to_string(),
+                PageAction::Wait { milliseconds: 1000 },
+                PageAction::Scroll {
+                    direction: ScrollDirection::Bottom,
                 },
-                ScrapeAction::Wait { milliseconds: 3000 },
+                PageAction::Wait { milliseconds: 3000 },
             ]
         } else {
             // 即使不需要JS，也为搜索引擎添加短暂等待
-            vec![ScrapeAction::Wait { milliseconds: 2000 }]
+            vec![PageAction::Wait { milliseconds: 2000 }]
         };
 
         ScrapeRequest {
             url: url.to_string(),
-            headers,
-            timeout: Duration::from_secs(self.config.timeout_seconds),
-            needs_js,
-            needs_screenshot: false,
-            screenshot_config: None,
-            mobile: false,
-            proxy: None,
-            skip_tls_verification: false,
-            needs_tls_fingerprint,
-            use_fire_engine: needs_js,
-            actions,
-            sync_wait_ms: if needs_js { 10000 } else { 0 },
+            options: ScrapeOptions {
+                headers,
+                timeout: Duration::from_secs(self.config.timeout_seconds),
+                needs_js,
+                needs_screenshot: false,
+                screenshot_config: None,
+                mobile: false,
+                proxy: None,
+                skip_tls_verification: false,
+                needs_tls_fingerprint,
+                use_fire_engine: needs_js,
+                actions,
+                sync_wait_ms: if needs_js { 10000 } else { 0 },
+            },
         }
     }
 
@@ -470,6 +485,7 @@ impl SmartSearchEngine {
             SearchEngineType::Bing => self.parse_bing_results(html),
             SearchEngineType::Baidu => self.parse_baidu_results(html),
             SearchEngineType::Sogou => self.parse_sogou_results(html),
+            _ => self.parse_google_results(html),
         }
     }
 
@@ -526,7 +542,7 @@ impl SmartSearchEngine {
         for selector_str in &title_selectors {
             if let Ok(selector) = Selector::parse(selector_str) {
                 if let Some(el) = element.select(&selector).next() {
-                    title = el.text().collect::<String>().trim().to_string();
+                    title = self.escape_html(&el.text().collect::<String>().trim().to_string());
                     if !title.is_empty() {
                         break;
                     }
@@ -559,7 +575,8 @@ impl SmartSearchEngine {
         for selector_str in &snippet_selectors {
             if let Ok(selector) = Selector::parse(selector_str) {
                 if let Some(el) = element.select(&selector).next() {
-                    description = el.text().collect::<String>().trim().to_string();
+                    description =
+                        self.escape_html(&el.text().collect::<String>().trim().to_string());
                     description = process_string(&description).unwrap_or(description);
                     if !description.is_empty() {
                         break;
@@ -600,7 +617,7 @@ impl SmartSearchEngine {
             let title = element
                 .select(&title_selector)
                 .next()
-                .map(|el| el.text().collect::<String>().trim().to_string())
+                .map(|el| self.escape_html(&el.text().collect::<String>().trim().to_string()))
                 .unwrap_or_default();
 
             let url = element
@@ -613,7 +630,7 @@ impl SmartSearchEngine {
             let description = element
                 .select(&snippet_selector)
                 .next()
-                .map(|el| el.text().collect::<String>().trim().to_string())
+                .map(|el| self.escape_html(&el.text().collect::<String>().trim().to_string()))
                 .unwrap_or_default();
             let description = process_string(&description).unwrap_or(description);
 
@@ -652,7 +669,7 @@ impl SmartSearchEngine {
             let title = element
                 .select(&title_selector)
                 .next()
-                .map(|el| el.text().collect::<String>().trim().to_string())
+                .map(|el| self.escape_html(&el.text().collect::<String>().trim().to_string()))
                 .unwrap_or_default();
 
             let url = element
@@ -704,7 +721,7 @@ impl SmartSearchEngine {
             let title = element
                 .select(&title_selector)
                 .next()
-                .map(|el| el.text().collect::<String>().trim().to_string())
+                .map(|el| self.escape_html(&el.text().collect::<String>().trim().to_string()))
                 .unwrap_or_default();
 
             let url = element
@@ -745,6 +762,7 @@ impl SmartSearchEngine {
                 SearchEngineType::Bing => "bing",
                 SearchEngineType::Baidu => "baidu",
                 SearchEngineType::Sogou => "sogou",
+                _ => "smart_search",
             };
             let filename = format!(
                 "/tmp/search_debug_{}_{}_{}.html",
@@ -805,7 +823,7 @@ impl SmartSearchEngine {
     /// 获取引擎名称
     #[allow(dead_code)]
     fn engine_name(&self) -> &'static str {
-        "smart_search"
+        self.config.engine_type.name()
     }
 
     /// 获取引擎名称字符串
@@ -830,17 +848,27 @@ impl SmartSearchEngine {
 
 #[async_trait]
 impl SearchEngine for SmartSearchEngine {
-    async fn search(
-        &self,
-        query: &str,
-        limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
-    ) -> Result<Vec<SearchResult>, SearchError> {
-        info!(
-            "智能搜索开始: query={}, lang={:?}, country={:?}, limit={}",
-            query, lang, country, limit
-        );
+    fn name(&self) -> &'static str {
+        // SmartSearchEngine 始终返回统一的名称
+        "smart_search"
+    }
+
+    fn engine_type(&self) -> SearchEngineType {
+        self.config.engine_type
+    }
+
+    fn health(&self) -> EngineHealth {
+        EngineHealth::Healthy
+    }
+
+    #[allow(deprecated)]
+    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
+        let query = &request.query;
+        let limit = request.limit;
+        let lang: Option<&str> = None;
+        let country: Option<&str> = None;
+
+        info!("智能搜索开始: query={}, limit={}", query, limit);
 
         // 检查速率限制
         self.check_rate_limit().await?;
@@ -853,7 +881,22 @@ impl SearchEngine for SmartSearchEngine {
             self.apply_scoring(&mut scored_results, query);
             scored_results.truncate(limit as usize);
             info!("返回 {} 个测试搜索结果", scored_results.len());
-            return Ok(scored_results);
+
+            let items: Vec<ResponseItem> = scored_results
+                .into_iter()
+                .map(|r| ResponseItem {
+                    title: r.title,
+                    url: r.url,
+                    description: r.description.unwrap_or_default(),
+                    engine: self.config.engine_type,
+                })
+                .collect();
+
+            return Ok(Response {
+                items,
+                total_results: None,
+                engine: self.config.engine_type,
+            });
         }
 
         // 构建搜索URL
@@ -873,10 +916,12 @@ impl SearchEngine for SmartSearchEngine {
         );
 
         // 执行搜索，支持重试
+        let mut retries = 0;
         let scrape_response = loop {
             let timeout_duration = Duration::from_secs(self.config.timeout_seconds);
             let scrape_result =
-                tokio::time::timeout(timeout_duration, self.router.route(&scrape_request)).await;
+                tokio::time::timeout(timeout_duration, self.engine_client.scrape(&scrape_request))
+                    .await;
 
             match scrape_result {
                 Ok(Ok(response)) => {
@@ -884,22 +929,24 @@ impl SearchEngine for SmartSearchEngine {
                 }
                 Ok(Err(e)) => {
                     warn!("智能路由抓取失败: {}", e);
-                    if self.should_retry(&e) {
+                    if self.should_retry(&e) && retries < self.config.max_retries {
+                        retries += 1;
                         self.handle_retry().await;
                         continue;
                     }
-                    break Err(SearchError::NetworkError(format!(
-                        "Smart routing failed: {}",
-                        e
-                    )));
+                    break Err(SearchError::Engine(format!("Smart routing failed: {}", e)));
                 }
                 Err(_) => {
                     warn!("智能路由抓取超时");
-                    if self.config.max_retries > 0 {
+                    if retries < self.config.max_retries {
+                        retries += 1;
                         self.handle_retry().await;
                         continue;
                     }
-                    break Err(SearchError::TimeoutError(self.config.timeout_seconds));
+                    break Err(SearchError::Engine(format!(
+                        "Timeout after {} seconds",
+                        self.config.timeout_seconds
+                    )));
                 }
             }
         }?;
@@ -915,7 +962,7 @@ impl SearchEngine for SmartSearchEngine {
         // 如果HTML内容太少，可能是被拦截了
         if html.len() < 1000 {
             warn!("搜索返回的HTML内容过少，可能被反爬虫拦截");
-            return Err(SearchError::EngineError(
+            return Err(SearchError::Engine(
                 "Search returned insufficient content".to_string(),
             ));
         }
@@ -931,16 +978,27 @@ impl SearchEngine for SmartSearchEngine {
         results.truncate(limit as usize);
 
         info!("返回 {} 个最终搜索结果", results.len());
-        Ok(results)
-    }
 
-    fn name(&self) -> &'static str {
-        self.engine_name()
+        let items: Vec<ResponseItem> = results
+            .into_iter()
+            .map(|r| ResponseItem {
+                title: r.title,
+                url: r.url,
+                description: r.description.unwrap_or_default(),
+                engine: self.config.engine_type,
+            })
+            .collect();
+
+        Ok(Response {
+            items,
+            total_results: None,
+            engine: self.config.engine_type,
+        })
     }
 }
 
 /// 创建Google智能搜索引擎
-pub fn create_google_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEngine> {
+pub fn create_google_smart_search(engine_client: Arc<EngineClient>) -> Arc<dyn SearchEngine> {
     let config = SmartSearchEngineConfig {
         engine_type: SearchEngineType::Google,
         rate_limiting_enabled: true,
@@ -951,11 +1009,11 @@ pub fn create_google_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEn
         max_retries: 3,
         retry_delay_ms: 1000,
     };
-    Arc::new(SmartSearchEngine::new(router, config))
+    Arc::new(SmartSearchEngine::new(engine_client, config))
 }
 
 /// 创建Bing智能搜索引擎
-pub fn create_bing_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEngine> {
+pub fn create_bing_smart_search(engine_client: Arc<EngineClient>) -> Arc<dyn SearchEngine> {
     let config = SmartSearchEngineConfig {
         engine_type: SearchEngineType::Bing,
         rate_limiting_enabled: true,
@@ -966,11 +1024,11 @@ pub fn create_bing_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEngi
         max_retries: 3,
         retry_delay_ms: 1000,
     };
-    Arc::new(SmartSearchEngine::new(router, config))
+    Arc::new(SmartSearchEngine::new(engine_client, config))
 }
 
 /// 创建百度智能搜索引擎
-pub fn create_baidu_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEngine> {
+pub fn create_baidu_smart_search(engine_client: Arc<EngineClient>) -> Arc<dyn SearchEngine> {
     let config = SmartSearchEngineConfig {
         engine_type: SearchEngineType::Baidu,
         rate_limiting_enabled: true,
@@ -981,11 +1039,11 @@ pub fn create_baidu_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEng
         max_retries: 3,
         retry_delay_ms: 1000,
     };
-    Arc::new(SmartSearchEngine::new(router, config))
+    Arc::new(SmartSearchEngine::new(engine_client, config))
 }
 
 /// 创建搜狗智能搜索引擎
-pub fn create_sogou_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEngine> {
+pub fn create_sogou_smart_search(engine_client: Arc<EngineClient>) -> Arc<dyn SearchEngine> {
     let config = SmartSearchEngineConfig {
         engine_type: SearchEngineType::Sogou,
         rate_limiting_enabled: true,
@@ -996,29 +1054,32 @@ pub fn create_sogou_smart_search(router: Arc<EngineRouter>) -> Arc<dyn SearchEng
         max_retries: 3,
         retry_delay_ms: 1000,
     };
-    Arc::new(SmartSearchEngine::new(router, config))
+    Arc::new(SmartSearchEngine::new(engine_client, config))
 }
 
 /// 创建带配置的智能搜索引擎
 pub fn create_smart_search_engine(
-    router: Arc<EngineRouter>,
+    engine_client: Arc<EngineClient>,
     config: SmartSearchEngineConfig,
 ) -> Arc<dyn SearchEngine> {
-    Arc::new(SmartSearchEngine::new(router, config))
+    Arc::new(SmartSearchEngine::new(engine_client, config))
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::engines::client::playwright::PlaywrightEngine;
     use crate::engines::client::reqwest::ReqwestEngine;
+    use crate::engines::router::EngineRouter;
     use crate::engines::traits::ScraperEngine;
 
-    fn create_test_router() -> Arc<EngineRouter> {
+    fn create_test_client() -> Arc<EngineClient> {
         let reqwest_engine = Arc::new(ReqwestEngine);
         let playwright_engine = Arc::new(PlaywrightEngine);
         let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
-        Arc::new(EngineRouter::new(engines))
+        let router = Arc::new(EngineRouter::new(engines));
+        Arc::new(EngineClient::with_router(router))
     }
 
     fn create_test_config() -> SmartSearchEngineConfig {
@@ -1036,35 +1097,35 @@ mod tests {
 
     #[tokio::test]
     async fn test_smart_search_engine_creation() {
-        let router = create_test_router();
+        let client = create_test_client();
 
         // 测试创建Google智能搜索引擎
-        let google_engine = create_google_smart_search(router.clone());
+        let google_engine = create_google_smart_search(client.clone());
         assert_eq!(google_engine.name(), "smart_search");
 
         // 测试创建Bing智能搜索引擎
-        let bing_engine = create_bing_smart_search(router.clone());
+        let bing_engine = create_bing_smart_search(client.clone());
         assert_eq!(bing_engine.name(), "smart_search");
 
         // 测试创建百度智能搜索引擎
-        let baidu_engine = create_baidu_smart_search(router.clone());
+        let baidu_engine = create_baidu_smart_search(client.clone());
         assert_eq!(baidu_engine.name(), "smart_search");
     }
 
     #[tokio::test]
     async fn test_smart_search_engine_with_config() {
-        let router = create_test_router();
+        let client = create_test_client();
         let config = create_test_config();
 
-        let smart_engine = Arc::new(SmartSearchEngine::new(router, config));
+        let smart_engine = Arc::new(SmartSearchEngine::new(client, config));
         assert_eq!(smart_engine.name(), "smart_search");
     }
 
     #[test]
     fn test_build_search_url() {
-        let router = create_test_router();
+        let client = create_test_client();
         let config = create_test_config();
-        let smart_engine = SmartSearchEngine::new(router.clone(), config);
+        let smart_engine = SmartSearchEngine::new(client.clone(), config);
 
         // 测试Google搜索URL构建
         let google_url = smart_engine.build_search_url("rust programming", Some("en"), Some("US"));
@@ -1075,7 +1136,7 @@ mod tests {
         // 测试Bing搜索URL构建
         let mut bing_config = create_test_config();
         bing_config.engine_type = SearchEngineType::Bing;
-        let bing_smart_engine = SmartSearchEngine::new(router, bing_config);
+        let bing_smart_engine = SmartSearchEngine::new(client, bing_config);
         let bing_url =
             bing_smart_engine.build_search_url("machine learning", Some("en"), Some("US"));
         assert!(bing_url.contains("bing.com"));
@@ -1085,12 +1146,12 @@ mod tests {
 
     #[test]
     fn test_needs_js_and_tls() {
-        let router = create_test_router();
+        let client = create_test_client();
 
         // 测试Google
         let mut google_config = create_test_config();
         google_config.engine_type = SearchEngineType::Google;
-        let google_engine = SmartSearchEngine::new(router.clone(), google_config);
+        let google_engine = SmartSearchEngine::new(client.clone(), google_config);
         let (needs_js_google, needs_tls_google) = google_engine.needs_js_and_tls();
         assert!(needs_js_google);
         assert!(!needs_tls_google);
@@ -1098,7 +1159,7 @@ mod tests {
         // 测试Bing
         let mut bing_config = create_test_config();
         bing_config.engine_type = SearchEngineType::Bing;
-        let bing_engine = SmartSearchEngine::new(router.clone(), bing_config);
+        let bing_engine = SmartSearchEngine::new(client.clone(), bing_config);
         let (needs_js_bing, needs_tls_bing) = bing_engine.needs_js_and_tls();
         assert!(needs_js_bing);
         assert!(!needs_tls_bing);
@@ -1106,7 +1167,7 @@ mod tests {
         // 测试百度
         let mut baidu_config = create_test_config();
         baidu_config.engine_type = SearchEngineType::Baidu;
-        let baidu_engine = SmartSearchEngine::new(router, baidu_config);
+        let baidu_engine = SmartSearchEngine::new(client, baidu_config);
         let (needs_js_baidu, needs_tls_baidu) = baidu_engine.needs_js_and_tls();
         assert!(!needs_js_baidu);
         assert!(!needs_tls_baidu);
@@ -1125,10 +1186,10 @@ mod tests {
 
     #[test]
     fn test_create_smart_search_engine_with_config() {
-        let router = create_test_router();
+        let client = create_test_client();
         let config = create_test_config();
 
-        let engine = create_smart_search_engine(router, config);
+        let engine = create_smart_search_engine(client, config);
         assert_eq!(engine.name(), "smart_search");
     }
 }

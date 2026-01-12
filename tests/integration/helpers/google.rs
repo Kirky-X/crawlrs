@@ -1,13 +1,26 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+#![allow(deprecated)]
+
+use crawlrs::search::client::google::GoogleSearchEngine;
+
+use crawlrs::engines::client::fire_cdp::FireEngineCdp;
+use crawlrs::engines::client::fire_tls::FireEngineTls;
+use crawlrs::engines::engine_client::EngineClient;
+use std::sync::Arc;
 
 #[allow(dead_code)]
 pub fn create_google_engine() -> GoogleSearchEngine {
-    GoogleSearchEngine::new()
+    let mut engines: Vec<Arc<dyn crawlrs::engines::traits::ScraperEngine>> = Vec::new();
+    let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+    engines.push(fire_engine_cdp as Arc<dyn crawlrs::engines::traits::ScraperEngine>);
+    let fire_engine_tls = Arc::new(FireEngineTls::new());
+    engines.push(fire_engine_tls as Arc<dyn crawlrs::engines::traits::ScraperEngine>);
+    let engine_client = Arc::new(EngineClient::with_engines(engines));
+    GoogleSearchEngine::new(engine_client)
 }
 
 #[allow(dead_code)]

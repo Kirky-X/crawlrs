@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::models::task::Task;
@@ -25,7 +25,7 @@ pub enum QueueError {
 
 /// 任务队列特质（内部使用）
 #[async_trait]
-pub(crate) trait TaskQueue: Send + Sync {
+pub trait TaskQueue: Send + Sync {
     /// 入队任务
     async fn enqueue(&self, task: Task) -> Result<Task, QueueError>;
 

@@ -1,7 +1,9 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+
+#![allow(deprecated)]
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -79,8 +81,11 @@ where
 
 use crawlrs::config::settings::Settings;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
+use crawlrs::domain::services::rate_limiting_service::RateLimitConfig;
+use crawlrs::engines::client::fire_cdp::FireEngineCdp;
 use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::geolocation::GeoLocationService;
@@ -88,33 +93,36 @@ use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryI
 use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
-use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
-use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingConfig;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl;
 use crawlrs::presentation::handlers;
 use crawlrs::presentation::middleware::auth_middleware::AuthState;
 use crawlrs::queue::task_queue::TaskQueue;
+use crawlrs::search::client::baidu::BaiduSearchEngine;
+use crawlrs::search::client::bing::BingSearchEngine;
+use crawlrs::search::client::google::GoogleSearchEngine;
+use crawlrs::search::client::sogou::SogouSearchEngine;
 use crawlrs::workers::expiration_worker::ExpirationWorker;
-use crawlrs::workers::manager::WorkerManager;
 use crawlrs::workers::scrape_worker::ScrapeWorker;
 use crawlrs::workers::worker::AbstractWorker;
 use crawlrs::workers::worker::Worker;
 use migration::{Migrator, MigratorTrait};
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{
+    ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement,
+};
 use std::process::Command;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+#[allow(dead_code)]
 struct InMemoryQueue {
     tasks: Arc<std::sync::Mutex<Vec<crawlrs::domain::models::task::Task>>>,
     task_repo: Arc<TaskRepositoryImpl>,
 }
 
 impl InMemoryQueue {
+    #[allow(dead_code)]
     fn new(task_repo: Arc<TaskRepositoryImpl>) -> Self {
         Self {
             tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -125,6 +133,7 @@ impl InMemoryQueue {
 
 #[async_trait::async_trait]
 impl TaskQueue for InMemoryQueue {
+    #[allow(dead_code)]
     async fn enqueue(
         &self,
         task: crawlrs::domain::models::task::Task,
@@ -296,7 +305,16 @@ pub async fn create_test_app_with_rate_limit_options(
     // 强制使用PostgreSQL数据库，与Worker共享
     let db_url = std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string());
-    let db = Database::connect(&db_url).await.unwrap();
+
+    let mut opt = ConnectOptions::new(db_url.clone());
+    // 增加最大连接数，防止在高并发测试时耗尽连接
+    opt.max_connections(20)
+        .min_connections(1)
+        .connect_timeout(Duration::from_secs(10))
+        .idle_timeout(Duration::from_secs(10))
+        .sqlx_logging(false);
+
+    let db = Database::connect(opt).await.unwrap();
     let db_pool = Arc::new(db);
 
     Migrator::up(db_pool.as_ref(), None).await.unwrap();
@@ -400,29 +418,38 @@ pub async fn create_test_app_with_rate_limit_options(
         task_repo.clone(),
         backlog_repo.clone(),
         credits_repo.clone(),
-        RateLimitingConfig::default(),
+        RateLimitingConfig {
+            rate_limit: RateLimitConfig {
+                requests_per_minute: 1000,
+                requests_per_second: 1000,
+                bucket_capacity: Some(1000),
+                ..RateLimitConfig::default()
+            },
+            ..RateLimitingConfig::default()
+        },
     ));
 
     let reqwest_engine = Arc::new(ReqwestEngine);
     let playwright_engine = Arc::new(PlaywrightEngine);
-    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
+    let fire_engine = Arc::new(FireEngineCdp::new());
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine, fire_engine];
     let router = Arc::new(crawlrs::engines::router::EngineRouter::new(engines));
+    let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 
     let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(Arc::new(
         redis_client.clone(),
     ))));
 
-    let search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine> = Arc::new(
-        crawlrs::infrastructure::search::aggregator::SearchAggregator::new(
+    let search_engine_service: Arc<dyn crawlrs::search::engine_trait::SearchEngine> =
+        Arc::new(crawlrs::search::aggregator::SearchAggregator::new(
             vec![
-                Arc::new(GoogleSearchEngine::new()),
+                Arc::new(GoogleSearchEngine::new(engine_client.clone())),
                 Arc::new(BingSearchEngine::new()),
                 Arc::new(BaiduSearchEngine::new()),
                 Arc::new(SogouSearchEngine::new()),
             ],
             10000,
-        ),
-    );
+        ));
 
     let geo_location_service = GeoLocationService::new();
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
@@ -484,7 +511,7 @@ pub async fn create_test_app_with_rate_limit_options(
     let llm_service = Box::new(crawlrs::domain::services::llm_service::LLMService::new(
         &settings,
     ));
-    let extraction_service = Arc::new(
+    let _extraction_service = Arc::new(
         crawlrs::domain::services::extraction_service::ExtractionService::new(llm_service),
     );
     let create_scrape_use_case = Arc::new(
@@ -492,7 +519,7 @@ pub async fn create_test_app_with_rate_limit_options(
     );
 
     // 创建 Webhook 服务
-    let webhook_service = Arc::new(
+    let _webhook_service = Arc::new(
         crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl::new(
             "test-secret".to_string(),
         ),
@@ -536,6 +563,8 @@ pub async fn create_test_app_with_rate_limit_options(
             let settings = worker_settings.clone();
 
             tokio::spawn(async move {
+                // Use default engine client which will eventually be replaced by the one from factory
+                let engine_client = Arc::new(EngineClient::with_router(router));
                 let worker = ScrapeWorker::new(
                     task_repo,
                     result_repo,
@@ -543,7 +572,7 @@ pub async fn create_test_app_with_rate_limit_options(
                     storage_repo,
                     webhook_event_repo,
                     credits_repo,
-                    router,
+                    engine_client,
                     create_scrape_use_case,
                     redis,
                     robots_checker,
@@ -596,7 +625,7 @@ fn create_router(
     >,
     router: Arc<crawlrs::engines::router::EngineRouter>,
     robots_checker: Arc<crawlrs::utils::robots::RobotsChecker>,
-    search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine>,
+    search_engine_service: Arc<dyn crawlrs::search::SearchEngine>,
     geo_restriction_repo: Arc<DatabaseGeoRestrictionRepository>,
     team_service: Arc<crawlrs::domain::services::team_service::TeamService>,
     rate_limiter: Arc<crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter>,
@@ -947,17 +976,19 @@ pub async fn create_test_app_no_worker() -> TestApp {
         redis_client.clone(),
     ))));
 
-    let search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine> = Arc::new(
-        crawlrs::infrastructure::search::aggregator::SearchAggregator::new(
+    // 创建搜索引擎实例
+    let _google_engine_client = Arc::new(EngineClient::default());
+    let google_engine_client = Arc::new(EngineClient::default());
+    let search_engine_service: Arc<dyn crawlrs::search::engine_trait::SearchEngine> =
+        Arc::new(crawlrs::search::aggregator::SearchAggregator::new(
             vec![
-                Arc::new(GoogleSearchEngine::new()),
+                Arc::new(GoogleSearchEngine::new(google_engine_client)),
                 Arc::new(BingSearchEngine::new()),
                 Arc::new(BaiduSearchEngine::new()),
                 Arc::new(SogouSearchEngine::new()),
             ],
             10000,
-        ),
-    );
+        ));
 
     let geo_location_service = GeoLocationService::new();
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));

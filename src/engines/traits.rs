@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 #![deprecated(
@@ -212,6 +212,23 @@ pub trait ScraperEngine: Send + Sync {
 
     /// 引擎名称
     fn name(&self) -> &'static str;
+
+    // 引擎能力方法 - 替代硬编码的引擎名检查
+
+    /// 是否支持截图
+    fn supports_screenshot(&self) -> bool {
+        true
+    }
+
+    /// 是否支持 JavaScript
+    fn supports_javascript(&self) -> bool {
+        true
+    }
+
+    /// 是否支持 TLS 指纹
+    fn supports_tls_fingerprint(&self) -> bool {
+        false
+    }
 }
 
 // Conversion methods for EngineClient

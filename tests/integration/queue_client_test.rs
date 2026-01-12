@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use async_trait::async_trait;
@@ -253,19 +253,19 @@ async fn test_enqueue_batch() {
             "scrape",
             "https://example1.com",
             serde_json::json!({}),
-            team_id.clone(),
+            team_id,
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example2.com",
             serde_json::json!({}),
-            team_id.clone(),
+            team_id,
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example3.com",
             serde_json::json!({}),
-            team_id.clone(),
+            team_id,
         ),
     ];
 
@@ -289,25 +289,25 @@ async fn test_enqueue_batch_exceeds_max() {
             "scrape",
             "https://example1.com",
             serde_json::json!({}),
-            team_id.clone(),
+            team_id,
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example2.com",
             serde_json::json!({}),
-            team_id.clone(),
+            team_id,
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example3.com",
             serde_json::json!({}),
-            team_id.clone(),
+            team_id,
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example4.com",
             serde_json::json!({}),
-            team_id.clone(),
+            team_id,
         ),
     ];
 

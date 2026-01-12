@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use chrono::{DateTime, FixedOffset, Utc};
@@ -10,8 +10,7 @@ use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::presentation::handlers::task_handler::wait_for_tasks_completion;
 use sea_orm::Database;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::{sleep, Instant};
+use tokio::time::Instant;
 use uuid::Uuid;
 
 fn create_test_task_with_status(

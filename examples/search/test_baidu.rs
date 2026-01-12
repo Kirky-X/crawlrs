@@ -1,11 +1,11 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 //! Baidu 搜索引擎真实搜索测试
 
-use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
+use crawlrs::search::client::baidu::BaiduSearchEngine;
 use crawlrs::utils::search_test::run_engine_test_with_output;
 use tokio::time::{timeout, Duration};
 use tracing::info;

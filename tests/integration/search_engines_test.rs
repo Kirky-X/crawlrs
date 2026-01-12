@@ -1,13 +1,17 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crawlrs::domain::search::engine::SearchEngine;
-use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
-use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
+#![allow(deprecated)]
+
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::search::client::{
+    BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SogouSearchEngine,
+};
+use crawlrs::search::{SearchEngine, SearchRequest};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::time::{timeout, Duration};
@@ -22,8 +26,14 @@ async fn run_concurrent_search_tests(
 
     test_mode.apply();
 
+    // Create EngineClient for Google
+    let reqwest_engine = Arc::new(ReqwestEngine);
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines));
+
     let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
-        ("Google", Arc::new(GoogleSearchEngine::new())),
+        ("Google", Arc::new(GoogleSearchEngine::new(engine_client))),
         ("Bing", Arc::new(BingSearchEngine::new())),
         ("Baidu", Arc::new(BaiduSearchEngine::new())),
         ("Sogou", Arc::new(SogouSearchEngine::new())),
@@ -43,7 +53,8 @@ async fn run_concurrent_search_tests(
 
             println!("🔍 开始测试 {} 搜索引擎...", engine_name);
 
-            let search_future = engine.search(&test_query, max_results, None, None);
+            let request = SearchRequest::new(&test_query).with_limit(max_results);
+            let search_future = engine.search(&request);
             let result = timeout(timeout_duration, search_future).await;
 
             match result {
@@ -51,10 +62,10 @@ async fn run_concurrent_search_tests(
                     println!(
                         "✅ {} 搜索成功，返回 {} 条结果",
                         engine_name,
-                        search_results.len()
+                        search_results.items.len()
                     );
 
-                    if search_results.is_empty() {
+                    if search_results.items.is_empty() {
                         println!("⚠️  {} 未返回任何搜索结果", engine_name);
                         return (engine_name.clone(), false, "无搜索结果".to_string());
                     }
@@ -62,7 +73,7 @@ async fn run_concurrent_search_tests(
                     let mut valid_results = 0;
                     let mut contains_gemini = 0;
 
-                    for (idx, result) in search_results.iter().enumerate() {
+                    for (idx, result) in search_results.items.iter().enumerate() {
                         if idx < 3 {
                             println!(
                                 "  {} 结果 {}: {} - {}",
@@ -78,11 +89,7 @@ async fn run_concurrent_search_tests(
                         }
 
                         let title_lower = result.title.to_lowercase();
-                        let desc_lower = result
-                            .description
-                            .as_ref()
-                            .map(|d| d.to_lowercase())
-                            .unwrap_or_default();
+                        let desc_lower = result.description.to_lowercase();
                         if title_lower.contains("gemini") || desc_lower.contains("gemini") {
                             contains_gemini += 1;
                         }
@@ -101,7 +108,7 @@ async fn run_concurrent_search_tests(
                         (
                             engine_name.clone(),
                             true,
-                            format!("成功返回 {} 个相关结果", search_results.len()),
+                            format!("成功返回 {} 个相关结果", search_results.items.len()),
                         )
                     }
                 }
@@ -269,8 +276,14 @@ async fn test_search_engine_performance() {
 
     println!("⚡ 开始搜索引擎性能测试...");
 
+    // Create EngineClient for Google
+    let reqwest_engine = Arc::new(ReqwestEngine);
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines_list: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines_list));
+
     let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
-        ("Google", Arc::new(GoogleSearchEngine::new())),
+        ("Google", Arc::new(GoogleSearchEngine::new(engine_client))),
         ("Bing", Arc::new(BingSearchEngine::new())),
         ("Baidu", Arc::new(BaiduSearchEngine::new())),
         ("Sogou", Arc::new(SogouSearchEngine::new())),
@@ -282,7 +295,8 @@ async fn test_search_engine_performance() {
         println!("🔍 测试 {} 性能...", engine_name);
 
         let start_time = std::time::Instant::now();
-        let result = engine.search(test_query, max_results, None, None).await;
+        let request = SearchRequest::new(test_query).with_limit(max_results);
+        let result = engine.search(&request).await;
         let duration = start_time.elapsed();
 
         match result {
@@ -291,9 +305,9 @@ async fn test_search_engine_performance() {
                     "✅ {} 性能测试完成，耗时: {:?}，返回 {} 条结果",
                     engine_name,
                     duration,
-                    search_results.len()
+                    search_results.items.len()
                 );
-                performance_results.push((engine_name, duration, search_results.len(), true));
+                performance_results.push((engine_name, duration, search_results.items.len(), true));
             }
             Err(error) => {
                 println!(
@@ -325,8 +339,14 @@ async fn test_search_engine_performance() {
 async fn test_search_engine_error_handling() {
     println!("🧪 测试搜索引擎错误处理...");
 
+    // Create EngineClient for Google
+    let reqwest_engine = Arc::new(ReqwestEngine);
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines_list: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines_list));
+
     let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
-        ("Google", Arc::new(GoogleSearchEngine::new())),
+        ("Google", Arc::new(GoogleSearchEngine::new(engine_client))),
         ("Bing", Arc::new(BingSearchEngine::new())),
         ("Baidu", Arc::new(BaiduSearchEngine::new())),
         ("Sogou", Arc::new(SogouSearchEngine::new())),
@@ -335,9 +355,14 @@ async fn test_search_engine_error_handling() {
     for (engine_name, engine) in &engines {
         println!("🔍 测试 {} 空查询处理...", engine_name);
 
-        match engine.search("", 10, None, None).await {
+        let request = SearchRequest::new("").with_limit(10);
+        match engine.search(&request).await {
             Ok(results) => {
-                println!("✅ {} 空查询返回 {} 条结果", engine_name, results.len());
+                println!(
+                    "✅ {} 空查询返回 {} 条结果",
+                    engine_name,
+                    results.items.len()
+                );
             }
             Err(error) => {
                 println!("✅ {} 空查询正确处理: {}", engine_name, error);
@@ -348,12 +373,13 @@ async fn test_search_engine_error_handling() {
     for (engine_name, engine) in &engines {
         println!("🔍 测试 {} 特殊字符查询...", engine_name);
 
-        match engine.search("gemini!@#$%^&*()", 5, None, None).await {
+        let request = SearchRequest::new("gemini!@#$%^&*()").with_limit(5);
+        match engine.search(&request).await {
             Ok(results) => {
                 println!(
                     "✅ {} 特殊字符查询返回 {} 条结果",
                     engine_name,
-                    results.len()
+                    results.items.len()
                 );
             }
             Err(error) => {
@@ -379,8 +405,14 @@ async fn test_search_results_comparison() {
 
     println!("🔍 比较不同搜索引擎的结果...");
 
+    // Create EngineClient for Google
+    let reqwest_engine = Arc::new(ReqwestEngine);
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines_list: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines_list));
+
     let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
-        ("Google", Arc::new(GoogleSearchEngine::new())),
+        ("Google", Arc::new(GoogleSearchEngine::new(engine_client))),
         ("Bing", Arc::new(BingSearchEngine::new())),
         ("Baidu", Arc::new(BaiduSearchEngine::new())),
         ("Sogou", Arc::new(SogouSearchEngine::new())),
@@ -391,7 +423,8 @@ async fn test_search_results_comparison() {
     for (engine_name, engine) in engines {
         println!("🔍 获取 {} 的搜索结果...", engine_name);
 
-        match engine.search(test_query, max_results, None, None).await {
+        let request = SearchRequest::new(test_query).with_limit(max_results);
+        match engine.search(&request).await {
             Ok(results) => {
                 all_results.insert(engine_name, results);
             }
@@ -407,10 +440,10 @@ async fn test_search_results_comparison() {
     println!("{}", "=".repeat(50));
 
     for (engine_name, results) in &all_results {
-        println!("🔍 {}: {} 条结果", engine_name, results.len());
+        println!("🔍 {}: {} 条结果", engine_name, results.items.len());
 
         let mut domains = std::collections::HashSet::new();
-        for result in results {
+        for result in &results.items {
             if let Ok(url) = url::Url::parse(&result.url) {
                 if let Some(domain) = url.domain() {
                     domains.insert(domain.to_string());
@@ -431,12 +464,12 @@ async fn test_search_results_comparison() {
         let first_engine = engine_names[0];
         let first_results = &all_results[first_engine];
 
-        for result in first_results {
+        for result in &first_results.items {
             let mut found_in = vec![first_engine];
 
             for other_engine in engine_names.iter().skip(1) {
                 let other_results = &all_results[other_engine];
-                if other_results.iter().any(|r| r.url == result.url) {
+                if other_results.items.iter().any(|r| r.url == result.url) {
                     found_in.push(other_engine);
                 }
             }

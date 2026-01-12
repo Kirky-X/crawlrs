@@ -1,10 +1,10 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use sea_orm_migration::prelude::*;
 use sea_orm::DbBackend;
+use sea_orm_migration::prelude::*;
 
 /// 地理限制功能迁移 - 为团队添加地理限制和IP白名单功能
 #[derive(DeriveMigrationName)]
@@ -29,7 +29,7 @@ impl MigrationTrait for Migration {
 
         // AllowedCountries
         if backend == DbBackend::Sqlite {
-             manager
+            manager
                 .alter_table(
                     Table::alter()
                         .table(Teams::Table)
@@ -37,13 +37,15 @@ impl MigrationTrait for Migration {
                             ColumnDef::new(Teams::AllowedCountries)
                                 .text() // Use text for SQLite compatibility
                                 .null()
-                                .comment("允许的国家代码列表，如 [\"US\", \"CN\"]，null 表示无限制"),
+                                .comment(
+                                    "允许的国家代码列表，如 [\"US\", \"CN\"]，null 表示无限制",
+                                ),
                         )
                         .to_owned(),
                 )
                 .await?;
         } else {
-             manager
+            manager
                 .alter_table(
                     Table::alter()
                         .table(Teams::Table)
@@ -51,7 +53,9 @@ impl MigrationTrait for Migration {
                             ColumnDef::new(Teams::AllowedCountries)
                                 .json()
                                 .null()
-                                .comment("允许的国家代码列表，如 [\"US\", \"CN\"]，null 表示无限制"),
+                                .comment(
+                                    "允许的国家代码列表，如 [\"US\", \"CN\"]，null 表示无限制",
+                                ),
                         )
                         .to_owned(),
                 )
@@ -60,7 +64,7 @@ impl MigrationTrait for Migration {
 
         // BlockedCountries
         if backend == DbBackend::Sqlite {
-             manager
+            manager
                 .alter_table(
                     Table::alter()
                         .table(Teams::Table)
@@ -68,13 +72,15 @@ impl MigrationTrait for Migration {
                             ColumnDef::new(Teams::BlockedCountries)
                                 .text() // Use text for SQLite compatibility
                                 .null()
-                                .comment("阻止的国家代码列表，如 [\"RU\", \"KP\"]，null 表示无限制"),
+                                .comment(
+                                    "阻止的国家代码列表，如 [\"RU\", \"KP\"]，null 表示无限制",
+                                ),
                         )
                         .to_owned(),
                 )
                 .await?;
         } else {
-             manager
+            manager
                 .alter_table(
                     Table::alter()
                         .table(Teams::Table)
@@ -82,7 +88,9 @@ impl MigrationTrait for Migration {
                             ColumnDef::new(Teams::BlockedCountries)
                                 .json()
                                 .null()
-                                .comment("阻止的国家代码列表，如 [\"RU\", \"KP\"]，null 表示无限制"),
+                                .comment(
+                                    "阻止的国家代码列表，如 [\"RU\", \"KP\"]，null 表示无限制",
+                                ),
                         )
                         .to_owned(),
                 )
@@ -91,7 +99,7 @@ impl MigrationTrait for Migration {
 
         // IpWhitelist
         if backend == DbBackend::Sqlite {
-             manager
+            manager
                 .alter_table(
                     Table::alter()
                         .table(Teams::Table)
@@ -105,7 +113,7 @@ impl MigrationTrait for Migration {
                 )
                 .await?;
         } else {
-             manager
+            manager
                 .alter_table(
                     Table::alter()
                         .table(Teams::Table)
@@ -122,7 +130,7 @@ impl MigrationTrait for Migration {
 
         // DomainBlacklist
         if backend == DbBackend::Sqlite {
-             manager
+            manager
                 .alter_table(
                     Table::alter()
                         .table(Teams::Table)
@@ -136,7 +144,7 @@ impl MigrationTrait for Migration {
                 )
                 .await?;
         } else {
-             manager
+            manager
                 .alter_table(
                     Table::alter()
                         .table(Teams::Table)
@@ -172,13 +180,34 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(GeoRestrictionLogs::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(GeoRestrictionLogs::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(GeoRestrictionLogs::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(GeoRestrictionLogs::TeamId).uuid().not_null())
-                    .col(ColumnDef::new(GeoRestrictionLogs::IpAddress).string().not_null())
-                    .col(ColumnDef::new(GeoRestrictionLogs::CountryCode).string().null())
-                    .col(ColumnDef::new(GeoRestrictionLogs::RestrictionType).string().not_null())
+                    .col(
+                        ColumnDef::new(GeoRestrictionLogs::IpAddress)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(GeoRestrictionLogs::CountryCode)
+                            .string()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(GeoRestrictionLogs::RestrictionType)
+                            .string()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(GeoRestrictionLogs::Url).string().null())
-                    .col(ColumnDef::new(GeoRestrictionLogs::Reason).string().not_null())
+                    .col(
+                        ColumnDef::new(GeoRestrictionLogs::Reason)
+                            .string()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(GeoRestrictionLogs::CreatedAt)
                             .timestamp_with_time_zone()

@@ -1,14 +1,9 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crawlrs::engines::client::fire_cdp::FireEngineCdp;
-use crawlrs::engines::client::fire_tls::FireEngineTls;
-use crawlrs::engines::client::playwright::PlaywrightEngine;
-use crawlrs::engines::client::reqwest::ReqwestEngine;
-use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
-use std::collections::HashMap;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
 use std::time::Duration;
 use testcontainers::{runners::AsyncRunner, GenericImage};
 use tracing::info;
@@ -16,21 +11,7 @@ use tracing::info;
 const TEST_URL: &str = "https://news.sina.com.cn/c/xl/2025-12-17/doc-inhcaekp2520228.shtml";
 
 fn create_base_request() -> ScrapeRequest {
-    ScrapeRequest {
-        url: TEST_URL.to_string(),
-        headers: HashMap::new(),
-        timeout: Duration::from_secs(60), // Increased timeout for FlareSolverr
-        needs_js: false,
-        needs_screenshot: false,
-        screenshot_config: None,
-        mobile: false,
-        proxy: None,
-        skip_tls_verification: false,
-        needs_tls_fingerprint: false,
-        use_fire_engine: false,
-        actions: vec![],
-        sync_wait_ms: 0,
-    }
+    ScrapeRequest::new(TEST_URL).timeout(Duration::from_secs(60)) // Increased timeout for FlareSolverr
 }
 
 async fn wait_for_flaresolverr(base_url: &str) {
@@ -81,15 +62,15 @@ async fn wait_for_flaresolverr(base_url: &str) {
 
 #[tokio::test]
 async fn test_real_world_reqwest_engine() {
-    let engine = ReqwestEngine;
+    let client = EngineClient::new();
     let request = create_base_request();
 
-    info!("Testing ReqwestEngine with URL: {}", TEST_URL);
-    let result = engine.scrape(&request).await;
+    info!("Testing EngineClient (reqwest) with URL: {}", TEST_URL);
+    let result = client.scrape(&request).await;
 
     match result {
         Ok(response) => {
-            info!("=== ReqwestEngine 抓取结果 ===");
+            info!("=== EngineClient (reqwest) 抓取结果 ===");
             info!("状态码: {}", response.status_code);
             info!("内容长度: {} 字符", response.content.len());
             info!("响应内容预览 (前500字符):");
@@ -103,14 +84,14 @@ async fn test_real_world_reqwest_engine() {
             );
         }
         Err(e) => {
-            panic!("ReqwestEngine failed: {:?}", e);
+            panic!("EngineClient (reqwest) failed: {:?}", e);
         }
     }
 }
 
 #[tokio::test]
 async fn test_real_world_playwright_engine() {
-    info!("Testing PlaywrightEngine with existing Chrome container...");
+    info!("Testing EngineClient (playwright) with existing Chrome container...");
 
     // Check if Chrome is available via environment variable
     let chrome_url = std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL")
@@ -118,19 +99,18 @@ async fn test_real_world_playwright_engine() {
 
     info!("Using Chrome at: {}", chrome_url);
 
-    let engine = PlaywrightEngine;
-    let mut request = create_base_request();
-    request.needs_js = true;
+    let client = EngineClient::new();
+    let request = create_base_request().needs_js();
 
-    info!("Testing PlaywrightEngine with URL: {}", TEST_URL);
+    info!("Testing EngineClient (playwright) with URL: {}", TEST_URL);
 
     let result = crawlrs::engines::client::playwright::REMOTE_URL_OVERRIDE
-        .scope(chrome_url.clone(), async { engine.scrape(&request).await })
+        .scope(chrome_url.clone(), async { client.scrape(&request).await })
         .await;
 
     match result {
         Ok(response) => {
-            info!("=== PlaywrightEngine 抓取结果 ===");
+            info!("=== EngineClient (playwright) 抓取结果 ===");
             info!("状态码: {}", response.status_code);
             info!("内容长度: {} 字符", response.content.len());
             info!("响应内容预览 (前500字符):");
@@ -144,7 +124,7 @@ async fn test_real_world_playwright_engine() {
             );
         }
         Err(e) => {
-            panic!("PlaywrightEngine failed: {:?}", e);
+            panic!("EngineClient (playwright) failed: {:?}", e);
         }
     }
 }
@@ -168,19 +148,25 @@ async fn test_real_world_fire_engine_cdp() {
 
     std::env::set_var("FIRE_ENGINE_CDP_URL", &api_url);
 
-    let engine = FireEngineCdp::new();
-    let mut request = create_base_request();
-    request.needs_js = true;
-    request.use_fire_engine = true;
+    let client = EngineClient::new();
+    let options = ScrapeOptions::builder()
+        .needs_js(true)
+        .use_fire_engine(true)
+        .timeout(Duration::from_secs(60))
+        .build();
+    let request = ScrapeRequest::new(TEST_URL).with_options(options);
 
-    info!("Testing FireEngineCdp with URL: {}", TEST_URL);
-    let result = engine.scrape(&request).await;
+    info!(
+        "Testing EngineClient (FireEngineCdp) with URL: {}",
+        TEST_URL
+    );
+    let result = client.scrape(&request).await;
 
     std::env::remove_var("FIRE_ENGINE_CDP_URL");
 
     match result {
         Ok(response) => {
-            info!("=== FireEngineCdp 抓取结果 ===");
+            info!("=== EngineClient (FireEngineCdp) 抓取结果 ===");
             info!("状态码: {}", response.status_code);
             info!("内容长度: {} 字符", response.content.len());
             info!("响应内容预览 (前500字符):");
@@ -194,7 +180,7 @@ async fn test_real_world_fire_engine_cdp() {
             );
         }
         Err(e) => {
-            panic!("FireEngineCdp failed: {:?}", e);
+            panic!("EngineClient (FireEngineCdp) failed: {:?}", e);
         }
     }
 }
@@ -218,19 +204,25 @@ async fn test_real_world_fire_engine_tls() {
 
     std::env::set_var("FIRE_ENGINE_TLS_URL", &api_url);
 
-    let engine = FireEngineTls::new();
-    let mut request = create_base_request();
-    request.needs_tls_fingerprint = true;
-    request.use_fire_engine = true;
+    let client = EngineClient::new();
+    let options = ScrapeOptions::builder()
+        .needs_tls_fingerprint(true)
+        .use_fire_engine(true)
+        .timeout(Duration::from_secs(60))
+        .build();
+    let request = ScrapeRequest::new(TEST_URL).with_options(options);
 
-    info!("Testing FireEngineTls with URL: {}", TEST_URL);
-    let result = engine.scrape(&request).await;
+    info!(
+        "Testing EngineClient (FireEngineTls) with URL: {}",
+        TEST_URL
+    );
+    let result = client.scrape(&request).await;
 
     std::env::remove_var("FIRE_ENGINE_TLS_URL");
 
     match result {
         Ok(response) => {
-            info!("=== FireEngineTls 抓取结果 ===");
+            info!("=== EngineClient (FireEngineTls) 抓取结果 ===");
             info!("状态码: {}", response.status_code);
             info!("内容长度: {} 字符", response.content.len());
             info!("响应内容预览 (前500字符):");
@@ -244,7 +236,7 @@ async fn test_real_world_fire_engine_tls() {
             );
         }
         Err(e) => {
-            panic!("FireEngineTls failed: {:?}", e);
+            panic!("EngineClient (FireEngineTls) failed: {:?}", e);
         }
     }
 }

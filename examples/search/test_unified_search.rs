@@ -1,17 +1,23 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+
+#![allow(deprecated)]
 
 //! 统一搜索引擎测试入口
 //!
 //! 支持同时测试所有搜索引擎，统一输出格式和 URL 可访问性检查
 
-use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
-use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::search::client::baidu::BaiduSearchEngine;
+use crawlrs::search::client::bing::BingSearchEngine;
+use crawlrs::search::client::google::GoogleSearchEngine;
+use crawlrs::search::client::sogou::SogouSearchEngine;
 use crawlrs::utils::search_test::{run_engine_test_with_output, TestResult};
+use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 use tracing::info;
 
@@ -43,7 +49,12 @@ async fn main() {
         "[1/4] 测试 Google 搜索引擎 (超时 {} 秒)...",
         ENGINE_TIMEOUT_SECS
     );
-    let google_engine = GoogleSearchEngine::new();
+    // Create EngineClient
+    let reqwest_engine = Arc::new(ReqwestEngine);
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines));
+    let google_engine = GoogleSearchEngine::new(engine_client);
     match timeout(
         timeout_duration,
         run_engine_test_with_output(
@@ -138,12 +149,7 @@ async fn main() {
     info!("==========================================");
 }
 
-fn print_summary(
-    results: &[(
-        &str,
-        &Result<TestResult, crawlrs::domain::search::engine::SearchError>,
-    )],
-) {
+fn print_summary(results: &[(&str, &anyhow::Result<TestResult>)]) {
     info!("");
     info!("==========================================");
     info!("测试结果汇总");

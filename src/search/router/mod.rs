@@ -1,9 +1,8 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::search_result::SearchResult;
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
@@ -297,15 +296,17 @@ impl SearchEngineRouter {
         let mut rng = rand::rng();
         let mut random_weight = rng.random_range(0.0..total_weight);
 
-        for (_, engine, _) in &candidates {
-            let success_rate = self
-                .metrics
-                .read()
-                .get(engine.name())
-                .map(|m| m.success_rate())
-                .unwrap_or(1.0);
-
-            let weight = success_rate * 100.0;
+        for (_, engine, metrics_ref) in &candidates {
+            // 使用与 total_weight 一致的权重计算公式
+            let success_weight = metrics_ref.success_rate() * 100.0;
+            let speed_weight = if metrics_ref.avg_response_time.as_secs_f64() < 1.0 {
+                100.0
+            } else if metrics_ref.avg_response_time.as_secs_f64() < 5.0 {
+                50.0
+            } else {
+                10.0
+            };
+            let weight = success_weight * 0.7 + speed_weight * 0.3;
             random_weight -= weight;
             if random_weight <= 0.0 {
                 return Some(engine.clone());
@@ -352,7 +353,6 @@ impl SearchEngineRouter {
         request: &SearchRequest,
         preferred: Option<&str>,
     ) -> Result<Response<ResponseItem>, SearchError> {
-        let start_time = Instant::now();
         let mut last_error: Option<SearchError> = None;
         let attempted_engines: Vec<String> = Vec::new();
 
@@ -393,6 +393,9 @@ impl SearchEngineRouter {
         }
 
         for (name, engine) in &sorted_engines {
+            // 为每个引擎单独计时
+            let engine_start_time = Instant::now();
+
             // 记录请求开始
             {
                 let mut metrics = self.metrics.write();
@@ -404,7 +407,7 @@ impl SearchEngineRouter {
             match tokio::time::timeout(self.config.request_timeout, engine.search(request)).await {
                 Ok(Ok(response)) => {
                     // 记录成功
-                    let response_time = start_time.elapsed();
+                    let response_time = engine_start_time.elapsed();
                     {
                         let mut metrics = self.metrics.write();
                         if let Some(m) = metrics.get_mut(name) {
@@ -469,7 +472,7 @@ impl SearchEngineRouter {
         self.metrics
             .read()
             .get(name)
-            .map(|m| m.health.clone())
+            .map(|m| m.health)
             .unwrap_or(EngineHealth::Healthy)
     }
 
@@ -638,9 +641,9 @@ impl SearchEngine for SmartSearchEngineWrapper {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::Arc;
 
     #[derive(Clone)]
+    #[allow(dead_code)]
     struct MockSearchEngine {
         name: &'static str,
         should_fail: bool,
@@ -648,6 +651,7 @@ mod tests {
     }
 
     impl MockSearchEngine {
+        #[allow(dead_code)]
         fn new(name: &'static str, should_fail: bool, response_time_ms: u64) -> Self {
             Self {
                 name,
@@ -682,10 +686,7 @@ mod tests {
             tokio::time::sleep(self.response_time).await;
 
             if self.should_fail {
-                Err(SearchError::EngineError(format!(
-                    "{} engine failed",
-                    self.name
-                )))
+                Err(SearchError::Engine(format!("{} engine failed", self.name)))
             } else {
                 Ok(Response {
                     items: vec![ResponseItem {
@@ -715,8 +716,7 @@ mod tests {
             request_timeout: std::time::Duration::from_secs(30),
             health_check_interval: Duration::from_secs(60),
             unhealthy_recovery_time: Duration::from_secs(300),
-            enable_auto_failover: true,
-            enable_load_balancing: true,
+            max_retries: 3,
         };
         let router = SearchEngineRouter::with_config(config.clone());
         assert_eq!(router.config.request_timeout, config.request_timeout);

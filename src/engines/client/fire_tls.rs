@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 #![allow(deprecated)]
@@ -151,5 +151,15 @@ impl ScraperEngine for FireEngineTls {
 
     fn name(&self) -> &'static str {
         "fire_engine_tls"
+    }
+
+    // 覆盖能力方法 - FireEngineTls 不支持截图和 JavaScript
+
+    fn supports_screenshot(&self) -> bool {
+        false
+    }
+
+    fn supports_javascript(&self) -> bool {
+        false
     }
 }

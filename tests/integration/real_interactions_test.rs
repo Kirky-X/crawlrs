@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use chrono::Duration;
@@ -8,8 +8,8 @@ use chrono::{DateTime, FixedOffset, Utc};
 use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
 use crawlrs::presentation::handlers::task_handler::wait_for_tasks_completion;
+use crawlrs::search::client::bing::BingSearchEngine;
 use migration::MigratorTrait;
 use sea_orm::Database;
 use std::sync::Arc;
@@ -159,7 +159,7 @@ async fn test_real_task_lifecycle_with_search_integration() {
     "#;
 
     let search_results = search_engine
-        .parse_search_results(real_search_html, "rust programming")
+        .parse_search_results(real_search_html)
         .await
         .unwrap();
     assert_eq!(search_results.len(), 2);
@@ -170,11 +170,17 @@ async fn test_real_task_lifecycle_with_search_integration() {
         "The Rust Programming Language Book"
     );
     assert_eq!(search_results[0].url, "https://doc.rust-lang.org/book/");
-    assert_eq!(search_results[0].engine, "bing");
+    assert_eq!(
+        search_results[0].engine,
+        crawlrs::search::types::SearchEngineType::Bing
+    );
 
     assert_eq!(search_results[1].title, "Rust Programming Language");
     assert_eq!(search_results[1].url, "https://rust-lang.org/");
-    assert_eq!(search_results[1].engine, "bing");
+    assert_eq!(
+        search_results[1].engine,
+        crawlrs::search::types::SearchEngineType::Bing
+    );
 }
 
 /// Test real error handling using real dependencies

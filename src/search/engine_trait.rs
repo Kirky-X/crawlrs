@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use async_trait::async_trait;
@@ -16,6 +16,8 @@ pub struct SearchRequest {
     pub engine: Option<SearchEngineType>,
     pub limit: u32,
     pub offset: u32,
+    pub lang: Option<String>,
+    pub country: Option<String>,
 }
 
 impl SearchRequest {
@@ -25,6 +27,8 @@ impl SearchRequest {
             engine: None,
             limit: 10,
             offset: 0,
+            lang: None,
+            country: None,
         }
     }
 
@@ -41,6 +45,22 @@ impl SearchRequest {
     pub fn with_offset(mut self, offset: u32) -> Self {
         self.offset = offset;
         self
+    }
+
+    pub fn with_lang(mut self, lang: &str) -> Self {
+        self.lang = Some(lang.to_string());
+        self
+    }
+
+    pub fn with_country(mut self, country: &str) -> Self {
+        self.country = Some(country.to_string());
+        self
+    }
+}
+
+impl Default for SearchRequest {
+    fn default() -> Self {
+        Self::new("")
     }
 }
 
@@ -60,9 +80,14 @@ pub trait SearchEngine: Send + Sync {
         limit: u32,
         _lang: Option<&str>,
         _country: Option<&str>,
-        _engine: Option<&str>,
+        engine: Option<&str>,
     ) -> Result<Vec<ResponseItem>, SearchError> {
-        let request = SearchRequest::new(query).with_limit(limit);
+        let mut request = SearchRequest::new(query).with_limit(limit);
+        if let Some(engine_name) = engine {
+            if let Some(engine_type) = SearchEngineType::from_name(engine_name) {
+                request = request.with_engine(engine_type);
+            }
+        }
         let response = self.search(&request).await?;
         Ok(response.items)
     }

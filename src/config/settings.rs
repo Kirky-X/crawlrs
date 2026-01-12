@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use config::{Config, ConfigError, Environment, File};
@@ -261,14 +261,14 @@ impl Settings {
         // 验证端口范围
         if self.server.port == 0 {
             return Err(ConfigError::Message(
-                "Invalid port number: port must be between 1 and 65535",
+                "Invalid port number: port must be between 1 and 65535".to_string(),
             ));
         }
 
         // 验证 A/B 测试权重范围
         if self.search.variant_b_weight < 0.0 || self.search.variant_b_weight > 1.0 {
             return Err(ConfigError::Message(
-                "Invalid variant_b_weight: must be between 0.0 and 1.0",
+                "Invalid variant_b_weight: must be between 0.0 and 1.0".to_string(),
             ));
         }
 
@@ -276,7 +276,7 @@ impl Settings {
         if let Some(max_conn) = self.database.max_connections {
             if max_conn == 0 {
                 return Err(ConfigError::Message(
-                    "Invalid max_connections: must be greater than 0",
+                    "Invalid max_connections: must be greater than 0".to_string(),
                 ));
             }
         }
@@ -284,7 +284,7 @@ impl Settings {
         if let Some(min_conn) = self.database.min_connections {
             if min_conn == 0 {
                 return Err(ConfigError::Message(
-                    "Invalid min_connections: must be greater than 0",
+                    "Invalid min_connections: must be greater than 0".to_string(),
                 ));
             }
         }
@@ -292,19 +292,18 @@ impl Settings {
         // 验证存储类型
         if self.storage.storage_type != "local" && self.storage.storage_type != "s3" {
             return Err(ConfigError::Message(
-                "Invalid storage_type: must be 'local' or 's3'",
+                "Invalid storage_type: must be 'local' or 's3'".to_string(),
             ));
         }
 
         // 验证 S3 配置完整性
-        if self.storage.storage_type == "s3" {
-            if self.storage.s3_bucket.is_none()
-                || self.storage.s3_bucket.as_ref().unwrap().is_empty()
-            {
-                return Err(ConfigError::Message(
-                    "S3 bucket must be configured when storage_type is 's3'",
-                ));
-            }
+        if self.storage.storage_type == "s3"
+            && (self.storage.s3_bucket.is_none()
+                || self.storage.s3_bucket.as_ref().unwrap().is_empty())
+        {
+            return Err(ConfigError::Message(
+                "S3 bucket must be configured when storage_type is 's3'".to_string(),
+            ));
         }
 
         Ok(())

@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 //! Common HTML parser for search engine results
@@ -8,7 +8,6 @@
 
 use super::{ResponseItem, SearchEngineType};
 use scraper::{Html, Selector};
-use std::collections::HashMap;
 
 /// Common HTML result parser for search engines
 pub struct HtmlParser {
@@ -28,8 +27,10 @@ impl HtmlParser {
         snippet_selectors: Vec<&str>,
     ) -> Self {
         Self {
-            title_selector: Selector::parse(title_selector).unwrap_or_else(|_| Selector::parse("h3").unwrap()),
-            link_selector: Selector::parse(link_selector).unwrap_or_else(|_| Selector::parse("a[href]").unwrap()),
+            title_selector: Selector::parse(title_selector)
+                .unwrap_or_else(|_| Selector::parse("h3").unwrap()),
+            link_selector: Selector::parse(link_selector)
+                .unwrap_or_else(|_| Selector::parse("a[href]").unwrap()),
             snippet_selectors: snippet_selectors
                 .iter()
                 .map(|s| Selector::parse(s).unwrap_or_else(|_| Selector::parse("p").unwrap()))
@@ -53,32 +54,27 @@ impl HtmlParser {
 
     /// Create parser for Bing-style results
     pub fn for_bing() -> Self {
-        Self::new(
-            vec!["li.b_algo"],
-            "h2",
-            "a[href]",
-            vec!["p"],
-        )
+        Self::new(vec!["li.b_algo"], "h2", "a[href]", vec!["p"])
     }
 
     /// Create parser for Baidu-style results
     pub fn for_baidu() -> Self {
         Self::new(
-            vec!["div.c-container", "div.result"],
-            "h3 a",
+            vec![
+                "div.c-container",
+                "div.result",
+                "div.result-op",
+                ".c-container",
+            ],
+            "h3",
             "a",
-            vec!["div.c-abstract"],
+            vec!["div.c-abstract", ".c-abstract", ".c-span18"],
         )
     }
 
     /// Create parser for Sogou-style results
     pub fn for_sogou() -> Self {
-        Self::new(
-            vec![".vrwrap", ".rb"],
-            "h3",
-            "h3 > a",
-            vec![],
-        )
+        Self::new(vec![".vrwrap", ".rb"], "h3", "h3 > a", vec![])
     }
 
     /// Parse HTML content and extract search results
@@ -87,45 +83,65 @@ impl HtmlParser {
         let mut results = Vec::new();
 
         // Try each result selector until we find matches
-        let result_elements = self.result_selectors.iter()
+        let result_elements = self
+            .result_selectors
+            .iter()
             .find_map(|s| {
                 let elements: Vec<_> = document.select(s).collect();
-                if !elements.is_empty() { Some(elements) } else { None }
+                if !elements.is_empty() {
+                    Some(elements)
+                } else {
+                    None
+                }
             })
             .unwrap_or_default();
 
         for element in result_elements {
             // Extract title
-            let title = element.select(&self.title_selector).next()
+            let title = element
+                .select(&self.title_selector)
+                .next()
                 .map(|e| e.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
 
-            if title.is_empty() { continue; }
+            if title.is_empty() {
+                continue;
+            }
 
             // Extract URL
             let url = {
                 let mut found_url = String::new();
                 if let Some(a) = element.select(&self.link_selector).next() {
                     if let Some(href) = a.value().attr("href") {
-                        if !href.is_empty() { found_url = Self::clean_url(href); }
+                        if !href.is_empty() {
+                            found_url = Self::clean_url(href);
+                        }
                     }
                 }
                 found_url
             };
 
-            if url.is_empty() || !url.starts_with("http") { continue; }
+            if url.is_empty() || !url.starts_with("http") {
+                continue;
+            }
 
             // Extract snippet
-            let description = self.snippet_selectors.iter()
+            let description = self
+                .snippet_selectors
+                .iter()
                 .find_map(|s| {
-                    element.select(s).next()
+                    element
+                        .select(s)
+                        .next()
                         .map(|e| e.text().collect::<String>().trim().to_string())
                         .filter(|t| !t.is_empty())
                 })
                 .unwrap_or_default();
 
             // Deduplicate by URL
-            if results.iter().any(|r| r.url == url) { continue; }
+            if results.iter().any(|r: &ResponseItem| r.url == url) {
+                continue;
+            }
 
             results.push(ResponseItem {
                 title: Self::escape_html(&title),
@@ -141,7 +157,11 @@ impl HtmlParser {
     /// Clean and normalize URLs
     pub fn clean_url(url: &str) -> String {
         if url.starts_with("/url?q=") {
-            url.trim_start_matches("/url?q=").split('&').next().unwrap_or(url).to_string()
+            url.trim_start_matches("/url?q=")
+                .split('&')
+                .next()
+                .unwrap_or(url)
+                .to_string()
         } else if url.starts_with("/") && !url.starts_with("//") {
             format!("https://www.google.com{}", url)
         } else {
@@ -151,7 +171,7 @@ impl HtmlParser {
 
     /// Escape HTML entities to prevent XSS
     pub fn escape_html(text: &str) -> String {
-        html_escape::decode_html_entities(text).trim().to_string()
+        html_escape::encode_text(text).trim().to_string()
     }
 }
 
@@ -220,7 +240,10 @@ mod tests {
     #[test]
     fn test_clean_url_relative() {
         let url = "/path/to/page";
-        assert_eq!(HtmlParser::clean_url(url), "https://www.google.com/path/to/page");
+        assert_eq!(
+            HtmlParser::clean_url(url),
+            "https://www.google.com/path/to/page"
+        );
     }
 
     #[test]
@@ -233,8 +256,8 @@ mod tests {
     #[test]
     fn test_user_agent_manager() {
         let mut manager = UserAgentManager::new();
-        let ua1 = manager.get();
-        let ua2 = manager.get();
+        let ua1 = manager.get().to_string();
+        let ua2 = manager.get().to_string();
         assert!(!ua1.is_empty());
         assert!(!ua2.is_empty());
     }

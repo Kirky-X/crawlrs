@@ -1,17 +1,19 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::search::client::google::GoogleSearchEngine;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[tokio::test]
 async fn test_google_arc_id_generation() {
-    let engine = GoogleSearchEngine::new();
+    let engine = GoogleSearchEngine::new(Arc::new(EngineClient::new()));
 
     // When: 首次获取 ARC_ID
-    let arc_id_1 = engine.get_arc_id(0).await;
+    let arc_id_1: String = engine.get_arc_id(0).await;
 
     // Then: 格式正确
     assert!(arc_id_1.starts_with("arc_id:srp_"));
@@ -27,7 +29,7 @@ async fn test_google_arc_id_generation() {
 
 #[tokio::test]
 async fn test_google_arc_id_refresh_after_hour() {
-    let engine = GoogleSearchEngine::new();
+    let engine = GoogleSearchEngine::new(Arc::new(EngineClient::new()));
 
     // Given: 获取初始 ARC_ID
     let arc_id_1 = engine.get_arc_id(0).await;
@@ -52,11 +54,11 @@ fn test_google_result_parsing() {
         </div>
     "#;
 
-    let engine = GoogleSearchEngine::new();
+    let engine = GoogleSearchEngine::new(Arc::new(EngineClient::new()));
     let results = engine.parse_results(html).unwrap();
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].title, "Test Title");
     assert_eq!(results[0].url, "https://example.com");
-    assert_eq!(results[0].description.clone().unwrap(), "Test description");
+    assert_eq!(results[0].description.clone(), "Test description");
 }

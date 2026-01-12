@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 /// 集成测试模块
@@ -29,4 +29,5 @@ pub mod scrape_handler_test;
 pub mod search_engines_test;
 pub mod search_uat_test;
 pub mod uat_scenarios_test;
+pub mod verify_google_routing;
 pub mod webhook_test;

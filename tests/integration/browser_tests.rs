@@ -1,7 +1,10 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+
+#![allow(dead_code)]
+#![allow(deprecated)]
 
 use super::helpers::browser_helpers::create_scrape_request;
 use super::helpers::google_helpers::{get_chrome_ws_url, set_chrome_ws_url};
@@ -73,6 +76,7 @@ pub async fn test_google_search(needs_js: bool, timeout_secs: u64) -> bool {
     }
 }
 
+#[allow(dead_code)]
 pub async fn test_google_search_with_query(query: &str, timeout_secs: u64) -> bool {
     let url = format!(
         "https://www.google.com/search?q={}",

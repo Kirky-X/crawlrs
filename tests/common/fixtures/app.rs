@@ -1,7 +1,10 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+
+#![allow(dead_code)]
+#![allow(deprecated)]
 
 /// TestApp 测试固件
 ///
@@ -23,9 +26,9 @@ use tower::Service;
 use uuid::Uuid;
 
 use crawlrs::config::settings::Settings;
-use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::geolocation::GeoLocationService;
@@ -33,14 +36,14 @@ use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryI
 use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
-use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
-use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingConfig;
 use crawlrs::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl;
 use crawlrs::presentation::handlers;
 use crawlrs::presentation::middleware::auth_middleware::AuthState;
+use crawlrs::search::client::baidu::BaiduSearchEngine;
+use crawlrs::search::client::bing::BingSearchEngine;
+use crawlrs::search::client::google::GoogleSearchEngine;
+use crawlrs::search::client::sogou::SogouSearchEngine;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 // === ConnectInfoService ===
@@ -288,6 +291,11 @@ impl TestAppFixture {
 
         let reqwest_engine = Arc::new(ReqwestEngine);
         let playwright_engine = Arc::new(PlaywrightEngine);
+
+        let engines_for_client: Vec<Arc<dyn ScraperEngine>> =
+            vec![reqwest_engine.clone(), playwright_engine.clone()];
+        let engine_client = Arc::new(EngineClient::with_engines(engines_for_client));
+
         let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
         let router = Arc::new(crawlrs::engines::router::EngineRouter::new(engines));
 
@@ -295,18 +303,16 @@ impl TestAppFixture {
             redis_client.clone(),
         ))));
 
-        let search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine> =
-            Arc::new(
-                crawlrs::infrastructure::search::aggregator::SearchAggregator::new(
-                    vec![
-                        Arc::new(GoogleSearchEngine::new()),
-                        Arc::new(BingSearchEngine::new()),
-                        Arc::new(BaiduSearchEngine::new()),
-                        Arc::new(SogouSearchEngine::new()),
-                    ],
-                    10000,
-                ),
-            );
+        let search_engine_service: Arc<dyn crawlrs::search::engine_trait::SearchEngine> =
+            Arc::new(crawlrs::search::aggregator::SearchAggregator::new(
+                vec![
+                    Arc::new(GoogleSearchEngine::new(engine_client)),
+                    Arc::new(BingSearchEngine::new()),
+                    Arc::new(BaiduSearchEngine::new()),
+                    Arc::new(SogouSearchEngine::new()),
+                ],
+                10000,
+            ));
 
         let geo_location_service = GeoLocationService::new();
         let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
@@ -359,7 +365,7 @@ impl TestAppFixture {
 
     /// 创建低速率限制的 TestApp
     pub async fn with_low_rate_limit() -> Self {
-        let mut fixture = Self::with_options(TestAppOptions {
+        let fixture = Self::with_options(TestAppOptions {
             rate_limit_enabled: true,
             use_redis: true,
             redis_port: 6381,
@@ -391,7 +397,7 @@ fn create_router(
     >,
     router: Arc<crawlrs::engines::router::EngineRouter>,
     robots_checker: Arc<crawlrs::utils::robots::RobotsChecker>,
-    search_engine_service: Arc<dyn crawlrs::domain::search::engine::SearchEngine>,
+    search_engine_service: Arc<dyn crawlrs::search::engine_trait::SearchEngine>,
     geo_restriction_repo: Arc<DatabaseGeoRestrictionRepository>,
     team_service: Arc<crawlrs::domain::services::team_service::TeamService>,
     rate_limiter: Arc<crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter>,

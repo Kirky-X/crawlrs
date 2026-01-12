@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crawlrs::application::dto::extract_request::ExtractRequestDto;
@@ -88,7 +88,7 @@ async fn test_extract_with_rules_credit_deduction() {
     println!("Task ID: {}", task_id);
 
     // 直接从数据库检查任务状态
-    use crawlrs::infrastructure::database::entities::task::{self, Entity as TaskEntity};
+    use crawlrs::infrastructure::database::entities::task::Entity as TaskEntity;
     use sea_orm::EntityTrait;
     use uuid::Uuid;
 
@@ -111,7 +111,6 @@ async fn test_extract_with_rules_credit_deduction() {
         }
     }
 
-    let mut task_completed = false;
     let mut last_status = String::new();
     for _i in 0..60 {
         let status_response = app
@@ -146,7 +145,6 @@ async fn test_extract_with_rules_credit_deduction() {
         }
 
         if status == "completed" {
-            task_completed = true;
             break;
         } else if status == "failed" {
             panic!("Task failed with status: {:?}", status_data);

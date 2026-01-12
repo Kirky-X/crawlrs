@@ -1,10 +1,11 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crate::config::settings::Settings;
-use crate::domain::services::llm_service::{LLMService, LLMServiceTrait, TokenUsage};
+pub use crate::domain::services::llm_service::TokenUsage;
+use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
 use anyhow::Result;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};

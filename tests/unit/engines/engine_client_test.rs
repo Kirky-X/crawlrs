@@ -1,17 +1,17 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 //! Unit tests for EngineClient
 
 #[cfg(test)]
 mod engine_client_tests {
-    use crate::engine_client::{
+    use crawlrs::engines::engine_client::{
         EngineClient, EngineError, EngineHealthStatus, PageAction, ScrapeOptions, ScrapeRequest,
-        ScreenshotConfig, ScrollDirection,
+        ScrapeResponse, ScreenshotConfig, ScrollDirection,
     };
-    use std::sync::Arc;
+
     use std::time::Duration;
 
     // === ScrapeRequest Tests ===
@@ -335,7 +335,7 @@ mod engine_client_tests {
         let client = EngineClient::new();
         let request = ScrapeRequest::new("not-a-valid-url");
 
-        let result = client.scrape(&request).await;
+        let result: Result<ScrapeResponse, EngineError> = client.scrape(&request).await;
 
         assert!(result.is_err());
         match result {
@@ -357,7 +357,7 @@ mod engine_client_tests {
         let client = EngineClient::new();
         let request = ScrapeRequest::new("http://localhost:8080");
 
-        let result = client.scrape(&request).await;
+        let result: Result<ScrapeResponse, EngineError> = client.scrape(&request).await;
 
         assert!(result.is_err());
         match result {
@@ -410,7 +410,7 @@ mod engine_client_tests {
 
     #[test]
     fn test_multiple_page_actions() {
-        let actions = vec![
+        let actions = [
             PageAction::Wait { milliseconds: 1000 },
             PageAction::Click {
                 selector: "#btn".to_string(),

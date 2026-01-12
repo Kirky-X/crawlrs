@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use dashmap::DashMap;
@@ -47,8 +47,11 @@ impl TeamSemaphore {
     /// # 返回值
     ///
     /// 返回一个信号量许可
-    pub async fn acquire(&self, team_id: Uuid) -> OwnedSemaphorePermit {
-        self.get_or_create(team_id).acquire_owned().await.unwrap()
+    pub async fn acquire(
+        &self,
+        team_id: Uuid,
+    ) -> Result<OwnedSemaphorePermit, tokio::sync::AcquireError> {
+        self.get_or_create(team_id).acquire_owned().await
     }
 
     /// 获取或创建指定团队的信号量

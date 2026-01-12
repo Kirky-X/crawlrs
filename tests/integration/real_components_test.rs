@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use chrono::Duration;
@@ -10,7 +10,7 @@ use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
 use crawlrs::domain::services::llm_service::LLMService;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
+use crawlrs::search::client::bing::BingSearchEngine;
 use migration::MigratorTrait;
 use sea_orm::Database;
 use serde_json::json;
@@ -23,6 +23,7 @@ pub struct RealTestContext {
     pub db_pool: Arc<sea_orm::DatabaseConnection>,
     pub task_repo: Arc<TaskRepositoryImpl>,
     pub search_engine: BingSearchEngine,
+    #[allow(dead_code)]
     pub llm_service: LLMService,
     pub team_id: Uuid,
 }
@@ -163,24 +164,30 @@ async fn test_real_search_engine_parsing() {
 
     let results = ctx
         .search_engine
-        .parse_search_results(realistic_html, "test query")
+        .parse_search_results(realistic_html)
         .await
         .unwrap();
 
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].title, "Test Result 1");
     assert_eq!(results[0].url, "https://example.com/result1");
-    assert_eq!(results[0].engine, "bing");
+    assert_eq!(
+        results[0].engine,
+        crawlrs::search::types::SearchEngineType::Bing
+    );
 
     assert_eq!(results[1].title, "Test Result 2");
     assert_eq!(results[1].url, "https://example.com/result2");
-    assert_eq!(results[1].engine, "bing");
+    assert_eq!(
+        results[1].engine,
+        crawlrs::search::types::SearchEngineType::Bing
+    );
 }
 
 /// Test real LLM service error handling
 #[tokio::test]
 async fn test_real_llm_service_error_handling() {
-    let ctx = RealTestContext::new().await;
+    let _ctx = RealTestContext::new().await;
 
     let test_text = "The product costs $29.99 and has 4.5 stars.";
     let schema = json!({

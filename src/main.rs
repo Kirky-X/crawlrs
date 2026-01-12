@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use axum::Extension;
@@ -15,7 +15,9 @@ use crawlrs::engines::client::fire_cdp::FireEngineCdp;
 use crawlrs::engines::client::fire_tls::FireEngineTls;
 use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::engines::router::EngineRouter;
+#[allow(deprecated)]
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::database::connection;
@@ -56,10 +58,10 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::info;
 
-use crawlrs::domain::search::engine::SearchEngine;
-use crawlrs::infrastructure::search::aggregator::SearchAggregator;
-
-use crawlrs::infrastructure::search::smart_search;
+use crawlrs::search::ab_test::SearchABTestEngine;
+use crawlrs::search::aggregator::SearchAggregator;
+use crawlrs::search::engine_trait::SearchEngine;
+use crawlrs::search::smart as smart_search;
 
 use crawlrs::utils::telemetry;
 use migration::{Migrator, MigratorTrait};
@@ -214,6 +216,7 @@ async fn main() -> anyhow::Result<()> {
     let playwright_engine = Arc::new(PlaywrightEngine);
     let fire_engine_tls = Arc::new(FireEngineTls::new());
     let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+    #[allow(deprecated)]
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![
         reqwest_engine,
         playwright_engine,
@@ -221,25 +224,34 @@ async fn main() -> anyhow::Result<()> {
         fire_engine_cdp,
     ];
     let router = Arc::new(EngineRouter::new(engines));
+    let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 
     // 初始化智能搜索引擎（使用EngineRouter进行智能路由）
     let mut search_engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
 
     // 创建Google智能搜索引擎
-    search_engines.push(smart_search::create_google_smart_search(router.clone()));
+    search_engines.push(smart_search::create_google_smart_search(
+        engine_client.clone(),
+    ));
 
     // 如果有Bing API密钥，创建Bing智能搜索引擎
     if let Some(key) = settings.bing_search.api_key.clone() {
         if !key.is_empty() {
-            search_engines.push(smart_search::create_bing_smart_search(router.clone()));
+            search_engines.push(smart_search::create_bing_smart_search(
+                engine_client.clone(),
+            ));
         }
     }
 
     // 创建百度智能搜索引擎
-    search_engines.push(smart_search::create_baidu_smart_search(router.clone()));
+    search_engines.push(smart_search::create_baidu_smart_search(
+        engine_client.clone(),
+    ));
 
     // 创建搜狗智能搜索引擎
-    search_engines.push(smart_search::create_sogou_smart_search(router.clone()));
+    search_engines.push(smart_search::create_sogou_smart_search(
+        engine_client.clone(),
+    ));
 
     let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
 
@@ -251,13 +263,11 @@ async fn main() -> anyhow::Result<()> {
             "Search A/B testing enabled, weight: {}",
             settings.search.variant_b_weight
         );
-        Arc::new(
-            crawlrs::infrastructure::search::ab_test::SearchABTestEngine::new(
-                search_aggregator.clone(),
-                search_aggregator, // 实际应用中这里应该是不同的引擎实现
-                settings.search.variant_b_weight,
-            ),
-        )
+        Arc::new(SearchABTestEngine::new(
+            search_aggregator.clone(),
+            search_aggregator, // 实际应用中这里应该是不同的引擎实现
+            settings.search.variant_b_weight,
+        ))
     } else {
         search_aggregator
     };
@@ -518,7 +528,7 @@ async fn main() -> anyhow::Result<()> {
                 storage_repo,
                 webhook_event_repository.clone(),
                 credits_repo.clone(),
-                router.clone(),
+                engine_client.clone(),
                 create_scrape_use_case.clone(),
                 (*redis_client).clone(),
                 robots_checker.clone(),

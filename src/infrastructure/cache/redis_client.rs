@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use anyhow::Result;
@@ -98,6 +98,41 @@ impl RedisClient {
         let mut con = self.client.get_multiplexed_async_connection().await?;
         con.expire::<_, ()>(key, seconds as i64).await?;
         Ok(())
+    }
+
+    /// 向有序集合添加成员
+    pub async fn zadd(&self, key: &str, member: &str, score: f64) -> Result<()> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        con.zadd::<_, _, _, ()>(key, member, score).await?;
+        Ok(())
+    }
+
+    /// 从有序集合移除成员
+    pub async fn zrem(&self, key: &str, member: &str) -> Result<()> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        con.zrem::<_, _, ()>(key, member).await?;
+        Ok(())
+    }
+
+    /// 获取有序集合的成员数量
+    pub async fn zcard(&self, key: &str) -> Result<u64> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        let count: u64 = con.zcard(key).await?;
+        Ok(count)
+    }
+
+    /// 移除有序集合中指定分数范围的成员
+    pub async fn zrembyscore(&self, key: &str, min: f64, max: f64) -> Result<u64> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        let count: u64 = con.zrembyscore(key, min, max).await?;
+        Ok(count)
+    }
+
+    /// 获取有序集合中成员的排名（从0开始，按分数从小到大）
+    pub async fn zrank(&self, key: &str, member: &str) -> Result<Option<usize>> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        let rank: Option<usize> = con.zrank(key, member).await?;
+        Ok(rank)
     }
 
     /// 增加键的值

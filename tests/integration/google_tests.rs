@@ -1,11 +1,13 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use super::helpers::google_helpers::{create_google_engine, get_chrome_ws_url, set_chrome_ws_url};
-use crawlrs::domain::search::engine::SearchEngine;
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+use crawlrs::search::client::google::GoogleSearchEngine;
+use crawlrs::search::response::{Response, ResponseItem};
+use crawlrs::search::types::SearchEngineType;
+use crawlrs::search::{SearchEngine, SearchError, SearchRequest};
 use reqwest;
 use serde_json;
 
@@ -82,19 +84,22 @@ async fn test_flaresolverr_google_request(client: &reqwest::Client, query: &str)
 async fn test_google_with_google_engine(google_engine: &GoogleSearchEngine, query: &str) -> bool {
     println!("\n🔍 搜索关键词: {}", query);
 
-    match google_engine
-        .search(query, 3, Some("zh-CN"), Some("CN"))
-        .await
-    {
-        Ok(results) => {
-            println!("✓ 搜索成功！找到 {} 个结果", results.len());
+    let request = SearchRequest::new(query)
+        .with_limit(3)
+        .with_lang("zh-CN")
+        .with_country("CN");
 
-            for (i, result) in results.iter().enumerate().take(2) {
+    match google_engine.search(&request).await {
+        Ok(results) => {
+            println!("✓ 搜索成功！找到 {} 个结果", results.items.len());
+
+            for (i, result) in results.items.iter().enumerate().take(2) {
                 println!("  {}. {} - {}", i + 1, result.title, result.url);
-                if let Some(ref description) = result.description {
-                    if !description.is_empty() {
-                        println!("     描述: {}", &description[..100.min(description.len())]);
-                    }
+                if !result.description.is_empty() {
+                    println!(
+                        "     描述: {}",
+                        &result.description[..100.min(result.description.len())]
+                    );
                 }
             }
             true
@@ -112,19 +117,22 @@ async fn test_flaresolverr_google_engine(
 ) -> bool {
     println!("\n🔍 使用FlareSolverr搜索关键词: {}", query);
 
-    match flaresolverr_engine
-        .search(query, 5, Some("en"), Some("US"))
-        .await
-    {
-        Ok(results) => {
-            println!("✓ 搜索成功！找到 {} 个结果", results.len());
+    let request = SearchRequest::new(query)
+        .with_limit(5)
+        .with_lang("en")
+        .with_country("US");
 
-            for (i, result) in results.iter().enumerate() {
+    match flaresolverr_engine.search(&request).await {
+        Ok(results) => {
+            println!("✓ 搜索成功！找到 {} 个结果", results.items.len());
+
+            for (i, result) in results.items.iter().enumerate() {
                 println!("  {}. {} - {}", i + 1, result.title, result.url);
-                if let Some(ref description) = result.description {
-                    if !description.is_empty() {
-                        println!("     描述: {}", &description[..100.min(description.len())]);
-                    }
+                if !result.description.is_empty() {
+                    println!(
+                        "     描述: {}",
+                        &result.description[..100.min(result.description.len())]
+                    );
                 }
             }
             true
@@ -188,41 +196,41 @@ impl FlareSolverrGoogleEngine {
 
 #[async_trait::async_trait]
 impl SearchEngine for FlareSolverrGoogleEngine {
-    async fn search(
-        &self,
-        query: &str,
-        max_results: u32,
-        _lang: Option<&str>,
-        _country: Option<&str>,
-    ) -> Result<
-        Vec<crawlrs::domain::models::search_result::SearchResult>,
-        crawlrs::domain::search::engine::SearchError,
-    > {
+    fn name(&self) -> &'static str {
+        "FlareSolverrGoogle"
+    }
+
+    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         let url = format!(
             "https://www.google.com/search?q={}&num={}",
-            query.replace(' ', "+"),
-            max_results
+            request.query.replace(' ', "+"),
+            request.limit
         );
 
         let html = self
             .flaresolverr_request(&url)
             .await
-            .map_err(crawlrs::domain::search::engine::SearchError::NetworkError)?;
+            .map_err(SearchError::Engine)?;
 
-        let results = self.parse_results(&html);
-        Ok(results)
+        let items = self.parse_results(&html);
+        Ok(Response {
+            items,
+            total_results: None,
+            engine: SearchEngineType::Google,
+        })
     }
 
-    fn name(&self) -> &'static str {
-        "flaresolverr_google"
+    fn engine_type(&self) -> SearchEngineType {
+        SearchEngineType::Google
+    }
+
+    fn health(&self) -> crawlrs::search::types::EngineHealth {
+        crawlrs::search::types::EngineHealth::Unknown
     }
 }
 
 impl FlareSolverrGoogleEngine {
-    fn parse_results(
-        &self,
-        html: &str,
-    ) -> Vec<crawlrs::domain::models::search_result::SearchResult> {
+    fn parse_results(&self, html: &str) -> Vec<ResponseItem> {
         use scraper::{Html, Selector};
         let document = Html::parse_document(html);
         let title_selector = Selector::parse("h3").unwrap();
@@ -245,13 +253,11 @@ impl FlareSolverrGoogleEngine {
                             .map(|el| el.text().collect::<String>())
                             .unwrap_or_default();
 
-                        results.push(crawlrs::domain::models::search_result::SearchResult {
+                        results.push(ResponseItem {
                             title: title.text().collect::<String>(),
                             url,
-                            description: Some(description),
-                            engine: "google".to_string(),
-                            score: 0.0,
-                            published_time: None,
+                            description,
+                            engine: SearchEngineType::Google,
                         });
                     }
                 }
@@ -355,10 +361,18 @@ async fn test_google_multiple_queries() {
             query, lang, country
         );
 
-        match google_engine.search(query, 5, lang, country).await {
+        let mut request = SearchRequest::new(query).with_limit(5);
+        if let Some(l) = lang {
+            request = request.with_lang(l);
+        }
+        if let Some(c) = country {
+            request = request.with_country(c);
+        }
+
+        match google_engine.search(&request).await {
             Ok(results) => {
-                println!("✓ 搜索成功！找到 {} 个结果", results.len());
-                for (i, result) in results.iter().enumerate().take(3) {
+                println!("✓ 搜索成功！找到 {} 个结果", results.items.len());
+                for (i, result) in results.items.iter().enumerate().take(3) {
                     println!("  {}. {}", i + 1, result.title);
                 }
             }

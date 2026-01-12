@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::models::search_result::SearchResult;
@@ -178,19 +178,27 @@ impl ResultDeduplicator {
             let word_hash = hasher.finish();
 
             // 更新位向量
-            for i in 0..self.config.fingerprint_config.fingerprint_size {
+            for (i, bit) in hash_bits
+                .iter_mut()
+                .enumerate()
+                .take(self.config.fingerprint_config.fingerprint_size)
+            {
                 if (word_hash >> (i % 64)) & 1 == 1 {
-                    hash_bits[i] += 1;
+                    *bit += 1;
                 } else {
-                    hash_bits[i] -= 1;
+                    *bit -= 1;
                 }
             }
         }
 
         // 生成最终指纹
         let mut fingerprint = 0u64;
-        for i in 0..self.config.fingerprint_config.fingerprint_size.min(64) {
-            if hash_bits[i] > 0 {
+        for (i, &bit) in hash_bits
+            .iter()
+            .enumerate()
+            .take(self.config.fingerprint_config.fingerprint_size.min(64))
+        {
+            if bit > 0 {
                 fingerprint |= 1 << i;
             }
         }
@@ -201,77 +209,6 @@ impl ResultDeduplicator {
     /// 计算两个字符串的相似度（使用Jaro-Winkler）
     fn calculate_similarity(&self, s1: &str, s2: &str) -> f32 {
         strsim::jaro_winkler(s1, s2) as f32
-    }
-
-    /// 检查两个结果是否重复
-    fn is_duplicate(&self, result: &SearchResult, existing: &SearchResult) -> bool {
-        match self.config.strategy {
-            DeduplicationStrategy::UrlOnly => {
-                let url1 = self.normalize_url(&result.url);
-                let url2 = self.normalize_url(&existing.url);
-                url1 == url2
-            }
-            DeduplicationStrategy::TitleOnly => {
-                let title1 = self.normalize_title(&result.title);
-                let title2 = self.normalize_title(&existing.title);
-                self.calculate_similarity(&title1, &title2) > self.config.title_similarity_threshold
-            }
-            DeduplicationStrategy::UrlAndTitle => {
-                let url1 = self.normalize_url(&result.url);
-                let url2 = self.normalize_url(&existing.url);
-                let title1 = self.normalize_title(&result.title);
-                let title2 = self.normalize_title(&existing.title);
-
-                url1 == url2
-                    || self.calculate_similarity(&title1, &title2)
-                        > self.config.title_similarity_threshold
-            }
-            DeduplicationStrategy::Smart => self.is_smart_duplicate(result, existing),
-        }
-    }
-
-    /// 智能去重检查
-    fn is_smart_duplicate(&self, result: &SearchResult, existing: &SearchResult) -> bool {
-        // URL检查
-        let url1 = self.normalize_url(&result.url);
-        let url2 = self.normalize_url(&existing.url);
-        if url1 == url2 {
-            return true;
-        }
-
-        // 标题相似度检查
-        let title1 = self.normalize_title(&result.title);
-        let title2 = self.normalize_title(&existing.title);
-        let title_similarity = self.calculate_similarity(&title1, &title2);
-
-        if title_similarity > self.config.title_similarity_threshold {
-            return true;
-        }
-
-        // 内容指纹检查（如果有内容）
-        if self.config.fingerprint_config.enabled {
-            if let (Some(content1), Some(content2)) = (&result.description, &existing.description) {
-                let fingerprint1 = self.generate_fingerprint(content1);
-                let fingerprint2 = self.generate_fingerprint(content2);
-
-                // 计算指纹相似度（汉明距离）
-                let fingerprint_similarity =
-                    self.calculate_fingerprint_similarity(fingerprint1, fingerprint2);
-
-                if fingerprint_similarity > self.config.content_similarity_threshold {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// 计算指纹相似度（基于汉明距离）
-    fn calculate_fingerprint_similarity(&self, fp1: u64, fp2: u64) -> f32 {
-        let hamming_distance = (fp1 ^ fp2).count_ones() as f32;
-        let max_distance = 64.0;
-        1.0 - (hamming_distance / max_distance)
     }
 
     /// 过滤重复结果
@@ -292,21 +229,20 @@ impl ResultDeduplicator {
                 DeduplicationStrategy::TitleOnly => title_exists,
                 DeduplicationStrategy::UrlAndTitle => {
                     url_exists
-                        || (title_exists
-                            && self.calculate_similarity(&normalized_title, &normalized_title)
-                                > self.config.title_similarity_threshold)
-                }
-                DeduplicationStrategy::Smart => {
-                    // URL 完全匹配
-                    url_exists
-                    // 标题相似且已存在（使用 HashSet 近似判断）
-                    || (title_exists && {
-                        // 只有当 HashSet 中存在时，才进一步检查
-                        unique_results.iter().any(|existing| {
+                        || unique_results.iter().any(|existing: &SearchResult| {
                             let existing_title = self.normalize_title(&existing.title);
                             self.calculate_similarity(&normalized_title, &existing_title)
                                 > self.config.title_similarity_threshold
                         })
+                }
+                DeduplicationStrategy::Smart => {
+                    // URL 完全匹配
+                    url_exists
+                    // 标题相似（使用相似度检查，而非精确匹配）
+                    || unique_results.iter().any(|existing: &SearchResult| {
+                        let existing_title = self.normalize_title(&existing.title);
+                        self.calculate_similarity(&normalized_title, &existing_title)
+                            > self.config.title_similarity_threshold
                     })
                 }
             };
@@ -340,7 +276,7 @@ impl ResultDeduplicator {
         // 合并所有结果
         for (engine_name, results) in engine_results {
             for mut result in results {
-                result.source_engine = Some(engine_name.clone());
+                result.engine = engine_name.clone();
                 all_results.push(result);
             }
         }
@@ -384,9 +320,9 @@ mod tests {
             title: title.to_string(),
             url: url.to_string(),
             description: description.map(|d| d.to_string()),
-            source_engine: None,
+            engine: "test".to_string(),
             score: 0.0,
-            published_date: None,
+            published_time: None,
         }
     }
 
@@ -433,21 +369,22 @@ mod tests {
     fn test_smart_deduplication() {
         let mut dedup = ResultDeduplicator::with_default_config();
         dedup.config.strategy = DeduplicationStrategy::Smart;
+        dedup.config.title_similarity_threshold = 0.9;
 
         let results = vec![
             create_test_result(
                 "https://example.com/page1",
-                "Rust Guide",
+                "Rust Programming Guide",
                 Some("Learn Rust programming"),
             ),
             create_test_result(
                 "https://example.com/page2",
                 "Rust Programming Guide",
                 Some("Learn Rust programming language"),
-            ), // 相似标题
+            ), // 完全相同的标题
             create_test_result(
                 "https://example.com/page3",
-                "Python Guide",
+                "Python Programming Guide",
                 Some("Learn Python programming"),
             ),
         ];

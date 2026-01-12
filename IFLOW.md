@@ -48,6 +48,7 @@ crawlrs/
 │   │   ├── search/         # 搜索引擎抽象
 │   │   ├── services/       # 领域服务
 │   │   └── use_cases/      # 领域用例
+│   ├── search/             # 搜索引擎实现 (新架构)
 │   ├── engines/            # 抓取引擎实现
 │   │   ├── reqwest_engine.rs      # HTTP 引擎
 │   │   ├── playwright_engine.rs   # 浏览器引擎
@@ -61,10 +62,6 @@ crawlrs/
 │   │   ├── cache/          # 缓存实现
 │   │   ├── database/       # 数据库连接
 │   │   ├── repositories/   # 仓储实现
-│   │   ├── search/         # 搜索实现
-│   │   │   ├── aggregator.rs      # 搜索聚合器
-│   │   │   ├── ab_test.rs         # A/B 测试引擎
-│   │   │   └── smart_search.rs    # 智能搜索引擎
 │   │   ├── services/       # 基础设施服务
 │   │   ├── observability/  # 可观测性
 │   │   ├── geolocation.rs  # 地理位置服务
@@ -342,7 +339,6 @@ cargo bench
 3. **基础设施层 (Infrastructure)**: 外部依赖实现
    - `repositories/`: 仓储实现（TaskRepositoryImpl, ScrapeResultRepositoryImpl 等）
    - `cache/`: 缓存实现（RedisClient）
-   - `search/`: 搜索实现（SearchAggregator, SearchABTestEngine, SmartSearch）
    - `services/`: 基础设施服务（RateLimitingServiceImpl, WebhookServiceImpl）
    - `observability/`: 可观测性组件
 
@@ -539,14 +535,14 @@ task.update(db.as_ref()).await?;
 多搜索引擎并发聚合，支持智能去重和排序：
 
 ```rust
-use crawlrs::infrastructure::search::aggregator::SearchAggregator;
+use crawlrs::search::aggregator::SearchAggregator;
 
 // 创建搜索引擎
 let search_engines: Vec<Arc<dyn SearchEngine>> = vec![
-    smart_search::create_google_smart_search(router.clone()),
-    smart_search::create_bing_smart_search(router.clone()),
-    smart_search::create_baidu_smart_search(router.clone()),
-    smart_search::create_sogou_smart_search(router.clone()),
+    smart::create_google_smart_search(router.clone()),
+    smart::create_bing_smart_search(router.clone()),
+    smart::create_baidu_smart_search(router.clone()),
+    smart::create_sogou_smart_search(router.clone()),
 ];
 
 // 创建聚合器
@@ -558,7 +554,7 @@ let aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
 A/B 测试引擎，支持流量分配和结果对比：
 
 ```rust
-use crawlrs::infrastructure::search::ab_test::SearchABTestEngine;
+use crawlrs::search::ab_test::SearchABTestEngine;
 
 // 创建 A/B 测试引擎
 let ab_test_engine = Arc::new(SearchABTestEngine::new(
@@ -573,10 +569,10 @@ let ab_test_engine = Arc::new(SearchABTestEngine::new(
 智能搜索引擎，根据页面类型自动选择最优抓取引擎：
 
 ```rust
-use crawlrs::infrastructure::search::smart_search;
+use crawlrs::search::smart;
 
 // 创建 Google 智能搜索引擎
-let google_search = smart_search::create_google_smart_search(router.clone());
+let google_search = smart::create_google_smart_search(router.clone());
 
 // 智能搜索引擎会自动选择：
 // - ReqwestEngine: 静态页面

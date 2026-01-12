@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crate::application::dto::search_request::{
@@ -34,7 +34,7 @@ pub enum SearchServiceError {
     InsufficientCredits { available: i64, required: i64 },
 }
 
-use crate::domain::search::engine::SearchEngine;
+use crate::search::engine_trait::SearchEngine;
 
 pub struct SearchService<CR, TR, CRR> {
     crawl_repo: Arc<CR>,
@@ -201,20 +201,20 @@ where
         country: Option<&str>,
         engine: Option<&str>,
     ) -> Result<Vec<SearchResultDto>, SearchServiceError> {
-        let results = self
+        let items = self
             .search_engine
             .search_with_engine(query, limit, lang, country, engine)
             .await
             .map_err(|e| SearchServiceError::SearchEngine(e.to_string()))?;
 
-        let filtered_results: Vec<SearchResultDto> = results
+        let filtered_results: Vec<SearchResultDto> = items
             .into_iter()
             .take(limit as usize)
             .map(|item| SearchResultDto {
                 title: item.title,
                 url: item.url,
-                description: item.description,
-                engine: Some(item.engine),
+                description: Some(item.description),
+                engine: Some(item.engine.name().to_string()),
             })
             .collect();
 

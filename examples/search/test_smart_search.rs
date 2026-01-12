@@ -1,7 +1,9 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+
+#![allow(deprecated)]
 
 //! SmartSearchEngine 智能搜索引擎演示
 //!
@@ -11,14 +13,15 @@
 //! - 自定义配置参数
 //! - 测试数据模式
 
-use crawlrs::domain::search::engine::SearchEngine;
+use crawlrs::engines::client::{PlaywrightEngine, ReqwestEngine};
+use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::engines::router::EngineRouter;
 use crawlrs::engines::traits::ScraperEngine;
-use crawlrs::engines::{playwright_engine::PlaywrightEngine, reqwest_engine::ReqwestEngine};
-use crawlrs::infrastructure::search::factory::SearchEngineFactory;
-use crawlrs::infrastructure::search::smart_search::{
-    SearchEngineType, SmartSearchEngine, SmartSearchEngineConfig,
-};
+use crawlrs::search::engine_trait::SearchEngine;
+use crawlrs::search::engine_trait::SearchRequest;
+use crawlrs::search::factory::SearchEngineFactory;
+use crawlrs::search::smart::{SmartSearchEngine, SmartSearchEngineConfig};
+use crawlrs::search::types::SearchEngineType;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
@@ -53,20 +56,26 @@ async fn demo_basic_usage() {
     info!("📖 演示一：基本用法");
     info!("----------------------------------------");
 
-    let router = create_test_router();
-    let google_engine = create_google_smart_search(router);
+    let client = create_test_client();
+    let google_engine = create_google_smart_search(client);
 
     info!("✅ 已创建 Google 智能搜索引擎");
 
+    let request = SearchRequest {
+        query: TEST_QUERY.to_string(),
+        limit: RESULT_LIMIT,
+        ..Default::default()
+    };
+
     match timeout(
         Duration::from_secs(TIMEOUT_SECS),
-        google_engine.search(TEST_QUERY, RESULT_LIMIT, None, None),
+        google_engine.search(&request),
     )
     .await
     {
         Ok(Ok(results)) => {
-            info!("✅ 搜索成功！找到 {} 个结果", results.len());
-            for (i, result) in results.iter().enumerate().take(3) {
+            info!("✅ 搜索成功！找到 {} 个结果", results.items.len());
+            for (i, result) in results.items.iter().enumerate().take(3) {
                 info!("  {}. {}", i + 1, result.title);
             }
         }
@@ -107,7 +116,7 @@ async fn demo_configuration() {
     info!("📖 演示三：自定义配置");
     info!("----------------------------------------");
 
-    let router = create_test_router();
+    let client = create_test_client();
 
     let config = SmartSearchEngineConfig {
         engine_type: SearchEngineType::Google,
@@ -120,7 +129,7 @@ async fn demo_configuration() {
         retry_delay_ms: 1000,
     };
 
-    let _engine = Arc::new(SmartSearchEngine::new(router, config));
+    let _engine = Arc::new(SmartSearchEngine::new(client, config));
     info!("✅ 已创建带自定义配置的智能搜索引擎");
     info!("   - 超时时间: {} 秒", 60);
     info!("   - 最大重试次数: {}", 3);
@@ -133,7 +142,7 @@ async fn demo_test_data_mode() {
     info!("📖 演示四：测试数据模式");
     info!("----------------------------------------");
 
-    let router = create_test_router();
+    let client = create_test_client();
 
     let test_data_path = PathBuf::from("test-data/search-engines");
 
@@ -148,7 +157,7 @@ async fn demo_test_data_mode() {
         retry_delay_ms: 100,
     };
 
-    let _engine = Arc::new(SmartSearchEngine::new(router, config));
+    let _engine = Arc::new(SmartSearchEngine::new(client, config));
     info!("✅ 已创建启用测试数据模式的智能搜索引擎");
     info!("   测试数据路径: {:?}", test_data_path);
 
@@ -160,14 +169,15 @@ async fn demo_test_data_mode() {
     info!("");
 }
 
-fn create_test_router() -> Arc<EngineRouter> {
+fn create_test_client() -> Arc<EngineClient> {
     let reqwest_engine = Arc::new(ReqwestEngine);
     let playwright_engine = Arc::new(PlaywrightEngine);
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
-    Arc::new(EngineRouter::new(engines))
+    let router = Arc::new(EngineRouter::new(engines));
+    Arc::new(EngineClient::with_router(router))
 }
 
-fn create_google_smart_search(router: Arc<EngineRouter>) -> Arc<SmartSearchEngine> {
+fn create_google_smart_search(client: Arc<EngineClient>) -> Arc<SmartSearchEngine> {
     let config = SmartSearchEngineConfig {
         engine_type: SearchEngineType::Google,
         rate_limiting_enabled: true,
@@ -178,5 +188,5 @@ fn create_google_smart_search(router: Arc<EngineRouter>) -> Arc<SmartSearchEngin
         max_retries: 3,
         retry_delay_ms: 1000,
     };
-    Arc::new(SmartSearchEngine::new(router, config))
+    Arc::new(SmartSearchEngine::new(client, config))
 }

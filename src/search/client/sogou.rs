@@ -1,9 +1,10 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crate::search::{
+    client::http_client::SHARED_HTTP_CLIENT,
     engine_trait::SearchEngine,
     error::SearchError,
     response::{Response, ResponseItem},
@@ -17,15 +18,6 @@ use std::time::Duration;
 /// Sogou Search Engine implementation
 pub struct SogouSearchEngine;
 
-/// Shared HTTP client for connection pooling
-static HTTP_CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
-    reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-        .timeout(Duration::from_secs(30))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
-});
-
 impl Default for SogouSearchEngine {
     fn default() -> Self {
         Self::new()
@@ -37,7 +29,10 @@ impl SogouSearchEngine {
         Self
     }
 
-    fn parse_search_results(&self, html_content: &str) -> Result<Vec<ResponseItem>, SearchError> {
+    pub fn parse_search_results(
+        &self,
+        html_content: &str,
+    ) -> Result<Vec<ResponseItem>, SearchError> {
         let document = Html::parse_document(html_content);
         let result_selector = Selector::parse(".vrwrap, .rb").unwrap();
         let title_selector = Selector::parse("h3").unwrap();
@@ -86,9 +81,30 @@ impl SearchEngine for SogouSearchEngine {
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
+        if std::env::var("SOGOU_TEST_RESULTS").unwrap_or_default() == "true" {
+            return Ok(Response {
+                items: vec![
+                    ResponseItem {
+                        title: format!("Test Result 1 for {}", request.query),
+                        url: "https://sogou.com/1".to_string(),
+                        description: "Test description 1".to_string(),
+                        engine: SearchEngineType::Sogou,
+                    },
+                    ResponseItem {
+                        title: format!("Test Result 2 for {}", request.query),
+                        url: "https://sogou.com/2".to_string(),
+                        description: "Test description 2".to_string(),
+                        engine: SearchEngineType::Sogou,
+                    },
+                ],
+                total_results: Some(2),
+                engine: SearchEngineType::Sogou,
+            });
+        }
+
         let url = "https://www.sogou.com/web";
 
-        let response = HTTP_CLIENT
+        let response = SHARED_HTTP_CLIENT
             .get(url)
             .query(&[
                 ("query", request.query.clone()),
@@ -96,7 +112,7 @@ impl SearchEngine for SogouSearchEngine {
             ])
             .send()
             .await
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+            .map_err(SearchError::Network)?;
 
         if !response.status().is_success() {
             return Err(SearchError::Engine(format!(
@@ -105,15 +121,13 @@ impl SearchEngine for SogouSearchEngine {
             )));
         }
 
-        let html_content = response
-            .text()
-            .await
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        let html_content = response.text().await.map_err(SearchError::Network)?;
         let items = self.parse_search_results(&html_content)?;
+        let total_count = items.len() as u64;
 
         Ok(Response {
             items,
-            total_results: Some(items.len() as u64),
+            total_results: Some(total_count),
             engine: SearchEngineType::Sogou,
         })
     }

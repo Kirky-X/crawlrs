@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
@@ -10,7 +10,7 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
-use crate::engines::router::EngineRouter;
+use crate::engines::engine_client::EngineClient;
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::queue::task_queue::TaskQueue;
 use crate::workers::expiration_worker::ExpirationWorker;
@@ -40,7 +40,7 @@ where
     storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
     webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
     credits_repository: Arc<CRR>,
-    router: Arc<EngineRouter>,
+    engine_client: Arc<EngineClient>,
     create_scrape_use_case: Arc<CreateScrapeUseCase>,
     redis: RedisClient,
     robots_checker: Arc<RobotsChecker>,
@@ -66,7 +66,7 @@ where
         storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
         webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
         credits_repository: Arc<CRR>,
-        router: Arc<EngineRouter>,
+        engine_client: Arc<EngineClient>,
         create_scrape_use_case: Arc<CreateScrapeUseCase>,
         redis: RedisClient,
         robots_checker: Arc<RobotsChecker>,
@@ -81,7 +81,7 @@ where
             storage_repository,
             webhook_event_repository,
             credits_repository,
-            router,
+            engine_client,
             create_scrape_use_case,
             redis,
             robots_checker,
@@ -115,7 +115,7 @@ where
                 self.storage_repository.clone(),
                 self.webhook_event_repository.clone(),
                 self.credits_repository.clone(),
-                self.router.clone(),
+                self.engine_client.clone(),
                 self.create_scrape_use_case.clone(),
                 self.redis.clone(),
                 self.robots_checker.clone(),

@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use axum::{
@@ -19,11 +19,11 @@ use crate::{
             crawl_repository::CrawlRepository, credits_repository::CreditsRepository,
             task_repository::TaskRepository,
         },
-        search::engine::SearchEngine,
         services::rate_limiting_service::{RateLimitResult, RateLimitingService},
         services::search_service::{SearchService, SearchServiceError},
     },
     presentation::handlers::task_handler::wait_for_tasks_completion,
+    search::SearchEngine,
 };
 use tracing::error;
 

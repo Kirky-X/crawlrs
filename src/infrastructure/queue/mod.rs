@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 pub mod client;
@@ -34,7 +34,6 @@ pub mod client;
 ///     DequeueRequest::new(worker_id)
 /// ).await?;
 /// ```
-pub mod scheduler;
 pub mod task_queue;
 
 pub use self::client::{

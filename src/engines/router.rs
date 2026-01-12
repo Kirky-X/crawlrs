@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 #![allow(deprecated)]
@@ -207,6 +207,16 @@ pub struct EngineRouter {
     strategy: LoadBalancingStrategy,
     /// 路由层指标
     metrics: Arc<RouterMetrics>,
+    /// 最大引擎尝试次数
+    max_engine_attempts: usize,
+    /// 最大重试次数 (总请求时间限制)
+    max_retries: usize,
+    /// 是否启用特征检测过滤
+    feature_filter_enabled: bool,
+    /// 是否启用并发竞速模式
+    race_mode_enabled: bool,
+    /// 动态阈值因子 (根据历史数据调整)
+    dynamic_threshold_factor: f64,
 }
 
 impl EngineRouter {
@@ -232,6 +242,11 @@ impl EngineRouter {
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy: LoadBalancingStrategy::SmartHybrid,
             metrics: Arc::new(RouterMetrics::new()),
+            max_engine_attempts: 3,
+            max_retries: 5,                // 默认最大重试次数
+            feature_filter_enabled: true,  // 默认启用特征检测过滤
+            race_mode_enabled: false,      // 默认禁用并发竞速模式
+            dynamic_threshold_factor: 1.0, // 默认动态阈值因子
         }
     }
 
@@ -263,7 +278,36 @@ impl EngineRouter {
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy,
             metrics: Arc::new(RouterMetrics::new()),
+            max_engine_attempts: 3,
+            max_retries: 5,
+            feature_filter_enabled: true,
+            race_mode_enabled: false,
+            dynamic_threshold_factor: 1.0,
         }
+    }
+
+    pub fn set_max_engine_attempts(&mut self, attempts: usize) {
+        self.max_engine_attempts = attempts.max(1);
+    }
+
+    /// 设置最大重试次数 (用于限制总请求时间)
+    pub fn set_max_retries(&mut self, retries: usize) {
+        self.max_retries = retries.max(1);
+    }
+
+    /// 启用/禁用特征检测过滤
+    pub fn set_feature_filter_enabled(&mut self, enabled: bool) {
+        self.feature_filter_enabled = enabled;
+    }
+
+    /// 启用/禁用并发竞速模式
+    pub fn set_race_mode_enabled(&mut self, enabled: bool) {
+        self.race_mode_enabled = enabled;
+    }
+
+    /// 设置动态阈值因子
+    pub fn set_dynamic_threshold_factor(&mut self, factor: f64) {
+        self.dynamic_threshold_factor = factor.max(0.1).min(2.0);
     }
 
     /// 设置负载均衡策略
@@ -300,18 +344,33 @@ impl EngineRouter {
                 continue;
             }
 
+            // 特征检测过滤 (如果启用)
+            if self.feature_filter_enabled {
+                if let Some(reason) = self.should_filter_by_feature(request, engine) {
+                    tracing::debug!(
+                        "Engine {} filtered by feature detection: {}",
+                        engine_name,
+                        reason
+                    );
+                    continue;
+                }
+            }
+
             // 获取支持分数
             let support_score = engine.support_score(request) as f64;
             if support_score == 0.0 {
                 continue;
             }
 
+            // 应用动态阈值因子
+            let adjusted_score = support_score * self.dynamic_threshold_factor;
+
             // 获取引擎统计信息
             let default_stats = EngineStats::default();
             let engine_stat = stats.get(engine_name).unwrap_or(&default_stats);
 
             // 计算综合评分
-            let final_score = self.calculate_engine_score(support_score, engine_stat);
+            let final_score = self.calculate_engine_score(adjusted_score, engine_stat);
 
             candidates.push((final_score, engine.clone()));
         }
@@ -320,6 +379,40 @@ impl EngineRouter {
         self.sort_candidates_by_strategy(&mut candidates, &stats);
 
         candidates
+    }
+
+    /// 特征检测过滤
+    /// 根据请求特征直接过滤不适合的引擎（使用能力方法替代硬编码引擎名）
+    fn should_filter_by_feature(
+        &self,
+        request: &ScrapeRequest,
+        engine: &Arc<dyn ScraperEngine>,
+    ) -> Option<String> {
+        // 如果需要截图，排除不支持截图的引擎
+        if request.needs_screenshot && !engine.supports_screenshot() {
+            return Some(format!(
+                "Engine {} does not support screenshots",
+                engine.name()
+            ));
+        }
+
+        // 如果需要 JS 或交互动作，排除不支持 JS 的引擎
+        if (request.needs_js || !request.actions.is_empty()) && !engine.supports_javascript() {
+            return Some(format!(
+                "Engine {} does not support JavaScript",
+                engine.name()
+            ));
+        }
+
+        // 如果明确需要 TLS 指纹，排除不专门支持 TLS 指纹的引擎
+        if request.needs_tls_fingerprint && !engine.supports_tls_fingerprint() {
+            return Some(format!(
+                "Engine {} is not optimized for TLS fingerprinting",
+                engine.name()
+            ));
+        }
+
+        None
     }
 
     /// 计算引擎综合评分
@@ -466,7 +559,6 @@ impl EngineRouter {
     /// Internal route implementation without timeout
     async fn route_internal(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
         let start_time = Instant::now();
-        let mut last_error = None;
 
         // 选择最优引擎
         let mut candidates = self.select_optimal_engines(request);
@@ -494,8 +586,19 @@ impl EngineRouter {
             self.strategy
         );
 
-        // 尝试每个引擎
-        for (score, engine) in candidates {
+        // 并发竞速模式
+        if self.race_mode_enabled && candidates.len() > 1 {
+            return self.route_race_mode(request, candidates, start_time).await;
+        }
+
+        // 传统顺序模式 (带 max_retries 限制)
+        let max_attempts = self.max_engine_attempts.max(1).min(candidates.len());
+        let max_retries = self.max_retries.max(1);
+        let mut total_attempts = 0;
+        let mut last_error = None;
+
+        for (score, engine) in candidates.into_iter().take(max_attempts) {
+            total_attempts += 1;
             let engine_name = engine.name();
 
             // 记录引擎选择
@@ -507,14 +610,39 @@ impl EngineRouter {
                 engine_name, score, request.url
             );
 
+            let remaining = request
+                .timeout
+                .checked_sub(start_time.elapsed())
+                .unwrap_or(Duration::from_millis(0));
+            if remaining.is_zero() {
+                return Err(EngineError::Timeout(request.timeout));
+            }
+
+            let attempt_request = ScrapeRequest {
+                url: request.url.clone(),
+                headers: request.headers.clone(),
+                timeout: remaining,
+                needs_js: request.needs_js,
+                needs_screenshot: request.needs_screenshot,
+                screenshot_config: request.screenshot_config.clone(),
+                mobile: request.mobile,
+                proxy: request.proxy.clone(),
+                skip_tls_verification: request.skip_tls_verification,
+                needs_tls_fingerprint: request.needs_tls_fingerprint,
+                use_fire_engine: request.use_fire_engine,
+                actions: request.actions.clone(),
+                sync_wait_ms: request.sync_wait_ms,
+            };
+
             let engine_start = Instant::now();
-            match engine.scrape(request).await {
+            match engine.scrape(&attempt_request).await {
                 Ok(response) => {
                     let response_time = engine_start.elapsed();
                     self.update_engine_stats(engine_name, true, response_time);
                     self.circuit_breaker.record_success(engine_name);
 
                     // 记录成功指标
+                    self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
                     self.metrics
                         .successful_requests
                         .fetch_add(1, Ordering::Relaxed);
@@ -546,6 +674,16 @@ impl EngineRouter {
                             engine_name, e
                         );
                         last_error = Some(e);
+
+                        // 检查是否超过最大重试次数
+                        if total_attempts >= max_retries {
+                            warn!("Max retries {} reached, failing request", max_retries);
+                            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+                            self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
+                            return Err(last_error.unwrap_or_else(|| {
+                                EngineError::AllEnginesFailed("Max retries reached".to_string())
+                            }));
+                        }
                         continue;
                     }
 
@@ -559,9 +697,128 @@ impl EngineRouter {
         }
 
         warn!("All engines failed for request to {}", request.url);
+        self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
         self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
         Err(last_error
             .unwrap_or_else(|| EngineError::AllEnginesFailed("All engines failed".to_string())))
+    }
+
+    /// 并发竞速模式：同时发起多个引擎请求，返回最快成功的那个
+    async fn route_race_mode(
+        &self,
+        request: &ScrapeRequest,
+        candidates: Vec<(f64, Arc<dyn ScraperEngine>)>,
+        start_time: Instant,
+    ) -> Result<ScrapeResponse, EngineError> {
+        use futures::future;
+        use tokio::time;
+
+        let remaining = request
+            .timeout
+            .checked_sub(start_time.elapsed())
+            .unwrap_or(Duration::from_millis(0));
+
+        if remaining.is_zero() {
+            return Err(EngineError::Timeout(request.timeout));
+        }
+
+        // 限制竞速引擎数量
+        let race_candidates: Vec<_> = candidates.into_iter().take(3).collect();
+
+        info!(
+            "Race mode: launching {} engines concurrently for {}",
+            race_candidates.len(),
+            request.url
+        );
+
+        // 创建竞速任务 (使用 Box::pin 解决 Unpin 问题)
+        let mut race_futures: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>> =
+            Vec::new();
+
+        for (score, engine) in race_candidates {
+            let engine_name = engine.name().to_string();
+            let engine_clone = engine.clone();
+
+            let remaining_clone = remaining;
+            let request_clone = ScrapeRequest {
+                url: request.url.clone(),
+                headers: request.headers.clone(),
+                timeout: remaining_clone,
+                needs_js: request.needs_js,
+                needs_screenshot: request.needs_screenshot,
+                screenshot_config: request.screenshot_config.clone(),
+                mobile: request.mobile,
+                proxy: request.proxy.clone(),
+                skip_tls_verification: request.skip_tls_verification,
+                needs_tls_fingerprint: request.needs_tls_fingerprint,
+                use_fire_engine: request.use_fire_engine,
+                actions: request.actions.clone(),
+                sync_wait_ms: request.sync_wait_ms,
+            };
+
+            let race_future: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
+                Box::pin(async move {
+                    let engine_start = Instant::now();
+                    match engine_clone.scrape(&request_clone).await {
+                        Ok(response) => Ok((engine_name, response, engine_start.elapsed())),
+                        Err(e) => Err((engine_name, e)),
+                    }
+                });
+
+            race_futures.push(race_future);
+        }
+
+        // 并发执行，返回最快成功的
+        let timeout_duration = remaining.max(Duration::from_millis(100));
+
+        // 使用 SelectAll 进行竞速
+        let select_all_future = future::select_all(race_futures);
+
+        match time::timeout(timeout_duration, select_all_future).await {
+            Ok((result, _index, _others)) => {
+                match result {
+                    Ok((engine_name, response, response_time)) => {
+                        self.update_engine_stats(&engine_name, true, response_time);
+                        self.circuit_breaker.record_success(&engine_name);
+                        self.metrics
+                            .successful_requests
+                            .fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .record_engine_latency(&engine_name, response_time);
+                        self.metrics.record_engine_success(&engine_name);
+
+                        info!(
+                            "Race mode: {} won in {:?}, total time: {:?}",
+                            engine_name,
+                            response_time,
+                            start_time.elapsed()
+                        );
+
+                        // 取消其他正在进行的任务
+                        Ok(response)
+                    }
+                    Err((engine_name, e)) => {
+                        self.metrics
+                            .record_engine_failure(&engine_name, &e.to_string());
+
+                        if e.is_retryable() {
+                            self.circuit_breaker.record_failure(&engine_name);
+                            Err(e)
+                        } else {
+                            Err(e)
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // 超时
+                warn!(
+                    "Race mode timed out after {:?} for request to {}",
+                    timeout_duration, request.url
+                );
+                Err(EngineError::Timeout(timeout_duration))
+            }
+        }
     }
 
     /// 聚合多个引擎的搜索结果
@@ -661,6 +918,7 @@ impl EngineRouter {
 mod tests {
     use super::*;
     use crate::engines::client::reqwest::ReqwestEngine;
+    use async_trait::async_trait;
 
     #[tokio::test]
     async fn test_engine_router_creation() {
@@ -668,6 +926,70 @@ mod tests {
         let router = EngineRouter::new(engines);
 
         assert_eq!(router.strategy, LoadBalancingStrategy::SmartHybrid);
+    }
+
+    #[tokio::test]
+    async fn test_route_respects_max_engine_attempts() {
+        struct CountingEngine {
+            name: &'static str,
+            calls: Arc<std::sync::atomic::AtomicU32>,
+            ok: bool,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for CountingEngine {
+            async fn scrape(
+                &self,
+                _request: &ScrapeRequest,
+            ) -> Result<ScrapeResponse, EngineError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if self.ok {
+                    Ok(ScrapeResponse::new("http://1.1.1.1", "ok"))
+                } else {
+                    Err(EngineError::Timeout(Duration::from_millis(10)))
+                }
+            }
+
+            fn support_score(&self, _request: &ScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        let c1 = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let c2 = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let c3 = Arc::new(std::sync::atomic::AtomicU32::new(0));
+
+        let e1: Arc<dyn ScraperEngine> = Arc::new(CountingEngine {
+            name: "e1",
+            calls: c1.clone(),
+            ok: false,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(CountingEngine {
+            name: "e2",
+            calls: c2.clone(),
+            ok: false,
+        });
+        let e3: Arc<dyn ScraperEngine> = Arc::new(CountingEngine {
+            name: "e3",
+            calls: c3.clone(),
+            ok: true,
+        });
+
+        let mut router = EngineRouter::new(vec![e1, e2, e3]);
+        router.set_strategy(LoadBalancingStrategy::RoundRobin);
+        router.set_max_engine_attempts(2);
+
+        let request = ScrapeRequest::new("http://1.1.1.1");
+        let result = router.route(&request).await;
+
+        assert!(result.is_err());
+        assert_eq!(c1.load(Ordering::SeqCst), 1);
+        assert_eq!(c2.load(Ordering::SeqCst), 1);
+        assert_eq!(c3.load(Ordering::SeqCst), 0);
     }
 
     #[test]

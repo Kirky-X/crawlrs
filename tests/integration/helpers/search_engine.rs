@@ -1,19 +1,34 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crawlrs::domain::search::engine::SearchEngine;
-use crawlrs::infrastructure::search::baidu::BaiduSearchEngine;
-use crawlrs::infrastructure::search::bing::BingSearchEngine;
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
-use crawlrs::infrastructure::search::sogou::SogouSearchEngine;
+#![allow(deprecated)]
+
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::search::client::baidu::BaiduSearchEngine;
+use crawlrs::search::client::bing::BingSearchEngine;
+use crawlrs::search::client::google::GoogleSearchEngine;
+use crawlrs::search::client::sogou::SogouSearchEngine;
+use crawlrs::search::engine_trait::SearchEngine;
 use std::sync::Arc;
+
+fn create_engine_client() -> Arc<EngineClient> {
+    let reqwest_engine = Arc::new(ReqwestEngine);
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    Arc::new(EngineClient::with_engines(engines))
+}
 
 #[allow(dead_code)]
 pub fn create_search_engines() -> Vec<(&'static str, Arc<dyn SearchEngine>)> {
     vec![
-        ("Google", Arc::new(GoogleSearchEngine::new())),
+        (
+            "Google",
+            Arc::new(GoogleSearchEngine::new(create_engine_client())),
+        ),
         ("Bing", Arc::new(BingSearchEngine::new())),
         ("Baidu", Arc::new(BaiduSearchEngine::new())),
         ("Sogou", Arc::new(SogouSearchEngine::new())),
@@ -23,7 +38,7 @@ pub fn create_search_engines() -> Vec<(&'static str, Arc<dyn SearchEngine>)> {
 #[allow(dead_code)]
 pub fn create_single_engine(engine_name: &str) -> Option<Arc<dyn SearchEngine>> {
     match engine_name {
-        "Google" => Some(Arc::new(GoogleSearchEngine::new())),
+        "Google" => Some(Arc::new(GoogleSearchEngine::new(create_engine_client()))),
         "Bing" => Some(Arc::new(BingSearchEngine::new())),
         "Baidu" => Some(Arc::new(BaiduSearchEngine::new())),
         "Sogou" => Some(Arc::new(SogouSearchEngine::new())),

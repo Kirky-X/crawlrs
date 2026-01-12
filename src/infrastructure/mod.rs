@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 /// 基础设施层模块
@@ -23,5 +23,6 @@ pub mod geolocation;
 pub mod metrics;
 pub mod observability;
 pub mod queue;
+pub use database::repositories;
 pub mod services;
 pub mod storage;

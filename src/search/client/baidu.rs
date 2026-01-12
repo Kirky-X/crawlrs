@@ -1,9 +1,11 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crate::search::{
+    client::html_parser::HtmlParser,
+    client::http_client::SHARED_HTTP_CLIENT,
     engine_trait::SearchEngine,
     error::SearchError,
     response::{Response, ResponseItem},
@@ -11,7 +13,6 @@ use crate::search::{
     SearchRequest,
 };
 use async_trait::async_trait;
-use scraper::{Html, Selector};
 use serde_json;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -25,16 +26,9 @@ pub enum BaiduSearchCategory {
 }
 
 /// Baidu Search Engine implementation
-pub struct BaiduSearchEngine;
-
-/// Shared HTTP client for connection pooling
-static HTTP_CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
-    reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .timeout(Duration::from_secs(30))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
-});
+pub struct BaiduSearchEngine {
+    parser: HtmlParser,
+}
 
 impl Default for BaiduSearchEngine {
     fn default() -> Self {
@@ -44,7 +38,9 @@ impl Default for BaiduSearchEngine {
 
 impl BaiduSearchEngine {
     pub fn new() -> Self {
-        Self
+        Self {
+            parser: HtmlParser::for_baidu(),
+        }
     }
 
     pub fn build_baidu_url(
@@ -80,9 +76,8 @@ impl BaiduSearchEngine {
     }
 
     pub fn parse_baidu_response(&self, json_str: &str) -> Result<Vec<ResponseItem>, SearchError> {
-        let json: serde_json::Value = serde_json::from_str(json_str).map_err(|e| {
-            SearchError::ContentParsing(format!("Failed to parse Baidu JSON: {}", e))
-        })?;
+        let json: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|e| SearchError::Parse(format!("Failed to parse Baidu JSON: {}", e)))?;
 
         let mut results = Vec::new();
 
@@ -127,48 +122,7 @@ impl BaiduSearchEngine {
         html: &str,
         _query: &str,
     ) -> Result<Vec<ResponseItem>, SearchError> {
-        let document = Html::parse_document(html);
-        let result_selector = Selector::parse("div.c-container")
-            .unwrap_or_else(|_| Selector::parse("div.result").unwrap());
-        let title_selector =
-            Selector::parse("h3 a").unwrap_or_else(|_| Selector::parse("a").unwrap());
-        let link_selector = Selector::parse("a").unwrap();
-        let snippet_selector =
-            Selector::parse("div.c-abstract").unwrap_or_else(|_| Selector::parse("div").unwrap());
-
-        let mut results = Vec::new();
-
-        for element in document.select(&result_selector) {
-            let title = element
-                .select(&title_selector)
-                .next()
-                .map(|el| el.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-
-            let url = element
-                .select(&link_selector)
-                .next()
-                .and_then(|el| el.value().attr("href"))
-                .map(|href| href.to_string())
-                .unwrap_or_default();
-
-            let description = element
-                .select(&snippet_selector)
-                .next()
-                .map(|el| el.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-
-            if !title.is_empty() && !url.is_empty() {
-                results.push(ResponseItem {
-                    title,
-                    url,
-                    description,
-                    engine: SearchEngineType::Baidu,
-                });
-            }
-        }
-
-        Ok(results)
+        Ok(self.parser.parse(html, SearchEngineType::Baidu))
     }
 }
 
@@ -185,18 +139,35 @@ impl SearchEngine for BaiduSearchEngine {
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
-        let url = "https://www.baidu.com/s";
+        if std::env::var("BAIDU_TEST_RESULTS").unwrap_or_default() == "true" {
+            return Ok(Response {
+                items: vec![
+                    ResponseItem {
+                        title: format!("Baidu Test Result 1 for {}", request.query),
+                        url: "https://baidu.com/1".to_string(),
+                        description: "Test description 1".to_string(),
+                        engine: SearchEngineType::Baidu,
+                    },
+                    ResponseItem {
+                        title: format!("Baidu Test Result 2 for {}", request.query),
+                        url: "https://baidu.com/2".to_string(),
+                        description: "Test description 2".to_string(),
+                        engine: SearchEngineType::Baidu,
+                    },
+                ],
+                total_results: Some(2),
+                engine: SearchEngineType::Baidu,
+            });
+        }
 
-        let response = HTTP_CLIENT
+        let (url, params) = self.build_baidu_url(&request.query, 1, BaiduSearchCategory::General);
+
+        let response = SHARED_HTTP_CLIENT
             .get(url)
-            .query(&[
-                ("wd", request.query.clone()),
-                ("rn", request.limit.to_string()),
-                ("tn", "json".to_string()),
-            ])
+            .query(&params)
             .send()
             .await
-            .map_err(|e| SearchError::Network(e))?;
+            .map_err(SearchError::Network)?;
 
         if !response.status().is_success() {
             return Err(SearchError::Engine(format!(
@@ -205,10 +176,26 @@ impl SearchEngine for BaiduSearchEngine {
             )));
         }
 
-        let content = response.text().await.map_err(|e| SearchError::Network(e))?;
+        let content = response.text().await.map_err(SearchError::Network)?;
 
-        // Since we requested json with tn=json, use parse_baidu_response
-        let items = self.parse_baidu_response(&content)?;
+        // Try parsing as HTML (Baidu returns HTML by default now)
+        let items = self.parse_search_results(&content, &request.query).await?;
+
+        // If items are empty, try JSON as fallback (though unlikely with current URL)
+        let items = if items.is_empty() {
+            if let Ok(json_items) = self.parse_baidu_response(&content) {
+                if !json_items.is_empty() {
+                    json_items
+                } else {
+                    items
+                }
+            } else {
+                items
+            }
+        } else {
+            items
+        };
+
         let total_count = items.len() as u64;
 
         Ok(Response {

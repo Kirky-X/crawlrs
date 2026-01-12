@@ -115,7 +115,7 @@ Fire Engine 引擎测试 - 增强抓取能力
 对象存储完整集成 - 结果存储功能核心
 🟡 中优先级 (近期处理)
 Fire Engine 引擎测试 - 增强抓取能力
-高级同步等待机制 - 提升用户体验- [x] 智能去重：在 `infrastructure/search/aggregator.rs` 中实现了基于 URL 和标题 Jaro-Winkler 相似度的去重（阈值 0.9）。
+高级同步等待机制 - 提升用户体验- [x] 智能去重：在 `search/aggregator/deduplicator.rs` 中实现了基于 URL 和标题 Jaro-Winkler 相似度的去重（阈值 0.9）。
 - [x] 计费系统：每个搜索请求消耗 1 Credit，已在 `SearchService` 中实现。
 - [x] 缓存机制：已实现基于内存的缓存（`SearchAggregator` 中的 `DashMap`），TTL 为 5 分钟。
 - [x] 回填抓取：支持 `crawl_results` 参数，自动为搜索结果创建爬取任务。
@@ -195,7 +195,7 @@ Fire Engine 引擎测试 - 增强抓取能力
 
 **实现状态**: ✅ 已实现
 - [x] 基于 URL 完全去重
-- [x] 基于标题 Jaro-Winkler 相似度去重（在 `infrastructure/search/deduplicator.rs` 中实现，阈值 0.85）
+- [x] 基于标题 Jaro-Winkler 相似度去重（在 `search/aggregator/deduplicator.rs` 中实现，阈值 0.85）
 
 ---
 

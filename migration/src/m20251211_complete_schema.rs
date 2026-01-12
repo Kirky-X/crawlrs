@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use sea_orm_migration::prelude::*;
@@ -53,16 +53,14 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(ApiKeys::Table)
                     .if_not_exists()
-                    .col(
-                        {
-                            let mut col = ColumnDef::new(ApiKeys::Id);
-                            col.uuid().not_null();
-                            if manager.get_database_backend() == DbBackend::Postgres {
-                                col.default(Expr::cust("gen_random_uuid()"));
-                            }
-                            col
+                    .col({
+                        let mut col = ColumnDef::new(ApiKeys::Id);
+                        col.uuid().not_null();
+                        if manager.get_database_backend() == DbBackend::Postgres {
+                            col.default(Expr::cust("gen_random_uuid()"));
                         }
-                    )
+                        col
+                    })
                     .col(
                         ColumnDef::new(ApiKeys::Key)
                             .string()
@@ -382,7 +380,8 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(ColumnDef::new(ScrapeResults::Content).text().not_null())
-                    .col(ColumnDef::new(ScrapeResults::ContentType)
+                    .col(
+                        ColumnDef::new(ScrapeResults::ContentType)
                             .string()
                             .not_null(),
                     )
@@ -412,7 +411,12 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(ColumnDef::new(Credits::Id).uuid().not_null().primary_key())
                     .col(ColumnDef::new(Credits::TeamId).uuid().not_null())
-                    .col(ColumnDef::new(Credits::Balance).big_integer().not_null().default(0))
+                    .col(
+                        ColumnDef::new(Credits::Balance)
+                            .big_integer()
+                            .not_null()
+                            .default(0),
+                    )
                     .col(
                         ColumnDef::new(Credits::CreatedAt)
                             .timestamp_with_time_zone()
@@ -447,12 +451,37 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(CreditsTransactions::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(CreditsTransactions::Id).uuid().not_null().primary_key())
-                    .col(ColumnDef::new(CreditsTransactions::TeamId).uuid().not_null())
-                    .col(ColumnDef::new(CreditsTransactions::Amount).big_integer().not_null())
-                    .col(ColumnDef::new(CreditsTransactions::TransactionType).string().not_null())
-                    .col(ColumnDef::new(CreditsTransactions::Description).string().not_null())
-                    .col(ColumnDef::new(CreditsTransactions::ReferenceId).uuid().null())
+                    .col(
+                        ColumnDef::new(CreditsTransactions::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
+                    .col(
+                        ColumnDef::new(CreditsTransactions::TeamId)
+                            .uuid()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(CreditsTransactions::Amount)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(CreditsTransactions::TransactionType)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(CreditsTransactions::Description)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(CreditsTransactions::ReferenceId)
+                            .uuid()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(CreditsTransactions::CreatedAt)
                             .timestamp_with_time_zone()
@@ -490,15 +519,40 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(TasksBacklog::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(TasksBacklog::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(TasksBacklog::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(TasksBacklog::TaskId).uuid().not_null())
                     .col(ColumnDef::new(TasksBacklog::TeamId).uuid().not_null())
                     .col(ColumnDef::new(TasksBacklog::TaskType).string().not_null())
-                    .col(ColumnDef::new(TasksBacklog::Priority).integer().not_null().default(0))
+                    .col(
+                        ColumnDef::new(TasksBacklog::Priority)
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
                     .col(ColumnDef::new(TasksBacklog::Payload).json().not_null())
-                    .col(ColumnDef::new(TasksBacklog::MaxRetries).integer().not_null().default(3))
-                    .col(ColumnDef::new(TasksBacklog::RetryCount).integer().not_null().default(0))
-                    .col(ColumnDef::new(TasksBacklog::Status).string().not_null().default("pending"))
+                    .col(
+                        ColumnDef::new(TasksBacklog::MaxRetries)
+                            .integer()
+                            .not_null()
+                            .default(3),
+                    )
+                    .col(
+                        ColumnDef::new(TasksBacklog::RetryCount)
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
+                    .col(
+                        ColumnDef::new(TasksBacklog::Status)
+                            .string()
+                            .not_null()
+                            .default("pending"),
+                    )
                     .col(
                         ColumnDef::new(TasksBacklog::CreatedAt)
                             .timestamp_with_time_zone()
@@ -511,9 +565,21 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
-                    .col(ColumnDef::new(TasksBacklog::ScheduledAt).timestamp_with_time_zone().null())
-                    .col(ColumnDef::new(TasksBacklog::ExpiresAt).timestamp_with_time_zone().null())
-                    .col(ColumnDef::new(TasksBacklog::ProcessedAt).timestamp_with_time_zone().null())
+                    .col(
+                        ColumnDef::new(TasksBacklog::ScheduledAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(TasksBacklog::ExpiresAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(TasksBacklog::ProcessedAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
                     .to_owned(),
             )
             .await?;

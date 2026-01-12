@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 //! 搜索模块
@@ -33,11 +33,12 @@ pub mod smart;
 pub mod types;
 
 pub use ab_test::SearchABTestEngine;
-pub use adapter::create_domain_adapter;
+pub use adapter::{GenericSearchEngineAdapter, SearchEngineAdapter};
 pub use aggregator::deduplicator::ResultDeduplicator as Deduplicator;
 pub use aggregator::SearchAggregator;
 pub use client::{
     BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SearchClient, SogouSearchEngine,
+    SHARED_HTTP_CLIENT,
 };
 pub use engine_trait::{SearchEngine, SearchRequest};
 pub use error::SearchError;

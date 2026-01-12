@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 //! 性能基准测试套件
@@ -86,6 +86,7 @@ fn benchmark_task_creation(c: &mut Criterion) {
                             url: sea_orm::Set(format!("https://example{}.com", i)),
                             payload: sea_orm::Set(serde_json::json!({"test": true})),
                             attempt_count: sea_orm::Set(0),
+                            retry_count: sea_orm::Set(0),
                             max_retries: sea_orm::Set(3),
                             created_at: sea_orm::Set(chrono::Utc::now().into()),
                             updated_at: sea_orm::Set(chrono::Utc::now().into()),
@@ -472,6 +473,7 @@ fn benchmark_database_queries(c: &mut Criterion) {
                 url: sea_orm::Set(format!("https://example{}.com", i)),
                 payload: sea_orm::Set(serde_json::json!({"test": true, "index": i})),
                 attempt_count: sea_orm::Set(0),
+                retry_count: sea_orm::Set(0),
                 max_retries: sea_orm::Set(3),
                 created_at: sea_orm::Set(chrono::Utc::now().into()),
                 updated_at: sea_orm::Set(chrono::Utc::now().into()),

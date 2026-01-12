@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 #![allow(deprecated)]
@@ -211,6 +211,10 @@ impl ScraperEngine for PlaywrightEngine {
             let page = browser.new_page("about:blank").await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
+            // Note: Page is intentionally not closed here to allow for reuse.
+            // Browser will be closed when application shuts down.
+            // In case of errors, the Page will be dropped automatically.
+
             // Set user agent if mobile
             if request.mobile {
                 page.set_user_agent("Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1").await
@@ -391,6 +395,12 @@ impl ScraperEngine for PlaywrightEngine {
     /// 引擎名称
     fn name(&self) -> &'static str {
         "playwright"
+    }
+
+    // 覆盖能力方法 - Playwright 不专门优化 TLS 指纹
+
+    fn supports_tls_fingerprint(&self) -> bool {
+        false
     }
 }
 

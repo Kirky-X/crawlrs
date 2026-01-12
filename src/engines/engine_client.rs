@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 //! EngineClient - Unified public API for scraping operations
@@ -207,8 +207,7 @@ pub enum PageAction {
 }
 
 /// Scroll direction for PageAction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScrollDirection {
     #[default]
     Down,
@@ -216,7 +215,6 @@ pub enum ScrollDirection {
     Bottom,
     Top,
 }
-
 
 /// Screenshot configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -335,8 +333,7 @@ impl EngineError {
 }
 
 /// Health status of the engine system.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum EngineHealthStatus {
     /// All engines are operational
     #[default]
@@ -354,7 +351,6 @@ pub enum EngineHealthStatus {
         message: String,
     },
 }
-
 
 /// Engine client - the single entry point for all scraping operations.
 ///

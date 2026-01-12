@@ -1,23 +1,26 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+
+#![allow(deprecated)]
 
 use crate::engines::client::fire_cdp::FireEngineCdp;
 use crate::engines::client::fire_tls::FireEngineTls;
+use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::search::client::baidu::BaiduSearchEngine;
 use crate::search::client::bing::BingSearchEngine;
 use crate::search::client::google::GoogleSearchEngine;
 use crate::search::client::sogou::SogouSearchEngine;
-use crate::search::engine_trait::SearchEngine;
+use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::router::{SearchEngineRouter, SearchEngineRouterConfig};
 use crate::search::smart::{
     create_baidu_smart_search, create_bing_smart_search, create_google_smart_search,
 };
 use crate::search::types::SearchEngineType;
-use std::str::FromStr;
 use std::sync::Arc;
+
 use tracing::info;
 
 /// 搜索引擎工厂配置
@@ -110,14 +113,18 @@ impl SearchEngineFactory {
     pub async fn register_google_engine(&mut self) {
         #[cfg(feature = "playwright")]
         {
-            let google_engine = Arc::new(GoogleSearchEngine::new());
+            let engine_client = self.create_engine_client_with_fire_engines();
+            let google_engine = Arc::new(GoogleSearchEngine::new(engine_client));
             self.router.register_engine(google_engine);
-            info!("Google 搜索引擎已注册（使用 Playwright）");
+            info!("Google 搜索引擎已注册（使用 Playwright/Fire Engine）");
         }
 
         #[cfg(not(feature = "playwright"))]
         {
-            let google_engine = Arc::new(GoogleSearchEngine::new());
+            // Even without playwright feature, we should provide an engine client
+            // It might fallback to other engines or Reqwest if configured
+            let engine_client = self.create_engine_client_with_fire_engines();
+            let google_engine = Arc::new(GoogleSearchEngine::new(engine_client));
             self.router.register_engine(google_engine);
             info!("Google 搜索引擎已注册（HTTP 模式）");
         }
@@ -144,8 +151,9 @@ impl SearchEngineFactory {
         info!("Sogou 搜索引擎已注册");
     }
 
-    /// 创建 EngineRouter 并注册 Fire Engines（用于智能搜索）
-    pub fn create_engine_router_with_fire_engines(&self) -> Arc<EngineRouter> {
+    /// 创建 EngineClient 并注册 Fire Engines（用于智能搜索）
+    #[allow(deprecated)]
+    pub fn create_engine_client_with_fire_engines(&self) -> Arc<EngineClient> {
         let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
 
         // 注册 Fire Engine CDP（用于需要完整浏览器自动化的网站）
@@ -156,28 +164,28 @@ impl SearchEngineFactory {
         let fire_engine_tls = Arc::new(FireEngineTls::new());
         engines.push(fire_engine_tls.clone() as Arc<dyn crate::engines::traits::ScraperEngine>);
 
-        let router = EngineRouter::new(engines);
+        let router = Arc::new(EngineRouter::new(engines));
         info!("EngineRouter 创建完成，已注册 Fire Engines");
 
-        Arc::new(router)
+        Arc::new(EngineClient::with_router(router))
     }
 
     /// 创建 Google 智能搜索引擎（使用 Fire Engine）
     pub fn create_google_smart_search(&self) -> Arc<dyn SearchEngine> {
-        let engine_router = self.create_engine_router_with_fire_engines();
-        create_google_smart_search(engine_router)
+        let engine_client = self.create_engine_client_with_fire_engines();
+        create_google_smart_search(engine_client)
     }
 
     /// 创建 Bing 智能搜索引擎
     pub fn create_bing_smart_search(&self) -> Arc<dyn SearchEngine> {
-        let engine_router = self.create_engine_router_with_fire_engines();
-        create_bing_smart_search(engine_router)
+        let engine_client = self.create_engine_client_with_fire_engines();
+        create_bing_smart_search(engine_client)
     }
 
     /// 创建 Baidu 智能搜索引擎
     pub fn create_baidu_smart_search(&self) -> Arc<dyn SearchEngine> {
-        let engine_router = self.create_engine_router_with_fire_engines();
-        create_baidu_smart_search(engine_router)
+        let engine_client = self.create_engine_client_with_fire_engines();
+        create_baidu_smart_search(engine_client)
     }
 
     /// 注册自定义搜索引擎
@@ -192,7 +200,7 @@ impl SearchEngineFactory {
             SearchEngineType::Bing => self.router.get_engine("bing"),
             SearchEngineType::Baidu => self.router.get_engine("baidu"),
             SearchEngineType::Sogou => self.router.get_engine("sogou"),
-            SearchEngineType::Smart | SearchEngineType::ABTest => None,
+            SearchEngineType::Smart | SearchEngineType::ABTest | SearchEngineType::Auto => None,
         }
     }
 
@@ -228,46 +236,54 @@ impl SearchEngineFactory {
         Vec<crate::domain::models::search_result::SearchResult>,
         crate::domain::search::engine::SearchError,
     > {
-        match engine_type.unwrap_or(self.config.default_engine) {
-            SearchEngineType::Google => {
-                if let Some(engine) = self.router.get_engine("google") {
-                    engine.search(query, limit, lang, country).await
+        let request = SearchRequest {
+            query: query.to_string(),
+            limit,
+            offset: 0,
+            engine: engine_type,
+            lang: lang.map(|s| s.to_string()),
+            country: country.map(|s| s.to_string()),
+        };
+
+        let engine_val = engine_type.unwrap_or(self.config.default_engine);
+        let preferred_engine = match engine_val {
+            SearchEngineType::Google => Some("google"),
+            SearchEngineType::Bing => Some("bing"),
+            SearchEngineType::Baidu => Some("baidu"),
+            SearchEngineType::Sogou => Some("sogou"),
+            SearchEngineType::Smart | SearchEngineType::ABTest | SearchEngineType::Auto => None,
+        };
+
+        let response = self
+            .router
+            .search(&request, preferred_engine)
+            .await
+            .map_err(|e| crate::domain::search::engine::SearchError::EngineError(e.to_string()))?;
+
+        let total_items = response.items.len();
+        Ok(response
+            .items
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| {
+                // 基于位置计算简单分数：第一个结果得 1.0，最后一个得 0.0
+                // 保留结果间的相对排序信息
+                let score = if total_items > 1 {
+                    1.0 - (index as f64 / (total_items - 1) as f64)
                 } else {
-                    self.router
-                        .search(query, limit, lang, country, Some("google"))
-                        .await
+                    1.0
+                };
+
+                crate::domain::models::search_result::SearchResult {
+                    title: item.title,
+                    url: item.url,
+                    description: Some(item.description),
+                    engine: format!("{:?}", item.engine),
+                    score,
+                    published_time: None,
                 }
-            }
-            SearchEngineType::Bing => {
-                if let Some(engine) = self.router.get_engine("bing") {
-                    engine.search(query, limit, lang, country).await
-                } else {
-                    self.router
-                        .search(query, limit, lang, country, Some("bing"))
-                        .await
-                }
-            }
-            SearchEngineType::Baidu => {
-                if let Some(engine) = self.router.get_engine("baidu") {
-                    engine.search(query, limit, lang, country).await
-                } else {
-                    self.router
-                        .search(query, limit, lang, country, Some("baidu"))
-                        .await
-                }
-            }
-            SearchEngineType::Sogou => {
-                if let Some(engine) = self.router.get_engine("sogou") {
-                    engine.search(query, limit, lang, country).await
-                } else {
-                    self.router
-                        .search(query, limit, lang, country, Some("sogou"))
-                        .await
-                }
-            }
-            SearchEngineType::Smart => self.router.search(query, limit, lang, country, None).await,
-            SearchEngineType::ABTest => self.router.search(query, limit, lang, country, None).await,
-        }
+            })
+            .collect())
     }
 
     /// 获取工厂统计信息
@@ -310,12 +326,24 @@ pub async fn create_default_router(
 /// 便捷函数：创建单一搜索引擎
 #[cfg(feature = "playwright")]
 pub fn create_google_engine() -> Arc<dyn SearchEngine> {
-    Arc::new(GoogleSearchEngine::new())
+    let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
+    let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+    engines.push(fire_engine_cdp as Arc<dyn crate::engines::traits::ScraperEngine>);
+    let fire_engine_tls = Arc::new(FireEngineTls::new());
+    engines.push(fire_engine_tls as Arc<dyn crate::engines::traits::ScraperEngine>);
+    let engine_client = Arc::new(EngineClient::with_engines(engines));
+    Arc::new(GoogleSearchEngine::new(engine_client))
 }
 
 #[cfg(not(feature = "playwright"))]
 pub fn create_google_engine() -> Arc<dyn SearchEngine> {
-    Arc::new(GoogleSearchEngine::new())
+    let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
+    let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+    engines.push(fire_engine_cdp as Arc<dyn crate::engines::traits::ScraperEngine>);
+    let fire_engine_tls = Arc::new(FireEngineTls::new());
+    engines.push(fire_engine_tls as Arc<dyn crate::engines::traits::ScraperEngine>);
+    let engine_client = Arc::new(EngineClient::with_engines(engines));
+    Arc::new(GoogleSearchEngine::new(engine_client))
 }
 
 /// 便捷函数：创建 Bing 搜索引擎

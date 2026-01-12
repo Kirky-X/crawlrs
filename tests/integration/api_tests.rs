@@ -1,7 +1,9 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+
+#![allow(deprecated)]
 
 use super::helpers::{
     create_test_app, create_test_app_with_low_rate_limit, create_test_app_with_rate_limit_options,
@@ -82,7 +84,12 @@ async fn test_scrape_rate_limit() {
     // The key format must match what RateLimiter expects: rate_limit_config:{api_key}
     let rate_limit_key = format!("rate_limit_config:{}", app.api_key);
     let rate_limit_config = "10"; // Simple string value as expected by RateLimiter
-    if let Err(_) = app.redis.set(&rate_limit_key, rate_limit_config, 60).await {
+    if app
+        .redis
+        .set(&rate_limit_key, rate_limit_config, 60)
+        .await
+        .is_err()
+    {
         println!("⚠️  Rate limit test skipped - Redis connection failed");
         return;
     }
@@ -133,7 +140,7 @@ async fn test_team_concurrency_limit() {
     let redis_client = app.redis.clone();
 
     let limit_key = format!("team:{}:concurrency_limit", team_id);
-    if let Err(_) = redis_client.set(&limit_key, "1", 3600).await {
+    if redis_client.set(&limit_key, "1", 3600).await.is_err() {
         println!("⚠️  Team concurrency limit test skipped - Redis connection failed");
         return;
     }
@@ -149,7 +156,7 @@ async fn test_team_concurrency_limit() {
 
     // Let's manually increment the active jobs count in Redis to simulate an active job.
     let active_jobs_key = format!("team:{}:active_jobs", team_id);
-    if let Err(_) = redis_client.set(&active_jobs_key, "1", 3600).await {
+    if redis_client.set(&active_jobs_key, "1", 3600).await.is_err() {
         println!("⚠️  Team concurrency limit test skipped - Redis connection failed");
         // Clean up
         let _: () = redis_client.del(&limit_key).await.unwrap_or(());

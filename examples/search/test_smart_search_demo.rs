@@ -1,11 +1,11 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crawlrs::engines::router::EngineRouter;
 use crawlrs::engines::engine::{ReqwestEngine, PlaywrightEngine};
-use crawlrs::infrastructure::search::smart_search;
+use crawlrs::search::smart as smart_search;
 use std::sync::Arc;
 
 #[tokio::main]

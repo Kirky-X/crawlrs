@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 //! S3 存储集成测试
@@ -22,7 +22,7 @@ async fn test_s3_storage_save_and_get() {
     let _ = tracing_subscriber::fmt::try_init();
 
     // 创建 S3 存储配置
-    let settings = StorageSettings {
+    let _settings = StorageSettings {
         storage_type: "s3".to_string(),
         local_path: None,
         s3_region: Some("us-east-1".to_string()),

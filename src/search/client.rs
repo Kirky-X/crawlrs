@@ -1,8 +1,13 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+#![allow(deprecated)]
+
+use crate::engines::client::reqwest::ReqwestEngine;
+use crate::engines::engine_client::EngineClient;
+use crate::engines::traits::ScraperEngine;
 use std::sync::Arc;
 
 use once_cell::sync::Lazy;
@@ -11,17 +16,20 @@ use super::{
     engine_trait::{SearchEngine, SearchRequest},
     error::SearchError,
     response::{Response, ResponseItem},
-    types::{EngineHealth, SearchEngineType},
+    types::SearchEngineType,
 };
 
 pub mod baidu;
 pub mod bing;
 pub mod google;
+pub mod html_parser;
+pub mod http_client;
 pub mod sogou;
 
 pub use baidu::BaiduSearchEngine;
 pub use bing::BingSearchEngine;
 pub use google::GoogleSearchEngine;
+pub use http_client::SHARED_HTTP_CLIENT;
 pub use sogou::SogouSearchEngine;
 
 #[derive(Clone)]
@@ -50,9 +58,15 @@ impl SearchClient {
 
             // 注册所有支持的搜索引擎（真实实现）
             // 默认注册所有引擎
+
+            // Create a default EngineClient with ReqwestEngine for Google
+            let reqwest_engine = Arc::new(ReqwestEngine);
+            let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+            let engine_client = Arc::new(EngineClient::with_engines(engines));
+
             inner
                 .engines
-                .push(Arc::new(GoogleSearchEngine::new()) as Arc<dyn SearchEngine>);
+                .push(Arc::new(GoogleSearchEngine::new(engine_client)) as Arc<dyn SearchEngine>);
             inner
                 .engines
                 .push(Arc::new(BingSearchEngine::new()) as Arc<dyn SearchEngine>);
@@ -162,6 +176,8 @@ impl SearchCommand {
             engine: Some(engine),
             limit: self.limit,
             offset: self.offset,
+            lang: None,
+            country: None,
         };
 
         let eng = self

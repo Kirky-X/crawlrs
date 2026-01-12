@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 pub mod deduplicator;
@@ -197,12 +197,50 @@ impl SearchEngine for SearchAggregator {
     }
 
     fn health(&self) -> EngineHealth {
-        EngineHealth::Healthy
+        // 检查是否有可用的引擎
+        if self.engines.is_empty() {
+            return EngineHealth::Unhealthy;
+        }
+
+        // 检查是否有引擎处于不健康状态
+        let mut unhealthy_count = 0;
+        let total_count = self.engines.len();
+
+        for engine in &self.engines {
+            match engine.health() {
+                EngineHealth::Unhealthy | EngineHealth::Isolated => {
+                    unhealthy_count += 1;
+                }
+                EngineHealth::Degraded => {
+                    // 部分失败也算作降级
+                    unhealthy_count += 1;
+                }
+                EngineHealth::Healthy | EngineHealth::Unknown => {}
+            }
+        }
+
+        // 如果超过 50% 的引擎不健康，标记为降级
+        if unhealthy_count > 0 {
+            if unhealthy_count >= total_count / 2 {
+                EngineHealth::Degraded
+            } else {
+                EngineHealth::Healthy
+            }
+        } else {
+            EngineHealth::Healthy
+        }
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
-        // Check cache
-        let cache_key = format!("{}:{}:{}", request.query, request.limit, request.offset);
+        // Check cache - include all dimensions to avoid cache pollution
+        let cache_key = format!(
+            "{}:{}:{}:{}:{}",
+            request.query,
+            request.limit,
+            request.offset,
+            request.lang.as_deref().unwrap_or("default"),
+            request.country.as_deref().unwrap_or("default")
+        );
         if let Some(entry) = self.cache.get(&cache_key) {
             if entry.1.elapsed() < self.cache_ttl {
                 info!("Cache hit for query: {}", request.query);

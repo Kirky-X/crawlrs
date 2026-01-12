@@ -1,6 +1,6 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use std::sync::Arc;
@@ -32,6 +32,9 @@ pub async fn team_semaphore_middleware(
     })?;
 
     // 使用真实的team_id获取并发许可
-    let _permit = semaphore.acquire(team_id).await;
+    let _permit = semaphore
+        .acquire(team_id)
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(next.run(request).await)
 }

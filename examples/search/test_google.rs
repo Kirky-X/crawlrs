@@ -1,12 +1,18 @@
 // Copyright (c) 2025 Kirky.X
 //
-// Licensed under the MIT License
+// Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+
+#![allow(deprecated)]
 
 //! Google 搜索引擎真实搜索测试
 
-use crawlrs::infrastructure::search::google::GoogleSearchEngine;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::search::client::google::GoogleSearchEngine;
 use crawlrs::utils::search_test::run_engine_test_with_output;
+use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 use tracing::info;
 
@@ -29,11 +35,17 @@ async fn main() {
 
     let timeout_duration = Duration::from_secs(TIMEOUT_SECS);
 
+    // Create EngineClient
+    let reqwest_engine = Arc::new(ReqwestEngine);
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines));
+
     match timeout(
         timeout_duration,
         run_engine_test_with_output(
             "Google",
-            GoogleSearchEngine::new(),
+            GoogleSearchEngine::new(engine_client),
             Some(TEST_KEYWORD),
             TIMEOUT_SECS,
             Some(RESULT_LIMIT),
