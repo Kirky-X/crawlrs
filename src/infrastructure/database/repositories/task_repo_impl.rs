@@ -178,8 +178,6 @@ impl TaskRepository for TaskRepositoryImpl {
             active.lock_expires_at = Set(Some((Utc::now() + self.lock_duration).into()));
             active.status = Set(TaskStatus::Active.to_string());
             active.started_at = Set(Some(Utc::now().into()));
-            let current_attempt = *active.attempt_count.as_ref();
-            active.attempt_count = Set(current_attempt + 1);
 
             let updated = active.update(&txn).await?;
 
