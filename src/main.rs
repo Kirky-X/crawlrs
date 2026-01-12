@@ -11,10 +11,16 @@ use axum::{
 use crawlrs::config::settings::Settings;
 use crawlrs::domain::repositories::storage_repository::StorageRepository;
 use crawlrs::domain::services::rate_limiting_service::{RateLimitConfig, RateLimitStrategy};
-use crawlrs::engines::client::fire_cdp::FireEngineCdp;
-use crawlrs::engines::client::fire_tls::FireEngineTls;
-use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::client::reqwest::ReqwestEngine;
+
+#[cfg(feature = "engine-playwright")]
+use crawlrs::engines::client::playwright::PlaywrightEngine;
+
+#[cfg(feature = "engine-fire-cdp")]
+use crawlrs::engines::client::fire_cdp::FireEngineCdp;
+
+#[cfg(feature = "engine-fire-tls")]
+use crawlrs::engines::client::fire_tls::FireEngineTls;
 use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::engines::router::EngineRouter;
 #[allow(deprecated)]
@@ -213,16 +219,32 @@ async fn main() -> anyhow::Result<()> {
             }
         };
     let reqwest_engine = Arc::new(ReqwestEngine);
-    let playwright_engine = Arc::new(PlaywrightEngine);
-    let fire_engine_tls = Arc::new(FireEngineTls::new());
-    let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+
+    // 初始化引擎列表
     #[allow(deprecated)]
-    let engines: Vec<Arc<dyn ScraperEngine>> = vec![
-        reqwest_engine,
-        playwright_engine,
-        fire_engine_tls,
-        fire_engine_cdp,
-    ];
+    let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+
+    // 根据特性条件添加 Playwright 引擎
+    #[cfg(feature = "engine-playwright")]
+    {
+        let playwright_engine = Arc::new(PlaywrightEngine);
+        engines.push(playwright_engine);
+    }
+
+    // 根据特性条件添加 Fire TLS 引擎
+    #[cfg(feature = "engine-fire-tls")]
+    {
+        let fire_engine_tls = Arc::new(FireEngineTls::new());
+        engines.push(fire_engine_tls);
+    }
+
+    // 根据特性条件添加 Fire CDP 引擎
+    #[cfg(feature = "engine-fire-cdp")]
+    {
+        let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+        engines.push(fire_engine_cdp);
+    }
+
     let router = Arc::new(EngineRouter::new(engines));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 

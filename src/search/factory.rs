@@ -5,8 +5,12 @@
 
 #![allow(deprecated)]
 
+#[cfg(feature = "engine-fire-cdp")]
 use crate::engines::client::fire_cdp::FireEngineCdp;
+
+#[cfg(feature = "engine-fire-tls")]
 use crate::engines::client::fire_tls::FireEngineTls;
+
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::search::client::baidu::BaiduSearchEngine;
@@ -111,7 +115,7 @@ impl SearchEngineFactory {
 
     /// 创建并注册 Google 搜索引擎
     pub async fn register_google_engine(&mut self) {
-        #[cfg(feature = "playwright")]
+        #[cfg(feature = "engine-playwright")]
         {
             let engine_client = self.create_engine_client_with_fire_engines();
             let google_engine = Arc::new(GoogleSearchEngine::new(engine_client));
@@ -119,7 +123,7 @@ impl SearchEngineFactory {
             info!("Google 搜索引擎已注册（使用 Playwright/Fire Engine）");
         }
 
-        #[cfg(not(feature = "playwright"))]
+        #[cfg(not(feature = "engine-playwright"))]
         {
             // Even without playwright feature, we should provide an engine client
             // It might fallback to other engines or Reqwest if configured
@@ -157,12 +161,18 @@ impl SearchEngineFactory {
         let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
 
         // 注册 Fire Engine CDP（用于需要完整浏览器自动化的网站）
-        let fire_engine_cdp = Arc::new(FireEngineCdp::new());
-        engines.push(fire_engine_cdp.clone() as Arc<dyn crate::engines::traits::ScraperEngine>);
+        #[cfg(feature = "engine-fire-cdp")]
+        {
+            let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+            engines.push(fire_engine_cdp.clone() as Arc<dyn crate::engines::traits::ScraperEngine>);
+        }
 
         // 注册 Fire Engine TLS（用于需要TLS指纹对抗的网站）
-        let fire_engine_tls = Arc::new(FireEngineTls::new());
-        engines.push(fire_engine_tls.clone() as Arc<dyn crate::engines::traits::ScraperEngine>);
+        #[cfg(feature = "engine-fire-tls")]
+        {
+            let fire_engine_tls = Arc::new(FireEngineTls::new());
+            engines.push(fire_engine_tls.clone() as Arc<dyn crate::engines::traits::ScraperEngine>);
+        }
 
         let router = Arc::new(EngineRouter::new(engines));
         info!("EngineRouter 创建完成，已注册 Fire Engines");
@@ -324,24 +334,42 @@ pub async fn create_default_router(
 }
 
 /// 便捷函数：创建单一搜索引擎
-#[cfg(feature = "playwright")]
+#[cfg(feature = "engine-playwright")]
 pub fn create_google_engine() -> Arc<dyn SearchEngine> {
     let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
-    let fire_engine_cdp = Arc::new(FireEngineCdp::new());
-    engines.push(fire_engine_cdp as Arc<dyn crate::engines::traits::ScraperEngine>);
-    let fire_engine_tls = Arc::new(FireEngineTls::new());
-    engines.push(fire_engine_tls as Arc<dyn crate::engines::traits::ScraperEngine>);
+
+    #[cfg(feature = "engine-fire-cdp")]
+    {
+        let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+        engines.push(fire_engine_cdp as Arc<dyn crate::engines::traits::ScraperEngine>);
+    }
+
+    #[cfg(feature = "engine-fire-tls")]
+    {
+        let fire_engine_tls = Arc::new(FireEngineTls::new());
+        engines.push(fire_engine_tls as Arc<dyn crate::engines::traits::ScraperEngine>);
+    }
+
     let engine_client = Arc::new(EngineClient::with_engines(engines));
     Arc::new(GoogleSearchEngine::new(engine_client))
 }
 
-#[cfg(not(feature = "playwright"))]
+#[cfg(not(feature = "engine-playwright"))]
 pub fn create_google_engine() -> Arc<dyn SearchEngine> {
     let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
-    let fire_engine_cdp = Arc::new(FireEngineCdp::new());
-    engines.push(fire_engine_cdp as Arc<dyn crate::engines::traits::ScraperEngine>);
-    let fire_engine_tls = Arc::new(FireEngineTls::new());
-    engines.push(fire_engine_tls as Arc<dyn crate::engines::traits::ScraperEngine>);
+
+    #[cfg(feature = "engine-fire-cdp")]
+    {
+        let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+        engines.push(fire_engine_cdp as Arc<dyn crate::engines::traits::ScraperEngine>);
+    }
+
+    #[cfg(feature = "engine-fire-tls")]
+    {
+        let fire_engine_tls = Arc::new(FireEngineTls::new());
+        engines.push(fire_engine_tls as Arc<dyn crate::engines::traits::ScraperEngine>);
+    }
+
     let engine_client = Arc::new(EngineClient::with_engines(engines));
     Arc::new(GoogleSearchEngine::new(engine_client))
 }

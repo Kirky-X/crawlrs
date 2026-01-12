@@ -7,5 +7,6 @@
 ///
 /// 提供系统监控和可观测性功能
 /// 包括指标收集和遥测数据管理
+#[cfg(feature = "metrics")]
 pub mod metrics;
 // pub mod telemetry;

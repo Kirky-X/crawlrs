@@ -3,12 +3,34 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-pub mod fire_cdp;
-pub mod fire_tls;
-pub mod playwright;
+/// 基础 HTTP 引擎模块 (始终可用)
 pub mod reqwest;
 
-pub use self::fire_cdp::FireEngineCdp;
-pub use self::fire_tls::FireEngineTls;
-pub use self::playwright::PlaywrightEngine;
+/// Playwright 浏览器自动化引擎
+#[cfg(feature = "engine-playwright")]
+pub mod playwright;
+
+/// Fire CDP 引擎模块
+#[cfg(feature = "engine-fire-cdp")]
+pub mod fire_cdp;
+
+/// Fire TLS 引擎模块
+#[cfg(feature = "engine-fire-tls")]
+pub mod fire_tls;
+
+// Re-exports
+
+/// Reqwest 引擎 (始终可用)
 pub use self::reqwest::ReqwestEngine;
+
+/// Playwright 引擎
+#[cfg(feature = "engine-playwright")]
+pub use self::playwright::PlaywrightEngine;
+
+/// Fire CDP 引擎
+#[cfg(feature = "engine-fire-cdp")]
+pub use self::fire_cdp::FireEngineCdp;
+
+/// Fire TLS 引擎
+#[cfg(feature = "engine-fire-tls")]
+pub use self::fire_tls::FireEngineTls;

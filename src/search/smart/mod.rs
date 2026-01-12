@@ -1069,15 +1069,23 @@ pub fn create_smart_search_engine(
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::engines::client::playwright::PlaywrightEngine;
     use crate::engines::client::reqwest::ReqwestEngine;
     use crate::engines::router::EngineRouter;
     use crate::engines::traits::ScraperEngine;
 
+    #[cfg(feature = "engine-playwright")]
+    use crate::engines::client::playwright::PlaywrightEngine;
+
     fn create_test_client() -> Arc<EngineClient> {
         let reqwest_engine = Arc::new(ReqwestEngine);
-        let playwright_engine = Arc::new(PlaywrightEngine);
-        let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
+        let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+
+        #[cfg(feature = "engine-playwright")]
+        {
+            let playwright_engine = Arc::new(PlaywrightEngine);
+            engines.push(playwright_engine);
+        }
+
         let router = Arc::new(EngineRouter::new(engines));
         Arc::new(EngineClient::with_router(router))
     }

@@ -3,6 +3,10 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+/// 编译时特性检查：确保至少启用一个数据库后端
+#[cfg(not(any(feature = "db-postgres", feature = "db-sqlite")))]
+compile_error!("Must enable at least one database feature: db-postgres or db-sqlite");
+
 /// 应用程序模块
 ///
 /// 包含应用程序的核心业务逻辑和用例

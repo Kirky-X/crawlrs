@@ -8,12 +8,39 @@ exclude = ["examples/mod.rs"]
 autoexamples = false
 
 [features]
-default = []
-playwright = []
+# 默认开启基础功能，使用 Postgres
+default = ["engine-reqwest", "redis-cache", "metrics", "db-postgres"]
+
+# 全功能组合
+full = ["default", "engine-playwright", "engine-fire-cdp", "engine-fire-tls", "db-sqlite"]
+
+# --- 引擎特性 ---
+# 基础 HTTP 引擎 (始终可用)
+engine-reqwest = []
+
+# Playwright 引擎 (引入 chromiumoxide)
+engine-playwright = ["dep:chromiumoxide"]
+
+# Fire 引擎组件
+engine-fire-cdp = []
+engine-fire-tls = []
+
+# --- 搜索特性 ---
 search-google = []
 search-bing = []
 search-baidu = []
 search-sogou = []
+
+# --- 基础设施特性 ---
+# Redis 缓存与限流支持
+redis-cache = ["dep:redis"]
+
+# 指标监控
+metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
+
+# --- 数据库特性 ---
+db-postgres = ["sea-orm/sqlx-postgres", "sqlx/postgres"]
+db-sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
 
 [dependencies]
 # Async runtime and web framework
@@ -39,13 +66,13 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 url = "2.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 
-# Database
-sea-orm = { version = "1.0", default-features = false, features = ["sqlx-postgres", "sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
-sqlx = { version = "0.8", default-features = false, features = ["postgres", "sqlite", "runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
+# Database (根据特性选择后端)
+sea-orm = { version = "1.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json"] }
 migration = { path = "migration" }
 
 # Caching and state management
-redis = { version = "1.0", features = ["tokio-comp"] }
+redis = { version = "1.0", features = ["tokio-comp"], optional = true }
 dashmap = "6.1.0"
 once_cell = "1.21.3"
 
@@ -59,13 +86,13 @@ sysinfo = "0.33"
 # Logging and observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-metrics = "0.24.3"
-metrics-exporter-prometheus = { version = "0.18.1", default-features = false, features = ["http-listener"] }
+metrics = { version = "0.24.3", optional = true }
+metrics-exporter-prometheus = { version = "0.18.1", default-features = false, features = ["http-listener"], optional = true }
 
 # Web scraping and content processing
 scraper = "0.25.0"
 robotstxt = "0.3"
-chromiumoxide = { version = "0.8.0", default-features = false, features = ["tokio-runtime"] }
+chromiumoxide = { version = "0.8.0", default-features = false, features = ["tokio-runtime"], optional = true }
 fake-useragent = "0.1"
 
 # Text processing and encoding
