@@ -3,13 +3,20 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use chrono::Utc;
 use metrics::{describe_counter, describe_gauge, describe_histogram, gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use tracing::{error, warn};
+
+// Atomic metrics for lock-free reads in hot path
+static CURRENT_CPU_USAGE: AtomicU64 = AtomicU64::new(0);
+static CURRENT_MEMORY_USAGE: AtomicU64 = AtomicU64::new(0);
+static LAST_UPDATE_TIME: AtomicU64 = AtomicU64::new(0);
 
 static SYSTEM: Lazy<Arc<Mutex<System>>> = Lazy::new(|| {
     let mut sys = System::new_with_specifics(
@@ -95,6 +102,11 @@ fn update_system_metrics() {
         sys.refresh_memory();
 
         let cpu_usage = sys.global_cpu_usage() / 100.0;
+
+        // Store in atomic variables for lock-free reads
+        CURRENT_CPU_USAGE.store((cpu_usage * 100.0) as u64, Ordering::Relaxed);
+        LAST_UPDATE_TIME.store(Utc::now().timestamp() as u64, Ordering::Relaxed);
+
         gauge!("system_cpu_usage_ratio").set(cpu_usage as f64);
 
         // Alerting logic
@@ -111,6 +123,10 @@ fn update_system_metrics() {
         if total_mem > 0 {
             let used_mem = sys.used_memory();
             let mem_usage = used_mem as f64 / total_mem as f64;
+
+            // Store memory usage in atomic variable
+            CURRENT_MEMORY_USAGE.store((mem_usage * 100.0) as u64, Ordering::Relaxed);
+
             gauge!("system_memory_usage_ratio").set(mem_usage);
 
             if mem_usage > 0.9 {
@@ -162,24 +178,23 @@ pub fn check_alerts() {
 }
 
 /// 获取当前系统 CPU 使用率 (0.0 - 1.0)
+/// Uses atomic variable for lock-free reads in hot path
 pub fn get_cpu_usage() -> f64 {
-    if let Ok(sys) = SYSTEM.lock() {
-        (sys.global_cpu_usage() / 100.0) as f64
-    } else {
-        0.0
-    }
+    CURRENT_CPU_USAGE.load(Ordering::Relaxed) as f64 / 100.0
 }
 
 /// 获取当前系统内存使用率 (0.0 - 1.0)
+/// Uses atomic variable for lock-free reads in hot path
 pub fn get_memory_usage() -> f64 {
-    if let Ok(sys) = SYSTEM.lock() {
-        let total_mem = sys.total_memory();
-        if total_mem > 0 {
-            sys.used_memory() as f64 / total_mem as f64
-        } else {
-            0.0
-        }
-    } else {
-        0.0
+    CURRENT_MEMORY_USAGE.load(Ordering::Relaxed) as f64 / 100.0
+}
+
+/// 检查指标是否过期 (超过2秒未更新)
+pub fn is_metrics_stale() -> bool {
+    let last_update = LAST_UPDATE_TIME.load(Ordering::Relaxed);
+    if last_update == 0 {
+        return true;
     }
+    let now = Utc::now().timestamp() as u64;
+    now - last_update > 2
 }

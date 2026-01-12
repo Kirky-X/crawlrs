@@ -229,4 +229,29 @@ impl RedisClient {
 
         Ok(keys)
     }
+
+    /// 执行 Lua 脚本
+    pub async fn eval(&self, script: &str, keys: &[&str], args: &[&str]) -> Result<String> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        let mut cmd = redis::cmd("EVAL");
+        cmd.arg(script).arg(keys.len());
+
+        for key in keys {
+            cmd.arg(key);
+        }
+
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        let result: String = cmd.query_async(&mut con).await?;
+        Ok(result)
+    }
+
+    /// 检查键是否存在
+    pub async fn exists(&self, key: &str) -> Result<bool> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        let exists: bool = con.exists(key).await?;
+        Ok(exists)
+    }
 }

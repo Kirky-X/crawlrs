@@ -7,11 +7,31 @@ use anyhow::Result;
 use reqwest::Client;
 use robotstxt::DefaultMatcher;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use url::Url;
 
 use async_trait::async_trait;
+
+/// Robots.txt缓存统计
+struct CacheStats {
+    pub hits: AtomicU64,
+    pub misses: AtomicU64,
+}
+
+impl Default for CacheStats {
+    fn default() -> Self {
+        Self {
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+        }
+    }
+}
+
+use once_cell::sync::Lazy;
+
+static CACHE_STATS: Lazy<CacheStats> = Lazy::new(CacheStats::default);
 
 /// Robots.txt检查器接口
 #[async_trait]
@@ -108,12 +128,15 @@ impl RobotsChecker {
             let mut cache = self.memory_cache.lock().unwrap();
             if let Some(cached) = cache.get(&robots_url) {
                 if cached.expires_at > Instant::now() {
+                    CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
                     return Ok(cached.content.clone());
                 } else {
                     cache.remove(&robots_url);
                 }
             }
         }
+
+        CACHE_STATS.misses.fetch_add(1, Ordering::Relaxed);
 
         // 2. Check Redis cache
         let redis_key = format!("robots_cache:{}", robots_url);
@@ -128,6 +151,7 @@ impl RobotsChecker {
                         expires_at: Instant::now() + Duration::from_secs(3600),
                     },
                 );
+                CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
                 return Ok(content);
             }
         }
@@ -251,5 +275,13 @@ impl RobotsChecker {
     /// 旧的公开方法，为了兼容性保留
     pub async fn is_allowed(&self, url_str: &str, user_agent: &str) -> Result<bool> {
         RobotsCheckerTrait::is_allowed(self, url_str, user_agent).await
+    }
+
+    /// 获取缓存统计信息
+    pub fn get_cache_stats() -> (u64, u64) {
+        (
+            CACHE_STATS.hits.load(Ordering::Relaxed),
+            CACHE_STATS.misses.load(Ordering::Relaxed),
+        )
     }
 }

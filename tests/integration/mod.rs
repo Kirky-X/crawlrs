@@ -31,3 +31,4 @@ pub mod search_uat_test;
 pub mod uat_scenarios_test;
 pub mod verify_google_routing;
 pub mod webhook_test;
+pub mod worker_tests;

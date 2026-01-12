@@ -41,6 +41,57 @@ use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseI
 use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 
+// Lua script for atomic concurrency control - reduces 4 Redis round-trips to 1
+const CONCURRENCY_CONTROL_LUA: &str = r#"
+local active_key = KEYS[1]
+local limit_key = KEYS[2]
+local task_id = ARGV[1]
+local score = tonumber(ARGV[2])
+local stale_threshold = tonumber(ARGV[3])
+local default_limit = tonumber(ARGV[4])
+
+-- 1. Cleanup stale tasks (older than threshold)
+redis.call('ZREMRANGEBYSCORE', active_key, '-inf', stale_threshold)
+
+-- 2. Get limit from Redis or use default
+local limit = tonumber(redis.call('GET', limit_key) or default_limit)
+
+-- 3. Check if task is already in set (heartbeat case)
+if redis.call('ZSCORE', active_key, task_id) then
+    redis.call('ZADD', active_key, score, task_id)
+    return 1
+end
+
+-- 4. Check current count and acquire if within limit
+local count = redis.call('ZCARD', active_key)
+if count < limit then
+    redis.call('ZADD', active_key, score, task_id)
+    return 1
+else
+    return 0
+end
+"#;
+
+// Regex cache for crawl pattern matching
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
+static REGEX_CACHE: Lazy<Mutex<HashMap<String, regex::Regex>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
+    let mut cache = REGEX_CACHE.lock().unwrap();
+    if let Some(regex) = cache.get(pattern) {
+        return Some(regex.clone());
+    }
+
+    if let Ok(regex) = regex::Regex::new(pattern) {
+        cache.insert(pattern.to_string(), regex.clone());
+        return Some(regex);
+    }
+    None
+}
+
 /// 抓取工作者
 pub struct ScrapeWorker<R, S, C, CRR>
 where
@@ -147,38 +198,12 @@ where
 
     async fn acquire_concurrency_permit(&self, task: &Task) -> Result<bool> {
         let team_id = task.team_id;
-        // Use ZSET for robust concurrency control: member=task_id, score=timestamp
         let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
-        let now = Utc::now().timestamp() as f64;
-
-        // 1. Cleanup stale tasks (older than 1 hour) to prevent deadlocks
-        let stale_threshold = now - 3600.0;
-        if let Err(e) = self
-            .redis
-            .zrembyscore(&team_active_tasks_key, f64::NEG_INFINITY, stale_threshold)
-            .await
-        {
-            warn!("Failed to cleanup stale tasks for team {}: {}", team_id, e);
-        }
-
-        // 2. Speculatively add current task (Add-then-Check pattern for atomicity)
-        // This ensures that if multiple workers race, they all add, and then the excess ones back off.
-        self.redis
-            .zadd(&team_active_tasks_key, &task.id.to_string(), now)
-            .await?;
-
-        // 3. Get rank of current task to see if we are within limit
-        // ZRANK returns 0-based index sorted by score (timestamp).
-        // If rank < limit, we are in the first 'limit' tasks.
-        let rank = self
-            .redis
-            .zrank(&team_active_tasks_key, &task.id.to_string())
-            .await?
-            .unwrap_or(usize::MAX); // Should exist since we just added it
-
-        // 4. Get limit
         let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
-        // Priority: 1. Task Payload (max_concurrency) 2. Redis Key 3. Default
+        let now = Utc::now().timestamp() as f64;
+        let stale_threshold = now - 3600.0; // 1 hour stale
+
+        // Get limit - Priority: 1. Task Payload 2. Redis Key 3. Default
         let payload_limit = if task.task_type == TaskType::Crawl {
             task.payload
                 .get("config")
@@ -186,33 +211,28 @@ where
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize)
         } else {
-            // For Scrape task, we can check options if available
             None
         };
 
-        let limit: usize = if let Some(l) = payload_limit {
-            l
-        } else {
-            let limit_str: Option<String> = self.redis.get(&team_concurrency_limit_key).await?;
-            limit_str
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(self.default_concurrency_limit)
-        };
+        let default_limit = payload_limit.unwrap_or(self.default_concurrency_limit);
 
-        // 5. Check if we exceeded limit based on Rank
-        // Example: Limit 2. Tasks A (rank 0), B (rank 1), C (rank 2).
-        // A and B are < 2. C is >= 2. C should back off.
-        if rank >= limit {
-            // We are over limit.
-            // Remove ourselves to restore count.
-            self.redis
-                .zrem(&team_active_tasks_key, &task.id.to_string())
-                .await?;
+        // Execute atomic Lua script - reduces 4 Redis calls to 1
+        let result = self
+            .redis
+            .eval(
+                CONCURRENCY_CONTROL_LUA,
+                &[&team_active_tasks_key, &team_concurrency_limit_key],
+                &[
+                    &task.id.to_string(),
+                    &now.to_string(),
+                    &stale_threshold.to_string(),
+                    &default_limit.to_string(),
+                ],
+            )
+            .await?;
 
-            return Ok(false);
-        }
-
-        Ok(true)
+        let granted = result == "1";
+        Ok(granted)
     }
 
     async fn release_concurrency_permit(&self, team_id: Uuid, task_id: Uuid) -> Result<()> {
@@ -968,7 +988,7 @@ where
         if let Some(includes) = &config.include_patterns {
             let mut matched = false;
             for pattern in includes {
-                if let Ok(re) = Regex::new(pattern) {
+                if let Some(re) = get_cached_regex(pattern) {
                     if re.is_match(url) {
                         matched = true;
                         break;
@@ -987,7 +1007,7 @@ where
         // 2. 检查排除模式 (如果有配置，不能匹配任何一个)
         if let Some(excludes) = &config.exclude_patterns {
             for pattern in excludes {
-                if let Ok(re) = Regex::new(pattern) {
+                if let Some(re) = get_cached_regex(pattern) {
                     if re.is_match(url) {
                         return false;
                     }
