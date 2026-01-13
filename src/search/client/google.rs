@@ -14,7 +14,6 @@ use crate::search::{
 use async_trait::async_trait;
 use chrono::Utc;
 use rand::Rng;
-use reqwest::Client;
 use scraper::{Html, Selector};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,19 +25,7 @@ fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
     Selector::parse(selector_str).ok()
 }
 
-/// Google HTTP client - reused across requests for connection pooling
-#[allow(dead_code)]
-static HTTP_CLIENT: once_cell::sync::Lazy<Client> = once_cell::sync::Lazy::new(|| {
-    Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(10)
-        .pool_idle_timeout(Duration::from_secs(90))
-        .build()
-        .unwrap_or_else(|_| Client::new())
-});
-
-/// Google ARC_ID cache structure
+/// Google Search Engine implementation
 struct ArcIdCache {
     arc_id: String,
     generated_at: i64,

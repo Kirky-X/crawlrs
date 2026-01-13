@@ -317,6 +317,25 @@ pub enum EngineError {
     Internal(String),
 }
 
+// From implementations for EngineError
+impl From<String> for EngineError {
+    fn from(msg: String) -> Self {
+        EngineError::RequestFailed(msg)
+    }
+}
+
+impl From<&str> for EngineError {
+    fn from(msg: &str) -> Self {
+        EngineError::RequestFailed(msg.to_string())
+    }
+}
+
+impl From<anyhow::Error> for EngineError {
+    fn from(err: anyhow::Error) -> Self {
+        EngineError::Internal(err.to_string())
+    }
+}
+
 impl EngineError {
     /// Check if the error is retryable.
     pub fn is_retryable(&self) -> bool {

@@ -222,6 +222,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 初始化引擎列表
     #[allow(deprecated)]
+    #[allow(unused_mut)]
     let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
 
     // 根据特性条件添加 Playwright 引擎

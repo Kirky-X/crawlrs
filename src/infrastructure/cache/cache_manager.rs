@@ -199,7 +199,9 @@ impl CacheManager {
     pub fn extract_hot_patterns(queries: &[String]) -> Vec<String> {
         use std::collections::HashMap;
 
-        let mut pattern_counts: HashMap<String, u32> = HashMap::new();
+        // Estimate capacity based on input size
+        let estimated_capacity = (queries.len() / 2).max(1);
+        let mut pattern_counts: HashMap<String, u32> = HashMap::with_capacity(estimated_capacity);
 
         for query in queries {
             // 提取关键词模式（简化实现）

@@ -37,7 +37,7 @@ impl BingSearchEngine {
 
     /// Construct Bing cookies for region and language settings
     pub fn get_bing_cookies(&self, lang: &str, region: &str) -> HashMap<String, String> {
-        let mut cookies = HashMap::new();
+        let mut cookies = HashMap::with_capacity(4);
         cookies.insert("_EDGE_CD".to_string(), format!("m={}&u={}", region, lang));
         cookies.insert("_EDGE_S".to_string(), format!("mkt={}&ui={}", region, lang));
         cookies
@@ -45,7 +45,7 @@ impl BingSearchEngine {
 
     /// Build Bing search parameters for testing
     pub fn build_params(&self, query: &str, page: u32) -> HashMap<String, String> {
-        let mut params = HashMap::new();
+        let mut params = HashMap::with_capacity(8);
         params.insert("q".to_string(), query.to_string());
         params.insert("pq".to_string(), query.to_string());
 

@@ -20,6 +20,25 @@ pub enum RelevanceScorerError {
     RegexError(String),
 }
 
+// From implementations for RelevanceScorerError
+impl From<String> for RelevanceScorerError {
+    fn from(msg: String) -> Self {
+        RelevanceScorerError::RegexError(msg)
+    }
+}
+
+impl From<&str> for RelevanceScorerError {
+    fn from(msg: &str) -> Self {
+        RelevanceScorerError::RegexError(msg.to_string())
+    }
+}
+
+impl From<anyhow::Error> for RelevanceScorerError {
+    fn from(err: anyhow::Error) -> Self {
+        RelevanceScorerError::RegexError(err.to_string())
+    }
+}
+
 type DateParser = fn(&str) -> Option<DateTime<Utc>>;
 
 static DATE_REGEXES: Lazy<Vec<(Regex, DateParser)>> = Lazy::new(|| {
@@ -60,7 +79,8 @@ static DATE_REGEXES: Lazy<Vec<(Regex, DateParser)>> = Lazy::new(|| {
     ]
 });
 
-static REGEX_CACHE: Lazy<Mutex<HashMap<String, Regex>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static REGEX_CACHE: Lazy<Mutex<HashMap<String, Regex>>> =
+    Lazy::new(|| Mutex::new(HashMap::with_capacity(256)));
 
 fn get_cached_regex(term: &str) -> Result<Regex, RelevanceScorerError> {
     let pattern = format!(r"\b{}\b", regex::escape(term));
@@ -91,14 +111,17 @@ impl RelevanceScorer {
             .collect();
 
         // Calculate TF-IDF-like weights for query terms
-        let mut term_weights = HashMap::new();
-        let total_terms = terms.len() as f64;
+        let total_terms = terms.len();
+        let unique_terms = terms.iter().collect::<std::collections::HashSet<_>>().len();
+        let mut term_weights = HashMap::with_capacity(unique_terms);
+
+        let total_terms_f64 = total_terms as f64;
 
         for term in &terms {
             let count = terms.iter().filter(|t| t == &term).count() as f64;
-            let tf = count / total_terms;
+            let tf = count / total_terms_f64;
             // Simple IDF approximation (logarithmic scale)
-            let idf = (1.0 + total_terms / count).ln();
+            let idf = (1.0 + total_terms_f64 / count).ln();
             term_weights.insert(term.clone(), tf * idf);
         }
 

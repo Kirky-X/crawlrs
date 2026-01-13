@@ -172,8 +172,8 @@ impl SearchEngineRouter {
     /// 创建新的搜索引擎路由器
     pub fn new() -> Self {
         Self {
-            engines: HashMap::new(),
-            metrics: RwLock::new(HashMap::new()),
+            engines: HashMap::with_capacity(8),
+            metrics: RwLock::new(HashMap::with_capacity(8)),
             config: SearchEngineRouterConfig::default(),
             load_balance_index: RwLock::new(0),
         }
@@ -182,8 +182,8 @@ impl SearchEngineRouter {
     /// 创建带配置的搜索引擎路由器
     pub fn with_config(config: SearchEngineRouterConfig) -> Self {
         Self {
-            engines: HashMap::new(),
-            metrics: RwLock::new(HashMap::new()),
+            engines: HashMap::with_capacity(8),
+            metrics: RwLock::new(HashMap::with_capacity(8)),
             config,
             load_balance_index: RwLock::new(0),
         }

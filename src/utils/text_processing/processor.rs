@@ -46,7 +46,7 @@ impl WebContentProcessor {
     }
 
     fn init_encoding_patterns() -> HashMap<&'static str, Regex> {
-        let mut patterns = HashMap::new();
+        let mut patterns = HashMap::with_capacity(4);
         patterns.insert(
             ENCODING_PATTERN_HTML_META,
             Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#)
@@ -385,7 +385,7 @@ impl CrawlTextProcessor {
         if words.len() < 10 {
             return 0.0;
         }
-        let mut word_counts = std::collections::HashMap::new();
+        let mut word_counts = std::collections::HashMap::with_capacity(256);
         for word in &words {
             *word_counts.entry(word.to_lowercase()).or_insert(0) += 1;
         }

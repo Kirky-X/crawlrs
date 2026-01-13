@@ -67,7 +67,8 @@ impl ExtractionService {
         html_content: &str,
         rules: &HashMap<String, ExtractionRule>,
     ) -> Result<(Value, TokenUsage)> {
-        let mut result = HashMap::new();
+        // Pre-allocate based on rules count
+        let mut result = HashMap::with_capacity(rules.len());
         let mut total_usage = TokenUsage::default();
 
         for (key, rule) in rules {
@@ -206,7 +207,7 @@ mod tests {
             </html>
         "#;
 
-        let mut rules = HashMap::new();
+        let mut rules = HashMap::with_capacity(8);
         rules.insert(
             "title".to_string(),
             ExtractionRule {

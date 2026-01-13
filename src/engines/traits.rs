@@ -188,7 +188,7 @@ pub struct ScrapeResponse {
 impl ScrapeResponse {
     /// 创建一个新的抓取响应
     pub fn new(_url: &str, content: &str) -> Self {
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::with_capacity(2);
         headers.insert(CONTENT_TYPE.to_string(), TEXT_HTML.to_string());
 
         Self {

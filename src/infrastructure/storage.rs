@@ -273,7 +273,9 @@ pub struct InMemoryStorage {
 impl InMemoryStorage {
     pub fn new() -> Self {
         Self {
-            data: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            data: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::with_capacity(1024),
+            )),
         }
     }
 }

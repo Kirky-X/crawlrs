@@ -90,10 +90,30 @@ pub enum ScrapeWorkerError {
     #[error("任务处理错误: {0}")]
     TaskError(String),
 }
+
+// From implementations for ScrapeWorkerError
+impl From<String> for ScrapeWorkerError {
+    fn from(msg: String) -> Self {
+        ScrapeWorkerError::TaskError(msg)
+    }
+}
+
+impl From<&str> for ScrapeWorkerError {
+    fn from(msg: &str) -> Self {
+        ScrapeWorkerError::TaskError(msg.to_string())
+    }
+}
+
+impl From<anyhow::Error> for ScrapeWorkerError {
+    fn from(err: anyhow::Error) -> Self {
+        ScrapeWorkerError::TaskError(err.to_string())
+    }
+}
+
 use std::sync::Mutex;
 
 static REGEX_CACHE: Lazy<Mutex<HashMap<String, regex::Regex>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+    Lazy::new(|| Mutex::new(HashMap::with_capacity(256)));
 
 fn get_cached_regex(pattern: &str) -> Result<regex::Regex, ScrapeWorkerError> {
     let mut cache = REGEX_CACHE
@@ -468,7 +488,7 @@ where
         }
 
         // 2. 构建抓取请求
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::with_capacity(16);
         if let Some(h) = &config.headers {
             if let Some(obj) = h.as_object() {
                 for (k, v) in obj {
@@ -781,7 +801,7 @@ where
         }
 
         // Handle prompt-based extraction (legacy)
-        let mut rules = HashMap::new();
+        let mut rules = HashMap::with_capacity(8);
         if let Some(prompt) = payload.prompt {
             rules.insert(
                 "extracted_data".to_string(),
@@ -1415,7 +1435,7 @@ where
 
         let options = scrape_request.options.as_ref();
 
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::with_capacity(16);
         if let Some(opts) = options {
             if let Some(h) = &opts.headers {
                 if let Some(obj) = h.as_object() {

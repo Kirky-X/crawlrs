@@ -115,7 +115,7 @@ impl ScraperEngine for FireEngineTls {
             .ok_or_else(|| EngineError::Other("Flaresolverr returned no solution".to_string()))?;
 
         // Convert headers
-        let mut headers = std::collections::HashMap::new();
+        let mut headers = std::collections::HashMap::with_capacity(32);
         if let serde_json::Value::Object(map) = solution.headers {
             for (k, v) in map {
                 if let Some(s) = v.as_str() {

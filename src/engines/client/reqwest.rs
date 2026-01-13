@@ -128,7 +128,7 @@ impl ScraperEngine for ReqwestEngine {
             content_type
         };
 
-        let mut response_headers = std::collections::HashMap::new();
+        let mut response_headers = std::collections::HashMap::with_capacity(32);
         for (k, v) in response.headers() {
             if let Ok(v_str) = v.to_str() {
                 response_headers.insert(k.as_str().to_string(), v_str.to_string());

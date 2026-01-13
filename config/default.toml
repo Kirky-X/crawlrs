@@ -41,8 +41,6 @@ task_lock_duration_seconds = 300
 
 # Search Configuration
 [search]
-ab_test_enabled = false
-variant_b_weight = 0.1
 default_engine = "baidu"
 
 # Search Engine Enable/Disable Configuration
@@ -87,3 +85,20 @@ cx = ""
 api_key = "ollama"
 model = "qwen3:1.7b"
 api_base_url = "http://172.24.160.1:11434/v1"
+
+# Engine Support Score Configuration
+# Scores are used by engine router to select the best engine for a request
+# Range: 0-100 (higher = more preferred)
+[engine_scores]
+# Fire CDP engine scores
+fire_cdp_with_tls_screenshot = 100  # TLS fingerprint + screenshot needed
+fire_cdp_with_tls = 100             # TLS fingerprint needed (no screenshot)
+fire_cdp_screenshot = 80            # Screenshot only
+fire_cdp_js = 90                    # JavaScript rendering needed
+fire_cdp_actions = 90               # Page interactions needed
+fire_cdp_default = 40               # Default score for basic requests
+
+# Fire TLS engine scores
+fire_tls_with_tls = 100             # TLS fingerprint needed
+fire_tls_unsupported = 0            # JS, screenshot, or actions not supported
+fire_tls_default = 40               # Default score for basic requests

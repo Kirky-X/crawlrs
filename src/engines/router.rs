@@ -58,11 +58,17 @@ impl RouterMetrics {
             candidate_count_total: AtomicU64::new(0),
             attempt_count_total: AtomicU64::new(0),
             engine_selection_total: AtomicU64::new(0),
-            engine_latencies: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            engine_success_count: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-            engine_failure_count: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            engine_latencies: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::with_capacity(8),
+            )),
+            engine_success_count: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::with_capacity(8),
+            )),
+            engine_failure_count: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::with_capacity(8),
+            )),
             failure_classification: Arc::new(std::sync::Mutex::new(
-                std::collections::HashMap::new(),
+                std::collections::HashMap::with_capacity(8),
             )),
         }
     }
@@ -282,7 +288,7 @@ impl EngineRouter {
     ///
     /// 返回新的引擎路由器实例
     pub fn new(engines: Vec<Arc<dyn ScraperEngine>>) -> Self {
-        let mut engine_stats = std::collections::HashMap::new();
+        let mut engine_stats = std::collections::HashMap::with_capacity(8);
         for engine in &engines {
             engine_stats.insert(engine.name().to_string(), EngineStats::default());
         }
@@ -318,7 +324,7 @@ impl EngineRouter {
         circuit_breaker: Arc<CircuitBreaker>,
         strategy: LoadBalancingStrategy,
     ) -> Self {
-        let mut engine_stats = std::collections::HashMap::new();
+        let mut engine_stats = std::collections::HashMap::with_capacity(8);
         for engine in &engines {
             engine_stats.insert(engine.name().to_string(), EngineStats::default());
         }

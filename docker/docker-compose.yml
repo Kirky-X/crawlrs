@@ -313,6 +313,60 @@ services:
     labels:
       - "crawlrs.service=pgadmin"
 
+  # ==========================================================================
+  # 测试服务 (用于运行集成测试)
+  # ==========================================================================
+  test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.test
+    image: crawlrs-test:latest
+    container_name: crawlrs-test
+    command: ["cargo", "test", "--features", "full", "--test", "integration_tests"]
+    environment:
+      # 测试配置
+      - TEST_DATABASE_URL=postgres://crawlrs:password@db:5432/crawlrs_test
+      - TEST_REDIS_PORT=6379
+      - SKIP_S3_TESTS=true
+      - SKIP_BROWSER_TESTS=true
+      - SKIP_SEARCH_TESTS=true
+
+      # 数据库配置 (使用服务名)
+      - CRAWLRS__DATABASE__URL=postgres://crawlrs:password@db:5432/crawlrs_test
+      - CRAWLRS__DATABASE__HOST=db
+      - CRAWLRS__DATABASE__PORT=5432
+      - CRAWLRS__DATABASE__NAME=crawlrs_test
+      - CRAWLRS__DATABASE__USER=crawlrs
+      - CRAWLRS__DATABASE__PASSWORD=password
+
+      # Redis配置 (使用服务名)
+      - CRAWLRS__REDIS__URL=redis://redis:6379
+      - CRAWLRS__REDIS__HOST=redis
+
+      # 服务器配置
+      - CRAWLRS__SERVER__HOST=0.0.0.0
+      - CRAWLRS__SERVER__PORT=3000
+      - CRAWLRS__SERVER__ENABLE_PORT_DETECTION=false
+
+      # 日志配置
+      - CRAWLRS__RUST_LOG=info
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../target:/app/target
+      - ../tests:/app/tests
+      - ../config:/app/config
+      - ./test-results:/app/test-results
+    networks:
+      - crawlrs-network
+    restart: no
+    profiles:
+      - test
+
 # =============================================================================
 # 网络配置
 # =============================================================================

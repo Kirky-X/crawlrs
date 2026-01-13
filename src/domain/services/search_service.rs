@@ -34,6 +34,25 @@ pub enum SearchServiceError {
     InsufficientCredits { available: i64, required: i64 },
 }
 
+// From implementations for SearchServiceError
+impl From<String> for SearchServiceError {
+    fn from(msg: String) -> Self {
+        SearchServiceError::ValidationError(msg)
+    }
+}
+
+impl From<&str> for SearchServiceError {
+    fn from(msg: &str) -> Self {
+        SearchServiceError::ValidationError(msg.to_string())
+    }
+}
+
+impl From<anyhow::Error> for SearchServiceError {
+    fn from(err: anyhow::Error) -> Self {
+        SearchServiceError::SearchEngine(err.to_string())
+    }
+}
+
 use crate::search::engine_trait::SearchEngine;
 
 pub struct SearchService<CR, TR, CRR> {

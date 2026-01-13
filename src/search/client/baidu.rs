@@ -48,7 +48,7 @@ impl BaiduSearchEngine {
         page: u32,
         category: BaiduSearchCategory,
     ) -> (String, HashMap<String, String>) {
-        let mut params = HashMap::new();
+        let mut params = HashMap::with_capacity(8);
         let offset = ((page - 1) * 10).to_string();
 
         match category {

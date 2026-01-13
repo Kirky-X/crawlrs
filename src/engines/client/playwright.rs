@@ -87,10 +87,16 @@ async fn get_or_init_browser() -> Result<Arc<Browser>, EngineError> {
     }
 
     // Need to create a new browser
-    let remote_debugging_url = REMOTE_URL_OVERRIDE
-        .try_with(|url| url.clone())
+    // Priority: CHROMIUM_REMOTE_DEBUGGING_URL env var > REMOTE_URL_OVERRIDE task_local
+    let remote_debugging_url = std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL")
         .ok()
-        .or_else(|| std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").ok());
+        .filter(|url| !url.is_empty())
+        .or_else(|| {
+            REMOTE_URL_OVERRIDE
+                .try_with(|url| url.clone())
+                .ok()
+                .filter(|url| !url.is_empty())
+        });
 
     let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
         tracing::info!("Connecting to remote Chrome instance at: {}", url);
@@ -313,7 +319,7 @@ impl ScraperEngine for PlaywrightEngine {
 
             // Build headers from available document information
             let response_headers = {
-                let mut headers = std::collections::HashMap::new();
+                let mut headers = std::collections::HashMap::with_capacity(2);
                 headers.insert("Content-Type".to_string(), content_type.clone());
                 headers
             };

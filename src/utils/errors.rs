@@ -46,6 +46,39 @@ pub enum WorkerError {
     NotFound(String),
 }
 
+// From implementations for WorkerError
+impl From<String> for WorkerError {
+    fn from(msg: String) -> Self {
+        WorkerError::InternalError(msg)
+    }
+}
+
+impl From<&str> for WorkerError {
+    fn from(msg: &str) -> Self {
+        WorkerError::InternalError(msg.to_string())
+    }
+}
+
+impl From<anyhow::Error> for WorkerError {
+    fn from(err: anyhow::Error) -> Self {
+        WorkerError::InternalError(err.to_string())
+    }
+}
+
+impl From<RepositoryError> for WorkerError {
+    fn from(err: RepositoryError) -> Self {
+        match err {
+            RepositoryError::DatabaseError(msg) => WorkerError::RepositoryError(msg),
+            RepositoryError::NotFound => WorkerError::NotFound("Resource not found".to_string()),
+            RepositoryError::AlreadyExists => {
+                WorkerError::RepositoryError("Resource already exists".to_string())
+            }
+            RepositoryError::InvalidParameter(msg) => WorkerError::DomainError(msg),
+            RepositoryError::InternalError(msg) => WorkerError::InternalError(msg),
+        }
+    }
+}
+
 /// 统一的应用层错误
 #[derive(Error, Debug)]
 pub enum AppError {

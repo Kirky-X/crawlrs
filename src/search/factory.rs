@@ -157,6 +157,7 @@ impl SearchEngineFactory {
 
     /// 创建 EngineClient 并注册 Fire Engines（用于智能搜索）
     #[allow(deprecated)]
+    #[allow(unused_mut)]
     pub fn create_engine_client_with_fire_engines(&self) -> Arc<EngineClient> {
         let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
 
@@ -355,6 +356,7 @@ pub fn create_google_engine() -> Arc<dyn SearchEngine> {
 }
 
 #[cfg(not(feature = "engine-playwright"))]
+#[allow(unused_mut)]
 pub fn create_google_engine() -> Arc<dyn SearchEngine> {
     let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
 

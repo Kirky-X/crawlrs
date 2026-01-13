@@ -7,6 +7,7 @@ pub mod browser_helpers;
 pub mod chrome;
 pub mod google;
 pub mod google_helpers;
+pub mod mock_server;
 pub mod search_engine;
 pub mod test_app;
 

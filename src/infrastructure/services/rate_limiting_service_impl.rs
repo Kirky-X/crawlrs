@@ -345,7 +345,12 @@ impl RateLimitingService for RateLimitingServiceImpl {
         endpoint: &str,
     ) -> Result<RateLimitResult, RateLimitingError> {
         debug!("========== RATE LIMIT CHECK ==========");
-        debug!(api_key);
+        let masked_key = if api_key.len() > 8 {
+            &api_key[..4]
+        } else {
+            "****"
+        };
+        debug!(api_key = masked_key);
         debug!(endpoint);
         debug!(enabled = self.config.rate_limit.enabled);
 

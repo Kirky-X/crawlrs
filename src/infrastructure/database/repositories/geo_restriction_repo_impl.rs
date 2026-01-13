@@ -42,7 +42,7 @@ impl InMemoryGeoRestrictionRepository {
     /// 创建新的内存地理限制仓库实例
     pub fn new() -> Self {
         Self {
-            restrictions: Arc::new(RwLock::new(HashMap::new())),
+            restrictions: Arc::new(RwLock::new(HashMap::with_capacity(64))),
             audit_logs: Arc::new(RwLock::new(Vec::new())),
         }
     }

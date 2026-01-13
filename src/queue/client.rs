@@ -752,7 +752,7 @@ impl QueueMetrics for QueueMetricsImpl {
                 .load(std::sync::atomic::Ordering::SeqCst),
             tasks_failed: self.tasks_failed.load(std::sync::atomic::Ordering::SeqCst),
             avg_processing_time_ms: 0.0, // Requires timing tracking
-            operation_success_rates: std::collections::HashMap::new(),
+            operation_success_rates: std::collections::HashMap::with_capacity(16),
         }
     }
 }

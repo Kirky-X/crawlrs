@@ -121,7 +121,7 @@ impl RobotsChecker {
     pub fn new(redis_client: Option<Arc<RedisClient>>) -> Self {
         Self {
             client: Client::new(),
-            memory_cache: Arc::new(Mutex::new(HashMap::new())),
+            memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             redis_client,
             retry_policy: RetryPolicy {
                 max_retries: 5,

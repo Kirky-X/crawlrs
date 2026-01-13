@@ -103,8 +103,8 @@ impl CircuitBreaker {
     /// 返回新的熔断器实例
     pub fn new() -> Self {
         Self {
-            states: Arc::new(RwLock::new(HashMap::new())),
-            configs: Arc::new(RwLock::new(HashMap::new())),
+            states: Arc::new(RwLock::new(HashMap::with_capacity(8))),
+            configs: Arc::new(RwLock::new(HashMap::with_capacity(8))),
             default_config: CircuitConfig::default(),
         }
     }
@@ -120,8 +120,8 @@ impl CircuitBreaker {
     /// 返回新的熔断器实例
     pub fn with_default_config(config: CircuitConfig) -> Self {
         Self {
-            states: Arc::new(RwLock::new(HashMap::new())),
-            configs: Arc::new(RwLock::new(HashMap::new())),
+            states: Arc::new(RwLock::new(HashMap::with_capacity(8))),
+            configs: Arc::new(RwLock::new(HashMap::with_capacity(8))),
             default_config: config,
         }
     }

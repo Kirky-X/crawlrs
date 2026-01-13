@@ -3,6 +3,11 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+/// Load degradation thresholds
+const HIGH_LOAD_THRESHOLD: f64 = 0.8;
+const MEDIUM_LOAD_THRESHOLD: f64 = 0.6;
+const MEDIUM_LOAD_DEPTH_FACTOR: f64 = 0.75;
+
 use crate::domain::models::task::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::infrastructure::observability::metrics::{get_cpu_usage, get_memory_usage};
@@ -93,15 +98,19 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         // Degradation strategy: reduce max_depth under high load
         let cpu_usage = get_cpu_usage();
         let mem_usage = get_memory_usage();
-        let effective_max_depth = if cpu_usage > 0.8 || mem_usage > 0.8 {
-            // High load: limit depth to current + 1 or config/2
-            std::cmp::min(max_depth, depth + 1)
-        } else if cpu_usage > 0.6 || mem_usage > 0.6 {
-            // Medium load: limit depth to 75% of max_depth
-            std::cmp::max(depth + 1, (max_depth as f64 * 0.75) as u64)
-        } else {
-            max_depth
-        };
+        let effective_max_depth =
+            if cpu_usage > HIGH_LOAD_THRESHOLD || mem_usage > HIGH_LOAD_THRESHOLD {
+                // High load: limit depth to current + 1 or config/2
+                std::cmp::min(max_depth, depth + 1)
+            } else if cpu_usage > MEDIUM_LOAD_THRESHOLD || mem_usage > MEDIUM_LOAD_THRESHOLD {
+                // Medium load: limit depth to 75% of max_depth
+                std::cmp::max(
+                    depth + 1,
+                    (max_depth as f64 * MEDIUM_LOAD_DEPTH_FACTOR) as u64,
+                )
+            } else {
+                max_depth
+            };
 
         if depth >= effective_max_depth {
             tracing::warn!(

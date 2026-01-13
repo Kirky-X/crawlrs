@@ -3,12 +3,47 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! 真实世界集成测试
+//!
+//! 测试真实网站抓取功能，需要以下之一：
+//! 1. 运行中的 FlareSolverr 和 Chrome 容器
+//! 2. 可用的 Playwright 环境
+//!
+//! 运行方式：
+//! ```bash
+//! # 启动浏览器服务
+//! docker-compose --profile browser up -d flaresolverr chrome
+//!
+//! # 或跳过这些测试
+//! export SKIP_BROWSER_TESTS=true
+//! ```
+
 use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
+use std::env;
 use std::time::Duration;
 use testcontainers::{runners::AsyncRunner, GenericImage};
 use tracing::info;
 
 const TEST_URL: &str = "https://news.sina.com.cn/c/xl/2025-12-17/doc-inhcaekp2520228.shtml";
+
+/// 检查是否应该跳过浏览器测试
+fn should_skip_browser_tests() -> bool {
+    env::var("SKIP_BROWSER_TESTS").is_ok()
+}
+
+/// 检查 FlareSolverr 是否可用
+async fn is_flaresolverr_available() -> bool {
+    let client = reqwest::Client::new();
+    let endpoints = vec!["http://localhost:8191/v1/health", "http://localhost:8191/"];
+
+    for endpoint in endpoints {
+        match reqwest::get(endpoint).await {
+            Ok(resp) if resp.status().is_success() => return true,
+            _ => continue,
+        }
+    }
+    false
+}
 
 fn create_base_request() -> ScrapeRequest {
     ScrapeRequest::new(TEST_URL).timeout(Duration::from_secs(60)) // Increased timeout for FlareSolverr
@@ -62,6 +97,11 @@ async fn wait_for_flaresolverr(base_url: &str) {
 
 #[tokio::test]
 async fn test_real_world_reqwest_engine() {
+    if should_skip_browser_tests() {
+        println!("⚠️  Browser tests skipped - SKIP_BROWSER_TESTS is set");
+        return;
+    }
+
     let client = EngineClient::new();
     let request = create_base_request();
 
@@ -91,6 +131,11 @@ async fn test_real_world_reqwest_engine() {
 
 #[tokio::test]
 async fn test_real_world_playwright_engine() {
+    if should_skip_browser_tests() {
+        println!("⚠️  Browser tests skipped - SKIP_BROWSER_TESTS is set");
+        return;
+    }
+
     info!("Testing EngineClient (playwright) with existing Chrome container...");
 
     // Check if Chrome is available via environment variable
@@ -187,6 +232,11 @@ async fn test_real_world_fire_engine_cdp() {
 
 #[tokio::test]
 async fn test_real_world_fire_engine_tls() {
+    if should_skip_browser_tests() {
+        println!("⚠️  Browser tests skipped - SKIP_BROWSER_TESTS is set");
+        return;
+    }
+
     info!("Starting FlareSolverr container for TLS test...");
     let flaresolverr = GenericImage::new("ghcr.io/flaresolverr/flaresolverr", "latest")
         .with_exposed_port(testcontainers::core::ContainerPort::Tcp(8191))

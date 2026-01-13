@@ -312,7 +312,7 @@ impl SmartSearchEngine {
     ) -> ScrapeRequest {
         use rand::rng;
 
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::with_capacity(16);
 
         // 为所有请求类型添加完整的浏览器指纹
         let user_agents = [

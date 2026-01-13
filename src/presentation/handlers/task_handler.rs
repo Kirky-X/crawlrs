@@ -211,7 +211,7 @@ pub async fn query_tasks<T: TaskRepository>(
         let task_ids: Vec<uuid::Uuid> = tasks.iter().map(|task| task.id).collect();
         let results = scrape_result_repo.find_by_task_ids(&task_ids).await?;
 
-        let mut map = std::collections::HashMap::new();
+        let mut map = std::collections::HashMap::with_capacity(64);
         for result in results {
             map.insert(result.task_id, result);
         }
@@ -298,7 +298,7 @@ pub async fn cancel_tasks<T: TaskRepository>(
 
     // 验证任务ID列表不为空
     if request.task_ids.is_empty() {
-        return Err(AppError::from(anyhow::anyhow!("Task IDs cannot be empty")));
+        return Err(AppError::Validation("Task IDs cannot be empty".to_string()));
     }
 
     let force = request.force.unwrap_or(false);

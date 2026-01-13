@@ -87,7 +87,7 @@ pub struct EngineHealthMonitor {
 impl EngineHealthMonitor {
     /// 创建新的健康监控器
     pub fn new(engines: Vec<Arc<dyn ScraperEngine>>) -> Self {
-        let mut health_status = HashMap::new();
+        let mut health_status = HashMap::with_capacity(8);
 
         for engine in &engines {
             let engine_name = engine.name().to_string();
@@ -116,7 +116,7 @@ impl EngineHealthMonitor {
         engines: Vec<Arc<dyn ScraperEngine>>,
         config: HealthCheckConfig,
     ) -> Self {
-        let mut health_status = HashMap::new();
+        let mut health_status = HashMap::with_capacity(8);
 
         for engine in &engines {
             let engine_name = engine.name().to_string();

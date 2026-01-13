@@ -69,7 +69,7 @@ impl BacklogWorker {
 
         // 2. 按团队分组处理任务
         let mut backlogs_by_team: std::collections::HashMap<uuid::Uuid, Vec<_>> =
-            std::collections::HashMap::new();
+            std::collections::HashMap::with_capacity(32);
         for backlog in pending_backlogs {
             backlogs_by_team
                 .entry(backlog.team_id)
