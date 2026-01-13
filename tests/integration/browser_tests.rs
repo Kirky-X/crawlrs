@@ -114,7 +114,7 @@ async fn test_browser_connection_simple() {
     // Set environment variable to avoid browser reuse conflicts
     std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
 
-    set_chrome_ws_url("ws://localhost:9222");
+    set_chrome_ws_url("http://localhost:9222");
 
     // Add a delay to ensure browser connection is stable
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -133,7 +133,7 @@ async fn test_browser_connection_debug() {
     // Set environment variable to avoid browser reuse conflicts
     std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
 
-    set_chrome_ws_url("ws://localhost:9222");
+    set_chrome_ws_url("http://localhost:9222");
 
     // Add a delay to ensure browser connection is stable
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -158,7 +158,7 @@ async fn test_playwright_direct() {
     // Set environment variable to avoid browser reuse conflicts
     std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
 
-    set_chrome_ws_url("ws://localhost:9222");
+    set_chrome_ws_url("http://localhost:9222");
 
     // Add a delay to ensure browser connection is stable
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
