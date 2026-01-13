@@ -19,7 +19,7 @@ impl ScopeValidationExt for Request {
     fn require_scope(&self, scope: ScopePermission) -> Result<(), StatusCode> {
         let auth_state = self
             .extensions()
-            .get::<super::auth_middleware_enhanced::AuthState>()
+            .get::<super::auth_middleware::AuthState>()
             .ok_or(StatusCode::UNAUTHORIZED)?;
 
         if auth_state.scope.has_permission(scope) {
@@ -35,7 +35,7 @@ impl ScopeValidationExt for Request {
 
     fn has_scope(&self, scope: ScopePermission) -> bool {
         self.extensions()
-            .get::<super::auth_middleware_enhanced::AuthState>()
+            .get::<super::auth_middleware::AuthState>()
             .map(|s| s.scope.has_permission(scope))
             .unwrap_or(false)
     }

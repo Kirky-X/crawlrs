@@ -429,6 +429,8 @@ fn create_router(
     let auth_state = AuthState {
         db: db_pool.clone(),
         team_id,
+        api_key_id: uuid::Uuid::nil(),
+        scope: crawlrs::domain::auth::ApiKeyScope::default(),
     };
 
     let public_routes = axum::Router::new()

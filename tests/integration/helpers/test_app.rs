@@ -80,6 +80,7 @@ where
 }
 
 use crawlrs::config::settings::Settings;
+use crawlrs::domain::auth::ApiKeyScope;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::domain::services::rate_limiting_service::RateLimitConfig;
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
@@ -657,6 +658,8 @@ fn create_router(
     let auth_state = AuthState {
         db: db_pool.clone(),
         team_id,
+        api_key_id: Uuid::new_v4(),
+        scope: ApiKeyScope::default(),
     };
 
     let public_routes = axum::Router::new()

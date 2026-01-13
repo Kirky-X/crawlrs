@@ -48,6 +48,8 @@ async fn setup_app_with_db() -> (Router, DatabaseConnection) {
     let auth_state = AuthState {
         db: Arc::new(db.clone()),
         team_id: Uuid::nil(), // Will be set by middleware
+        api_key_id: Uuid::nil(),
+        scope: crawlrs::domain::auth::ApiKeyScope::default(),
     };
 
     let app = Router::new()

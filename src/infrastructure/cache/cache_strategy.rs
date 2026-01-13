@@ -327,12 +327,14 @@ impl CacheStrategy for MemoryCacheStrategy {
 }
 
 /// Redis缓存策略
+#[cfg(feature = "redis-cache")]
 pub struct RedisCacheStrategy {
     redis_client: Arc<crate::infrastructure::cache::redis_client::RedisClient>,
     config: CacheStrategyConfig,
     _stats: std::sync::Arc<std::sync::Mutex<CacheStats>>,
 }
 
+#[cfg(feature = "redis-cache")]
 impl RedisCacheStrategy {
     pub fn new(
         redis_client: Arc<crate::infrastructure::cache::redis_client::RedisClient>,
@@ -351,6 +353,7 @@ impl RedisCacheStrategy {
 }
 
 #[async_trait]
+#[cfg(feature = "redis-cache")]
 impl CacheStrategy for RedisCacheStrategy {
     async fn get(&self, key: &str) -> Result<Option<Vec<SearchResult>>> {
         let cache_key = self.generate_cache_key(key);
@@ -459,6 +462,7 @@ impl CacheStrategy for RedisCacheStrategy {
 }
 
 /// 分层缓存策略（内存+Redis）
+#[cfg(feature = "redis-cache")]
 pub struct LayeredCacheStrategy {
     memory_cache: MemoryCacheStrategy,
     redis_cache: RedisCacheStrategy,
@@ -467,6 +471,7 @@ pub struct LayeredCacheStrategy {
     _stats: std::sync::Arc<std::sync::Mutex<CacheStats>>,
 }
 
+#[cfg(feature = "redis-cache")]
 impl LayeredCacheStrategy {
     pub fn new(
         memory_config: CacheStrategyConfig,
@@ -484,6 +489,7 @@ impl LayeredCacheStrategy {
 }
 
 #[async_trait]
+#[cfg(feature = "redis-cache")]
 impl CacheStrategy for LayeredCacheStrategy {
     async fn get(&self, key: &str) -> Result<Option<Vec<SearchResult>>> {
         // 先检查内存缓存
@@ -620,167 +626,10 @@ impl CacheStrategy for LayeredCacheStrategy {
 }
 
 /// 智能缓存策略
-pub struct SmartCacheStrategy {
-    strategies: Vec<Box<dyn CacheStrategy>>,
-    current_strategy: std::sync::Arc<std::sync::RwLock<usize>>,
-    performance_history: std::sync::Arc<std::sync::Mutex<Vec<CachePerformance>>>,
-}
-
-#[derive(Clone)]
-struct CachePerformance {
-    strategy_index: usize,
-    hit_rate: f64,
-    latency_ms: f64,
-    #[allow(dead_code)]
-    _memory_usage: f64,
-    _timestamp: Instant,
-}
-
-/// 缓存监控器
-#[allow(dead_code)]
-pub struct CacheMonitor {
-    stats: Arc<std::sync::Mutex<CacheStats>>,
-    _last_report: Instant,
-}
-
-impl CacheMonitor {
-    pub fn new(stats: Arc<std::sync::Mutex<CacheStats>>) -> Self {
-        Self {
-            stats,
-            _last_report: Instant::now(),
-        }
-    }
-}
-
-impl SmartCacheStrategy {
-    pub fn new(strategies: Vec<Box<dyn CacheStrategy>>) -> Self {
-        Self {
-            strategies,
-            current_strategy: std::sync::Arc::new(std::sync::RwLock::new(0)),
-            performance_history: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-        }
-    }
-
-    fn select_optimal_strategy(&self) -> usize {
-        let history = self.performance_history.lock().unwrap();
-        if history.is_empty() {
-            return 0;
-        }
-
-        // 简单的性能评分算法
-        let mut strategy_scores: Vec<(usize, f64)> = (0..self.strategies.len())
-            .map(|i| {
-                let relevant_history: Vec<&CachePerformance> =
-                    history.iter().filter(|p| p.strategy_index == i).collect();
-
-                if relevant_history.is_empty() {
-                    (i, 0.5) // 默认分数
-                } else {
-                    let avg_hit_rate = relevant_history.iter().map(|p| p.hit_rate).sum::<f64>()
-                        / relevant_history.len() as f64;
-                    let avg_latency = relevant_history.iter().map(|p| p.latency_ms).sum::<f64>()
-                        / relevant_history.len() as f64;
-
-                    // 评分：命中率权重 70%，延迟权重 30%
-                    let score = avg_hit_rate * 0.7 + (1000.0 / (avg_latency + 1.0)) * 0.3;
-                    (i, score)
-                }
-            })
-            .collect();
-
-        strategy_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        strategy_scores[0].0
-    }
-
-    fn record_performance(&self, strategy_index: usize, hit_rate: f64, latency_ms: f64) {
-        let mut history = self.performance_history.lock().unwrap();
-        history.push(CachePerformance {
-            strategy_index,
-            hit_rate,
-            latency_ms,
-            _memory_usage: 0.0, // 简化实现
-            _timestamp: Instant::now(),
-        });
-
-        // 保持历史记录在合理大小内
-        if history.len() > 1000 {
-            history.drain(0..100);
-        }
-    }
-}
-
-#[async_trait]
-impl CacheStrategy for SmartCacheStrategy {
-    async fn get(&self, key: &str) -> Result<Option<Vec<SearchResult>>> {
-        let start = Instant::now();
-        let current_index = *self.current_strategy.read().unwrap();
-
-        let result = self.strategies[current_index].get(key).await?;
-        let latency_ms = start.elapsed().as_millis() as f64;
-
-        // 记录性能（简化版）
-        let hit_rate = if result.is_some() { 1.0 } else { 0.0 };
-        self.record_performance(current_index, hit_rate, latency_ms);
-
-        // 定期重新选择策略
-        if rand::random::<f64>() < 0.01 {
-            let optimal_index = self.select_optimal_strategy();
-            if optimal_index != current_index {
-                *self.current_strategy.write().unwrap() = optimal_index;
-                info!("Switched to cache strategy index: {}", optimal_index);
-            }
-        }
-
-        Ok(result)
-    }
-
-    async fn set(&self, key: &str, value: Vec<SearchResult>, ttl: Option<Duration>) -> Result<()> {
-        let current_index = *self.current_strategy.read().unwrap();
-        self.strategies[current_index].set(key, value, ttl).await
-    }
-
-    async fn delete(&self, key: &str) -> Result<()> {
-        let current_index = *self.current_strategy.read().unwrap();
-        self.strategies[current_index].delete(key).await
-    }
-
-    async fn clear(&self) -> Result<()> {
-        // 清空所有策略的缓存
-        for strategy in &self.strategies {
-            strategy.clear().await?;
-        }
-        Ok(())
-    }
-
-    fn get_stats(&self) -> CacheStats {
-        let current_index = *self.current_strategy.read().unwrap();
-        self.strategies[current_index].get_stats()
-    }
-
-    async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()> {
-        let current_index = *self.current_strategy.read().unwrap();
-        self.strategies[current_index].preheat(hot_data).await
-    }
-
-    async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>> {
-        let current_index = *self.current_strategy.read().unwrap();
-        self.strategies[current_index].get_batch(keys).await
-    }
-
-    async fn set_batch(
-        &self,
-        entries: Vec<(String, Vec<SearchResult>)>,
-        ttl: Option<Duration>,
-    ) -> Result<()> {
-        let current_index = *self.current_strategy.read().unwrap();
-        self.strategies[current_index].set_batch(entries, ttl).await
-    }
-}
-
-/// 缓存策略工厂
 pub struct CacheStrategyFactory;
 
 impl CacheStrategyFactory {
+    #[cfg(feature = "redis-cache")]
     pub fn create_strategy(
         config: CacheStrategyConfig,
         redis_client: Option<Arc<crate::infrastructure::cache::redis_client::RedisClient>>,
@@ -865,5 +714,157 @@ impl Default for LayeredCacheConfig {
             redis_ttl: 3600, // 1小时
             memory_max_entries: 1000,
         }
+    }
+}
+
+/// 智能缓存策略
+pub struct SmartCacheStrategy {
+    strategies: Vec<Box<dyn CacheStrategy>>,
+    current_strategy: std::sync::Arc<std::sync::RwLock<usize>>,
+    performance_history: std::sync::Arc<std::sync::Mutex<Vec<CachePerformance>>>,
+}
+
+#[derive(Clone)]
+struct CachePerformance {
+    strategy_index: usize,
+    hit_rate: f64,
+    latency_ms: f64,
+    #[allow(dead_code)]
+    _memory_usage: f64,
+    _timestamp: Instant,
+}
+
+/// 缓存监控器
+#[allow(dead_code)]
+pub struct CacheMonitor {
+    stats: Arc<std::sync::Mutex<CacheStats>>,
+    _last_report: Instant,
+}
+
+impl CacheMonitor {
+    pub fn new(stats: Arc<std::sync::Mutex<CacheStats>>) -> Self {
+        Self {
+            stats,
+            _last_report: Instant::now(),
+        }
+    }
+}
+
+impl SmartCacheStrategy {
+    pub fn new(strategies: Vec<Box<dyn CacheStrategy>>) -> Self {
+        Self {
+            strategies,
+            current_strategy: std::sync::Arc::new(std::sync::RwLock::new(0)),
+            performance_history: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    fn select_optimal_strategy(&self) -> usize {
+        let history = self.performance_history.lock().unwrap();
+        if history.is_empty() {
+            return 0;
+        }
+
+        let mut strategy_scores: Vec<(usize, f64)> = (0..self.strategies.len())
+            .map(|i| {
+                let relevant_history: Vec<&CachePerformance> =
+                    history.iter().filter(|p| p.strategy_index == i).collect();
+
+                if relevant_history.is_empty() {
+                    (i, 0.5)
+                } else {
+                    let avg_hit_rate = relevant_history.iter().map(|p| p.hit_rate).sum::<f64>()
+                        / relevant_history.len() as f64;
+                    let avg_latency = relevant_history.iter().map(|p| p.latency_ms).sum::<f64>()
+                        / relevant_history.len() as f64;
+
+                    let score = avg_hit_rate * 0.7 + (1000.0 / (avg_latency + 1.0)) * 0.3;
+                    (i, score)
+                }
+            })
+            .collect();
+
+        strategy_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        strategy_scores[0].0
+    }
+
+    fn record_performance(&self, strategy_index: usize, hit_rate: f64, latency_ms: f64) {
+        let mut history = self.performance_history.lock().unwrap();
+        history.push(CachePerformance {
+            strategy_index,
+            hit_rate,
+            latency_ms,
+            _memory_usage: 0.0,
+            _timestamp: Instant::now(),
+        });
+
+        if history.len() > 1000 {
+            history.drain(0..100);
+        }
+    }
+}
+
+#[async_trait]
+impl CacheStrategy for SmartCacheStrategy {
+    async fn get(&self, key: &str) -> Result<Option<Vec<SearchResult>>> {
+        let start = Instant::now();
+        let current_index = *self.current_strategy.read().unwrap();
+
+        let result = self.strategies[current_index].get(key).await?;
+        let latency_ms = start.elapsed().as_millis() as f64;
+
+        let hit_rate = if result.is_some() { 1.0 } else { 0.0 };
+        self.record_performance(current_index, hit_rate, latency_ms);
+
+        if rand::random::<f64>() < 0.01 {
+            let optimal_index = self.select_optimal_strategy();
+            if optimal_index != current_index {
+                *self.current_strategy.write().unwrap() = optimal_index;
+                info!("Switched to cache strategy index: {}", optimal_index);
+            }
+        }
+
+        Ok(result)
+    }
+
+    async fn set(&self, key: &str, value: Vec<SearchResult>, ttl: Option<Duration>) -> Result<()> {
+        let current_index = *self.current_strategy.read().unwrap();
+        self.strategies[current_index].set(key, value, ttl).await
+    }
+
+    async fn delete(&self, key: &str) -> Result<()> {
+        let current_index = *self.current_strategy.read().unwrap();
+        self.strategies[current_index].delete(key).await
+    }
+
+    async fn clear(&self) -> Result<()> {
+        for strategy in &self.strategies {
+            strategy.clear().await?;
+        }
+        Ok(())
+    }
+
+    fn get_stats(&self) -> CacheStats {
+        let current_index = *self.current_strategy.read().unwrap();
+        self.strategies[current_index].get_stats()
+    }
+
+    async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()> {
+        let current_index = *self.current_strategy.read().unwrap();
+        self.strategies[current_index].preheat(hot_data).await
+    }
+
+    async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>> {
+        let current_index = *self.current_strategy.read().unwrap();
+        self.strategies[current_index].get_batch(keys).await
+    }
+
+    async fn set_batch(
+        &self,
+        entries: Vec<(String, Vec<SearchResult>)>,
+        ttl: Option<Duration>,
+    ) -> Result<()> {
+        let current_index = *self.current_strategy.read().unwrap();
+        self.strategies[current_index].set_batch(entries, ttl).await
     }
 }

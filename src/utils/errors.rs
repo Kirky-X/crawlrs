@@ -5,6 +5,41 @@
 
 use thiserror::Error;
 
+/// Macro to generate standard error conversions for basic types
+///
+/// # Usage
+///
+/// ```rust
+/// impl_basic_error_conversions!(MyError, InternalVariant);
+/// ```
+///
+/// This generates:
+/// - `impl From<String> for MyError`
+/// - `impl From<&str> for MyError`
+/// - `impl From<anyhow::Error> for MyError`
+#[macro_export]
+macro_rules! impl_basic_error_conversions {
+    ($error_type:ty, $variant:ident) => {
+        impl From<String> for $error_type {
+            fn from(msg: String) -> Self {
+                Self::$variant(msg)
+            }
+        }
+
+        impl From<&str> for $error_type {
+            fn from(msg: &str) -> Self {
+                Self::$variant(msg.to_string())
+            }
+        }
+
+        impl From<anyhow::Error> for $error_type {
+            fn from(err: anyhow::Error) -> Self {
+                Self::$variant(err.to_string())
+            }
+        }
+    };
+}
+
 /// 仓库层错误类型
 #[derive(Error, Debug)]
 pub enum RepositoryError {
@@ -46,24 +81,8 @@ pub enum WorkerError {
     NotFound(String),
 }
 
-// From implementations for WorkerError
-impl From<String> for WorkerError {
-    fn from(msg: String) -> Self {
-        WorkerError::InternalError(msg)
-    }
-}
-
-impl From<&str> for WorkerError {
-    fn from(msg: &str) -> Self {
-        WorkerError::InternalError(msg.to_string())
-    }
-}
-
-impl From<anyhow::Error> for WorkerError {
-    fn from(err: anyhow::Error) -> Self {
-        WorkerError::InternalError(err.to_string())
-    }
-}
+// From implementations for WorkerError using macro
+impl_basic_error_conversions!(WorkerError, InternalError);
 
 impl From<RepositoryError> for WorkerError {
     fn from(err: RepositoryError) -> Self {
@@ -127,24 +146,8 @@ impl axum::response::IntoResponse for AppError {
     }
 }
 
-// From implementations for AppError
-impl From<String> for AppError {
-    fn from(msg: String) -> Self {
-        AppError::Internal(msg)
-    }
-}
-
-impl From<&str> for AppError {
-    fn from(msg: &str) -> Self {
-        AppError::Internal(msg.to_string())
-    }
-}
-
-impl From<anyhow::Error> for AppError {
-    fn from(err: anyhow::Error) -> Self {
-        AppError::Internal(err.to_string())
-    }
-}
+// From implementations for AppError using macro
+impl_basic_error_conversions!(AppError, Internal);
 
 impl From<RepositoryError> for AppError {
     fn from(err: RepositoryError) -> Self {
@@ -170,5 +173,18 @@ impl From<crate::domain::repositories::task_repository::RepositoryError> for App
                 AppError::NotFound("Resource not found".to_string())
             }
         }
+    }
+}
+
+/// From implementations for security-related errors
+impl From<crate::config::settings::ConfigSecurityError> for AppError {
+    fn from(err: crate::config::settings::ConfigSecurityError) -> Self {
+        AppError::Validation(err.to_string())
+    }
+}
+
+impl From<crate::utils::robots::RobotsCheckerError> for AppError {
+    fn from(err: crate::utils::robots::RobotsCheckerError) -> Self {
+        AppError::Internal(err.to_string())
     }
 }

@@ -9,6 +9,7 @@ use axum::{
     Router,
 };
 use crawlrs::config::settings::Settings;
+use crawlrs::domain::auth::ApiKeyScope;
 use crawlrs::domain::repositories::storage_repository::StorageRepository;
 use crawlrs::domain::services::rate_limiting_service::{RateLimitConfig, RateLimitStrategy};
 use crawlrs::engines::client::reqwest::ReqwestEngine;
@@ -131,9 +132,8 @@ async fn main() -> anyhow::Result<()> {
     info!("Configuration loaded");
 
     // 验证配置安全性
-    let security_warnings = settings.validate_security();
-    for warning in security_warnings {
-        tracing::warn!("{}", warning);
+    if let Err(e) = settings.validate_security() {
+        tracing::warn!("Security warning: {}", e);
     }
 
     // 端口嗅探
@@ -379,10 +379,12 @@ async fn main() -> anyhow::Result<()> {
             });
 
             // AuthState用于向认证中间件提供数据库连接
-            // 真实的team_id由认证中间件从API key验证后注入到请求扩展中
+            // 真实的team_id和api_key_id由认证中间件从API key验证后注入到请求扩展中
             let _auth_state = AuthState {
                 db: db.clone(),
                 team_id: uuid::Uuid::nil(), // 占位值，实际team_id由中间件从API key获取
+                api_key_id: uuid::Uuid::nil(), // 占位值，实际api_key_id由中间件从API key获取
+                scope: ApiKeyScope::default(),
             };
             tracing::info!(
                 "Authentication middleware configured - team_id extracted from API key validation"
