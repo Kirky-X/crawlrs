@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: crawlrs-search-test-postgres
+    environment:
+      POSTGRES_USER: crawlrs
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: crawlrs
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crawlrs -d crawlrs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crawlrs-search-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: crawlrs-search-test-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crawlrs-search-network
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: crawlrs-search-test-flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - CAPTCHA_SOLVER=none
+    ports:
+      - "8191:8191"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8191/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+    volumes:
+      - flaresolverr_data:/tmp
+    networks:
+      - crawlrs-search-network
+
+  crawlrs:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: crawlrs:search-test
+    container_name: crawlrs-search-app
+    command: ["./crawlrs", "api"]
+    ports:
+      - "3000:3000"
+    environment:
+      - CRAWLRS__DATABASE__URL=postgres://crawlrs:password@postgres:5432/crawlrs
+      - CRAWLRS__REDIS__URL=redis://redis:6379
+      - CRAWLRS__SERVER__HOST=0.0.0.0
+      - CRAWLRS__SERVER__PORT=3000
+      - CRAWLRS__SEARCH__ENGINES__GOOGLE_ENABLED=true
+      - CRAWLRS__SEARCH__ENGINES__BING_ENABLED=true
+      - CRAWLRS__SEARCH__ENGINES__BAIDU_ENABLED=true
+      - CRAWLRS__SEARCH__ENGINES__SOGOU_ENABLED=true
+      - CRAWLRS__SEARCH__FLARESOLVERR__URL=http://flaresolverr:8191/v1
+      - SKIP_S3_TESTS=true
+      - SKIP_BROWSER_TESTS=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - crawlrs-search-network
+
+networks:
+  crawlrs-search-network:
+    driver: bridge
+
+volumes:
+  flaresolverr_data:
