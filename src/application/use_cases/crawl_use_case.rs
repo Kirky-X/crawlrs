@@ -189,9 +189,21 @@ where
         dto: CrawlRequestDto,
         client_ip: &str,
     ) -> Result<Crawl, CrawlUseCaseError> {
-        // 1. 验证请求参数
-        dto.validate()
-            .map_err(|e| CrawlUseCaseError::ValidationError(e.to_string()))?;
+        // 1. 验证请求参数 (URL 验证在 handler 中进行)
+
+        // 简化 config 验证
+        if dto.config.max_depth > 5 {
+            return Err(CrawlUseCaseError::ValidationError(
+                "max_depth must be between 0 and 5".to_string(),
+            ));
+        }
+        if let Some(concurrency) = dto.config.max_concurrency {
+            if concurrency > 100 {
+                return Err(CrawlUseCaseError::ValidationError(
+                    "max_concurrency must be between 1 and 100".to_string(),
+                ));
+            }
+        }
 
         // 2. 检查地理限制
         let restrictions = self

@@ -7,9 +7,8 @@ use crate::domain::services::extraction_service::ExtractionRule;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use validator::Validate;
 
-#[derive(Debug, Deserialize, Serialize, Validate)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ExtractRequestDto {
     pub urls: Vec<String>,
     pub prompt: Option<String>,
@@ -18,7 +17,6 @@ pub struct ExtractRequestDto {
     /// 提取规则（用于复杂提取场景）
     pub rules: Option<HashMap<String, ExtractionRule>>,
     /// 同步等待时长（毫秒，默认 5000，最大 30000）
-    #[validate(range(min = 0, max = 30000))]
     pub sync_wait_ms: Option<u32>,
 }
 
