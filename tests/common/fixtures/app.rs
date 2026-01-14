@@ -428,6 +428,7 @@ fn create_router(
     );
     let auth_state = AuthState {
         db: db_pool.clone(),
+        auth_scope_service: None,
         team_id,
         api_key_id: uuid::Uuid::nil(),
         scope: crawlrs::domain::auth::ApiKeyScope::default(),

@@ -206,11 +206,11 @@ class CrawlrsAPIClient:
     def crawl(
         self,
         url: str,
-        options: Optional[Dict] = None,
+        config: Optional[Dict] = None,
         sync_wait_ms: Optional[int] = None,
     ) -> TestResult:
         """爬取接口"""
-        body = {"url": url, "options": options or {}}
+        body = {"url": url, "config": config or {"max_depth": 1}}
         if sync_wait_ms:
             body["sync_wait_ms"] = sync_wait_ms
 
@@ -247,11 +247,11 @@ class CrawlrsAPIClient:
     def scrape(
         self,
         url: str,
-        options: Optional[Dict] = None,
+        config: Optional[Dict] = None,
         sync_wait_ms: Optional[int] = None,
     ) -> TestResult:
         """抓取接口"""
-        body = {"url": url, "options": options or {}}
+        body = {"url": url, "config": config or {"max_depth": 1}}
         if sync_wait_ms:
             body["sync_wait_ms"] = sync_wait_ms
 
