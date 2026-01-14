@@ -135,3 +135,26 @@ impl FeatureFlagService {
         Ok(deleted)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_feature_flag_service_error_not_found_display() {
+        let error = FeatureFlagServiceError::NotFound {
+            name: "test_flag".to_string(),
+        };
+        assert_eq!(format!("{}", error), "Feature flag not found: test_flag");
+    }
+
+    #[test]
+    fn test_feature_flag_service_error_not_found_message() {
+        let error = FeatureFlagServiceError::NotFound {
+            name: "my_feature".to_string(),
+        };
+        let msg = error.to_string();
+        assert!(msg.contains("my_feature"));
+        assert!(msg.contains("Feature flag not found"));
+    }
+}

@@ -231,7 +231,7 @@ where
         scrape_result_repo,
         _geo_restriction_repo.clone(),
         Arc::new(TeamService::new(
-            GeoLocationService::new(),
+            Arc::new(GeoLocationService::new()),
             _geo_restriction_repo.clone(),
         )),
     );
@@ -270,7 +270,7 @@ where
         scrape_result_repo,
         _geo_restriction_repo.clone(),
         Arc::new(TeamService::new(
-            GeoLocationService::new(),
+            Arc::new(GeoLocationService::new()),
             _geo_restriction_repo.clone(),
         )),
     );
@@ -309,7 +309,7 @@ where
         scrape_result_repo,
         _geo_restriction_repo.clone(),
         Arc::new(TeamService::new(
-            GeoLocationService::new(),
+            Arc::new(GeoLocationService::new()),
             _geo_restriction_repo.clone(),
         )),
     );

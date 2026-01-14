@@ -306,7 +306,7 @@ async fn main() -> anyhow::Result<()> {
     let _credits_repo_unused = credits_repo.clone();
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.clone()));
     let team_service = Arc::new(TeamService::new(
-        crawlrs::infrastructure::geolocation::GeoLocationService::new(),
+        Arc::new(crawlrs::infrastructure::geolocation::GeoLocationService::new()),
         geo_restriction_repo.clone(),
     ));
     let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(

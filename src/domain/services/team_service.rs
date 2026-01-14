@@ -4,7 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
-use crate::infrastructure::geolocation::{is_ip_in_cidr, GeoLocationService};
+use crate::infrastructure::geolocation::{is_ip_in_cidr, GeoLocationServiceTrait};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -12,42 +12,29 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// 团队地理限制配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TeamGeoRestrictions {
-    /// 是否启用地理限制
     pub enable_geo_restrictions: bool,
-    /// 允许的国家代码列表 (ISO 3166-1 alpha-2)
     pub allowed_countries: Option<Vec<String>>,
-    /// 阻止的国家代码列表 (ISO 3166-1 alpha-2)
     pub blocked_countries: Option<Vec<String>>,
-    /// IP 白名单列表 (支持 CIDR 表示法)
     pub ip_whitelist: Option<Vec<String>>,
-    /// 域名黑名单列表
     pub domain_blacklist: Option<Vec<String>>,
 }
 
-/// 地理限制验证结果
 #[derive(Debug, Clone, PartialEq)]
 pub enum GeoRestrictionResult {
-    /// 允许访问
     Allowed,
-    /// 因地理限制被拒绝
     Denied(String),
 }
 
-/// 团队服务
-///
-/// 处理团队相关的业务逻辑，包括地理限制验证
 pub struct TeamService {
-    geolocation_service: GeoLocationService,
+    geolocation_service: Arc<dyn GeoLocationServiceTrait>,
     geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 
 impl TeamService {
-    /// 创建新的团队服务实例
     pub fn new(
-        geolocation_service: GeoLocationService,
+        geolocation_service: Arc<dyn GeoLocationServiceTrait>,
         geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     ) -> Self {
         Self {
@@ -56,18 +43,6 @@ impl TeamService {
         }
     }
 
-    /// 验证 IP 地址是否符合团队的地理限制
-    ///
-    /// # 参数
-    ///
-    /// * `team_id` - 团队 ID
-    /// * `ip_address` - 要验证的 IP 地址
-    /// * `restrictions` - 团队的地理限制配置
-    ///
-    /// # 返回值
-    ///
-    /// * `Ok(GeoRestrictionResult)` - 验证结果
-    /// * `Err(anyhow::Error)` - 验证过程中出现的错误
     pub async fn validate_geographic_restriction(
         &self,
         team_id: Uuid,
@@ -173,7 +148,6 @@ impl TeamService {
         Ok(location.country_code.to_uppercase())
     }
 
-    /// 验证域名是否在黑名单中
     pub fn validate_domain_blacklist(
         &self,
         domain: &str,
@@ -197,15 +171,6 @@ impl TeamService {
         Ok(GeoRestrictionResult::Allowed)
     }
 
-    /// 从数据库获取团队的地理限制配置
-    ///
-    /// # 参数
-    ///
-    /// * `team_id` - 团队 ID
-    ///
-    /// # 返回值
-    ///
-    /// * `TeamGeoRestrictions` - 团队的地理限制配置
     pub async fn get_team_geo_restrictions(&self, team_id: Uuid) -> TeamGeoRestrictions {
         match self
             .geo_restriction_repo

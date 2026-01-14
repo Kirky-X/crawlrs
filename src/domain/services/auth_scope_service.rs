@@ -165,3 +165,201 @@ impl AuthScopeService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_permission_allows_read_for_read_scope() {
+        let scope = ApiKeyScope {
+            read: true,
+            write: false,
+            admin: false,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_permission(&scope, ScopePermission::Read);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_permission_allows_write_for_write_scope() {
+        let scope = ApiKeyScope {
+            read: true,
+            write: true,
+            admin: false,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_permission(&scope, ScopePermission::Write);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_permission_denies_write_for_read_only() {
+        let scope = ApiKeyScope {
+            read: true,
+            write: false,
+            admin: false,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_permission(&scope, ScopePermission::Write);
+        assert!(result.is_err());
+        if let Err(AuthScopeServiceError::PermissionDenied { required, has }) = result {
+            assert_eq!(required, ScopePermission::Write);
+            assert!(!has.write);
+            assert!(has.read);
+        } else {
+            panic!("Expected PermissionDenied error");
+        }
+    }
+
+    #[test]
+    fn test_validate_permission_denies_admin_for_write_scope() {
+        let scope = ApiKeyScope {
+            read: true,
+            write: true,
+            admin: false,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_permission(&scope, ScopePermission::Admin);
+        assert!(result.is_err());
+        if let Err(AuthScopeServiceError::PermissionDenied { required, has }) = result {
+            assert_eq!(required, ScopePermission::Admin);
+            assert!(!has.admin);
+        } else {
+            panic!("Expected PermissionDenied error");
+        }
+    }
+
+    #[test]
+    fn test_validate_search_count_within_limit() {
+        let scope = ApiKeyScope {
+            search_limit: 100,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_search_count(&scope, 50);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_search_count_exceeds_limit() {
+        let scope = ApiKeyScope {
+            search_limit: 100,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_search_count(&scope, 150);
+        assert!(result.is_err());
+        if let Err(AuthScopeServiceError::QuotaExceeded(msg)) = result {
+            assert!(msg.contains("Search limit exceeded"));
+        } else {
+            panic!("Expected QuotaExceeded error");
+        }
+    }
+
+    #[test]
+    fn test_validate_scrape_count_exceeds_limit() {
+        let scope = ApiKeyScope {
+            scrape_limit: 50,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_scrape_count(&scope, 100);
+        assert!(result.is_err());
+        if let Err(AuthScopeServiceError::QuotaExceeded(msg)) = result {
+            assert!(msg.contains("Scrape limit exceeded"));
+        } else {
+            panic!("Expected QuotaExceeded error");
+        }
+    }
+
+    #[test]
+    fn test_validate_search_count_unlimited() {
+        let scope = ApiKeyScope {
+            search_limit: u32::MAX,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_search_count(&scope, 1_000_000);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_scrape_count_within_limit() {
+        let scope = ApiKeyScope {
+            scrape_limit: 50,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_scrape_count(&scope, 30);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_scrape_count_unlimited() {
+        let scope = ApiKeyScope {
+            scrape_limit: u32::MAX,
+            ..Default::default()
+        };
+        let result = AuthScopeService::validate_scrape_count(&scope, 500_000);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_merge_scopes_custom_takes_precedence() {
+        let team_scope = ApiKeyScope {
+            read: true,
+            write: false,
+            admin: false,
+            search_limit: 100,
+            scrape_limit: 50,
+        };
+        let custom_scope = ApiKeyScope {
+            read: true,
+            write: true,
+            admin: false,
+            search_limit: 200,
+            scrape_limit: 100,
+        };
+
+        let result = AuthScopeService::merge_scopes(Some(&team_scope), Some(&custom_scope));
+        assert!(result.write); // Custom takes precedence
+        assert_eq!(result.search_limit, 200);
+        assert_eq!(result.scrape_limit, 100);
+    }
+
+    #[test]
+    fn test_merge_scopes_returns_team_default_when_no_custom() {
+        let team_scope = ApiKeyScope {
+            read: true,
+            write: false,
+            admin: false,
+            search_limit: 100,
+            scrape_limit: 50,
+        };
+
+        let result = AuthScopeService::merge_scopes(Some(&team_scope), None);
+        assert!(!result.write);
+        assert_eq!(result.search_limit, 100);
+        assert_eq!(result.scrape_limit, 50);
+    }
+
+    #[test]
+    fn test_merge_scopes_returns_custom_when_no_team() {
+        let custom_scope = ApiKeyScope {
+            read: true,
+            write: true,
+            admin: true,
+            search_limit: 300,
+            scrape_limit: 150,
+        };
+
+        let result = AuthScopeService::merge_scopes(None, Some(&custom_scope));
+        assert!(result.write);
+        assert!(result.admin);
+        assert_eq!(result.search_limit, 300);
+        assert_eq!(result.scrape_limit, 150);
+    }
+
+    #[test]
+    fn test_merge_scopes_returns_default_when_neither() {
+        let result = AuthScopeService::merge_scopes(None, None);
+        assert_eq!(result, ApiKeyScope::default());
+    }
+}

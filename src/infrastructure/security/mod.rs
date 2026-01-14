@@ -80,11 +80,19 @@ mod tests {
         // bcrypt 哈希应该以 $2b$ 开头
         assert!(hash.starts_with("$2b$"));
 
-        // 相同的输入应该产生相同的哈希
-        assert_eq!(hash_api_key(key), hash);
+        // bcrypt 每次生成不同的哈希（随机盐），这是安全特性
+        let hash2 = hash_api_key(key);
+        assert_ne!(hash, hash2);
+        // 但两者都能验证通过同一个 key
+        assert!(verify_api_key(key, &hash));
+        assert!(verify_api_key(key, &hash2));
 
         // 不同的输入应该产生不同的哈希
-        assert_ne!(hash_api_key("different_key"), hash);
+        let hash3 = hash_api_key("different_key");
+        assert_ne!(hash, hash3);
+        // 不同的 key 不能通过验证
+        assert!(!verify_api_key("different_key", &hash));
+        assert!(!verify_api_key("test_api_key_12345", &hash3));
     }
 
     #[test]
@@ -104,7 +112,12 @@ mod tests {
         let key = "consistent_key";
         let hash1 = hash_api_key(key);
         let hash2 = hash_api_key(key);
-        assert_eq!(hash1, hash2);
+
+        // bcrypt 每次生成不同的哈希（随机盐），这是预期行为
+        // 正确的测试：验证两者都能通过同一个 key
+        assert_ne!(hash1, hash2); // 不同的哈希值
+        assert!(verify_api_key(key, &hash1)); // 都能验证通过
+        assert!(verify_api_key(key, &hash2));
     }
 
     #[test]

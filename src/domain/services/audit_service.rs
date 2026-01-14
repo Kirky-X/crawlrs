@@ -137,6 +137,124 @@ impl AuditLogBuilder {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn test_audit_log_builder_new() {
+        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow);
+        assert_eq!(builder.requested_action, "test_action");
+        assert_eq!(builder.decision, AuditDecision::Allow);
+    }
+
+    #[test]
+    fn test_audit_log_builder_with_api_key_id() {
+        let api_key_id = Uuid::new_v4();
+        let builder =
+            AuditLogBuilder::new("test_action", AuditDecision::Allow).with_api_key_id(api_key_id);
+        assert_eq!(builder.api_key_id, Some(api_key_id));
+    }
+
+    #[test]
+    fn test_audit_log_builder_with_team_id() {
+        let team_id = Uuid::new_v4();
+        let builder =
+            AuditLogBuilder::new("test_action", AuditDecision::Allow).with_team_id(team_id);
+        assert_eq!(builder.team_id, Some(team_id));
+    }
+
+    #[test]
+    fn test_audit_log_builder_with_denial_reason() {
+        let builder = AuditLogBuilder::new("test_action", AuditDecision::Deny)
+            .with_denial_reason("insufficient permissions");
+        assert_eq!(
+            builder.denial_reason,
+            Some("insufficient permissions".to_string())
+        );
+    }
+
+    #[test]
+    fn test_audit_log_builder_with_ip_address() {
+        let ip: std::net::IpAddr = Ipv4Addr::new(192, 168, 1, 1).into();
+        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow).with_ip_address(ip);
+        assert!(builder.ip_address.is_some());
+    }
+
+    #[test]
+    fn test_audit_log_builder_with_trace_id() {
+        let trace_id = Uuid::new_v4();
+        let builder =
+            AuditLogBuilder::new("test_action", AuditDecision::Allow).with_trace_id(trace_id);
+        assert_eq!(builder.trace_id, Some(trace_id));
+    }
+
+    #[test]
+    fn test_audit_log_builder_with_user_agent() {
+        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow)
+            .with_user_agent("Test Agent/1.0");
+        assert_eq!(builder.user_agent, Some("Test Agent/1.0".to_string()));
+    }
+
+    #[test]
+    fn test_audit_log_builder_with_request_path() {
+        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow)
+            .with_request_path("/api/v1/test");
+        assert_eq!(builder.request_path, Some("/api/v1/test".to_string()));
+    }
+
+    #[test]
+    fn test_audit_log_builder_with_request_method() {
+        let builder =
+            AuditLogBuilder::new("test_action", AuditDecision::Allow).with_request_method("POST");
+        assert_eq!(builder.request_method, Some("POST".to_string()));
+    }
+
+    #[test]
+    fn test_audit_log_builder_with_metadata() {
+        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow)
+            .with_metadata("key1", json!("value1"))
+            .with_metadata("key2", json!(123));
+
+        match &builder.metadata {
+            serde_json::Value::Object(map) => {
+                assert_eq!(map.get("key1"), Some(&json!("value1")));
+                assert_eq!(map.get("key2"), Some(&json!(123)));
+            }
+            _ => panic!("Expected object metadata"),
+        }
+    }
+
+    #[test]
+    fn test_audit_log_builder_build_returns_entry() {
+        let api_key_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let trace_id = Uuid::new_v4();
+        let ip: std::net::IpAddr = Ipv4Addr::new(10, 0, 0, 1).into();
+
+        let entry = AuditLogBuilder::new("test_action", AuditDecision::Allow)
+            .with_api_key_id(api_key_id)
+            .with_team_id(team_id)
+            .with_trace_id(trace_id)
+            .with_ip_address(ip)
+            .with_request_path("/api/test")
+            .with_request_method("GET")
+            .build();
+
+        assert_eq!(entry.requested_action, "test_action");
+        assert_eq!(entry.decision, AuditDecision::Allow);
+        assert_eq!(entry.api_key_id, Some(api_key_id));
+        assert_eq!(entry.team_id, Some(team_id));
+        assert_eq!(entry.trace_id, Some(trace_id));
+        assert_eq!(entry.request_path, Some("/api/test".to_string()));
+        assert_eq!(entry.request_method, Some("GET".to_string()));
+        assert!(entry.id != Uuid::nil());
+        assert!(entry.created_at <= chrono::Utc::now());
+    }
+}
+
 /// Service for managing audit logs
 #[derive(Clone)]
 pub struct AuditService {

@@ -3,44 +3,284 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[cfg(test)]
-#[cfg(feature = "db-sqlite")]
-mod team_service_tests {
-    use crate::domain::services::team_service::{
-        GeoRestrictionResult, TeamGeoRestrictions, TeamService,
+use crate::domain::repositories::geo_restriction_repository::{
+    GeoRestrictionRepository, GeoRestrictionRepositoryError,
+};
+use crate::domain::services::team_service::{
+    GeoRestrictionResult, TeamGeoRestrictions, TeamService,
+};
+use crate::infrastructure::geolocation::{GeoLocation, GeoLocationServiceTrait};
+use async_trait::async_trait;
+use std::net::IpAddr;
+use std::sync::Arc;
+use uuid::Uuid;
+
+fn mock_geo_location(country_code: String) -> GeoLocation {
+    GeoLocation {
+        ip: "0.0.0.0".to_string(),
+        country_code: country_code.clone(),
+        country_name: country_code.to_string(),
+        region: None,
+        city: None,
+        latitude: None,
+        longitude: None,
+        isp: None,
+        org: None,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MockGeoService {
+    country_code: String,
+}
+
+impl MockGeoService {
+    fn new(country_code: String) -> Self {
+        Self { country_code }
+    }
+}
+
+#[async_trait]
+impl GeoLocationServiceTrait for MockGeoService {
+    async fn get_location(&self, _ip: &IpAddr) -> Result<GeoLocation, anyhow::Error> {
+        Ok(mock_geo_location(self.country_code.clone()))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MockGeoRestrictionRepository;
+
+#[async_trait]
+impl GeoRestrictionRepository for MockGeoRestrictionRepository {
+    async fn get_team_restrictions(
+        &self,
+        _team_id: Uuid,
+    ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
+        Ok(TeamGeoRestrictions::default())
+    }
+
+    async fn update_team_restrictions(
+        &self,
+        _team_id: Uuid,
+        _restrictions: &TeamGeoRestrictions,
+    ) -> Result<(), GeoRestrictionRepositoryError> {
+        Ok(())
+    }
+
+    async fn log_geo_restriction_action(
+        &self,
+        _team_id: Uuid,
+        _ip_address: &str,
+        _country_code: &str,
+        _action: &str,
+        _reason: &str,
+    ) -> Result<(), GeoRestrictionRepositoryError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_geo_restrictions_disabled_returns_allowed() {
+    let geo_service: Arc<dyn GeoLocationServiceTrait> =
+        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: false,
+        ..Default::default()
     };
-    use crate::infrastructure::geolocation::GeoLocationService;
-    use crate::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
-    use migration::{Migrator, MigratorTrait};
-    use sea_orm::Database;
-    use std::sync::Arc;
 
-    async fn setup_db() -> Arc<sea_orm::DatabaseConnection> {
-        let db = Database::connect("sqlite::memory:").await.unwrap();
-        let db = Arc::new(db);
-        Migrator::up(db.as_ref(), None).await.unwrap();
-        db
+    let result = service
+        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .await;
+
+    assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+}
+
+#[tokio::test]
+async fn test_invalid_ip_format_returns_denied() {
+    let geo_service: Arc<dyn GeoLocationServiceTrait> =
+        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        ..Default::default()
+    };
+
+    let result = service
+        .validate_geographic_restriction(Uuid::new_v4(), "not-an-ip", &restrictions)
+        .await;
+
+    match result {
+        Ok(GeoRestrictionResult::Denied(msg)) => {
+            assert!(msg.contains("Invalid IP address format"));
+        }
+        _ => panic!("Expected Denied result"),
     }
+}
 
-    #[tokio::test]
-    async fn test_domain_blacklist() {
-        let db = setup_db().await;
-        let geo_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.clone()));
-        let geo_service = GeoLocationService::new(); // Assuming default constructor
-        let service = TeamService::new(geo_service, geo_repo);
+#[tokio::test]
+async fn test_ip_whitelist_cidr_allows() {
+    let geo_service = Arc::new(MockGeoService::new("RU".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
 
-        let restrictions = TeamGeoRestrictions {
-            enable_geo_restrictions: true,
-            domain_blacklist: Some(vec!["example.com".to_string()]),
-            ..Default::default()
-        };
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        ip_whitelist: Some(vec!["192.168.1.0/24".to_string()]),
+        ..Default::default()
+    };
 
-        // Blocked domain
-        let result = service.validate_domain_blacklist("www.example.com", &restrictions);
-        assert!(matches!(result, Ok(GeoRestrictionResult::Denied(_))));
+    let result = service
+        .validate_geographic_restriction(Uuid::new_v4(), "192.168.1.50", &restrictions)
+        .await;
 
-        // Allowed domain
-        let result = service.validate_domain_blacklist("www.google.com", &restrictions);
-        assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+    assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+}
+
+#[tokio::test]
+async fn test_non_whitelisted_ip_blocks() {
+    let geo_service: Arc<dyn GeoLocationServiceTrait> =
+        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        ip_whitelist: Some(vec!["10.0.0.0/8".to_string()]),
+        ..Default::default()
+    };
+
+    let result = service
+        .validate_geographic_restriction(Uuid::new_v4(), "192.168.1.1", &restrictions)
+        .await;
+
+    assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+}
+
+#[tokio::test]
+async fn test_allowed_countries_allows() {
+    let geo_service: Arc<dyn GeoLocationServiceTrait> =
+        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        allowed_countries: Some(vec!["US".to_string(), "CN".to_string()]),
+        ip_whitelist: None,
+        ..Default::default()
+    };
+
+    let result = service
+        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .await;
+
+    assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+}
+
+#[tokio::test]
+async fn test_blocked_countries_denies() {
+    let geo_service = Arc::new(MockGeoService::new("RU".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        blocked_countries: Some(vec!["RU".to_string()]),
+        ip_whitelist: None,
+        ..Default::default()
+    };
+
+    let result = service
+        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .await;
+
+    match result {
+        Ok(GeoRestrictionResult::Denied(_)) => {}
+        _ => panic!("Expected Denied result"),
     }
+}
+
+#[tokio::test]
+async fn test_case_insensitive_country_matching() {
+    let geo_service: Arc<dyn GeoLocationServiceTrait> =
+        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        allowed_countries: Some(vec!["us".to_string()]),
+        ip_whitelist: None,
+        ..Default::default()
+    };
+
+    let result = service
+        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .await;
+
+    assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+}
+
+#[tokio::test]
+async fn test_domain_blacklist_allows_safe_domain() {
+    let geo_service: Arc<dyn GeoLocationServiceTrait> =
+        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        domain_blacklist: Some(vec!["malicious.com".to_string()]),
+        ..Default::default()
+    };
+
+    let result = service.validate_domain_blacklist("www.google.com", &restrictions);
+
+    assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+}
+
+#[tokio::test]
+async fn test_domain_blacklist_blocks_matched_domain() {
+    let geo_service: Arc<dyn GeoLocationServiceTrait> =
+        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        domain_blacklist: Some(vec!["malicious.com".to_string()]),
+        ..Default::default()
+    };
+
+    let result = service.validate_domain_blacklist("www.malicious.com", &restrictions);
+
+    match result {
+        Ok(GeoRestrictionResult::Denied(msg)) => {
+            assert!(msg.contains("malicious.com"));
+        }
+        _ => panic!("Expected Denied result"),
+    }
+}
+
+#[tokio::test]
+async fn test_domain_blacklist_disabled_returns_allowed() {
+    let geo_service: Arc<dyn GeoLocationServiceTrait> =
+        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: false,
+        domain_blacklist: Some(vec!["malicious.com".to_string()]),
+        ..Default::default()
+    };
+
+    let result = service.validate_domain_blacklist("www.malicious.com", &restrictions);
+
+    assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
 }

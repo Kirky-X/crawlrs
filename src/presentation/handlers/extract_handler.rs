@@ -95,7 +95,10 @@ where
     }
 
     // 使用团队服务验证地理限制
-    let team_service = TeamService::new(GeoLocationService::new(), geo_restriction_repo.clone());
+    let team_service = TeamService::new(
+        Arc::new(GeoLocationService::new()),
+        geo_restriction_repo.clone(),
+    );
     match team_service
         .validate_geographic_restriction(team_id, &client_ip, &restrictions)
         .await

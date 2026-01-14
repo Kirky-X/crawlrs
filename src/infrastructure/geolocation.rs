@@ -31,6 +31,12 @@ pub struct GeoLocation {
     pub org: Option<String>,
 }
 
+/// IP地理定位服务Trait
+#[async_trait::async_trait]
+pub trait GeoLocationServiceTrait: Send + Sync {
+    async fn get_location(&self, ip: &IpAddr) -> Result<GeoLocation>;
+}
+
 /// IP地理定位服务
 pub struct GeoLocationService {
     /// API端点 (默认为 ipapi.co)
@@ -67,18 +73,11 @@ impl GeoLocationService {
                 .unwrap_or_default(),
         }
     }
+}
 
-    /// 获取IP地址的地理位置信息
-    ///
-    /// # 参数
-    ///
-    /// * `ip` - IP地址
-    ///
-    /// # 返回值
-    ///
-    /// * `Ok(GeoLocation)` - 地理位置信息
-    /// * `Err(anyhow::Error)` - 获取失败
-    pub async fn get_location(&self, ip: &IpAddr) -> Result<GeoLocation> {
+#[async_trait::async_trait]
+impl GeoLocationServiceTrait for GeoLocationService {
+    async fn get_location(&self, ip: &IpAddr) -> Result<GeoLocation> {
         let ip_str = ip.to_string();
         debug!("Getting geolocation for IP: {}", ip_str);
 
@@ -141,7 +140,9 @@ impl GeoLocationService {
         );
         Ok(geo_location)
     }
+}
 
+impl GeoLocationService {
     /// 批量获取IP地址的地理位置信息
     ///
     /// # 参数

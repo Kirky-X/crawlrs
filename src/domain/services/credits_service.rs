@@ -8,7 +8,7 @@
 //! Provides unified credit deduction and management for scraping operations.
 //! Consolidates credits logic from scrape_worker.
 
-use crate::domain::models::credits::CreditsTransactionType;
+use crate::domain::models::credits::{CreditsTransaction, CreditsTransactionType};
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -114,7 +114,7 @@ impl<R: CreditsRepository> CreditsService<R> {
             .deduct_credits(
                 team_id,
                 credits_used,
-                CreditsTransactionType::AiProcessing,
+                CreditsTransactionType::Scrape,
                 format!(
                     "Token credits for task {} ({} tokens)",
                     task_id, total_tokens
@@ -133,7 +133,10 @@ impl<R: CreditsRepository> CreditsService<R> {
 
     /// Get current credits balance for a team
     pub async fn get_balance(&self, team_id: Uuid) -> Result<i64, anyhow::Error> {
-        self.repository.get_balance(team_id).await
+        self.repository
+            .get_balance(team_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     /// Add credits to a team account
@@ -145,14 +148,17 @@ impl<R: CreditsRepository> CreditsService<R> {
         description: String,
     ) -> Result<(), anyhow::Error> {
         self.repository
-            .add_credits(team_id, amount, transaction_type, description)
+            .add_credits(team_id, amount, transaction_type, description, None)
             .await
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!("{}", e))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::repositories::credits_repository::CreditsRepositoryError;
     use async_trait::async_trait;
 
     struct MockCreditsRepository {
@@ -168,7 +174,7 @@ mod tests {
             _transaction_type: CreditsTransactionType,
             _description: String,
             _reference_id: Option<Uuid>,
-        ) -> Result<(), anyhow::Error> {
+        ) -> Result<(), CreditsRepositoryError> {
             self.deducted.lock().unwrap().push((team_id, amount));
             Ok(())
         }
@@ -179,25 +185,29 @@ mod tests {
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-        ) -> Result<(), anyhow::Error> {
-            Ok(())
+            _reference_id: Option<Uuid>,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(100)
         }
 
-        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, anyhow::Error> {
+        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
             Ok(100)
         }
 
         async fn get_transaction_history(
             &self,
             _team_id: Uuid,
-            _limit: i32,
-        ) -> Result<Vec<crate::domain::models::credits::CreditsTransaction>, anyhow::Error>
-        {
+            _limit: Option<u32>,
+        ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
             Ok(vec![])
         }
 
-        async fn rollback_credits(&self, _transaction_id: Uuid) -> Result<(), anyhow::Error> {
-            Ok(())
+        async fn initialize_team_credits(
+            &self,
+            _team_id: Uuid,
+            _initial_balance: i64,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(100)
         }
     }
 
@@ -282,5 +292,177 @@ mod tests {
 
         let history = deducted.lock().unwrap();
         assert!(history.is_empty()); // No deduction when no features used
+    }
+
+    // ========== Token Credit Tests ==========
+
+    #[tokio::test]
+    async fn test_deduct_token_credits_calculates_correctly() {
+        let deducted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+
+        let service = CreditsService::with_default_config(Arc::new(repo));
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        // 2500 tokens / 1000 tokens_per_credit = 2.5 -> ceil to 3 credits
+        service
+            .deduct_token_credits(team_id, task_id, 2500)
+            .await
+            .unwrap();
+
+        let history = deducted.lock().unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0], (team_id, 3)); // 3 credits for 2500 tokens
+    }
+
+    #[tokio::test]
+    async fn test_deduct_token_credits_handles_zero_tokens() {
+        let deducted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+
+        let service = CreditsService::with_default_config(Arc::new(repo));
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        // Zero tokens should not call repository
+        service
+            .deduct_token_credits(team_id, task_id, 0)
+            .await
+            .unwrap();
+
+        let history = deducted.lock().unwrap();
+        assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_deduct_token_credits_handles_negative_tokens() {
+        let deducted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+
+        let service = CreditsService::with_default_config(Arc::new(repo));
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        // Negative tokens should be treated as zero
+        service
+            .deduct_token_credits(team_id, task_id, -100)
+            .await
+            .unwrap();
+
+        let history = deducted.lock().unwrap();
+        assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_deduct_token_credits_single_token() {
+        let deducted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+
+        let service = CreditsService::with_default_config(Arc::new(repo));
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        // 1 token / 1000 tokens_per_credit = 0.001 -> ceil to 1 credit
+        service
+            .deduct_token_credits(team_id, task_id, 1)
+            .await
+            .unwrap();
+
+        let history = deducted.lock().unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0], (team_id, 1));
+    }
+
+    // ========== Balance and Add Tests ==========
+
+    #[tokio::test]
+    async fn test_get_balance_returns_value() {
+        let deducted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+
+        let service = CreditsService::with_default_config(Arc::new(repo));
+        let team_id = Uuid::new_v4();
+
+        // Mock returns 100
+        let balance = service.get_balance(team_id).await.unwrap();
+        assert_eq!(balance, 100);
+    }
+
+    #[tokio::test]
+    async fn test_add_credits_calls_repository() {
+        let deducted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+
+        let service = CreditsService::with_default_config(Arc::new(repo));
+        let team_id = Uuid::new_v4();
+
+        service
+            .add_credits(
+                team_id,
+                50,
+                CreditsTransactionType::ManualAdjustment,
+                "Test add".to_string(),
+            )
+            .await
+            .unwrap();
+
+        // Add_credits doesn't use the deducted vector, so we just verify no error
+    }
+
+    #[tokio::test]
+    async fn test_deduct_token_credits_large_number() {
+        let deducted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+
+        let service = CreditsService::with_default_config(Arc::new(repo));
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        // 100000 tokens / 1000 tokens_per_credit = 100 credits
+        service
+            .deduct_token_credits(team_id, task_id, 100000)
+            .await
+            .unwrap();
+
+        let history = deducted.lock().unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0], (team_id, 100));
+    }
+
+    #[tokio::test]
+    async fn test_deduct_token_credits_exact_boundary() {
+        let deducted = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+
+        let service = CreditsService::with_default_config(Arc::new(repo));
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        // 1000 tokens exactly = 1 credit (1000/1000 = 1.0, ceil is 1)
+        service
+            .deduct_token_credits(team_id, task_id, 1000)
+            .await
+            .unwrap();
+
+        let history = deducted.lock().unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0], (team_id, 1));
     }
 }

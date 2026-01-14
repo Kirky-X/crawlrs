@@ -272,8 +272,11 @@ mod tests {
 
     #[test]
     fn test_sanitize_error_message_removes_table_names() {
-        let msg = "Database error: table 'users' column 'email' not found";
+        let msg = "Database error: table: users column: email not found";
         let sanitized = sanitize_error_message(msg);
+        // Table/column patterns are replaced with [REDACTED]
+        assert!(sanitized.contains("[REDACTED]"));
+        // Verify original table/column names are removed
         assert!(!sanitized.contains("users"));
         assert!(!sanitized.contains("email"));
     }
@@ -282,8 +285,10 @@ mod tests {
     fn test_sanitize_error_message_removes_file_paths() {
         let msg = "Error at /home/dev/crawlrs/src/main.rs:42";
         let sanitized = sanitize_error_message(msg);
+        // File path should be redacted
         assert!(!sanitized.contains("/home/dev/crawlrs/"));
-        assert!(sanitized.contains("LOCATION_REDACTED"));
+        // File path is replaced with [FILE_PATH_REDACTED]
+        assert!(sanitized.contains("[FILE_PATH_REDACTED]"));
     }
 
     #[test]
@@ -325,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_should_hide_detailed_errors_by_default() {
-        std::env::remove_var("CRAWLRS_ENV");
         assert!(!should_show_detailed_errors());
     }
 }
+

@@ -881,3 +881,163 @@ impl CacheStrategy for SmartCacheStrategy {
         self.strategies[current_index].set_batch(entries, ttl).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::models::search_result::SearchResult;
+
+    fn create_test_search_results(count: usize) -> Vec<SearchResult> {
+        (0..count)
+            .map(|i| SearchResult {
+                title: format!("Test Result {}", i),
+                url: format!("https://example.com/{}", i),
+                description: Some(format!("Test description for result {}", i)),
+                engine: "test".to_string(),
+                score: 0.5,
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_cache_entry_new() {
+        let data = vec!["test_data".to_string()];
+        let entry = CacheEntry::new(data.clone(), Duration::from_secs(300));
+
+        assert!(!entry.is_expired());
+        assert_eq!(entry.access_count, 0);
+        assert_eq!(entry.data, data);
+    }
+
+    #[test]
+    fn test_cache_entry_is_expired() {
+        let data = vec!["test_data".to_string()];
+        // Create entry with zero TTL - should be expired
+        let entry = CacheEntry::new(data, Duration::from_secs(0));
+        assert!(entry.is_expired());
+    }
+
+    #[test]
+    fn test_cache_entry_touch() {
+        let data = vec!["test_data".to_string()];
+        let mut entry = CacheEntry::new(data, Duration::from_secs(300));
+
+        assert_eq!(entry.access_count, 0);
+        entry.touch();
+        assert_eq!(entry.access_count, 1);
+        entry.touch();
+        assert_eq!(entry.access_count, 2);
+    }
+
+    #[test]
+    fn test_cache_entry_priority_score() {
+        let data = vec!["test_data".to_string()];
+        let mut entry = CacheEntry::new(data, Duration::from_secs(300));
+
+        // Initially access_count is 0
+        let initial_score = entry.get_priority_score();
+
+        // Touch to increase access count
+        entry.touch();
+        entry.touch();
+
+        let after_touch_score = entry.get_priority_score();
+        assert!(after_touch_score > initial_score);
+    }
+
+    #[test]
+    fn test_cache_stats_default() {
+        let stats = CacheStats::default();
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.evictions, 0);
+        assert_eq!(stats.stores, 0);
+        assert_eq!(stats.compression_saves, 0);
+        assert_eq!(stats.preheat_hits, 0);
+    }
+
+    #[test]
+    fn test_cache_stats_clone() {
+        let mut stats = CacheStats::default();
+        stats.hits = 10;
+        stats.misses = 5;
+        stats.stores = 20;
+
+        let cloned = stats.clone();
+        assert_eq!(cloned.hits, 10);
+        assert_eq!(cloned.misses, 5);
+        assert_eq!(cloned.stores, 20);
+    }
+
+    #[test]
+    fn test_cache_strategy_config_default() {
+        let config = CacheStrategyConfig::default();
+        match config.cache_type {
+            CacheType::Memory => assert!(true),
+            _ => panic!("Expected Memory cache type"),
+        }
+        assert_eq!(config.ttl_seconds, 300);
+        assert_eq!(config.max_entries, 10000);
+        assert!(config.enable_compression);
+        assert!(!config.enable_preload);
+        assert!(config.preheat_config.is_none());
+        assert!(config.layered_config.is_none());
+    }
+
+    #[test]
+    fn test_cache_strategy_config_custom() {
+        let preheat_config = PreheatConfig {
+            hot_queries: vec!["query1".to_string(), "query2".to_string()],
+            preheat_interval: 60,
+            batch_size: 10,
+        };
+
+        let layered_config = LayeredCacheConfig {
+            memory_ttl: 120,
+            redis_ttl: 7200,
+            memory_max_entries: 5000,
+        };
+
+        let config = CacheStrategyConfig {
+            cache_type: CacheType::Layered,
+            ttl_seconds: 600,
+            max_entries: 5000,
+            enable_compression: false,
+            enable_preload: true,
+            preheat_config: Some(preheat_config),
+            layered_config: Some(layered_config),
+        };
+
+        match config.cache_type {
+            CacheType::Layered => assert!(true),
+            _ => panic!("Expected Layered cache type"),
+        }
+        assert_eq!(config.ttl_seconds, 600);
+        assert!(!config.enable_compression);
+        assert!(config.enable_preload);
+        assert!(config.preheat_config.is_some());
+        assert!(config.layered_config.is_some());
+    }
+
+    #[test]
+    fn test_cache_type_display() {
+        let memory = CacheType::Memory;
+        let redis = CacheType::Redis;
+        let layered = CacheType::Layered;
+        let smart = CacheType::Smart;
+
+        assert_eq!(format!("{:?}", memory), "Memory");
+        assert_eq!(format!("{:?}", redis), "Redis");
+        assert_eq!(format!("{:?}", layered), "Layered");
+        assert_eq!(format!("{:?}", smart), "Smart");
+    }
+
+    #[test]
+    fn test_layered_cache_config_default() {
+        let config = LayeredCacheConfig::default();
+        assert_eq!(config.memory_ttl, 60);
+        assert_eq!(config.redis_ttl, 3600);
+        assert_eq!(config.memory_max_entries, 1000);
+    }
+}
