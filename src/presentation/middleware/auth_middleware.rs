@@ -30,6 +30,7 @@
 //! ```
 
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
+use crate::domain::services::audit_service::AuditService;
 use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::infrastructure::database::entities::api_key;
 use crate::infrastructure::security;
@@ -241,6 +242,18 @@ pub async fn auth_middleware(
                 key.id, key.team_id, auth_state.scope
             );
 
+            // Log successful authentication to audit service
+            if let Some(audit_service) = req.extensions().get::<Arc<AuditService>>() {
+                let _ = audit_service
+                    .log_allow(
+                        format!("api_key.authenticated"),
+                        key.id,
+                        key.team_id,
+                        auth_state.scope.clone(),
+                    )
+                    .await;
+            }
+
             Ok(next.run(req).await)
         }
         Ok(None) => {
@@ -301,8 +314,20 @@ pub async fn scope_middleware(req: Request, next: Next) -> Result<Response, Stat
                 auth_state.api_key_id, required, method, path
             );
 
-            // TODO: Log to audit service
-            // let audit_entry = AuditLogEntry { ... };
+            // Log scope denial to audit service
+            if let Some(audit_service) = req.extensions().get::<Arc<AuditService>>() {
+                let api_key_scope: ApiKeyScope = required.into();
+                let reason = format!("Missing required scope: {:?}", required);
+                let _ = audit_service
+                    .log_deny(
+                        format!("scope.denied"),
+                        Some(auth_state.api_key_id),
+                        Some(auth_state.team_id),
+                        reason,
+                        Some(api_key_scope),
+                    )
+                    .await;
+            }
 
             return Err(StatusCode::FORBIDDEN);
         }
@@ -320,10 +345,10 @@ fn determine_required_scope(path: &str, method: &str) -> Option<ScopePermission>
 
     // Write endpoints (POST, PUT, PATCH, DELETE)
     if method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE" {
-        // Exception: some write-like endpoints might be read-only
-        if path.contains("/search") || path.contains("/scrape") {
-            // These are actually read operations
-            return None;
+        // POST to /v1/search and /v1/scrape are write operations
+        // They create tasks and consume credits
+        if (path.contains("/v1/search") || path.contains("/v1/scrape")) && method == "POST" {
+            return Some(ScopePermission::Write);
         }
         return Some(ScopePermission::Write);
     }

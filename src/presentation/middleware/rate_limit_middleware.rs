@@ -9,6 +9,25 @@ use crate::infrastructure::cache::redis_client::RedisClient;
 use anyhow::Result;
 use thiserror::Error;
 
+/// 原子速率限制 Lua 脚本
+///
+/// 确保 INCR 和 EXPIRE 操作原子性执行，防止竞态条件
+const ATOMIC_RATE_LIMIT_SCRIPT: &str = r#"
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+
+local current = redis.call('INCR', key)
+if current == 1 then
+    redis.call('EXPIRE', key, ttl)
+end
+
+if current > limit then
+    return 0
+end
+return current
+"#;
+
 /// 速率限制错误类型
 #[derive(Error, Debug)]
 pub enum RateLimitError {
@@ -51,7 +70,7 @@ impl RateLimiter {
         }
     }
 
-    /// 检查API密钥的请求速率是否超出限制
+    /// 检查API密钥的请求速率是否超出限制（原子操作）
     ///
     /// # 参数
     ///
@@ -63,30 +82,26 @@ impl RateLimiter {
     /// * `Err(RateLimitError)` - 请求超出限制或发生错误
     pub async fn check(&self, api_key: &str) -> Result<(), RateLimitError> {
         let key = format!("rate_limit:{}", api_key);
-        let current_requests = self
-            .redis_client
-            .incr(&key)
-            .await
-            .map_err(|e| RateLimitError::InternalError(format!("Redis INCR failed: {}", e)))?;
-
-        // Set expiry for the key if it's a new counter (i.e., current_requests == 1)
-        // This ensures the key expires after one minute, resetting the rate limit.
-        if current_requests == 1 {
-            self.redis_client.expire(&key, 60).await.map_err(|e| {
-                RateLimitError::InternalError(format!("Redis EXPIRE failed: {}", e))
-            })?;
-        }
-
         let limit = self.get_rate_limit(api_key).await?;
-        let key_prefix = &api_key[..std::cmp::min(8, api_key.len())];
-        tracing::debug!(
-            "RateLimiter: API Key starting with {} - Current: {}, Limit: {}",
-            key_prefix,
-            current_requests,
-            limit
-        );
+        let ttl = 60; // 60 seconds TTL
 
-        if current_requests > limit.into() {
+        // 使用 Lua 脚本实现原子 INCR + EXPIRE
+        let result: i64 = self
+            .redis_client
+            .eval(
+                ATOMIC_RATE_LIMIT_SCRIPT,
+                &[&key],
+                &[&limit.to_string(), &ttl.to_string()],
+            )
+            .await
+            .map_err(|e| RateLimitError::InternalError(format!("Lua script failed: {}", e)))?
+            .parse()
+            .map_err(|e| RateLimitError::InternalError(format!("Failed to parse result: {}", e)))?;
+
+        let current_requests = result as u32;
+        let key_prefix = &api_key[..std::cmp::min(8, api_key.len())];
+
+        if current_requests == 0 {
             tracing::warn!(
                 "RateLimiter: API Key starting with {} exceeded limit. Current: {}, Limit: {}",
                 key_prefix,
@@ -95,6 +110,13 @@ impl RateLimiter {
             );
             return Err(RateLimitError::TooManyRequests);
         }
+
+        tracing::debug!(
+            "RateLimiter: API Key starting with {} - Current: {}, Limit: {}",
+            key_prefix,
+            current_requests,
+            limit
+        );
 
         Ok(())
     }

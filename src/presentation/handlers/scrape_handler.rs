@@ -11,7 +11,6 @@ use axum::{
 use std::sync::Arc;
 use tracing::error;
 use uuid::Uuid;
-use validator::Validate;
 
 use crate::{
     application::dto::{scrape_request::ScrapeRequestDto, scrape_response::ScrapeResponseDto},
@@ -46,15 +45,18 @@ pub async fn create_scrape(
     let team_id = auth_state.team_id;
     let api_key = auth_state.api_key_id.to_string();
 
-    if let Err(e) = payload.validate() {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(serde_json::json!({
-                "success": false,
-                "error": e.to_string()
-            })),
-        )
-            .into_response();
+    // 验证 sync_wait_ms 范围
+    if let Some(ms) = payload.sync_wait_ms {
+        if ms > 30000 {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": "sync_wait_ms must be <= 30000"
+                })),
+            )
+                .into_response();
+        }
     }
 
     if is_internal_url(&payload.url) {

@@ -29,7 +29,6 @@ use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::presentation::helpers::ssrf_helper::is_internal_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
-use validator::Validate;
 
 /// 创建新的爬取任务
 #[allow(clippy::too_many_arguments)]
@@ -55,12 +54,14 @@ where
 {
     let team_id = auth_state.team_id;
     let api_key = auth_state.api_key_id.to_string();
-    if let Err(e) = payload.validate() {
+
+    // 验证 config 字段 (简化验证)
+    if payload.config.max_depth > 5 {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({
                 "success": false,
-                "error": e.to_string()
+                "error": "max_depth must be between 0 and 5"
             })),
         )
             .into_response();

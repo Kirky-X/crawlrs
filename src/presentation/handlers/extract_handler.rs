@@ -12,7 +12,6 @@ use axum::{
 use serde_json::json;
 use std::net::SocketAddr;
 use tracing::error;
-use validator::Validate;
 
 use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::config::settings::Settings;
@@ -81,16 +80,18 @@ where
         }
     };
 
-    // Validate request payload
-    if let Err(e) = payload.validate() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": format!("Validation error: {}", e)
-            })),
-        )
-            .into_response();
+    // Validate sync_wait_ms if present
+    if let Some(ms) = payload.sync_wait_ms {
+        if ms > 30000 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "sync_wait_ms must be <= 30000"
+                })),
+            )
+                .into_response();
+        }
     }
 
     // 使用团队服务验证地理限制

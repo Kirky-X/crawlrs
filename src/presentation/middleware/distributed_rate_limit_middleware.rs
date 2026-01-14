@@ -63,8 +63,8 @@ pub async fn distributed_rate_limit_middleware(
         debug!("Using api_key_id from AuthState");
         auth_state.api_key_id.to_string() // This is the database ID
     } else {
-        error!("Neither API key token nor AuthState found in request extensions.");
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        error!("DistributedRateLimitMiddleware: No API key found in request extensions.");
+        return Err(StatusCode::UNAUTHORIZED);
     };
 
     debug!(

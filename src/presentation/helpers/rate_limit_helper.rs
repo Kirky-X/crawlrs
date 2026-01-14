@@ -63,7 +63,9 @@ pub async fn check_rate_limit<T: RateLimitingService>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingError};
+    use crate::domain::services::rate_limiting_service::{
+        ConcurrencyConfig, ConcurrencyResult, RateLimitConfig, RateLimitResult, RateLimitingError,
+    };
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;

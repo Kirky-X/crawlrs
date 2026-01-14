@@ -12,8 +12,8 @@ use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRe
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
-    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler, team_handler,
-    webhook_handler,
+    audit_handler, crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
+    team_handler, webhook_handler,
 };
 use crate::presentation::routes::task::task_routes;
 use axum::{
@@ -106,7 +106,9 @@ pub fn routes() -> Router {
         .route(
             "/v1/teams/geo-restrictions",
             put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
-        );
+        )
+        .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
+        .route("/v1/audit/denied", get(audit_handler::get_denied_requests));
 
     let v2_routes = task_routes();
 
