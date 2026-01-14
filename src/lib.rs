@@ -7,6 +7,11 @@
 #[cfg(not(any(feature = "db-postgres", feature = "db-sqlite")))]
 compile_error!("Must enable at least one database feature: db-postgres or db-sqlite");
 
+/// 通用模块
+///
+/// 提供应用程序的通用功能，包括错误类型、常量定义等
+pub mod common;
+
 /// 应用程序模块
 ///
 /// 包含应用程序的核心业务逻辑和用例

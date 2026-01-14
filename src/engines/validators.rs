@@ -11,12 +11,40 @@ use url::Url;
 ///
 /// 检查解析后的 IP 是否为私有地址或环回地址
 /// 包含 DNS Rebinding 攻击防护
+///
+/// # 安全警告
+///
+/// SSRF 保护是关键的安全功能，不应该在生产环境中禁用。
+/// 如果确实需要在测试环境中禁用，请确保：
+/// 1. 仅在受控的测试环境中使用
+/// 2. 永远不要在生产环境或 CI/CD 流程中设置此环境变量
 pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
-    // 检查是否禁用 SSRF 保护（用于测试环境）
-    // 注意：生产环境永远不应该禁用 SSRF 保护
+    // 检查是否禁用 SSRF 保护（仅用于测试环境）
+    // 安全警告：生产环境必须启用 SSRF 保护
     let ssrf_disabled = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default();
     if ssrf_disabled.eq_ignore_ascii_case("true") {
-        tracing::debug!("SSRF protection disabled for URL: {}", url_str);
+        // 添加安全警告日志
+        tracing::warn!(
+            "SECURITY WARNING: SSRF protection is DISABLED for URL: {}. This should NEVER be enabled in production!",
+            url_str
+        );
+        // 检查是否在生产环境
+        let env = std::env::var("CRAWLRS_ENV").unwrap_or_default();
+        if env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod") {
+            return Err(anyhow::anyhow!(
+                "SECURITY ERROR: SSRF protection cannot be disabled in production environment"
+            ));
+        }
+        // 额外检查：如果不是明确的测试环境，也拒绝禁用
+        if !env.eq_ignore_ascii_case("test") && !env.eq_ignore_ascii_case("development") && !env.eq_ignore_ascii_case("dev") {
+            tracing::error!(
+                "SECURITY ERROR: Attempted to disable SSRF protection in unknown environment: {}. This is not allowed.",
+                env
+            );
+            return Err(anyhow::anyhow!(
+                "SECURITY ERROR: SSRF protection can only be disabled in test/development environments"
+            ));
+        }
         return Ok(());
     }
 

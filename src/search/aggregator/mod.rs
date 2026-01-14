@@ -54,7 +54,7 @@ impl SearchAggregator {
             timeout: Duration::from_millis(timeout_ms),
             // 使用LRU缓存，自动淘汰旧条目，防止内存无限增长
             cache: Arc::new(tokio::sync::Mutex::new(LruCache::new(
-                NonZeroUsize::new(cache_config::MAX_CACHE_ENTRIES).unwrap(),
+                NonZeroUsize::new(cache_config::MAX_CACHE_ENTRIES).expect("MAX_CACHE_ENTRIES must be greater than 0"),
             ))),
             cache_ttl: Duration::from_secs(cache_config::DEFAULT_TTL_SECS),
             failures: std::sync::Arc::new(DashMap::new()),

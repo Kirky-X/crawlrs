@@ -12,6 +12,7 @@ use parking_lot::RwLock;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
@@ -148,7 +149,7 @@ pub struct SearchEngineRouter {
     /// 配置
     config: SearchEngineRouterConfig,
     /// 负载均衡索引
-    load_balance_index: RwLock<usize>,
+    load_balance_index: AtomicUsize,
 }
 
 impl Clone for SearchEngineRouter {
@@ -157,7 +158,7 @@ impl Clone for SearchEngineRouter {
             engines: self.engines.clone(),
             metrics: RwLock::new(self.metrics.read().clone()),
             config: self.config.clone(),
-            load_balance_index: RwLock::new(*self.load_balance_index.read()),
+            load_balance_index: AtomicUsize::new(self.load_balance_index.load(std::sync::atomic::Ordering::Relaxed)),
         }
     }
 }
@@ -175,7 +176,7 @@ impl SearchEngineRouter {
             engines: HashMap::with_capacity(8),
             metrics: RwLock::new(HashMap::with_capacity(8)),
             config: SearchEngineRouterConfig::default(),
-            load_balance_index: RwLock::new(0),
+            load_balance_index: AtomicUsize::new(0),
         }
     }
 
@@ -185,7 +186,7 @@ impl SearchEngineRouter {
             engines: HashMap::with_capacity(8),
             metrics: RwLock::new(HashMap::with_capacity(8)),
             config,
-            load_balance_index: RwLock::new(0),
+            load_balance_index: AtomicUsize::new(0),
         }
     }
 

@@ -80,6 +80,24 @@ impl RouterMetrics {
         self.failure_classification.lock().await
     }
 
+    /// 对错误进行分类
+    fn classify_error(error_type: &str) -> String {
+        let lower = error_type.to_lowercase();
+        if lower.contains("timeout") {
+            "timeout".to_string()
+        } else if lower.contains("ssrf") {
+            "ssrf_protection".to_string()
+        } else if lower.contains("network") {
+            "network_error".to_string()
+        } else if lower.contains("circuit") {
+            "circuit_breaker".to_string()
+        } else if lower.contains("browser") {
+            "browser_error".to_string()
+        } else {
+            "other".to_string()
+        }
+    }
+
     /// 记录候选引擎数量
     pub fn record_candidates(&self, count: usize) {
         self.candidate_count_total
@@ -125,23 +143,6 @@ impl RouterMetrics {
         let error_category = Self::classify_error(error_type);
         let count = classification.entry(error_category).or_insert(0);
         *count += 1;
-    }
-
-    /// 对错误进行分类
-    fn classify_error(error_type: &str) -> String {
-        if error_type.contains("timeout") || error_type.contains("Timeout") {
-            "timeout".to_string()
-        } else if error_type.contains("ssrf") || error_type.contains("SSRF") {
-            "ssrf_protection".to_string()
-        } else if error_type.contains("network") || error_type.contains("Network") {
-            "network_error".to_string()
-        } else if error_type.contains("circuit") || error_type.contains("Circuit") {
-            "circuit_breaker".to_string()
-        } else if error_type.contains("browser") || error_type.contains("Browser") {
-            "browser_error".to_string()
-        } else {
-            "other".to_string()
-        }
     }
 
     /// 获取按引擎名称的平均延迟（纳秒）

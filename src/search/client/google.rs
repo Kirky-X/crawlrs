@@ -122,7 +122,7 @@ impl GoogleSearchEngine {
                 continue;
             }
             let title = title_node
-                .unwrap()
+                .expect("title_node should not be None after is_none() check")
                 .text()
                 .collect::<String>()
                 .trim()
@@ -138,7 +138,7 @@ impl GoogleSearchEngine {
                 continue;
             }
             let mut url = url_node
-                .unwrap()
+                .expect("url_node should not be None after is_none() check")
                 .value()
                 .attr("href")
                 .unwrap_or("")

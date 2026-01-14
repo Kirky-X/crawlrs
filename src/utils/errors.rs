@@ -52,41 +52,41 @@ pub fn sanitize_error_message(msg: &str) -> String {
     let mut msg = msg.to_string();
 
     // 移除表名和列名模式 (如 "table: users", "column: email")
-    let table_column_pattern = Regex::new(r#"(?i)(table|column|field):\s*[\w."']+"#).unwrap();
+    let table_column_pattern = Regex::new(r#"(?i)(table|column|field):\s*[\w."']+"#).expect("Invalid regex pattern");
     msg = table_column_pattern
         .replace_all(&msg, "[REDACTED]")
         .to_string();
 
     // 移除 SQL 查询片段
-    let sql_pattern = Regex::new(r#"(?i)(SQL|query|statement):\s*[^,\]}]+"#).unwrap();
+    let sql_pattern = Regex::new(r#"(?i)(SQL|query|statement):\s*[^,\]}]+"#).expect("Invalid regex pattern");
     msg = sql_pattern.replace_all(&msg, "[SQL_REDACTED]").to_string();
 
     // 移除文件路径 (如 /home/dev/crawlrs/src/..., /app/...)
-    let file_path_pattern = Regex::new(r#"/[a-zA-Z0-9_/.-]+\.(rs|toml|env|yml|json)"#).unwrap();
+    let file_path_pattern = Regex::new(r#"/[a-zA-Z0-9_/.-]+\.(rs|toml|env|yml|json)"#).expect("Invalid regex pattern");
     msg = file_path_pattern
         .replace_all(&msg, "[FILE_PATH_REDACTED]")
         .to_string();
 
     // 移除行号信息 (如 "at line 42", "src/file.rs:42")
-    let line_number_pattern = Regex::new(r#"[a-zA-Z0-9_/.-]+\.rs:\d+"#).unwrap();
+    let line_number_pattern = Regex::new(r#"[a-zA-Z0-9_/.-]+\.rs:\d+"#).expect("Invalid regex pattern");
     msg = line_number_pattern
         .replace_all(&msg, "[LOCATION_REDACTED]")
         .to_string();
 
     // 移除内部 IP 地址
-    let internal_ip_pattern = Regex::new(r#"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b"#).unwrap();
+    let internal_ip_pattern = Regex::new(r#"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b"#).expect("Invalid regex pattern");
     msg = internal_ip_pattern
         .replace_all(&msg, "[INTERNAL_IP_REDACTED]")
         .to_string();
 
     // 移除端口号（如果是内部服务）
-    let internal_service_pattern = Regex::new(r#"(localhost|127\.0\.0\.1):\d+"#).unwrap();
+    let internal_service_pattern = Regex::new(r#"(localhost|127\.0\.0\.1):\d+"#).expect("Invalid regex pattern");
     msg = internal_service_pattern
         .replace_all(&msg, "$1:[PORT_REDACTED]")
         .to_string();
 
     // 移除数据库连接字符串中的密码
-    let db_password_pattern = Regex::new(r#"(postgres|mysql|mongodb)://[^:]+:[^@]+@"#).unwrap();
+    let db_password_pattern = Regex::new(r#"(postgres|mysql|mongodb)://[^:]+:[^@]+@"#).expect("Invalid regex pattern");
     msg = db_password_pattern
         .replace_all(&msg, "$1://[USER]:[PASSWORD]@")
         .to_string();
