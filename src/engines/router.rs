@@ -945,7 +945,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_router_creation() {
-        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine)];
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::new())];
         let router = EngineRouter::new(engines);
 
         assert_eq!(router.strategy, LoadBalancingStrategy::SmartHybrid);

@@ -88,8 +88,12 @@ where
         team_id: Uuid,
         dto: SearchRequestDto,
     ) -> Result<SearchResponseDto, SearchServiceError> {
-        dto.validate()
-            .map_err(|e| SearchServiceError::ValidationError(e.to_string()))?;
+        // 简化验证：检查 query 是否为空
+        if dto.query.trim().is_empty() {
+            return Err(SearchServiceError::ValidationError(
+                "Query cannot be empty".to_string(),
+            ));
+        }
 
         // Check team credits balance before performing search
         let current_balance = self.credits_repo.get_balance(team_id).await?;

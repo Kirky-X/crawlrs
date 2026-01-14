@@ -60,7 +60,7 @@ impl SearchClient {
             // 默认注册所有引擎
 
             // Create a default EngineClient with ReqwestEngine for Google
-            let reqwest_engine = Arc::new(ReqwestEngine);
+            let reqwest_engine = Arc::new(ReqwestEngine::new());
             let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
             let engine_client = Arc::new(EngineClient::with_engines(engines));
 

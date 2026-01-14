@@ -78,10 +78,17 @@ impl SearchAggregator {
         engine_name: Option<&str>,
     ) -> Result<Vec<SearchResult>, SearchError> {
         if let Some(name) = engine_name {
+            info!("search_with_engine called with engine_name: {}", name);
+            let registered_names: Vec<&str> = self.engine_names();
+            info!("Registered engine names: {:?}", registered_names);
             let target_engine = self.get_engine(name);
             match target_engine {
                 Some(engine) => {
-                    info!("Directly calling search engine: {}", name);
+                    info!(
+                        "Directly calling search engine: {} (actual name: {})",
+                        name,
+                        engine.name()
+                    );
                     let response = engine.search(request).await?;
                     Ok(self.convert_response_to_results(response))
                 }
@@ -332,5 +339,49 @@ impl SearchEngine for SearchAggregator {
         cache.push(cache_key.clone(), (final_results.clone(), Instant::now()));
 
         Ok(self.convert_results_to_response(final_results))
+    }
+
+    /// Override search_with_engine to support specific engine selection
+    async fn search_with_engine(
+        &self,
+        query: &str,
+        limit: u32,
+        _lang: Option<&str>,
+        _country: Option<&str>,
+        engine: Option<&str>,
+    ) -> Result<Vec<ResponseItem>, SearchError> {
+        if let Some(name) = engine {
+            warn!(
+                "[DEBUG] search_with_engine called with engine_name: {}",
+                name
+            );
+            let registered_names: Vec<&str> = self.engine_names();
+            warn!("[DEBUG] Registered engine names: {:?}", registered_names);
+            let target_engine = self.get_engine(name);
+            match target_engine {
+                Some(e) => {
+                    warn!(
+                        "[DEBUG] Directly calling search engine: {} (actual name: {})",
+                        name,
+                        e.name()
+                    );
+                    let request = SearchRequest::new(query).with_limit(limit);
+                    let response = e.search(&request).await?;
+                    Ok(response.items)
+                }
+                None => {
+                    warn!("Engine '{}' not found, falling back to aggregator", name);
+                    // Fall back to searching all engines
+                    let request = SearchRequest::new(query).with_limit(limit);
+                    let response = self.search(&request).await?;
+                    Ok(response.items)
+                }
+            }
+        } else {
+            // Search all engines
+            let request = SearchRequest::new(query).with_limit(limit);
+            let response = self.search(&request).await?;
+            Ok(response.items)
+        }
     }
 }
