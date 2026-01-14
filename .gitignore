@@ -69,6 +69,13 @@ openspec/AGENTS.md
 # CLAUDE files
 CLAUDE.md
 
+# Cache directories
+tmp/
+.ruff_cache/
+.pytest_cache/
+.opencode/
+openspec/
+
 # -----------------------------------------------------------------------------
 # Section 3: Project-Specific Directories
 # -----------------------------------------------------------------------------
