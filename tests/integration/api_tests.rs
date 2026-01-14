@@ -52,18 +52,18 @@ async fn test_create_scrape_task_success() {
     );
 
     let task_response: serde_json::Value = response.json();
-    let task_id_str = task_response["id"].as_str().unwrap();
-    let task_id = Uuid::parse_str(task_id_str).unwrap();
+    let task_id_str = task_response["id"].as_str().expect("Task response missing 'id' field");
+    let task_id = Uuid::parse_str(task_id_str).expect("Invalid task ID format in response");
 
     // Verify the task was created in the database
     let task = task::Entity::find()
         .filter(task::Column::Id.eq(task_id))
         .one(app.db_pool.as_ref())
         .await
-        .unwrap();
+        .expect("Failed to query task from database");
 
     assert!(task.is_some());
-    let task = task.unwrap();
+    let task = task.expect("Task not found in database");
     assert_eq!(task.url, "https://example.com");
 }
 
@@ -89,7 +89,7 @@ async fn test_scrape_rate_limit() {
     let prefix = format!("rate_limit:{}", app.api_key);
     let keys: Vec<String> = app.redis.scan_pattern(&prefix).await.unwrap_or_default();
     for key in keys {
-        let _: () = app.redis.del(&key).await.unwrap();
+        let _: () = app.redis.del(&key).await.expect("Failed to delete rate limit key from Redis");
     }
 
     // Set a specific rate limit for this test's API key
@@ -211,9 +211,9 @@ async fn test_team_concurrency_limit() {
     if status == StatusCode::ACCEPTED {
         let task_id: Uuid = response.json::<serde_json::Value>()["id"]
             .as_str()
-            .unwrap()
+            .expect("Task response missing 'id' field")
             .parse()
-            .unwrap();
+            .expect("Failed to parse task ID as UUID");
 
         // 3. Wait a bit for worker to try processing
         tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
@@ -223,8 +223,8 @@ async fn test_team_concurrency_limit() {
             .filter(task::Column::Id.eq(task_id))
             .one(app.db_pool.as_ref())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to query task from database")
+            .expect("Task not found in database");
 
         // Verify the status is still queued (not started because of concurrency limit)
         assert_eq!(task.status, "queued");
@@ -273,10 +273,10 @@ async fn test_circuit_breaker_and_engine_fallback() {
     );
 
     // 绑定到 0.0.0.0 以便从 Docker 容器访问
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.expect("Failed to bind TCP listener");
+    let addr = listener.local_addr().expect("Failed to get local address");
     tokio::spawn(async move {
-        axum::serve(listener, app_server).await.unwrap();
+        axum::serve(listener, app_server).await.expect("Failed to start axum server");
     });
 
     // 如果在 Docker 环境中运行（通过 CHROMIUM_REMOTE_DEBUGGING_URL 检测），
@@ -453,7 +453,7 @@ async fn test_team_data_isolation() {
     );
     let task_a_id = response_a.json::<serde_json::Value>()["id"]
         .as_str()
-        .unwrap()
+        .expect("Missing 'id' field in task response")
         .to_string();
 
     // 2. Create Team B
@@ -486,7 +486,7 @@ async fn test_team_data_isolation() {
 
     let task_b_id = response_b.json::<serde_json::Value>()["id"]
         .as_str()
-        .unwrap()
+        .expect("Task response missing 'id' field")
         .to_string();
 
     // 4. Team A tries to access Team B's task -> Should fail (403 Forbidden or 404 Not Found depending on implementation)
@@ -617,9 +617,9 @@ async fn test_js_rendering_spa() {
     assert!(status_code == StatusCode::CREATED || status_code == StatusCode::ACCEPTED);
     let task_id: Uuid = response.json::<serde_json::Value>()["id"]
         .as_str()
-        .unwrap()
+        .expect("Missing 'id' field in task response")
         .parse()
-        .unwrap();
+        .expect("Failed to parse task ID as UUID");
 
     // 2. 等待任务完成
     let mut completed = false;
@@ -683,7 +683,7 @@ async fn test_full_site_crawl() {
         status,
         body
     );
-    let crawl_id: Uuid = body["id"].as_str().unwrap().parse().unwrap();
+    let crawl_id: Uuid = body["id"].as_str().expect("Crawl response missing 'id' field").parse().expect("Failed to parse crawl ID as UUID");
 
     // 2. 检查爬取状态并等待完成
     let mut completed = false;
@@ -767,9 +767,9 @@ async fn test_task_timeout_handling() {
     );
     let task_id: Uuid = response.json::<serde_json::Value>()["id"]
         .as_str()
-        .unwrap()
+        .expect("Missing 'id' field in task response")
         .parse()
-        .unwrap();
+        .expect("Failed to parse task ID as UUID");
 
     // 2. 等待 worker 处理并超时
     let mut timed_out = false;
@@ -947,14 +947,14 @@ async fn test_task_expiration() {
     task::Entity::insert(task_model)
         .exec(app.db_pool.as_ref())
         .await
-        .unwrap();
+        .expect("Failed to insert expired task into database");
 
     // 2. 将任务加入队列
     let _task = task::Entity::find_by_id(expired_task_id)
         .one(app.db_pool.as_ref())
         .await
-        .unwrap()
-        .unwrap();
+        .expect("Failed to query task from database")
+        .expect("Task not found in database");
 
     // We need a worker to process it. In integration tests, we can use the app's worker or trigger it.
     // The ScrapeWorker in app.rs runs in a loop.
@@ -967,8 +967,8 @@ async fn test_task_expiration() {
         let task = task::Entity::find_by_id(expired_task_id)
             .one(app.db_pool.as_ref())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to query expired task from database")
+            .expect("Expired task not found in database");
         task_status = task.status.clone();
         if task_status == "failed" {
             break;
@@ -1043,7 +1043,7 @@ async fn test_webhook_trigger() {
     }
 
     let task_response: serde_json::Value = response.json();
-    let _task_id = task_response["id"].as_str().unwrap();
+    let _task_id = task_response["id"].as_str().expect("Missing 'id' field in task response");
 
     // Wait for the task to complete and webhook to be triggered
     // In a real integration test, we would start a local server to receive the webhook.
@@ -1061,7 +1061,7 @@ async fn test_webhook_trigger() {
         .filter(webhook_event::Column::TeamId.eq(app.team_id))
         .all(app.db_pool.as_ref())
         .await
-        .unwrap();
+        .expect("Failed to query webhook events from database");
 
     // It's possible the worker hasn't processed it yet or the task is still queued.
     // Given we have workers running, it should eventually be processed.
@@ -1142,7 +1142,7 @@ async fn test_webhook_retry_policy() {
         .filter(webhook_event::Column::WebhookUrl.eq(webhook_url))
         .all(app.db_pool.as_ref())
         .await
-        .unwrap();
+        .expect("Failed to query webhook events from database");
 
     assert!(!events.is_empty(), "Should have created a webhook event");
     let _event = &events[0];
@@ -1156,7 +1156,7 @@ async fn test_webhook_retry_policy() {
             .filter(webhook_event::Column::WebhookUrl.eq(webhook_url))
             .all(app.db_pool.as_ref())
             .await
-            .unwrap();
+            .expect("Failed to query webhook events from database");
 
         if !events.is_empty() {
             let event = &events[0];
@@ -1224,7 +1224,7 @@ async fn test_search_basic() {
 
     let search_response: serde_json::Value = response.json();
     assert!(search_response.get("results").is_some());
-    let results = search_response.get("results").unwrap().as_array().unwrap();
+    let results = search_response.get("results").expect("Search response missing 'results' field").as_array().expect("'results' field should be an array");
     assert!(
         !results.is_empty(),
         "Expected search results to be non-empty"
@@ -1346,7 +1346,7 @@ async fn test_get_task_status() {
     }
 
     let task_response: serde_json::Value = create_response.json();
-    let task_id = task_response["id"].as_str().unwrap();
+    let task_id = task_response["id"].as_str().expect("Missing 'id' field in task response");
 
     // 查询任务状态
     let status_response = app
@@ -1370,7 +1370,7 @@ async fn test_get_task_status() {
     }
 
     let status_data: serde_json::Value = status_response.json();
-    assert_eq!(status_data["id"].as_str().unwrap(), task_id);
+    assert_eq!(status_data["id"].as_str().expect("Missing 'id' field in task status response"), task_id);
     assert!(status_data.get("status").is_some());
 }
 
@@ -1416,7 +1416,7 @@ async fn test_cancel_task() {
     }
 
     let task_response: serde_json::Value = create_response.json();
-    let task_id = task_response["id"].as_str().unwrap();
+    let task_id = task_response["id"].as_str().expect("Missing 'id' field in task response");
 
     // 取消任务
     let cancel_response = app
@@ -1455,7 +1455,7 @@ async fn test_cancel_crawl() {
         create_response.status_code()
     );
     let crawl_response: serde_json::Value = create_response.json();
-    let crawl_id = crawl_response["id"].as_str().unwrap();
+    let crawl_id = crawl_response["id"].as_str().expect("Missing 'id' field in crawl response");
 
     // 取消爬取
     let cancel_response = app
@@ -1530,7 +1530,7 @@ async fn test_health_check() {
     assert_eq!(response.status_code(), StatusCode::OK);
 
     let health_response: serde_json::Value = response.json();
-    assert_eq!(health_response["status"].as_str().unwrap(), "healthy");
+    assert_eq!(health_response["status"].as_str().expect("Missing 'status' field in health response"), "healthy");
 }
 
 /// 测试指标端点
@@ -1551,6 +1551,6 @@ async fn test_metrics_endpoint() {
     // The actual response is JSON with a "metrics" field containing the Prometheus metrics
     let json: serde_json::Value = response.json();
     assert!(json.get("metrics").is_some());
-    let metrics = json.get("metrics").unwrap().as_str().unwrap();
+    let metrics = json.get("metrics").expect("Metrics response missing 'metrics' field").as_str().expect("'metrics' field should be a string");
     assert!(metrics.contains("# HELP"));
 }

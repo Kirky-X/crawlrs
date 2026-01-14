@@ -5,111 +5,67 @@
 
 #![allow(dead_code)]
 
-/// 任务数据工厂
-///
-/// 提供测试任务创建的便捷函数
 use crawlrs::domain::models::task::{TaskStatus, TaskType};
 use crawlrs::infrastructure::database::entities::task::{self, Entity as TaskEntity};
 use sea_orm::{DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;
 
-/// 任务工厂
 pub struct TaskFactory;
 
 impl TaskFactory {
-    /// 创建抓取任务
+    async fn insert_and_fetch(db: &DatabaseConnection, model: task::ActiveModel) -> task::Model {
+        let result = TaskEntity::insert(model)
+            .exec(db)
+            .await
+            .expect("Failed to insert task into database");
+        TaskEntity::find_by_id(result.last_insert_id)
+            .one(db)
+            .await
+            .expect("Failed to query task from database")
+            .expect("Task not found after insertion")
+    }
+
+    fn base_task_model(
+        url: String,
+        task_type: TaskType,
+        team_id: Uuid,
+    ) -> task::ActiveModel {
+        task::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            url: Set(url),
+            task_type: Set(task_type.to_string()),
+            status: Set(TaskStatus::Queued.to_string()),
+            priority: Set(0),
+            team_id: Set(team_id),
+            ..Default::default()
+        }
+    }
+
     pub async fn create_scrape_task(db: &DatabaseConnection, url: &str) -> task::Model {
-        let task_model = task::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            url: Set(url.to_string()),
-            task_type: Set(TaskType::Scrape.to_string()),
-            status: Set(TaskStatus::Queued.to_string()),
-            priority: Set(0),
-            team_id: Set(Uuid::nil()),
-            ..Default::default()
-        };
-
-        let result = TaskEntity::insert(task_model).exec(db).await.unwrap();
-
-        // 获取插入的记录
-        TaskEntity::find_by_id(result.last_insert_id)
-            .one(db)
-            .await
-            .unwrap()
-            .unwrap()
+        let model = Self::base_task_model(url.to_string(), TaskType::Scrape, Uuid::nil());
+        Self::insert_and_fetch(db, model).await
     }
 
-    /// 创建爬取任务
     pub async fn create_crawl_task(db: &DatabaseConnection, url: &str, depth: u32) -> task::Model {
-        let task_model = task::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            url: Set(url.to_string()),
-            task_type: Set(TaskType::Crawl.to_string()),
-            status: Set(TaskStatus::Queued.to_string()),
-            priority: Set(0),
-            team_id: Set(Uuid::nil()),
-            payload: Set(serde_json::json!({
-                "depth": depth
-            })),
-            ..Default::default()
-        };
-
-        let result = TaskEntity::insert(task_model).exec(db).await.unwrap();
-
-        TaskEntity::find_by_id(result.last_insert_id)
-            .one(db)
-            .await
-            .unwrap()
-            .unwrap()
+        let mut model = Self::base_task_model(url.to_string(), TaskType::Crawl, Uuid::nil());
+        model.task_type = Set(TaskType::Crawl.to_string());
+        model.payload = Set(serde_json::json!({ "depth": depth }));
+        Self::insert_and_fetch(db, model).await
     }
 
-    /// 创建搜索任务
     pub async fn create_search_task(db: &DatabaseConnection, query: &str) -> task::Model {
-        let task_model = task::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            url: Set(format!("search:{}", query)),
-            task_type: Set(TaskType::Scrape.to_string()),
-            status: Set(TaskStatus::Queued.to_string()),
-            priority: Set(0),
-            team_id: Set(Uuid::nil()),
-            payload: Set(serde_json::json!({
-                "query": query
-            })),
-            ..Default::default()
-        };
-
-        let result = TaskEntity::insert(task_model).exec(db).await.unwrap();
-
-        TaskEntity::find_by_id(result.last_insert_id)
-            .one(db)
-            .await
-            .unwrap()
-            .unwrap()
+        let mut model = Self::base_task_model(format!("search:{}", query), TaskType::Scrape, Uuid::nil());
+        model.payload = Set(serde_json::json!({ "query": query }));
+        Self::insert_and_fetch(db, model).await
     }
 
-    /// 创建带团队的任务
     pub async fn create_task_with_team(
         db: &DatabaseConnection,
         url: &str,
         task_type: TaskType,
         team_id: Uuid,
     ) -> task::Model {
-        let task_model = task::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            url: Set(url.to_string()),
-            task_type: Set(task_type.to_string()),
-            status: Set(TaskStatus::Queued.to_string()),
-            priority: Set(0),
-            team_id: Set(team_id),
-            ..Default::default()
-        };
-
-        let result = TaskEntity::insert(task_model).exec(db).await.unwrap();
-
-        TaskEntity::find_by_id(result.last_insert_id)
-            .one(db)
-            .await
-            .unwrap()
-            .unwrap()
+        let model = Self::base_task_model(url.to_string(), task_type, team_id);
+        Self::insert_and_fetch(db, model).await
     }
 }

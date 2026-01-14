@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 #[test]
 fn test_task_lifecycle_happy_path() {
-    // Given: 新创建的任务
     let team_id = Uuid::new_v4();
     let url = "http://example.com".to_string();
     let payload = json!({});
@@ -25,7 +24,6 @@ fn test_task_lifecycle_happy_path() {
 
 #[test]
 fn test_task_retry_logic() {
-    // Given: 失败任务
     let team_id = Uuid::new_v4();
     let url = "http://example.com".to_string();
     let payload = json!({});
@@ -35,14 +33,10 @@ fn test_task_retry_logic() {
     task.attempt_count = 2;
     task.max_retries = 3;
 
-    // When: 检查是否可重试
     let can_retry = task.attempt_count < task.max_retries;
     assert!(can_retry);
 
-    // When: 重试次数达到上限
     task.attempt_count = 3;
     let can_retry_full = task.attempt_count < task.max_retries;
-
-    // Then: 不可重试
     assert!(!can_retry_full);
 }

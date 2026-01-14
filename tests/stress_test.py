@@ -8,10 +8,11 @@ import requests
 import time
 import concurrent.futures
 import random
+import os
 
-BASE_URL = "http://localhost:8899/v1"
-CONCURRENT_USERS = 50
-TOTAL_REQUESTS = 500
+BASE_URL = os.getenv("CRAWLRS_STRESS_TEST_URL", "http://localhost:8899/v1")
+CONCURRENT_USERS = int(os.getenv("CRAWLRS_STRESS_TEST_CONCURRENT_USERS", "50"))
+TOTAL_REQUESTS = int(os.getenv("CRAWLRS_STRESS_TEST_TOTAL_REQUESTS", "500"))
 
 def make_request(request_id):
     start_time = time.time()

@@ -12,7 +12,7 @@ from api_test_framework import CrawlrsAPIClient
 def api_client() -> Generator[CrawlrsAPIClient, None, None]:
     """提供 API 客户端实例"""
     base_url = os.getenv("CRAWLRS_API_URL", "http://localhost:3000")
-    api_key = os.getenv("CRAWLRS_API_KEY", "test-api-key")
+    api_key = os.getenv("CRAWLRS_API_KEY", os.getenv("TEST_API_KEY", "test-api-key"))
 
     client = CrawlrsAPIClient(base_url=base_url, api_key=api_key)
 
@@ -62,5 +62,5 @@ def webhook_test_params():
     return {
         "url": "https://httpbin.org/post",
         "events": ["task.completed", "task.failed"],
-        "secret": "test-secret",
+        "secret": os.getenv("TEST_WEBHOOK_SECRET", "test-secret"),
     }

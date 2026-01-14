@@ -83,8 +83,8 @@ async fn test_scrape_with_page_interactions() {
     }
 
     let task_response: serde_json::Value = response.json();
-    let task_id_str = task_response["id"].as_str().unwrap();
-    let task_id = Uuid::parse_str(task_id_str).unwrap();
+    let task_id_str = task_response["id"].as_str().expect("Missing 'id' field in task response");
+    let task_id = Uuid::parse_str(task_id_str).expect("Failed to parse task ID as UUID");
 
     // Poll for task completion
     let mut task_completed = false;
@@ -96,8 +96,8 @@ async fn test_scrape_with_page_interactions() {
             .filter(task::Column::Id.eq(task_id))
             .one(app.db_pool.as_ref())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to query task from database")
+            .expect("Task not found in database");
 
         task_status = TaskStatus::from_str(&task.status).unwrap_or(TaskStatus::Queued);
 
@@ -181,8 +181,8 @@ async fn test_scrape_with_click_action() {
     }
 
     let task_response: serde_json::Value = response.json();
-    let task_id_str = task_response["id"].as_str().unwrap();
-    let task_id = Uuid::parse_str(task_id_str).unwrap();
+    let task_id_str = task_response["id"].as_str().expect("Missing 'id' field in task response");
+    let task_id = Uuid::parse_str(task_id_str).expect("Failed to parse task ID as UUID");
 
     // Poll for task completion
     let mut task_completed = false;

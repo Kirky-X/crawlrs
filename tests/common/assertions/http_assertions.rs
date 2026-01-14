@@ -5,97 +5,68 @@
 
 #![allow(dead_code)]
 
-/// HTTP 断言模块
-///
-/// 提供常用的 HTTP 响应断言
 use axum::http::StatusCode;
 use axum_test::TestResponse;
 
-/// HTTP 断言辅助函数
 pub struct HttpAssertions;
 
 impl HttpAssertions {
-    /// 断言 201 Created
-    pub fn assert_created(response: &TestResponse) {
+    fn assert_status(response: &TestResponse, expected: StatusCode, name: &str) {
         assert_eq!(
             response.status_code(),
-            StatusCode::CREATED,
-            "Expected 201 Created, got {}",
+            expected,
+            "Expected {}, got {}",
+            name,
             response.status_code()
         );
     }
 
-    /// 断言 202 Accepted
-    pub fn assert_accepted(response: &TestResponse) {
-        assert_eq!(
-            response.status_code(),
-            StatusCode::ACCEPTED,
-            "Expected 202 Accepted, got {}",
-            response.status_code()
-        );
-    }
-
-    /// 断言 201 Created 或 202 Accepted
-    pub fn assert_created_or_accepted(response: &TestResponse) {
+    fn assert_status_in(response: &TestResponse, expected: &[StatusCode], name: &str) {
         let status = response.status_code();
         assert!(
-            status == StatusCode::CREATED || status == StatusCode::ACCEPTED,
-            "Expected 201 or 202, got {}",
+            expected.contains(&status),
+            "Expected {}, got {}",
+            name,
             status
         );
     }
 
-    /// 断言 400 Bad Request
+    pub fn assert_created(response: &TestResponse) {
+        Self::assert_status(response, StatusCode::CREATED, "201 Created");
+    }
+
+    pub fn assert_accepted(response: &TestResponse) {
+        Self::assert_status(response, StatusCode::ACCEPTED, "202 Accepted");
+    }
+
+    pub fn assert_created_or_accepted(response: &TestResponse) {
+        Self::assert_status_in(
+            response,
+            &[StatusCode::CREATED, StatusCode::ACCEPTED],
+            "201 or 202",
+        );
+    }
+
     pub fn assert_bad_request(response: &TestResponse) {
-        assert_eq!(
-            response.status_code(),
-            StatusCode::BAD_REQUEST,
-            "Expected 400 Bad Request, got {}",
-            response.status_code()
-        );
+        Self::assert_status(response, StatusCode::BAD_REQUEST, "400 Bad Request");
     }
 
-    /// 断言 401 Unauthorized
     pub fn assert_unauthorized(response: &TestResponse) {
-        assert_eq!(
-            response.status_code(),
-            StatusCode::UNAUTHORIZED,
-            "Expected 401 Unauthorized, got {}",
-            response.status_code()
-        );
+        Self::assert_status(response, StatusCode::UNAUTHORIZED, "401 Unauthorized");
     }
 
-    /// 断言 403 Forbidden
     pub fn assert_forbidden(response: &TestResponse) {
-        assert_eq!(
-            response.status_code(),
-            StatusCode::FORBIDDEN,
-            "Expected 403 Forbidden, got {}",
-            response.status_code()
-        );
+        Self::assert_status(response, StatusCode::FORBIDDEN, "403 Forbidden");
     }
 
-    /// 断言 404 Not Found
     pub fn assert_not_found(response: &TestResponse) {
-        assert_eq!(
-            response.status_code(),
-            StatusCode::NOT_FOUND,
-            "Expected 404 Not Found, got {}",
-            response.status_code()
-        );
+        Self::assert_status(response, StatusCode::NOT_FOUND, "404 Not Found");
     }
 
-    /// 断言 429 Too Many Requests
     pub fn assert_too_many_requests(response: &TestResponse) {
-        assert_eq!(
-            response.status_code(),
-            StatusCode::TOO_MANY_REQUESTS,
-            "Expected 429 Too Many Requests, got {}",
-            response.status_code()
-        );
+        Self::assert_status(response, StatusCode::TOO_MANY_REQUESTS, "429 Too Many Requests");
     }
 
-    /// 断言成功状态 (2xx)
     pub fn assert_success(response: &TestResponse) {
         let status = response.status_code();
         assert!(
@@ -105,7 +76,6 @@ impl HttpAssertions {
         );
     }
 
-    /// 断言服务器错误 (5xx)
     pub fn assert_server_error(response: &TestResponse) {
         let status = response.status_code();
         assert!(

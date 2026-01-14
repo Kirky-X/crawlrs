@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 async fn health_check_works() {
     let app = create_test_app_with_rate_limit_options(false, true).await;
     let response = app.server.get("/health").await;
-    response.assert_status(StatusCode::OK);
+    assert_eq!(response.status_code(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -21,5 +21,5 @@ async fn scrape_endpoint_returns_401_without_auth() {
         .post("/v1/scrape")
         .json(&serde_json::json!({"url": "https://example.com"}))
         .await;
-    response.assert_status(StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status_code(), StatusCode::UNAUTHORIZED);
 }

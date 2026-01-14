@@ -26,13 +26,19 @@ use std::env;
 
 /// 获取 S3/MinIO 凭据（优先使用环境变量）
 fn get_s3_credentials() -> (String, String, String) {
-    let access_key = env::var("S3_ACCESS_KEY_ID").unwrap_or_else(|_| {
-        env::var("MINIO_ROOT_USER").unwrap_or_else(|_| "minioadmin".to_string())
+    let access_key = env::var("TEST_S3_ACCESS_KEY").unwrap_or_else(|_| {
+        env::var("S3_ACCESS_KEY_ID").unwrap_or_else(|_| {
+            env::var("MINIO_ROOT_USER").unwrap_or_else(|_| "minioadmin".to_string())
+        })
     });
-    let secret_key = env::var("S3_SECRET_ACCESS_KEY").unwrap_or_else(|_| {
-        env::var("MINIO_ROOT_PASSWORD").unwrap_or_else(|_| "minioadmin123".to_string())
+    let secret_key = env::var("TEST_S3_SECRET_KEY").unwrap_or_else(|_| {
+        env::var("S3_SECRET_ACCESS_KEY").unwrap_or_else(|_| {
+            env::var("MINIO_ROOT_PASSWORD").unwrap_or_else(|_| "minioadmin123".to_string())
+        })
     });
-    let endpoint = env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
+    let endpoint = env::var("TEST_S3_ENDPOINT").unwrap_or_else(|_| {
+        env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string())
+    });
     (access_key, secret_key, endpoint)
 }
 
@@ -266,14 +272,15 @@ async fn test_create_storage_repository_missing_config() {
     assert!(result.is_err(), "Should fail with missing s3_region");
 
     // 测试缺少 s3_bucket
+    let (access_key, secret_key, endpoint) = get_s3_credentials();
     let settings = StorageSettings {
         storage_type: "s3".to_string(),
         local_path: None,
         s3_region: Some("us-east-1".to_string()),
         s3_bucket: None,
-        s3_access_key: Some("minioadmin".to_string()),
-        s3_secret_key: Some("minioadmin123".to_string()),
-        s3_endpoint: Some("http://localhost:9000".to_string()),
+        s3_access_key: Some(access_key),
+        s3_secret_key: Some(secret_key),
+        s3_endpoint: Some(endpoint),
     };
 
     let result = create_storage_repository(&settings);

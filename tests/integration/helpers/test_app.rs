@@ -205,77 +205,98 @@ impl Drop for TestApp {
 }
 
 impl TestApp {
+    /// 检测数据库后端类型
+    fn get_db_backend(&self) -> DbBackend {
+        if self.db_pool.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
+            DbBackend::Postgres
+        } else {
+            DbBackend::Sqlite
+        }
+    }
+
+    /// 执行数据库插入操作（根据数据库类型自动选择语法）
+    async fn execute_insert(
+        &self,
+        sql: &str,
+        values: Vec<sea_orm::Value>,
+    ) -> Result<(), sea_orm::DbErr> {
+        let db_backend = self.get_db_backend();
+        self.db_pool
+            .execute(Statement::from_sql_and_values(db_backend, sql, values))
+            .await
+    }
+
+    /// 插入 team 记录
+    async fn insert_team(&self, team_id: Uuid, team_name: &str) -> Result<(), sea_orm::DbErr> {
+        let db_backend = self.get_db_backend();
+        let (sql, values) = if db_backend == DbBackend::Postgres {
+            (
+                "INSERT INTO teams (id, name, created_at, updated_at) VALUES ($1, $2, NOW(), NOW())",
+                vec![team_id.into(), team_name.into()],
+            )
+        } else {
+            (
+                "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
+                vec![team_id.into(), team_name.into()],
+            )
+        };
+        self.execute_insert(sql, values).await
+    }
+
+    /// 插入 api_key 记录
+    async fn insert_api_key(
+        &self,
+        api_key_id: Uuid,
+        api_key: &str,
+        team_id: Uuid,
+    ) -> Result<(), sea_orm::DbErr> {
+        let db_backend = self.get_db_backend();
+        let (sql, values) = if db_backend == DbBackend::Postgres {
+            (
+                "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
+                vec![api_key_id.into(), api_key.into(), team_id.into()],
+            )
+        } else {
+            (
+                "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+                vec![api_key_id.into(), api_key.into(), team_id.into()],
+            )
+        };
+        self.execute_insert(sql, values).await
+    }
+
+    /// 插入 credits 记录
+    async fn insert_credits(
+        &self,
+        credits_id: Uuid,
+        team_id: Uuid,
+        balance: i64,
+    ) -> Result<(), sea_orm::DbErr> {
+        let db_backend = self.get_db_backend();
+        let (sql, values) = if db_backend == DbBackend::Postgres {
+            (
+                "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
+                vec![credits_id.into(), team_id.into(), balance.into()],
+            )
+        } else {
+            (
+                "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+                vec![credits_id.into(), team_id.into(), balance.into()],
+            )
+        };
+        self.execute_insert(sql, values).await
+    }
+
+    /// 创建测试团队
     pub async fn create_team(&self, team_name: &str) -> (String, uuid::Uuid) {
         let team_id = Uuid::new_v4();
         let api_key = Uuid::new_v4().to_string();
+        let api_key_id = Uuid::new_v4();
+        let credits_id = Uuid::new_v4();
 
-        // 检测数据库类型并使用对应的语法
-        let db_backend =
-            if self.db_pool.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
-                DbBackend::Postgres
-            } else {
-                DbBackend::Sqlite
-            };
-
-        if db_backend == DbBackend::Postgres {
-            self.db_pool
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "INSERT INTO teams (id, name, created_at, updated_at) VALUES ($1, $2, NOW(), NOW())",
-                    vec![team_id.into(), team_name.into()],
-                ))
-                .await
-                .unwrap();
-        } else {
-            self.db_pool
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "INSERT INTO teams (id, name, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
-                    vec![team_id.into(), team_name.into()],
-                ))
-                .await
-                .unwrap();
-        }
-
-        if db_backend == DbBackend::Postgres {
-            self.db_pool
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
-                    vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
-                ))
-                .await
-                .unwrap();
-        } else {
-            self.db_pool
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-                    vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
-                ))
-                .await
-                .unwrap();
-        }
-
-        if db_backend == DbBackend::Postgres {
-            self.db_pool
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES ($1, $2, 1000, NOW(), NOW())",
-                    vec![Uuid::new_v4().into(), team_id.into()],
-                ))
-                .await
-                .unwrap();
-        } else {
-            self.db_pool
-                .execute(Statement::from_sql_and_values(
-                    DbBackend::Sqlite,
-                    "INSERT INTO credits (id, team_id, balance, created_at, updated_at) VALUES (?, ?, 1000, datetime('now'), datetime('now'))",
-                    vec![Uuid::new_v4().into(), team_id.into()],
-                ))
-                .await
-                .unwrap();
-        }
+        self.insert_team(team_id, team_name).await.unwrap();
+        self.insert_api_key(api_key_id, &api_key, team_id).await.unwrap();
+        self.insert_credits(credits_id, team_id, 1000).await.unwrap();
 
         (api_key, team_id)
     }
@@ -305,8 +326,10 @@ pub async fn create_test_app_with_rate_limit_options(
     use_redis: bool,
 ) -> TestApp {
     // 强制使用PostgreSQL数据库，与Worker共享
+    let db_password = std::env::var("TEST_DATABASE_PASSWORD")
+        .unwrap_or_else(|_| "password".to_string());
     let db_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string());
+        .unwrap_or_else(|_| format!("postgres://crawlrs:{}@localhost:5443/crawlrs_test", db_password));
 
     let mut opt = ConnectOptions::new(db_url.clone());
     // 增加最大连接数，防止在高并发测试时耗尽连接
@@ -522,9 +545,11 @@ pub async fn create_test_app_with_rate_limit_options(
     );
 
     // 创建 Webhook 服务
+    let webhook_secret = std::env::var("TEST_WEBHOOK_SECRET")
+        .unwrap_or_else(|_| "test-secret".to_string());
     let _webhook_service = Arc::new(
         crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl::new(
-            "test-secret".to_string(),
+            webhook_secret,
         ),
     );
 
@@ -793,7 +818,11 @@ fn create_router(
 pub async fn create_test_app_no_worker() -> TestApp {
     // 强制使用PostgreSQL数据库，与Worker共享
     let db_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string());
+        .unwrap_or_else(|_| {
+            let db_password = std::env::var("TEST_DATABASE_PASSWORD")
+                .unwrap_or_else(|_| "password".to_string());
+            format!("postgres://crawlrs:{}@localhost:5443/crawlrs_test", db_password)
+        });
     let db = Database::connect(&db_url).await.unwrap();
     let db_pool = Arc::new(db);
 

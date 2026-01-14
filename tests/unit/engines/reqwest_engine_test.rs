@@ -55,7 +55,7 @@ mod tests {
 
         let engine = ReqwestEngine;
         let request = ScrapeRequest {
-            url: format!("http://{}", addr),
+            url: server_url.clone(),
             headers: HashMap::new(),
             timeout: Duration::from_secs(5),
             needs_js: false,
@@ -102,6 +102,8 @@ mod tests {
             skip_tls_verification: false,
             needs_tls_fingerprint: false,
             use_fire_engine: false,
+            actions: Vec::new(),
+            sync_wait_ms: 0,
         };
 
         let result = engine.scrape(&request).await;
