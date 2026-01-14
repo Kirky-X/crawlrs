@@ -218,7 +218,7 @@ async fn main() -> anyhow::Result<()> {
                 ));
             }
         };
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::with_proxy(settings.proxy.url.clone()));
 
     // 初始化引擎列表
     #[allow(deprecated)]
@@ -235,15 +235,21 @@ async fn main() -> anyhow::Result<()> {
     // 根据特性条件添加 Fire TLS 引擎
     #[cfg(feature = "engine-fire-tls")]
     {
-        let fire_engine_tls = Arc::new(FireEngineTls::new());
+        let fire_engine_tls = Arc::new(FireEngineTls::with_proxy(settings.proxy.url.clone()));
         engines.push(fire_engine_tls);
     }
 
     // 根据特性条件添加 Fire CDP 引擎
     #[cfg(feature = "engine-fire-cdp")]
     {
-        let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+        let fire_engine_cdp = Arc::new(FireEngineCdp::with_proxy(settings.proxy.url.clone()));
         engines.push(fire_engine_cdp);
+    }
+
+    // 设置代理环境变量（用于Playwright等引擎）
+    if settings.proxy.enabled {
+        std::env::set_var("CRAWLRS_PROXY_URL", &settings.proxy.url);
+        tracing::info!("HTTP proxy enabled: {}", settings.proxy.url);
     }
 
     let router = Arc::new(EngineRouter::new(engines));
@@ -257,15 +263,6 @@ async fn main() -> anyhow::Result<()> {
         engine_client.clone(),
     ));
 
-    // 如果有Bing API密钥，创建Bing智能搜索引擎
-    if let Some(key) = settings.bing_search.api_key.clone() {
-        if !key.is_empty() {
-            search_engines.push(smart_search::create_bing_smart_search(
-                engine_client.clone(),
-            ));
-        }
-    }
-
     // 创建百度智能搜索引擎
     search_engines.push(smart_search::create_baidu_smart_search(
         engine_client.clone(),
@@ -273,6 +270,11 @@ async fn main() -> anyhow::Result<()> {
 
     // 创建搜狗智能搜索引擎
     search_engines.push(smart_search::create_sogou_smart_search(
+        engine_client.clone(),
+    ));
+
+    // 创建 Bing 智能搜索引擎（无条件注册，不需要 API 密钥）
+    search_engines.push(smart_search::create_bing_smart_search(
         engine_client.clone(),
     ));
 

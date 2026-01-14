@@ -21,6 +21,8 @@ use tokio::task_local;
 
 task_local! {
     pub static REMOTE_URL_OVERRIDE: String;
+    /// 代理配置（通过请求传递）
+    pub static PROXY_URL_OVERRIDE: Option<String>;
 }
 
 // Global browser instance to avoid re-launching Chrome on every request.
@@ -98,6 +100,18 @@ async fn get_or_init_browser() -> Result<Arc<Browser>, EngineError> {
                 .filter(|url| !url.is_empty())
         });
 
+    // Get proxy URL from task_local or request
+    let proxy_url = std::env::var("CRAWLRS_PROXY_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+        .or_else(|| {
+            PROXY_URL_OVERRIDE
+                .try_with(|url| url.clone())
+                .ok()
+                .flatten()
+                .filter(|url| !url.is_empty())
+        });
+
     let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
         tracing::info!("Connecting to remote Chrome instance at: {}", url);
         Browser::connect(url)
@@ -110,6 +124,12 @@ async fn get_or_init_browser() -> Result<Arc<Browser>, EngineError> {
 
         // Production environment setup
         builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
+
+        // Add proxy server argument if configured
+        if let Some(ref proxy) = proxy_url {
+            tracing::info!("Using proxy for Playwright: {}", proxy);
+            builder = builder.arg(format!("--proxy-server={}", proxy));
+        }
 
         Browser::launch(
             builder
@@ -217,6 +237,9 @@ impl ScraperEngine for PlaywrightEngine {
 
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
+            // Set proxy URL for browser configuration
+            let _proxy_guard = PROXY_URL_OVERRIDE.scope(request.proxy.clone());
+
             let browser = get_browser().await?;
 
             // Create new page and navigate

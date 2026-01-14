@@ -97,3 +97,43 @@ pub struct ConcurrencySettings {
     /// 任务锁持续时间（秒）
     pub task_lock_duration_seconds: i64,
 }
+
+/// HTTP代理配置设置
+///
+/// 配置HTTP代理参数，用于转发爬虫请求
+///
+/// # 字段说明
+///
+/// * `url` - 代理服务器URL，支持 http、https、socks5 协议
+/// * `enabled` - 是否启用代理，默认 false
+///
+/// # 示例
+///
+/// ```
+/// # use serde::Deserialize;
+/// # use std::collections::HashMap;
+///
+/// #[derive(Debug, Clone, Deserialize)]
+/// pub struct ProxySettings {
+///     pub url: String,
+///     pub enabled: bool,
+/// }
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProxySettings {
+    /// 代理服务器URL
+    /// 格式: http://host:port, https://host:port, socks5://host:port
+    /// 包含认证: http://user:pass@host:port
+    pub url: String,
+    /// 是否启用代理
+    pub enabled: bool,
+}
+
+impl Default for ProxySettings {
+    fn default() -> Self {
+        Self {
+            url: "http://localhost:10808".to_string(),
+            enabled: false,
+        }
+    }
+}

@@ -50,7 +50,7 @@ default_engine = "baidu"
 
 # Search Engine Enable/Disable Configuration
 [search.engines]
-google_enabled = false
+google_enabled = true
 bing_enabled = true
 baidu_enabled = true
 sogou_enabled = true
@@ -113,3 +113,9 @@ fire_cdp_default = 40               # Default score for basic requests
 fire_tls_with_tls = 100             # TLS fingerprint needed
 fire_tls_unsupported = 0            # JS, screenshot, or actions not supported
 fire_tls_default = 40               # Default score for basic requests
+
+# HTTP Proxy Configuration
+# Configure proxy for all scraping engines
+[proxy]
+url = "http://localhost:10808"
+enabled = false

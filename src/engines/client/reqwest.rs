@@ -12,10 +12,13 @@ use once_cell::sync::Lazy;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::time::{Duration, Instant};
 
-/// 全局 HTTP 客户端实例，提供连接复用和性能优化
+/// 默认超时时间
+const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
+
+/// 默认HTTP客户端（无代理）
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECONDS))
         .cookie_store(true)
         .build()
         .expect("Failed to build HTTP client")
@@ -24,17 +27,50 @@ static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
 /// 抓取引擎
 ///
 /// 基于reqwest实现的基本HTTP抓取引擎
-pub struct ReqwestEngine;
+pub struct ReqwestEngine {
+    /// 全局代理URL（如果配置）
+    proxy_url: Option<String>,
+}
 
 impl ReqwestEngine {
-    /// 创建新的 ReqwestEngine 实例
+    /// 创建新的 ReqwestEngine 实例（无代理）
     pub fn new() -> Self {
-        Self
+        Self { proxy_url: None }
     }
 
-    /// 获取全局 HTTP 客户端
-    fn get_client(&self) -> &reqwest::Client {
-        &HTTP_CLIENT
+    /// 创建带代理配置的 ReqwestEngine 实例
+    pub fn with_proxy(proxy_url: impl Into<String>) -> Self {
+        Self {
+            proxy_url: Some(proxy_url.into()),
+        }
+    }
+
+    /// 获取HTTP客户端
+    fn get_client(&self, proxy: &Option<String>) -> reqwest::Client {
+        // 如果请求指定了代理，或者引擎有全局代理配置
+        let proxy_url = proxy.as_ref().or(self.proxy_url.as_ref());
+
+        if let Some(url) = proxy_url {
+            // 创建带代理的客户端
+            let builder = reqwest::Client::builder()
+                .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECONDS))
+                .cookie_store(true);
+
+            match reqwest::Proxy::http(url) {
+                Ok(proxy) => {
+                    if let Ok(client) = builder.proxy(proxy).build() {
+                        tracing::debug!("Using HTTP proxy: {}", url);
+                        return client;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to configure HTTP proxy: {}", e);
+                }
+            }
+        }
+
+        // 返回默认无代理客户端
+        HTTP_CLIENT.clone()
     }
 }
 
@@ -73,8 +109,8 @@ impl ScraperEngine for ReqwestEngine {
             }
         }
 
-        // Use shared HTTP client for connection reuse
-        let client = self.get_client();
+        // Use shared HTTP client for connection reuse, with proxy support
+        let client = self.get_client(&request.proxy);
 
         // Create request builder
         let mut request_builder = if request.mobile {
@@ -90,16 +126,6 @@ impl ScraperEngine for ReqwestEngine {
 
         // Add custom headers
         request_builder = request_builder.headers(headers);
-
-        // Handle proxy - proxy must be configured when building the client
-        if let Some(_proxy_url) = &request.proxy {
-            tracing::warn!("Proxy support requires custom client configuration");
-        }
-
-        // Handle TLS verification - TLS verification must be configured when building the client
-        if request.skip_tls_verification {
-            tracing::warn!("TLS verification skip requires custom client configuration");
-        }
 
         // Set timeout
         request_builder = request_builder.timeout(request.timeout);

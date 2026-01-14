@@ -3,8 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#![allow(deprecated)]
-
 use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,6 +15,8 @@ use std::time::Instant;
 pub struct FireEngineCdp {
     client: reqwest::Client,
     base_url: String,
+    /// 代理配置
+    proxy_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -27,6 +27,10 @@ struct FlaresolverrRequest {
     max_timeout: u64,
     #[serde(rename = "returnScreenshot")]
     return_screenshot: bool,
+    /// 代理配置（通过自定义头部传递）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "customHeaders")]
+    custom_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -67,6 +71,18 @@ impl FireEngineCdp {
             base_url: std::env::var("FIRE_ENGINE_CDP_URL")
                 .or_else(|_| std::env::var("FIRE_ENGINE_URL"))
                 .unwrap_or_else(|_| "http://localhost:8191/v1".to_string()),
+            proxy_url: None,
+        }
+    }
+
+    /// 创建带代理配置的 FireEngineCdp 实例
+    pub fn with_proxy(proxy_url: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: std::env::var("FIRE_ENGINE_CDP_URL")
+                .or_else(|_| std::env::var("FIRE_ENGINE_URL"))
+                .unwrap_or_else(|_| "http://localhost:8191/v1".to_string()),
+            proxy_url: Some(proxy_url.into()),
         }
     }
 }
@@ -82,11 +98,23 @@ impl ScraperEngine for FireEngineCdp {
     async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
         let start = Instant::now();
 
+        // Determine proxy to use: request-level override or engine-level default
+        let proxy_url = request.proxy.as_ref().or(self.proxy_url.as_ref());
+
+        // Prepare custom headers with proxy info if configured
+        let custom_headers = proxy_url.map(|proxy| {
+            let mut headers = std::collections::HashMap::new();
+            headers.insert("X-Proxy-URL".to_string(), proxy.clone());
+            tracing::debug!("FireEngineCdp using proxy: {}", proxy);
+            headers
+        });
+
         let req_body = FlaresolverrRequest {
             cmd: "request.get".to_string(),
             url: request.url.clone(),
             max_timeout: request.timeout.as_millis() as u64,
             return_screenshot: request.needs_screenshot,
+            custom_headers,
         };
 
         let resp = self

@@ -8,7 +8,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use super::app::{
-    ConcurrencySettings, DatabaseSettings, RateLimitingSettings, RedisSettings, ServerSettings,
+    ConcurrencySettings, DatabaseSettings, ProxySettings, RateLimitingSettings, RedisSettings,
+    ServerSettings,
 };
 use super::llm::LLMSettings;
 use super::search::{BingSearchSettings, GoogleSearchSettings, SearchSettings};
@@ -90,6 +91,8 @@ pub struct Settings {
     pub search: SearchSettings,
     /// LLM 配置
     pub llm: LLMSettings,
+    /// HTTP 代理配置
+    pub proxy: ProxySettings,
 }
 
 impl Settings {
@@ -172,7 +175,10 @@ impl Settings {
             .set_default("llm.api_key", "")? // LLM API 密钥
             .set_default("llm.model", "gpt-3.5-turbo")? // 默认模型
             .set_default("llm.api_base_url", "https://api.openai.com/v1")? // 默认 API 基础 URL
-            // 9. 加载配置文件（可选）
+            // 10. 设置代理默认配置
+            .set_default("proxy.url", "http://localhost:10808")? // 默认代理地址
+            .set_default("proxy.enabled", false)? // 默认禁用代理
+            // 11. 加载配置文件（可选）
             .add_source(File::with_name("config/default").required(false)) // 加载默认配置
             .add_source(File::with_name(&format!("config/{}", env)).required(false)) // 加载环境特定配置
             // 10. 加载环境变量（最高优先级）

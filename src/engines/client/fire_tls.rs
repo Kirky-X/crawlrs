@@ -3,8 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#![allow(deprecated)]
-
 use super::super::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -16,6 +14,8 @@ use std::time::Instant;
 pub struct FireEngineTls {
     client: reqwest::Client,
     base_url: String,
+    /// 代理配置
+    proxy_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -24,6 +24,10 @@ struct FlaresolverrRequest {
     url: String,
     #[serde(rename = "maxTimeout")]
     max_timeout: u64,
+    /// 代理配置（通过自定义头部传递）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "customHeaders")]
+    custom_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -62,6 +66,18 @@ impl FireEngineTls {
             base_url: std::env::var("FIRE_ENGINE_TLS_URL")
                 .or_else(|_| std::env::var("FIRE_ENGINE_URL"))
                 .unwrap_or_else(|_| "http://localhost:8191/v1".to_string()),
+            proxy_url: None,
+        }
+    }
+
+    /// 创建带代理配置的 FireEngineTls 实例
+    pub fn with_proxy(proxy_url: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: std::env::var("FIRE_ENGINE_TLS_URL")
+                .or_else(|_| std::env::var("FIRE_ENGINE_URL"))
+                .unwrap_or_else(|_| "http://localhost:8191/v1".to_string()),
+            proxy_url: Some(proxy_url.into()),
         }
     }
 }
@@ -84,10 +100,22 @@ impl ScraperEngine for FireEngineTls {
 
         let start = Instant::now();
 
+        // Determine proxy to use: request-level override or engine-level default
+        let proxy_url = request.proxy.as_ref().or(self.proxy_url.as_ref());
+
+        // Prepare custom headers with proxy info if configured
+        let custom_headers = proxy_url.map(|proxy| {
+            let mut headers = std::collections::HashMap::new();
+            headers.insert("X-Proxy-URL".to_string(), proxy.clone());
+            tracing::debug!("FireEngineTls using proxy: {}", proxy);
+            headers
+        });
+
         let req_body = FlaresolverrRequest {
             cmd: "request.get".to_string(),
             url: request.url.clone(),
             max_timeout: request.timeout.as_millis() as u64,
+            custom_headers,
         };
 
         let resp = self
@@ -153,7 +181,7 @@ impl ScraperEngine for FireEngineTls {
         "fire_engine_tls"
     }
 
-    // 覆盖能力方法 - FireEngineTls 不支持截图和 JavaScript
+    // 覆盖能力方法 - FireEngineTls 不支持截图和 JavaScript，但支持 TLS 指纹
 
     fn supports_screenshot(&self) -> bool {
         false
@@ -161,5 +189,9 @@ impl ScraperEngine for FireEngineTls {
 
     fn supports_javascript(&self) -> bool {
         false
+    }
+
+    fn supports_tls_fingerprint(&self) -> bool {
+        true
     }
 }
