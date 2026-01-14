@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use rand::prelude::*;
-use scraper::Selector;
+use scraper::{Html, Selector};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -44,6 +44,8 @@ struct SearchResultParserConfig {
     snippet_selectors: Vec<&'static str>,
     /// 引擎名称
     engine_name: &'static str,
+    /// URL属性名（默认为href）
+    url_attr: Option<&'static str>,
 }
 
 /// 通用搜索结果解析函数 - 消除重复代码
@@ -97,6 +99,9 @@ fn parse_search_results_common(
             config.engine_name
         ));
 
+    // 确定URL属性名（默认为href）
+    let url_attr = config.url_attr.unwrap_or("href");
+
     let mut results = Vec::new();
     let scorer = RelevanceScorer::new(config.engine_name);
 
@@ -107,10 +112,11 @@ fn parse_search_results_common(
             .map(|el| el.text().collect::<String>().trim().to_string())
             .unwrap_or_default();
 
+        // 使用指定的属性提取URL
         let url = element
             .select(&link_selector)
             .next()
-            .and_then(|el| el.value().attr("href"))
+            .and_then(|el| el.value().attr(url_attr))
             .map(|href| href.to_string())
             .unwrap_or_default();
 
@@ -284,7 +290,7 @@ impl SmartSearchEngine {
             SearchEngineType::Google => (true, false),
             SearchEngineType::Bing => (true, false),
             SearchEngineType::Baidu => (false, false),
-            SearchEngineType::Sogou => (false, false),
+            SearchEngineType::Sogou => (true, false), // Sogou需要JS渲染结果
             // 对于非特定引擎类型，默认使用 Google 的配置
             _ => (true, false),
         }
@@ -715,6 +721,7 @@ impl SmartSearchEngine {
             link_selectors: vec!["a"],
             snippet_selectors: vec!["p", "div"],
             engine_name: "bing",
+            url_attr: None,
         };
         parse_search_results_common(html, config)
     }
@@ -727,20 +734,90 @@ impl SmartSearchEngine {
             link_selectors: vec!["a"],
             snippet_selectors: vec!["div.c-abstract", "div"],
             engine_name: "baidu",
+            url_attr: None,
         };
         parse_search_results_common(html, config)
     }
 
     /// 解析搜狗搜索结果
     fn parse_sogou_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        let config = SearchResultParserConfig {
-            result_selectors: vec!["div.rc", "div.result"],
-            title_selectors: vec!["h3 a", "a"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["div.ft", "div"],
-            engine_name: "sogou",
-        };
-        parse_search_results_common(html, config)
+        // 检测验证码页面
+        if html.contains("验证码") || html.contains("seccode") || html.contains("verify") {
+            warn!("Sogou returned CAPTCHA verification page");
+            return Err(SearchError::Engine(
+                "Sogou blocked the request with CAPTCHA verification. Try again later or use a different engine.".to_string(),
+            ));
+        }
+
+        let document = Html::parse_document(html);
+        let mut results = Vec::new();
+
+        // 根据 temp/search.md 中的逆向工程结果
+        // Sogou 的结果包裹在 class="vrwrap" 中
+        let result_selector = safe_parse_selector("div.vrwrap")
+            .expect("Failed to parse Sogou result selector: div.vrwrap");
+
+        // 标题在 h3.vr-title > a 中
+        let title_selector = safe_parse_selector("h3.vr-title a, h3 a")
+            .expect("Failed to parse Sogou title selector");
+
+        // URL 从 href 属性提取
+        let link_selector = safe_parse_selector("h3.vr-title a, h3 a")
+            .expect("Failed to parse Sogou link selector");
+
+        // 摘要从 text-layout > p 中提取
+        let snippet_selector = safe_parse_selector("div.text-layout p, div.ft p, p")
+            .expect("Failed to parse Sogou snippet selector");
+
+        for element in document.select(&result_selector) {
+            // 提取标题
+            let title_node = element.select(&title_selector).next();
+            let title = match title_node {
+                Some(e) => {
+                    let text: String = e.text().collect();
+                    text.trim().to_string()
+                }
+                None => String::new(),
+            };
+
+            if title.is_empty() {
+                continue;
+            }
+
+            // 提取 URL - 处理内部重定向链接
+            let link_node = element.select(&link_selector).next();
+            let mut url = match link_node {
+                Some(e) => e.value().attr("href").unwrap_or("").to_string(),
+                None => String::new(),
+            };
+
+            // 处理 /link?url= 格式的重定向链接
+            if url.starts_with("/link?url=") {
+                url = format!("https://www.sogou.com{}", url);
+            }
+
+            // 提取摘要
+            let snippet_node = element.select(&snippet_selector).next();
+            let description = match snippet_node {
+                Some(e) => {
+                    let text: String = e.text().collect();
+                    text.trim().to_string()
+                }
+                None => String::new(),
+            };
+
+            if !url.is_empty() {
+                results.push(SearchResult::new(
+                    title,
+                    url,
+                    Some(description),
+                    "sogou".to_string(),
+                ));
+            }
+        }
+
+        info!("Parsed {} Sogou search results", results.len());
+        Ok(results)
     }
 
     /// 保存HTML用于调试分析
@@ -839,8 +916,14 @@ impl SmartSearchEngine {
 #[async_trait]
 impl SearchEngine for SmartSearchEngine {
     fn name(&self) -> &'static str {
-        // SmartSearchEngine 始终返回统一的名称
-        "smart_search"
+        // 根据 engine_type 返回实际的引擎名称
+        match self.config.engine_type {
+            SearchEngineType::Google => "google",
+            SearchEngineType::Bing => "bing",
+            SearchEngineType::Baidu => "baidu",
+            SearchEngineType::Sogou => "sogou",
+            _ => "smart_search",
+        }
     }
 
     fn engine_type(&self) -> SearchEngineType {
@@ -1067,7 +1150,7 @@ mod tests {
     use crate::engines::client::playwright::PlaywrightEngine;
 
     fn create_test_client() -> Arc<EngineClient> {
-        let reqwest_engine = Arc::new(ReqwestEngine);
+        let reqwest_engine = Arc::new(ReqwestEngine::new());
         let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
 
         #[cfg(feature = "engine-playwright")]
@@ -1099,15 +1182,15 @@ mod tests {
 
         // 测试创建Google智能搜索引擎
         let google_engine = create_google_smart_search(client.clone());
-        assert_eq!(google_engine.name(), "smart_search");
+        assert_eq!(google_engine.name(), "google");
 
         // 测试创建Bing智能搜索引擎
         let bing_engine = create_bing_smart_search(client.clone());
-        assert_eq!(bing_engine.name(), "smart_search");
+        assert_eq!(bing_engine.name(), "bing");
 
         // 测试创建百度智能搜索引擎
         let baidu_engine = create_baidu_smart_search(client.clone());
-        assert_eq!(baidu_engine.name(), "smart_search");
+        assert_eq!(baidu_engine.name(), "baidu");
     }
 
     #[tokio::test]
@@ -1116,7 +1199,7 @@ mod tests {
         let config = create_test_config();
 
         let smart_engine = Arc::new(SmartSearchEngine::new(client, config));
-        assert_eq!(smart_engine.name(), "smart_search");
+        assert_eq!(smart_engine.name(), "google");
     }
 
     #[test]
@@ -1165,10 +1248,21 @@ mod tests {
         // 测试百度
         let mut baidu_config = create_test_config();
         baidu_config.engine_type = SearchEngineType::Baidu;
-        let baidu_engine = SmartSearchEngine::new(client, baidu_config);
+        let baidu_engine = SmartSearchEngine::new(client.clone(), baidu_config);
         let (needs_js_baidu, needs_tls_baidu) = baidu_engine.needs_js_and_tls();
         assert!(!needs_js_baidu);
         assert!(!needs_tls_baidu);
+
+        // 测试搜狗
+        let mut sogou_config = create_test_config();
+        sogou_config.engine_type = SearchEngineType::Sogou;
+        let sogou_engine = SmartSearchEngine::new(client, sogou_config);
+        let (needs_js_sogou, needs_tls_sogou) = sogou_engine.needs_js_and_tls();
+        assert!(
+            needs_js_sogou,
+            "Sogou should need JS rendering for search results"
+        );
+        assert!(!needs_tls_sogou);
     }
 
     #[test]
@@ -1188,6 +1282,6 @@ mod tests {
         let config = create_test_config();
 
         let engine = create_smart_search_engine(client, config);
-        assert_eq!(engine.name(), "smart_search");
+        assert_eq!(engine.name(), "google");
     }
 }

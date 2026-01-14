@@ -21,6 +21,7 @@ use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::router::{SearchEngineRouter, SearchEngineRouterConfig};
 use crate::search::smart::{
     create_baidu_smart_search, create_bing_smart_search, create_google_smart_search,
+    create_sogou_smart_search,
 };
 use crate::search::types::SearchEngineType;
 use std::sync::Arc;
@@ -150,9 +151,10 @@ impl SearchEngineFactory {
 
     /// 创建并注册 Sogou 搜索引擎
     pub fn register_sogou_engine(&mut self) {
-        let sogou_engine = Arc::new(SogouSearchEngine::new());
+        let engine_client = self.create_engine_client_with_fire_engines();
+        let sogou_engine = create_sogou_smart_search(engine_client);
         self.router.register_engine(sogou_engine);
-        info!("Sogou 搜索引擎已注册");
+        info!("Sogou 搜索引擎已注册（使用 SmartSearchEngine + Playwright）");
     }
 
     /// 创建 EngineClient 并注册 Fire Engines（用于智能搜索）
@@ -161,17 +163,37 @@ impl SearchEngineFactory {
     pub fn create_engine_client_with_fire_engines(&self) -> Arc<EngineClient> {
         let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
 
+        // 获取代理URL配置
+        let proxy_url = std::env::var("CRAWLRS_PROXY_URL")
+            .ok()
+            .filter(|url| !url.is_empty());
+
         // 注册 Fire Engine CDP（用于需要完整浏览器自动化的网站）
         #[cfg(feature = "engine-fire-cdp")]
         {
-            let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+            let fire_engine_cdp = if let Some(ref proxy) = proxy_url {
+                Arc::new(FireEngineCdp::with_proxy(proxy))
+            } else {
+                Arc::new(FireEngineCdp::new())
+            };
             engines.push(fire_engine_cdp.clone() as Arc<dyn crate::engines::traits::ScraperEngine>);
+            info!(
+                "FireEngineCdp 已注册{}",
+                proxy_url
+                    .as_ref()
+                    .map(|p| format!("（代理: {}）", p))
+                    .unwrap_or_else(|| "".to_string())
+            );
         }
 
         // 注册 Fire Engine TLS（用于需要TLS指纹对抗的网站）
         #[cfg(feature = "engine-fire-tls")]
         {
-            let fire_engine_tls = Arc::new(FireEngineTls::new());
+            let fire_engine_tls = if let Some(ref proxy) = proxy_url {
+                Arc::new(FireEngineTls::with_proxy(proxy))
+            } else {
+                Arc::new(FireEngineTls::new())
+            };
             engines.push(fire_engine_tls.clone() as Arc<dyn crate::engines::traits::ScraperEngine>);
         }
 

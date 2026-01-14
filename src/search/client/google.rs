@@ -97,114 +97,87 @@ impl GoogleSearchEngine {
 
         info!("Parsing Google search results...");
 
-        // Multiple selector strategies for robustness with safe parsing
-        let selectors = [
-            safe_parse_selector("div[jscontroller*='SC7lYd']")
-                .expect("Failed to parse Google selector: div[jscontroller*='SC7lYd']"),
-            safe_parse_selector("div.g").expect("Failed to parse Google selector: div.g"),
-            safe_parse_selector("div[data-hveid]")
-                .expect("Failed to parse Google selector: div[data-hveid]"),
-            safe_parse_selector("div:has(> a > h3)")
-                .expect("Failed to parse Google selector: div:has(> a > h3)"),
-        ];
+        // 根据 temp/search.md 中的逆向工程结果
+        // Google 结果包裹在 div[jscontroller*="SC7lYd"] 中
+        let result_selector = safe_parse_selector("div[jscontroller*='SC7lYd']")
+            .expect("Failed to parse Google selector: div[jscontroller*='SC7lYd']");
 
-        let result_elements = selectors
-            .iter()
-            .find_map(|s| {
-                let elements: Vec<_> = document.select(s).collect();
-                if !elements.is_empty() {
-                    Some(elements)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-
+        // 标题在 a > h3 中
         let title_selector =
-            safe_parse_selector("h3").expect("Failed to parse Google title selector");
+            safe_parse_selector("a h3, h3").expect("Failed to parse Google title selector");
+
+        // URL 从 a 的 href 属性提取
         let link_selector =
             safe_parse_selector("a[href]").expect("Failed to parse Google link selector");
-        let snippet_selectors = [
-            safe_parse_selector("[data-sncf], div[data-snc]")
-                .expect("Failed to parse Google snippet selector"),
-            safe_parse_selector("span.st, div.st, p.st")
-                .expect("Failed to parse Google snippet selector"),
-            safe_parse_selector("div[class*='snippet'], div[class*='desc']")
-                .expect("Failed to parse Google snippet selector"),
-        ];
 
-        for element in result_elements {
-            // Extract title
-            let title = element
-                .select(&title_selector)
-                .next()
-                .map(|e| e.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
+        // 摘要从 div[data-sncf="1"] 中提取
+        let snippet_selector = safe_parse_selector("div[data-sncf='1'], div[data-snc]")
+            .expect("Failed to parse Google snippet selector");
+
+        // 提取搜索结果块
+        for result_element in document.select(&result_selector) {
+            // 提取标题
+            let title_node = result_element.select(&title_selector).next();
+            if title_node.is_none() {
+                continue;
+            }
+            let title = title_node
+                .unwrap()
+                .text()
+                .collect::<String>()
+                .trim()
+                .to_string();
 
             if title.is_empty() {
                 continue;
             }
 
-            // Extract URL
-            let mut found_url = String::new();
-            if let Some(a) = element.select(&link_selector).next() {
-                if a.select(&title_selector).next().is_some() {
-                    if let Some(href) = a.value().attr("href") {
-                        if !href.is_empty() {
-                            found_url = href.to_string();
-                        }
-                    }
-                }
+            // 提取链接
+            let url_node = result_element.select(&link_selector).next();
+            if url_node.is_none() {
+                continue;
             }
-            if found_url.is_empty() {
-                for a in element.select(&link_selector) {
-                    if let Some(href) = a.value().attr("href") {
-                        if !href.is_empty() && href.starts_with("http") {
-                            found_url = href.to_string();
-                            break;
-                        }
-                    }
-                }
-            }
+            let mut url = url_node
+                .unwrap()
+                .value()
+                .attr("href")
+                .unwrap_or("")
+                .to_string();
 
-            // Clean and validate URL
-            let clean_url = if found_url.starts_with("/url?q=") {
-                found_url
-                    .trim_start_matches("/url?q=")
-                    .split('&')
-                    .next()
-                    .unwrap_or(&found_url)
-                    .to_string()
-            } else if found_url.starts_with("/") && !found_url.starts_with("//") {
-                format!("https://www.google.com{}", found_url)
-            } else {
-                found_url
-            };
-
-            if clean_url.is_empty() || !clean_url.starts_with("http") {
+            if url.is_empty() {
                 continue;
             }
 
-            // Extract snippet
-            let description = snippet_selectors
-                .iter()
-                .find_map(|s| {
-                    element
-                        .select(s)
-                        .next()
-                        .map(|e| e.text().collect::<String>().trim().to_string())
-                        .filter(|t| !t.is_empty())
-                })
+            // 清理 URL - 处理 /url?q= 格式
+            if url.starts_with("/url?q=") {
+                url = url
+                    .trim_start_matches("/url?q=")
+                    .split('&')
+                    .next()
+                    .unwrap_or(&url)
+                    .to_string();
+            } else if url.starts_with("/") && !url.starts_with("//") {
+                url = format!("https://www.google.com{}", url);
+            }
+
+            if !url.starts_with("http") {
+                continue;
+            }
+
+            // 提取摘要 - data-sncf="1" 通常包含摘要文本
+            let content_nodes = result_element.select(&snippet_selector).next();
+            let description = content_nodes
+                .map(|e| e.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
 
-            // Deduplicate by URL
-            if results.iter().any(|r: &ResponseItem| r.url == clean_url) {
+            // 去重
+            if results.iter().any(|r: &ResponseItem| r.url == url) {
                 continue;
             }
 
             results.push(ResponseItem {
                 title: Self::escape_html(&title),
-                url: clean_url,
+                url,
                 description: Self::escape_html(&description),
                 engine: SearchEngineType::Google,
             });

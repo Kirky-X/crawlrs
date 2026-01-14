@@ -103,4 +103,152 @@ impl SearchEngine for SearchABTestEngine {
 
         result
     }
+
+    async fn search_with_engine(
+        &self,
+        query: &str,
+        limit: u32,
+        lang: Option<&str>,
+        country: Option<&str>,
+        engine: Option<&str>,
+    ) -> Result<Vec<ResponseItem>, SearchError> {
+        let (selected_engine, variant_name) = self.select_engine();
+
+        info!(
+            "A/B Test: Selected {} ({}) for query: {} with engine_filter: {:?}",
+            variant_name,
+            selected_engine.name(),
+            query,
+            engine
+        );
+
+        // Delegate to the selected engine's search_with_engine
+        selected_engine
+            .search_with_engine(query, limit, lang, country, engine)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::response::ResponseItem;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Mock engine that tracks search calls
+    struct MockEngine {
+        name: &'static str,
+        search_call_count: Arc<AtomicUsize>,
+        last_engine_filter: Arc<AtomicUsize>,
+    }
+
+    impl MockEngine {
+        fn new(name: &'static str) -> (Arc<Self>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+            let search_call_count = Arc::new(AtomicUsize::new(0));
+            let last_engine_filter = Arc::new(AtomicUsize::new(0));
+            (
+                Arc::new(Self {
+                    name,
+                    search_call_count: search_call_count.clone(),
+                    last_engine_filter: last_engine_filter.clone(),
+                }),
+                search_call_count,
+                last_engine_filter,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl SearchEngine for MockEngine {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn engine_type(&self) -> SearchEngineType {
+            SearchEngineType::from_name(self.name).unwrap_or(SearchEngineType::Auto)
+        }
+
+        fn health(&self) -> EngineHealth {
+            EngineHealth::Healthy
+        }
+
+        async fn search(
+            &self,
+            request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            self.search_call_count.fetch_add(1, Ordering::SeqCst);
+            Ok(Response {
+                items: vec![ResponseItem {
+                    title: format!("Result from {}", self.name),
+                    url: format!("https://{}.com/result", self.name),
+                    description: format!("Description from {}", self.name),
+                    engine: self.engine_type(),
+                }],
+                total_results: Some(1),
+                engine: self.engine_type(),
+            })
+        }
+
+        async fn search_with_engine(
+            &self,
+            query: &str,
+            limit: u32,
+            _lang: Option<&str>,
+            _country: Option<&str>,
+            engine: Option<&str>,
+        ) -> Result<Vec<ResponseItem>, SearchError> {
+            self.search_call_count.fetch_add(1, Ordering::SeqCst);
+            self.last_engine_filter
+                .store(engine.map(|e| e.len()).unwrap_or(0), Ordering::SeqCst);
+            self.search(&SearchRequest::new(query).with_limit(limit))
+                .await
+                .map(|r| r.items)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ab_test_engine_search_with_engine_delegation() {
+        // Create two mock engines
+        let (engine_a, count_a, _) = MockEngine::new("engine_a");
+        let (engine_b, count_b, _) = MockEngine::new("engine_b");
+
+        // Create A/B test engine with 100% variant_a to ensure deterministic behavior
+        let ab_engine = SearchABTestEngine::new(engine_a, engine_b, 0.0);
+
+        // Test that search_with_engine properly delegates to variant_a with engine filter
+        let result = ab_engine
+            .search_with_engine("test query", 10, None, None, Some("bing"))
+            .await
+            .expect("search_with_engine should succeed");
+
+        // Verify the result came from engine_a (variant_a due to weight 0.0)
+        assert_eq!(result.len(), 1);
+        assert!(result[0].title.contains("engine_a"));
+
+        // Verify that search_with_engine was called on the underlying engine
+        // It should be called exactly once (A/B engine delegates to variant_a)
+        // Note: The underlying engine's search_with_engine calls search internally
+        // so count_a will be 1 (for search_with_engine) + 1 (for search called by it) = 2
+        // But we only track search_with_engine calls
+        assert!(count_a.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_ab_test_engine_search_with_engine_passes_filter() {
+        // Create two mock engines
+        let (engine_a, count_a, last_filter_a) = MockEngine::new("engine_a");
+        let (engine_b, count_b, last_filter_b) = MockEngine::new("engine_b");
+
+        // Create A/B test engine with 100% variant_a
+        let ab_engine = SearchABTestEngine::new(engine_a, engine_b, 0.0);
+
+        // Test with specific engine filter
+        let _ = ab_engine
+            .search_with_engine("test query", 10, None, None, Some("bing"))
+            .await
+            .expect("search_with_engine should succeed");
+
+        // Verify the engine filter was passed through
+        assert!(last_filter_a.load(Ordering::SeqCst) > 0);
+    }
 }

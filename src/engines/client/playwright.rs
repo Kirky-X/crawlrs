@@ -238,7 +238,7 @@ impl ScraperEngine for PlaywrightEngine {
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
             // Set proxy URL for browser configuration
-            let _proxy_guard = PROXY_URL_OVERRIDE.scope(request.proxy.clone());
+            let _proxy_guard = PROXY_URL_OVERRIDE.scope(request.proxy.clone(), async {});
 
             let browser = get_browser().await?;
 
