@@ -62,6 +62,10 @@ Desktop.ini
 # Shared folder
 .shared/
 
+# AGENTS files
+AGENTS.md
+openspec/AGENTS.md
+
 # -----------------------------------------------------------------------------
 # Section 3: Project-Specific Directories
 # -----------------------------------------------------------------------------
