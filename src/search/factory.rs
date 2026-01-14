@@ -182,7 +182,7 @@ impl SearchEngineFactory {
                 proxy_url
                     .as_ref()
                     .map(|p| format!("（代理: {}）", p))
-                    .unwrap_or_else(|| "".to_string())
+                    .unwrap_or_default()
             );
         }
 

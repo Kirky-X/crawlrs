@@ -10,16 +10,10 @@ pub struct ResponseHelpers;
 
 impl ResponseHelpers {
     pub fn is_success_or_accepted(status: StatusCode) -> bool {
-        status == StatusCode::CREATED
-            || status == StatusCode::ACCEPTED
-            || status.is_success()
+        status == StatusCode::CREATED || status == StatusCode::ACCEPTED || status.is_success()
     }
 
-    pub fn assert_any_of(
-        response: &TestResponse,
-        expected: &[StatusCode],
-        context: &str,
-    ) {
+    pub fn assert_any_of(response: &TestResponse, expected: &[StatusCode], context: &str) {
         let status = response.status_code();
         assert!(
             expected.contains(&status),
@@ -45,7 +39,11 @@ impl ResponseHelpers {
     pub fn assert_success_or_rate_limited(response: &TestResponse) {
         Self::assert_any_of(
             response,
-            &[StatusCode::CREATED, StatusCode::ACCEPTED, StatusCode::TOO_MANY_REQUESTS],
+            &[
+                StatusCode::CREATED,
+                StatusCode::ACCEPTED,
+                StatusCode::TOO_MANY_REQUESTS,
+            ],
             "request",
         );
     }

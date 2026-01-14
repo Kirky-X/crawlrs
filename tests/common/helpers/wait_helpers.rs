@@ -45,17 +45,16 @@ impl WaitHelpers {
     ) -> Result<Task, String> {
         Self::poll_with_timeout(
             || {
-                task_repo
-                    .find_by_id(task_id)
-                    .ok()
-                    .flatten()
-                    .filter(|task| {
-                        task.status == TaskStatus::Completed || task.status == TaskStatus::Failed
-                    })
+                task_repo.find_by_id(task_id).ok().flatten().filter(|task| {
+                    task.status == TaskStatus::Completed || task.status == TaskStatus::Failed
+                })
             },
             Duration::from_secs(timeout_secs),
             Duration::from_millis(100),
-            format!("Task {} did not complete within {} seconds", task_id, timeout_secs),
+            format!(
+                "Task {} did not complete within {} seconds",
+                task_id, timeout_secs
+            ),
         )
         .await
     }

@@ -29,7 +29,9 @@ async fn wait_for_tasks_completion(
             }
 
             let status_data: serde_json::Value = status_response.json();
-            let status = status_data["status"].as_str().expect("Missing 'status' field in task response");
+            let status = status_data["status"]
+                .as_str()
+                .expect("Missing 'status' field in task response");
 
             match status {
                 "queued" | "active" => false,
@@ -82,7 +84,12 @@ async fn test_ecommerce_product_monitoring_scenario() {
 
         assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
-        task_ids.push(task_data["id"].as_str().expect("Missing 'id' field in task response").to_string());
+        task_ids.push(
+            task_data["id"]
+                .as_str()
+                .expect("Missing 'id' field in task response")
+                .to_string(),
+        );
     }
 
     wait_for_tasks_completion(&app, &task_ids, 90).await;
@@ -105,7 +112,10 @@ async fn test_ecommerce_product_monitoring_scenario() {
 
     for result in &results {
         assert_eq!(result["status"], "completed");
-        assert!(!result["result"]["content"].as_str().expect("Missing 'content' field in result").is_empty());
+        assert!(!result["result"]["content"]
+            .as_str()
+            .expect("Missing 'content' field in result")
+            .is_empty());
         assert!(result["metadata"]["product_id"].is_string());
         assert!(result["metadata"]["monitoring_type"].is_string());
     }
@@ -144,7 +154,10 @@ async fn test_content_aggregation_scenario() {
 
     assert_eq!(crawl_response.status_code(), StatusCode::ACCEPTED);
     let crawl_data: serde_json::Value = crawl_response.json();
-    let crawl_id = crawl_data["id"].as_str().expect("Missing 'id' field in crawl response").to_string();
+    let crawl_id = crawl_data["id"]
+        .as_str()
+        .expect("Missing 'id' field in crawl response")
+        .to_string();
 
     let mut retries = 0;
     const MAX_RETRIES: u32 = 90;
@@ -162,7 +175,9 @@ async fn test_content_aggregation_scenario() {
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
         let status_data: serde_json::Value = status_response.json();
-        let status = status_data["status"].as_str().expect("Missing 'status' field in crawl status response");
+        let status = status_data["status"]
+            .as_str()
+            .expect("Missing 'status' field in crawl status response");
 
         if status != "pending" && status != "running" {
             break;
@@ -182,17 +197,32 @@ async fn test_content_aggregation_scenario() {
     let final_data: serde_json::Value = final_response.json();
 
     assert!(final_data["results"].is_array());
-    let results = final_data["results"].as_array().expect("Missing 'results' array in crawl response");
+    let results = final_data["results"]
+        .as_array()
+        .expect("Missing 'results' array in crawl response");
     assert_eq!(results.len(), news_sources.len());
 
     for (index, result) in results.iter().enumerate() {
         assert!(result["url"].is_string());
         assert!(result["content"].is_string());
         assert!(
-            result["status"].as_str().expect("Missing 'status' field in crawl result") == "completed"
-                || result["status"].as_str().expect("Missing 'status' field in crawl result") == "partial"
+            result["status"]
+                .as_str()
+                .expect("Missing 'status' field in crawl result")
+                == "completed"
+                || result["status"]
+                    .as_str()
+                    .expect("Missing 'status' field in crawl result")
+                    == "partial"
         );
-        assert!(!result["content"].as_str().expect("Missing 'content' field in crawl result").is_empty(), "Source {} should have content", index);
+        assert!(
+            !result["content"]
+                .as_str()
+                .expect("Missing 'content' field in crawl result")
+                .is_empty(),
+            "Source {} should have content",
+            index
+        );
     }
 
     let metadata = &final_data["metadata"];
@@ -233,7 +263,12 @@ async fn test_competitive_analysis_scenario() {
 
         assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
-        analysis_tasks.push(task_data["id"].as_str().expect("Missing 'id' field in task response").to_string());
+        analysis_tasks.push(
+            task_data["id"]
+                .as_str()
+                .expect("Missing 'id' field in task response")
+                .to_string(),
+        );
     }
 
     let start_time = std::time::Instant::now();
@@ -256,7 +291,9 @@ async fn test_competitive_analysis_scenario() {
             }
 
             let status_data: serde_json::Value = status_response.json();
-            let status = status_data["status"].as_str().expect("Missing 'status' field in task response");
+            let status = status_data["status"]
+                .as_str()
+                .expect("Missing 'status' field in task response");
 
             match status {
                 "pending" | "running" => false,
@@ -291,9 +328,16 @@ async fn test_competitive_analysis_scenario() {
     for result in &analysis_results {
         assert_eq!(result["status"], "completed");
         assert!(result["metadata"]["competitor_id"].is_string());
-        assert_eq!(result["metadata"]["analysis_type"], "competitive_intelligence");
+        assert_eq!(
+            result["metadata"]["analysis_type"],
+            "competitive_intelligence"
+        );
         assert!(
-            result["result"]["content"].as_str().expect("Missing 'content' field in analysis result").len() > 100,
+            result["result"]["content"]
+                .as_str()
+                .expect("Missing 'content' field in analysis result")
+                .len()
+                > 100,
             "Analysis should extract substantial content"
         );
     }

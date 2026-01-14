@@ -52,7 +52,9 @@ async fn test_create_scrape_task_success() {
     );
 
     let task_response: serde_json::Value = response.json();
-    let task_id_str = task_response["id"].as_str().expect("Task response missing 'id' field");
+    let task_id_str = task_response["id"]
+        .as_str()
+        .expect("Task response missing 'id' field");
     let task_id = Uuid::parse_str(task_id_str).expect("Invalid task ID format in response");
 
     // Verify the task was created in the database
@@ -89,7 +91,11 @@ async fn test_scrape_rate_limit() {
     let prefix = format!("rate_limit:{}", app.api_key);
     let keys: Vec<String> = app.redis.scan_pattern(&prefix).await.unwrap_or_default();
     for key in keys {
-        let _: () = app.redis.del(&key).await.expect("Failed to delete rate limit key from Redis");
+        let _: () = app
+            .redis
+            .del(&key)
+            .await
+            .expect("Failed to delete rate limit key from Redis");
     }
 
     // Set a specific rate limit for this test's API key
@@ -273,10 +279,14 @@ async fn test_circuit_breaker_and_engine_fallback() {
     );
 
     // 绑定到 0.0.0.0 以便从 Docker 容器访问
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.expect("Failed to bind TCP listener");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0")
+        .await
+        .expect("Failed to bind TCP listener");
     let addr = listener.local_addr().expect("Failed to get local address");
     tokio::spawn(async move {
-        axum::serve(listener, app_server).await.expect("Failed to start axum server");
+        axum::serve(listener, app_server)
+            .await
+            .expect("Failed to start axum server");
     });
 
     // 如果在 Docker 环境中运行（通过 CHROMIUM_REMOTE_DEBUGGING_URL 检测），
@@ -288,7 +298,7 @@ async fn test_circuit_breaker_and_engine_fallback() {
     };
     let test_url = format!("http://{}:{}/conditional", host, addr.port());
 
-    let engine_a = Arc::new(ReqwestEngine);
+    let engine_a = Arc::new(ReqwestEngine::new());
     let engine_b = Arc::new(PlaywrightEngine);
 
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![engine_a.clone(), engine_b.clone()];
@@ -683,7 +693,11 @@ async fn test_full_site_crawl() {
         status,
         body
     );
-    let crawl_id: Uuid = body["id"].as_str().expect("Crawl response missing 'id' field").parse().expect("Failed to parse crawl ID as UUID");
+    let crawl_id: Uuid = body["id"]
+        .as_str()
+        .expect("Crawl response missing 'id' field")
+        .parse()
+        .expect("Failed to parse crawl ID as UUID");
 
     // 2. 检查爬取状态并等待完成
     let mut completed = false;
@@ -1043,7 +1057,9 @@ async fn test_webhook_trigger() {
     }
 
     let task_response: serde_json::Value = response.json();
-    let _task_id = task_response["id"].as_str().expect("Missing 'id' field in task response");
+    let _task_id = task_response["id"]
+        .as_str()
+        .expect("Missing 'id' field in task response");
 
     // Wait for the task to complete and webhook to be triggered
     // In a real integration test, we would start a local server to receive the webhook.
@@ -1224,7 +1240,11 @@ async fn test_search_basic() {
 
     let search_response: serde_json::Value = response.json();
     assert!(search_response.get("results").is_some());
-    let results = search_response.get("results").expect("Search response missing 'results' field").as_array().expect("'results' field should be an array");
+    let results = search_response
+        .get("results")
+        .expect("Search response missing 'results' field")
+        .as_array()
+        .expect("'results' field should be an array");
     assert!(
         !results.is_empty(),
         "Expected search results to be non-empty"
@@ -1346,7 +1366,9 @@ async fn test_get_task_status() {
     }
 
     let task_response: serde_json::Value = create_response.json();
-    let task_id = task_response["id"].as_str().expect("Missing 'id' field in task response");
+    let task_id = task_response["id"]
+        .as_str()
+        .expect("Missing 'id' field in task response");
 
     // 查询任务状态
     let status_response = app
@@ -1370,7 +1392,12 @@ async fn test_get_task_status() {
     }
 
     let status_data: serde_json::Value = status_response.json();
-    assert_eq!(status_data["id"].as_str().expect("Missing 'id' field in task status response"), task_id);
+    assert_eq!(
+        status_data["id"]
+            .as_str()
+            .expect("Missing 'id' field in task status response"),
+        task_id
+    );
     assert!(status_data.get("status").is_some());
 }
 
@@ -1416,7 +1443,9 @@ async fn test_cancel_task() {
     }
 
     let task_response: serde_json::Value = create_response.json();
-    let task_id = task_response["id"].as_str().expect("Missing 'id' field in task response");
+    let task_id = task_response["id"]
+        .as_str()
+        .expect("Missing 'id' field in task response");
 
     // 取消任务
     let cancel_response = app
@@ -1455,7 +1484,9 @@ async fn test_cancel_crawl() {
         create_response.status_code()
     );
     let crawl_response: serde_json::Value = create_response.json();
-    let crawl_id = crawl_response["id"].as_str().expect("Missing 'id' field in crawl response");
+    let crawl_id = crawl_response["id"]
+        .as_str()
+        .expect("Missing 'id' field in crawl response");
 
     // 取消爬取
     let cancel_response = app
@@ -1530,7 +1561,12 @@ async fn test_health_check() {
     assert_eq!(response.status_code(), StatusCode::OK);
 
     let health_response: serde_json::Value = response.json();
-    assert_eq!(health_response["status"].as_str().expect("Missing 'status' field in health response"), "healthy");
+    assert_eq!(
+        health_response["status"]
+            .as_str()
+            .expect("Missing 'status' field in health response"),
+        "healthy"
+    );
 }
 
 /// 测试指标端点
@@ -1551,6 +1587,10 @@ async fn test_metrics_endpoint() {
     // The actual response is JSON with a "metrics" field containing the Prometheus metrics
     let json: serde_json::Value = response.json();
     assert!(json.get("metrics").is_some());
-    let metrics = json.get("metrics").expect("Metrics response missing 'metrics' field").as_str().expect("'metrics' field should be a string");
+    let metrics = json
+        .get("metrics")
+        .expect("Metrics response missing 'metrics' field")
+        .as_str()
+        .expect("'metrics' field should be a string");
     assert!(metrics.contains("# HELP"));
 }

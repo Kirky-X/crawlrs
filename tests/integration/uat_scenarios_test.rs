@@ -1032,7 +1032,7 @@ async fn test_uat005_engine_degradation() {
     use std::sync::Arc;
 
     // 1. 创建真实引擎
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
     let engine_client = Arc::new(EngineClient::with_engines(engines));
     let google_engine = Arc::new(GoogleSearchEngine::new(engine_client));
@@ -1346,7 +1346,7 @@ async fn test_uat025_search_concurrency_perf() {
     use std::time::Instant;
 
     // 1. 创建真实引擎
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
     let engine_client = Arc::new(EngineClient::with_engines(engines));
     let google_engine = Arc::new(GoogleSearchEngine::new(engine_client));

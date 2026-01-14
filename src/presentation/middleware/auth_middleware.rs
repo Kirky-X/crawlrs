@@ -300,7 +300,7 @@ pub async fn scope_middleware(req: Request, next: Next) -> Result<Response, Stat
     let method = req.method().clone();
 
     // Determine required scope based on endpoint
-    let required_scope = determine_required_scope(&path, &method.to_string());
+    let required_scope = determine_required_scope(&path, method.as_ref());
 
     if let Some(required) = required_scope {
         let auth_state = req

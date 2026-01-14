@@ -38,7 +38,7 @@ async fn test_health_monitor_real_integration() {
     // Allow some time for the server to be ready
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let engine = Arc::new(ReqwestEngine);
+    let engine = Arc::new(ReqwestEngine::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![engine];
 
     let config = HealthCheckConfig {
@@ -75,7 +75,7 @@ async fn test_health_monitor_real_integration() {
 async fn test_health_monitor_real_integration_failure() {
     let target_url = start_test_server(false).await;
 
-    let engine = Arc::new(ReqwestEngine);
+    let engine = Arc::new(ReqwestEngine::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![engine];
 
     let config = HealthCheckConfig {

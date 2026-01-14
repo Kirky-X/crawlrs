@@ -28,8 +28,11 @@ impl Default for DatabaseOptions {
         Self {
             url: std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
                 let db_password = std::env::var("TEST_DATABASE_PASSWORD")
-            .unwrap_or_else(|_| "password".to_string());
-        format!("postgres://crawlrs:{}@localhost:5433/crawlrs_test", db_password)
+                    .unwrap_or_else(|_| "password".to_string());
+                format!(
+                    "postgres://crawlrs:{}@localhost:5433/crawlrs_test",
+                    db_password
+                )
             }),
             use_redis: true,
             redis_port: 6381,

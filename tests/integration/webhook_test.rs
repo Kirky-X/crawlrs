@@ -20,8 +20,7 @@ use uuid::Uuid;
 /// 获取测试用的 webhook secret
 /// 从环境变量 TEST_WEBHOOK_SECRET 读取，如果没有设置则使用默认值 "test-secret"
 fn get_test_webhook_secret() -> String {
-    std::env::var("TEST_WEBHOOK_SECRET")
-        .unwrap_or_else(|_| "test-secret".to_string())
+    std::env::var("TEST_WEBHOOK_SECRET").unwrap_or_else(|_| "test-secret".to_string())
 }
 
 async fn start_test_server(success: bool) -> String {
@@ -89,12 +88,9 @@ async fn test_webhook_delivery_success() {
 #[tokio::test]
 
 async fn test_webhook_delivery_failure_retry() {
-
     let app = create_test_app_no_worker().await;
 
     let repo = Arc::new(WebhookEventRepoImpl::new(app.db_pool.clone()));
-
-
 
     let webhook_url = start_test_server(false).await;
 
@@ -102,10 +98,7 @@ async fn test_webhook_delivery_failure_retry() {
 
     let team_id = Uuid::new_v4();
 
-
-
     let event = WebhookEvent {
-
         id: event_id,
 
         team_id,
@@ -137,30 +130,19 @@ async fn test_webhook_delivery_failure_retry() {
         updated_at: Utc::now(),
 
         delivered_at: None,
-
     };
 
-
-
     repo.create(&event)
-
         .await
-
         .expect("Failed to create webhook event");
-
-
 
     let webhook_service = Arc::new(WebhookServiceImpl::new(get_test_webhook_secret()));
 
     let worker = WebhookWorker::new(repo.clone(), webhook_service, RetryPolicy::default());
 
-
-
     let result = worker.process_pending_webhooks().await;
 
     assert!(result.is_ok());
-
-
 
     let updated_event = repo.find_by_id(event_id).await.unwrap().unwrap();
 
@@ -173,7 +155,6 @@ async fn test_webhook_delivery_failure_retry() {
     assert_eq!(updated_event.status, WebhookStatus::Failed);
 
     assert!(updated_event.next_retry_at.is_some());
-
 }
 
 #[tokio::test]

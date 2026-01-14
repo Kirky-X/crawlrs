@@ -29,7 +29,10 @@ impl InMemoryTestQueue {
     }
 
     fn add_task(&self, task: Task) {
-        self.tasks.lock().expect("Failed to acquire tasks lock").push(task);
+        self.tasks
+            .lock()
+            .expect("Failed to acquire tasks lock")
+            .push(task);
     }
 
     fn task_status(&self, task_id: Uuid) -> Option<TaskStatus> {
@@ -60,32 +63,47 @@ impl InMemoryTestQueue {
     }
 
     fn task_count(&self) -> usize {
-        self.tasks.lock().expect("Failed to acquire tasks lock").len()
+        self.tasks
+            .lock()
+            .expect("Failed to acquire tasks lock")
+            .len()
     }
 }
 
 #[async_trait]
 impl TaskQueue for InMemoryTestQueue {
     async fn enqueue(&self, task: Task) -> Result<Task, crawlrs::queue::QueueError> {
-        self.tasks.lock().expect("Failed to acquire tasks lock").push(task.clone());
+        self.tasks
+            .lock()
+            .expect("Failed to acquire tasks lock")
+            .push(task.clone());
         Ok(task)
     }
 
     async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, crawlrs::queue::QueueError> {
         let mut tasks = self.tasks.lock().expect("Failed to acquire tasks lock");
         if let Some(task) = tasks.pop() {
-            self.dequeued_tasks.lock().expect("Failed to acquire dequeued_tasks lock").push(task.clone());
+            self.dequeued_tasks
+                .lock()
+                .expect("Failed to acquire dequeued_tasks lock")
+                .push(task.clone());
             return Ok(Some(task));
         }
         Ok(None)
     }
 
     async fn complete(&self, task_id: Uuid) -> Result<(), crawlrs::queue::QueueError> {
-        let mut dequeued = self.dequeued_tasks.lock().expect("Failed to acquire dequeued_tasks lock");
+        let mut dequeued = self
+            .dequeued_tasks
+            .lock()
+            .expect("Failed to acquire dequeued_tasks lock");
         if let Some(pos) = dequeued.iter().position(|t| t.id == task_id) {
             let mut task = dequeued.remove(pos);
             task.status = TaskStatus::Completed;
-            self.completed_tasks.lock().expect("Failed to acquire completed_tasks lock").push(task);
+            self.completed_tasks
+                .lock()
+                .expect("Failed to acquire completed_tasks lock")
+                .push(task);
             return Ok(());
         }
         drop(dequeued);
@@ -94,17 +112,26 @@ impl TaskQueue for InMemoryTestQueue {
         if let Some(pos) = tasks.iter().position(|t| t.id == task_id) {
             let mut task = tasks.remove(pos);
             task.status = TaskStatus::Completed;
-            self.completed_tasks.lock().expect("Failed to acquire completed_tasks lock").push(task);
+            self.completed_tasks
+                .lock()
+                .expect("Failed to acquire completed_tasks lock")
+                .push(task);
         }
         Ok(())
     }
 
     async fn fail(&self, task_id: Uuid) -> Result<(), crawlrs::queue::QueueError> {
-        let mut dequeued = self.dequeued_tasks.lock().expect("Failed to acquire dequeued_tasks lock");
+        let mut dequeued = self
+            .dequeued_tasks
+            .lock()
+            .expect("Failed to acquire dequeued_tasks lock");
         if let Some(pos) = dequeued.iter().position(|t| t.id == task_id) {
             let mut task = dequeued.remove(pos);
             task.status = TaskStatus::Failed;
-            self.completed_tasks.lock().expect("Failed to acquire completed_tasks lock").push(task);
+            self.completed_tasks
+                .lock()
+                .expect("Failed to acquire completed_tasks lock")
+                .push(task);
             return Ok(());
         }
         drop(dequeued);
@@ -113,17 +140,26 @@ impl TaskQueue for InMemoryTestQueue {
         if let Some(pos) = tasks.iter().position(|t| t.id == task_id) {
             let mut task = tasks.remove(pos);
             task.status = TaskStatus::Failed;
-            self.completed_tasks.lock().expect("Failed to acquire completed_tasks lock").push(task);
+            self.completed_tasks
+                .lock()
+                .expect("Failed to acquire completed_tasks lock")
+                .push(task);
         }
         Ok(())
     }
 
     async fn cancel(&self, task_id: Uuid) -> Result<(), crawlrs::queue::QueueError> {
-        let mut dequeued = self.dequeued_tasks.lock().expect("Failed to acquire dequeued_tasks lock");
+        let mut dequeued = self
+            .dequeued_tasks
+            .lock()
+            .expect("Failed to acquire dequeued_tasks lock");
         if let Some(pos) = dequeued.iter().position(|t| t.id == task_id) {
             let mut task = dequeued.remove(pos);
             task.status = TaskStatus::Cancelled;
-            self.completed_tasks.lock().expect("Failed to acquire completed_tasks lock").push(task);
+            self.completed_tasks
+                .lock()
+                .expect("Failed to acquire completed_tasks lock")
+                .push(task);
             return Ok(());
         }
         drop(dequeued);
@@ -132,7 +168,10 @@ impl TaskQueue for InMemoryTestQueue {
         if let Some(pos) = tasks.iter().position(|t| t.id == task_id) {
             let mut task = tasks.remove(pos);
             task.status = TaskStatus::Cancelled;
-            self.completed_tasks.lock().expect("Failed to acquire completed_tasks lock").push(task);
+            self.completed_tasks
+                .lock()
+                .expect("Failed to acquire completed_tasks lock")
+                .push(task);
         }
         Ok(())
     }
@@ -363,7 +402,13 @@ async fn test_dequeue_batch() {
 
     let result = client.dequeue_batch(worker_id, 5).await;
     assert!(result.is_ok());
-    assert_eq!(result.expect("Failed to get batch dequeue result").tasks.len(), 3);
+    assert_eq!(
+        result
+            .expect("Failed to get batch dequeue result")
+            .tasks
+            .len(),
+        3
+    );
 }
 
 #[tokio::test]
@@ -498,13 +543,29 @@ async fn test_full_workflow() {
 
     let enqueue = client.enqueue_batch(&requests).await;
     assert!(enqueue.is_ok());
-    assert_eq!(enqueue.expect("Failed to get batch enqueue result").success_count, 3);
+    assert_eq!(
+        enqueue
+            .expect("Failed to get batch enqueue result")
+            .success_count,
+        3
+    );
 
     let dequeue_result = client.dequeue_batch(worker_id, 10).await;
     assert!(dequeue_result.is_ok());
-    assert_eq!(dequeue_result.as_ref().expect("Failed to get batch dequeue result").tasks.len(), 3);
+    assert_eq!(
+        dequeue_result
+            .as_ref()
+            .expect("Failed to get batch dequeue result")
+            .tasks
+            .len(),
+        3
+    );
 
-    if let Some(task) = dequeue_result.expect("Failed to get batch dequeue result").tasks.first() {
+    if let Some(task) = dequeue_result
+        .expect("Failed to get batch dequeue result")
+        .tasks
+        .first()
+    {
         let complete = client
             .update_status(StatusUpdateRequest::complete(task.id))
             .await;
@@ -586,8 +647,14 @@ async fn test_multiple_cycles() {
         serde_json::json!({}),
         team_id,
     )];
-    client.enqueue_batch(&requests1).await.expect("Failed to enqueue batch");
-    let result1 = client.dequeue_batch(worker_id, 5).await.expect("Failed to dequeue batch");
+    client
+        .enqueue_batch(&requests1)
+        .await
+        .expect("Failed to enqueue batch");
+    let result1 = client
+        .dequeue_batch(worker_id, 5)
+        .await
+        .expect("Failed to dequeue batch");
     assert_eq!(result1.tasks.len(), 1);
 
     let requests2 = vec![
@@ -604,8 +671,14 @@ async fn test_multiple_cycles() {
             team_id,
         ),
     ];
-    client.enqueue_batch(&requests2).await.expect("Failed to enqueue batch");
-    let result2 = client.dequeue_batch(worker_id, 5).await.expect("Failed to dequeue batch");
+    client
+        .enqueue_batch(&requests2)
+        .await
+        .expect("Failed to enqueue batch");
+    let result2 = client
+        .dequeue_batch(worker_id, 5)
+        .await
+        .expect("Failed to dequeue batch");
     assert_eq!(result2.tasks.len(), 2);
 
     assert_eq!(queue_ref.task_count(), 0);

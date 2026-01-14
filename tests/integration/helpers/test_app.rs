@@ -89,7 +89,7 @@ use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
-use crawlrs::infrastructure::geolocation::GeoLocationService;
+use crawlrs::infrastructure::geolocation::{GeoLocationService, GeoLocationServiceTrait};
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
@@ -141,7 +141,7 @@ impl TaskQueue for InMemoryQueue {
     ) -> Result<crawlrs::domain::models::task::Task, crawlrs::queue::task_queue::QueueError> {
         let task_repo = self.task_repo.as_ref();
         task_repo.create(&task).await?;
-        let mut queue = self.tasks.lock().unwrap();
+        let mut queue = self.tasks.lock().expect("Failed to lock task queue");
         queue.push(task.clone());
         Ok(task)
     }
@@ -151,7 +151,7 @@ impl TaskQueue for InMemoryQueue {
         _worker_id: Uuid,
     ) -> Result<Option<crawlrs::domain::models::task::Task>, crawlrs::queue::task_queue::QueueError>
     {
-        let mut queue = self.tasks.lock().unwrap();
+        let mut queue = self.tasks.lock().expect("Failed to lock task queue");
         Ok(queue.pop())
     }
 
@@ -224,6 +224,7 @@ impl TestApp {
         self.db_pool
             .execute(Statement::from_sql_and_values(db_backend, sql, values))
             .await
+            .map(|_| ())
     }
 
     /// 插入 team 记录
@@ -294,9 +295,15 @@ impl TestApp {
         let api_key_id = Uuid::new_v4();
         let credits_id = Uuid::new_v4();
 
-        self.insert_team(team_id, team_name).await.unwrap();
-        self.insert_api_key(api_key_id, &api_key, team_id).await.unwrap();
-        self.insert_credits(credits_id, team_id, 1000).await.unwrap();
+        self.insert_team(team_id, team_name)
+            .await
+            .expect("Failed to insert team");
+        self.insert_api_key(api_key_id, &api_key, team_id)
+            .await
+            .expect("Failed to insert API key");
+        self.insert_credits(credits_id, team_id, 1000)
+            .await
+            .expect("Failed to insert credits");
 
         (api_key, team_id)
     }
@@ -326,10 +333,14 @@ pub async fn create_test_app_with_rate_limit_options(
     use_redis: bool,
 ) -> TestApp {
     // 强制使用PostgreSQL数据库，与Worker共享
-    let db_password = std::env::var("TEST_DATABASE_PASSWORD")
-        .unwrap_or_else(|_| "password".to_string());
-    let db_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| format!("postgres://crawlrs:{}@localhost:5443/crawlrs_test", db_password));
+    let db_password =
+        std::env::var("TEST_DATABASE_PASSWORD").unwrap_or_else(|_| "password".to_string());
+    let db_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+        format!(
+            "postgres://crawlrs:{}@localhost:5443/crawlrs_test",
+            db_password
+        )
+    });
 
     let mut opt = ConnectOptions::new(db_url.clone());
     // 增加最大连接数，防止在高并发测试时耗尽连接
@@ -339,10 +350,14 @@ pub async fn create_test_app_with_rate_limit_options(
         .idle_timeout(Duration::from_secs(10))
         .sqlx_logging(false);
 
-    let db = Database::connect(opt).await.unwrap();
+    let db = Database::connect(opt)
+        .await
+        .expect("Failed to connect to database");
     let db_pool = Arc::new(db);
 
-    Migrator::up(db_pool.as_ref(), None).await.unwrap();
+    Migrator::up(db_pool.as_ref(), None)
+        .await
+        .expect("Failed to run database migrations");
 
     let redis_url;
     let redis_client: RedisClient;
@@ -352,11 +367,15 @@ pub async fn create_test_app_with_rate_limit_options(
         // Use external Redis instance - try different ports if default fails
         let redis_port = std::env::var("TEST_REDIS_PORT").unwrap_or_else(|_| "6380".to_string());
         redis_url = format!("redis://127.0.0.1:{}", redis_port);
-        redis_client = RedisClient::new(&redis_url).await.unwrap();
+        redis_client = RedisClient::new(&redis_url)
+            .await
+            .expect("Failed to connect to Redis");
         redis_process = None;
     } else {
         redis_url = "redis://127.0.0.1:6380".to_string();
-        redis_client = RedisClient::new(&redis_url).await.unwrap();
+        redis_client = RedisClient::new(&redis_url)
+            .await
+            .expect("Failed to connect to Redis");
         redis_process = None;
     }
 
@@ -455,7 +474,7 @@ pub async fn create_test_app_with_rate_limit_options(
         },
     ));
 
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
     let playwright_engine = Arc::new(PlaywrightEngine);
     let fire_engine = Arc::new(FireEngineCdp::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine, fire_engine];
@@ -477,7 +496,8 @@ pub async fn create_test_app_with_rate_limit_options(
             10000,
         ));
 
-    let geo_location_service = GeoLocationService::new();
+    let geo_location_service =
+        Arc::new(GeoLocationService::new()) as Arc<dyn GeoLocationServiceTrait>;
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
     let team_service = Arc::new(crawlrs::domain::services::team_service::TeamService::new(
         geo_location_service,
@@ -545,8 +565,8 @@ pub async fn create_test_app_with_rate_limit_options(
     );
 
     // 创建 Webhook 服务
-    let webhook_secret = std::env::var("TEST_WEBHOOK_SECRET")
-        .unwrap_or_else(|_| "test-secret".to_string());
+    let webhook_secret =
+        std::env::var("TEST_WEBHOOK_SECRET").unwrap_or_else(|_| "test-secret".to_string());
     let _webhook_service = Arc::new(
         crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl::new(
             webhook_secret,
@@ -817,12 +837,14 @@ fn create_router(
 
 pub async fn create_test_app_no_worker() -> TestApp {
     // 强制使用PostgreSQL数据库，与Worker共享
-    let db_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| {
-            let db_password = std::env::var("TEST_DATABASE_PASSWORD")
-                .unwrap_or_else(|_| "password".to_string());
-            format!("postgres://crawlrs:{}@localhost:5443/crawlrs_test", db_password)
-        });
+    let db_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+        let db_password =
+            std::env::var("TEST_DATABASE_PASSWORD").unwrap_or_else(|_| "password".to_string());
+        format!(
+            "postgres://crawlrs:{}@localhost:5443/crawlrs_test",
+            db_password
+        )
+    });
     let db = Database::connect(&db_url).await.unwrap();
     let db_pool = Arc::new(db);
 
@@ -1002,7 +1024,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
         RateLimitingConfig::default(),
     ));
 
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
     let playwright_engine = Arc::new(PlaywrightEngine);
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
     let router = Arc::new(crawlrs::engines::router::EngineRouter::new(engines));
@@ -1025,7 +1047,8 @@ pub async fn create_test_app_no_worker() -> TestApp {
             10000,
         ));
 
-    let geo_location_service = GeoLocationService::new();
+    let geo_location_service =
+        Arc::new(GeoLocationService::new()) as Arc<dyn GeoLocationServiceTrait>;
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
     let team_service = Arc::new(crawlrs::domain::services::team_service::TeamService::new(
         geo_location_service,

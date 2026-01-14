@@ -295,7 +295,10 @@ impl CacheStrategy for MemoryCacheStrategy {
             if let Some(mut entry) = self.cache.get_mut(key) {
                 if entry.is_expired() {
                     self.cache.remove(key);
-                    self._stats.lock().expect("Cache stats lock poisoned").misses += 1;
+                    self._stats
+                        .lock()
+                        .expect("Cache stats lock poisoned")
+                        .misses += 1;
                     results.push(None);
                 } else {
                     entry.touch();
@@ -303,7 +306,10 @@ impl CacheStrategy for MemoryCacheStrategy {
                     results.push(Some(entry.data.clone()));
                 }
             } else {
-                self._stats.lock().expect("Cache stats lock poisoned").misses += 1;
+                self._stats
+                    .lock()
+                    .expect("Cache stats lock poisoned")
+                    .misses += 1;
                 results.push(None);
             }
         }
@@ -324,7 +330,10 @@ impl CacheStrategy for MemoryCacheStrategy {
         }
 
         self.evict_if_needed();
-        self._stats.lock().expect("Cache stats lock poisoned").stores += count as u64;
+        self._stats
+            .lock()
+            .expect("Cache stats lock poisoned")
+            .stores += count as u64;
         Ok(())
     }
 }
@@ -773,7 +782,10 @@ impl SmartCacheStrategy {
     }
 
     fn select_optimal_strategy(&self) -> usize {
-        let history = self.performance_history.lock().expect("Performance history lock poisoned");
+        let history = self
+            .performance_history
+            .lock()
+            .expect("Performance history lock poisoned");
         if history.is_empty() {
             return 0;
         }
@@ -802,7 +814,10 @@ impl SmartCacheStrategy {
     }
 
     fn record_performance(&self, strategy_index: usize, hit_rate: f64, latency_ms: f64) {
-        let mut history = self.performance_history.lock().expect("Performance history lock poisoned");
+        let mut history = self
+            .performance_history
+            .lock()
+            .expect("Performance history lock poisoned");
         history.push(CachePerformance {
             strategy_index,
             hit_rate,
@@ -821,7 +836,10 @@ impl SmartCacheStrategy {
 impl CacheStrategy for SmartCacheStrategy {
     async fn get(&self, key: &str) -> Result<Option<Vec<SearchResult>>> {
         let start = Instant::now();
-        let current_index = *self.current_strategy.read().expect("Current strategy lock poisoned");
+        let current_index = *self
+            .current_strategy
+            .read()
+            .expect("Current strategy lock poisoned");
 
         let result = self.strategies[current_index].get(key).await?;
         let latency_ms = start.elapsed().as_millis() as f64;
@@ -832,7 +850,10 @@ impl CacheStrategy for SmartCacheStrategy {
         if rand::random::<f64>() < 0.01 {
             let optimal_index = self.select_optimal_strategy();
             if optimal_index != current_index {
-                *self.current_strategy.write().expect("Current strategy lock poisoned") = optimal_index;
+                *self
+                    .current_strategy
+                    .write()
+                    .expect("Current strategy lock poisoned") = optimal_index;
                 info!("Switched to cache strategy index: {}", optimal_index);
             }
         }
@@ -841,12 +862,18 @@ impl CacheStrategy for SmartCacheStrategy {
     }
 
     async fn set(&self, key: &str, value: Vec<SearchResult>, ttl: Option<Duration>) -> Result<()> {
-        let current_index = *self.current_strategy.read().expect("Current strategy lock poisoned");
+        let current_index = *self
+            .current_strategy
+            .read()
+            .expect("Current strategy lock poisoned");
         self.strategies[current_index].set(key, value, ttl).await
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        let current_index = *self.current_strategy.read().expect("Current strategy lock poisoned");
+        let current_index = *self
+            .current_strategy
+            .read()
+            .expect("Current strategy lock poisoned");
         self.strategies[current_index].delete(key).await
     }
 
@@ -858,17 +885,26 @@ impl CacheStrategy for SmartCacheStrategy {
     }
 
     fn get_stats(&self) -> CacheStats {
-        let current_index = *self.current_strategy.read().expect("Current strategy lock poisoned");
+        let current_index = *self
+            .current_strategy
+            .read()
+            .expect("Current strategy lock poisoned");
         self.strategies[current_index].get_stats()
     }
 
     async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()> {
-        let current_index = *self.current_strategy.read().expect("Current strategy lock poisoned");
+        let current_index = *self
+            .current_strategy
+            .read()
+            .expect("Current strategy lock poisoned");
         self.strategies[current_index].preheat(hot_data).await
     }
 
     async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>> {
-        let current_index = *self.current_strategy.read().expect("Current strategy lock poisoned");
+        let current_index = *self
+            .current_strategy
+            .read()
+            .expect("Current strategy lock poisoned");
         self.strategies[current_index].get_batch(keys).await
     }
 
@@ -877,7 +913,10 @@ impl CacheStrategy for SmartCacheStrategy {
         entries: Vec<(String, Vec<SearchResult>)>,
         ttl: Option<Duration>,
     ) -> Result<()> {
-        let current_index = *self.current_strategy.read().expect("Current strategy lock poisoned");
+        let current_index = *self
+            .current_strategy
+            .read()
+            .expect("Current strategy lock poisoned");
         self.strategies[current_index].set_batch(entries, ttl).await
     }
 }

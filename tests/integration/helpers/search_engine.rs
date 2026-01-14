@@ -16,7 +16,7 @@ use crawlrs::search::engine_trait::SearchEngine;
 use std::sync::Arc;
 
 fn create_engine_client() -> Arc<EngineClient> {
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
     let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
     Arc::new(EngineClient::with_engines(engines))

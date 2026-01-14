@@ -289,7 +289,7 @@ impl TestAppFixture {
             RateLimitingConfig::default(),
         ));
 
-        let reqwest_engine = Arc::new(ReqwestEngine);
+        let reqwest_engine = Arc::new(ReqwestEngine::new());
         let playwright_engine = Arc::new(PlaywrightEngine);
 
         let engines_for_client: Vec<Arc<dyn ScraperEngine>> =

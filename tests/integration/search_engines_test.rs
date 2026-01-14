@@ -81,7 +81,7 @@ async fn run_concurrent_search_tests(
     test_mode.apply();
 
     // Create EngineClient for Google
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
     let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
     let engine_client = Arc::new(EngineClient::with_engines(engines));
@@ -372,7 +372,7 @@ async fn test_search_engine_performance() {
     println!("⚡ 开始搜索引擎性能测试...");
 
     // Create EngineClient for Google
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
     let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
     let engines_list: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
     let engine_client = Arc::new(EngineClient::with_engines(engines_list));
@@ -435,7 +435,7 @@ async fn test_search_engine_error_handling() {
     println!("🧪 测试搜索引擎错误处理...");
 
     // Create EngineClient for Google
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
     let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
     let engines_list: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
     let engine_client = Arc::new(EngineClient::with_engines(engines_list));
@@ -501,7 +501,7 @@ async fn test_search_results_comparison() {
     println!("🔍 比较不同搜索引擎的结果...");
 
     // Create EngineClient for Google
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
     let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
     let engines_list: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
     let engine_client = Arc::new(EngineClient::with_engines(engines_list));

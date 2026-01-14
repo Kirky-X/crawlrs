@@ -25,11 +25,7 @@ impl TaskFactory {
             .expect("Task not found after insertion")
     }
 
-    fn base_task_model(
-        url: String,
-        task_type: TaskType,
-        team_id: Uuid,
-    ) -> task::ActiveModel {
+    fn base_task_model(url: String, task_type: TaskType, team_id: Uuid) -> task::ActiveModel {
         task::ActiveModel {
             id: Set(Uuid::new_v4()),
             url: Set(url),
@@ -54,7 +50,8 @@ impl TaskFactory {
     }
 
     pub async fn create_search_task(db: &DatabaseConnection, query: &str) -> task::Model {
-        let mut model = Self::base_task_model(format!("search:{}", query), TaskType::Scrape, Uuid::nil());
+        let mut model =
+            Self::base_task_model(format!("search:{}", query), TaskType::Scrape, Uuid::nil());
         model.payload = Set(serde_json::json!({ "query": query }));
         Self::insert_and_fetch(db, model).await
     }

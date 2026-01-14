@@ -19,19 +19,19 @@ use crawlrs::engines::router::EngineRouter;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::database::connection;
 use crawlrs::infrastructure::repositories::{
-    crawl_repo_impl::CrawlRepositoryImpl,
-    credits_repo_impl::CreditsRepositoryImpl,
+    crawl_repo_impl::CrawlRepositoryImpl, credits_repo_impl::CreditsRepositoryImpl,
     database_geo_restriction_repo::DatabaseGeoRestrictionRepository,
-    scrape_result_repo_impl::ScrapeResultRepositoryImpl,
-    task_repo_impl::TaskRepositoryImpl,
+    scrape_result_repo_impl::ScrapeResultRepositoryImpl, task_repo_impl::TaskRepositoryImpl,
     tasks_backlog_repo_impl::TasksBacklogRepositoryImpl,
-    webhook_event_repo_impl::WebhookEventRepoImpl,
-    webhook_repo_impl::WebhookRepoImpl,
+    webhook_event_repo_impl::WebhookEventRepoImpl, webhook_repo_impl::WebhookRepoImpl,
 };
-use crawlrs::infrastructure::services::rate_limiting_service_impl::{RateLimitingConfig, RateLimitingServiceImpl};
+use crawlrs::infrastructure::services::rate_limiting_service_impl::{
+    RateLimitingConfig, RateLimitingServiceImpl,
+};
 use crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl;
 use crawlrs::presentation::handlers::{
-    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler, webhook_handler,
+    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
+    webhook_handler,
 };
 use crawlrs::presentation::middleware::auth_middleware::AuthState;
 use crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter;
@@ -45,7 +45,10 @@ use crawlrs::search::engine_trait::SearchEngine;
 use crawlrs::search::smart as smart_search;
 use crawlrs::utils::retry_policy::RetryPolicy;
 use crawlrs::utils::telemetry;
-use crawlrs::workers::{backlog_worker::BacklogWorker, manager::WorkerManager, webhook_worker::WebhookWorker, AbstractWorker, Worker};
+use crawlrs::workers::{
+    backlog_worker::BacklogWorker, manager::WorkerManager, webhook_worker::WebhookWorker,
+    AbstractWorker, Worker,
+};
 use migration::{Migrator, MigratorTrait};
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -82,7 +85,10 @@ async fn main() -> anyhow::Result<()> {
     if let Err(e) = settings.validate_security() {
         let env = std::env::var("CRAWLRS_ENV").unwrap_or_default();
         if env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod") {
-            error!("Configuration security validation failed in production: {}", e);
+            error!(
+                "Configuration security validation failed in production: {}",
+                e
+            );
             error!("Server will NOT start due to security concerns. Please fix the configuration issues above.");
             return Err(anyhow::anyhow!("Security validation failed: {}", e));
         } else {
@@ -182,7 +188,9 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(crawlrs::infrastructure::geolocation::GeoLocationService::new()),
         geo_restriction_repo.clone(),
     ));
-    let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(redis_client.clone())));
+    let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(
+        redis_client.clone(),
+    )));
 
     // 初始化限流与并发控制组件
     let tasks_backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db.clone()));
@@ -206,13 +214,14 @@ async fn main() -> anyhow::Result<()> {
         backlog_process_interval_seconds: 30,
         rate_limit_ttl_seconds: 3600,
     };
-    let rate_limiting_service: Arc<dyn RateLimitingService> = Arc::new(RateLimitingServiceImpl::new(
-        redis_client.clone(),
-        task_repo.clone(),
-        tasks_backlog_repo.clone(),
-        credits_repo.clone(),
-        rate_limiting_config,
-    ));
+    let rate_limiting_service: Arc<dyn RateLimitingService> =
+        Arc::new(RateLimitingServiceImpl::new(
+            redis_client.clone(),
+            task_repo.clone(),
+            tasks_backlog_repo.clone(),
+            credits_repo.clone(),
+            rate_limiting_config,
+        ));
     info!("Rate limiting service initialized");
 
     // 8. 根据启动参数选择服务类型
@@ -473,24 +482,35 @@ fn initialize_storage_repository(
         Ok(repo) => Ok(Some(Arc::from(repo))),
         Err(e) => {
             error!("Failed to initialize storage repository: {}", e);
-            Err(anyhow::anyhow!("Failed to initialize storage repository: {}", e))
+            Err(anyhow::anyhow!(
+                "Failed to initialize storage repository: {}",
+                e
+            ))
         }
     }
 }
 
 /// 初始化抓取引擎列表
 #[allow(deprecated)]
-fn initialize_engines(proxy_config: &crawlrs::config::app::ProxySettings) -> Vec<Arc<dyn ScraperEngine>> {
-    let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::with_proxy(proxy_config.url.clone()))];
+fn initialize_engines(
+    proxy_config: &crawlrs::config::app::ProxySettings,
+) -> Vec<Arc<dyn ScraperEngine>> {
+    let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::with_proxy(
+        proxy_config.url.clone(),
+    ))];
 
     #[cfg(feature = "engine-playwright")]
     engines.push(Arc::new(PlaywrightEngine));
 
     #[cfg(feature = "engine-fire-tls")]
-    engines.push(Arc::new(FireEngineTls::with_proxy(proxy_config.url.clone())));
+    engines.push(Arc::new(FireEngineTls::with_proxy(
+        proxy_config.url.clone(),
+    )));
 
     #[cfg(feature = "engine-fire-cdp")]
-    engines.push(Arc::new(FireEngineCdp::with_proxy(proxy_config.url.clone())));
+    engines.push(Arc::new(FireEngineCdp::with_proxy(
+        proxy_config.url.clone(),
+    )));
 
     engines
 }

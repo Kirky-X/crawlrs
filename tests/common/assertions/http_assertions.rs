@@ -64,7 +64,11 @@ impl HttpAssertions {
     }
 
     pub fn assert_too_many_requests(response: &TestResponse) {
-        Self::assert_status(response, StatusCode::TOO_MANY_REQUESTS, "429 Too Many Requests");
+        Self::assert_status(
+            response,
+            StatusCode::TOO_MANY_REQUESTS,
+            "429 Too Many Requests",
+        );
     }
 
     pub fn assert_success(response: &TestResponse) {

@@ -36,7 +36,10 @@ pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
             ));
         }
         // 额外检查：如果不是明确的测试环境，也拒绝禁用
-        if !env.eq_ignore_ascii_case("test") && !env.eq_ignore_ascii_case("development") && !env.eq_ignore_ascii_case("dev") {
+        if !env.eq_ignore_ascii_case("test")
+            && !env.eq_ignore_ascii_case("development")
+            && !env.eq_ignore_ascii_case("dev")
+        {
             tracing::error!(
                 "SECURITY ERROR: Attempted to disable SSRF protection in unknown environment: {}. This is not allowed.",
                 env

@@ -158,7 +158,10 @@ impl Clone for SearchEngineRouter {
             engines: self.engines.clone(),
             metrics: RwLock::new(self.metrics.read().clone()),
             config: self.config.clone(),
-            load_balance_index: AtomicUsize::new(self.load_balance_index.load(std::sync::atomic::Ordering::Relaxed)),
+            load_balance_index: AtomicUsize::new(
+                self.load_balance_index
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
         }
     }
 }
