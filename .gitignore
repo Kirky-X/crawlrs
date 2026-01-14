@@ -108,6 +108,9 @@ openspec/
 !.env.example
 !.env.test.example
 
+# Specific environment files to ignore
+.env.test
+
 # Test environment configuration (contains passwords/secrets)
 config/test.env
 config/test.toml
