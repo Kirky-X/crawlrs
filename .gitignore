@@ -56,6 +56,12 @@ Desktop.ini
 # Trae
 .trae/
 
+# Claude AI
+.claude/
+
+# Shared folder
+.shared/
+
 # -----------------------------------------------------------------------------
 # Section 3: Project-Specific Directories
 # -----------------------------------------------------------------------------
