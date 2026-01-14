@@ -12,7 +12,6 @@ use axum::{
 use serde_json::json;
 use std::net::SocketAddr;
 use tracing::error;
-use uuid::Uuid;
 use validator::Validate;
 
 use crate::application::dto::extract_request::ExtractRequestDto;
@@ -23,6 +22,7 @@ use crate::domain::services::team_service::TeamService;
 use crate::infrastructure::geolocation::GeoLocationService;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
+use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 use std::sync::Arc;
 
@@ -31,13 +31,14 @@ pub async fn extract<GR>(
     Extension(_settings): Extension<Arc<Settings>>,
     Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
     Extension(geo_restriction_repo): Extension<Arc<GR>>,
-    Extension(team_id): Extension<Uuid>,
+    Extension(auth_state): Extension<AuthState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<ExtractRequestDto>,
 ) -> impl IntoResponse
 where
     GR: GeoRestrictionRepository + 'static,
 {
+    let team_id = auth_state.team_id;
     // Validate the request
     if payload.urls.is_empty() {
         return (
@@ -87,18 +88,6 @@ where
             Json(json!({
                 "success": false,
                 "error": format!("Validation error: {}", e)
-            })),
-        )
-            .into_response();
-    }
-
-    // Validate URLs are not empty
-    if payload.urls.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": "At least one URL is required"
             })),
         )
             .into_response();

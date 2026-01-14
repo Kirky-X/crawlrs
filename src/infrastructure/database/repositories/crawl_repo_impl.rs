@@ -161,4 +161,61 @@ impl CrawlRepository for CrawlRepositoryImpl {
             .await?;
         Ok(())
     }
+
+    async fn find_by_team_id_paginated(
+        &self,
+        team_id: Uuid,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<Crawl>, RepositoryError> {
+        let models = crawl_entity::Entity::find()
+            .filter(crawl_entity::Column::TeamId.eq(team_id))
+            .order_by_desc(crawl_entity::Column::CreatedAt)
+            .limit(limit as u64)
+            .offset(offset as u64)
+            .all(self.db.as_ref())
+            .await?;
+
+        let mut crawls = Vec::new();
+        for m in models {
+            let status = match m.status.as_str() {
+                "queued" => CrawlStatus::Queued,
+                "processing" => CrawlStatus::Processing,
+                "completed" => CrawlStatus::Completed,
+                "failed" => CrawlStatus::Failed,
+                "cancelled" => CrawlStatus::Cancelled,
+                _ => {
+                    return Err(RepositoryError::Database(DbErr::Custom(
+                        "Invalid crawl status".to_string(),
+                    )))
+                }
+            };
+
+            crawls.push(Crawl {
+                id: m.id,
+                team_id: m.team_id,
+                name: m.name,
+                root_url: m.root_url,
+                url: m.url,
+                status,
+                config: m.config,
+                total_tasks: m.total_tasks,
+                completed_tasks: m.completed_tasks,
+                failed_tasks: m.failed_tasks,
+                created_at: m.created_at.into(),
+                updated_at: m.updated_at.into(),
+                completed_at: m.completed_at.map(Into::into),
+            });
+        }
+
+        Ok(crawls)
+    }
+
+    async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError> {
+        let count = crawl_entity::Entity::find()
+            .filter(crawl_entity::Column::TeamId.eq(team_id))
+            .count(self.db.as_ref())
+            .await?;
+        Ok(count)
+    }
 }

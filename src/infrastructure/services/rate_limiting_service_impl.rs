@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
+#[cfg(feature = "rate-limiting")]
 use redis::AsyncCommands;
+use sha2::{Digest, Sha256};
 use tracing::debug;
 use uuid::Uuid;
 
@@ -19,12 +21,14 @@ use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyResult, RateLimitConfig, RateLimitResult, RateLimitingError,
     RateLimitingService,
 };
+#[cfg(feature = "rate-limiting")]
 use crate::infrastructure::cache::redis_client::RedisClient;
 
 /// 限流与并发控制服务实现
 ///
 /// 该服务实现了基于Redis的分布式限流和并发控制机制
 /// 支持令牌桶限流算法和分布式信号量并发控制
+#[cfg(feature = "rate-limiting")]
 pub struct RateLimitingServiceImpl {
     redis: Arc<RedisClient>,
     task_repository: Arc<dyn TaskRepository>,
@@ -60,6 +64,7 @@ impl Default for RateLimitingConfig {
     }
 }
 
+#[cfg(feature = "rate-limiting")]
 impl RateLimitingServiceImpl {
     pub fn new(
         redis: Arc<RedisClient>,
@@ -338,6 +343,7 @@ impl RateLimitingServiceImpl {
 }
 
 #[async_trait]
+#[cfg(feature = "rate-limiting")]
 impl RateLimitingService for RateLimitingServiceImpl {
     async fn check_rate_limit(
         &self,
@@ -345,12 +351,11 @@ impl RateLimitingService for RateLimitingServiceImpl {
         endpoint: &str,
     ) -> Result<RateLimitResult, RateLimitingError> {
         debug!("========== RATE LIMIT CHECK ==========");
-        let masked_key = if api_key.len() > 8 {
-            &api_key[..4]
-        } else {
-            "****"
-        };
-        debug!(api_key = masked_key);
+        // 使用SHA256哈希代替部分掩码，更安全地记录API key
+        let mut hasher = Sha256::new();
+        hasher.update(api_key.as_bytes());
+        let api_key_hash = format!("{:x}", hasher.finalize());
+        debug!(api_key_hash = %api_key_hash);
         debug!(endpoint);
         debug!(enabled = self.config.rate_limit.enabled);
 

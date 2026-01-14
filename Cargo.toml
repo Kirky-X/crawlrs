@@ -9,7 +9,7 @@ autoexamples = false
 
 [features]
 # 默认开启基础功能，使用 Postgres
-default = ["engine-reqwest", "redis-cache", "metrics", "db-postgres"]
+default = ["engine-reqwest", "redis-cache", "rate-limiting", "metrics", "db-postgres"]
 
 # 全功能组合
 full = ["default", "engine-playwright", "engine-fire-cdp", "engine-fire-tls", "db-sqlite"]
@@ -33,7 +33,11 @@ search-sogou = []
 
 # --- 基础设施特性 ---
 # Redis 缓存与限流支持
-redis-cache = ["dep:redis"]
+# 注意：redis 依赖通过 rate-limiting 特性管理
+redis-cache = []
+
+# 速率限制支持（依赖 redis）
+rate-limiting = ["dep:redis"]
 
 # 指标监控
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]

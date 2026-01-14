@@ -9,9 +9,11 @@ use crate::engines::circuit_breaker::CircuitBreaker;
 use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use crate::engines::validators::validate_url;
 use rand::seq::SliceRandom;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 /// 路由层指标收集器
@@ -32,20 +34,13 @@ pub struct RouterMetrics {
     /// 引擎选择次数
     pub engine_selection_total: AtomicU64,
     /// 按引擎名称的延迟统计 (引擎名 -> 总延迟纳秒)
-    pub engine_latencies: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    pub engine_latencies: Arc<Mutex<HashMap<String, u64>>>,
     /// 按引擎名称的成功次数
-    pub engine_success_count: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    pub engine_success_count: Arc<Mutex<HashMap<String, u64>>>,
     /// 按引擎名称的失败次数
-    pub engine_failure_count: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    pub engine_failure_count: Arc<Mutex<HashMap<String, u64>>>,
     /// 失败类型统计 (错误类型 -> 次数)
-    pub failure_classification: Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
-}
-
-/// 路由指标错误
-#[derive(Debug, thiserror::Error)]
-pub enum RouterMetricsError {
-    #[error("Metrics lock poisoned: {0}")]
-    LockPoisoned(String),
+    pub failure_classification: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 impl RouterMetrics {
@@ -58,59 +53,31 @@ impl RouterMetrics {
             candidate_count_total: AtomicU64::new(0),
             attempt_count_total: AtomicU64::new(0),
             engine_selection_total: AtomicU64::new(0),
-            engine_latencies: Arc::new(std::sync::Mutex::new(
-                std::collections::HashMap::with_capacity(8),
-            )),
-            engine_success_count: Arc::new(std::sync::Mutex::new(
-                std::collections::HashMap::with_capacity(8),
-            )),
-            engine_failure_count: Arc::new(std::sync::Mutex::new(
-                std::collections::HashMap::with_capacity(8),
-            )),
-            failure_classification: Arc::new(std::sync::Mutex::new(
-                std::collections::HashMap::with_capacity(8),
-            )),
+            engine_latencies: Arc::new(Mutex::new(HashMap::with_capacity(8))),
+            engine_success_count: Arc::new(Mutex::new(HashMap::with_capacity(8))),
+            engine_failure_count: Arc::new(Mutex::new(HashMap::with_capacity(8))),
+            failure_classification: Arc::new(Mutex::new(HashMap::with_capacity(8))),
         }
     }
 
-    /// 安全获取 latencies 锁
-    fn latencies_mut(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>>, RouterMetricsError>
-    {
-        self.engine_latencies
-            .lock()
-            .map_err(|e| RouterMetricsError::LockPoisoned(e.to_string()))
+    /// 安全获取 latencies 锁 (异步版本)
+    async fn latencies_mut(&self) -> tokio::sync::MutexGuard<'_, HashMap<String, u64>> {
+        self.engine_latencies.lock().await
     }
 
-    /// 安全获取 success_count 锁
-    fn success_count_mut(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>>, RouterMetricsError>
-    {
-        self.engine_success_count
-            .lock()
-            .map_err(|e| RouterMetricsError::LockPoisoned(e.to_string()))
+    /// 安全获取 success_count 锁 (异步版本)
+    async fn success_count_mut(&self) -> tokio::sync::MutexGuard<'_, HashMap<String, u64>> {
+        self.engine_success_count.lock().await
     }
 
-    /// 安全获取 failure_count 锁
-    fn failure_count_mut(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>>, RouterMetricsError>
-    {
-        self.engine_failure_count
-            .lock()
-            .map_err(|e| RouterMetricsError::LockPoisoned(e.to_string()))
+    /// 安全获取 failure_count 锁 (异步版本)
+    async fn failure_count_mut(&self) -> tokio::sync::MutexGuard<'_, HashMap<String, u64>> {
+        self.engine_failure_count.lock().await
     }
 
-    /// 安全获取 classification 锁
-    fn classification_mut(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>>, RouterMetricsError>
-    {
-        self.failure_classification
-            .lock()
-            .map_err(|e| RouterMetricsError::LockPoisoned(e.to_string()))
+    /// 安全获取 classification 锁 (异步版本)
+    async fn classification_mut(&self) -> tokio::sync::MutexGuard<'_, HashMap<String, u64>> {
+        self.failure_classification.lock().await
     }
 
     /// 记录候选引擎数量
@@ -125,45 +92,39 @@ impl RouterMetrics {
     }
 
     /// 记录引擎选择
-    pub fn record_engine_selection(&self, engine_name: &str) {
+    pub async fn record_engine_selection(&self, engine_name: &str) {
         self.engine_selection_total.fetch_add(1, Ordering::Relaxed);
-        if let Ok(mut latencies) = self.latencies_mut() {
-            if !latencies.contains_key(engine_name) {
-                latencies.insert(engine_name.to_string(), 0);
-            }
+        let mut latencies = self.latencies_mut().await;
+        if !latencies.contains_key(engine_name) {
+            latencies.insert(engine_name.to_string(), 0);
         }
-        // 忽略锁错误，只记录日志
     }
 
     /// 记录引擎延迟
-    pub fn record_engine_latency(&self, engine_name: &str, duration: Duration) {
-        if let Ok(mut latencies) = self.latencies_mut() {
-            if let Some(total) = latencies.get_mut(engine_name) {
-                *total += duration.as_nanos() as u64;
-            }
+    pub async fn record_engine_latency(&self, engine_name: &str, duration: Duration) {
+        let mut latencies = self.latencies_mut().await;
+        if let Some(total) = latencies.get_mut(engine_name) {
+            *total += duration.as_nanos() as u64;
         }
     }
 
     /// 记录引擎成功
-    pub fn record_engine_success(&self, engine_name: &str) {
-        if let Ok(mut success_count) = self.success_count_mut() {
-            let count = success_count.entry(engine_name.to_string()).or_insert(0);
-            *count += 1;
-        }
+    pub async fn record_engine_success(&self, engine_name: &str) {
+        let mut success_count = self.success_count_mut().await;
+        let count = success_count.entry(engine_name.to_string()).or_insert(0);
+        *count += 1;
     }
 
     /// 记录引擎失败
-    pub fn record_engine_failure(&self, engine_name: &str, error_type: &str) {
-        if let Ok(mut failure_count) = self.failure_count_mut() {
-            let count = failure_count.entry(engine_name.to_string()).or_insert(0);
-            *count += 1;
-        }
+    pub async fn record_engine_failure(&self, engine_name: &str, error_type: &str) {
+        let mut failure_count = self.failure_count_mut().await;
+        let count = failure_count.entry(engine_name.to_string()).or_insert(0);
+        *count += 1;
 
-        if let Ok(mut classification) = self.classification_mut() {
-            let error_category = Self::classify_error(error_type);
-            let count = classification.entry(error_category).or_insert(0);
-            *count += 1;
-        }
+        let mut classification = self.classification_mut().await;
+        let error_category = Self::classify_error(error_type);
+        let count = classification.entry(error_category).or_insert(0);
+        *count += 1;
     }
 
     /// 对错误进行分类
@@ -184,9 +145,9 @@ impl RouterMetrics {
     }
 
     /// 获取按引擎名称的平均延迟（纳秒）
-    pub fn get_avg_latency_ns(&self, engine_name: &str) -> Option<u64> {
-        let latencies = self.latencies_mut().ok()?;
-        let success_count = self.success_count_mut().ok()?;
+    pub async fn get_avg_latency_ns(&self, engine_name: &str) -> Option<u64> {
+        let latencies = self.latencies_mut().await;
+        let success_count = self.success_count_mut().await;
 
         if let (Some(&total_ns), Some(&count)) =
             (latencies.get(engine_name), success_count.get(engine_name))
@@ -660,7 +621,7 @@ impl EngineRouter {
             let engine_name = engine.name();
 
             // 记录引擎选择
-            self.metrics.record_engine_selection(engine_name);
+            self.metrics.record_engine_selection(engine_name).await;
             self.metrics.record_attempt();
 
             info!(
@@ -705,8 +666,9 @@ impl EngineRouter {
                         .successful_requests
                         .fetch_add(1, Ordering::Relaxed);
                     self.metrics
-                        .record_engine_latency(engine_name, response_time);
-                    self.metrics.record_engine_success(engine_name);
+                        .record_engine_latency(engine_name, response_time)
+                        .await;
+                    self.metrics.record_engine_success(engine_name).await;
 
                     info!(
                         "Engine {} succeeded in {:?}, total time: {:?}",
@@ -723,7 +685,8 @@ impl EngineRouter {
 
                     // 记录失败指标
                     self.metrics
-                        .record_engine_failure(engine_name, &e.to_string());
+                        .record_engine_failure(engine_name, &e.to_string())
+                        .await;
 
                     if e.is_retryable() {
                         self.circuit_breaker.record_failure(engine_name);
@@ -842,8 +805,9 @@ impl EngineRouter {
                             .successful_requests
                             .fetch_add(1, Ordering::Relaxed);
                         self.metrics
-                            .record_engine_latency(&engine_name, response_time);
-                        self.metrics.record_engine_success(&engine_name);
+                            .record_engine_latency(&engine_name, response_time)
+                            .await;
+                        self.metrics.record_engine_success(&engine_name).await;
 
                         info!(
                             "Race mode: {} won in {:?}, total time: {:?}",
@@ -857,7 +821,8 @@ impl EngineRouter {
                     }
                     Err((engine_name, e)) => {
                         self.metrics
-                            .record_engine_failure(&engine_name, &e.to_string());
+                            .record_engine_failure(&engine_name, &e.to_string())
+                            .await;
 
                         if e.is_retryable() {
                             self.circuit_breaker.record_failure(&engine_name);

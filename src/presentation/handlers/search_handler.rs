@@ -23,6 +23,7 @@ use crate::{
         services::search_service::{SearchService, SearchServiceError},
     },
     presentation::handlers::task_handler::wait_for_tasks_completion,
+    presentation::middleware::auth_middleware::AuthState,
     search::SearchEngine,
 };
 use tracing::error;
@@ -36,8 +37,7 @@ pub async fn search<CR, TR, CRR>(
     Extension(settings): Extension<Arc<Settings>>,
     Extension(search_engine): Extension<Arc<dyn SearchEngine>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
-    Extension(team_id): Extension<uuid::Uuid>,
-    Extension(api_key): Extension<String>,
+    Extension(auth_state): Extension<AuthState>,
     Json(payload): Json<SearchRequestDto>,
 ) -> impl IntoResponse
 where
@@ -45,6 +45,8 @@ where
     TR: TaskRepository + 'static,
     CRR: CreditsRepository + 'static,
 {
+    let team_id = auth_state.team_id;
+    let api_key = auth_state.api_key_id.to_string();
     // 1. 检查限流
     match rate_limiting_service
         .check_rate_limit(&api_key, "/v1/search")

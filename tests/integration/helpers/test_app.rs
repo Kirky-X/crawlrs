@@ -177,6 +177,7 @@ impl TaskQueue for InMemoryQueue {
 pub struct TestApp {
     pub server: TestServer,
     pub api_key: String,
+    pub api_key_id: uuid::Uuid,
     pub team_id: uuid::Uuid,
     pub db_pool: Arc<DatabaseConnection>,
     pub task_repo: Arc<TaskRepositoryImpl>,
@@ -338,6 +339,7 @@ pub async fn create_test_app_with_rate_limit_options(
 
     let api_key = Uuid::new_v4().to_string();
     let team_id = Uuid::new_v4();
+    let api_key_id = Uuid::new_v4();
 
     // 根据数据库URL确定数据库后端类型
     let db_backend = if db_url.starts_with("postgres://") {
@@ -362,7 +364,7 @@ pub async fn create_test_app_with_rate_limit_options(
             .execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
-                vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+                vec![api_key_id.into(), api_key.clone().into(), team_id.into()],
             ))
             .await
             .unwrap();
@@ -604,6 +606,7 @@ pub async fn create_test_app_with_rate_limit_options(
     TestApp {
         server,
         api_key,
+        api_key_id,
         team_id,
         db_pool,
         task_repo: task_repo.clone(),
@@ -782,8 +785,6 @@ fn create_router(
         .layer(axum::Extension(team_semaphore))
         .layer(axum::Extension(queue))
         .layer(axum::Extension(auth_state))
-        .layer(axum::Extension(team_id))
-        .layer(axum::Extension(api_key))
         .layer(axum::Extension(redis_client))
         .layer(axum::Extension(rate_limiter))
 }
@@ -886,6 +887,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
 
     let api_key = Uuid::new_v4().to_string();
     let team_id = Uuid::new_v4();
+    let api_key_id = Uuid::new_v4();
 
     // 根据数据库URL确定数据库后端类型
     let db_backend = if db_url.starts_with("postgres://") {
@@ -910,7 +912,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
             .execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
-                vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+                vec![api_key_id.into(), api_key.clone().into(), team_id.into()],
             ))
             .await
             .unwrap();
@@ -1032,6 +1034,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
     TestApp {
         server,
         api_key,
+        api_key_id,
         team_id,
         db_pool,
         task_repo: task_repo.clone(),

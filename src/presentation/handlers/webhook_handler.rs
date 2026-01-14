@@ -8,11 +8,11 @@ use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::domain::use_cases::create_webhook::CreateWebhookUseCase;
 use crate::presentation::errors::AppError;
+use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{http::StatusCode, Extension, Json};
 use serde::Deserialize;
 use std::sync::Arc;
 use tracing::error;
-use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct CreateWebhookPayload {
@@ -22,10 +22,11 @@ pub struct CreateWebhookPayload {
 pub async fn create_webhook<R: WebhookRepository>(
     Extension(repo): Extension<Arc<R>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
-    Extension(team_id): Extension<Uuid>,
-    Extension(api_key): Extension<String>,
+    Extension(auth_state): Extension<AuthState>,
     Json(payload): Json<CreateWebhookPayload>,
 ) -> Result<(StatusCode, Json<Webhook>), AppError> {
+    let team_id = auth_state.team_id;
+    let api_key = auth_state.api_key_id.to_string();
     // 1. 检查限流
     match rate_limiting_service
         .check_rate_limit(&api_key, "/v1/webhooks")

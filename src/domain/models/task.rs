@@ -15,7 +15,7 @@ use uuid::Uuid;
 /// 表示系统中一个待处理的工作单元，可以是网页抓取、
 /// 网站爬取或内容提取等不同类型的任务。任务具有状态、
 /// 优先级、重试机制和锁定机制等属性。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Task {
     /// 任务唯一标识符
     pub id: Uuid,

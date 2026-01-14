@@ -19,6 +19,15 @@ pub trait WebhookEventRepository: Send + Sync {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError>;
     /// 查找待处理的Webhook事件
     async fn find_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError>;
+    /// 根据团队ID分页查询Webhook事件
+    async fn find_by_team_id_paginated(
+        &self,
+        team_id: Uuid,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<WebhookEvent>, RepositoryError>;
+    /// 统计团队Webhook事件数量
+    async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError>;
     /// 更新Webhook事件
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError>;
 }

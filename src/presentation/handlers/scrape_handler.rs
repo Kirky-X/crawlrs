@@ -10,7 +10,6 @@ use axum::{
 };
 use std::sync::Arc;
 use tracing::error;
-use url::Url;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -29,6 +28,8 @@ use crate::{
         },
     },
     presentation::handlers::task_handler::wait_for_tasks_completion,
+    presentation::helpers::ssrf_helper::is_internal_url,
+    presentation::middleware::auth_middleware::AuthState,
     queue::task_queue::TaskQueue,
 };
 
@@ -39,10 +40,12 @@ pub async fn create_scrape(
     Extension(_settings): Extension<Arc<Settings>>,
     Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
-    Extension(team_id): Extension<Uuid>,
-    Extension(api_key): Extension<String>,
+    Extension(auth_state): Extension<AuthState>,
     Json(payload): Json<ScrapeRequestDto>,
 ) -> impl IntoResponse {
+    let team_id = auth_state.team_id;
+    let api_key = auth_state.api_key_id.to_string();
+
     if let Err(e) = payload.validate() {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -55,26 +58,15 @@ pub async fn create_scrape(
     }
 
     if is_internal_url(&payload.url) {
-        let ssrf_disabled = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default();
-        tracing::error!(
-            "SSRF Check: url={}, ssrf_disabled={}, is_internal=true",
-            payload.url,
-            ssrf_disabled
-        );
-        // Allow disabling SSRF protection via environment variable (for testing)
-        if ssrf_disabled != "true" {
-            tracing::error!("SSRF Protection: Blocking internal URL {}", payload.url);
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": "SSRF protection: Internal URLs are not allowed"
-                })),
-            )
-                .into_response();
-        }
-    } else {
-        tracing::error!("SSRF Check: url={}, is_internal=false", payload.url);
+        tracing::error!("SSRF Protection: Blocking internal URL {}", payload.url);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false,
+                "error": "SSRF protection: Internal URLs are not allowed"
+            })),
+        )
+            .into_response();
     }
 
     // 1. 检查限流
@@ -213,8 +205,9 @@ pub async fn create_scrape(
 pub async fn cancel_scrape(
     Path(id): Path<Uuid>,
     Extension(repository): Extension<Arc<TaskRepositoryImpl>>,
-    Extension(team_id): Extension<Uuid>,
+    Extension(auth_state): Extension<AuthState>,
 ) -> impl IntoResponse {
+    let team_id = auth_state.team_id;
     match repository.find_by_id(id).await {
         Ok(Some(task)) => {
             if task.team_id != team_id {
@@ -272,44 +265,13 @@ pub async fn cancel_scrape(
     }
 }
 
-fn is_internal_url(url_str: &str) -> bool {
-    if let Ok(url) = Url::parse(url_str) {
-        if let Some(host) = url.host_str() {
-            if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-                return true;
-            }
-            // Basic private IP check (simplified)
-            if host.starts_with("192.168.")
-                || host.starts_with("10.")
-                || host.starts_with("169.254.")
-            {
-                return true;
-            }
-            if host.starts_with("172.") {
-                let parts: Vec<&str> = host.split('.').collect();
-                if parts.len() >= 2 {
-                    if let Ok(num) = parts[1].parse::<u8>() {
-                        if (16..=31).contains(&num) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            // Check for IPv6 link-local
-            if host.starts_with("fe80::") || host.starts_with("fe00::") {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 pub async fn get_scrape_status(
     Path(id): Path<Uuid>,
     Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
     Extension(result_repository): Extension<Arc<ScrapeResultRepositoryImpl>>,
-    Extension(team_id): Extension<Uuid>,
+    Extension(auth_state): Extension<AuthState>,
 ) -> impl IntoResponse {
+    let team_id = auth_state.team_id;
     match task_repository.find_by_id(id).await {
         Ok(Some(task)) => {
             if task.team_id != team_id {

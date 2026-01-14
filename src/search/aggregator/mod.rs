@@ -9,7 +9,9 @@ pub mod enhanced;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::future::join_all;
+use lru::LruCache;
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -22,11 +24,16 @@ use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
 use crate::search::types::{EngineHealth, SearchEngineType};
+use crate::utils::constants::cache_config;
+
+/// 缓存键类型
+type CacheEntry = (Vec<SearchResult>, Instant);
 
 pub struct SearchAggregator {
     engines: Vec<Arc<dyn SearchEngine>>,
     timeout: Duration,
-    cache: DashMap<String, (Vec<SearchResult>, Instant)>,
+    // 使用LRU缓存替代无界DashMap，防止内存泄漏
+    cache: Arc<tokio::sync::Mutex<LruCache<String, CacheEntry>>>,
     cache_ttl: Duration,
     failures: std::sync::Arc<DashMap<String, u32>>,
 }
@@ -36,8 +43,7 @@ impl fmt::Debug for SearchAggregator {
         f.debug_struct("SearchAggregator")
             .field("engine_count", &self.engines.len())
             .field("timeout_ms", &self.timeout.as_millis())
-            .field("cache_size", &self.cache.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -46,8 +52,11 @@ impl SearchAggregator {
         Self {
             engines,
             timeout: Duration::from_millis(timeout_ms),
-            cache: DashMap::new(),
-            cache_ttl: Duration::from_secs(300),
+            // 使用LRU缓存，自动淘汰旧条目，防止内存无限增长
+            cache: Arc::new(tokio::sync::Mutex::new(LruCache::new(
+                NonZeroUsize::new(cache_config::MAX_CACHE_ENTRIES).unwrap(),
+            ))),
+            cache_ttl: Duration::from_secs(cache_config::DEFAULT_TTL_SECS),
             failures: std::sync::Arc::new(DashMap::new()),
         }
     }
@@ -241,15 +250,20 @@ impl SearchEngine for SearchAggregator {
             request.lang.as_deref().unwrap_or("default"),
             request.country.as_deref().unwrap_or("default")
         );
-        if let Some(entry) = self.cache.get(&cache_key) {
-            if entry.1.elapsed() < self.cache_ttl {
-                info!("Cache hit for query: {}", request.query);
-                let mut cached_results = entry.0.clone();
-                // Apply limit to cached results
-                if cached_results.len() > request.limit as usize {
-                    cached_results.truncate(request.limit as usize);
+
+        // 使用LRU缓存的get方法
+        {
+            let mut cache = self.cache.lock().await;
+            if let Some((cached_results, timestamp)) = cache.get(&cache_key) {
+                if timestamp.elapsed() < self.cache_ttl {
+                    info!("Cache hit for query: {}", request.query);
+                    let mut results = cached_results.clone();
+                    // Apply limit to cached results
+                    if results.len() > request.limit as usize {
+                        results.truncate(request.limit as usize);
+                    }
+                    return Ok(self.convert_results_to_response(results));
                 }
-                return Ok(self.convert_results_to_response(cached_results));
             }
         }
 
@@ -312,8 +326,10 @@ impl SearchEngine for SearchAggregator {
         }
 
         let final_results = self.deduplicate_and_rank(all_results, &request.query);
-        self.cache
-            .insert(cache_key, (final_results.clone(), Instant::now()));
+
+        // 使用LRU缓存的push方法，自动淘汰旧条目
+        let mut cache = self.cache.lock().await;
+        cache.push(cache_key.clone(), (final_results.clone(), Instant::now()));
 
         Ok(self.convert_results_to_response(final_results))
     }

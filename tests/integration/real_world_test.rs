@@ -18,8 +18,13 @@
 //! export SKIP_BROWSER_TESTS=true
 //! ```
 
+use crawlrs::engines::client::fire_cdp::FireEngineCdp;
+use crawlrs::engines::client::fire_tls::FireEngineTls;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
+use crawlrs::engines::traits::ScraperEngine;
 use std::env;
+use std::sync::Arc;
 use std::time::Duration;
 use testcontainers::{runners::AsyncRunner, GenericImage};
 use tracing::info;
@@ -102,7 +107,9 @@ async fn test_real_world_reqwest_engine() {
         return;
     }
 
-    let client = EngineClient::new();
+    // Create EngineClient with ReqwestEngine registered
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::new())];
+    let client = EngineClient::with_engines(engines);
     let request = create_base_request();
 
     info!("Testing EngineClient (reqwest) with URL: {}", TEST_URL);
@@ -144,7 +151,11 @@ async fn test_real_world_playwright_engine() {
 
     info!("Using Chrome at: {}", chrome_url);
 
-    let client = EngineClient::new();
+    // Create EngineClient with PlaywrightEngine registered
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(
+        crawlrs::engines::client::playwright::PlaywrightEngine,
+    )];
+    let client = EngineClient::with_engines(engines);
     let request = create_base_request().needs_js();
 
     info!("Testing EngineClient (playwright) with URL: {}", TEST_URL);
@@ -193,7 +204,9 @@ async fn test_real_world_fire_engine_cdp() {
 
     std::env::set_var("FIRE_ENGINE_CDP_URL", &api_url);
 
-    let client = EngineClient::new();
+    // Create EngineClient with FireEngineCdp registered
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(FireEngineCdp::new())];
+    let client = EngineClient::with_engines(engines);
     let options = ScrapeOptions::builder()
         .needs_js(true)
         .use_fire_engine(true)
@@ -254,7 +267,9 @@ async fn test_real_world_fire_engine_tls() {
 
     std::env::set_var("FIRE_ENGINE_TLS_URL", &api_url);
 
-    let client = EngineClient::new();
+    // Create EngineClient with FireEngineTls registered
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(FireEngineTls::new())];
+    let client = EngineClient::with_engines(engines);
     let options = ScrapeOptions::builder()
         .needs_tls_fingerprint(true)
         .use_fire_engine(true)

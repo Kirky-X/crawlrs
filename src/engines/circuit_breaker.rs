@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+#[cfg(feature = "metrics")]
 use metrics::{counter, gauge};
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -188,6 +189,7 @@ impl CircuitBreaker {
                         return false;
                     }
                 }
+                #[cfg(feature = "metrics")]
                 counter!("circuit_breaker_rejected_total", "engine" => engine_name.to_string())
                     .increment(1);
                 true
@@ -207,8 +209,10 @@ impl CircuitBreaker {
             state.total_requests += 1;
             state.total_successes += 1;
 
+            #[cfg(feature = "metrics")]
             counter!("circuit_breaker_requests_total", "engine" => engine_name.to_string())
                 .increment(1);
+            #[cfg(feature = "metrics")]
             counter!("circuit_breaker_successes_total", "engine" => engine_name.to_string())
                 .increment(1);
 
@@ -255,8 +259,10 @@ impl CircuitBreaker {
             }
         }
 
+        #[cfg(feature = "metrics")]
         counter!("circuit_breaker_requests_total", "engine" => engine_name.to_string())
             .increment(1);
+        #[cfg(feature = "metrics")]
         counter!("circuit_breaker_failures_total", "engine" => engine_name.to_string())
             .increment(1);
 
@@ -311,6 +317,7 @@ impl CircuitBreaker {
             Status::Open => 1.0,
             Status::HalfOpen => 0.5,
         };
+        #[cfg(feature = "metrics")]
         gauge!("circuit_breaker_status", "engine" => engine_name.to_string()).set(val);
     }
 }

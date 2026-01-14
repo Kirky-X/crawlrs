@@ -34,42 +34,13 @@ use crate::engines::engine_client::{
     EngineClient, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse, ScreenshotConfig,
     ScrollDirection,
 };
+#[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::queue::task_queue::TaskQueue;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
 use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
-
-// Lua script for atomic concurrency control - reduces 4 Redis round-trips to 1
-const CONCURRENCY_CONTROL_LUA: &str = r#"
-local active_key = KEYS[1]
-local limit_key = KEYS[2]
-local task_id = ARGV[1]
-local score = tonumber(ARGV[2])
-local stale_threshold = tonumber(ARGV[3])
-local default_limit = tonumber(ARGV[4])
-
--- 1. Cleanup stale tasks (older than threshold)
-redis.call('ZREMRANGEBYSCORE', active_key, '-inf', stale_threshold)
-
--- 2. Get limit from Redis or use default
-local limit = tonumber(redis.call('GET', limit_key) or default_limit)
-
--- 3. Check if task is already in set (heartbeat case)
-if redis.call('ZSCORE', active_key, task_id) then
-    redis.call('ZADD', active_key, score, task_id)
-    return 1
-end
-
--- 4. Check current count and acquire if within limit
-local count = redis.call('ZCARD', active_key)
-if count < limit then
-    redis.call('ZADD', active_key, score, task_id)
-    return 1
-else
-    return 0
-end
-"#;
+use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
 
 // Regex cache for crawl pattern matching
 use once_cell::sync::Lazy;
@@ -145,6 +116,7 @@ where
     credits_repository: Arc<CRR>,
     engine_client: Arc<EngineClient>,
     _create_scrape_use_case: Arc<CreateScrapeUseCase>,
+    #[cfg(feature = "redis-cache")]
     redis: RedisClient,
     robots_checker: Arc<RobotsChecker>,
     settings: Arc<Settings>,
@@ -162,6 +134,7 @@ where
 {
     /// 创建新的抓取工作器实例
     #[allow(clippy::too_many_arguments)]
+    #[cfg(feature = "redis-cache")]
     pub fn new(
         repository: Arc<R>,
         result_repository: Arc<S>,
@@ -1541,6 +1514,7 @@ where
     credits_repository: Option<Arc<CRR>>,
     engine_client: Option<Arc<EngineClient>>,
     create_scrape_use_case: Option<Arc<CreateScrapeUseCase>>,
+    #[cfg(feature = "redis-cache")]
     redis: Option<RedisClient>,
     robots_checker: Option<Arc<RobotsChecker>>,
     settings: Option<Arc<Settings>>,
@@ -1564,6 +1538,7 @@ where
             credits_repository: None,
             engine_client: None,
             create_scrape_use_case: None,
+            #[cfg(feature = "redis-cache")]
             redis: None,
             robots_checker: None,
             settings: None,
@@ -1580,6 +1555,7 @@ where
     CRR: CreditsRepository + Send + Sync,
 {
     /// 创建新的构建器
+    #[cfg(feature = "redis-cache")]
     pub fn new() -> Self {
         Self {
             repository: None,
@@ -1655,6 +1631,7 @@ where
     }
 
     /// 设置 Redis 客户端 (必需)
+    #[cfg(feature = "redis-cache")]
     pub fn with_redis(mut self, redis: RedisClient) -> Self {
         self.redis = Some(redis);
         self
@@ -1679,6 +1656,8 @@ where
     }
 
     /// 构建 ScrapeWorker 实例
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(feature = "redis-cache")]
     pub fn build(self) -> Result<ScrapeWorker<R, S, C, CRR>, &'static str> {
         let repository = self.repository.ok_or("repository is required")?;
         let result_repository = self

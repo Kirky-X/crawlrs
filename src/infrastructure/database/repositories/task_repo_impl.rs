@@ -15,6 +15,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -236,6 +237,27 @@ impl TaskRepository for TaskRepositoryImpl {
             .count(self.db.as_ref())
             .await?;
         Ok(count > 0)
+    }
+
+    async fn find_existing_urls(
+        &self,
+        urls: &[String],
+    ) -> Result<HashSet<String>, RepositoryError> {
+        if urls.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        // 批量查询所有已存在的 URL
+        let existing_tasks = task_entity::Entity::find()
+            .filter(task_entity::Column::Url.is_in(urls.to_vec()))
+            .all(self.db.as_ref())
+            .await?;
+
+        // 提取 URL 集合
+        let existing_urls: HashSet<String> =
+            existing_tasks.into_iter().map(|task| task.url).collect();
+
+        Ok(existing_urls)
     }
 
     async fn reset_stuck_tasks(&self, timeout: chrono::Duration) -> Result<u64, RepositoryError> {

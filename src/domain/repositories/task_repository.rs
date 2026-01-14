@@ -7,6 +7,7 @@ use crate::domain::models::task::{Task, TaskStatus, TaskType};
 use async_trait::async_trait;
 use chrono::{DateTime, FixedOffset};
 use sea_orm::DbErr;
+use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -56,6 +57,9 @@ pub trait TaskRepository: Send + Sync {
     async fn mark_cancelled(&self, id: Uuid) -> Result<(), RepositoryError>;
     /// 检查URL是否存在
     async fn exists_by_url(&self, url: &str) -> Result<bool, RepositoryError>;
+    /// 批量检查URL是否存在（优化 N+1 查询）
+    async fn find_existing_urls(&self, urls: &[String])
+        -> Result<HashSet<String>, RepositoryError>;
     /// 重置卡住的任务（长时间处于Active状态）
     async fn reset_stuck_tasks(&self, timeout: chrono::Duration) -> Result<u64, RepositoryError>;
     /// 取消与特定 Crawl ID 相关的所有任务

@@ -27,21 +27,9 @@ use crate::domain::services::team_service::TeamService;
 use crate::infrastructure::geolocation::GeoLocationService;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
+use crate::presentation::helpers::ssrf_helper::is_internal_url;
+use crate::presentation::middleware::auth_middleware::AuthState;
 use validator::Validate;
-
-fn is_internal_url(url_str: &str) -> bool {
-    if let Ok(url) = url::Url::parse(url_str) {
-        if let Some(host) = url.host_str() {
-            // 简单检查是否为本地或私有IP
-            return host == "localhost"
-                || host == "127.0.0.1"
-                || host.starts_with("192.168.")
-                || host.starts_with("10.")
-                || host.starts_with("172.");
-        }
-    }
-    false
-}
 
 /// 创建新的爬取任务
 #[allow(clippy::too_many_arguments)]
@@ -54,8 +42,7 @@ pub async fn create_crawl<CR, TR, WR, SRR, GR>(
     Extension(team_service): Extension<Arc<TeamService>>,
     Extension(task_repository_impl): Extension<Arc<TaskRepositoryImpl>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
-    Extension(team_id): Extension<Uuid>,
-    Extension(api_key): Extension<String>,
+    Extension(auth_state): Extension<AuthState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<CrawlRequestDto>,
 ) -> impl IntoResponse
@@ -66,6 +53,8 @@ where
     SRR: ScrapeResultRepository + 'static,
     GR: GeoRestrictionRepository + 'static,
 {
+    let team_id = auth_state.team_id;
+    let api_key = auth_state.api_key_id.to_string();
     if let Err(e) = payload.validate() {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -262,7 +251,7 @@ pub async fn get_crawl_results<CR, TR, WR, SRR, GR>(
     Extension(webhook_repo): Extension<Arc<WR>>,
     Extension(scrape_result_repo): Extension<Arc<SRR>>,
     Extension(_geo_restriction_repo): Extension<Arc<GR>>,
-    Extension(team_id): Extension<Uuid>,
+    Extension(auth_state): Extension<AuthState>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse
 where
@@ -272,6 +261,7 @@ where
     SRR: ScrapeResultRepository + 'static,
     GR: GeoRestrictionRepository + 'static,
 {
+    let team_id = auth_state.team_id;
     let use_case = CrawlUseCase::new(
         crawl_repo,
         task_repo,
@@ -300,7 +290,7 @@ pub async fn cancel_crawl<CR, TR, WR, SRR, GR>(
     Extension(webhook_repo): Extension<Arc<WR>>,
     Extension(scrape_result_repo): Extension<Arc<SRR>>,
     Extension(_geo_restriction_repo): Extension<Arc<GR>>,
-    Extension(team_id): Extension<Uuid>,
+    Extension(auth_state): Extension<AuthState>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse
 where
@@ -310,6 +300,7 @@ where
     SRR: ScrapeResultRepository + 'static,
     GR: GeoRestrictionRepository + 'static,
 {
+    let team_id = auth_state.team_id;
     let use_case = CrawlUseCase::new(
         crawl_repo,
         task_repo,

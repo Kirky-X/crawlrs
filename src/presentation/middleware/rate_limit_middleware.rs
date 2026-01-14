@@ -3,6 +3,8 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::impl_basic_error_conversions;
+#[cfg(feature = "rate-limiting")]
 use crate::infrastructure::cache::redis_client::RedisClient;
 use anyhow::Result;
 use thiserror::Error;
@@ -18,6 +20,8 @@ pub enum RateLimitError {
     #[error("Internal server error: {0}")]
     InternalError(String),
 }
+
+impl_basic_error_conversions!(RateLimitError, InternalError);
 
 /// 速率限制器
 pub struct RateLimiter {

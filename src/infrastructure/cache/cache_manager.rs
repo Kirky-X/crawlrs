@@ -13,6 +13,7 @@ use crate::domain::models::search_result::SearchResult;
 use crate::infrastructure::cache::cache_strategy::{
     CacheStrategy, CacheStrategyConfig, CacheStrategyFactory, CacheType, PreheatConfig,
 };
+#[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
 
 /// 缓存管理器
@@ -21,11 +22,13 @@ use crate::infrastructure::cache::redis_client::RedisClient;
 pub struct CacheManager {
     strategy: Arc<RwLock<Box<dyn CacheStrategy>>>,
     config: CacheStrategyConfig,
+    #[cfg(feature = "redis-cache")]
     redis_client: Option<Arc<RedisClient>>,
 }
 
 impl CacheManager {
     /// 创建新的缓存管理器
+    #[cfg(feature = "redis-cache")]
     pub async fn new(config: CacheStrategyConfig, redis_url: Option<&str>) -> Result<Self> {
         let redis_client = if let Some(url) = redis_url {
             Some(Arc::new(RedisClient::new(url).await?))
@@ -114,6 +117,7 @@ impl CacheManager {
     }
 
     /// 切换缓存策略
+    #[cfg(feature = "redis-cache")]
     pub async fn switch_strategy(&self, new_config: CacheStrategyConfig) -> Result<()> {
         info!("Switching cache strategy to: {:?}", new_config.cache_type);
 

@@ -9,4 +9,5 @@
 /// 使用Prometheus格式暴露应用性能指标
 ///
 /// 该模块已统一到 observability/metrics,此处为向后兼容提供的重导出
+#[cfg(feature = "metrics")]
 pub use crate::infrastructure::observability::metrics::init_metrics;

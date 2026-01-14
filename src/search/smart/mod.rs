@@ -32,6 +32,111 @@ fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
     Selector::parse(selector_str).ok()
 }
 
+/// 搜索结果解析器配置
+struct SearchResultParserConfig {
+    /// 结果选择器
+    result_selectors: Vec<&'static str>,
+    /// 标题选择器
+    title_selectors: Vec<&'static str>,
+    /// 链接选择器
+    link_selectors: Vec<&'static str>,
+    /// 摘要选择器
+    snippet_selectors: Vec<&'static str>,
+    /// 引擎名称
+    engine_name: &'static str,
+}
+
+/// 通用搜索结果解析函数 - 消除重复代码
+fn parse_search_results_common(
+    html: &str,
+    config: SearchResultParserConfig,
+) -> Result<Vec<SearchResult>, SearchError> {
+    use crate::domain::services::relevance_scorer::RelevanceScorer;
+    use scraper::Html;
+
+    let document = Html::parse_document(html);
+
+    // 选择最佳可用选择器
+    let result_selector = config
+        .result_selectors
+        .iter()
+        .filter_map(|s| safe_parse_selector(s))
+        .next()
+        .expect(&format!(
+            "Failed to parse result selector for {}",
+            config.engine_name
+        ));
+
+    let title_selector = config
+        .title_selectors
+        .iter()
+        .filter_map(|s| safe_parse_selector(s))
+        .next()
+        .expect(&format!(
+            "Failed to parse title selector for {}",
+            config.engine_name
+        ));
+
+    let link_selector = config
+        .link_selectors
+        .iter()
+        .filter_map(|s| safe_parse_selector(s))
+        .next()
+        .expect(&format!(
+            "Failed to parse link selector for {}",
+            config.engine_name
+        ));
+
+    let snippet_selector = config
+        .snippet_selectors
+        .iter()
+        .filter_map(|s| safe_parse_selector(s))
+        .next()
+        .expect(&format!(
+            "Failed to parse snippet selector for {}",
+            config.engine_name
+        ));
+
+    let mut results = Vec::new();
+    let scorer = RelevanceScorer::new(config.engine_name);
+
+    for element in document.select(&result_selector) {
+        let title = element
+            .select(&title_selector)
+            .next()
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+
+        let url = element
+            .select(&link_selector)
+            .next()
+            .and_then(|el| el.value().attr("href"))
+            .map(|href| href.to_string())
+            .unwrap_or_default();
+
+        let description = element
+            .select(&snippet_selector)
+            .next()
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+        let description = process_string(&description).unwrap_or(description);
+
+        if !title.is_empty() && !url.is_empty() {
+            let mut result = SearchResult::new(
+                title,
+                url,
+                Some(description),
+                config.engine_name.to_string(),
+            );
+            result.score =
+                scorer.calculate_score(&result.title, result.description.as_deref(), &result.url);
+            results.push(result);
+        }
+    }
+
+    Ok(results)
+}
+
 /// 智能搜索引擎配置
 pub struct SmartSearchEngineConfig {
     /// 搜索引擎类型
@@ -604,167 +709,38 @@ impl SmartSearchEngine {
 
     /// 解析 Bing 搜索结果
     fn parse_bing_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        use scraper::Html;
-
-        let document = Html::parse_document(html);
-        let result_selector = safe_parse_selector("li.b_algo")
-            .or_else(|| safe_parse_selector("div.sb_add"))
-            .expect("Failed to parse Bing result selector");
-        let title_selector = safe_parse_selector("h2")
-            .or_else(|| safe_parse_selector("a"))
-            .expect("Failed to parse Bing title selector");
-        let link_selector = safe_parse_selector("a").expect("Failed to parse Bing link selector");
-        let snippet_selector = safe_parse_selector("p")
-            .or_else(|| safe_parse_selector("div"))
-            .expect("Failed to parse Bing snippet selector");
-
-        let mut results = Vec::new();
-        let scorer = RelevanceScorer::new("bing_search");
-
-        for element in document.select(&result_selector) {
-            let title = element
-                .select(&title_selector)
-                .next()
-                .map(|el| self.escape_html(el.text().collect::<String>().trim()))
-                .unwrap_or_default();
-
-            let url = element
-                .select(&link_selector)
-                .next()
-                .and_then(|el| el.value().attr("href"))
-                .map(|href| href.to_string())
-                .unwrap_or_default();
-
-            let description = element
-                .select(&snippet_selector)
-                .next()
-                .map(|el| self.escape_html(el.text().collect::<String>().trim()))
-                .unwrap_or_default();
-            let description = process_string(&description).unwrap_or(description);
-
-            if !title.is_empty() && !url.is_empty() {
-                let engine_name = self.get_engine_name();
-                let mut result = SearchResult::new(title, url, Some(description), engine_name);
-                result.score = scorer.calculate_score(
-                    &result.title,
-                    result.description.as_deref(),
-                    &result.url,
-                );
-                results.push(result);
-            }
-        }
-
-        Ok(results)
+        let config = SearchResultParserConfig {
+            result_selectors: vec!["li.b_algo", "div.sb_add"],
+            title_selectors: vec!["h2", "a"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["p", "div"],
+            engine_name: "bing",
+        };
+        parse_search_results_common(html, config)
     }
 
     /// 解析百度搜索结果
     fn parse_baidu_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        use scraper::Html;
-
-        let document = Html::parse_document(html);
-        let result_selector = safe_parse_selector("div.c-container")
-            .or_else(|| safe_parse_selector("div.result"))
-            .expect("Failed to parse Baidu result selector");
-        let title_selector = safe_parse_selector("h3 a")
-            .or_else(|| safe_parse_selector("a"))
-            .expect("Failed to parse Baidu title selector");
-        let link_selector = safe_parse_selector("a").expect("Failed to parse Baidu link selector");
-        let snippet_selector = safe_parse_selector("div.c-abstract")
-            .or_else(|| safe_parse_selector("div"))
-            .expect("Failed to parse Baidu snippet selector");
-
-        let mut results = Vec::new();
-        let scorer = RelevanceScorer::new("baidu_search");
-
-        for element in document.select(&result_selector) {
-            let title = element
-                .select(&title_selector)
-                .next()
-                .map(|el| self.escape_html(el.text().collect::<String>().trim()))
-                .unwrap_or_default();
-
-            let url = element
-                .select(&link_selector)
-                .next()
-                .and_then(|el| el.value().attr("href"))
-                .map(|href| href.to_string())
-                .unwrap_or_default();
-
-            let description = element
-                .select(&snippet_selector)
-                .next()
-                .map(|el| el.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-            let description = process_string(&description).unwrap_or(description);
-
-            if !title.is_empty() && !url.is_empty() {
-                let engine_name = self.get_engine_name();
-                let mut result = SearchResult::new(title, url, Some(description), engine_name);
-                result.score = scorer.calculate_score(
-                    &result.title,
-                    result.description.as_deref(),
-                    &result.url,
-                );
-                results.push(result);
-            }
-        }
-
-        Ok(results)
+        let config = SearchResultParserConfig {
+            result_selectors: vec!["div.c-container", "div.result"],
+            title_selectors: vec!["h3 a", "a"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["div.c-abstract", "div"],
+            engine_name: "baidu",
+        };
+        parse_search_results_common(html, config)
     }
 
     /// 解析搜狗搜索结果
     fn parse_sogou_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        use scraper::Html;
-
-        let document = Html::parse_document(html);
-        let result_selector = safe_parse_selector("div.rc")
-            .or_else(|| safe_parse_selector("div.result"))
-            .expect("Failed to parse Sogou result selector");
-        let title_selector = safe_parse_selector("h3 a")
-            .or_else(|| safe_parse_selector("a"))
-            .expect("Failed to parse Sogou title selector");
-        let link_selector = safe_parse_selector("a").expect("Failed to parse Sogou link selector");
-        let snippet_selector = safe_parse_selector("div.ft")
-            .or_else(|| safe_parse_selector("div"))
-            .expect("Failed to parse Sogou snippet selector");
-
-        let mut results = Vec::new();
-        let scorer = RelevanceScorer::new("sogou_search");
-
-        for element in document.select(&result_selector) {
-            let title = element
-                .select(&title_selector)
-                .next()
-                .map(|el| self.escape_html(el.text().collect::<String>().trim()))
-                .unwrap_or_default();
-
-            let url = element
-                .select(&link_selector)
-                .next()
-                .and_then(|el| el.value().attr("href"))
-                .map(|href| href.to_string())
-                .unwrap_or_default();
-
-            let description = element
-                .select(&snippet_selector)
-                .next()
-                .map(|el| el.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-            let description = process_string(&description).unwrap_or(description);
-
-            if !title.is_empty() && !url.is_empty() {
-                let engine_name = self.get_engine_name();
-                let mut result = SearchResult::new(title, url, Some(description), engine_name);
-                result.score = scorer.calculate_score(
-                    &result.title,
-                    result.description.as_deref(),
-                    &result.url,
-                );
-                results.push(result);
-            }
-        }
-
-        Ok(results)
+        let config = SearchResultParserConfig {
+            result_selectors: vec!["div.rc", "div.result"],
+            title_selectors: vec!["h3 a", "a"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["div.ft", "div"],
+            engine_name: "sogou",
+        };
+        parse_search_results_common(html, config)
     }
 
     /// 保存HTML用于调试分析

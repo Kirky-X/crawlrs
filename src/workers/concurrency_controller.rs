@@ -1,0 +1,190 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0
+// See LICENSE file in the project root for full license information.
+
+//! 并发控制模块
+//!
+//! 提供任务并发控制功能，包括信号量管理和并发限制
+
+use anyhow::Result;
+use chrono::Utc;
+use std::sync::Arc;
+use uuid::Uuid;
+
+use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
+
+/// 并发控制器
+///
+/// 负责管理团队级别的任务并发控制
+#[derive(Clone)]
+pub struct ConcurrencyController {
+    redis: Arc<RedisClient>,
+    default_concurrency_limit: usize,
+}
+
+impl ConcurrencyController {
+    /// 创建新的并发控制器
+    pub fn new(redis: RedisClient, default_concurrency_limit: usize) -> Self {
+        Self {
+            redis: Arc::new(redis),
+            default_concurrency_limit,
+        }
+    }
+
+    /// 从任务负载中提取并发限制
+    pub fn extract_payload_limit(task: &crate::domain::models::task::Task) -> Option<usize> {
+        if task.task_type == crate::domain::models::task::TaskType::Crawl {
+            task.payload
+                .get("config")
+                .and_then(|c| c.get("max_concurrency"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+        } else {
+            None
+        }
+    }
+
+    /// 获取有效的并发限制
+    pub fn get_effective_limit(&self, task: &crate::domain::models::task::Task) -> usize {
+        Self::extract_payload_limit(task).unwrap_or(self.default_concurrency_limit)
+    }
+
+    /// 获取信号量许可
+    ///
+    /// # Arguments
+    ///
+    /// * `task` - 任务
+    ///
+    /// # Returns
+    ///
+    /// 如果获取成功返回 Ok(true)，如果达到限制返回 Ok(false)，错误返回 Err
+    pub async fn acquire_permit(&self, task: &crate::domain::models::task::Task) -> Result<bool> {
+        let team_id = task.team_id;
+        let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
+        let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
+        let now = Utc::now().timestamp() as f64;
+        let stale_threshold = now - 3600.0; // 1 hour stale
+
+        let default_limit = self.get_effective_limit(task);
+
+        // Execute atomic Lua script - reduces 4 Redis calls to 1
+        let result = self
+            .redis
+            .eval(
+                CONCURRENCY_CONTROL_LUA,
+                &[&team_active_tasks_key, &team_concurrency_limit_key],
+                &[
+                    &task.id.to_string(),
+                    &now.to_string(),
+                    &stale_threshold.to_string(),
+                    &default_limit.to_string(),
+                ],
+            )
+            .await?;
+
+        let granted = result == "1";
+        Ok(granted)
+    }
+
+    /// 释放信号量许可
+    pub async fn release_permit(&self, team_id: Uuid, task_id: Uuid) -> Result<()> {
+        let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
+        self.redis
+            .zrem(&team_active_tasks_key, &task_id.to_string())
+            .await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_payload_limit_scrape_task() {
+        use crate::domain::models::task::{Task, TaskType};
+        use uuid::Uuid;
+
+        let task = Task {
+            id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            task_type: TaskType::Scrape,
+            url: "http://example.com".to_string(),
+            payload: serde_json::json!({
+                "config": {
+                    "max_concurrency": 5
+                }
+            }),
+            ..Task::default()
+        };
+
+        // Scrape tasks don't check payload limit
+        let limit = ConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_extract_payload_limit_crawl_task() {
+        use crate::domain::models::task::{Task, TaskType};
+        use uuid::Uuid;
+
+        let task = Task {
+            id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            task_type: TaskType::Crawl,
+            url: "http://example.com".to_string(),
+            payload: serde_json::json!({
+                "config": {
+                    "max_concurrency": 10
+                }
+            }),
+            ..Task::default()
+        };
+
+        let limit = ConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, Some(10));
+    }
+
+    #[test]
+    fn test_extract_payload_limit_no_config() {
+        use crate::domain::models::task::{Task, TaskType};
+        use uuid::Uuid;
+
+        let task = Task {
+            id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            task_type: TaskType::Scrape,
+            url: "http://example.com".to_string(),
+            payload: serde_json::json!({}),
+            ..Task::default()
+        };
+
+        let limit = ConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_extract_payload_limit_non_crawl_task() {
+        use crate::domain::models::task::{Task, TaskType};
+        use uuid::Uuid;
+
+        let task = Task {
+            id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            task_type: TaskType::Extract,
+            url: "http://example.com".to_string(),
+            payload: serde_json::json!({
+                "config": {
+                    "max_concurrency": 5
+                }
+            }),
+            ..Task::default()
+        };
+
+        // Non-Crawl tasks don't check payload limit
+        let limit = ConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+}

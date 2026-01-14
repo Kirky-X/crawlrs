@@ -5,6 +5,7 @@
 
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
+use thiserror::Error;
 
 use super::app::{
     ConcurrencySettings, DatabaseSettings, RateLimitingSettings, RedisSettings, ServerSettings,
@@ -12,6 +13,33 @@ use super::app::{
 use super::llm::LLMSettings;
 use super::search::{BingSearchSettings, GoogleSearchSettings, SearchSettings};
 use super::storage::{StorageSettings, WebhookSettings};
+
+/// 配置安全错误
+#[derive(Error, Debug)]
+pub enum ConfigSecurityError {
+    #[error("CRITICAL: Webhook secret cannot be empty in production")]
+    EmptyWebhookSecret,
+
+    #[error("CRITICAL: Webhook secret uses weak default value '{0}'. Must be changed to a strong random secret!")]
+    WeakWebhookSecret(String),
+
+    #[error("CRITICAL: Webhook secret is too short ({0} bytes). Minimum 32 bytes required.")]
+    ShortWebhookSecret(usize),
+
+    #[error("CRITICAL: Database URL uses weak/default password. Use strong authentication in production!")]
+    WeakDatabasePassword,
+
+    #[error("SECURITY WARNING: S3 access key is not configured but storage type is 's3'")]
+    MissingS3AccessKey,
+
+    #[error(
+        "WARNING: S3 secret key appears to be short (< 32 characters). Use a strong secret key."
+    )]
+    ShortS3SecretKey,
+
+    #[error("WARNING: Rate limiting is disabled. This may expose the service to abuse.")]
+    RateLimitingDisabled,
+}
 
 /// 应用程序配置设置
 ///
@@ -161,14 +189,13 @@ impl Settings {
 
     /// 验证配置安全性
     ///
-    /// 检查是否存在弱默认配置，并返回警告
+    /// 检查是否存在弱默认配置，并返回错误（会阻止启动）
     ///
     /// # 返回值
     ///
-    /// * `Vec<String>` - 安全警告列表（为空表示配置安全）
-    pub fn validate_security(&self) -> Vec<String> {
-        let mut warnings = Vec::new();
-
+    /// * `Ok(())` - 配置安全
+    /// * `Err(ConfigSecurityError)` - 发现安全风险
+    pub fn validate_security(&self) -> Result<(), ConfigSecurityError> {
         // 检查 webhook secret 是否使用默认值
         let weak_secrets = [
             "your-webhook-secret",
@@ -180,25 +207,14 @@ impl Settings {
         ];
 
         if self.webhook.secret.is_empty() {
-            warnings.push(
-                "CRITICAL: Webhook secret is empty! Webhook signature verification will fail. \
-                Set CRAWLRS__WEBHOOK__SECRET environment variable to a strong random value."
-                    .to_string(),
-            );
+            return Err(ConfigSecurityError::EmptyWebhookSecret);
         } else if weak_secrets.contains(&self.webhook.secret.as_str()) {
-            warnings.push(
-                format!(
-                    "CRITICAL: Webhook secret is using a weak default value '{}'! \
-                    This allows attackers to forge webhook payloads. \
-                    Set CRAWLRS__WEBHOOK__SECRET environment variable to a strong random value (min 32 bytes).",
-                    self.webhook.secret
-                )
-            );
+            return Err(ConfigSecurityError::WeakWebhookSecret(
+                self.webhook.secret.clone(),
+            ));
         } else if self.webhook.secret.len() < 32 {
-            warnings.push(format!(
-                "WARNING: Webhook secret is too short ({} bytes). \
-                    Recommend using at least 32 bytes for better security.",
-                self.webhook.secret.len()
+            return Err(ConfigSecurityError::ShortWebhookSecret(
+                self.webhook.secret.len(),
             ));
         }
 
@@ -211,10 +227,7 @@ impl Settings {
                 .map(|s| s.is_empty())
                 .unwrap_or(true)
             {
-                warnings.push(
-                    "SECURITY WARNING: S3 access key is not configured but storage type is 's3'."
-                        .to_string(),
-                );
+                return Err(ConfigSecurityError::MissingS3AccessKey);
             }
 
             if self
@@ -224,33 +237,23 @@ impl Settings {
                 .map(|s| s.len() < 32)
                 .unwrap_or(false)
             {
-                warnings.push(
-                    "WARNING: S3 secret key appears to be short (< 32 characters). Use a strong secret key."
-                        .to_string(),
-                );
+                return Err(ConfigSecurityError::ShortS3SecretKey);
             }
         }
 
         // 检查速率限制是否禁用
         if !self.rate_limiting.enabled {
-            warnings.push(
-                "WARNING: Rate limiting is disabled. This may expose the service to abuse."
-                    .to_string(),
-            );
+            return Err(ConfigSecurityError::RateLimitingDisabled);
         }
 
         if self.database.url.contains("password=password")
             || self.database.url.contains("password=postgres")
             || self.database.url.contains("password=admin")
         {
-            warnings.push(
-                "SECURITY WARNING: Database URL may use weak/default password. \
-                Use strong authentication in production."
-                    .to_string(),
-            );
+            return Err(ConfigSecurityError::WeakDatabasePassword);
         }
 
-        warnings
+        Ok(())
     }
 
     /// 验证配置值有效性

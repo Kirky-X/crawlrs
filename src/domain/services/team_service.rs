@@ -74,12 +74,10 @@ impl TeamService {
         ip_address: &str,
         restrictions: &TeamGeoRestrictions,
     ) -> Result<GeoRestrictionResult> {
-        // 如果未启用地理限制，直接允许
         if !restrictions.enable_geo_restrictions {
             return Ok(GeoRestrictionResult::Allowed);
         }
 
-        // 解析 IP 地址
         let ip = match IpAddr::from_str(ip_address) {
             Ok(ip) => ip,
             Err(_) => {
@@ -89,7 +87,6 @@ impl TeamService {
             }
         };
 
-        // 首先检查 IP 白名单
         if let Some(ref whitelist) = restrictions.ip_whitelist {
             for cidr in whitelist {
                 if is_ip_in_cidr(&ip, cidr) {
@@ -104,25 +101,9 @@ impl TeamService {
             }
         }
 
-        // 检查允许的国家列表
-        if let Some(ref allowed) = restrictions.allowed_countries {
-            // 获取 IP 的地理位置信息
-            let location = match self.geolocation_service.get_location(&ip).await {
-                Ok(location) => location,
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to get geolocation for IP {} for team {}: {}",
-                        ip_address,
-                        team_id,
-                        e
-                    );
-                    return Ok(GeoRestrictionResult::Denied(
-                        "Unable to determine geographic location".to_string(),
-                    ));
-                }
-            };
-            let country_code = location.country_code.to_uppercase();
+        let country_code = self.get_country_code(team_id, ip_address, &ip).await?;
 
+        if let Some(ref allowed) = restrictions.allowed_countries {
             if !allowed
                 .iter()
                 .any(|code| code.to_uppercase() == country_code)
@@ -139,32 +120,8 @@ impl TeamService {
                     country_code
                 )));
             }
-
-            // 如果在允许列表中，则继续检查其他限制（如黑名单）
-            // 注意：通常白名单优先于黑名单，但这里的 allowed_countries 是 "仅允许这些国家"，所以如果在列表中，还需要检查是否在黑名单中
         }
 
-        // 获取 IP 的地理位置信息 (如果尚未获取)
-        // 优化：如果已经获取过，避免重复调用
-        // 但由于 Rust 的所有权机制，这里简单起见重新获取或重构代码
-        // 为了简化，我们假设 geolocation_service 有缓存
-        let location = match self.geolocation_service.get_location(&ip).await {
-            Ok(location) => location,
-            Err(e) => {
-                tracing::error!(
-                    "Failed to get geolocation for IP {} for team {}: {}",
-                    ip_address,
-                    team_id,
-                    e
-                );
-                return Ok(GeoRestrictionResult::Denied(
-                    "Unable to determine geographic location".to_string(),
-                ));
-            }
-        };
-        let country_code = location.country_code.to_uppercase();
-
-        // 检查阻止的国家列表
         if let Some(ref blocked) = restrictions.blocked_countries {
             if blocked
                 .iter()
@@ -192,6 +149,28 @@ impl TeamService {
         );
 
         Ok(GeoRestrictionResult::Allowed)
+    }
+
+    async fn get_country_code(
+        &self,
+        team_id: Uuid,
+        ip_address: &str,
+        ip: &IpAddr,
+    ) -> Result<String> {
+        let location = self
+            .geolocation_service
+            .get_location(ip)
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    "Failed to get geolocation for IP {} for team {}: {}",
+                    ip_address,
+                    team_id,
+                    e
+                );
+                anyhow::anyhow!("Unable to determine geographic location")
+            })?;
+        Ok(location.country_code.to_uppercase())
     }
 
     /// 验证域名是否在黑名单中

@@ -14,6 +14,7 @@
 /// - 指标（metrics）：提供系统监控和性能指标收集
 /// - 队列（queue）：提供任务队列和调度功能
 /// - 存储（storage）：提供文件和对象存储功能
+/// - 安全（security）：提供安全相关的功能，如API Key哈希
 ///
 /// 基础设施层遵循依赖倒置原则，依赖于领域层的抽象接口，
 /// 确保领域层保持纯粹的业务逻辑，不受技术实现的影响。
@@ -23,6 +24,7 @@ pub mod geolocation;
 pub mod metrics;
 pub mod observability;
 pub mod queue;
+pub mod security;
 pub use database::repositories;
 pub mod services;
 pub mod storage;

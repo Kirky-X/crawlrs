@@ -24,24 +24,42 @@ use crawlrs::domain::repositories::storage_repository::StorageRepository;
 use crawlrs::infrastructure::storage::{create_storage_repository, S3Storage};
 use std::env;
 
+/// 获取 S3/MinIO 凭据（优先使用环境变量）
+fn get_s3_credentials() -> (String, String, String) {
+    let access_key = env::var("S3_ACCESS_KEY_ID")
+        .unwrap_or_else(|_| env::var("MINIO_ROOT_USER").unwrap_or_else(|_| "minioadmin".to_string()));
+    let secret_key = env::var("S3_SECRET_ACCESS_KEY")
+        .unwrap_or_else(|_| env::var("MINIO_ROOT_PASSWORD").unwrap_or_else(|_| "minioadmin123".to_string()));
+    let endpoint = env::var("S3_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:9000".to_string());
+    (access_key, secret_key, endpoint)
+}
+
+/// 创建 S3 存储实例
+async fn create_s3_storage() -> Option<S3Storage> {
+    let (access_key, secret_key, endpoint) = get_s3_credentials();
+    let storage = S3Storage::new(
+        "us-east-1".to_string(),
+        "crawlrs".to_string(),
+        access_key,
+        secret_key,
+        Some(endpoint),
+    );
+    // 验证连接
+    if storage.exists("health-check").await.is_ok() {
+        Some(storage)
+    } else {
+        None
+    }
+}
+
 /// 检查 S3/MinIO 是否可用
 async fn is_s3_available() -> bool {
     // 检查环境变量
     if env::var("SKIP_S3_TESTS").is_ok() {
         return false;
     }
-
-    // 尝试创建存储实例并检查连接
-    let storage = S3Storage::new(
-        "us-east-1".to_string(),
-        "crawlrs".to_string(),
-        "minioadmin".to_string(),
-        "minioadmin123".to_string(),
-        Some("http://localhost:9000".to_string()),
-    );
-
-    // 尝试检查 bucket 是否存在
-    storage.exists("health-check").await.is_ok()
+    create_s3_storage().await.is_some()
 }
 
 /// 跳过测试的辅助宏
@@ -63,13 +81,9 @@ async fn test_s3_storage_save_and_get() {
     // 初始化日志
     let _ = tracing_subscriber::fmt::try_init();
 
-    // 创建 S3 存储实例
-    let storage = S3Storage::new(
-        "us-east-1".to_string(),
-        "crawlrs".to_string(),
-        "minioadmin".to_string(),
-        "minioadmin123".to_string(),
-        Some("http://localhost:9000".to_string()),
+    // 使用辅助函数创建存储实例
+    let storage = create_s3_storage().await.expect("S3 storage should be available");
+        Some(endpoint),
     );
 
     // 测试数据
@@ -100,13 +114,7 @@ async fn test_s3_storage_exists() {
     skip_if_s3_unavailable!();
     let _ = tracing_subscriber::fmt::try_init();
 
-    let storage = S3Storage::new(
-        "us-east-1".to_string(),
-        "crawlrs".to_string(),
-        "minioadmin".to_string(),
-        "minioadmin123".to_string(),
-        Some("http://localhost:9000".to_string()),
-    );
+    let storage = create_s3_storage().await.expect("S3 storage should be available");
 
     let key = "test/exists.txt";
     let data = b"Test exists";
@@ -141,13 +149,7 @@ async fn test_s3_storage_delete() {
     skip_if_s3_unavailable!();
     let _ = tracing_subscriber::fmt::try_init();
 
-    let storage = S3Storage::new(
-        "us-east-1".to_string(),
-        "crawlrs".to_string(),
-        "minioadmin".to_string(),
-        "minioadmin123".to_string(),
-        Some("http://localhost:9000".to_string()),
-    );
+    let storage = create_s3_storage().await.expect("S3 storage should be available");
 
     let key = "test/delete.txt";
     let data = b"Test delete";
@@ -171,13 +173,7 @@ async fn test_s3_storage_large_file() {
     skip_if_s3_unavailable!();
     let _ = tracing_subscriber::fmt::try_init();
 
-    let storage = S3Storage::new(
-        "us-east-1".to_string(),
-        "crawlrs".to_string(),
-        "minioadmin".to_string(),
-        "minioadmin123".to_string(),
-        Some("http://localhost:9000".to_string()),
-    );
+    let storage = create_s3_storage().await.expect("S3 storage should be available");
 
     // 创建 1MB 的测试数据
     let key = "test/large.bin";
@@ -211,14 +207,15 @@ async fn test_create_storage_repository_s3() {
     skip_if_s3_unavailable!();
     let _ = tracing_subscriber::fmt::try_init();
 
+    let (access_key, secret_key, endpoint) = get_s3_credentials();
     let settings = StorageSettings {
         storage_type: "s3".to_string(),
         local_path: None,
         s3_region: Some("us-east-1".to_string()),
         s3_bucket: Some("crawlrs".to_string()),
-        s3_access_key: Some("minioadmin".to_string()),
-        s3_secret_key: Some("minioadmin123".to_string()),
-        s3_endpoint: Some("http://localhost:9000".to_string()),
+        s3_access_key: Some(access_key),
+        s3_secret_key: Some(secret_key),
+        s3_endpoint: Some(endpoint),
     };
 
     let result = create_storage_repository(&settings);
@@ -247,14 +244,15 @@ async fn test_create_storage_repository_missing_config() {
     let _ = tracing_subscriber::fmt::try_init();
 
     // 测试缺少 s3_region
+    let (access_key, secret_key, endpoint) = get_s3_credentials();
     let settings = StorageSettings {
         storage_type: "s3".to_string(),
         local_path: None,
         s3_region: None,
         s3_bucket: Some("crawlrs".to_string()),
-        s3_access_key: Some("minioadmin".to_string()),
-        s3_secret_key: Some("minioadmin123".to_string()),
-        s3_endpoint: Some("http://localhost:9000".to_string()),
+        s3_access_key: Some(access_key),
+        s3_secret_key: Some(secret_key),
+        s3_endpoint: Some(endpoint),
     };
 
     let result = create_storage_repository(&settings);

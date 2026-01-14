@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::services::team_service::TeamGeoRestrictions;
+use crate::presentation::middleware::auth_middleware::AuthState;
 
 /// 更新团队地理限制配置的请求DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,11 +49,12 @@ pub struct TeamGeoRestrictionsResponse {
 /// 获取团队地理限制配置
 pub async fn get_team_geo_restrictions<GR>(
     Extension(geo_restriction_repo): Extension<Arc<GR>>,
-    Extension(team_id): Extension<Uuid>,
+    Extension(auth_state): Extension<AuthState>,
 ) -> impl IntoResponse
 where
     GR: GeoRestrictionRepository + 'static,
 {
+    let team_id = auth_state.team_id;
     match geo_restriction_repo.get_team_restrictions(team_id).await {
         Ok(restrictions) => {
             let response = TeamGeoRestrictionsResponse {
@@ -90,12 +92,13 @@ where
 /// 更新团队地理限制配置
 pub async fn update_team_geo_restrictions<GR>(
     Extension(geo_restriction_repo): Extension<Arc<GR>>,
-    Extension(team_id): Extension<Uuid>,
+    Extension(auth_state): Extension<AuthState>,
     Json(request): Json<UpdateTeamGeoRestrictionsRequest>,
 ) -> impl IntoResponse
 where
     GR: GeoRestrictionRepository + 'static,
 {
+    let team_id = auth_state.team_id;
     // 验证请求数据
     if let Some(ref countries) = request.allowed_countries {
         for country in countries {

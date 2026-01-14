@@ -3,14 +3,19 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::impl_basic_error_conversions;
+#[cfg(feature = "redis-cache")]
+use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::utils::retry_policy::RetryPolicy;
 use anyhow::Result;
 use reqwest::Client;
 use robotstxt::DefaultMatcher;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
+use tokio::sync::Mutex;
 use url::Url;
 
 use async_trait::async_trait;
@@ -28,11 +33,7 @@ pub enum RobotsCheckerError {
     ValidationError(String),
 }
 
-impl From<anyhow::Error> for RobotsCheckerError {
-    fn from(err: anyhow::Error) -> Self {
-        RobotsCheckerError::ValidationError(err.to_string())
-    }
-}
+impl_basic_error_conversions!(RobotsCheckerError, ValidationError);
 
 /// Robots.txt缓存统计
 struct CacheStats {
@@ -72,9 +73,6 @@ struct CachedRobots {
     expires_at: Instant,
 }
 
-use crate::infrastructure::cache::redis_client::RedisClient;
-use crate::utils::retry_policy::RetryPolicy;
-
 /// Robots.txt检查器
 #[derive(Clone)]
 pub struct RobotsChecker {
@@ -85,6 +83,7 @@ pub struct RobotsChecker {
     memory_cache: Arc<Mutex<HashMap<String, CachedRobots>>>,
 
     /// Redis客户端
+    #[cfg(feature = "redis-cache")]
     redis_client: Option<Arc<RedisClient>>,
 
     /// 重试策略
@@ -112,6 +111,7 @@ impl Default for RobotsChecker {
     }
 }
 
+#[cfg(feature = "redis-cache")]
 impl RobotsChecker {
     /// 创建新的Robots检查器实例
     ///
@@ -146,10 +146,7 @@ impl RobotsChecker {
 
         // 1. Check memory cache
         {
-            let mut cache = self
-                .memory_cache
-                .lock()
-                .map_err(|e| RobotsCheckerError::CacheLockError(e.to_string()))?;
+            let mut cache = self.memory_cache.lock().await;
             if let Some(cached) = cache.get(&robots_url) {
                 if cached.expires_at > Instant::now() {
                     CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
@@ -167,10 +164,7 @@ impl RobotsChecker {
         if let Some(ref redis) = self.redis_client {
             if let Ok(Some(content)) = redis.get(&redis_key).await {
                 // Update memory cache
-                let mut cache = self
-                    .memory_cache
-                    .lock()
-                    .map_err(|e| RobotsCheckerError::CacheLockError(e.to_string()))?;
+                let mut cache = self.memory_cache.lock().await;
                 cache.insert(
                     robots_url.clone(),
                     CachedRobots {
@@ -240,10 +234,7 @@ impl RobotsChecker {
 
         // 4. Update memory cache
         {
-            let mut cache = self
-                .memory_cache
-                .lock()
-                .map_err(|e| RobotsCheckerError::CacheLockError(e.to_string()))?;
+            let mut cache = self.memory_cache.lock().await;
             cache.insert(
                 robots_url.clone(),
                 CachedRobots {

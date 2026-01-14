@@ -10,5 +10,6 @@
 pub mod errors;
 pub mod extractors;
 pub mod handlers;
+pub mod helpers;
 pub mod middleware;
 pub mod routes;

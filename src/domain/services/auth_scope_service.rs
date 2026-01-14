@@ -33,6 +33,14 @@ pub struct AuthScopeService {
     scope_repo: AuthScopeRepository,
 }
 
+impl std::fmt::Debug for AuthScopeService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthScopeService")
+            .field("scope_repo", &"AuthScopeRepository")
+            .finish()
+    }
+}
+
 impl AuthScopeService {
     /// Create a new service
     pub fn new(db: DatabaseConnection) -> Self {

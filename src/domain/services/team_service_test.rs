@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 #[cfg(test)]
+#[cfg(feature = "db-sqlite")]
 mod team_service_tests {
     use crate::domain::services::team_service::{
         GeoRestrictionResult, TeamGeoRestrictions, TeamService,

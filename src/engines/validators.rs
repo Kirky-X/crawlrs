@@ -13,8 +13,10 @@ use url::Url;
 /// 包含 DNS Rebinding 攻击防护
 pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
     // 检查是否禁用 SSRF 保护（用于测试环境）
+    // 注意：生产环境永远不应该禁用 SSRF 保护
     let ssrf_disabled = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default();
     if ssrf_disabled.eq_ignore_ascii_case("true") {
+        tracing::debug!("SSRF protection disabled for URL: {}", url_str);
         return Ok(());
     }
 

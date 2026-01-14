@@ -204,7 +204,7 @@ impl MemoryCacheStrategy {
             self.cache.remove(key);
         }
 
-        let mut stats = self._stats.lock().unwrap();
+        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
         stats.evictions += to_evict as u64;
 
         debug!("Evicted {} entries from memory cache", to_evict);
@@ -218,18 +218,18 @@ impl CacheStrategy for MemoryCacheStrategy {
             if entry.is_expired() {
                 drop(entry);
                 self.cache.remove(key);
-                let mut stats = self._stats.lock().unwrap();
+                let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
                 stats.misses += 1;
                 return Ok(None);
             }
 
             entry.touch();
-            let mut stats = self._stats.lock().unwrap();
+            let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
             stats.hits += 1;
 
             Ok(Some(entry.data.clone()))
         } else {
-            let mut stats = self._stats.lock().unwrap();
+            let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
             stats.misses += 1;
             Ok(None)
         }
@@ -243,7 +243,7 @@ impl CacheStrategy for MemoryCacheStrategy {
         self.cache.insert(key.to_string(), entry);
         self.evict_if_needed();
 
-        let mut stats = self._stats.lock().unwrap();
+        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
         stats.stores += 1;
 
         debug!(
@@ -266,7 +266,10 @@ impl CacheStrategy for MemoryCacheStrategy {
     }
 
     fn get_stats(&self) -> CacheStats {
-        self._stats.lock().unwrap().clone()
+        self._stats
+            .lock()
+            .expect("Cache stats lock poisoned")
+            .clone()
     }
 
     async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()> {
@@ -278,7 +281,7 @@ impl CacheStrategy for MemoryCacheStrategy {
             self.set(&key, results, Some(ttl)).await?;
         }
 
-        let mut stats = self._stats.lock().unwrap();
+        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
         stats.preheat_hits += entry_count as u64;
 
         info!("Memory cache preheating completed");
@@ -362,14 +365,14 @@ impl CacheStrategy for RedisCacheStrategy {
             Some(json_str) => {
                 let results: Vec<SearchResult> = serde_json::from_str(&json_str)?;
 
-                let mut stats = self._stats.lock().unwrap();
+                let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
                 stats.hits += 1;
 
                 debug!("Cache hit for key: {}", key);
                 Ok(Some(results))
             }
             None => {
-                let mut stats = self._stats.lock().unwrap();
+                let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
                 stats.misses += 1;
 
                 debug!("Cache miss for key: {}", key);
@@ -388,7 +391,7 @@ impl CacheStrategy for RedisCacheStrategy {
             .set(&cache_key, &json_str, ttl.as_secs() as usize)
             .await?;
 
-        let mut stats = self._stats.lock().unwrap();
+        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
         stats.stores += 1;
 
         debug!(
@@ -414,7 +417,10 @@ impl CacheStrategy for RedisCacheStrategy {
     }
 
     fn get_stats(&self) -> CacheStats {
-        self._stats.lock().unwrap().clone()
+        self._stats
+            .lock()
+            .expect("Cache stats lock poisoned")
+            .clone()
     }
 
     async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()> {
@@ -426,7 +432,7 @@ impl CacheStrategy for RedisCacheStrategy {
             self.set(&key, results, Some(ttl)).await?;
         }
 
-        let mut stats = self._stats.lock().unwrap();
+        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
         stats.preheat_hits += entry_count as u64;
 
         info!("Redis cache preheating completed");
@@ -520,7 +526,7 @@ impl CacheStrategy for LayeredCacheStrategy {
         let memory_ttl = Duration::from_secs(self.config.memory_ttl);
         let redis_ttl = ttl.unwrap_or(Duration::from_secs(self.config.redis_ttl));
 
-        // 并行设置
+        // 并行设置（直接使用 value，无需克隆）
         let memory_future = self.memory_cache.set(key, value.clone(), Some(memory_ttl));
         let redis_future = self.redis_cache.set(key, value, Some(redis_ttl));
 
@@ -570,8 +576,11 @@ impl CacheStrategy for LayeredCacheStrategy {
             hot_data.len()
         );
 
-        let memory_future = self.memory_cache.preheat(hot_data.clone());
-        let redis_future = self.redis_cache.preheat(hot_data);
+        let memory_entries = hot_data.clone();
+        let redis_entries = hot_data;
+
+        let memory_future = self.memory_cache.preheat(memory_entries);
+        let redis_future = self.redis_cache.preheat(redis_entries);
 
         tokio::try_join!(memory_future, redis_future)?;
 
@@ -587,9 +596,10 @@ impl CacheStrategy for LayeredCacheStrategy {
                 results.push(Some(results_val));
             } else if let Some(results_val) = self.redis_cache.get(key).await? {
                 let memory_ttl = Duration::from_secs(self.config.memory_ttl);
+                let results_for_cache = results_val.clone();
                 let _ = self
                     .memory_cache
-                    .set(key, results_val.clone(), Some(memory_ttl))
+                    .set(key, results_for_cache, Some(memory_ttl))
                     .await;
                 results.push(Some(results_val));
             } else {
@@ -608,12 +618,15 @@ impl CacheStrategy for LayeredCacheStrategy {
         let memory_ttl = Duration::from_secs(self.config.memory_ttl);
         let redis_ttl = ttl.unwrap_or(Duration::from_secs(self.config.redis_ttl));
 
-        let memory_entries = entries
-            .iter()
-            .cloned()
-            .map(|(k, v)| (k, v.clone()))
-            .collect();
-        let redis_entries = entries;
+        let mut memory_entries = Vec::with_capacity(entries.len());
+        let mut redis_entries = Vec::with_capacity(entries.len());
+
+        for (key, value) in entries.into_iter() {
+            let key_clone = key.clone();
+            let value_clone = value.clone();
+            memory_entries.push((key_clone, value_clone));
+            redis_entries.push((key, value));
+        }
 
         let memory_future = self
             .memory_cache

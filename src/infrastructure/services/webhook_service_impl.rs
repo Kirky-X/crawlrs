@@ -35,8 +35,13 @@ impl WebhookServiceImpl {
     /// 为负载生成签名
     fn generate_signature(&self, payload: &str, timestamp: i64) -> String {
         let message = format!("{}.{}", timestamp, payload);
-        let mut mac = HmacSha256::new_from_slice(self.secret.as_bytes())
-            .expect("HMAC can take key of any size");
+        let mut mac = match HmacSha256::new_from_slice(self.secret.as_bytes()) {
+            Ok(mac) => mac,
+            Err(e) => {
+                tracing::error!("Failed to initialize HMAC: {}", e);
+                return String::new();
+            }
+        };
         mac.update(message.as_bytes());
         let result = mac.finalize();
         hex::encode(result.into_bytes())

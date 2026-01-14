@@ -140,6 +140,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
 }
 
 #[cfg(test)]
+#[cfg(feature = "db-sqlite")]
 mod tests {
     use super::*;
     use crate::infrastructure::database::entities::team;

@@ -30,8 +30,10 @@
 //! ```
 
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
+use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::infrastructure::database::entities::api_key;
 use crate::infrastructure::security;
+use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 use axum::{
     extract::{Request, State},
     http::{header, StatusCode},
@@ -51,6 +53,8 @@ use uuid::Uuid;
 pub struct AuthState {
     /// Database connection for additional queries
     pub db: Arc<DatabaseConnection>,
+    /// AuthScopeService for loading permissions from database
+    pub auth_scope_service: Option<AuthScopeService>,
     /// Team ID associated with the API key
     pub team_id: Uuid,
     /// API Key ID for audit logging and feature flags
@@ -69,9 +73,46 @@ impl AuthState {
     ) -> Self {
         Self {
             db,
+            auth_scope_service: None,
             team_id,
             api_key_id,
             scope,
+        }
+    }
+
+    /// Create AuthState with AuthScopeService for permission loading
+    pub fn with_scope_service(
+        db: Arc<DatabaseConnection>,
+        auth_scope_service: AuthScopeService,
+        team_id: Uuid,
+        api_key_id: Uuid,
+        default_scope: ApiKeyScope,
+    ) -> Self {
+        Self {
+            db,
+            auth_scope_service: Some(auth_scope_service),
+            team_id,
+            api_key_id,
+            scope: default_scope,
+        }
+    }
+
+    /// Load actual scope from database if service is available
+    pub async fn load_scope_from_db(&mut self) {
+        if let Some(ref service) = self.auth_scope_service {
+            match service.get_scope_for_key(self.api_key_id, None).await {
+                Ok(scope) => {
+                    self.scope = scope;
+                    debug!(
+                        "Loaded scope from database for API Key: {}",
+                        self.api_key_id
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load scope from database: {:?}, using default", e);
+                    // Keep using default scope
+                }
+            }
         }
     }
 }
@@ -92,9 +133,6 @@ pub enum AuthError {
     #[error("API key has expired")]
     ExpiredKey,
 }
-
-/// Public endpoints that don't require authentication
-const PUBLIC_ENDPOINTS: &[&str] = &["/health", "/metrics", "/v1/version"];
 
 /// Unified authentication middleware
 ///
@@ -178,12 +216,19 @@ pub async fn auth_middleware(
 
             // Create AuthState with default scope if not present in DB
             // In a real implementation, you'd load the scope from the database
-            let auth_state = AuthState::new(
+            let mut auth_state = AuthState::with_scope_service(
                 state.db.clone(),
+                state
+                    .auth_scope_service
+                    .clone()
+                    .unwrap_or_else(|| AuthScopeService::new((*state.db).clone())),
                 key.team_id,
                 key.id,
-                ApiKeyScope::default(), // TODO: Load actual scope from database
+                ApiKeyScope::default(),
             );
+
+            // Load actual scope from database
+            auth_state.load_scope_from_db().await;
 
             // Inject auth state and extracted values into request extensions
             req.extensions_mut().insert(auth_state.clone());
@@ -237,7 +282,7 @@ fn extract_bearer_token(req: &Request) -> Option<String> {
 ///
 /// * `Ok(Response)` - If scope validation passes
 /// * `Err(StatusCode)` - If scope validation fails
-pub async fn scope_middleware(mut req: Request, next: Next) -> Result<Response, StatusCode> {
+pub async fn scope_middleware(req: Request, next: Next) -> Result<Response, StatusCode> {
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 

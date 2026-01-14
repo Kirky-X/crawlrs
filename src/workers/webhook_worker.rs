@@ -10,6 +10,7 @@ use crate::utils::retry_policy::RetryPolicy;
 use crate::workers::worker::{ProcessResult, WorkerProcess};
 use anyhow::Result;
 use chrono::Utc;
+#[cfg(feature = "metrics")]
 use metrics::counter;
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -88,6 +89,7 @@ impl WebhookWorker {
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to update event: {}", e))?;
 
+                #[cfg(feature = "metrics")]
                 counter!("webhook_delivery_success_total").increment(1);
                 Ok(())
             }
@@ -131,6 +133,7 @@ impl WebhookWorker {
                 "Webhook {} moved to dead letter state after {} attempts: {}",
                 event.id, new_attempt_count, error
             );
+            #[cfg(feature = "metrics")]
             counter!("webhook_dead_letter_total", "reason" => error.to_string()).increment(1);
         } else {
             // 计算下次重试时间
@@ -147,6 +150,7 @@ impl WebhookWorker {
                 "Webhook {} will be retried at {} (attempt {})",
                 event.id, next_retry, new_attempt_count
             );
+            #[cfg(feature = "metrics")]
             counter!("webhook_retry_scheduled_total", "attempt" => new_attempt_count.to_string())
                 .increment(1);
         }

@@ -14,7 +14,10 @@ pub struct Model {
     pub team_id: Uuid,
     #[sea_orm(unique)]
     pub key: String,
+    /// Hash of the API key for secure storage (SHA-256 hex encoded)
+    pub key_hash: Option<String>,
     pub created_at: ChronoDateTimeWithTimeZone,
+    pub updated_at: Option<ChronoDateTimeWithTimeZone>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

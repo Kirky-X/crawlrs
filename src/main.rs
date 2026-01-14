@@ -382,7 +382,8 @@ async fn main() -> anyhow::Result<()> {
             // 真实的team_id和api_key_id由认证中间件从API key验证后注入到请求扩展中
             let _auth_state = AuthState {
                 db: db.clone(),
-                team_id: uuid::Uuid::nil(), // 占位值，实际team_id由中间件从API key获取
+                auth_scope_service: None,      // 由中间件根据需要初始化
+                team_id: uuid::Uuid::nil(),    // 占位值，实际team_id由中间件从API key获取
                 api_key_id: uuid::Uuid::nil(), // 占位值，实际api_key_id由中间件从API key获取
                 scope: ApiKeyScope::default(),
             };

@@ -13,6 +13,7 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
 use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::presentation::errors::AppError;
+use crate::presentation::middleware::auth_middleware::AuthState;
 use anyhow;
 use axum::{extract::Extension, Json};
 use chrono::Utc;
@@ -127,11 +128,12 @@ pub async fn wait_for_tasks_completion<T: TaskRepository>(
 
 /// 统一任务查询处理器
 pub async fn query_tasks<T: TaskRepository>(
-    Extension(team_id): Extension<uuid::Uuid>, // 从认证中间件获取
+    Extension(auth_state): Extension<AuthState>,
     Extension(task_repo): Extension<Arc<T>>,
     Extension(scrape_result_repo): Extension<Arc<ScrapeResultRepositoryImpl>>,
     Json(request): Json<TaskQueryRequestDto>,
 ) -> Result<Json<TaskQueryResponseDto>, AppError> {
+    let team_id = auth_state.team_id;
     let start_time = Instant::now();
 
     // 验证请求参数
@@ -282,10 +284,11 @@ pub async fn query_tasks<T: TaskRepository>(
 
 /// 统一任务取消处理器
 pub async fn cancel_tasks<T: TaskRepository>(
-    Extension(team_id): Extension<uuid::Uuid>, // 从认证中间件获取
+    Extension(auth_state): Extension<AuthState>,
     Extension(task_repo): Extension<Arc<T>>,
     Json(request): Json<TaskCancelRequestDto>,
 ) -> Result<Json<TaskCancelResponseDto>, AppError> {
+    let team_id = auth_state.team_id;
     let start_time = Instant::now();
 
     // 验证请求参数

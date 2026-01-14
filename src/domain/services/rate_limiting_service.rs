@@ -114,6 +114,7 @@ pub enum ConcurrencyResult {
 
 /// 限流与并发控制服务接口
 #[async_trait]
+#[cfg(feature = "rate-limiting")]
 pub trait RateLimitingService: Send + Sync {
     /// 检查API限流
     async fn check_rate_limit(
@@ -197,6 +198,7 @@ pub enum RateLimitingError {
     #[error("配置错误: {0}")]
     ConfigurationError(String),
 
+    #[cfg(feature = "rate-limiting")]
     #[error("Redis连接错误: {0}")]
     RedisError(#[from] redis::RedisError),
 

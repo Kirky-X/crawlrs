@@ -122,6 +122,31 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
 
         Ok(updated_model.into())
     }
+
+    async fn find_by_team_id_paginated(
+        &self,
+        team_id: Uuid,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<WebhookEvent>, RepositoryError> {
+        let models = webhook_event::Entity::find()
+            .filter(webhook_event::Column::TeamId.eq(team_id))
+            .order_by_desc(webhook_event::Column::CreatedAt)
+            .limit(limit as u64)
+            .offset(offset as u64)
+            .all(self.db.as_ref())
+            .await?;
+
+        Ok(models.into_iter().map(Into::into).collect())
+    }
+
+    async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError> {
+        let count = webhook_event::Entity::find()
+            .filter(webhook_event::Column::TeamId.eq(team_id))
+            .count(self.db.as_ref())
+            .await?;
+        Ok(count)
+    }
 }
 
 impl From<webhook_event::Model> for WebhookEvent {

@@ -10,7 +10,18 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use thiserror::Error;
 use tracing::{debug, error, info};
+
+/// 文本处理错误类型
+#[derive(Error, Debug)]
+pub enum TextProcessingError {
+    #[error("正则表达式编译失败: {0}")]
+    RegexCompilationError(String),
+
+    #[error("编码处理错误: {0}")]
+    EncodingError(#[from] TextEncodingError),
+}
 
 /// 常量定义 - 编码检测模式键名
 const ENCODING_PATTERN_HTML_META: &str = "html_meta";
@@ -37,7 +48,8 @@ impl WebContentProcessor {
         Self {
             text_processor: TextEncodingProcessor::global(),
             html_cleaner: HtmlCleaner::new(),
-            encoding_patterns: Self::init_encoding_patterns(),
+            encoding_patterns: Self::init_encoding_patterns()
+                .expect("Failed to initialize encoding patterns"),
         }
     }
 
@@ -45,24 +57,25 @@ impl WebContentProcessor {
         &WEB_PROCESSOR
     }
 
-    fn init_encoding_patterns() -> HashMap<&'static str, Regex> {
+    fn init_encoding_patterns() -> Result<HashMap<&'static str, Regex>, TextProcessingError> {
         let mut patterns = HashMap::with_capacity(4);
+
         patterns.insert(
             ENCODING_PATTERN_HTML_META,
             Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#)
-                .expect("Failed to compile HTML meta charset regex"),
+                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
         );
         patterns.insert(
             ENCODING_PATTERN_XML_DECLARATION,
             Regex::new(r#"(?i)<\?xml[^>]*encoding\s*=\s*["']?([^"'>\s]+)["']?[^>]*\?>"#)
-                .expect("Failed to compile XML encoding regex"),
+                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
         );
         patterns.insert(
             ENCODING_PATTERN_HTTP_CONTENT_TYPE,
             Regex::new(r#"(?i)charset\s*=\s*([^;\s]+)"#)
-                .expect("Failed to compile HTTP content-type charset regex"),
+                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
         );
-        patterns
+        Ok(patterns)
     }
 
     pub fn process_web_content(

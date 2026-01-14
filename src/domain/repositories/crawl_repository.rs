@@ -103,4 +103,35 @@ pub trait CrawlRepository: Send + Sync {
     /// * `Ok(())` - 成功增加计数
     /// * `Err(RepositoryError)` - 操作失败时返回错误
     async fn increment_total_tasks(&self, id: Uuid) -> Result<(), RepositoryError>;
+
+    /// 根据团队ID分页查询爬取任务
+    ///
+    /// # 参数
+    ///
+    /// * `team_id` - 团队的唯一标识符
+    /// * `limit` - 返回记录的最大数量
+    /// * `offset` - 跳过的记录数量（用于分页）
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(Vec<Crawl>)` - 返回爬取任务列表
+    /// * `Err(RepositoryError)` - 查询失败时返回错误
+    async fn find_by_team_id_paginated(
+        &self,
+        team_id: Uuid,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<Crawl>, RepositoryError>;
+
+    /// 统计团队爬取任务数量
+    ///
+    /// # 参数
+    ///
+    /// * `team_id` - 团队的唯一标识符
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(u64)` - 返回任务总数
+    /// * `Err(RepositoryError)` - 统计失败时返回错误
+    async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError>;
 }

@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::impl_basic_error_conversions;
 use thiserror::Error;
 use tokio::time::error::Elapsed;
 
@@ -24,3 +25,5 @@ pub enum SearchError {
     #[error("没有可用的搜索引擎")]
     NoEngineAvailable,
 }
+
+impl_basic_error_conversions!(SearchError, Parse);

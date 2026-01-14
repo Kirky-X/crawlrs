@@ -1,17 +1,21 @@
 # Database Configuration
 [database]
-url = "postgres://crawlrs:password@localhost:5432/crawlrs_test"
+# Use environment variable: CRAWLRS__DATABASE__URL or build URL from components
+# Example: postgres://user:password@host:5432/database
+# For security, password should NOT be hardcoded in this file
 max_connections = 20
 min_connections = 5
 connect_timeout = 30
 idle_timeout = 600
 
 # Docker Database Configuration (overridden by environment variables)
+# WARNING: Do NOT hardcode passwords in this file!
+# Use CRAWLRS__DATABASE__PASSWORD environment variable
 [database.docker]
 host = "db"
 port = 5432
 user = "crawlrs"
-password = "password"
+password = ""  # Set via CRAWLRS__DATABASE__PASSWORD
 name = "crawlrs"
 
 # Redis Configuration
@@ -30,8 +34,9 @@ port = 8899
 enable_port_detection = true
 
 # Rate Limiting Configuration
+# IMPORTANT: Rate limiting SHOULD be enabled in production to prevent abuse
 [rate_limiting]
-enabled = false
+enabled = true
 default_rpm = 60
 
 # Concurrency Configuration
@@ -62,10 +67,13 @@ max_retries = 3
 [storage]
 storage_type = "local"
 local_path = "storage"
+# For S3 storage, use environment variables:
+# CRAWLRS__STORAGE__S3_ACCESS_KEY
+# CRAWLRS__STORAGE__S3_SECRET_KEY
 # s3_region = "us-east-1"
 # s3_bucket = "my-bucket"
-# s3_access_key = "access-key"
-# s3_secret_key = "secret-key"
+# s3_access_key = ""  # Set via environment variable
+# s3_secret_key = ""  # Set via environment variable
 
 # Webhook Configuration
 [webhook]
@@ -73,7 +81,9 @@ timeout_seconds = 10
 max_retries = 3
 retry_interval_seconds = 60
 user_agent = "Crawlrs-Webhook/1.0"
-secret = "your-webhook-secret"
+# IMPORTANT: Set webhook secret via CRAWLRS__WEBHOOK__SECRET environment variable
+# Do NOT use weak default values like "your-webhook-secret"
+secret = ""
 
 # Google Custom Search API Configuration
 [google_search]
@@ -82,9 +92,10 @@ cx = ""
 
 # LLM Configuration
 [llm]
-api_key = "ollama"
+# Set API key via CRAWLRS__LLM__API_KEY environment variable for production
+api_key = ""
 model = "qwen3:1.7b"
-api_base_url = "http://172.24.160.1:11434/v1"
+api_base_url = "http://localhost:11434/v1"
 
 # Engine Support Score Configuration
 # Scores are used by engine router to select the best engine for a request

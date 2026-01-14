@@ -11,6 +11,7 @@ use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::engines::engine_client::EngineClient;
+#[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::queue::task_queue::TaskQueue;
 use crate::workers::expiration_worker::ExpirationWorker;

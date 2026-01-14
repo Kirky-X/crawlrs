@@ -10,6 +10,7 @@ const MEDIUM_LOAD_DEPTH_FACTOR: f64 = 0.75;
 
 use crate::domain::models::task::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
+#[cfg(feature = "metrics")]
 use crate::infrastructure::observability::metrics::{get_cpu_usage, get_memory_usage};
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 use anyhow::Result;
@@ -78,7 +79,31 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         html_content: &str,
     ) -> Result<Vec<Task>> {
         tracing::debug!("Processing crawl result for task: {}", parent_task.id);
-        // Parse config from payload
+
+        let config = self.parse_crawl_config(parent_task)?;
+
+        if config.depth >= config.max_depth {
+            return Ok(vec![]);
+        }
+
+        let effective_max_depth = self.apply_load_degradation(config.depth, config.max_depth);
+
+        if config.depth >= effective_max_depth {
+            tracing::warn!(
+                "Crawl depth limited by degradation strategy: depth={}, effective_max_depth={}",
+                config.depth,
+                effective_max_depth
+            );
+            return Ok(vec![]);
+        }
+
+        let links = self.discover_links(html_content, &parent_task.url, &config)?;
+
+        self.create_tasks_from_links(parent_task, &links, config, effective_max_depth)
+            .await
+    }
+
+    fn parse_crawl_config(&self, parent_task: &Task) -> Result<CrawlConfig> {
         let depth = parent_task
             .payload
             .get("depth")
@@ -89,36 +114,6 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
             .get("max_depth")
             .and_then(|v| v.as_u64())
             .unwrap_or(3);
-
-        // Check depth limit
-        if depth >= max_depth {
-            return Ok(vec![]);
-        }
-
-        // Degradation strategy: reduce max_depth under high load
-        let cpu_usage = get_cpu_usage();
-        let mem_usage = get_memory_usage();
-        let effective_max_depth =
-            if cpu_usage > HIGH_LOAD_THRESHOLD || mem_usage > HIGH_LOAD_THRESHOLD {
-                // High load: limit depth to current + 1 or config/2
-                std::cmp::min(max_depth, depth + 1)
-            } else if cpu_usage > MEDIUM_LOAD_THRESHOLD || mem_usage > MEDIUM_LOAD_THRESHOLD {
-                // Medium load: limit depth to 75% of max_depth
-                std::cmp::max(
-                    depth + 1,
-                    (max_depth as f64 * MEDIUM_LOAD_DEPTH_FACTOR) as u64,
-                )
-            } else {
-                max_depth
-            };
-
-        if depth >= effective_max_depth {
-            tracing::warn!(
-                "Crawl depth limited by degradation strategy: depth={}, effective_max_depth={}, cpu={}, mem={}",
-                depth, effective_max_depth, cpu_usage, mem_usage
-            );
-            return Ok(vec![]);
-        }
 
         let include_patterns: Vec<String> = parent_task
             .payload
@@ -144,129 +139,191 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        // Extract links
-        let links = LinkDiscoverer::extract_links(html_content, &parent_task.url)?;
+        Ok(CrawlConfig {
+            depth,
+            max_depth,
+            include_patterns,
+            exclude_patterns,
+            strategy: strategy.to_string(),
+            domain_blacklist,
+        })
+    }
 
-        // Filter links
-        let filtered = LinkDiscoverer::filter_links(links, &include_patterns, &exclude_patterns);
+    #[cfg(feature = "metrics")]
+    fn apply_load_degradation(&self, depth: u64, max_depth: u64) -> u64 {
+        let cpu_usage = get_cpu_usage();
+        let mem_usage = get_memory_usage();
+
+        if cpu_usage > HIGH_LOAD_THRESHOLD || mem_usage > HIGH_LOAD_THRESHOLD {
+            tracing::warn!(
+                "High load detected: cpu={}, mem={}, limiting depth",
+                cpu_usage,
+                mem_usage
+            );
+            std::cmp::min(max_depth, depth + 1)
+        } else if cpu_usage > MEDIUM_LOAD_THRESHOLD || mem_usage > MEDIUM_LOAD_THRESHOLD {
+            tracing::warn!(
+                "Medium load detected: cpu={}, mem={}, limiting depth",
+                cpu_usage,
+                mem_usage
+            );
+            std::cmp::max(
+                depth + 1,
+                (max_depth as f64 * MEDIUM_LOAD_DEPTH_FACTOR) as u64,
+            )
+        } else {
+            max_depth
+        }
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    fn apply_load_degradation(&self, _depth: u64, max_depth: u64) -> u64 {
+        max_depth
+    }
+
+    fn discover_links(
+        &self,
+        html_content: &str,
+        base_url: &str,
+        config: &CrawlConfig,
+    ) -> Result<HashSet<String>> {
+        let links = LinkDiscoverer::extract_links(html_content, base_url)?;
+        let filtered =
+            LinkDiscoverer::filter_links(links, &config.include_patterns, &config.exclude_patterns);
+        Ok(filtered)
+    }
+
+    async fn create_tasks_from_links(
+        &self,
+        parent_task: &Task,
+        links: &HashSet<String>,
+        config: CrawlConfig,
+        effective_max_depth: u64,
+    ) -> Result<Vec<Task>> {
+        let filtered_vec: Vec<String> = links.iter().cloned().collect();
+        let existing_urls = self.repo.find_existing_urls(&filtered_vec).await?;
 
         let mut created_tasks = Vec::new();
 
-        for link in filtered {
-            debug!(link);
-
-            // Domain blacklist check
-            if let Ok(url) = Url::parse(&link) {
-                if let Some(domain) = url.domain() {
-                    if domain_blacklist.iter().any(|d| domain.contains(d)) {
-                        tracing::info!(
-                            "Skipping blacklisted domain: {} for link: {}",
-                            domain,
-                            link
-                        );
-                        debug!(domain);
-                        continue;
-                    }
-                }
+        for link in links.clone() {
+            if self.is_domain_blacklisted(&link, &config.domain_blacklist) {
+                continue;
             }
 
-            // Deduplication check
-            if self.repo.exists_by_url(&link).await? {
+            if existing_urls.contains(&link) {
                 debug!(url_exists = link);
                 continue;
             }
             debug!(url_new = link);
 
-            // Create new task payload
-            let mut payload = parent_task.payload.clone();
-            payload["depth"] = serde_json::json!(depth + 1);
-
-            // Adjust priority based on strategy
-            // BFS: Same priority (FIFO) or lower
-            // DFS: Higher priority (LIFO)
-            let mut priority = if strategy.to_lowercase() == "dfs" {
-                parent_task.priority + 10
-            } else {
-                parent_task.priority
-            };
-
-            // Degradation strategy: reduce priority for non-critical tasks under high load
-            if cpu_usage > 0.7 || mem_usage > 0.7 {
-                priority = priority.saturating_sub(5);
-            }
-
-            // Get robots.txt crawl delay if available
-            // 注意：这里将 robots 检查推迟到任务处理时，或者在此处并行检查
-            // 为了优化 UAT-012 的处理时间，我们可以在这里跳过 robots 检查，
-            // 让 Worker 在实际执行时进行检查。或者我们只获取 delay 但不进行完整的 allowed 检查。
-            // 但根据目前的代码结构，Robots 检查是在这里进行的。
-            // 优化：只有当 URL 不在数据库中时才检查 robots.txt
-
-            let user_agent = "Crawlrs/0.1.0";
-            // Robots.txt check - Move AFTER deduplication check to save network requests
-            let allowed = self.robots_checker.is_allowed(&link, user_agent).await?;
-            debug!(link, allowed);
-            if !allowed {
-                debug!(robots_blocked = link);
-                continue;
-            }
-            debug!(robots_allowed = link);
-
-            let robots_delay = self
-                .robots_checker
-                .get_crawl_delay(&link, user_agent)
+            if let Some(task) = self
+                .create_single_task(parent_task, &link, &config, effective_max_depth)
                 .await?
-                .map(|d| d.as_millis() as u64);
-
-            let config_delay = parent_task
-                .payload
-                .get("config")
-                .and_then(|c| c.get("crawl_delay_ms"))
-                .and_then(|v| v.as_u64());
-
-            // Prefer robots.txt delay if it's larger, or use config delay
-            let delay_ms = match (robots_delay, config_delay) {
-                (Some(r), Some(c)) => std::cmp::max(r, c),
-                (Some(r), None) => r,
-                (None, Some(c)) => c,
-                (None, None) => 0,
-            };
-
-            let scheduled_at = if delay_ms > 0 {
-                Some((Utc::now() + chrono::Duration::milliseconds(delay_ms as i64)).into())
-            } else {
-                None
-            };
-
-            let new_task = Task {
-                id: Uuid::new_v4(),
-                task_type: parent_task.task_type, // Propagate task type
-                status: TaskStatus::Queued,
-                priority,
-                team_id: parent_task.team_id,
-                url: link,
-                payload,
-                retry_count: 0,
-                attempt_count: 0,
-                max_retries: parent_task.max_retries,
-                scheduled_at,
-                created_at: Utc::now().into(),
-                started_at: None,
-                completed_at: None,
-                crawl_id: parent_task.crawl_id,
-                updated_at: Utc::now().into(),
-                lock_token: None,
-                lock_expires_at: None,
-                expires_at: parent_task.expires_at,
-            };
-
-            // Save to repository
-            self.repo.create(&new_task).await?;
-            created_tasks.push(new_task);
+            {
+                created_tasks.push(task);
+            }
         }
 
         Ok(created_tasks)
     }
+
+    fn is_domain_blacklisted(&self, link: &str, domain_blacklist: &[String]) -> bool {
+        if let Ok(url) = Url::parse(link) {
+            if let Some(domain) = url.domain() {
+                if domain_blacklist.iter().any(|d| domain.contains(d)) {
+                    tracing::info!("Skipping blacklisted domain: {} for link: {}", domain, link);
+                    debug!(domain);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    async fn create_single_task(
+        &self,
+        parent_task: &Task,
+        link: &str,
+        config: &CrawlConfig,
+        _effective_max_depth: u64,
+    ) -> Result<Option<Task>> {
+        let mut payload = parent_task.payload.clone();
+        payload["depth"] = serde_json::json!(config.depth + 1);
+
+        let priority = if config.strategy.to_lowercase() == "dfs" {
+            parent_task.priority + 10
+        } else {
+            parent_task.priority
+        };
+
+        let user_agent = "Crawlrs/0.1.0";
+        let allowed = self.robots_checker.is_allowed(link, user_agent).await?;
+        debug!(link, allowed);
+        if !allowed {
+            debug!(robots_blocked = link);
+            return Ok(None);
+        }
+        debug!(robots_allowed = link);
+
+        let robots_delay = self
+            .robots_checker
+            .get_crawl_delay(link, user_agent)
+            .await?
+            .map(|d| d.as_millis() as u64);
+
+        let config_delay = parent_task
+            .payload
+            .get("config")
+            .and_then(|c| c.get("crawl_delay_ms"))
+            .and_then(|v| v.as_u64());
+
+        let delay_ms = match (robots_delay, config_delay) {
+            (Some(r), Some(c)) => std::cmp::max(r, c),
+            (Some(r), None) => r,
+            (None, Some(c)) => c,
+            (None, None) => 0,
+        };
+
+        let scheduled_at = if delay_ms > 0 {
+            Some((Utc::now() + chrono::Duration::milliseconds(delay_ms as i64)).into())
+        } else {
+            None
+        };
+
+        let new_task = Task {
+            id: Uuid::new_v4(),
+            task_type: parent_task.task_type,
+            status: TaskStatus::Queued,
+            priority,
+            team_id: parent_task.team_id,
+            url: link.to_string(),
+            payload,
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: parent_task.max_retries,
+            scheduled_at,
+            created_at: Utc::now().into(),
+            started_at: None,
+            completed_at: None,
+            crawl_id: parent_task.crawl_id,
+            updated_at: Utc::now().into(),
+            lock_token: None,
+            lock_expires_at: None,
+            expires_at: parent_task.expires_at,
+        };
+
+        self.repo.create(&new_task).await?;
+        Ok(Some(new_task))
+    }
+}
+
+struct CrawlConfig {
+    depth: u64,
+    max_depth: u64,
+    include_patterns: Vec<String>,
+    exclude_patterns: Vec<String>,
+    strategy: String,
+    domain_blacklist: Vec<String>,
 }
 
 /// 链接发现器

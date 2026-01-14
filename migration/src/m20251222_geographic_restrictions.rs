@@ -304,15 +304,47 @@ impl MigrationTrait for Migration {
             .drop_table(Table::drop().table(GeoRestrictionLogs::Table).to_owned())
             .await?;
 
-        // 删除 teams 表的地理限制相关字段
+        // 删除 teams 表的地理限制相关字段 (SQLite 需要逐列删除)
         manager
             .alter_table(
                 Table::alter()
                     .table(Teams::Table)
                     .drop_column(Teams::AllowedCountries)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(Teams::Table)
                     .drop_column(Teams::BlockedCountries)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(Teams::Table)
                     .drop_column(Teams::IpWhitelist)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(Teams::Table)
                     .drop_column(Teams::DomainBlacklist)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(Teams::Table)
                     .drop_column(Teams::EnableGeoRestrictions)
                     .to_owned(),
             )

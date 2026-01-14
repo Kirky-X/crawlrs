@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 #[cfg(test)]
+#[cfg(feature = "db-sqlite")]
 mod expiration_worker_tests {
     use crate::domain::models::task::{TaskStatus, TaskType};
     use crate::infrastructure::database::entities::{task, team};

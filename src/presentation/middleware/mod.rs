@@ -9,6 +9,20 @@
 /// 包括认证、限流、信号量控制等功能
 pub mod auth_middleware;
 pub mod distributed_rate_limit_middleware;
+#[cfg(feature = "rate-limiting")]
 pub mod rate_limit_middleware;
 pub mod team_semaphore;
 pub mod team_semaphore_middleware;
+
+/// Public endpoints that don't require authentication or rate limiting
+pub const PUBLIC_ENDPOINTS: &[&str] = &["/health", "/metrics", "/v1/version"];
+
+/// Endpoints excluded from rate limiting
+pub const RATE_LIMIT_EXCLUDED_ENDPOINTS: &[&str] = &[
+    "/health",
+    "/metrics",
+    "/v1/version",
+    "/v1/extract",
+    "/v1/crawl",
+    "/v1/scrape",
+];
