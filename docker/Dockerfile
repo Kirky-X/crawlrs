@@ -1,5 +1,18 @@
+# =============================================================================
+# Crawlrs Unified Dockerfile
+# =============================================================================
+# This is the PRIMARY Dockerfile for building crawlrs from source.
+#
+# Related files:
+#   - Dockerfile.test: For running tests in Docker
+#   - Dockerfile.runtime: Lightweight runtime from pre-built binary
+#
+# Usage:
+#   Build:  docker build -t crawlrs:latest -f Dockerfile .
+#   Run:    docker run -p 3000:3000 crawlrs:latest
+# =============================================================================
+
 # Unified Dockerfile for crawlrs
-# Supports all service types: api, engine, extraction, worker
 
 # Stage 1: Builder
 FROM rust:1.92.0-bullseye as builder

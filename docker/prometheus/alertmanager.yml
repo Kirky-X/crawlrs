@@ -1,0 +1,160 @@
+# Copyright (c) 2025 Kirky.X
+#
+# Licensed under the Apache License, Version 2.0
+# See LICENSE file in the project root for full license information.
+
+# AlertManager Configuration for crawlrs
+# 文件位置: docker/prometheus/alertmanager.yml
+# 用途: 配置告警通知渠道和路由规则
+
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'localhost:25'
+  smtp_from: 'alertmanager@crawlrs.example.com'
+  smtp_auth_username: 'alertmanager'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+
+# 路由规则
+route:
+  group_by: ['alertname', 'severity', 'team']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default-receiver'
+  
+  # 子路由 - 按严重性分发到不同渠道
+  routes:
+    # P0-Critical: 立即通知 on-call 人员
+    - match:
+        severity: critical
+      receiver: 'pagerduty'
+      group_wait: 0s
+      repeat_interval: 1h
+    
+    # P1-High: 通知平台团队
+    - match:
+        severity: high
+      receiver: 'platform-slack'
+      group_wait: 1m
+    
+    # P3-Low: 记录到日志即可
+    - match:
+        severity: low
+      receiver: 'log-only'
+      continue: false
+
+# 接收者配置
+receivers:
+  # 默认接收者 - 发送邮件
+  - name: 'default-receiver'
+    email_configs:
+      - to: 'platform-team@example.com'
+        send_resolved: true
+        headers:
+          Subject: "[Crawlrs Alert] {{ .Status }} - {{ .GroupLabels.Alertname }}"
+        html: |
+          <h2>Crawlrs Alert</h2>
+          <p><strong>Status:</strong> {{ .Status }}</p>
+          <p><strong>Severity:</strong> {{ .Labels.severity }}</p>
+          <p><strong>Alert:</strong> {{ .Labels.alertname }}</p>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Start:</strong> {{ .StartsAt.Format "2006-01-02 15:04:05" }}</p>
+          {{ if gt (len .Labels) 1 }}
+          <h3>Labels</h3>
+          <ul>
+            {{ range $key, $value := .Labels }}
+            <li>{{ $key }}: {{ $value }}</li>
+            {{ end }}
+          </ul>
+          {{ end }}
+          {{ if gt (len .Annotations) 1 }}
+          <h3>Annotations</h3>
+          <ul>
+            {{ range $key, $value := .Annotations }}
+            <li>{{ $key }}: {{ $value }}</li>
+            {{ end }}
+          </ul>
+          {{ end }}
+          <p><a href="{{ .GeneratorURL }}">View in Prometheus</a></p>
+
+  # PagerDuty 接收者 (P0)
+  - name: 'pagerduty'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        severity: critical
+        event_type: 'trigger'
+        dedup_key: '{{ .GroupLabels.Alertname }}-{{ .Labels.severity }}'
+        description: |
+          Crawlrs Alert: {{ .Labels.alertname }}
+          
+          {{ .Annotations.description }}
+        details:
+          severity: '{{ .Labels.severity }}'
+          team: '{{ .Labels.team }}'
+          runbook_url: '{{ .Annotations.runbook_url }}'
+        action: 'trigger'
+        send_resolved: true
+
+  # Slack 接收者 (P1, P2)
+  - name: 'platform-slack'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#crawlrs-alerts'
+        username: 'Crawlrs AlertBot'
+        icon_emoji: ':rotating_light:'
+        title: |
+          [{{ .Status | toUpper }}] {{ .Labels.alertname }}
+        text: |
+          *Severity:* {{ .Labels.severity }}
+          *Team:* {{ .Labels.team }}
+          
+          {{ .Annotations.description }}
+          
+          {{ if gt (len .Labels) 1 }}
+          *Labels:*
+          {{ range $key, $value := .Labels }}{{ if ne $key "severity" }}{{ if ne $key "team" }}{{ if ne $key "alertname" }}• {{ $key }}: {{ $value }}
+          {{ end }}{{ end }}{{ end }}{{ end }}
+          
+          <{{ .GeneratorURL }}|View in Prometheus> | <{{ .Annotations.runbook_url }}|Runbook>
+        actions:
+          - type: button
+            text: 'Acknowledge'
+            confirm:
+              title: 'Acknowledge alert?'
+              text: 'This will mark the alert as acknowledged.'
+              ok_text: 'Yes'
+              dismiss_text: 'No'
+            url: '#'
+          - type: button
+            text: 'View Dashboard'
+            url: 'https://grafana.example.com/d/crawlrs-overview'
+        send_resolved: true
+
+  # 仅日志接收者 (P3)
+  - name: 'log-only'
+    webhook_configs:
+      - url: 'http://localhost:8080/webhooks/alert-logging'
+        send_resolved: true
+
+# 抑制规则
+inhibit_rules:
+  # 当 P0 告警触发时，抑制同类的 P1/P2/P3 告警
+  - source_match:
+      severity: 'critical'
+    target_match_re:
+      severity: 'high|medium|low'
+    equal:
+      - alertname
+      - team
+
+  # 当服务 down 告警触发时，抑制该服务的其他告警
+  - source_match:
+      alertname: 'CrawlrsServiceDown'
+    target_match_re:
+      alertname: 'Crawlrs.*'
+    equal:
+      - instance
+
+# 模板文件引用
+templates:
+  - '/etc/alertmanager/template/*.html'

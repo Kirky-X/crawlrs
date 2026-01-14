@@ -1,0 +1,208 @@
+# Copyright (c) 2025 Kirky.X
+#
+# Licensed under the Apache License, Version 2.0
+# See LICENSE file in the project root for full license information.
+
+# Prometheus Alert Rules for crawlrs
+# 文件位置: docker/prometheus/rules/crawlrs-alerts.yml
+# 用途: 定义业务级告警规则，用于 Prometheus AlertManager
+
+groups:
+  - name: crawlrs-critical
+    rules:
+      # P0-Critical: 服务完全不可用
+      - alert: CrawlrsServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Crawlrs service is down"
+          description: "The crawlrs service has been down for more than 1 minute."
+          runbook_url: "https://wiki.example.com/runbooks/crawlrs-down"
+
+      # P0-Critical: API 成功率低于 50%
+      - alert: CrawlrsAPISuccessRateCritical
+        expr: |
+          sum(rate(crawlrs_api_requests_total{status="success"}[5m])) 
+          / sum(rate(crawlrs_api_requests_total[5m])) < 0.5
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "API success rate critical (< 50%)"
+          description: "API success rate has dropped below 50% for 5 minutes."
+          runbook_url: "https://wiki.example.com/runbooks/api-success-rate"
+
+      # P0-Critical: 所有引擎不可用
+      - alert: CrawlrsAllEnginesUnavailable
+        expr: |
+          sum(crawlrs_engine_health{status="healthy"}) == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "All engines are unavailable"
+          description: "No engines are reporting healthy status."
+          runbook_url: "https://wiki.example.com/runbooks/all-engines-down"
+
+  - name: crawlrs-high
+    rules:
+      # P1-High: 任务成功率低于 95%
+      - alert: CrawlrsTaskSuccessRateLow
+        expr: |
+          sum(rate(crawlrs_tasks_completed{status="success"}[15m])) 
+          / sum(rate(crawlrs_tasks_completed[15m])) < 0.95
+        for: 15m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Task success rate below 95%"
+          description: "Task success rate has dropped below 95% for 15 minutes."
+          runbook_url: "https://wiki.example.com/runbooks/task-success-rate"
+
+      # P1-High: 数据库连接池耗尽
+      - alert: CrawlrsDBConnectionPoolExhausted
+        expr: |
+          crawlrs_db_connections_active / crawlrs_db_connections_max > 0.9
+        for: 10m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Database connection pool > 90% utilization"
+          description: "Database connection pool utilization exceeds 90%."
+          runbook_url: "https://wiki.example.com/runbooks/db-connections"
+
+      # P1-High: Redis 内存使用率高
+      - alert: CrawlrsRedisMemoryHigh
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 15m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Redis memory usage > 85%"
+          description: "Redis memory usage has exceeded 85%."
+          runbook_url: "https://wiki.example.com/runbooks/redis-memory"
+
+  - name: crawlrs-medium
+    rules:
+      # P2-Medium: 队列积压超过 10000
+      - alert: CrawlrsQueueBacklogHigh
+        expr: crawlrs_tasks_queue_depth > 10000
+        for: 30m
+        labels:
+          severity: medium
+          team: platform
+        annotations:
+          summary: "Task queue backlog > 10000"
+          description: "Task queue backlog has exceeded 10000 tasks for 30 minutes."
+          runbook_url: "https://wiki.example.com/runbooks/queue-backlog"
+
+      # P2-Medium: API P99 延迟 > 500ms
+      - alert: CrawlrsAPILatencyHigh
+        expr: |
+          histogram_quantile(0.99, sum(rate(crawlrs_api_request_duration_seconds_bucket[10m])) by (le, endpoint)) > 0.5
+        for: 10m
+        labels:
+          severity: medium
+          team: platform
+        annotations:
+          summary: "API P99 latency > 500ms"
+          description: "API P99 latency has exceeded 500ms for 10 minutes."
+          runbook_url: "https://wiki.example.com/runbooks/api-latency"
+
+      # P2-Medium: 引擎断路器打开
+      - alert: CrawlrsEngineCircuitBreakerOpen
+        expr: crawlrs_engine_circuit_breaker_state == 2
+        for: 5m
+        labels:
+          severity: medium
+          team: platform
+        annotations:
+          summary: "Engine circuit breaker open"
+          description: "Circuit breaker for {{ $labels.engine }} has been open for 5 minutes."
+          runbook_url: "https://wiki.example.com/runbooks/circuit-breaker"
+
+  - name: crawlrs-low
+    rules:
+      # P3-Low: 单个引擎故障
+      - alert: CrawlrsEngineFailure
+        expr: |
+          increase(crawlrs_engine_errors_total[1h]) > 10
+        for: 1h
+        labels:
+          severity: low
+          team: platform
+        annotations:
+          summary: "Engine {{ $labels.engine }} failing frequently"
+          description: "Engine {{ $labels.engine }} has had more than 10 errors in the last hour."
+          runbook_url: "https://wiki.example.com/runbooks/engine-errors"
+
+      # P3-Low: Worker CPU 使用率高
+      - alert: CrawlrsWorkerCPUHigh
+        expr: |
+          rate(process_cpu_seconds_total{job="crawlrs-worker"}[5m]) * 100 > 80
+        for: 10m
+        labels:
+          severity: low
+          team: platform
+        annotations:
+          summary: "Worker CPU usage > 80%"
+          description: "Worker process CPU usage has exceeded 80% for 10 minutes."
+          runbook_url: "https://wiki.example.com/runbooks/worker-cpu"
+
+      # P3-Low: Webhook 投递失败
+      - alert: CrawlrsWebhookDeliveryFailed
+        expr: |
+          increase(crawlrs_webhook_delivery_failed[1h]) > 5
+        for: 1h
+        labels:
+          severity: low
+          team: platform
+        annotations:
+          summary: "Webhook delivery failures increasing"
+          description: "More than 5 webhook deliveries failed in the last hour."
+
+  - name: crawlrs-recording
+    rules:
+      # Recording rules for better performance
+      # API 成功率
+      - record: crawlrs_api_success_rate
+        expr: |
+          sum(rate(crawlrs_api_requests_total{status="success"}[5m])) 
+          / sum(rate(crawlrs_api_requests_total[5m]))
+
+      # 任务成功率
+      - record: crawlrs_task_success_rate
+        expr: |
+          sum(rate(crawlrs_tasks_completed{status="success"}[15m])) 
+          / sum(rate(crawlrs_tasks_completed[15m]))
+
+      # 按引擎的成功率
+      - record: crawlrs_engine_success_rate
+        expr: |
+          sum by (engine) (rate(crawlrs_engine_requests_total{status="success"}[5m])) 
+          / sum by (engine) (rate(crawlrs_engine_requests_total[5m]))
+
+      # 按引擎的平均响应时间
+      - record: crawlrs_engine_avg_response_time
+        expr: |
+          sum by (engine) (rate(crawlrs_engine_response_time_seconds_sum[5m])) 
+          / sum by (engine) (rate(crawlrs_engine_response_time_seconds_count[5m]))
+
+      # 队列深度
+      - record: crawlrs_tasks_queue_depth
+        expr: |
+          sum by (status) (crawlrs_tasks_total)
+
+      # 活跃 Worker 数量
+      - record: crawlrs_active_workers
+        expr: |
+          count(up{job="crawlrs-worker"} == 1)

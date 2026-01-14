@@ -6,7 +6,7 @@
 
 # Database Configuration (使用 Docker 容器 nebula-postgres)
 [database]
-url = "postgres://idgen:idgen123@localhost:5432/crawlrs_test"
+url = "postgres://crawlrs:password@localhost:5432/crawlrs_test"
 max_connections = 20
 min_connections = 5
 connect_timeout = 60
