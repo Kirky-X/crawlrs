@@ -123,6 +123,34 @@ impl std::fmt::Display for ScopePermission {
     }
 }
 
+impl From<ScopePermission> for ApiKeyScope {
+    fn from(permission: ScopePermission) -> Self {
+        match permission {
+            ScopePermission::Read => Self {
+                read: true,
+                write: false,
+                admin: false,
+                search_limit: 100,
+                scrape_limit: 50,
+            },
+            ScopePermission::Write => Self {
+                read: true,
+                write: true,
+                admin: false,
+                search_limit: 100,
+                scrape_limit: 50,
+            },
+            ScopePermission::Admin => Self {
+                read: true,
+                write: true,
+                admin: true,
+                search_limit: 100,
+                scrape_limit: 50,
+            },
+        }
+    }
+}
+
 /// Feature flag for runtime feature control
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureFlag {

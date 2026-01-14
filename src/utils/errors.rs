@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use regex::Regex;
 use thiserror::Error;
 
 /// Macro to generate standard error conversions for basic types
@@ -38,6 +39,67 @@ macro_rules! impl_basic_error_conversions {
             }
         }
     };
+}
+
+/// 错误消息脱敏函数
+///
+/// 移除错误消息中的敏感信息，包括：
+/// - 数据库表名和列名
+/// - 文件路径
+/// - SQL 查询片段
+/// - 内部服务地址
+pub fn sanitize_error_message(msg: &str) -> String {
+    let mut msg = msg.to_string();
+
+    // 移除表名和列名模式 (如 "table: users", "column: email")
+    let table_column_pattern = Regex::new(r#"(?i)(table|column|field):\s*[\w."']+"#).unwrap();
+    msg = table_column_pattern
+        .replace_all(&msg, "[REDACTED]")
+        .to_string();
+
+    // 移除 SQL 查询片段
+    let sql_pattern = Regex::new(r#"(?i)(SQL|query|statement):\s*[^,\]}]+"#).unwrap();
+    msg = sql_pattern.replace_all(&msg, "[SQL_REDACTED]").to_string();
+
+    // 移除文件路径 (如 /home/dev/crawlrs/src/..., /app/...)
+    let file_path_pattern = Regex::new(r#"/[a-zA-Z0-9_/.-]+\.(rs|toml|env|yml|json)"#).unwrap();
+    msg = file_path_pattern
+        .replace_all(&msg, "[FILE_PATH_REDACTED]")
+        .to_string();
+
+    // 移除行号信息 (如 "at line 42", "src/file.rs:42")
+    let line_number_pattern = Regex::new(r#"[a-zA-Z0-9_/.-]+\.rs:\d+"#).unwrap();
+    msg = line_number_pattern
+        .replace_all(&msg, "[LOCATION_REDACTED]")
+        .to_string();
+
+    // 移除内部 IP 地址
+    let internal_ip_pattern = Regex::new(r#"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b"#).unwrap();
+    msg = internal_ip_pattern
+        .replace_all(&msg, "[INTERNAL_IP_REDACTED]")
+        .to_string();
+
+    // 移除端口号（如果是内部服务）
+    let internal_service_pattern = Regex::new(r#"(localhost|127\.0\.0\.1):\d+"#).unwrap();
+    msg = internal_service_pattern
+        .replace_all(&msg, "$1:[PORT_REDACTED]")
+        .to_string();
+
+    // 移除数据库连接字符串中的密码
+    let db_password_pattern = Regex::new(r#"(postgres|mysql|mongodb)://[^:]+:[^@]+@"#).unwrap();
+    msg = db_password_pattern
+        .replace_all(&msg, "$1://[USER]:[PASSWORD]@")
+        .to_string();
+
+    msg
+}
+
+/// 检查是否应该显示详细错误信息
+fn should_show_detailed_errors() -> bool {
+    // 开发环境显示详细错误，生产环境隐藏
+    std::env::var("CRAWLRS_ENV")
+        .map(|v| v.eq_ignore_ascii_case("development") || v.eq_ignore_ascii_case("dev"))
+        .unwrap_or(false)
 }
 
 /// 仓库层错误类型
@@ -131,8 +193,23 @@ impl axum::response::IntoResponse for AppError {
             AppError::Validation(msg) => (axum::http::StatusCode::BAD_REQUEST, msg),
             AppError::NotFound(msg) => (axum::http::StatusCode::NOT_FOUND, msg),
             AppError::RateLimited(msg) => (axum::http::StatusCode::TOO_MANY_REQUESTS, msg),
-            AppError::Internal(msg) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, msg),
-            AppError::ServiceUnavailable(msg) => (axum::http::StatusCode::SERVICE_UNAVAILABLE, msg),
+            AppError::Internal(msg) => {
+                // 在生产环境中脱敏内部错误消息
+                let sanitized_msg = if should_show_detailed_errors() {
+                    msg
+                } else {
+                    sanitize_error_message(&msg)
+                };
+                (axum::http::StatusCode::INTERNAL_SERVER_ERROR, sanitized_msg)
+            }
+            AppError::ServiceUnavailable(msg) => {
+                let sanitized_msg = if should_show_detailed_errors() {
+                    msg
+                } else {
+                    sanitize_error_message(&msg)
+                };
+                (axum::http::StatusCode::SERVICE_UNAVAILABLE, sanitized_msg)
+            }
         };
 
         let body = serde_json::json!({
@@ -186,5 +263,69 @@ impl From<crate::config::settings::ConfigSecurityError> for AppError {
 impl From<crate::utils::robots::RobotsCheckerError> for AppError {
     fn from(err: crate::utils::robots::RobotsCheckerError) -> Self {
         AppError::Internal(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_error_message_removes_table_names() {
+        let msg = "Database error: table 'users' column 'email' not found";
+        let sanitized = sanitize_error_message(msg);
+        assert!(!sanitized.contains("users"));
+        assert!(!sanitized.contains("email"));
+    }
+
+    #[test]
+    fn test_sanitize_error_message_removes_file_paths() {
+        let msg = "Error at /home/dev/crawlrs/src/main.rs:42";
+        let sanitized = sanitize_error_message(msg);
+        assert!(!sanitized.contains("/home/dev/crawlrs/"));
+        assert!(sanitized.contains("LOCATION_REDACTED"));
+    }
+
+    #[test]
+    fn test_sanitize_error_message_removes_internal_ips() {
+        let msg = "Connection failed to 10.0.0.1:5432";
+        let sanitized = sanitize_error_message(msg);
+        assert!(!sanitized.contains("10.0.0.1"));
+    }
+
+    #[test]
+    fn test_sanitize_error_message_removes_db_passwords() {
+        let msg = "Connection failed: postgres://user:password123@localhost:5432";
+        let sanitized = sanitize_error_message(msg);
+        assert!(!sanitized.contains("password123"));
+        assert!(sanitized.contains("[PASSWORD]"));
+    }
+
+    #[test]
+    fn test_sanitize_error_message_preserves_safe_content() {
+        let msg = "Invalid input: email format is incorrect";
+        let sanitized = sanitize_error_message(msg);
+        assert!(sanitized.contains("Invalid input"));
+        assert!(sanitized.contains("email format"));
+    }
+
+    #[test]
+    fn test_should_show_detailed_errors_in_dev() {
+        std::env::set_var("CRAWLRS_ENV", "development");
+        assert!(should_show_detailed_errors());
+        std::env::remove_var("CRAWLRS_ENV");
+    }
+
+    #[test]
+    fn test_should_hide_detailed_errors_in_prod() {
+        std::env::set_var("CRAWLRS_ENV", "production");
+        assert!(!should_show_detailed_errors());
+        std::env::remove_var("CRAWLRS_ENV");
+    }
+
+    #[test]
+    fn test_should_hide_detailed_errors_by_default() {
+        std::env::remove_var("CRAWLRS_ENV");
+        assert!(!should_show_detailed_errors());
     }
 }

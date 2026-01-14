@@ -13,6 +13,31 @@ use std::time::Duration;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// 脱敏 webhook 响应消息
+///
+/// 截断并清理 webhook 响应中的敏感信息
+fn sanitize_webhook_response(body: &str) -> String {
+    const MAX_LENGTH: usize = 200;
+
+    if body.is_empty() {
+        return String::new();
+    }
+
+    let truncated = if body.len() > MAX_LENGTH {
+        format!("{}... (truncated)", &body[..MAX_LENGTH])
+    } else {
+        body.to_string()
+    };
+
+    // 移除可能的敏感信息（API 密钥、令牌等）
+    let sanitized = truncated.replace(
+        |c: char| !c.is_ascii_graphic() && !c.is_ascii_whitespace(),
+        "?",
+    );
+
+    sanitized
+}
+
 /// Webhook服务实现
 pub struct WebhookServiceImpl {
     /// HTTP 客户端
@@ -71,10 +96,16 @@ impl WebhookService for WebhookServiceImpl {
         } else {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            let sanitized_body = sanitize_webhook_response(&body);
+            tracing::warn!(
+                "Webhook delivery failed with status {}: {}",
+                status,
+                sanitized_body
+            );
             Err(anyhow!(
                 "Webhook delivery failed with status {}: {}",
                 status,
-                body
+                sanitized_body
             ))
         }
     }
