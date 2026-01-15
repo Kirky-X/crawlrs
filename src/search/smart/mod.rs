@@ -32,6 +32,26 @@ fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
     Selector::parse(selector_str).ok()
 }
 
+/// 解析并验证选择器，如果所有选择器都失败则返回错误
+///
+/// 这个辅助函数消除了重复的 `.expect()` 模式
+fn parse_selectors(
+    engine_name: &str,
+    selectors: &[&'static str],
+    selector_type: &str,
+) -> Result<Selector, SearchError> {
+    selectors
+        .iter()
+        .filter_map(|s| safe_parse_selector(s))
+        .next()
+        .ok_or_else(|| {
+            SearchError::Parse(format!(
+                "Failed to parse {} selector for {}",
+                selector_type, engine_name
+            ))
+        })
+}
+
 /// 搜索结果解析器配置
 struct SearchResultParserConfig {
     /// 结果选择器
@@ -58,46 +78,15 @@ fn parse_search_results_common(
 
     let document = Html::parse_document(html);
 
-    // 选择最佳可用选择器
-    let result_selector = config
-        .result_selectors
-        .iter()
-        .filter_map(|s| safe_parse_selector(s))
-        .next()
-        .expect(&format!(
-            "Failed to parse result selector for {}",
-            config.engine_name
-        ));
+    // 使用辅助函数解析选择器，消除重复的 expect 模式
+    let result_selector = parse_selectors(config.engine_name, &config.result_selectors, "result")?;
 
-    let title_selector = config
-        .title_selectors
-        .iter()
-        .filter_map(|s| safe_parse_selector(s))
-        .next()
-        .expect(&format!(
-            "Failed to parse title selector for {}",
-            config.engine_name
-        ));
+    let title_selector = parse_selectors(config.engine_name, &config.title_selectors, "title")?;
 
-    let link_selector = config
-        .link_selectors
-        .iter()
-        .filter_map(|s| safe_parse_selector(s))
-        .next()
-        .expect(&format!(
-            "Failed to parse link selector for {}",
-            config.engine_name
-        ));
+    let link_selector = parse_selectors(config.engine_name, &config.link_selectors, "link")?;
 
-    let snippet_selector = config
-        .snippet_selectors
-        .iter()
-        .filter_map(|s| safe_parse_selector(s))
-        .next()
-        .expect(&format!(
-            "Failed to parse snippet selector for {}",
-            config.engine_name
-        ));
+    let snippet_selector =
+        parse_selectors(config.engine_name, &config.snippet_selectors, "snippet")?;
 
     // 确定URL属性名（默认为href）
     let url_attr = config.url_attr.unwrap_or("href");

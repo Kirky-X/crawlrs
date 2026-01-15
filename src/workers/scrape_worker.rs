@@ -29,6 +29,7 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+use crate::utils::regex_cache::RegexCache;
 
 use crate::engines::engine_client::{
     EngineClient, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse, ScreenshotConfig,
@@ -81,23 +82,10 @@ impl From<anyhow::Error> for ScrapeWorkerError {
     }
 }
 
-use std::sync::Mutex;
-
-static REGEX_CACHE: Lazy<Mutex<HashMap<String, regex::Regex>>> =
-    Lazy::new(|| Mutex::new(HashMap::with_capacity(256)));
-
 fn get_cached_regex(pattern: &str) -> Result<regex::Regex, ScrapeWorkerError> {
-    let mut cache = REGEX_CACHE
-        .lock()
-        .map_err(|_| ScrapeWorkerError::CacheLockError)?;
-    if let Some(regex) = cache.get(pattern) {
-        return Ok(regex.clone());
-    }
-
-    let regex =
-        regex::Regex::new(pattern).map_err(|e| ScrapeWorkerError::RegexError(e.to_string()))?;
-    cache.insert(pattern.to_string(), regex.clone());
-    Ok(regex)
+    RegexCache::global()
+        .get_or_insert(pattern)
+        .map_err(|e| ScrapeWorkerError::RegexError(e))
 }
 
 /// 抓取工作者

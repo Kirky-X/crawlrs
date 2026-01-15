@@ -14,7 +14,7 @@ use crate::domain::repositories::{
     task_repository::TaskRepository, tasks_backlog_repository::TasksBacklogRepository,
 };
 use crate::domain::services::rate_limiting_service::RateLimitingService;
-use crate::utils::errors::WorkerError;
+use crate::utils::errors::{RepositoryResultExt, WorkerError};
 use crate::workers::worker::{ProcessResult, WorkerProcess};
 
 /// 积压任务处理Worker
@@ -54,7 +54,7 @@ impl BacklogWorker {
             .tasks_backlog_repository
             .get_pending_tasks(None, Some(self.batch_size as u64))
             .await
-            .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+            .repo_err()?;
 
         if pending_backlogs.is_empty() {
             info!("没有待处理的积压任务");
@@ -121,7 +121,7 @@ impl BacklogWorker {
             self.tasks_backlog_repository
                 .update(&expired_backlog)
                 .await
-                .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+                .repo_err()?;
 
             return Ok(false);
         }
@@ -138,7 +138,7 @@ impl BacklogWorker {
             self.tasks_backlog_repository
                 .update(&failed_backlog)
                 .await
-                .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+                .repo_err()?;
 
             return Ok(false);
         }
@@ -171,7 +171,7 @@ impl BacklogWorker {
                         self.tasks_backlog_repository
                             .update(&retry_backlog)
                             .await
-                            .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+                            .repo_err()?;
 
                         Err(e)
                     }
@@ -210,7 +210,7 @@ impl BacklogWorker {
             .task_repository
             .find_by_id(backlog.task_id)
             .await
-            .map_err(|e| WorkerError::RepositoryError(e.to_string()))?
+            .repo_err()?
             .ok_or_else(|| WorkerError::NotFound(format!("任务 {} 不存在", backlog.task_id)))?;
 
         // 2. 检查任务状态
@@ -226,7 +226,7 @@ impl BacklogWorker {
             self.tasks_backlog_repository
                 .update(&completed_backlog)
                 .await
-                .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+                .repo_err()?;
 
             return Ok(());
         }
@@ -239,7 +239,7 @@ impl BacklogWorker {
         self.task_repository
             .update(&updated_task)
             .await
-            .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+            .repo_err()?;
 
         // 4. 标记积压任务为已完成
         let mut completed_backlog = backlog.clone();
@@ -250,7 +250,7 @@ impl BacklogWorker {
         self.tasks_backlog_repository
             .update(&completed_backlog)
             .await
-            .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+            .repo_err()?;
 
         info!("任务 {} 重新激活成功", task.id);
         Ok(())
@@ -264,7 +264,7 @@ impl BacklogWorker {
             .tasks_backlog_repository
             .get_expired_tasks(Some(100))
             .await
-            .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+            .repo_err()?;
 
         if expired_backlogs.is_empty() {
             info!("没有过期的积压任务");
@@ -302,14 +302,14 @@ impl BacklogWorker {
         self.tasks_backlog_repository
             .update(&expired_backlog)
             .await
-            .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+            .repo_err()?;
 
         // 2. 查找对应的任务
         let task = self
             .task_repository
             .find_by_id(backlog.task_id)
             .await
-            .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+            .repo_err()?;
 
         if let Some(task) = task {
             // 3. 如果任务还在pending状态，标记为失败
@@ -318,10 +318,7 @@ impl BacklogWorker {
                 failed_task.status = crate::domain::models::task::TaskStatus::Failed;
                 failed_task.updated_at = Utc::now().into();
 
-                self.task_repository
-                    .update(&failed_task)
-                    .await
-                    .map_err(|e| WorkerError::RepositoryError(e.to_string()))?;
+                self.task_repository.update(&failed_task).await.repo_err()?;
 
                 info!("任务 {} 因积压过期被标记为失败", task.id);
             }

@@ -7,8 +7,9 @@ use chrono::{DateTime, Duration, Utc};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use thiserror::Error;
+
+use crate::utils::regex_cache::RegexCache;
 
 /// Relevance scorer errors
 #[derive(Error, Debug)]
@@ -79,21 +80,12 @@ static DATE_REGEXES: Lazy<Vec<(Regex, DateParser)>> = Lazy::new(|| {
     ]
 });
 
-static REGEX_CACHE: Lazy<Mutex<HashMap<String, Regex>>> =
-    Lazy::new(|| Mutex::new(HashMap::with_capacity(256)));
+static REGEX_CACHE: Lazy<RegexCache> = Lazy::new(RegexCache::new);
 
 fn get_cached_regex(term: &str) -> Result<Regex, RelevanceScorerError> {
-    let pattern = format!(r"\b{}\b", regex::escape(term));
-    let mut cache = REGEX_CACHE
-        .lock()
-        .map_err(|e| RelevanceScorerError::CacheLockError(e.to_string()))?;
-    if let Some(regex) = cache.get(&pattern) {
-        return Ok(regex.clone());
-    }
-    let regex =
-        Regex::new(&pattern).map_err(|e| RelevanceScorerError::RegexError(e.to_string()))?;
-    cache.insert(pattern.clone(), regex.clone());
-    Ok(regex)
+    RegexCache::global()
+        .get_or_insert_escaped(term)
+        .map_err(|e| RelevanceScorerError::RegexError(e))
 }
 
 pub struct RelevanceScorer {

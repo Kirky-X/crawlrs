@@ -14,6 +14,7 @@ pub mod credits_repo_impl;
 pub mod database_geo_restriction_repo;
 pub mod feature_flag_repo_impl;
 pub mod geo_restriction_repo_impl;
+pub mod macros;
 pub mod scrape_result_repo_impl;
 pub mod task_repo_impl;
 pub mod tasks_backlog_repo_impl;

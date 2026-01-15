@@ -166,6 +166,31 @@ impl From<RepositoryError> for WorkerError {
     }
 }
 
+/// Extension trait for converting repository errors to WorkerError
+///
+/// This eliminates repetitive `.map_err(|e| WorkerError::RepositoryError(e.to_string()))` patterns.
+///
+/// # Usage
+///
+/// ```rust
+/// use crate::utils::errors::RepositoryResultExt;
+///
+/// async fn example() -> Result<(), WorkerError> {
+///     let result = repository.find_by_id(id).await?;
+///     Ok(result)
+/// }
+/// ```
+pub trait RepositoryResultExt<T> {
+    /// Convert the result to WorkerError format
+    fn repo_err(self) -> Result<T, WorkerError>;
+}
+
+impl<T, E: std::fmt::Display> RepositoryResultExt<T> for Result<T, E> {
+    fn repo_err(self) -> Result<T, WorkerError> {
+        self.map_err(|e| WorkerError::RepositoryError(e.to_string()))
+    }
+}
+
 /// 统一的应用层错误
 #[derive(Error, Debug)]
 pub enum AppError {
