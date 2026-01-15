@@ -17,7 +17,7 @@ autoexamples = false
 default = ["engine-reqwest", "redis-cache", "rate-limiting", "metrics", "db-postgres"]
 
 # 全功能组合
-full = ["default", "engine-playwright", "engine-fire-cdp", "engine-fire-tls", "db-sqlite"]
+full = ["default", "engine-playwright", "engine-fire-cdp", "engine-fire-tls", "engine-flaresolverr", "db-sqlite"]
 
 # --- 引擎特性 ---
 # 基础 HTTP 引擎 (始终可用)
@@ -29,6 +29,9 @@ engine-playwright = ["dep:chromiumoxide"]
 # Fire 引擎组件
 engine-fire-cdp = []
 engine-fire-tls = []
+
+# FlareSolverr 引擎
+engine-flaresolverr = []
 
 # --- 搜索特性 ---
 search-google = []
@@ -188,5 +191,21 @@ name = "test_sogou"
 path = "examples/search/test_sogou.rs"
 
 [[example]]
+name = "test_playwright_google"
+path = "examples/browser/test_playwright_google.rs"
+
+[[example]]
 name = "test_unified_search"
 path = "examples/search/test_unified_search.rs"
+
+[[example]]
+name = "test_playwright_basic"
+path = "examples/browser/test_playwright_basic.rs"
+
+[[example]]
+name = "test_google_homepage"
+path = "examples/browser/test_google_homepage.rs"
+
+[[example]]
+name = "test_flaresolverr_direct"
+path = "examples/browser/test_flaresolverr_direct.rs"

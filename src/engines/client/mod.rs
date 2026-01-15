@@ -18,6 +18,10 @@ pub mod fire_cdp;
 #[cfg(feature = "engine-fire-tls")]
 pub mod fire_tls;
 
+/// FlareSolverr 引擎模块
+#[cfg(feature = "engine-flaresolverr")]
+pub mod flare_solverr;
+
 // Re-exports
 
 /// Reqwest 引擎 (始终可用)
@@ -34,3 +38,7 @@ pub use self::fire_cdp::FireEngineCdp;
 /// Fire TLS 引擎
 #[cfg(feature = "engine-fire-tls")]
 pub use self::fire_tls::FireEngineTls;
+
+/// FlareSolverr 引擎
+#[cfg(feature = "engine-flaresolverr")]
+pub use self::flare_solverr::FlareSolverrEngine;

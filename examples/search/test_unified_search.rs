@@ -50,7 +50,7 @@ async fn main() {
         ENGINE_TIMEOUT_SECS
     );
     // Create EngineClient
-    let reqwest_engine = Arc::new(ReqwestEngine);
+    let reqwest_engine = Arc::new(ReqwestEngine::default());
     let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
     let engine_client = Arc::new(EngineClient::with_engines(engines));

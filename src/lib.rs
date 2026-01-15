@@ -61,3 +61,8 @@ pub mod search;
 ///
 /// 提供任务队列接口和实现
 pub mod queue;
+
+/// 示例模块
+///
+/// 提供示例测试工具函数
+pub mod examples;

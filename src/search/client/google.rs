@@ -268,11 +268,13 @@ impl SearchEngine for GoogleSearchEngine {
         );
 
         // Use EngineClient to scrape the search result page
-        // We force use_fire_engine=true as requested for better Google scraping reliability
+        // Google requires JavaScript rendering, so we set needs_js=true
+        // The EngineClient's smart routing will automatically select the optimal engine
+        // based on support_score (Playwright/Playwright will get 100, Reqwest will get 10)
         let engine_request = EngineScrapeRequest::new(&google_url)
             .with_options(
                 crate::engines::engine_client::ScrapeOptions::builder()
-                    .use_fire_engine(true)
+                    .needs_js(true)  // Google requires JS rendering
                     .timeout(Duration::from_secs(60))
                     .headers(
                         vec![

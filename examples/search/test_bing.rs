@@ -5,7 +5,7 @@
 
 //! Bing 搜索引擎真实搜索测试
 
-use crate::test_harness::SearchTestHarness;
+use crate::examples::test_harness::SearchTestHarness;
 use crawlrs::search::client::bing::BingSearchEngine;
 
 const TIMEOUT_SECS: u64 = 60;
