@@ -6,7 +6,7 @@
 pub mod test_baidu;
 pub mod test_bing;
 pub mod test_google;
+pub mod test_harness;
 pub mod test_smart_search;
 pub mod test_sogou;
-pub mod test_sogou_redirect;
 pub mod test_unified_search;
