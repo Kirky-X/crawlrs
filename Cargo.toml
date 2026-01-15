@@ -188,5 +188,17 @@ name = "test_sogou"
 path = "examples/search/test_sogou.rs"
 
 [[example]]
+name = "test_sogou_redirect"
+path = "examples/search/test_sogou_redirect.rs"
+
+[[example]]
+name = "test_sogou_parse"
+path = "examples/search/test_sogou_parse.rs"
+
+[[example]]
+name = "test_sogou_url"
+path = "examples/search/test_sogou_url.rs"
+
+[[example]]
 name = "test_unified_search"
 path = "examples/search/test_unified_search.rs"

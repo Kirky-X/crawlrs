@@ -33,6 +33,38 @@ impl SogouSearchEngine {
         Self
     }
 
+    /// 解析并补全搜狗搜索结果中的URL
+    /// 处理相对路径和中转URL格式
+    pub fn resolve_url(&self, url: &str) -> String {
+        if url.is_empty() {
+            return String::new();
+        }
+
+        // 如果已经是完整URL，直接返回
+        if url.starts_with("http://") || url.starts_with("https://") {
+            return url.to_string();
+        }
+
+        // 处理搜狗中转链接: /link?url=...
+        if url.starts_with("/link?url=") {
+            // 提取参数中的URL并解码
+            let encoded_url = url.trim_start_matches("/link?url=");
+            // URL解码
+            return match urlencoding::decode(encoded_url) {
+                Ok(decoded) => decoded.into_owned(),
+                Err(_) => encoded_url.to_string(),
+            };
+        }
+
+        // 处理其他相对路径
+        if url.starts_with("/") {
+            return format!("https://www.sogou.com{}", url);
+        }
+
+        // 其他情况返回原URL
+        url.to_string()
+    }
+
     pub fn parse_search_results(
         &self,
         html_content: &str,
@@ -43,28 +75,45 @@ impl SogouSearchEngine {
         let title_selector =
             safe_parse_selector("h3").expect("Failed to parse Sogou title selector");
         let link_selector =
-            safe_parse_selector("h3 > a").expect("Failed to parse Sogou link selector");
+            safe_parse_selector("h3 a").expect("Failed to parse Sogou link selector");
 
         let mut results = Vec::new();
 
         for element in document.select(&result_selector) {
-            let title = element
-                .select(&title_selector)
-                .next()
-                .map(|e| e.text().collect::<String>())
-                .unwrap_or_default();
+            // 提取标题 - 获取纯文本并清理空白
+            let title_node = element.select(&title_selector).next();
+            if title_node.is_none() {
+                continue;
+            }
 
-            let url = element
-                .select(&link_selector)
-                .next()
-                .and_then(|e| e.value().attr("href"))
-                .unwrap_or_default()
+            // 获取所有文本并清理
+            let raw_title = title_node.unwrap().text().collect::<String>();
+            let title = raw_title.trim().to_string();
+
+            if title.is_empty() {
+                continue;
+            }
+
+            // 提取链接
+            let url_node = element.select(&link_selector).next();
+            if url_node.is_none() {
+                continue;
+            }
+
+            let raw_url = url_node
+                .unwrap()
+                .value()
+                .attr("href")
+                .unwrap_or("")
                 .to_string();
 
-            if !title.is_empty() && !url.is_empty() {
+            // 解析并补全URL
+            let resolved_url = self.resolve_url(&raw_url);
+
+            if !resolved_url.is_empty() {
                 results.push(ResponseItem {
                     title,
-                    url,
+                    url: resolved_url,
                     description: String::new(),
                     engine: SearchEngineType::Sogou,
                 });
