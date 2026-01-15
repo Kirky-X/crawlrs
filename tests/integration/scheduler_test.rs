@@ -41,7 +41,10 @@ async fn test_reset_stuck_tasks() {
         lock_expires_at: Some(past_time.into()), // Expired
     };
 
-    app.task_repo.create(&task).await.expect("Failed to create stuck task");
+    app.task_repo
+        .create(&task)
+        .await
+        .expect("Failed to create stuck task");
     // We need to manually update it to Active/Locked because create usually sets defaults or we need to ensure the DB state matches.
     // However, our repository implementation inserts what we give it, or sets defaults if missing.
     // The create implementation uses `model.insert`, and `ActiveModel` From<Task> sets all fields.
@@ -77,7 +80,10 @@ async fn test_reset_stuck_tasks() {
         lock_token: Some(Uuid::new_v4()),
         lock_expires_at: Some(future_time.into()), // Not Expired
     };
-    app.task_repo.create(&valid_task).await.expect("Failed to create valid task");
+    app.task_repo
+        .create(&valid_task)
+        .await
+        .expect("Failed to create valid task");
 
     // 3. Call reset_stuck_tasks
     // Timeout parameter is used to check against started_at if lock_expires_at is null.
@@ -92,7 +98,12 @@ async fn test_reset_stuck_tasks() {
     // 4. Verify results
     assert_eq!(affected, 1, "Should reset exactly 1 task");
 
-    let updated_stuck_task = app.task_repo.find_by_id(task_id).await.expect("Failed to find stuck task").expect("Stuck task not found");
+    let updated_stuck_task = app
+        .task_repo
+        .find_by_id(task_id)
+        .await
+        .expect("Failed to find stuck task")
+        .expect("Stuck task not found");
     assert_eq!(updated_stuck_task.status, TaskStatus::Queued);
     assert!(updated_stuck_task.lock_token.is_none());
     assert!(updated_stuck_task.lock_expires_at.is_none());

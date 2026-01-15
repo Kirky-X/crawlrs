@@ -9,7 +9,7 @@ use super::helpers::{
     create_test_app, create_test_app_with_low_rate_limit, create_test_app_with_rate_limit_options,
 };
 use crate::common::constants::timeouts::{
-    QUICK_TEST_TIMEOUT, CRAWL_TASK_TIMEOUT, API_REQUEST_TIMEOUT,
+    API_REQUEST_TIMEOUT, CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT,
 };
 use axum::http::StatusCode;
 use chrono::Utc;
@@ -328,7 +328,7 @@ async fn test_circuit_breaker_and_engine_fallback() {
         url: test_url,
         headers: HashMap::new(),
         timeout: QUICK_TEST_TIMEOUT, // 短超时触发 Reqwest 失败
-        needs_js: true,                  // 确保 Playwright 愿意处理
+        needs_js: true,              // 确保 Playwright 愿意处理
         needs_screenshot: false,
         screenshot_config: None,
         mobile: false,

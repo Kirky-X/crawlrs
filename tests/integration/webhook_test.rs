@@ -33,11 +33,15 @@ async fn start_test_server(success: bool) -> String {
         )
     };
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind to address");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind to address");
     let addr = listener.local_addr().expect("Failed to get local address");
 
     tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("Failed to start server");
+        axum::serve(listener, app)
+            .await
+            .expect("Failed to start server");
     });
 
     format!("http://{}/webhook", addr)
@@ -50,7 +54,10 @@ async fn test_webhook_delivery_success() {
 
     let webhook_url = start_test_server(true).await;
     let event_id = Uuid::new_v4();
-    let team_id = app.api_key.parse::<Uuid>().expect("Failed to parse team ID from API key");
+    let team_id = app
+        .api_key
+        .parse::<Uuid>()
+        .expect("Failed to parse team ID from API key");
 
     let event = WebhookEvent {
         id: event_id,
@@ -80,7 +87,11 @@ async fn test_webhook_delivery_success() {
     let result = worker.process_pending_webhooks().await;
     assert!(result.is_ok());
 
-    let updated_event = repo.find_by_id(event_id).await.expect("Failed to find webhook event").expect("Webhook event not found");
+    let updated_event = repo
+        .find_by_id(event_id)
+        .await
+        .expect("Failed to find webhook event")
+        .expect("Webhook event not found");
     assert_eq!(updated_event.status, WebhookStatus::Delivered);
     assert_eq!(updated_event.response_status, Some(200));
 }
@@ -144,7 +155,11 @@ async fn test_webhook_delivery_failure_retry() {
 
     assert!(result.is_ok());
 
-    let updated_event = repo.find_by_id(event_id).await.expect("Failed to find webhook event").expect("Webhook event not found");
+    let updated_event = repo
+        .find_by_id(event_id)
+        .await
+        .expect("Failed to find webhook event")
+        .expect("Webhook event not found");
 
     assert_eq!(updated_event.attempt_count, 1);
 
@@ -202,7 +217,11 @@ async fn test_webhook_max_retries_dead_letter() {
     assert!(result.is_ok());
 
     // 3. Check that it's now in Dead state
-    let updated_event = repo.find_by_id(event_id).await.expect("Failed to find webhook event").expect("Webhook event not found");
+    let updated_event = repo
+        .find_by_id(event_id)
+        .await
+        .expect("Failed to find webhook event")
+        .expect("Webhook event not found");
     assert_eq!(updated_event.attempt_count, 5);
     assert_eq!(updated_event.status, WebhookStatus::Dead);
 }
@@ -245,7 +264,11 @@ async fn test_webhook_non_retryable_error() {
     let result = worker.process_pending_webhooks().await;
     assert!(result.is_ok());
 
-    let updated_event = repo.find_by_id(event_id).await.expect("Failed to find webhook event").expect("Webhook event not found");
+    let updated_event = repo
+        .find_by_id(event_id)
+        .await
+        .expect("Failed to find webhook event")
+        .expect("Webhook event not found");
     // 400 Bad Request is not in retryable patterns, so it should go straight to Dead
     assert_eq!(updated_event.status, WebhookStatus::Dead);
     assert_eq!(updated_event.attempt_count, 1);
@@ -255,11 +278,15 @@ async fn start_test_server_status(status_code: u16) -> String {
     let status = StatusCode::from_u16(status_code).expect("Failed to create status code");
     let app = Router::new().route("/webhook", post(move || async move { status }));
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind to address");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind to address");
     let addr = listener.local_addr().expect("Failed to get local address");
 
     tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("Failed to start server");
+        axum::serve(listener, app)
+            .await
+            .expect("Failed to start server");
     });
 
     format!("http://{}/webhook", addr)

@@ -69,7 +69,10 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     let handle1 = tokio::spawn(async move {
         // Small delay to ensure Worker 1 starts first
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        repo1.acquire_next(worker1_id).await.expect("Failed to acquire task for worker 1")
+        repo1
+            .acquire_next(worker1_id)
+            .await
+            .expect("Failed to acquire task for worker 1")
     });
 
     let repo2 = repo.clone();
@@ -77,7 +80,10 @@ async fn test_concurrent_task_acquisition_and_timeout() {
         // Give Worker 1 more time to acquire and set the lock before Worker 2 tries
         // The database transaction and lock setting need time to complete
         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-        repo2.acquire_next(worker2_id).await.expect("Failed to acquire task for worker 2")
+        repo2
+            .acquire_next(worker2_id)
+            .await
+            .expect("Failed to acquire task for worker 2")
     });
 
     let result1 = handle1.await.expect("Failed to join worker 1 task");
@@ -119,10 +125,16 @@ async fn test_concurrent_task_acquisition_and_timeout() {
 
     let mut task_active: task_entity::ActiveModel = task_model.into();
     task_active.lock_expires_at = Set(Some(expired_time.into()));
-    task_active.update(app.db_pool.as_ref()).await.expect("Failed to update task");
+    task_active
+        .update(app.db_pool.as_ref())
+        .await
+        .expect("Failed to update task");
 
     // Worker 2 should now be able to acquire the task
-    let reacquired_task = repo.acquire_next(worker2_id).await.expect("Failed to reacquire task");
+    let reacquired_task = repo
+        .acquire_next(worker2_id)
+        .await
+        .expect("Failed to reacquire task");
     assert!(reacquired_task.is_some());
     assert_eq!(reacquired_task.expect("Task not found").id, task.id);
 }
@@ -164,15 +176,25 @@ async fn test_repository_crud_operations() {
     repo.create(&new_task).await.expect("Failed to create task");
 
     // Read
-    let found_task = repo.find_by_id(new_task.id).await.expect("Failed to query task").expect("Task not found");
+    let found_task = repo
+        .find_by_id(new_task.id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
     assert_eq!(found_task.id, new_task.id);
 
     // Update
     let mut updated_task = found_task;
     updated_task.status = TaskStatus::Active;
-    repo.update(&updated_task).await.expect("Failed to update task");
+    repo.update(&updated_task)
+        .await
+        .expect("Failed to update task");
 
-    let found_after_update = repo.find_by_id(updated_task.id).await.expect("Failed to query task").expect("Task not found");
+    let found_after_update = repo
+        .find_by_id(updated_task.id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
     assert_eq!(found_after_update.status, TaskStatus::Active);
 }
 
@@ -245,17 +267,28 @@ async fn test_repository_acquire_next_task() {
     repo.create(&task2).await.expect("Failed to create task 2");
 
     // Acquire first task (should be task1 due to higher priority)
-    let acquired_task1 = repo.acquire_next(worker_id).await.expect("Failed to acquire task").expect("No task available");
+    let acquired_task1 = repo
+        .acquire_next(worker_id)
+        .await
+        .expect("Failed to acquire task")
+        .expect("No task available");
     assert_eq!(acquired_task1.id, task1.id);
     assert_eq!(acquired_task1.status, TaskStatus::Active);
 
     // Acquire second task
-    let acquired_task2 = repo.acquire_next(worker_id).await.expect("Failed to acquire task").expect("No task available");
+    let acquired_task2 = repo
+        .acquire_next(worker_id)
+        .await
+        .expect("Failed to acquire task")
+        .expect("No task available");
     assert_eq!(acquired_task2.id, task2.id);
     assert_eq!(acquired_task2.status, TaskStatus::Active);
 
     // No more tasks to acquire
-    let no_more_tasks = repo.acquire_next(worker_id).await.expect("Failed to acquire task");
+    let no_more_tasks = repo
+        .acquire_next(worker_id)
+        .await
+        .expect("Failed to acquire task");
     assert!(no_more_tasks.is_none());
 }
 
@@ -296,8 +329,14 @@ async fn test_task_status_transitions() {
     repo.create(&task).await.expect("Failed to create task");
 
     // Test mark_completed
-    repo.mark_completed(task.id).await.expect("Failed to mark task as completed");
-    let completed_task = repo.find_by_id(task.id).await.expect("Failed to query task").expect("Task not found");
+    repo.mark_completed(task.id)
+        .await
+        .expect("Failed to mark task as completed");
+    let completed_task = repo
+        .find_by_id(task.id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
     assert_eq!(completed_task.status, TaskStatus::Completed);
     assert!(completed_task.completed_at.is_some());
 
@@ -306,10 +345,18 @@ async fn test_task_status_transitions() {
     let mut failed_task = task.clone();
     failed_task.id = failed_task_id;
     failed_task.status = TaskStatus::Active;
-    repo.create(&failed_task).await.expect("Failed to create failed task");
+    repo.create(&failed_task)
+        .await
+        .expect("Failed to create failed task");
 
-    repo.mark_failed(failed_task_id).await.expect("Failed to mark task as failed");
-    let found_failed_task = repo.find_by_id(failed_task_id).await.expect("Failed to query task").expect("Task not found");
+    repo.mark_failed(failed_task_id)
+        .await
+        .expect("Failed to mark task as failed");
+    let found_failed_task = repo
+        .find_by_id(failed_task_id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
     assert_eq!(found_failed_task.status, TaskStatus::Failed);
 
     // Test mark_cancelled
@@ -317,10 +364,18 @@ async fn test_task_status_transitions() {
     let mut cancelled_task = task.clone();
     cancelled_task.id = cancelled_task_id;
     cancelled_task.status = TaskStatus::Queued;
-    repo.create(&cancelled_task).await.expect("Failed to create cancelled task");
+    repo.create(&cancelled_task)
+        .await
+        .expect("Failed to create cancelled task");
 
-    repo.mark_cancelled(cancelled_task_id).await.expect("Failed to mark task as cancelled");
-    let found_cancelled_task = repo.find_by_id(cancelled_task_id).await.expect("Failed to query task").expect("Task not found");
+    repo.mark_cancelled(cancelled_task_id)
+        .await
+        .expect("Failed to mark task as cancelled");
+    let found_cancelled_task = repo
+        .find_by_id(cancelled_task_id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
     assert_eq!(found_cancelled_task.status, TaskStatus::Cancelled);
 }
 
@@ -337,7 +392,10 @@ async fn test_exists_by_url() {
     let test_url = "https://example.com/exists-test";
 
     // Initially, URL should not exist
-    assert!(!repo.exists_by_url(test_url).await.expect("Failed to check task existence"));
+    assert!(!repo
+        .exists_by_url(test_url)
+        .await
+        .expect("Failed to check task existence"));
 
     // Create a task with the URL
     let task = Task {
@@ -365,7 +423,10 @@ async fn test_exists_by_url() {
     repo.create(&task).await.expect("Failed to create task");
 
     // Now URL should exist
-    assert!(repo.exists_by_url(test_url).await.expect("Failed to check task existence"));
+    assert!(repo
+        .exists_by_url(test_url)
+        .await
+        .expect("Failed to check task existence"));
 
     // Test with different URL
     assert!(!repo
@@ -444,8 +505,12 @@ async fn test_reset_stuck_tasks() {
         lock_expires_at: None,
     };
 
-    repo.create(&stuck_task).await.expect("Failed to create stuck task");
-    repo.create(&recent_task).await.expect("Failed to create recent task");
+    repo.create(&stuck_task)
+        .await
+        .expect("Failed to create stuck task");
+    repo.create(&recent_task)
+        .await
+        .expect("Failed to create recent task");
 
     // Reset tasks that have been active for more than 30 minutes
     let reset_count = repo
@@ -455,11 +520,19 @@ async fn test_reset_stuck_tasks() {
     assert_eq!(reset_count, 1);
 
     // Verify the stuck task was reset
-    let reset_task = repo.find_by_id(stuck_task.id).await.expect("Failed to query task").expect("Task not found");
+    let reset_task = repo
+        .find_by_id(stuck_task.id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
     assert_eq!(reset_task.status, TaskStatus::Queued);
 
     // Verify the recent task was not reset
-    let unchanged_task = repo.find_by_id(recent_task.id).await.expect("Failed to query task").expect("Task not found");
+    let unchanged_task = repo
+        .find_by_id(recent_task.id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
     assert_eq!(unchanged_task.status, TaskStatus::Active);
 }
 
@@ -523,14 +596,22 @@ async fn test_cancel_tasks_by_crawl_id() {
         lock_token: None,
         lock_expires_at: None,
     };
-    repo.create(&different_crawl_task).await.expect("Failed to create different crawl task");
+    repo.create(&different_crawl_task)
+        .await
+        .expect("Failed to create different crawl task");
 
     // Cancel tasks by crawl_id
-    let cancelled_count = repo.cancel_tasks_by_crawl_id(crawl_id).await.expect("Failed to cancel tasks by crawl ID");
+    let cancelled_count = repo
+        .cancel_tasks_by_crawl_id(crawl_id)
+        .await
+        .expect("Failed to cancel tasks by crawl ID");
     assert_eq!(cancelled_count, 3);
 
     // Verify tasks with the target crawl_id were cancelled
-    let tasks_by_crawl_id = repo.find_by_crawl_id(crawl_id).await.expect("Failed to find tasks by crawl ID");
+    let tasks_by_crawl_id = repo
+        .find_by_crawl_id(crawl_id)
+        .await
+        .expect("Failed to find tasks by crawl ID");
     assert_eq!(tasks_by_crawl_id.len(), 3);
     for task in tasks_by_crawl_id {
         assert_eq!(task.status, TaskStatus::Cancelled);
@@ -653,10 +734,18 @@ async fn test_expire_tasks() {
         lock_expires_at: None,
     };
 
-    repo.create(&expired_queued_task).await.expect("Failed to create expired queued task");
-    repo.create(&expired_active_task).await.expect("Failed to create expired active task");
-    repo.create(&recent_queued_task).await.expect("Failed to create recent queued task");
-    repo.create(&recent_active_task).await.expect("Failed to create recent active task");
+    repo.create(&expired_queued_task)
+        .await
+        .expect("Failed to create expired queued task");
+    repo.create(&expired_active_task)
+        .await
+        .expect("Failed to create expired active task");
+    repo.create(&recent_queued_task)
+        .await
+        .expect("Failed to create recent queued task");
+    repo.create(&recent_active_task)
+        .await
+        .expect("Failed to create recent active task");
 
     // Expire tasks older than 1 day
     let expired_count = repo.expire_tasks().await.expect("Failed to expire tasks");
@@ -758,10 +847,15 @@ async fn test_find_by_crawl_id() {
         lock_token: None,
         lock_expires_at: None,
     };
-    repo.create(&different_crawl_task).await.expect("Failed to create different crawl task");
+    repo.create(&different_crawl_task)
+        .await
+        .expect("Failed to create different crawl task");
 
     // Find tasks by crawl_id
-    let found_tasks = repo.find_by_crawl_id(crawl_id).await.expect("Failed to find tasks by crawl ID");
+    let found_tasks = repo
+        .find_by_crawl_id(crawl_id)
+        .await
+        .expect("Failed to find tasks by crawl ID");
     assert_eq!(found_tasks.len(), 3);
 
     // Verify all found tasks have the correct crawl_id
@@ -771,6 +865,9 @@ async fn test_find_by_crawl_id() {
     }
 
     // Verify no tasks are found for non-existent crawl_id
-    let no_tasks = repo.find_by_crawl_id(Uuid::new_v4()).await.expect("Failed to find tasks by crawl ID");
+    let no_tasks = repo
+        .find_by_crawl_id(Uuid::new_v4())
+        .await
+        .expect("Failed to find tasks by crawl ID");
     assert!(no_tasks.is_empty());
 }

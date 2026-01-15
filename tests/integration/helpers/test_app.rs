@@ -79,6 +79,7 @@ where
     }
 }
 
+use crate::common::constants::timeouts::{API_REQUEST_TIMEOUT, CRAWL_TASK_TIMEOUT};
 use crawlrs::config::settings::Settings;
 use crawlrs::domain::auth::ApiKeyScope;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
@@ -115,9 +116,6 @@ use std::process::Command;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use uuid::Uuid;
-use crate::common::constants::timeouts::{
-    API_REQUEST_TIMEOUT, CRAWL_TASK_TIMEOUT,
-};
 
 #[allow(dead_code)]
 struct InMemoryQueue {
@@ -532,7 +530,9 @@ pub async fn create_test_app_with_rate_limit_options(
         _rate_limit_enabled,
     );
 
-    let mock_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Failed to parse socket address");
+    let mock_addr: SocketAddr = "127.0.0.1:8080"
+        .parse()
+        .expect("Failed to parse socket address");
     let app = app.layer(ConnectInfoLayer::new(mock_addr));
     let server = TestServer::new(app).expect("Failed to create test server");
 
@@ -637,10 +637,8 @@ pub async fn create_test_app_with_rate_limit_options(
 
         // Also start expiration worker
         let expiration_worker = Arc::new(ExpirationWorker::new(worker_task_repo.clone()));
-        let expiration_worker = Arc::new(AbstractWorker::new(
-            expiration_worker,
-            CRAWL_TASK_TIMEOUT,
-        ));
+        let expiration_worker =
+            Arc::new(AbstractWorker::new(expiration_worker, CRAWL_TASK_TIMEOUT));
         let exp_worker_clone = expiration_worker.clone();
         tokio::spawn(async move {
             exp_worker_clone.run().await;
@@ -848,10 +846,14 @@ pub async fn create_test_app_no_worker() -> TestApp {
             db_password
         )
     });
-    let db = Database::connect(&db_url).await.expect("Failed to connect to database");
+    let db = Database::connect(&db_url)
+        .await
+        .expect("Failed to connect to database");
     let db_pool = Arc::new(db);
 
-    Migrator::up(db_pool.as_ref(), None).await.expect("Failed to run database migrations");
+    Migrator::up(db_pool.as_ref(), None)
+        .await
+        .expect("Failed to run database migrations");
 
     // 清理测试相关的表数据
     let db_backend = if db_url.starts_with("postgres://") {
@@ -937,7 +939,9 @@ pub async fn create_test_app_no_worker() -> TestApp {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let redis_url = format!("redis://127.0.0.1:{}", redis_port);
     eprintln!("DEBUG: Connecting to Redis at {}", redis_url);
-    let redis_client = RedisClient::new(&redis_url).await.expect("Failed to connect to Redis");
+    let redis_client = RedisClient::new(&redis_url)
+        .await
+        .expect("Failed to connect to Redis");
     eprintln!("DEBUG: Redis connection established");
 
     let api_key = Uuid::new_v4().to_string();
@@ -1083,7 +1087,9 @@ pub async fn create_test_app_no_worker() -> TestApp {
         true,
     );
 
-    let mock_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Failed to parse socket address");
+    let mock_addr: SocketAddr = "127.0.0.1:8080"
+        .parse()
+        .expect("Failed to parse socket address");
     let app = app.layer(ConnectInfoLayer::new(mock_addr));
     let server = TestServer::new(app).expect("Failed to create test server");
 

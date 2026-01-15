@@ -19,12 +19,16 @@ async fn test_process_crawl_result_creates_tasks_integration() {
     // 1. Setup Local Server for Robots.txt
     let app_router =
         Router::new().route("/robots.txt", get(|| async { "User-agent: *\nAllow: /" }));
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind to address");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind to address");
     let addr = listener.local_addr().expect("Failed to get local address");
     let base_url = format!("http://{}", addr);
 
     tokio::spawn(async move {
-        axum::serve(listener, app_router).await.expect("Failed to start server");
+        axum::serve(listener, app_router)
+            .await
+            .expect("Failed to start server");
     });
 
     // 2. Initialize Service with Real Repository from App
@@ -96,12 +100,16 @@ async fn test_process_crawl_result_respects_domain_blacklist() {
     // 1. Setup Local Server for Robots.txt
     let app_router =
         Router::new().route("/robots.txt", get(|| async { "User-agent: *\nAllow: /" }));
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind to address");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind to address");
     let addr = listener.local_addr().expect("Failed to get local address");
     let base_url = format!("http://{}", addr);
 
     tokio::spawn(async move {
-        axum::serve(listener, app_router).await.expect("Failed to start server");
+        axum::serve(listener, app_router)
+            .await
+            .expect("Failed to start server");
     });
 
     let service = CrawlService::new(app.task_repo.clone());

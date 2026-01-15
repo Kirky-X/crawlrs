@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CrawlRequestDto {
     pub url: String,
     pub name: Option<String>,
@@ -17,6 +18,7 @@ pub struct CrawlRequestDto {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct CrawlConfigDto {
     pub max_depth: u32,
     pub include_patterns: Option<Vec<String>>,

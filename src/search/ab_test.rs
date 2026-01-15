@@ -174,7 +174,7 @@ mod tests {
 
         async fn search(
             &self,
-            request: &SearchRequest,
+            _request: &SearchRequest,
         ) -> Result<Response<ResponseItem>, SearchError> {
             self.search_call_count.fetch_add(1, Ordering::SeqCst);
             Ok(Response {
@@ -210,7 +210,7 @@ mod tests {
     async fn test_ab_test_engine_search_with_engine_delegation() {
         // Create two mock engines
         let (engine_a, count_a, _) = MockEngine::new("engine_a");
-        let (engine_b, count_b, _) = MockEngine::new("engine_b");
+        let (engine_b, _count_b, _) = MockEngine::new("engine_b");
 
         // Create A/B test engine with 100% variant_a to ensure deterministic behavior
         let ab_engine = SearchABTestEngine::new(engine_a, engine_b, 0.0);
@@ -236,8 +236,8 @@ mod tests {
     #[tokio::test]
     async fn test_ab_test_engine_search_with_engine_passes_filter() {
         // Create two mock engines
-        let (engine_a, count_a, last_filter_a) = MockEngine::new("engine_a");
-        let (engine_b, count_b, last_filter_b) = MockEngine::new("engine_b");
+        let (engine_a, _count_a, last_filter_a) = MockEngine::new("engine_a");
+        let (engine_b, _count_b, _last_filter_b) = MockEngine::new("engine_b");
 
         // Create A/B test engine with 100% variant_a
         let ab_engine = SearchABTestEngine::new(engine_a, engine_b, 0.0);

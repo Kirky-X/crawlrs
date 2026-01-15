@@ -206,7 +206,9 @@ impl TestAppFixture {
         } else {
             "redis://127.0.0.1:6379".to_string()
         };
-        let redis_client = RedisClient::new(&redis_url).await.expect("Failed to create Redis client");
+        let redis_client = RedisClient::new(&redis_url)
+            .await
+            .expect("Failed to create Redis client");
 
         let api_key = Uuid::new_v4().to_string();
         let team_id = Uuid::new_v4();
@@ -346,9 +348,11 @@ impl TestAppFixture {
             options.rate_limit_enabled,
         );
 
-        let mock_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Failed to parse socket address");
-            let app = app.layer(ConnectInfoLayer::new(mock_addr));
-            let server = TestServer::new(app).expect("Failed to create test server");
+        let mock_addr: SocketAddr = "127.0.0.1:8080"
+            .parse()
+            .expect("Failed to parse socket address");
+        let app = app.layer(ConnectInfoLayer::new(mock_addr));
+        let server = TestServer::new(app).expect("Failed to create test server");
         let app = TestApp {
             server,
             api_key,

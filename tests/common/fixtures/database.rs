@@ -58,11 +58,15 @@ impl DatabaseFixture {
 
     /// 使用指定选项创建数据库固件
     pub async fn with_options(options: DatabaseOptions) -> Self {
-        let db = Database::connect(&options.url).await.expect("Failed to connect to database");
+        let db = Database::connect(&options.url)
+            .await
+            .expect("Failed to connect to database");
         let db_pool = Arc::new(db);
 
         // 运行数据库迁移
-        Migrator::up(db_pool.as_ref(), None).await.expect("Failed to run database migrations");
+        Migrator::up(db_pool.as_ref(), None)
+            .await
+            .expect("Failed to run database migrations");
 
         let db_backend = if options.url.starts_with("postgres://") {
             DbBackend::Postgres

@@ -11,7 +11,7 @@
 use crate::domain::models::credits::{CreditsTransaction, CreditsTransactionType};
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::info;
 use uuid::Uuid;
 
 /// Configuration for credits costs
@@ -196,8 +196,8 @@ mod tests {
 
         async fn get_transaction_history(
             &self,
-            _team_id: Uuid,
-            _limit: Option<u32>,
+            team_id: Uuid,
+            limit: Option<u32>,
         ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
             Ok(vec![])
         }

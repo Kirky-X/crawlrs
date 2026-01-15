@@ -104,7 +104,10 @@ async fn run_concurrent_search_tests(
         let test_query = test_query.to_string();
 
         let handle = tokio::spawn(async move {
-            let _permit = semaphore.acquire().await.expect("Failed to acquire semaphore permit");
+            let _permit = semaphore
+                .acquire()
+                .await
+                .expect("Failed to acquire semaphore permit");
 
             println!("🔍 开始测试 {} 搜索引擎...", engine_name);
 

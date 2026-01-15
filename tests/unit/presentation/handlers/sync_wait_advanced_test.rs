@@ -54,9 +54,13 @@ fn create_test_task_with_status(
 }
 
 async fn setup_test_repo() -> TaskRepositoryImpl {
-    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("Failed to create in-memory database");
     use migration::{Migrator, MigratorTrait};
-    Migrator::up(&db, None).await.expect("Failed to run database migrations");
+    Migrator::up(&db, None)
+        .await
+        .expect("Failed to run database migrations");
     TaskRepositoryImpl::new(Arc::new(db), chrono::Duration::seconds(30))
 }
 
@@ -69,7 +73,9 @@ async fn test_sync_wait_smart_logic_immediate() {
 
     let completed_task =
         create_test_task_with_status(task_id, team_id, TaskStatus::Completed, TaskType::Scrape);
-    repo.create(&completed_task).await.expect("Failed to create completed task");
+    repo.create(&completed_task)
+        .await
+        .expect("Failed to create completed task");
 
     // When: 调用同步等待函数，设置 5 秒等待时间
     let start = Instant::now();
@@ -94,7 +100,9 @@ async fn test_sync_wait_smart_logic_timeout() {
 
     let processing_task =
         create_test_task_with_status(task_id, team_id, TaskStatus::Active, TaskType::Scrape);
-    repo.create(&processing_task).await.expect("Failed to create processing task");
+    repo.create(&processing_task)
+        .await
+        .expect("Failed to create processing task");
 
     // When: 调用同步等待函数，设置较短的超时时间
     let start = Instant::now();
@@ -129,9 +137,15 @@ async fn test_sync_wait_multiple_tasks_mixed_status() {
     let queued_task =
         create_test_task_with_status(task_ids[2], team_id, TaskStatus::Queued, TaskType::Scrape);
 
-    repo.create(&completed_task).await.expect("Failed to create completed task");
-    repo.create(&processing_task).await.expect("Failed to create processing task");
-    repo.create(&queued_task).await.expect("Failed to create queued task");
+    repo.create(&completed_task)
+        .await
+        .expect("Failed to create completed task");
+    repo.create(&processing_task)
+        .await
+        .expect("Failed to create processing task");
+    repo.create(&queued_task)
+        .await
+        .expect("Failed to create queued task");
 
     // When: 调用同步等待函数，设置较长等待时间
     let start = Instant::now();
@@ -157,7 +171,9 @@ async fn test_sync_wait_default_behavior() {
 
     let queued_task =
         create_test_task_with_status(task_id, team_id, TaskStatus::Queued, TaskType::Scrape);
-    repo.create(&queued_task).await.expect("Failed to create queued task");
+    repo.create(&queued_task)
+        .await
+        .expect("Failed to create queued task");
 
     // When: 调用同步等待函数，使用默认参数
     let start = Instant::now();
@@ -201,9 +217,15 @@ async fn test_sync_wait_task_type_variations() {
         TaskType::Crawl,
     );
 
-    repo.create(&scrape_task).await.expect("Failed to create scrape task");
-    repo.create(&search_task).await.expect("Failed to create search task");
-    repo.create(&crawl_task).await.expect("Failed to create crawl task");
+    repo.create(&scrape_task)
+        .await
+        .expect("Failed to create scrape task");
+    repo.create(&search_task)
+        .await
+        .expect("Failed to create search task");
+    repo.create(&crawl_task)
+        .await
+        .expect("Failed to create crawl task");
 
     // When: 调用同步等待函数，等待所有任务
     let start = Instant::now();

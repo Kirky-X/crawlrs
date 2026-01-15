@@ -56,7 +56,9 @@ fn test_google_result_parsing() {
     "#;
 
     let engine = GoogleSearchEngine::new(Arc::new(EngineClient::new()));
-    let results = engine.parse_results(html).expect("Failed to parse google search results");
+    let results = engine
+        .parse_results(html)
+        .expect("Failed to parse google search results");
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].title, "Test Title");

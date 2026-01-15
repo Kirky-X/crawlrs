@@ -80,12 +80,10 @@ static DATE_REGEXES: Lazy<Vec<(Regex, DateParser)>> = Lazy::new(|| {
     ]
 });
 
-static REGEX_CACHE: Lazy<RegexCache> = Lazy::new(RegexCache::new);
-
 fn get_cached_regex(term: &str) -> Result<Regex, RelevanceScorerError> {
     RegexCache::global()
         .get_or_insert_escaped(term)
-        .map_err(|e| RelevanceScorerError::RegexError(e))
+        .map_err(RelevanceScorerError::RegexError)
 }
 
 pub struct RelevanceScorer {

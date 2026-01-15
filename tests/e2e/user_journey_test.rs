@@ -3,12 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::common::constants::timeouts::E2E_TEST_TIMEOUT;
 use crate::integration::helpers::create_test_app;
 use axum::http::StatusCode;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
-use crate::common::constants::timeouts::E2E_TEST_TIMEOUT;
 
 #[tokio::test]
 async fn test_new_user_onboarding_journey() {
@@ -58,7 +58,10 @@ async fn test_new_user_onboarding_journey() {
 
     assert_eq!(first_scrape_response.status_code(), StatusCode::ACCEPTED);
     let scrape_data: serde_json::Value = first_scrape_response.json();
-    let task_id = scrape_data["id"].as_str().expect("Missing 'id' field in scrape response").to_string();
+    let task_id = scrape_data["id"]
+        .as_str()
+        .expect("Missing 'id' field in scrape response")
+        .to_string();
 
     // Step 6: User checks task status
     let mut status = String::from("pending");
@@ -74,7 +77,10 @@ async fn test_new_user_onboarding_journey() {
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
         let status_data: serde_json::Value = status_response.json();
-        status = status_data["status"].as_str().expect("Missing 'status' field in task response").to_string();
+        status = status_data["status"]
+            .as_str()
+            .expect("Missing 'status' field in task response")
+            .to_string();
 
         sleep(Duration::from_millis(500)).await;
         retries += 1;
@@ -205,7 +211,10 @@ async fn test_developer_integration_journey() {
 
     assert_eq!(cancel_test_response.status_code(), StatusCode::ACCEPTED);
     let cancel_data: serde_json::Value = cancel_test_response.json();
-    let cancel_task_id = cancel_data["id"].as_str().expect("Missing 'id' field in cancel response").to_string();
+    let cancel_task_id = cancel_data["id"]
+        .as_str()
+        .expect("Missing 'id' field in cancel response")
+        .to_string();
 
     // Immediately try to cancel (may or may not succeed depending on timing)
     let cancel_response = app
@@ -299,7 +308,12 @@ async fn test_power_user_advanced_features_journey() {
 
         assert_eq!(task_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = task_response.json();
-        concurrent_tasks.push(task_data["id"].as_str().expect("Missing 'id' field in task response").to_string());
+        concurrent_tasks.push(
+            task_data["id"]
+                .as_str()
+                .expect("Missing 'id' field in task response")
+                .to_string(),
+        );
     }
 
     // Step 4: Power user monitors all concurrent tasks
@@ -318,7 +332,10 @@ async fn test_power_user_advanced_features_journey() {
                 .await;
 
             let status_data: serde_json::Value = status_response.json();
-            let status = status_data["status"].as_str().expect("Missing 'status' field in task response").to_string();
+            let status = status_data["status"]
+                .as_str()
+                .expect("Missing 'status' field in task response")
+                .to_string();
 
             if status == "pending" || status == "running" {
                 all_completed = false;

@@ -19,10 +19,14 @@ use uuid::Uuid;
 
 async fn setup_app_with_db() -> (Router, DatabaseConnection) {
     // Create in-memory SQLite database for testing
-    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("Failed to create in-memory database");
 
     // Run migrations to create tables
-    Migrator::up(&db, None).await.expect("Failed to run database migrations");
+    Migrator::up(&db, None)
+        .await
+        .expect("Failed to run database migrations");
 
     // Create test team and API key
     let team_id = Uuid::new_v4();
@@ -130,10 +134,14 @@ async fn test_auth_middleware_valid_header() {
 #[tokio::test]
 async fn test_auth_middleware_rejects_nil_uuid() {
     // Create in-memory SQLite database for testing
-    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("Failed to create in-memory database");
 
     // Run migrations to create tables
-    Migrator::up(&db, None).await.expect("Failed to run database migrations");
+    Migrator::up(&db, None)
+        .await
+        .expect("Failed to run database migrations");
 
     // Create API key with nil UUID (SECURITY ISSUE)
     let nil_uuid = Uuid::nil();
@@ -182,5 +190,69 @@ async fn test_auth_middleware_rejects_nil_uuid() {
         .expect("Failed to get response");
 
     // Should return UNAUTHORIZED, not OK
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_auth_middleware_extracts_bearer_token() {
+    let (app, _db) = setup_app_with_db().await;
+
+    // Test that Bearer prefix is correctly extracted
+    let test_key = "test-api-key-12345";
+
+    // We'll test the token extraction by checking behavior with different formats
+    // Valid format: "Bearer <key>"
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/protected")
+                .header("Authorization", format!("Bearer {}", test_key))
+                .body(Body::empty())
+                .expect("Failed to build request"),
+        )
+        .await
+        .expect("Failed to get response");
+
+    // With an unrecognized key, should still get UNAUTHORIZED (not a different error)
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_auth_middleware_empty_bearer_token() {
+    let (app, _db) = setup_app_with_db().await;
+
+    // Test empty Bearer token
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/protected")
+                .header("Authorization", "Bearer ")
+                .body(Body::empty())
+                .expect("Failed to build request"),
+        )
+        .await
+        .expect("Failed to get response");
+
+    // Should reject empty token
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_auth_middleware_wrong_auth_type() {
+    let (app, _db) = setup_app_with_db().await;
+
+    // Test wrong authentication type (Basic instead of Bearer)
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/protected")
+                .header("Authorization", "Basic dXNlcjpwYXNz")
+                .body(Body::empty())
+                .expect("Failed to build request"),
+        )
+        .await
+        .expect("Failed to get response");
+
+    // Should reject non-Bearer auth
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

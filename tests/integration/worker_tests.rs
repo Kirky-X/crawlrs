@@ -45,7 +45,9 @@ end
 async fn test_lua_concurrency_control_single_worker() {
     let redis_url =
         std::env::var("TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    let redis = RedisClient::new(&redis_url).await.expect("Failed to create Redis client");
+    let redis = RedisClient::new(&redis_url)
+        .await
+        .expect("Failed to create Redis client");
     let team_id = Uuid::new_v4();
     let task_id = Uuid::new_v4();
 
@@ -53,11 +55,20 @@ async fn test_lua_concurrency_control_single_worker() {
     let limit_key = format!("team:{}:concurrency_limit", team_id);
 
     // Cleanup
-    redis.del(&active_key).await.expect("Failed to delete active key");
-    redis.del(&limit_key).await.expect("Failed to delete limit key");
+    redis
+        .del(&active_key)
+        .await
+        .expect("Failed to delete active key");
+    redis
+        .del(&limit_key)
+        .await
+        .expect("Failed to delete limit key");
 
     // Set limit to 5
-    redis.set_forever(&limit_key, "5").await.expect("Failed to set concurrency limit");
+    redis
+        .set_forever(&limit_key, "5")
+        .await
+        .expect("Failed to set concurrency limit");
 
     let now = Utc::now().timestamp() as f64;
     let stale_threshold = now - 3600.0;
@@ -80,12 +91,21 @@ async fn test_lua_concurrency_control_single_worker() {
     assert_eq!(result, "1", "First acquisition should succeed");
 
     // Verify task is in the set
-    let count = redis.zcard(&active_key).await.expect("Failed to get active task count");
+    let count = redis
+        .zcard(&active_key)
+        .await
+        .expect("Failed to get active task count");
     assert_eq!(count, 1, "Should have 1 active task");
 
     // Cleanup
-    redis.del(&active_key).await.expect("Failed to delete active key");
-    redis.del(&limit_key).await.expect("Failed to delete limit key");
+    redis
+        .del(&active_key)
+        .await
+        .expect("Failed to delete active key");
+    redis
+        .del(&limit_key)
+        .await
+        .expect("Failed to delete limit key");
 }
 
 /// Test Lua script concurrency control with multiple concurrent workers
@@ -93,17 +113,28 @@ async fn test_lua_concurrency_control_single_worker() {
 async fn test_lua_concurrency_control_multiple_workers() {
     let redis_url =
         std::env::var("TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    let redis = RedisClient::new(&redis_url).await.expect("Failed to create Redis client");
+    let redis = RedisClient::new(&redis_url)
+        .await
+        .expect("Failed to create Redis client");
     let team_id = Uuid::new_v4();
     let limit_key = format!("team:{}:concurrency_limit", team_id);
 
     // Cleanup
     let active_key = format!("team:{}:active_tasks", team_id);
-    redis.del(&active_key).await.expect("Failed to delete active key");
-    redis.del(&limit_key).await.expect("Failed to delete limit key");
+    redis
+        .del(&active_key)
+        .await
+        .expect("Failed to delete active key");
+    redis
+        .del(&limit_key)
+        .await
+        .expect("Failed to delete limit key");
 
     // Set limit to 3
-    redis.set_forever(&limit_key, "3").await.expect("Failed to set concurrency limit");
+    redis
+        .set_forever(&limit_key, "3")
+        .await
+        .expect("Failed to set concurrency limit");
 
     let now = Utc::now().timestamp() as f64;
     let stale_threshold = now - 3600.0;
@@ -151,12 +182,21 @@ async fn test_lua_concurrency_control_multiple_workers() {
     assert_eq!(failure_count, 2, "Exactly 2 workers should fail");
 
     // Verify final count
-    let count = redis.zcard(&active_key).await.expect("Failed to get active task count");
+    let count = redis
+        .zcard(&active_key)
+        .await
+        .expect("Failed to get active task count");
     assert_eq!(count, 3, "Should have exactly 3 active tasks");
 
     // Cleanup
-    redis.del(&active_key).await.expect("Failed to delete active key");
-    redis.del(&limit_key).await.expect("Failed to delete limit key");
+    redis
+        .del(&active_key)
+        .await
+        .expect("Failed to delete active key");
+    redis
+        .del(&limit_key)
+        .await
+        .expect("Failed to delete limit key");
 }
 
 /// Test stale task cleanup in Lua script
@@ -164,7 +204,9 @@ async fn test_lua_concurrency_control_multiple_workers() {
 async fn test_lua_concurrency_control_stale_cleanup() {
     let redis_url =
         std::env::var("TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    let redis = RedisClient::new(&redis_url).await.expect("Failed to create Redis client");
+    let redis = RedisClient::new(&redis_url)
+        .await
+        .expect("Failed to create Redis client");
     let team_id = Uuid::new_v4();
     let task_id = Uuid::new_v4();
 
@@ -172,8 +214,14 @@ async fn test_lua_concurrency_control_stale_cleanup() {
     let limit_key = format!("team:{}:concurrency_limit", team_id);
 
     // Cleanup
-    redis.del(&active_key).await.expect("Failed to delete active key");
-    redis.del(&limit_key).await.expect("Failed to delete limit key");
+    redis
+        .del(&active_key)
+        .await
+        .expect("Failed to delete active key");
+    redis
+        .del(&limit_key)
+        .await
+        .expect("Failed to delete limit key");
 
     // Add a stale task (2 hours old)
     let stale_score = (Utc::now().timestamp() - 7200) as f64;
@@ -182,11 +230,17 @@ async fn test_lua_concurrency_control_stale_cleanup() {
         .await
         .expect("Failed to add stale task");
 
-    let count_before = redis.zcard(&active_key).await.expect("Failed to get active task count");
+    let count_before = redis
+        .zcard(&active_key)
+        .await
+        .expect("Failed to get active task count");
     assert_eq!(count_before, 1, "Should have 1 stale task before cleanup");
 
     // Set limit and acquire
-    redis.set_forever(&limit_key, "5").await.expect("Failed to set concurrency limit");
+    redis
+        .set_forever(&limit_key, "5")
+        .await
+        .expect("Failed to set concurrency limit");
     let now = Utc::now().timestamp() as f64;
     let stale_threshold = now - 3600.0;
 
@@ -207,10 +261,19 @@ async fn test_lua_concurrency_control_stale_cleanup() {
     assert_eq!(result, "1", "Acquisition should succeed");
 
     // Stale task should be cleaned up, new task added
-    let count_after = redis.zcard(&active_key).await.expect("Failed to get active task count");
+    let count_after = redis
+        .zcard(&active_key)
+        .await
+        .expect("Failed to get active task count");
     assert_eq!(count_after, 1, "Should have 1 task after stale cleanup");
 
     // Cleanup
-    redis.del(&active_key).await.expect("Failed to delete active key");
-    redis.del(&limit_key).await.expect("Failed to delete limit key");
+    redis
+        .del(&active_key)
+        .await
+        .expect("Failed to delete active key");
+    redis
+        .del(&limit_key)
+        .await
+        .expect("Failed to delete limit key");
 }

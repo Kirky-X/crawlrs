@@ -18,7 +18,6 @@ use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
-use validator::Validate;
 
 #[derive(Error, Debug)]
 pub enum SearchServiceError {

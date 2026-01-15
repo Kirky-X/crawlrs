@@ -3,8 +3,8 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
 use super::helpers::google_helpers::{create_google_engine, get_chrome_ws_url, set_chrome_ws_url};
+use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
 use crawlrs::search::client::google::GoogleSearchEngine;
 use crawlrs::search::response::{Response, ResponseItem};
 use crawlrs::search::types::SearchEngineType;
@@ -236,7 +236,8 @@ impl FlareSolverrGoogleEngine {
         let document = Html::parse_document(html);
         let title_selector = Selector::parse("h3").expect("Failed to parse title selector");
         let link_selector = Selector::parse("a").expect("Failed to parse link selector");
-        let snippet_selector = Selector::parse(".VwiC3b").expect("Failed to parse snippet selector");
+        let snippet_selector =
+            Selector::parse(".VwiC3b").expect("Failed to parse snippet selector");
 
         let mut results = Vec::new();
         let titles: Vec<_> = document.select(&title_selector).collect();
@@ -381,9 +382,10 @@ async fn test_google_multiple_queries() {
                 println!("✗ 搜索失败: {:?}", e);
                 panic!("搜索关键词 '{}' 测试失败: {:?}", query, e);
             }
-                }
-            
-                    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;    }
+        }
+
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
+    }
 
     println!("🎉 Google搜索引擎多种查询测试通过！");
 }

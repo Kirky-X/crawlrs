@@ -94,9 +94,19 @@ impl RateLimitingServiceImpl {
         format!("{}:{}", self.config.redis_key_prefix, suffix)
     }
 
+    /// 对API Key进行哈希处理以用于Redis键
+    /// 避免API Key明文出现在Redis中，防止日志泄露
+    fn hash_api_key_for_redis(&self, api_key: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(api_key);
+        let result = hasher.finalize();
+        format!("{:x}", result)
+    }
+
     /// 构建API限流键
     fn build_api_rate_limit_key(&self, api_key: &str, endpoint: &str, window: &str) -> String {
-        self.build_redis_key(&format!("api:{}:{}:{}", api_key, endpoint, window))
+        let hashed_key = self.hash_api_key_for_redis(api_key);
+        self.build_redis_key(&format!("api:{}:{}:{}", hashed_key, endpoint, window))
     }
 
     /// 构建团队信号量键
@@ -354,8 +364,7 @@ impl RateLimitingService for RateLimitingServiceImpl {
         // 使用SHA256哈希代替部分掩码，更安全地记录API key
         let mut hasher = Sha256::new();
         hasher.update(api_key.as_bytes());
-        let api_key_hash = format!("{:x}", hasher.finalize());
-        debug!(api_key_hash = %api_key_hash);
+        let _api_key_hash = format!("{:x}", hasher.finalize());
         debug!(endpoint);
         debug!(enabled = self.config.rate_limit.enabled);
 

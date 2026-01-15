@@ -3,12 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::common::constants::timeouts::CRAWL_TASK_TIMEOUT;
 use crate::integration::helpers::create_test_app;
 use axum::http::StatusCode;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
-use crate::common::constants::timeouts::CRAWL_TASK_TIMEOUT;
 
 async fn wait_for_tasks_completion(
     app: &crate::integration::helpers::test_app::TestApp,

@@ -18,8 +18,12 @@ use uuid::Uuid;
 async fn create_test_app_with_tasks() -> (TestServer, String, Uuid, Arc<TaskRepositoryImpl>) {
     use migration::{Migrator, MigratorTrait};
 
-    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
-    Migrator::up(&db, None).await.expect("Failed to run database migrations");
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("Failed to create in-memory database");
+    Migrator::up(&db, None)
+        .await
+        .expect("Failed to run database migrations");
     let db_pool = Arc::new(db);
 
     let api_key = Uuid::new_v4().to_string();
@@ -96,7 +100,10 @@ async fn create_test_task(
         lock_expires_at: None,
     };
 
-    task_repo.create(&task).await.expect("Failed to create task");
+    task_repo
+        .create(&task)
+        .await
+        .expect("Failed to create task");
     task_id.to_string()
 }
 
@@ -150,7 +157,9 @@ async fn test_batch_task_query_basic() {
         "Response body: {}",
         serde_json::to_string_pretty(&body).expect("Failed to serialize response body")
     );
-    let tasks = body["data"]["tasks"].as_array().expect("Missing 'tasks' array in response");
+    let tasks = body["data"]["tasks"]
+        .as_array()
+        .expect("Missing 'tasks' array in response");
     assert_eq!(tasks.len(), 3);
 
     // 验证任务类型和状态 (注意：查询结果按创建时间倒序排列，最新的在前)
@@ -199,7 +208,10 @@ async fn test_batch_task_query_with_filters() {
         offset: 0,
         ..Default::default()
     };
-    let (all_tasks, _) = task_repo.query_tasks(params).await.expect("Failed to query tasks");
+    let (all_tasks, _) = task_repo
+        .query_tasks(params)
+        .await
+        .expect("Failed to query tasks");
     let task_ids: Vec<String> = all_tasks.iter().map(|t| t.id.to_string()).collect();
 
     // When: 只查询已完成和失败的任务
@@ -216,13 +228,19 @@ async fn test_batch_task_query_with_filters() {
     // Then: 只返回过滤后的任务
     assert_eq!(response.status_code(), StatusCode::OK);
     let body: serde_json::Value = response.json();
-    let tasks = body["data"]["tasks"].as_array().expect("Missing 'tasks' array in response");
+    let tasks = body["data"]["tasks"]
+        .as_array()
+        .expect("Missing 'tasks' array in response");
 
     // 应该只返回 completed 和 failed 状态的任务
     assert_eq!(tasks.len(), 2);
     let statuses: Vec<&str> = tasks
         .iter()
-        .map(|t| t["status"].as_str().expect("Missing 'status' field in task"))
+        .map(|t| {
+            t["status"]
+                .as_str()
+                .expect("Missing 'status' field in task")
+        })
         .collect();
     assert!(statuses.contains(&"completed"));
     assert!(statuses.contains(&"failed"));
@@ -257,7 +275,9 @@ async fn test_batch_task_query_exclude_results() {
     // Then: 响应中不包含 result 字段
     assert_eq!(response.status_code(), StatusCode::OK);
     let body: serde_json::Value = response.json();
-    let tasks = body["data"]["tasks"].as_array().expect("Missing 'tasks' array in response");
+    let tasks = body["data"]["tasks"]
+        .as_array()
+        .expect("Missing 'tasks' array in response");
     assert_eq!(tasks.len(), 1);
 
     // 不应该包含结果数据
@@ -310,19 +330,37 @@ async fn test_batch_task_cancel_success() {
     // Then: 所有任务被取消
     assert_eq!(response.status_code(), StatusCode::OK);
     let body: serde_json::Value = response.json();
-    let cancelled_tasks = body["data"]["cancelled_tasks"].as_array().expect("Missing 'cancelled_tasks' array in response");
-    let failed_tasks = body["data"]["failed_tasks"].as_array().expect("Missing 'failed_tasks' array in response");
+    let cancelled_tasks = body["data"]["cancelled_tasks"]
+        .as_array()
+        .expect("Missing 'cancelled_tasks' array in response");
+    let failed_tasks = body["data"]["failed_tasks"]
+        .as_array()
+        .expect("Missing 'failed_tasks' array in response");
 
     // 验证所有任务都被取消（3个取消，0个失败）
     assert_eq!(cancelled_tasks.len(), 3);
     assert_eq!(failed_tasks.len(), 0);
-    assert_eq!(body["data"]["total_cancelled"].as_u64().expect("Missing 'total_cancelled' field in response"), 3);
-    assert_eq!(body["data"]["total_failed"].as_u64().expect("Missing 'total_failed' field in response"), 0);
+    assert_eq!(
+        body["data"]["total_cancelled"]
+            .as_u64()
+            .expect("Missing 'total_cancelled' field in response"),
+        3
+    );
+    assert_eq!(
+        body["data"]["total_failed"]
+            .as_u64()
+            .expect("Missing 'total_failed' field in response"),
+        0
+    );
 
     // 验证任务状态已更新
     for task_id in &task_ids {
         let task_uuid = Uuid::parse_str(task_id).expect("Failed to parse task ID as UUID");
-        let task = task_repo.find_by_id(task_uuid).await.expect("Failed to find task").expect("Task not found");
+        let task = task_repo
+            .find_by_id(task_uuid)
+            .await
+            .expect("Failed to find task")
+            .expect("Task not found");
         assert_eq!(task.status, TaskStatus::Cancelled);
     }
 }
@@ -355,14 +393,28 @@ async fn test_cancel_completed_task() {
     // Then: 取消失败，返回原因
     assert_eq!(response.status_code(), StatusCode::OK);
     let body: serde_json::Value = response.json();
-    let cancelled_tasks = body["data"]["cancelled_tasks"].as_array().expect("Missing 'cancelled_tasks' array in response");
-    let failed_tasks = body["data"]["failed_tasks"].as_array().expect("Missing 'failed_tasks' array in response");
+    let cancelled_tasks = body["data"]["cancelled_tasks"]
+        .as_array()
+        .expect("Missing 'cancelled_tasks' array in response");
+    let failed_tasks = body["data"]["failed_tasks"]
+        .as_array()
+        .expect("Missing 'failed_tasks' array in response");
 
     // 验证任务取消失败（0个取消，1个失败）
     assert_eq!(cancelled_tasks.len(), 0);
     assert_eq!(failed_tasks.len(), 1);
-    assert_eq!(body["data"]["total_cancelled"].as_u64().expect("Missing 'total_cancelled' field in response"), 0);
-    assert_eq!(body["data"]["total_failed"].as_u64().expect("Missing 'total_failed' field in response"), 1);
+    assert_eq!(
+        body["data"]["total_cancelled"]
+            .as_u64()
+            .expect("Missing 'total_cancelled' field in response"),
+        0
+    );
+    assert_eq!(
+        body["data"]["total_failed"]
+            .as_u64()
+            .expect("Missing 'total_failed' field in response"),
+        1
+    );
 
     // 验证失败原因
     assert!(failed_tasks[0]["reason"]
@@ -399,14 +451,28 @@ async fn test_force_cancel_completed_task() {
     // Then: 强制取消也失败，因为任务已完成
     assert_eq!(response.status_code(), StatusCode::OK);
     let body: serde_json::Value = response.json();
-    let cancelled_tasks = body["data"]["cancelled_tasks"].as_array().expect("Missing 'cancelled_tasks' array in response");
-    let failed_tasks = body["data"]["failed_tasks"].as_array().expect("Missing 'failed_tasks' array in response");
+    let cancelled_tasks = body["data"]["cancelled_tasks"]
+        .as_array()
+        .expect("Missing 'cancelled_tasks' array in response");
+    let failed_tasks = body["data"]["failed_tasks"]
+        .as_array()
+        .expect("Missing 'failed_tasks' array in response");
 
     // 验证任务强制取消失败（0个取消，1个失败）- 已完成的任务不能被取消，即使强制
     assert_eq!(cancelled_tasks.len(), 0);
     assert_eq!(failed_tasks.len(), 1);
-    assert_eq!(body["data"]["total_cancelled"].as_u64().expect("Missing 'total_cancelled' field in response"), 0);
-    assert_eq!(body["data"]["total_failed"].as_u64().expect("Missing 'total_failed' field in response"), 1);
+    assert_eq!(
+        body["data"]["total_cancelled"]
+            .as_u64()
+            .expect("Missing 'total_cancelled' field in response"),
+        0
+    );
+    assert_eq!(
+        body["data"]["total_failed"]
+            .as_u64()
+            .expect("Missing 'total_failed' field in response"),
+        1
+    );
 
     // 验证失败原因
     assert!(failed_tasks[0]["reason"]
@@ -433,7 +499,9 @@ async fn test_batch_operations_empty_list() {
     // Then: 返回空结果
     assert_eq!(response.status_code(), StatusCode::OK);
     let body: serde_json::Value = response.json();
-    let tasks = body["data"]["tasks"].as_array().expect("Missing 'tasks' array in response");
+    let tasks = body["data"]["tasks"]
+        .as_array()
+        .expect("Missing 'tasks' array in response");
     assert_eq!(tasks.len(), 0);
 
     // When: 尝试取消空任务列表 (应该返回验证错误)

@@ -12,6 +12,7 @@ use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::infrastructure::cache::cache_manager::CacheManager;
 use crate::infrastructure::cache::cache_strategy::CacheStrategyConfig;
+use crate::infrastructure::cache::types::CacheStats;
 
 /// 增强的搜索聚合器，集成智能缓存策略
 pub struct EnhancedSearchAggregator {
@@ -172,9 +173,7 @@ impl EnhancedSearchAggregator {
     }
 
     /// 获取缓存统计信息
-    pub async fn get_cache_stats(
-        &self,
-    ) -> crate::infrastructure::cache::cache_strategy::CacheStats {
+    pub async fn get_cache_stats(&self) -> CacheStats {
         self.cache_manager.get_stats().await
     }
 

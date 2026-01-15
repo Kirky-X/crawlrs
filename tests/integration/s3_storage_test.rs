@@ -135,7 +135,10 @@ async fn test_s3_storage_exists() {
         "Failed to check existence: {:?}",
         result.err()
     );
-    assert!(!result.expect("Failed to check existence"), "File should not exist yet");
+    assert!(
+        !result.expect("Failed to check existence"),
+        "File should not exist yet"
+    );
 
     // 保存文件
     storage.save(key, data).await.expect("Failed to save file");
@@ -147,7 +150,10 @@ async fn test_s3_storage_exists() {
         "Failed to check existence: {:?}",
         result.err()
     );
-    assert!(result.expect("Failed to check existence"), "File should exist now");
+    assert!(
+        result.expect("Failed to check existence"),
+        "File should exist now"
+    );
 
     // 清理
     let _ = storage.delete(key).await;
@@ -169,14 +175,20 @@ async fn test_s3_storage_delete() {
     storage.save(key, data).await.expect("Failed to save file");
 
     // 确认文件存在
-    assert!(storage.exists(key).await.expect("Failed to check existence"));
+    assert!(storage
+        .exists(key)
+        .await
+        .expect("Failed to check existence"));
 
     // 删除文件
     let result = storage.delete(key).await;
     assert!(result.is_ok(), "Failed to delete: {:?}", result.err());
 
     // 确认文件不存在
-    assert!(!storage.exists(key).await.expect("Failed to check existence"));
+    assert!(!storage
+        .exists(key)
+        .await
+        .expect("Failed to check existence"));
 }
 
 #[tokio::test]

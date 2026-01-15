@@ -31,7 +31,9 @@ pub struct RealTestContext {
 impl RealTestContext {
     pub async fn new() -> Self {
         // Setup real database
-        let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory database");
         let db_pool = Arc::new(db);
 
         // Run migrations
@@ -100,12 +102,21 @@ async fn test_real_task_lifecycle() {
     let test_task = ctx.create_test_task(task_id, TaskStatus::Queued, "https://example.com");
 
     // Create task
-    let created_task = ctx.task_repo.create(&test_task).await.expect("Failed to create task");
+    let created_task = ctx
+        .task_repo
+        .create(&test_task)
+        .await
+        .expect("Failed to create task");
     assert_eq!(created_task.id, task_id);
     assert_eq!(created_task.status, TaskStatus::Queued);
 
     // Find task by ID
-    let found_task = ctx.task_repo.find_by_id(task_id).await.expect("Failed to find task").expect("Task not found");
+    let found_task = ctx
+        .task_repo
+        .find_by_id(task_id)
+        .await
+        .expect("Failed to find task")
+        .expect("Task not found");
     assert_eq!(found_task.id, task_id);
     assert_eq!(found_task.url, "https://example.com");
 
@@ -114,15 +125,27 @@ async fn test_real_task_lifecycle() {
     updated_task.status = TaskStatus::Active;
     updated_task.started_at = Some(DateTime::<FixedOffset>::from(Utc::now()));
 
-    let saved_updated_task = ctx.task_repo.update(&updated_task).await.expect("Failed to update task");
+    let saved_updated_task = ctx
+        .task_repo
+        .update(&updated_task)
+        .await
+        .expect("Failed to update task");
     assert_eq!(saved_updated_task.status, TaskStatus::Active);
     assert!(saved_updated_task.started_at.is_some());
 
     // Mark as completed
-    ctx.task_repo.mark_completed(task_id).await.expect("Failed to mark task as completed");
+    ctx.task_repo
+        .mark_completed(task_id)
+        .await
+        .expect("Failed to mark task as completed");
 
     // Verify completion
-    let completed_task = ctx.task_repo.find_by_id(task_id).await.expect("Failed to find task").expect("Task not found");
+    let completed_task = ctx
+        .task_repo
+        .find_by_id(task_id)
+        .await
+        .expect("Failed to find task")
+        .expect("Task not found");
     assert_eq!(completed_task.status, TaskStatus::Completed);
     assert!(completed_task.completed_at.is_some());
 }
@@ -236,7 +259,10 @@ async fn test_real_task_querying() {
         };
 
         let task = ctx.create_test_task(task_id, status, &format!("https://example.com/page{}", i));
-        ctx.task_repo.create(&task).await.expect("Failed to create task");
+        ctx.task_repo
+            .create(&task)
+            .await
+            .expect("Failed to create task");
     }
 
     // Query all tasks
@@ -252,7 +278,11 @@ async fn test_real_task_querying() {
         offset: 0,
     };
 
-    let (all_tasks, total_count) = ctx.task_repo.query_tasks(all_tasks_params).await.expect("Failed to query tasks");
+    let (all_tasks, total_count) = ctx
+        .task_repo
+        .query_tasks(all_tasks_params)
+        .await
+        .expect("Failed to query tasks");
     assert_eq!(total_count, 5);
     assert_eq!(all_tasks.len(), 5);
 
@@ -289,7 +319,10 @@ async fn test_real_task_batch_operations() {
 
     for &task_id in &task_ids {
         let task = ctx.create_test_task(task_id, TaskStatus::Queued, "https://example.com");
-        ctx.task_repo.create(&task).await.expect("Failed to create task");
+        ctx.task_repo
+            .create(&task)
+            .await
+            .expect("Failed to create task");
     }
 
     // Batch cancel tasks
@@ -304,7 +337,12 @@ async fn test_real_task_batch_operations() {
 
     // Verify tasks are cancelled
     for &task_id in &task_ids {
-        let task = ctx.task_repo.find_by_id(task_id).await.expect("Failed to find task").expect("Task not found");
+        let task = ctx
+            .task_repo
+            .find_by_id(task_id)
+            .await
+            .expect("Failed to find task")
+            .expect("Task not found");
         assert_eq!(task.status, TaskStatus::Cancelled);
     }
 }

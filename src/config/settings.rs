@@ -30,6 +30,12 @@ pub enum ConfigSecurityError {
     #[error("CRITICAL: Database URL uses weak/default password. Use strong authentication in production!")]
     WeakDatabasePassword,
 
+    #[error("CRITICAL: Database password cannot be empty in production")]
+    EmptyDatabasePassword,
+
+    #[error("CRITICAL: Database password is too short ({0} bytes). Minimum 16 bytes required in production!")]
+    ShortDatabasePassword(usize),
+
     #[error("SECURITY WARNING: S3 access key is not configured but storage type is 's3'")]
     MissingS3AccessKey,
 
@@ -257,6 +263,31 @@ impl Settings {
             || self.database.url.contains("password=admin")
         {
             return Err(ConfigSecurityError::WeakDatabasePassword);
+        }
+
+        // Additional production password validation
+        let env = std::env::var("CRAWLRS_ENV").unwrap_or_default();
+        let is_production =
+            env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod");
+
+        if is_production {
+            // Extract password from URL for validation
+            // URL format: postgres://user:password@host/db
+            let password_length = if let Some(at_pos) = self.database.url.find('@') {
+                if let Some(colon_pos) = self.database.url[..at_pos].find(':') {
+                    // Password is between colon and @
+                    at_pos - colon_pos - 1
+                } else {
+                    0 // No password found
+                }
+            } else {
+                0 // No @ sign, no password
+            };
+
+            // Check minimum password length in production
+            if password_length > 0 && password_length < 16 {
+                return Err(ConfigSecurityError::ShortDatabasePassword(password_length));
+            }
         }
 
         Ok(())

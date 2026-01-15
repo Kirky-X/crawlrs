@@ -114,7 +114,7 @@ impl Default for RegexCache {
 ///
 /// This static lazy instance can be used across the codebase
 /// without requiring explicit initialization.
-pub static GLOBAL_REGEX_CACHE: Lazy<RegexCache> = Lazy::new(|| RegexCache::new());
+pub static GLOBAL_REGEX_CACHE: Lazy<RegexCache> = Lazy::new(RegexCache::new);
 
 impl RegexCache {
     /// Returns a reference to the global regex cache.

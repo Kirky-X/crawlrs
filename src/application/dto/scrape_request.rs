@@ -9,7 +9,9 @@ use serde_json::Value;
 /// 爬取请求数据传输对象
 ///
 /// 用于封装客户端发起的网页爬取请求的相关参数
+/// 拒绝未知字段以增强安全性
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScrapeRequestDto {
     /// 要爬取的网页URL (仅支持 http/https)
     pub url: String,

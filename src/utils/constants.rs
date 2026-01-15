@@ -7,7 +7,6 @@
 ///
 /// 这些常量用于在整个项目中保持一致性和可维护性
 /// 遵循代码审查报告中发现的优化建议
-
 /// HTTP 内容类型常量
 pub mod content_types {
     pub const TEXT_HTML: &str = "text/html";

@@ -495,7 +495,7 @@ fn initialize_storage_repository(
 fn initialize_engines(
     proxy_config: &crawlrs::config::app::ProxySettings,
 ) -> Vec<Arc<dyn ScraperEngine>> {
-    let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::with_proxy(
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::with_proxy(
         proxy_config.url.clone(),
     ))];
 

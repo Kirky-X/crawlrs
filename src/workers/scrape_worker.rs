@@ -44,7 +44,6 @@ use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
 
 // Regex cache for crawl pattern matching
-use once_cell::sync::Lazy;
 use thiserror::Error;
 
 /// Worker 错误类型
@@ -85,7 +84,7 @@ impl From<anyhow::Error> for ScrapeWorkerError {
 fn get_cached_regex(pattern: &str) -> Result<regex::Regex, ScrapeWorkerError> {
     RegexCache::global()
         .get_or_insert(pattern)
-        .map_err(|e| ScrapeWorkerError::RegexError(e))
+        .map_err(ScrapeWorkerError::RegexError)
 }
 
 /// 抓取工作者

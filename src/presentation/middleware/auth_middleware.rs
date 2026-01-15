@@ -159,7 +159,7 @@ pub async fn auth_middleware(
     debug!("AuthMiddleware processing path: {}", path);
 
     // Allow public endpoints without authentication
-    if PUBLIC_ENDPOINTS.iter().any(|&endpoint| path == endpoint) {
+    if PUBLIC_ENDPOINTS.contains(&path) {
         debug!("Public endpoint {}, skipping auth", path);
         return Ok(next.run(req).await);
     }
@@ -209,8 +209,17 @@ pub async fn auth_middleware(
 
             // Log migration status for keys using legacy plaintext storage
             if key.key_hash.is_none() {
-                tracing::info!(
-                    "API Key {} uses legacy plaintext storage, consider migrating to hashed storage",
+                let env = std::env::var("CRAWLRS_ENV").unwrap_or_default();
+                if env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod") {
+                    // In production, reject legacy plaintext API keys
+                    tracing::error!(
+                        "SECURITY: Legacy plaintext API Key {} rejected in production environment",
+                        key.id
+                    );
+                    return Err(StatusCode::UNAUTHORIZED);
+                }
+                tracing::warn!(
+                    "Legacy plaintext API Key {} detected, please migrate to hashed storage",
                     key.id
                 );
             }
@@ -237,16 +246,17 @@ pub async fn auth_middleware(
             req.extensions_mut().insert(key.id);
             req.extensions_mut().insert(token_str);
 
+            // 日志只记录认证成功，不记录具体密钥信息
             debug!(
-                "Authenticated API Key: {}, team: {}, scope: {:?}",
-                key.id, key.team_id, auth_state.scope
+                "API Key authentication successful for team: {:?}",
+                key.team_id
             );
 
             // Log successful authentication to audit service
             if let Some(audit_service) = req.extensions().get::<Arc<AuditService>>() {
                 let _ = audit_service
                     .log_allow(
-                        format!("api_key.authenticated"),
+                        "api_key.authenticated".to_string(),
                         key.id,
                         key.team_id,
                         auth_state.scope.clone(),
@@ -320,7 +330,7 @@ pub async fn scope_middleware(req: Request, next: Next) -> Result<Response, Stat
                 let reason = format!("Missing required scope: {:?}", required);
                 let _ = audit_service
                     .log_deny(
-                        format!("scope.denied"),
+                        "scope.denied".to_string(),
                         Some(auth_state.api_key_id),
                         Some(auth_state.team_id),
                         reason,
@@ -338,8 +348,14 @@ pub async fn scope_middleware(req: Request, next: Next) -> Result<Response, Stat
 
 /// Determine required scope for an endpoint
 fn determine_required_scope(path: &str, method: &str) -> Option<ScopePermission> {
-    // Admin endpoints
-    if path.starts_with("/api/v1/teams") || path.starts_with("/api/v1/billing") {
+    // Helper function for exact path prefix matching
+    // Ensures we match "/api/v1/teams" but not "/api/v1/teams-secret"
+    fn is_path_prefix(path: &str, prefix: &str) -> bool {
+        path == prefix || (path.starts_with(prefix) && path[prefix.len()..].starts_with('/'))
+    }
+
+    // Admin endpoints - use precise matching
+    if is_path_prefix(path, "/api/v1/teams") || is_path_prefix(path, "/api/v1/billing") {
         return Some(ScopePermission::Admin);
     }
 

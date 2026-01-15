@@ -18,6 +18,7 @@
 //! export SKIP_BROWSER_TESTS=true
 //! ```
 
+use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
 use crawlrs::engines::client::fire_tls::FireEngineTls;
 use crawlrs::engines::client::reqwest::ReqwestEngine;
@@ -28,7 +29,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use testcontainers::{runners::AsyncRunner, GenericImage};
 use tracing::info;
-use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
 
 const TEST_URL: &str = "https://news.sina.com.cn/c/xl/2025-12-17/doc-inhcaekp2520228.shtml";
 

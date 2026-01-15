@@ -7,28 +7,22 @@ use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use crate::domain::models::search_result::SearchResult;
+use crate::infrastructure::cache::stats_collector::CacheStatsCollector;
+use crate::infrastructure::cache::types::CacheStats;
 
-/// 缓存策略配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheStrategyConfig {
-    /// 缓存类型
     pub cache_type: CacheType,
-    /// TTL（秒）
     pub ttl_seconds: u64,
-    /// 最大缓存条目数
     pub max_entries: usize,
-    /// 是否启用压缩
     pub enable_compression: bool,
-    /// 是否启用预加载
     pub enable_preload: bool,
-    /// 缓存预热配置
     pub preheat_config: Option<PreheatConfig>,
-    /// 分层缓存配置
     pub layered_config: Option<LayeredCacheConfig>,
 }
 
@@ -36,7 +30,7 @@ impl Default for CacheStrategyConfig {
     fn default() -> Self {
         Self {
             cache_type: CacheType::Memory,
-            ttl_seconds: 300, // 5分钟
+            ttl_seconds: 300,
             max_entries: 10000,
             enable_compression: true,
             enable_preload: false,
@@ -46,53 +40,38 @@ impl Default for CacheStrategyConfig {
     }
 }
 
-/// 缓存类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CacheType {
-    /// 内存缓存
     Memory,
-    /// Redis缓存
     Redis,
-    /// 分层缓存（内存+Redis）
     Layered,
-    /// 智能缓存（根据数据特性自动选择）
     Smart,
 }
 
-/// 预热配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreheatConfig {
-    /// 预热查询列表
     pub hot_queries: Vec<String>,
-    /// 预热间隔（秒）
     pub preheat_interval: u64,
-    /// 预热批次大小
     pub batch_size: usize,
 }
 
-/// 分层缓存配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayeredCacheConfig {
-    /// 内存缓存TTL（秒）
     pub memory_ttl: u64,
-    /// Redis缓存TTL（秒）
     pub redis_ttl: u64,
-    /// 内存缓存最大条目数
     pub memory_max_entries: usize,
 }
 
-/// 缓存统计信息
-#[derive(Debug, Clone, Default)]
-pub struct CacheStats {
-    pub hits: u64,
-    pub misses: u64,
-    pub evictions: u64,
-    pub stores: u64,
-    pub compression_saves: u64,
-    pub preheat_hits: u64,
+impl Default for LayeredCacheConfig {
+    fn default() -> Self {
+        Self {
+            memory_ttl: 60,
+            redis_ttl: 3600,
+            memory_max_entries: 1000,
+        }
+    }
 }
 
-/// 缓存条目
 #[derive(Clone)]
 struct CacheEntry<T> {
     data: T,
@@ -130,31 +109,15 @@ impl<T> CacheEntry<T> {
     }
 }
 
-/// 缓存策略接口
 #[async_trait]
 pub trait CacheStrategy: Send + Sync {
-    /// 获取缓存值
     async fn get(&self, key: &str) -> Result<Option<Vec<SearchResult>>>;
-
-    /// 设置缓存值
     async fn set(&self, key: &str, value: Vec<SearchResult>, ttl: Option<Duration>) -> Result<()>;
-
-    /// 删除缓存值
     async fn delete(&self, key: &str) -> Result<()>;
-
-    /// 清空缓存
     async fn clear(&self) -> Result<()>;
-
-    /// 获取缓存统计信息
     fn get_stats(&self) -> CacheStats;
-
-    /// 执行缓存预热
     async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()>;
-
-    /// 批量获取缓存
     async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>>;
-
-    /// 批量设置缓存
     async fn set_batch(
         &self,
         entries: Vec<(String, Vec<SearchResult>)>,
@@ -162,11 +125,10 @@ pub trait CacheStrategy: Send + Sync {
     ) -> Result<()>;
 }
 
-/// 内存缓存策略
 pub struct MemoryCacheStrategy {
     cache: DashMap<String, CacheEntry<Vec<SearchResult>>>,
     config: CacheStrategyConfig,
-    _stats: std::sync::Arc<std::sync::Mutex<CacheStats>>,
+    stats_collector: CacheStatsCollector,
 }
 
 impl MemoryCacheStrategy {
@@ -174,7 +136,7 @@ impl MemoryCacheStrategy {
         Self {
             cache: DashMap::new(),
             config,
-            _stats: std::sync::Arc::new(std::sync::Mutex::new(CacheStats::default())),
+            stats_collector: CacheStatsCollector::new(),
         }
     }
 
@@ -184,10 +146,8 @@ impl MemoryCacheStrategy {
             return;
         }
 
-        // 需要淘汰条目
-        let to_evict = current_size - self.config.max_entries + (self.config.max_entries / 10); // 多淘汰10%
+        let to_evict = current_size - self.config.max_entries + (self.config.max_entries / 10);
 
-        // 收集所有条目并按优先级排序
         let mut entries: Vec<(String, f64)> = self
             .cache
             .iter()
@@ -199,13 +159,11 @@ impl MemoryCacheStrategy {
 
         entries.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // 淘汰优先级最低的条目
         for (key, _) in entries.iter().take(to_evict) {
             self.cache.remove(key);
         }
 
-        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-        stats.evictions += to_evict as u64;
+        self.stats_collector.record_evictions(to_evict);
 
         debug!("Evicted {} entries from memory cache", to_evict);
     }
@@ -218,19 +176,16 @@ impl CacheStrategy for MemoryCacheStrategy {
             if entry.is_expired() {
                 drop(entry);
                 self.cache.remove(key);
-                let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-                stats.misses += 1;
+                self.stats_collector.record_miss();
                 return Ok(None);
             }
 
             entry.touch();
-            let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-            stats.hits += 1;
+            self.stats_collector.record_hit();
 
             Ok(Some(entry.data.clone()))
         } else {
-            let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-            stats.misses += 1;
+            self.stats_collector.record_miss();
             Ok(None)
         }
     }
@@ -243,8 +198,7 @@ impl CacheStrategy for MemoryCacheStrategy {
         self.cache.insert(key.to_string(), entry);
         self.evict_if_needed();
 
-        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-        stats.stores += 1;
+        self.stats_collector.record_store();
 
         debug!(
             "Stored {} results in memory cache for key: {}",
@@ -261,15 +215,13 @@ impl CacheStrategy for MemoryCacheStrategy {
 
     async fn clear(&self) -> Result<()> {
         self.cache.clear();
+        self.stats_collector.reset();
         info!("Cleared all memory cache entries");
         Ok(())
     }
 
     fn get_stats(&self) -> CacheStats {
-        self._stats
-            .lock()
-            .expect("Cache stats lock poisoned")
-            .clone()
+        self.stats_collector.snapshot()
     }
 
     async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()> {
@@ -281,8 +233,7 @@ impl CacheStrategy for MemoryCacheStrategy {
             self.set(&key, results, Some(ttl)).await?;
         }
 
-        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-        stats.preheat_hits += entry_count as u64;
+        self.stats_collector.record_preheat_hits(entry_count);
 
         info!("Memory cache preheating completed");
         Ok(())
@@ -295,21 +246,15 @@ impl CacheStrategy for MemoryCacheStrategy {
             if let Some(mut entry) = self.cache.get_mut(key) {
                 if entry.is_expired() {
                     self.cache.remove(key);
-                    self._stats
-                        .lock()
-                        .expect("Cache stats lock poisoned")
-                        .misses += 1;
+                    self.stats_collector.record_miss();
                     results.push(None);
                 } else {
                     entry.touch();
-                    self._stats.lock().expect("Cache stats lock poisoned").hits += 1;
+                    self.stats_collector.record_hit();
                     results.push(Some(entry.data.clone()));
                 }
             } else {
-                self._stats
-                    .lock()
-                    .expect("Cache stats lock poisoned")
-                    .misses += 1;
+                self.stats_collector.record_miss();
                 results.push(None);
             }
         }
@@ -330,20 +275,18 @@ impl CacheStrategy for MemoryCacheStrategy {
         }
 
         self.evict_if_needed();
-        self._stats
-            .lock()
-            .expect("Cache stats lock poisoned")
-            .stores += count as u64;
+        for _ in 0..count {
+            self.stats_collector.record_store();
+        }
         Ok(())
     }
 }
 
-/// Redis缓存策略
 #[cfg(feature = "redis-cache")]
 pub struct RedisCacheStrategy {
     redis_client: Arc<crate::infrastructure::cache::redis_client::RedisClient>,
     config: CacheStrategyConfig,
-    _stats: std::sync::Arc<std::sync::Mutex<CacheStats>>,
+    stats_collector: CacheStatsCollector,
 }
 
 #[cfg(feature = "redis-cache")]
@@ -355,7 +298,7 @@ impl RedisCacheStrategy {
         Self {
             redis_client,
             config,
-            _stats: std::sync::Arc::new(std::sync::Mutex::new(CacheStats::default())),
+            stats_collector: CacheStatsCollector::new(),
         }
     }
 
@@ -374,15 +317,13 @@ impl CacheStrategy for RedisCacheStrategy {
             Some(json_str) => {
                 let results: Vec<SearchResult> = serde_json::from_str(&json_str)?;
 
-                let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-                stats.hits += 1;
+                self.stats_collector.record_hit();
 
                 debug!("Cache hit for key: {}", key);
                 Ok(Some(results))
             }
             None => {
-                let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-                stats.misses += 1;
+                self.stats_collector.record_miss();
 
                 debug!("Cache miss for key: {}", key);
                 Ok(None)
@@ -400,8 +341,7 @@ impl CacheStrategy for RedisCacheStrategy {
             .set(&cache_key, &json_str, ttl.as_secs() as usize)
             .await?;
 
-        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-        stats.stores += 1;
+        self.stats_collector.record_store();
 
         debug!(
             "Stored {} results in Redis cache for key: {}",
@@ -420,16 +360,12 @@ impl CacheStrategy for RedisCacheStrategy {
     }
 
     async fn clear(&self) -> Result<()> {
-        // Redis不支持直接清空所有匹配模式的键，这里简单记录日志
         warn!("Redis cache clear not implemented, would need to iterate over all keys");
         Ok(())
     }
 
     fn get_stats(&self) -> CacheStats {
-        self._stats
-            .lock()
-            .expect("Cache stats lock poisoned")
-            .clone()
+        self.stats_collector.snapshot()
     }
 
     async fn preheat(&self, hot_data: Vec<(String, Vec<SearchResult>)>) -> Result<()> {
@@ -441,8 +377,7 @@ impl CacheStrategy for RedisCacheStrategy {
             self.set(&key, results, Some(ttl)).await?;
         }
 
-        let mut stats = self._stats.lock().expect("Cache stats lock poisoned");
-        stats.preheat_hits += entry_count as u64;
+        self.stats_collector.record_preheat_hits(entry_count);
 
         info!("Redis cache preheating completed");
         Ok(())
@@ -476,14 +411,13 @@ impl CacheStrategy for RedisCacheStrategy {
     }
 }
 
-/// 分层缓存策略（内存+Redis）
 #[cfg(feature = "redis-cache")]
 pub struct LayeredCacheStrategy {
     memory_cache: MemoryCacheStrategy,
     redis_cache: RedisCacheStrategy,
     config: LayeredCacheConfig,
     #[allow(dead_code)]
-    _stats: std::sync::Arc<std::sync::Mutex<CacheStats>>,
+    _stats: Arc<Mutex<CacheStats>>,
 }
 
 #[cfg(feature = "redis-cache")]
@@ -498,7 +432,7 @@ impl LayeredCacheStrategy {
             memory_cache: MemoryCacheStrategy::new(memory_config),
             redis_cache: RedisCacheStrategy::new(redis_client, redis_config),
             config: layered_config,
-            _stats: std::sync::Arc::new(std::sync::Mutex::new(CacheStats::default())),
+            _stats: Arc::new(Mutex::new(CacheStats::default())),
         }
     }
 }
@@ -507,17 +441,14 @@ impl LayeredCacheStrategy {
 #[cfg(feature = "redis-cache")]
 impl CacheStrategy for LayeredCacheStrategy {
     async fn get(&self, key: &str) -> Result<Option<Vec<SearchResult>>> {
-        // 先检查内存缓存
         if let Some(results) = self.memory_cache.get(key).await? {
             debug!("Layered cache hit in memory layer for key: {}", key);
             return Ok(Some(results));
         }
 
-        // 内存未命中，检查Redis
         if let Some(results) = self.redis_cache.get(key).await? {
             debug!("Layered cache hit in Redis layer for key: {}", key);
 
-            // 回填到内存缓存
             let memory_ttl = Duration::from_secs(self.config.memory_ttl);
             self.memory_cache
                 .set(key, results.clone(), Some(memory_ttl))
@@ -531,11 +462,9 @@ impl CacheStrategy for LayeredCacheStrategy {
     }
 
     async fn set(&self, key: &str, value: Vec<SearchResult>, ttl: Option<Duration>) -> Result<()> {
-        // 设置到两层缓存
         let memory_ttl = Duration::from_secs(self.config.memory_ttl);
         let redis_ttl = ttl.unwrap_or(Duration::from_secs(self.config.redis_ttl));
 
-        // 并行设置（直接使用 value，无需克隆）
         let memory_future = self.memory_cache.set(key, value.clone(), Some(memory_ttl));
         let redis_future = self.redis_cache.set(key, value, Some(redis_ttl));
 
@@ -647,7 +576,6 @@ impl CacheStrategy for LayeredCacheStrategy {
     }
 }
 
-/// 智能缓存策略
 pub struct CacheStrategyFactory;
 
 impl CacheStrategyFactory {
@@ -689,13 +617,10 @@ impl CacheStrategyFactory {
                 ))
             }
             CacheType::Smart => {
-                // 创建多个策略供智能选择
                 let mut strategies: Vec<Box<dyn CacheStrategy>> = Vec::new();
 
-                // 内存策略
                 strategies.push(Box::new(MemoryCacheStrategy::new(config.clone())));
 
-                // Redis策略（如果可用）
                 if let Some(ref redis_client) = redis_client {
                     let redis_config = CacheStrategyConfig {
                         cache_type: CacheType::Redis,
@@ -708,7 +633,6 @@ impl CacheStrategyFactory {
                     )));
                 }
 
-                // 分层策略（如果Redis可用）
                 if let Some(ref redis_client) = redis_client {
                     if let Some(ref layered_config) = config.layered_config {
                         let layered_strategy = Self::create_strategy(
@@ -729,21 +653,10 @@ impl CacheStrategyFactory {
     }
 }
 
-impl Default for LayeredCacheConfig {
-    fn default() -> Self {
-        Self {
-            memory_ttl: 60,  // 1分钟
-            redis_ttl: 3600, // 1小时
-            memory_max_entries: 1000,
-        }
-    }
-}
-
-/// 智能缓存策略
 pub struct SmartCacheStrategy {
     strategies: Vec<Box<dyn CacheStrategy>>,
-    current_strategy: std::sync::Arc<std::sync::RwLock<usize>>,
-    performance_history: std::sync::Arc<std::sync::Mutex<Vec<CachePerformance>>>,
+    current_strategy: Arc<RwLock<usize>>,
+    performance_history: Arc<Mutex<Vec<CachePerformance>>>,
 }
 
 #[derive(Clone)]
@@ -756,15 +669,14 @@ struct CachePerformance {
     _timestamp: Instant,
 }
 
-/// 缓存监控器
 #[allow(dead_code)]
 pub struct CacheMonitor {
-    stats: Arc<std::sync::Mutex<CacheStats>>,
+    stats: Arc<Mutex<CacheStats>>,
     _last_report: Instant,
 }
 
 impl CacheMonitor {
-    pub fn new(stats: Arc<std::sync::Mutex<CacheStats>>) -> Self {
+    pub fn new(stats: Arc<Mutex<CacheStats>>) -> Self {
         Self {
             stats,
             _last_report: Instant::now(),
@@ -776,8 +688,8 @@ impl SmartCacheStrategy {
     pub fn new(strategies: Vec<Box<dyn CacheStrategy>>) -> Self {
         Self {
             strategies,
-            current_strategy: std::sync::Arc::new(std::sync::RwLock::new(0)),
-            performance_history: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            current_strategy: Arc::new(RwLock::new(0)),
+            performance_history: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -841,7 +753,7 @@ impl CacheStrategy for SmartCacheStrategy {
             .read()
             .expect("Current strategy lock poisoned");
 
-        let result = self.strategies[current_index].get(key).await?;
+        let result: Option<Vec<SearchResult>> = self.strategies[current_index].get(key).await?;
         let latency_ms = start.elapsed().as_millis() as f64;
 
         let hit_rate = if result.is_some() { 1.0 } else { 0.0 };
@@ -924,20 +836,6 @@ impl CacheStrategy for SmartCacheStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::search_result::SearchResult;
-
-    fn create_test_search_results(count: usize) -> Vec<SearchResult> {
-        (0..count)
-            .map(|i| SearchResult {
-                title: format!("Test Result {}", i),
-                url: format!("https://example.com/{}", i),
-                description: Some(format!("Test description for result {}", i)),
-                engine: "test".to_string(),
-                score: 0.5,
-                ..Default::default()
-            })
-            .collect()
-    }
 
     #[test]
     fn test_cache_entry_new() {
@@ -952,7 +850,6 @@ mod tests {
     #[test]
     fn test_cache_entry_is_expired() {
         let data = vec!["test_data".to_string()];
-        // Create entry with zero TTL - should be expired
         let entry = CacheEntry::new(data, Duration::from_secs(0));
         assert!(entry.is_expired());
     }
@@ -974,39 +871,13 @@ mod tests {
         let data = vec!["test_data".to_string()];
         let mut entry = CacheEntry::new(data, Duration::from_secs(300));
 
-        // Initially access_count is 0
         let initial_score = entry.get_priority_score();
 
-        // Touch to increase access count
         entry.touch();
         entry.touch();
 
         let after_touch_score = entry.get_priority_score();
         assert!(after_touch_score > initial_score);
-    }
-
-    #[test]
-    fn test_cache_stats_default() {
-        let stats = CacheStats::default();
-        assert_eq!(stats.hits, 0);
-        assert_eq!(stats.misses, 0);
-        assert_eq!(stats.evictions, 0);
-        assert_eq!(stats.stores, 0);
-        assert_eq!(stats.compression_saves, 0);
-        assert_eq!(stats.preheat_hits, 0);
-    }
-
-    #[test]
-    fn test_cache_stats_clone() {
-        let mut stats = CacheStats::default();
-        stats.hits = 10;
-        stats.misses = 5;
-        stats.stores = 20;
-
-        let cloned = stats.clone();
-        assert_eq!(cloned.hits, 10);
-        assert_eq!(cloned.misses, 5);
-        assert_eq!(cloned.stores, 20);
     }
 
     #[test]
@@ -1078,5 +949,17 @@ mod tests {
         assert_eq!(config.memory_ttl, 60);
         assert_eq!(config.redis_ttl, 3600);
         assert_eq!(config.memory_max_entries, 1000);
+    }
+
+    #[test]
+    fn test_memory_cache_strategy_stats() {
+        let config = CacheStrategyConfig::default();
+        let strategy = MemoryCacheStrategy::new(config);
+
+        let stats = strategy.get_stats();
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.evictions, 0);
+        assert_eq!(stats.stores, 0);
     }
 }

@@ -15,6 +15,7 @@ use crate::infrastructure::cache::cache_strategy::{
 };
 #[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::infrastructure::cache::types::CacheStats;
 
 /// 缓存管理器
 ///
@@ -75,7 +76,7 @@ impl CacheManager {
     }
 
     /// 获取缓存统计信息
-    pub async fn get_stats(&self) -> crate::infrastructure::cache::cache_strategy::CacheStats {
+    pub async fn get_stats(&self) -> CacheStats {
         let strategy = self.strategy.read().await;
         strategy.get_stats()
     }

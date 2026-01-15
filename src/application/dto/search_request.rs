@@ -7,6 +7,7 @@ use crate::application::dto::crawl_request::CrawlConfigDto;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SearchRequestDto {
     pub query: String,
     pub engine: Option<String>, // e.g., "google", "bing"

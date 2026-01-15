@@ -6,9 +6,9 @@
 #![allow(dead_code)]
 #![allow(deprecated)]
 
-use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
 use super::helpers::browser_helpers::create_scrape_request;
 use super::helpers::google_helpers::{get_chrome_ws_url, set_chrome_ws_url};
+use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
 use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::traits::ScraperEngine;
 

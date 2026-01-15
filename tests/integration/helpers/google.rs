@@ -5,7 +5,7 @@
 
 #![allow(deprecated)]
 
-use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT};
+use crate::common::constants::timeouts::CRAWL_TASK_TIMEOUT;
 use crawlrs::search::client::google::GoogleSearchEngine;
 
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
@@ -117,7 +117,8 @@ impl FlareSolverrGoogleEngine {
         let document = Html::parse_document(html);
         let title_selector = Selector::parse("h3").expect("Failed to parse title selector");
         let _link_selector = Selector::parse("a").expect("Failed to parse link selector");
-        let snippet_selector = Selector::parse(".VwiC3b").expect("Failed to parse snippet selector");
+        let snippet_selector =
+            Selector::parse(".VwiC3b").expect("Failed to parse snippet selector");
 
         let mut results = Vec::new();
 

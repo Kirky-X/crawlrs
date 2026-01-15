@@ -168,8 +168,8 @@ impl FeatureFlag {
     /// Check if the feature is currently active
     pub fn is_active(&self) -> bool {
         self.enabled
-            && self.started_at.map_or(true, |t| t <= chrono::Utc::now())
-            && self.stopped_at.map_or(true, |t| t > chrono::Utc::now())
+            && self.started_at.is_none_or(|t| t <= chrono::Utc::now())
+            && self.stopped_at.is_none_or(|t| t > chrono::Utc::now())
     }
 
     /// Check if a specific API Key should have access based on rollout

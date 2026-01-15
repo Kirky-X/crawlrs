@@ -164,6 +164,7 @@ impl SearchEngineFactory {
         let mut engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>> = Vec::new();
 
         // 获取代理URL配置
+        #[allow(unused)]
         let proxy_url = std::env::var("CRAWLRS_PROXY_URL")
             .ok()
             .filter(|url| !url.is_empty());

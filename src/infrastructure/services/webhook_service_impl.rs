@@ -7,11 +7,28 @@ use crate::domain::models::webhook::WebhookEvent;
 use crate::domain::services::webhook_service::WebhookService;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use chrono::Utc;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::time::Duration;
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// 最大允许的时间戳偏差（秒）
+/// 用于防止重放攻击
+/// 接收方 webhook handler 应使用此常量验证时间戳
+#[allow(dead_code)]
+const MAX_TIMESTAMP_AGE: i64 = 300; // 5分钟
+
+/// 验证 webhook 时间戳是否在有效期内
+/// 用于防止重放攻击
+/// 接收方 webhook handler 应调用此函数验证请求时间戳
+#[allow(dead_code)]
+fn validate_timestamp(timestamp: i64) -> bool {
+    let now = Utc::now().timestamp();
+    let diff = (now - timestamp).abs();
+    diff <= MAX_TIMESTAMP_AGE
+}
 
 /// 脱敏 webhook 响应消息
 ///
@@ -30,12 +47,10 @@ fn sanitize_webhook_response(body: &str) -> String {
     };
 
     // 移除可能的敏感信息（API 密钥、令牌等）
-    let sanitized = truncated.replace(
+    truncated.replace(
         |c: char| !c.is_ascii_graphic() && !c.is_ascii_whitespace(),
         "?",
-    );
-
-    sanitized
+    )
 }
 
 /// Webhook服务实现

@@ -27,7 +27,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use tracing::log::error;
 use uuid::Uuid;
-use validator::Validate;
 
 /// 爬取用例错误类型
 ///
