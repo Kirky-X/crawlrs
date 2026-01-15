@@ -1,3 +1,4 @@
+use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
@@ -112,7 +113,7 @@ async fn test_scrape_with_page_interactions() {
             panic!("Task failed unexpectedly");
         }
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(QUICK_TEST_TIMEOUT).await;
     }
 
     assert!(
@@ -196,8 +197,8 @@ async fn test_scrape_with_click_action() {
             .filter(task::Column::Id.eq(task_id))
             .one(app.db_pool.as_ref())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to query task from database")
+            .expect("Task not found in database");
 
         if TaskStatus::from_str(&task.status).unwrap_or(TaskStatus::Queued) == TaskStatus::Completed
         {
@@ -211,7 +212,7 @@ async fn test_scrape_with_click_action() {
             break;
         }
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(QUICK_TEST_TIMEOUT).await;
     }
 
     assert!(task_completed, "Task did not complete in time");
@@ -281,8 +282,8 @@ async fn test_scrape_with_input_action() {
     }
 
     let task_response: serde_json::Value = response.json();
-    let task_id_str = task_response["id"].as_str().unwrap();
-    let task_id = Uuid::parse_str(task_id_str).unwrap();
+    let task_id_str = task_response["id"].as_str().expect("Missing 'id' field in task response");
+    let task_id = Uuid::parse_str(task_id_str).expect("Failed to parse task ID as UUID");
 
     // Poll for task completion
     let mut task_completed = false;
@@ -292,8 +293,8 @@ async fn test_scrape_with_input_action() {
             .filter(task::Column::Id.eq(task_id))
             .one(app.db_pool.as_ref())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to query task from database")
+            .expect("Task not found in database");
 
         if TaskStatus::from_str(&task.status).unwrap_or(TaskStatus::Queued) == TaskStatus::Completed
         {
@@ -307,7 +308,7 @@ async fn test_scrape_with_input_action() {
             break;
         }
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(QUICK_TEST_TIMEOUT).await;
     }
 
     assert!(task_completed, "Task did not complete in time");
@@ -375,8 +376,8 @@ async fn test_scrape_with_screenshot_action() {
     }
 
     let task_response: serde_json::Value = response.json();
-    let task_id_str = task_response["id"].as_str().unwrap();
-    let task_id = Uuid::parse_str(task_id_str).unwrap();
+    let task_id_str = task_response["id"].as_str().expect("Missing 'id' field in task response");
+    let task_id = Uuid::parse_str(task_id_str).expect("Failed to parse task ID as UUID");
 
     // Poll for task completion
     let mut task_completed = false;
@@ -386,8 +387,8 @@ async fn test_scrape_with_screenshot_action() {
             .filter(task::Column::Id.eq(task_id))
             .one(app.db_pool.as_ref())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to query task from database")
+            .expect("Task not found in database");
 
         if TaskStatus::from_str(&task.status).unwrap_or(TaskStatus::Queued) == TaskStatus::Completed
         {
@@ -399,7 +400,7 @@ async fn test_scrape_with_screenshot_action() {
             panic!("Task failed unexpectedly");
         }
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(QUICK_TEST_TIMEOUT).await;
     }
 
     assert!(task_completed, "Task did not complete in time");
@@ -479,8 +480,8 @@ async fn test_scrape_with_complex_interactions() {
     }
 
     let task_response: serde_json::Value = response.json();
-    let task_id_str = task_response["id"].as_str().unwrap();
-    let task_id = Uuid::parse_str(task_id_str).unwrap();
+    let task_id_str = task_response["id"].as_str().expect("Missing 'id' field in task response");
+    let task_id = Uuid::parse_str(task_id_str).expect("Failed to parse task ID as UUID");
 
     // Poll for task completion
     let mut task_completed = false;
@@ -491,8 +492,8 @@ async fn test_scrape_with_complex_interactions() {
             .filter(task::Column::Id.eq(task_id))
             .one(app.db_pool.as_ref())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to query task from database")
+            .expect("Task not found in database");
 
         if TaskStatus::from_str(&task.status).unwrap_or(TaskStatus::Queued) == TaskStatus::Completed
         {
@@ -504,7 +505,7 @@ async fn test_scrape_with_complex_interactions() {
             panic!("Task failed unexpectedly");
         }
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(QUICK_TEST_TIMEOUT).await;
     }
 
     assert!(

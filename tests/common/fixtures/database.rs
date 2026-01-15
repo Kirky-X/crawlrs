@@ -58,11 +58,11 @@ impl DatabaseFixture {
 
     /// 使用指定选项创建数据库固件
     pub async fn with_options(options: DatabaseOptions) -> Self {
-        let db = Database::connect(&options.url).await.unwrap();
+        let db = Database::connect(&options.url).await.expect("Failed to connect to database");
         let db_pool = Arc::new(db);
 
         // 运行数据库迁移
-        Migrator::up(db_pool.as_ref(), None).await.unwrap();
+        Migrator::up(db_pool.as_ref(), None).await.expect("Failed to run database migrations");
 
         let db_backend = if options.url.starts_with("postgres://") {
             DbBackend::Postgres
@@ -91,7 +91,7 @@ impl DatabaseFixture {
                         vec![cleanup_pattern.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to delete tasks");
 
                 self.db_pool
                     .execute(Statement::from_sql_and_values(
@@ -100,7 +100,7 @@ impl DatabaseFixture {
                         vec![cleanup_pattern.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to delete tasks from backlog");
 
                 self.db_pool
                     .execute(Statement::from_sql_and_values(
@@ -109,7 +109,7 @@ impl DatabaseFixture {
                         vec![cleanup_pattern.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to delete scrape results");
             }
             DbBackend::Sqlite => {
                 // SQLite语法
@@ -120,7 +120,7 @@ impl DatabaseFixture {
                         vec![cleanup_pattern.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to delete tasks");
 
                 self.db_pool
                     .execute(Statement::from_sql_and_values(
@@ -129,7 +129,7 @@ impl DatabaseFixture {
                         vec![cleanup_pattern.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to delete tasks from backlog");
 
                 self.db_pool
                     .execute(Statement::from_sql_and_values(
@@ -138,7 +138,7 @@ impl DatabaseFixture {
                         vec![cleanup_pattern.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to delete scrape results");
             }
             _ => {}
         }

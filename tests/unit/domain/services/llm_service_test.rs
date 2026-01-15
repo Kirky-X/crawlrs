@@ -40,8 +40,8 @@ mod tests {
             completion_tokens: 20,
             total_tokens: 30,
         };
-        let json = serde_json::to_string(&usage).unwrap();
-        let deserialized: TokenUsage = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&usage).expect("Failed to serialize token usage");
+        let deserialized: TokenUsage = serde_json::from_str(&json).expect("Failed to deserialize token usage");
         assert_eq!(deserialized.total_tokens, 30);
     }
 }

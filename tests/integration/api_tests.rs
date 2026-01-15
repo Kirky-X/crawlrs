@@ -8,6 +8,9 @@
 use super::helpers::{
     create_test_app, create_test_app_with_low_rate_limit, create_test_app_with_rate_limit_options,
 };
+use crate::common::constants::timeouts::{
+    QUICK_TEST_TIMEOUT, CRAWL_TASK_TIMEOUT, API_REQUEST_TIMEOUT,
+};
 use axum::http::StatusCode;
 use chrono::Utc;
 use crawlrs::infrastructure::database::entities::task;
@@ -222,7 +225,7 @@ async fn test_team_concurrency_limit() {
             .expect("Failed to parse task ID as UUID");
 
         // 3. Wait a bit for worker to try processing
-        tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
 
         // 4. Check task status if task was accepted
         let task = task::Entity::find()
@@ -269,7 +272,7 @@ async fn test_circuit_breaker_and_engine_fallback() {
                 // ReqwestEngine's User-Agent contains "crawlrs"
                 // Simulate timeout: delay 2 seconds, while request timeout is set to 1 second
                 // This is a real delay, not a simulated result, used to test timeout handling logic
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
                 (StatusCode::OK, "Too slow for reqwest")
             } else {
                 // PlaywrightEngine 或其他
@@ -306,8 +309,8 @@ async fn test_circuit_breaker_and_engine_fallback() {
     // 2. 设置断路器：低阈值用于测试
     let circuit_config = CircuitConfig {
         failure_threshold: 2,
-        recovery_timeout: Duration::from_secs(60),
-        failure_window: Duration::from_secs(60),
+        recovery_timeout: CRAWL_TASK_TIMEOUT,
+        failure_window: CRAWL_TASK_TIMEOUT,
     };
     let cb = Arc::new(CircuitBreaker::with_default_config(circuit_config));
 
@@ -324,7 +327,7 @@ async fn test_circuit_breaker_and_engine_fallback() {
     let request = ScrapeRequest {
         url: test_url,
         headers: HashMap::new(),
-        timeout: Duration::from_secs(1), // 短超时触发 Reqwest 失败
+        timeout: QUICK_TEST_TIMEOUT, // 短超时触发 Reqwest 失败
         needs_js: true,                  // 确保 Playwright 愿意处理
         needs_screenshot: false,
         screenshot_config: None,
@@ -380,7 +383,7 @@ async fn test_circuit_breaker_and_engine_fallback() {
     let elapsed = start.elapsed();
 
     // 断路器打开后，Reqwest 应该立即被跳过，不需要等待其超时
-    assert!(elapsed < Duration::from_secs(1));
+    assert!(elapsed < QUICK_TEST_TIMEOUT);
 
     if let Ok(resp) = response {
         assert!(resp.content.contains("Success from other engine"));
@@ -635,7 +638,7 @@ async fn test_js_rendering_spa() {
     let mut completed = false;
     for _ in 0..20 {
         // 增加重试次数
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
         let status_response = app
             .server
             .get(&format!("/v1/scrape/{}", task_id))
@@ -702,7 +705,7 @@ async fn test_full_site_crawl() {
     // 2. 检查爬取状态并等待完成
     let mut completed = false;
     for _ in 0..30 {
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
         let status_response = app
             .server
             .get(&format!("/v1/crawl/{}", crawl_id))
@@ -788,7 +791,7 @@ async fn test_task_timeout_handling() {
     // 2. 等待 worker 处理并超时
     let mut timed_out = false;
     for _ in 0..10 {
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
         let status_response = app
             .server
             .get(&format!("/v1/scrape/{}", task_id))
@@ -1066,7 +1069,7 @@ async fn test_webhook_trigger() {
     // For now, we can check if a webhook event record was created in the database.
 
     // Allow some time for processing
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
 
     // Check database for webhook event
     // We need to access the database directly
@@ -1148,7 +1151,7 @@ async fn test_webhook_retry_policy() {
 
     // 3. 等待任务完成并触发 Webhook
     // 初始发送失败后，应该会被标记为 Failed 并计划重试
-    tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
+    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
 
     // 4. 检查 WebhookEvent 状态
     use crawlrs::infrastructure::database::entities::webhook_event::{self, SeaWebhookStatus};

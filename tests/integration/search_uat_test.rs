@@ -6,6 +6,7 @@
 use super::helpers::create_test_app;
 use reqwest::StatusCode;
 use serde_json::json;
+use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
 use std::time::Instant;
 
 /// UAT-001: 单引擎搜索
@@ -44,7 +45,7 @@ async fn test_uat_001_single_engine_search() {
     assert!(search_response.get("results").is_some());
     assert!(search_response.get("credits_used").is_some());
 
-    let results = search_response["results"].as_array().unwrap();
+    let results = search_response["results"].as_array().expect("Missing 'results' array in response");
     assert!(results.len() <= 10);
 
     // 验证每个结果的结构
@@ -102,7 +103,7 @@ async fn test_uat_002_multi_engine_aggregation() {
     );
 
     let search_response: serde_json::Value = response.json();
-    let results = search_response["results"].as_array().unwrap();
+    let results = search_response["results"].as_array().expect("Missing 'results' array in search response");
 
     // 验证结果数量限制
     assert!(results.len() <= 15);
@@ -110,7 +111,7 @@ async fn test_uat_002_multi_engine_aggregation() {
     // 验证无重复URL
     let mut urls = std::collections::HashSet::new();
     for result in results {
-        let url = result["url"].as_str().unwrap();
+        let url = result["url"].as_str().expect("Missing 'url' field in result");
         assert!(!urls.contains(url), "Duplicate URL found: {}", url);
         urls.insert(url);
     }
@@ -118,7 +119,7 @@ async fn test_uat_002_multi_engine_aggregation() {
     // 验证多个引擎的结果
     let mut engines = std::collections::HashSet::new();
     for result in results {
-        let engine = result["engine"].as_str().unwrap();
+        let engine = result["engine"].as_str().expect("Missing 'engine' field in result");
         engines.insert(engine);
     }
 
@@ -167,7 +168,7 @@ async fn test_uat_003_search_cache_hit() {
     assert_eq!(response1.status_code(), StatusCode::OK);
 
     // 等待1秒（确保缓存已设置）
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
 
     // 第二次查询相同关键词（使用同一个app实例）
     let start_time2 = Instant::now();
@@ -237,7 +238,7 @@ async fn test_uat_004_search_with_sync_wait() {
 
     // 如果没有返回结果，可能是因为网络原因或者引擎限制，在集成测试中我们可以模拟一些结果
     // 但在 UAT 测试中，我们应该确保它能工作
-    if search_response["results"].as_array().unwrap().is_empty() {
+    if search_response["results"].as_array().expect("Missing 'results' array in response").is_empty() {
         println!("⚠️  UAT-004 No real search results returned, checking if it's due to engine limitations...");
     }
 

@@ -1,3 +1,4 @@
+use crate::common::constants::timeouts::API_REQUEST_TIMEOUT;
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
@@ -23,7 +24,7 @@ mod tests {
         let basic_request = ScrapeRequest {
             url: "https://example.com".to_string(),
             headers: HashMap::new(),
-            timeout: Duration::from_secs(10),
+            timeout: API_REQUEST_TIMEOUT,
             needs_js: false,
             needs_screenshot: false,
             screenshot_config: None,
@@ -41,7 +42,7 @@ mod tests {
         let js_request = ScrapeRequest {
             url: "https://example.com".to_string(),
             headers: HashMap::new(),
-            timeout: Duration::from_secs(10),
+            timeout: API_REQUEST_TIMEOUT,
             needs_js: true,
             needs_screenshot: false,
             screenshot_config: None,
@@ -59,7 +60,7 @@ mod tests {
         let screenshot_request = ScrapeRequest {
             url: "https://example.com".to_string(),
             headers: HashMap::new(),
-            timeout: Duration::from_secs(10),
+            timeout: API_REQUEST_TIMEOUT,
             needs_js: false,
             needs_screenshot: true,
             screenshot_config: None,
@@ -77,7 +78,7 @@ mod tests {
         let mobile_request = ScrapeRequest {
             url: "https://example.com".to_string(),
             headers: HashMap::new(),
-            timeout: Duration::from_secs(10),
+            timeout: API_REQUEST_TIMEOUT,
             needs_js: false,
             needs_screenshot: false,
             screenshot_config: None,

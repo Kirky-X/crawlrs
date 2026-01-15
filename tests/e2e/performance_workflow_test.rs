@@ -8,6 +8,9 @@ use axum::http::StatusCode;
 use serde_json::json;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
+use crate::common::constants::timeouts::{
+    CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT, E2E_TEST_TIMEOUT, LONG_RUNNING_TEST_TIMEOUT,
+};
 
 #[tokio::test]
 async fn test_performance_single_url_benchmark() {
@@ -42,7 +45,7 @@ async fn test_performance_single_url_benchmark() {
 
         assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
-        let task_id = task_data["id"].as_str().unwrap().to_string();
+        let task_id = task_data["id"].as_str().expect("Missing 'id' field in task response").to_string();
 
         // Wait for completion
         let mut status = String::from("pending");
@@ -59,10 +62,10 @@ async fn test_performance_single_url_benchmark() {
                 .await;
 
             let status_data: serde_json::Value = status_response.json();
-            status = status_data["status"].as_str().unwrap().to_string();
+            status = status_data["status"].as_str().expect("Missing 'status' field in task response").to_string();
 
-            if wait_time > Duration::from_secs(60) {
-                panic!("Task timeout for URL: {}", url);
+            if wait_time > CRAWL_TASK_TIMEOUT {
+                panic!("Task timeout for URL: {} (expected < {:?})", url, CRAWL_TASK_TIMEOUT);
             }
         }
 
@@ -90,8 +93,9 @@ async fn test_performance_single_url_benchmark() {
 
         assert!(success, "Task should complete successfully for {}", url);
         assert!(
-            duration < Duration::from_secs(45),
-            "Scraping should complete within 45 seconds for {}",
+            duration < E2E_TEST_TIMEOUT,
+            "Scraping should complete within {:?} for {}",
+            E2E_TEST_TIMEOUT,
             url
         );
         assert!(content_length > 0, "Should extract content from {}", url);
@@ -125,7 +129,7 @@ async fn test_performance_concurrent_scraping() {
 
         assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
-        task_ids.push(task_data["id"].as_str().unwrap().to_string());
+        task_ids.push(task_data["id"].as_str().expect("Missing 'id' field in task response").to_string());
     }
 
     // Wait for all tasks to complete
@@ -144,7 +148,7 @@ async fn test_performance_concurrent_scraping() {
                 .await;
 
             let status_data: serde_json::Value = status_response.json();
-            let status = status_data["status"].as_str().unwrap().to_string();
+            let status = status_data["status"].as_str().expect("Missing 'status' field in task response").to_string();
 
             if status == "completed" {
                 completed_tasks += 1;
@@ -167,8 +171,9 @@ async fn test_performance_concurrent_scraping() {
         "All concurrent tasks should complete"
     );
     assert!(
-        total_time < Duration::from_secs(90),
-        "Concurrent scraping should complete within 90 seconds"
+        total_time < LONG_RUNNING_TEST_TIMEOUT,
+        "Concurrent scraping should complete within {:?}",
+        LONG_RUNNING_TEST_TIMEOUT
     );
 
     println!(
@@ -208,7 +213,7 @@ async fn test_performance_batch_crawl() {
 
     assert_eq!(crawl_response.status_code(), StatusCode::ACCEPTED);
     let crawl_data: serde_json::Value = crawl_response.json();
-    let crawl_id = crawl_data["id"].as_str().unwrap().to_string();
+    let crawl_id = crawl_data["id"].as_str().expect("Missing 'id' field in crawl response").to_string();
 
     // Monitor progress
     let mut status = String::from("pending");
@@ -228,7 +233,7 @@ async fn test_performance_batch_crawl() {
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
         let status_data: serde_json::Value = status_response.json();
-        status = status_data["status"].as_str().unwrap().to_string();
+        status = status_data["status"].as_str().expect("Missing 'status' field in crawl response").to_string();
 
         sleep(Duration::from_millis(1000)).await;
         retries += 1;
@@ -244,7 +249,7 @@ async fn test_performance_batch_crawl() {
         .await;
 
     let final_data: serde_json::Value = final_response.json();
-    let results = final_data["results"].as_array().unwrap();
+    let results = final_data["results"].as_array().expect("Missing 'results' array in crawl response");
 
     // Performance assertions
     assert_eq!(
@@ -256,8 +261,9 @@ async fn test_performance_batch_crawl() {
         "At least 75% of URLs should be processed successfully"
     );
     assert!(
-        total_time < Duration::from_secs(120),
-        "Batch crawl should complete within 120 seconds"
+        total_time < LONG_RUNNING_TEST_TIMEOUT,
+        "Batch crawl should complete within {:?}",
+        LONG_RUNNING_TEST_TIMEOUT
     );
 
     println!(
@@ -384,7 +390,7 @@ async fn test_performance_error_recovery() {
 
     assert_eq!(timeout_response.status_code(), StatusCode::ACCEPTED);
     let timeout_task_data: serde_json::Value = timeout_response.json();
-    let timeout_task_id = timeout_task_data["id"].as_str().unwrap().to_string();
+    let timeout_task_id = timeout_task_data["id"].as_str().expect("Missing 'id' field in timeout response").to_string();
 
     // Wait for timeout to occur
     sleep(Duration::from_millis(3000)).await;
@@ -401,12 +407,14 @@ async fn test_performance_error_recovery() {
 
     // Performance assertions for error handling
     assert!(
-        invalid_duration < Duration::from_secs(2),
-        "Invalid URL validation should be fast"
+        invalid_duration < QUICK_TEST_TIMEOUT,
+        "Invalid URL validation should be fast (< {:?})",
+        QUICK_TEST_TIMEOUT
     );
     assert!(
-        ssrf_duration < Duration::from_secs(2),
-        "SSRF protection should be fast"
+        ssrf_duration < QUICK_TEST_TIMEOUT,
+        "SSRF protection should be fast (< {:?})",
+        QUICK_TEST_TIMEOUT
     );
     assert!(
         timeout_total_duration < Duration::from_secs(5),

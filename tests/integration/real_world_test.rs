@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use testcontainers::{runners::AsyncRunner, GenericImage};
 use tracing::info;
+use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
 
 const TEST_URL: &str = "https://news.sina.com.cn/c/xl/2025-12-17/doc-inhcaekp2520228.shtml";
 
@@ -51,7 +52,7 @@ async fn is_flaresolverr_available() -> bool {
 }
 
 fn create_base_request() -> ScrapeRequest {
-    ScrapeRequest::new(TEST_URL).timeout(Duration::from_secs(60)) // Increased timeout for FlareSolverr
+    ScrapeRequest::new(TEST_URL).timeout(CRAWL_TASK_TIMEOUT) // Increased timeout for FlareSolverr
 }
 
 async fn wait_for_flaresolverr(base_url: &str) {
@@ -92,7 +93,7 @@ async fn wait_for_flaresolverr(base_url: &str) {
         }
 
         info!("Waiting for FlareSolverr... attempt {}", i);
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
     }
 
     if !found {
@@ -210,7 +211,7 @@ async fn test_real_world_fire_engine_cdp() {
     let options = ScrapeOptions::builder()
         .needs_js(true)
         .use_fire_engine(true)
-        .timeout(Duration::from_secs(60))
+        .timeout(CRAWL_TASK_TIMEOUT)
         .build();
     let request = ScrapeRequest::new(TEST_URL).with_options(options);
 
@@ -273,7 +274,7 @@ async fn test_real_world_fire_engine_tls() {
     let options = ScrapeOptions::builder()
         .needs_tls_fingerprint(true)
         .use_fire_engine(true)
-        .timeout(Duration::from_secs(60))
+        .timeout(CRAWL_TASK_TIMEOUT)
         .build();
     let request = ScrapeRequest::new(TEST_URL).with_options(options);
 

@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 #![allow(deprecated)]
 
+use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
 use super::helpers::browser_helpers::create_scrape_request;
 use super::helpers::google_helpers::{get_chrome_ws_url, set_chrome_ws_url};
 use crawlrs::engines::client::playwright::PlaywrightEngine;
@@ -117,7 +118,7 @@ async fn test_browser_connection_simple() {
     set_chrome_ws_url("http://localhost:9222");
 
     // Add a delay to ensure browser connection is stable
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
 
     let result = test_simple_http_page().await;
     assert!(result, "简单HTTP页面访问测试失败");
@@ -136,7 +137,7 @@ async fn test_browser_connection_debug() {
     set_chrome_ws_url("http://localhost:9222");
 
     // Add a delay to ensure browser connection is stable
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
 
     // 只测试需要JS渲染的情况，因为Playwright引擎只在needs_js=true时执行
     let result = test_example_com(true, 15).await;
@@ -161,7 +162,7 @@ async fn test_playwright_direct() {
     set_chrome_ws_url("http://localhost:9222");
 
     // Add a delay to ensure browser connection is stable
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
 
     let result = test_example_com(true, 30).await;
 
@@ -187,7 +188,7 @@ async fn test_browser_with_remote_chrome() {
     set_chrome_ws_url(&ws_url);
 
     // Add a delay to ensure browser connection is stable
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
 
     let result = test_example_com(true, 30).await;
     assert!(result, "使用远程Chrome访问example.com失败");

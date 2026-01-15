@@ -21,6 +21,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+use crate::common::constants::timeouts::{E2E_TEST_TIMEOUT, QUICK_TEST_TIMEOUT};
 
 #[macro_export]
 macro_rules! retry_assert {
@@ -309,9 +310,9 @@ async fn test_uat006_distributed_rate_limiting() {
     // 注意：这将释放所有 3 个并发任务，不仅仅是一个。
     let _: () = redis::cmd("DEL")
         .arg(&semaphore_key)
-        .query_async(&mut redis_client.get_connection().await.unwrap())
+        .query_async(&mut redis_client.get_connection().await.expect("Failed to get Redis connection"))
         .await
-        .unwrap();
+        .expect("Failed to delete semaphore key");
 
     // 再次请求应该允许
     let task_id_retry = Uuid::new_v4();
@@ -379,7 +380,7 @@ async fn test_uat007_path_filtering_empty_rules() {
         {
             Ok(tasks) if tasks.len() == 3 => break tasks,
             _ => {
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
             }
         }
     };
@@ -894,7 +895,7 @@ async fn test_uat004_javascript_rendering() {
     // 这里的关键是验证 PlaywrightEngine 能够被正确调用并返回内容
     let options = ScrapeOptions::builder()
         .needs_js(true)
-        .timeout(Duration::from_secs(30))
+        .timeout(E2E_TEST_TIMEOUT)
         .sync_wait_ms(1000)
         .skip_tls_verification(true)
         .build();
@@ -984,7 +985,7 @@ async fn test_uat025_degradation_strategy() {
     let next_tasks = crawl_service
         .process_crawl_result(&task, html)
         .await
-        .unwrap();
+        .expect("Failed to process crawl result");
 
     // 使用重试机制验证任务生成
     retry_assert!(
@@ -1257,7 +1258,7 @@ async fn test_uat019_team_concurrency_limit() {
     let redis_client =
         crawlrs::infrastructure::cache::redis_client::RedisClient::new(&app.redis_url)
             .await
-            .unwrap();
+            .expect("Failed to create Redis client");
     let task_repo = app.task_repo.clone();
     let credits_repo = Arc::new(
         crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl::new(
@@ -1304,12 +1305,12 @@ async fn test_uat019_team_concurrency_limit() {
             lock_expires_at: None,
             expires_at: None,
         };
-        app.task_repo.create(&task).await.unwrap();
+        app.task_repo.create(&task).await.expect("Failed to create task");
 
         let result = service
             .check_team_concurrency(team_id, task_id)
             .await
-            .unwrap();
+            .expect("Failed to check team concurrency");
 
         if i < 2 {
             assert!(matches!(result, ConcurrencyResult::Allowed));
@@ -1519,10 +1520,10 @@ async fn test_uat026_sync_wait_perf() {
     tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         for task_id in task_ids_worker {
-            let mut task = repo_worker.find_by_id(task_id).await.unwrap().unwrap();
+            let mut task = repo_worker.find_by_id(task_id).await.expect("Failed to find task").expect("Task not found");
             task.status = TaskStatus::Completed;
             task.completed_at = Some(Utc::now().into()); // Convert Utc::now() to FixedOffset
-            repo_worker.update(&task).await.unwrap();
+            repo_worker.update(&task).await.expect("Failed to update task");
         }
     });
 
@@ -1566,7 +1567,7 @@ async fn test_uat026_sync_wait_perf() {
     assert_eq!(success_count, task_count);
     assert_eq!(timeout_count, 0);
     // 应该在 500ms (任务处理) + 这里的开销内完成，肯定小于 5s (从2s增加)
-    assert!(duration < std::time::Duration::from_secs(5));
+    assert!(duration < QUICK_TEST_TIMEOUT);
 }
 
 /// UAT-027: 统一任务管理接口性能测试
@@ -1634,7 +1635,7 @@ async fn test_uat027_task_mgmt_perf() {
                     lock_expires_at: None,
                     expires_at: None,
                 };
-                repo_clone.create(&task).await.unwrap();
+                repo_clone.create(&task).await.expect("Failed to create task");
                 created_ids.push(task.id);
             }
             created_ids
@@ -1642,7 +1643,7 @@ async fn test_uat027_task_mgmt_perf() {
     }
 
     for handle in handles {
-        let mut ids = handle.await.unwrap();
+        let mut ids = handle.await.expect("Failed to join task creation handle");
         task_ids.append(&mut ids);
     }
     println!(
@@ -1660,7 +1661,7 @@ async fn test_uat027_task_mgmt_perf() {
         ..Default::default()
     };
 
-    let (tasks, total) = repo.query_tasks(query_params).await.unwrap();
+    let (tasks, total) = repo.query_tasks(query_params).await.expect("Failed to query tasks");
     let query_duration = start_query.elapsed();
 
     println!(
@@ -1688,7 +1689,7 @@ async fn test_uat027_task_mgmt_perf() {
     let (cancelled, failed) = repo
         .batch_cancel(tasks_to_cancel.clone(), team_id, true)
         .await
-        .unwrap();
+        .expect("Failed to batch cancel tasks");
     let cancel_duration = start_cancel.elapsed();
 
     println!(
@@ -1702,11 +1703,11 @@ async fn test_uat027_task_mgmt_perf() {
     assert_eq!(cancelled.len(), 50);
     assert!(failed.is_empty());
     // 批量取消涉及多次数据库更新，可能比查询慢，但应在合理范围内
-    assert!(cancel_duration < std::time::Duration::from_secs(2));
+    assert!(cancel_duration < QUICK_TEST_TIMEOUT);
 
     // 验证状态
     for task_id in cancelled {
-        let task = repo.find_by_id(task_id).await.unwrap().unwrap();
+        let task = repo.find_by_id(task_id).await.expect("Failed to find task").expect("Task not found");
         assert_eq!(task.status, TaskStatus::Cancelled);
     }
 
@@ -1767,7 +1768,7 @@ async fn test_uat016_sync_wait_integration() {
         lock_expires_at: None,
         expires_at: None,
     };
-    repo.create(&task).await.unwrap();
+    repo.create(&task).await.expect("Failed to create task");
 
     // 3. 测试正常完成场景
     let repo_clone = repo.clone();
@@ -1776,10 +1777,10 @@ async fn test_uat016_sync_wait_integration() {
     // 后台模拟任务处理：延迟 500ms 后完成
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let mut task = repo_clone.find_by_id(task_id_clone).await.unwrap().unwrap();
+        let mut task = repo_clone.find_by_id(task_id_clone).await.expect("Failed to find task").expect("Task not found");
         task.status = TaskStatus::Completed;
         task.completed_at = Some(Utc::now().into());
-        repo_clone.update(&task).await.unwrap();
+        repo_clone.update(&task).await.expect("Failed to update task");
     });
 
     let start_time = Instant::now();
@@ -1799,7 +1800,7 @@ async fn test_uat016_sync_wait_integration() {
     // 但为了 CI 稳定性，我们放宽下限检查，因为调度可能非常快（如果 spawn 先于 await 执行）
     // 或者非常慢。
     // 只要它返回了，并且任务确实完成了即可。
-    let task_check = repo.find_by_id(task_id).await.unwrap().unwrap();
+    let task_check = repo.find_by_id(task_id).await.expect("Failed to find task").expect("Task not found");
     assert_eq!(task_check.status, TaskStatus::Completed);
 
     println!("✓ UAT-016 同步等待成功场景测试通过 (耗时: {:?})", elapsed);
@@ -1828,15 +1829,15 @@ async fn test_uat016_sync_wait_integration() {
         expires_at: None,
     };
 
-    repo.create(&timeout_task).await.unwrap();
+    repo.create(&timeout_task).await.expect("Failed to create timeout task");
 
     // 使用重试机制验证任务创建状态
     retry_assert!(
         10,
         tokio::time::Duration::from_millis(50),
         {
-            let task_check = repo.find_by_id(timeout_task_id).await.unwrap();
-            task_check.is_some() && task_check.unwrap().status == TaskStatus::Queued
+            let task_check = repo.find_by_id(timeout_task_id).await.expect("Failed to find task");
+            task_check.is_some() && task_check.expect("Task not found").status == TaskStatus::Queued
         },
         "Task should be created with Queued status"
     );
@@ -1871,7 +1872,7 @@ async fn test_uat016_sync_wait_integration() {
         5,
         tokio::time::Duration::from_millis(50),
         {
-            let task_in_db = repo.find_by_id(timeout_task_id).await.unwrap();
+            let task_in_db = repo.find_by_id(timeout_task_id).await.expect("Failed to find task");
             task_in_db
                 .map(|t| t.status == TaskStatus::Queued)
                 .unwrap_or(false)
@@ -1944,7 +1945,7 @@ async fn test_uat017_task_management_api() {
                 lock_expires_at: None,
                 expires_at: None,
             };
-            repo.create(&task).await.unwrap();
+            repo.create(&task).await.expect("Failed to create task");
             task_ids.push(task.id);
         }
     }
@@ -1956,7 +1957,7 @@ async fn test_uat017_task_management_api() {
         limit: 20,
         ..Default::default()
     };
-    let (tasks, total) = repo.query_tasks(query_params).await.unwrap();
+    let (tasks, total) = repo.query_tasks(query_params).await.expect("Failed to query tasks");
 
     // 调试输出
     println!("Found {} tasks with total {}", tasks.len(), total);
@@ -1986,7 +1987,7 @@ async fn test_uat017_task_management_api() {
         offset: 0,
         ..Default::default()
     };
-    let (page1, total) = repo.query_tasks(query_params.clone()).await.unwrap();
+    let (page1, total) = repo.query_tasks(query_params.clone()).await.expect("Failed to query page 1");
     assert_eq!(page1.len(), 3);
     assert_eq!(total, 10); // 总共 5 * 2 = 10 个任务
 
@@ -1996,7 +1997,7 @@ async fn test_uat017_task_management_api() {
         offset: 3,
         ..Default::default()
     };
-    let (page2, _) = repo.query_tasks(query_params).await.unwrap();
+    let (page2, _) = repo.query_tasks(query_params).await.expect("Failed to query page 2");
     assert_eq!(page2.len(), 3);
 
     // 确保分页无重复（简单验证ID）
@@ -2012,7 +2013,7 @@ async fn test_uat017_task_management_api() {
     // 使用 force=true 允许取消 Active 任务
 
     let all_ids = task_ids.clone();
-    let (cancelled, failed) = repo.batch_cancel(all_ids, team_id, true).await.unwrap();
+    let (cancelled, failed) = repo.batch_cancel(all_ids, team_id, true).await.expect("Failed to batch cancel tasks");
 
     // 使用重试机制验证批量取消结果
     retry_assert!(
@@ -2026,7 +2027,7 @@ async fn test_uat017_task_management_api() {
 
     // 验证被取消的任务状态
     for id in cancelled {
-        let task = repo.find_by_id(id).await.unwrap().unwrap();
+        let task = repo.find_by_id(id).await.expect("Failed to find task").expect("Task not found");
         assert_eq!(task.status, TaskStatus::Cancelled);
     }
 

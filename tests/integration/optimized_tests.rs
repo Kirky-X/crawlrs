@@ -24,6 +24,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
+use crate::common::constants::timeouts::{
+    QUICK_TEST_TIMEOUT, E2E_TEST_TIMEOUT, CRAWL_TASK_TIMEOUT,
+};
 
 // ============================================================================
 // 反爬虫保护配置
@@ -40,7 +43,7 @@ const USER_AGENTS: &[&str] = &[
 
 /// 随机选择一个 User-Agent
 fn random_user_agent() -> &'static str {
-    USER_AGENTS.choose(&mut rand::rng()).unwrap()
+    USER_AGENTS.choose(&mut rand::rng()).expect("No user agents available")
 }
 
 /// 生成随机延迟（3-8秒之间）
@@ -115,11 +118,11 @@ const NEWS_WEBSITES: &[NewsWebsite] = &[
 /// 随机选择一个新闻网页
 fn random_news_page() -> &'static str {
     // 随机选择一个网站
-    let website = NEWS_WEBSITES.choose(&mut rand::rng()).unwrap();
+    let website = NEWS_WEBSITES.choose(&mut rand::rng()).expect("No news websites available");
     println!("📰 随机选择新闻网站: {}", website.name);
 
     // 随机选择该网站的一个页面
-    let page_url = website.pages.choose(&mut rand::rng()).unwrap();
+    let page_url = website.pages.choose(&mut rand::rng()).expect("No pages available for website");
     println!("📄 随机选择页面: {}", page_url);
 
     page_url
@@ -146,7 +149,7 @@ fn create_scrape_request(url: &str) -> ScrapeRequest {
     headers.insert("Upgrade-Insecure-Requests".to_string(), "1".to_string());
 
     let options = ScrapeOptions::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(E2E_TEST_TIMEOUT)
         .headers(headers)
         .build();
 
@@ -239,8 +242,7 @@ async fn test_multiple_random_news_scrape() {
         println!("📍 目标 URL: {}", url);
 
         let start_time = std::time::Instant::now();
-        let result = timeout(Duration::from_secs(60), engine.scrape(&request)).await;
-        let duration = start_time.elapsed();
+            let result = timeout(CRAWL_TASK_TIMEOUT, engine.scrape(&request)).await;        let duration = start_time.elapsed();
 
         match result {
             Ok(Ok(response)) => {
@@ -300,7 +302,7 @@ const SEARCH_KEYWORDS: &[&str] = &[
 
 /// 随机选择一个搜索关键词
 fn random_search_keyword() -> &'static str {
-    let keyword = SEARCH_KEYWORDS.choose(&mut rand::rng()).unwrap();
+    let keyword = SEARCH_KEYWORDS.choose(&mut rand::rng()).expect("No search keywords available");
     println!("🔍 随机选择搜索关键词: {}", keyword);
 
     keyword
@@ -662,7 +664,7 @@ async fn test_combined_random_scrape_and_search() {
     println!("📍 目标 URL: {}", url);
 
     let scrape_result = timeout(
-        Duration::from_secs(30),
+        E2E_TEST_TIMEOUT,
         scrape_engine.scrape(&scrape_request),
     )
     .await;

@@ -11,6 +11,7 @@
 //! - 搜索引擎测试辅助函数
 //! - URL 可访问性检查
 
+use crate::common::constants::timeouts::API_REQUEST_TIMEOUT;
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::SearchEngine;
 use crate::domain::search::engine::SearchError;
@@ -128,7 +129,7 @@ pub async fn check_urls_accessibility(results: &[SearchResult]) -> TestResult {
 
 pub async fn check_url_accessibility(url: &str) -> Result<bool, String> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(API_REQUEST_TIMEOUT)
         .build()
         .map_err(|e| format!("客户端创建失败: {}", e))?;
 

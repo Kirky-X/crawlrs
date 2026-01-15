@@ -47,10 +47,10 @@ fn create_test_task(id: Uuid, team_id: Uuid, status: TaskStatus) -> Task {
 }
 
 async fn setup_test_repo() -> TaskRepositoryImpl {
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
     // 运行迁移以创建表
     use migration::{Migrator, MigratorTrait};
-    Migrator::up(&db, None).await.unwrap();
+    Migrator::up(&db, None).await.expect("Failed to run database migrations");
     TaskRepositoryImpl::new(Arc::new(db), chrono::Duration::seconds(30))
 }
 
@@ -62,7 +62,7 @@ async fn test_sync_wait_returns_result_immediately() {
     let team_id = Uuid::new_v4();
 
     let completed_task = create_test_task(task_id, team_id, TaskStatus::Completed);
-    repo.create(&completed_task).await.unwrap();
+    repo.create(&completed_task).await.expect("Failed to create completed task");
 
     // When: 调用同步等待函数
     let start = Instant::now();
@@ -86,7 +86,7 @@ async fn test_sync_wait_timeout_with_uncompleted_tasks() {
     let team_id = Uuid::new_v4();
 
     let active_task = create_test_task(task_id, team_id, TaskStatus::Active);
-    repo.create(&active_task).await.unwrap();
+    repo.create(&active_task).await.expect("Failed to create active task");
 
     // When: 调用同步等待函数，设置较短的超时时间
     let start = Instant::now();
@@ -118,7 +118,7 @@ async fn test_sync_wait_multiple_tasks() {
 
     for &id in &task_ids {
         let completed_task = create_test_task(id, team_id, TaskStatus::Completed);
-        repo.create(&completed_task).await.unwrap();
+        repo.create(&completed_task).await.expect("Failed to create completed task");
     }
 
     // When: 调用同步等待函数

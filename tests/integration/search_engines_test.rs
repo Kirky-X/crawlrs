@@ -32,6 +32,7 @@
 
 #![allow(deprecated)]
 
+use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
 use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::engines::traits::ScraperEngine;
@@ -103,7 +104,7 @@ async fn run_concurrent_search_tests(
         let test_query = test_query.to_string();
 
         let handle = tokio::spawn(async move {
-            let _permit = semaphore.acquire().await.unwrap();
+            let _permit = semaphore.acquire().await.expect("Failed to acquire semaphore permit");
 
             println!("🔍 开始测试 {} 搜索引擎...", engine_name);
 
@@ -413,7 +414,7 @@ async fn test_search_engine_performance() {
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
     }
 
     println!("\n⚡ 搜索引擎性能报告");
@@ -528,7 +529,7 @@ async fn test_search_results_comparison() {
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
     }
 
     println!("\n📊 搜索结果对比分析");

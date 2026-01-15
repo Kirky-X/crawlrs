@@ -15,7 +15,7 @@ mod tests {
     #[tokio::test]
     async fn test_worker_manager_configuration_loading() {
         // Test that WorkerManager can be initialized with Settings
-        let settings = Settings::new().unwrap();
+        let settings = Settings::new().expect("Failed to load settings");
 
         // Verify that all required configuration sections are present
         assert!(
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn test_worker_settings_structure() {
-        let settings = Settings::new().unwrap();
+        let settings = Settings::new().expect("Failed to load settings");
 
         // Test that concurrency settings are properly deserialized
         let concurrency_settings = &settings.concurrency;

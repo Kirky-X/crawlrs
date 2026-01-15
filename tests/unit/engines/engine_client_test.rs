@@ -7,6 +7,9 @@
 
 #[cfg(test)]
 mod engine_client_tests {
+    use crate::common::constants::timeouts::{
+        API_REQUEST_TIMEOUT, DEFAULT_TEST_TIMEOUT, E2E_TEST_TIMEOUT, LONG_RUNNING_TEST_TIMEOUT,
+    };
     use crawlrs::engines::engine_client::{
         EngineClient, EngineError, EngineHealthStatus, PageAction, ScrapeOptions, ScrapeRequest,
         ScrapeResponse, ScreenshotConfig, ScrollDirection,
@@ -28,13 +31,13 @@ mod engine_client_tests {
     fn test_scrape_request_with_options() {
         let options = ScrapeOptions::builder()
             .needs_js(true)
-            .timeout(Duration::from_secs(60))
+            .timeout(E2E_TEST_TIMEOUT)
             .build();
 
         let request = ScrapeRequest::new("https://example.com").with_options(options);
 
         assert!(request.options.needs_js);
-        assert_eq!(request.options.timeout, Duration::from_secs(60));
+        assert_eq!(request.options.timeout, E2E_TEST_TIMEOUT);
     }
 
     #[test]
@@ -43,12 +46,12 @@ mod engine_client_tests {
             .needs_js()
             .needs_screenshot()
             .mobile()
-            .timeout(Duration::from_secs(30));
+            .timeout(DEFAULT_TEST_TIMEOUT);
 
         assert!(request.options.needs_js);
         assert!(request.options.needs_screenshot);
         assert!(request.options.mobile);
-        assert_eq!(request.options.timeout, Duration::from_secs(30));
+        assert_eq!(request.options.timeout, DEFAULT_TEST_TIMEOUT);
     }
 
     // === ScrapeOptions Tests ===
@@ -59,7 +62,7 @@ mod engine_client_tests {
         assert!(!options.needs_js);
         assert!(!options.needs_screenshot);
         assert!(!options.mobile);
-        assert_eq!(options.timeout, Duration::from_secs(30));
+        assert_eq!(options.timeout, DEFAULT_TEST_TIMEOUT);
         assert!(options.headers.is_empty());
         assert!(options.actions.is_empty());
     }
@@ -70,7 +73,7 @@ mod engine_client_tests {
             .needs_js(true)
             .needs_screenshot(true)
             .mobile(true)
-            .timeout(Duration::from_secs(120))
+            .timeout(LONG_RUNNING_TEST_TIMEOUT)
             .sync_wait_ms(1000)
             .skip_tls_verification(true)
             .proxy("http://proxy.example.com")
@@ -81,7 +84,7 @@ mod engine_client_tests {
         assert!(options.needs_js);
         assert!(options.needs_screenshot);
         assert!(options.mobile);
-        assert_eq!(options.timeout, Duration::from_secs(120));
+        assert_eq!(options.timeout, LONG_RUNNING_TEST_TIMEOUT);
         assert_eq!(options.sync_wait_ms, 1000);
         assert!(options.skip_tls_verification);
         assert_eq!(options.proxy, Some("http://proxy.example.com".to_string()));
@@ -227,7 +230,7 @@ mod engine_client_tests {
     #[test]
     fn test_engine_error_is_retryable() {
         assert!(EngineError::RequestFailed("error".to_string()).is_retryable());
-        assert!(EngineError::Timeout(Duration::from_secs(30)).is_retryable());
+        assert!(EngineError::Timeout(DEFAULT_TEST_TIMEOUT).is_retryable());
         assert!(EngineError::BrowserError("error".to_string()).is_retryable());
 
         assert!(!EngineError::NoEnginesAvailable.is_retryable());
@@ -241,7 +244,7 @@ mod engine_client_tests {
         let error = EngineError::RequestFailed("connection refused".to_string());
         assert_eq!(format!("{}", error), "Request failed: connection refused");
 
-        let timeout_error = EngineError::Timeout(Duration::from_secs(30));
+        let timeout_error = EngineError::Timeout(DEFAULT_TEST_TIMEOUT);
         assert_eq!(format!("{}", timeout_error), "Request timed out after 30s");
 
         let ssrf_error = EngineError::SsrfProtection("internal URL".to_string());

@@ -115,6 +115,9 @@ use std::process::Command;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use uuid::Uuid;
+use crate::common::constants::timeouts::{
+    API_REQUEST_TIMEOUT, CRAWL_TASK_TIMEOUT,
+};
 
 #[allow(dead_code)]
 struct InMemoryQueue {
@@ -346,8 +349,8 @@ pub async fn create_test_app_with_rate_limit_options(
     // 增加最大连接数，防止在高并发测试时耗尽连接
     opt.max_connections(20)
         .min_connections(1)
-        .connect_timeout(Duration::from_secs(10))
-        .idle_timeout(Duration::from_secs(10))
+        .connect_timeout(API_REQUEST_TIMEOUT)
+        .idle_timeout(API_REQUEST_TIMEOUT)
         .sqlx_logging(false);
 
     let db = Database::connect(opt)
@@ -400,7 +403,7 @@ pub async fn create_test_app_with_rate_limit_options(
                 vec![team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert team record");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -409,7 +412,7 @@ pub async fn create_test_app_with_rate_limit_options(
                 vec![api_key_id.into(), api_key.clone().into(), team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert API key record");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -418,7 +421,7 @@ pub async fn create_test_app_with_rate_limit_options(
                 vec![Uuid::new_v4().into(), team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert credits record");
     } else {
         // SQLite语法
         db_pool
@@ -428,7 +431,7 @@ pub async fn create_test_app_with_rate_limit_options(
                 vec![team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert team record");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -437,7 +440,7 @@ pub async fn create_test_app_with_rate_limit_options(
                 vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert API key record");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -446,7 +449,7 @@ pub async fn create_test_app_with_rate_limit_options(
                 vec![Uuid::new_v4().into(), team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert credits record");
     }
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
@@ -529,9 +532,9 @@ pub async fn create_test_app_with_rate_limit_options(
         _rate_limit_enabled,
     );
 
-    let mock_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+    let mock_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Failed to parse socket address");
     let app = app.layer(ConnectInfoLayer::new(mock_addr));
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app).expect("Failed to create test server");
 
     // 启动 WorkerManager 来处理任务
     let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
@@ -551,7 +554,7 @@ pub async fn create_test_app_with_rate_limit_options(
     let storage_repo: Option<
         Arc<dyn crawlrs::domain::repositories::storage_repository::StorageRepository + Send + Sync>,
     > = None;
-    let settings = Arc::new(Settings::new().unwrap());
+    let settings = Arc::new(Settings::new().expect("Failed to load settings"));
 
     // 创建 LLM 服务（用于提取功能）
     let llm_service = Box::new(crawlrs::domain::services::llm_service::LLMService::new(
@@ -636,7 +639,7 @@ pub async fn create_test_app_with_rate_limit_options(
         let expiration_worker = Arc::new(ExpirationWorker::new(worker_task_repo.clone()));
         let expiration_worker = Arc::new(AbstractWorker::new(
             expiration_worker,
-            Duration::from_secs(60),
+            CRAWL_TASK_TIMEOUT,
         ));
         let exp_worker_clone = expiration_worker.clone();
         tokio::spawn(async move {
@@ -699,7 +702,7 @@ fn create_router(
             db_pool.clone(),
         ),
     );
-    let settings = Arc::new(Settings::new().unwrap());
+    let settings = Arc::new(Settings::new().expect("Failed to load settings"));
     let queue: Arc<dyn TaskQueue> = Arc::new(crawlrs::queue::task_queue::PostgresTaskQueue::new(
         task_repo.clone(),
     ));
@@ -845,10 +848,10 @@ pub async fn create_test_app_no_worker() -> TestApp {
             db_password
         )
     });
-    let db = Database::connect(&db_url).await.unwrap();
+    let db = Database::connect(&db_url).await.expect("Failed to connect to database");
     let db_pool = Arc::new(db);
 
-    Migrator::up(db_pool.as_ref(), None).await.unwrap();
+    Migrator::up(db_pool.as_ref(), None).await.expect("Failed to run database migrations");
 
     // 清理测试相关的表数据
     let db_backend = if db_url.starts_with("postgres://") {
@@ -866,7 +869,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![],
             ))
             .await
-            .unwrap();
+            .expect("Failed to delete tasks");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -875,7 +878,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![],
             ))
             .await
-            .unwrap();
+            .expect("Failed to delete tasks backlog");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -884,7 +887,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![],
             ))
             .await
-            .unwrap();
+            .expect("Failed to delete scrape results");
     } else {
         // SQLite语法 - 清理所有任务和相关数据
         db_pool
@@ -894,7 +897,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![],
             ))
             .await
-            .unwrap();
+            .expect("Failed to delete tasks");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -903,7 +906,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![],
             ))
             .await
-            .unwrap();
+            .expect("Failed to delete tasks backlog");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -912,13 +915,13 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![],
             ))
             .await
-            .unwrap();
+            .expect("Failed to delete scrape results");
     }
 
     let start_port = 8000;
     let result =
         crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true, 100)
-            .unwrap();
+            .expect("Failed to find available port");
     let redis_port = result.port;
     eprintln!("DEBUG: Starting Redis on port {}", redis_port);
     let redis_process = Some(
@@ -934,7 +937,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let redis_url = format!("redis://127.0.0.1:{}", redis_port);
     eprintln!("DEBUG: Connecting to Redis at {}", redis_url);
-    let redis_client = RedisClient::new(&redis_url).await.unwrap();
+    let redis_client = RedisClient::new(&redis_url).await.expect("Failed to connect to Redis");
     eprintln!("DEBUG: Redis connection established");
 
     let api_key = Uuid::new_v4().to_string();
@@ -958,7 +961,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert team record");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -967,7 +970,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![api_key_id.into(), api_key.clone().into(), team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert API key record");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -976,7 +979,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![Uuid::new_v4().into(), team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert credits record");
     } else {
         // SQLite语法
         db_pool
@@ -986,7 +989,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert team record");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -995,7 +998,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert API key record");
 
         db_pool
             .execute(Statement::from_sql_and_values(
@@ -1004,7 +1007,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
                 vec![Uuid::new_v4().into(), team_id.into()],
             ))
             .await
-            .unwrap();
+            .expect("Failed to insert credits record");
     }
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
@@ -1080,9 +1083,9 @@ pub async fn create_test_app_no_worker() -> TestApp {
         true,
     );
 
-    let mock_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+    let mock_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Failed to parse socket address");
     let app = app.layer(ConnectInfoLayer::new(mock_addr));
-    let server = TestServer::new(app).unwrap();
+    let server = TestServer::new(app).expect("Failed to create test server");
 
     TestApp {
         server,

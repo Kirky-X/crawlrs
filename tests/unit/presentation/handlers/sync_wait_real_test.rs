@@ -46,13 +46,13 @@ fn create_test_task(id: Uuid, team_id: Uuid, status: TaskStatus) -> Task {
 #[tokio::test]
 async fn test_sync_wait_returns_result_immediately_with_real_repo() {
     // Given: 设置真实的数据库和仓库
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
     let db_pool = Arc::new(db);
 
     // 运行迁移
     migration::Migrator::up(db_pool.as_ref(), None)
         .await
-        .unwrap();
+        .expect("Failed to run database migrations");
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db_pool.clone(),
@@ -64,7 +64,7 @@ async fn test_sync_wait_returns_result_immediately_with_real_repo() {
 
     // 创建一个已完成的任务
     let completed_task = create_test_task(task_id, team_id, TaskStatus::Completed);
-    let _saved_task = task_repo.create(&completed_task).await.unwrap();
+    let _saved_task = task_repo.create(&completed_task).await.expect("Failed to create completed task");
 
     // When: 调用同步等待函数
     let start = Instant::now();
@@ -84,13 +84,13 @@ async fn test_sync_wait_returns_result_immediately_with_real_repo() {
 #[tokio::test]
 async fn test_sync_wait_timeout_with_uncompleted_tasks_real_repo() {
     // Given: 设置真实的数据库和仓库
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
     let db_pool = Arc::new(db);
 
     // 运行迁移
     migration::Migrator::up(db_pool.as_ref(), None)
         .await
-        .unwrap();
+        .expect("Failed to run database migrations");
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db_pool.clone(),
@@ -102,7 +102,7 @@ async fn test_sync_wait_timeout_with_uncompleted_tasks_real_repo() {
 
     // 创建一个未完成的任务
     let active_task = create_test_task(task_id, team_id, TaskStatus::Active);
-    let _saved_task = task_repo.create(&active_task).await.unwrap();
+    let _saved_task = task_repo.create(&active_task).await.expect("Failed to create active task");
 
     // When: 调用同步等待函数，设置较短的超时时间
     let start = Instant::now();
@@ -133,13 +133,13 @@ async fn test_sync_wait_timeout_with_uncompleted_tasks_real_repo() {
 #[tokio::test]
 async fn test_sync_wait_multiple_tasks_real_repo() {
     // Given: 设置真实的数据库和仓库
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
     let db_pool = Arc::new(db);
 
     // 运行迁移
     migration::Migrator::up(db_pool.as_ref(), None)
         .await
-        .unwrap();
+        .expect("Failed to run database migrations");
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db_pool.clone(),
@@ -152,7 +152,7 @@ async fn test_sync_wait_multiple_tasks_real_repo() {
     // 创建多个已完成的任务
     for &task_id in &task_ids {
         let completed_task = create_test_task(task_id, team_id, TaskStatus::Completed);
-        let _saved_task = task_repo.create(&completed_task).await.unwrap();
+        let _saved_task = task_repo.create(&completed_task).await.expect("Failed to create completed task");
     }
 
     // When: 调用同步等待函数
@@ -166,13 +166,13 @@ async fn test_sync_wait_multiple_tasks_real_repo() {
 #[tokio::test]
 async fn test_sync_wait_empty_task_list_real_repo() {
     // Given: 设置真实的数据库和仓库
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
     let db_pool = Arc::new(db);
 
     // 运行迁移
     migration::Migrator::up(db_pool.as_ref(), None)
         .await
-        .unwrap();
+        .expect("Failed to run database migrations");
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db_pool.clone(),

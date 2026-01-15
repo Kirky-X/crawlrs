@@ -1,3 +1,4 @@
+use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
@@ -14,7 +15,7 @@ async fn test_bing_cookie_management() {
     let cookie_1 = engine.get_bing_cookies("en", "US");
 
     // When: 1 秒后再次获取
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
     let cookie_2 = engine.get_bing_cookies("en", "US");
 
     // Then: 应该相同（未超过 1 小时）

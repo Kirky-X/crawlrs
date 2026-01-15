@@ -1,3 +1,4 @@
+use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
@@ -20,7 +21,7 @@ async fn test_google_arc_id_generation() {
     assert!(arc_id_1.contains("use_ac:true"));
 
     // When: 1 秒后再次获取
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
     let arc_id_2 = engine.get_arc_id(0).await;
 
     // Then: 应该相同（未超过 1 小时）
@@ -55,7 +56,7 @@ fn test_google_result_parsing() {
     "#;
 
     let engine = GoogleSearchEngine::new(Arc::new(EngineClient::new()));
-    let results = engine.parse_results(html).unwrap();
+    let results = engine.parse_results(html).expect("Failed to parse google search results");
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].title, "Test Title");

@@ -55,7 +55,7 @@ async fn test_bing_search_engine_real_parsing() {
         .await;
 
     assert!(result.is_ok());
-    let results = result.unwrap();
+    let results = result.expect("Failed to get bing search results");
     assert_eq!(results.len(), 2);
 
     // Verify first result
@@ -127,7 +127,7 @@ async fn test_bing_search_engine_real_malformed_html() {
         .await;
 
     assert!(result.is_ok());
-    let results = result.unwrap();
+    let results = result.expect("Failed to get bing search results");
 
     // Should only include the valid result
     assert_eq!(results.len(), 1);
@@ -185,7 +185,7 @@ async fn test_bing_search_engine_real_html_with_dates() {
         .await;
 
     assert!(result.is_ok());
-    let results = result.unwrap();
+    let results = result.expect("Failed to get bing search results");
 
     // Should parse both results correctly
     assert_eq!(results.len(), 2);
@@ -199,7 +199,7 @@ async fn test_bing_search_engine_real_html_with_dates() {
     assert!(results[0]
         .description
         .as_ref()
-        .unwrap()
+        .expect("Missing description in result 0")
         .contains("Published on Jan 15, 2024"));
 
     // Verify second result with date
@@ -208,7 +208,7 @@ async fn test_bing_search_engine_real_html_with_dates() {
     assert!(results[1]
         .description
         .as_ref()
-        .unwrap()
+        .expect("Missing description in result 1")
         .contains("Last updated: March 2024"));
 }
 
@@ -238,7 +238,7 @@ async fn test_bing_search_engine_real_empty_html() {
 
     // Should return empty results, not an error
     assert!(result.is_ok());
-    let results = result.unwrap();
+    let results = result.expect("Failed to get bing search results");
     assert_eq!(results.len(), 0);
 }
 

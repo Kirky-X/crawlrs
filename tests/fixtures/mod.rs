@@ -81,7 +81,7 @@ pub fn generate_test_audit_log(
             None
         },
         scope_used: Some(generate_test_scope(true, false, false)),
-        ip_address: Some("127.0.0.1".parse().unwrap()),
+        ip_address: Some("127.0.0.1".parse().expect("Failed to parse IP address")),
         trace_id: Some(Uuid::new_v4()),
         user_agent: Some("Test User Agent".to_string()),
         request_path: Some("/test/path".to_string()),

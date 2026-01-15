@@ -141,7 +141,7 @@ impl TestApp {
                     vec![team_id.into(), team_name.into()],
                 ))
                 .await
-                .unwrap();
+                .expect("Failed to insert team");
         } else {
             self.db_pool
                 .execute(Statement::from_sql_and_values(
@@ -150,7 +150,7 @@ impl TestApp {
                     vec![team_id.into(), team_name.into()],
                 ))
                 .await
-                .unwrap();
+                .expect("Failed to insert team");
         }
 
         (api_key, team_id)
@@ -206,7 +206,7 @@ impl TestAppFixture {
         } else {
             "redis://127.0.0.1:6379".to_string()
         };
-        let redis_client = RedisClient::new(&redis_url).await.unwrap();
+        let redis_client = RedisClient::new(&redis_url).await.expect("Failed to create Redis client");
 
         let api_key = Uuid::new_v4().to_string();
         let team_id = Uuid::new_v4();
@@ -221,7 +221,7 @@ impl TestAppFixture {
                         vec![team_id.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to insert team");
 
                 db_pool
                     .execute(Statement::from_sql_and_values(
@@ -230,7 +230,7 @@ impl TestAppFixture {
                         vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to insert API key");
 
                 db_pool
                     .execute(Statement::from_sql_and_values(
@@ -239,7 +239,7 @@ impl TestAppFixture {
                         vec![Uuid::new_v4().into(), team_id.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to insert credits");
             }
             DbBackend::Sqlite => {
                 db_pool
@@ -249,7 +249,7 @@ impl TestAppFixture {
                         vec![team_id.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to insert team");
 
                 db_pool
                     .execute(Statement::from_sql_and_values(
@@ -258,7 +258,7 @@ impl TestAppFixture {
                         vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to insert API key");
 
                 db_pool
                     .execute(Statement::from_sql_and_values(
@@ -267,7 +267,7 @@ impl TestAppFixture {
                         vec![Uuid::new_v4().into(), team_id.into()],
                     ))
                     .await
-                    .unwrap();
+                    .expect("Failed to insert credits");
             }
             _ => {}
         }
@@ -346,10 +346,9 @@ impl TestAppFixture {
             options.rate_limit_enabled,
         );
 
-        let mock_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
-        let app = app.layer(ConnectInfoLayer::new(mock_addr));
-        let server = TestServer::new(app).unwrap();
-
+        let mock_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Failed to parse socket address");
+            let app = app.layer(ConnectInfoLayer::new(mock_addr));
+            let server = TestServer::new(app).expect("Failed to create test server");
         let app = TestApp {
             server,
             api_key,
@@ -422,7 +421,7 @@ fn create_router(
             db_pool.clone(),
         ),
     );
-    let settings = Arc::new(Settings::new().unwrap());
+    let settings = Arc::new(Settings::new().expect("Failed to load settings"));
     let queue: Arc<dyn crawlrs::queue::task_queue::TaskQueue> = Arc::new(
         crawlrs::queue::task_queue::PostgresTaskQueue::new(task_repo.clone()),
     );

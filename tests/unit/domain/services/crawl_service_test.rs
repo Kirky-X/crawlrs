@@ -26,7 +26,7 @@ mod tests {
         "##;
         let base_url = "https://example.com";
 
-        let links = LinkDiscoverer::extract_links(html, base_url).unwrap();
+        let links = LinkDiscoverer::extract_links(html, base_url).expect("Failed to extract links");
 
         assert!(links.contains("https://example.com/page1"));
         assert!(links.contains("https://example.com/page2"));

@@ -35,8 +35,8 @@ mod tests {
         </html>
         "#;
         
-        let results = engine.parse_search_results(html_response).unwrap();
-        
+        let results = engine.parse_search_results(html_response).expect("Failed to parse search results");
+
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].title, "测试文章标题1");
         assert_eq!(results[0].url, "https://example.com/article1");
@@ -64,8 +64,8 @@ mod tests {
         </html>
         "#;
         
-        let results = engine.parse_search_results(empty_html).unwrap();
-        
+        let results = engine.parse_search_results(empty_html).expect("Failed to parse empty HTML");
+
         assert_eq!(results.len(), 0);
     }
     
@@ -92,8 +92,8 @@ mod tests {
         </html>
         "#;
         
-        let results = engine.parse_search_results(malformed_html).unwrap();
-        
+        let results = engine.parse_search_results(malformed_html).expect("Failed to parse malformed HTML");
+
         // 应该过滤掉不完整的条目
         assert_eq!(results.len(), 0);
     }
@@ -120,7 +120,7 @@ mod tests {
         </html>
         "#;
         
-        let results = engine.parse_search_results(html_with_dates).unwrap();
+        let results = engine.parse_search_results(html_with_dates).expect("Failed to parse search results");
         
         assert_eq!(results.len(), 2);
         

@@ -5,6 +5,7 @@
 
 #![allow(deprecated)]
 
+use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT};
 use crawlrs::search::client::google::GoogleSearchEngine;
 
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
@@ -40,9 +41,9 @@ impl FlareSolverrGoogleEngine {
         Self {
             flaresolverr_url,
             client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
+                .timeout(CRAWL_TASK_TIMEOUT)
                 .build()
-                .unwrap(),
+                .expect("Failed to build reqwest client"),
         }
     }
 
@@ -114,9 +115,9 @@ impl FlareSolverrGoogleEngine {
         use scraper::{Html, Selector};
 
         let document = Html::parse_document(html);
-        let title_selector = Selector::parse("h3").unwrap();
-        let _link_selector = Selector::parse("a").unwrap();
-        let snippet_selector = Selector::parse(".VwiC3b").unwrap();
+        let title_selector = Selector::parse("h3").expect("Failed to parse title selector");
+        let _link_selector = Selector::parse("a").expect("Failed to parse link selector");
+        let snippet_selector = Selector::parse(".VwiC3b").expect("Failed to parse snippet selector");
 
         let mut results = Vec::new();
 

@@ -49,9 +49,9 @@ mod tests {
                 ]
             }
         }"#;
-        
-        let results = engine.parse_baidu_response(json_response).unwrap();
-        
+
+        let results = engine.parse_baidu_response(json_response).expect("Failed to parse Baidu response");
+
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "测试标题<div>"); // HTML转义应该被解码
         assert_eq!(results[0].url, "https://example.com");
@@ -64,15 +64,15 @@ mod tests {
         
         // 测试空响应
         let empty_response = r#"{"feed": {}}"#;
-        let results = engine.parse_baidu_response(empty_response).unwrap();
+        let results = engine.parse_baidu_response(empty_response).expect("Failed to parse baidu response");
         assert_eq!(results.len(), 0);
-        
+
         let no_feed_response = r#"{}"#;
-        let results = engine.parse_baidu_response(no_feed_response).unwrap();
+        let results = engine.parse_baidu_response(no_feed_response).expect("Failed to parse baidu response");
         assert_eq!(results.len(), 0);
-        
+
         let no_entry_response = r#"{"feed": {"entry": null}}"#;
-        let results = engine.parse_baidu_response(no_entry_response).unwrap();
+        let results = engine.parse_baidu_response(no_entry_response).expect("Failed to parse baidu response");
         assert_eq!(results.len(), 0);
     }
     
@@ -94,7 +94,7 @@ mod tests {
             }
         }"#;
         
-        let results = engine.parse_baidu_response(incomplete_response).unwrap();
+        let results = engine.parse_baidu_response(incomplete_response).expect("Failed to parse baidu response");
         assert_eq!(results.len(), 0); // 应该过滤掉不完整的条目
     }
 

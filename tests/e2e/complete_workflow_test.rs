@@ -41,7 +41,7 @@ async fn test_complete_scrape_workflow() {
     }
 
     let task_data: serde_json::Value = create_response.json();
-    let task_id = task_data["id"].as_str().unwrap();
+    let task_id = task_data["id"].as_str().expect("Missing 'id' field in task response");
 
     // Check initial status
     let initial_status_response = app
@@ -81,7 +81,7 @@ async fn test_complete_scrape_workflow() {
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
         let status_data: serde_json::Value = status_response.json();
-        status = status_data["status"].as_str().unwrap().to_string();
+        status = status_data["status"].as_str().expect("Missing 'status' field in task response").to_string();
 
         println!("Task status: {}, retries: {}", status, retries);
         if let Some(error) = status_data.get("error") {
@@ -125,7 +125,7 @@ async fn test_complete_scrape_workflow() {
 
     assert!(final_data["result"].is_object());
     assert!(final_data["result"]["content"].is_string());
-    assert!(!final_data["result"]["content"].as_str().unwrap().is_empty());
+    assert!(!final_data["result"]["content"].as_str().expect("Missing 'content' field in result").is_empty());
 }
 
 #[tokio::test]
@@ -157,7 +157,7 @@ async fn test_batch_scrape_workflow() {
 
         assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
         let task_data: serde_json::Value = create_response.json();
-        task_ids.push(task_data["id"].as_str().unwrap().to_string());
+        task_ids.push(task_data["id"].as_str().expect("Missing 'id' field in task response").to_string());
     }
 
     // Step 2: Monitor all tasks until completion
@@ -177,7 +177,7 @@ async fn test_batch_scrape_workflow() {
 
             assert_eq!(status_response.status_code(), StatusCode::OK);
             let status_data: serde_json::Value = status_response.json();
-            let status = status_data["status"].as_str().unwrap().to_string();
+            let status = status_data["status"].as_str().expect("Missing 'status' field in task response").to_string();
 
             if status == "queued" || status == "active" {
                 all_completed = false;
@@ -209,7 +209,7 @@ async fn test_batch_scrape_workflow() {
         let final_data: serde_json::Value = final_response.json();
 
         assert_eq!(final_data["status"], "completed");
-        assert!(!final_data["result"]["content"].as_str().unwrap().is_empty());
+        assert!(!final_data["result"]["content"].as_str().expect("Missing 'content' field in result").is_empty());
     }
 }
 
@@ -236,7 +236,7 @@ async fn test_crawl_with_webhook_workflow() {
 
     assert_eq!(create_response.status_code(), StatusCode::ACCEPTED);
     let crawl_data: serde_json::Value = create_response.json();
-    let crawl_id = crawl_data["id"].as_str().unwrap();
+    let crawl_id = crawl_data["id"].as_str().expect("Missing 'id' field in crawl response");
 
     // Step 2: Monitor crawl status
     let mut status = String::from("pending");
@@ -256,7 +256,7 @@ async fn test_crawl_with_webhook_workflow() {
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
         let status_data: serde_json::Value = status_response.json();
-        status = status_data["status"].as_str().unwrap().to_string();
+        status = status_data["status"].as_str().expect("Missing 'status' field in crawl response").to_string();
 
         sleep(Duration::from_millis(1000)).await;
         retries += 1;
@@ -275,7 +275,7 @@ async fn test_crawl_with_webhook_workflow() {
     let final_data: serde_json::Value = final_response.json();
 
     assert!(final_data["results"].is_array());
-    assert!(!final_data["results"].as_array().unwrap().is_empty());
+    assert!(!final_data["results"].as_array().expect("Missing 'results' array in crawl response").is_empty());
 }
 
 #[tokio::test]
@@ -321,7 +321,7 @@ async fn test_error_handling_workflow() {
 
     assert_eq!(domain_response.status_code(), StatusCode::ACCEPTED);
     let task_data: serde_json::Value = domain_response.json();
-    let task_id = task_data["id"].as_str().unwrap();
+    let task_id = task_data["id"].as_str().expect("Missing 'id' field in task response");
 
     // Wait for task to fail
     sleep(Duration::from_millis(5000)).await;

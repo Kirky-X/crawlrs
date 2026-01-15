@@ -22,10 +22,10 @@ async fn start_test_server(success: bool) -> String {
         )
     };
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind to address");
+    let addr = listener.local_addr().expect("Failed to get local address");
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(listener, app).await.expect("Failed to start server");
     });
 
     format!("http://{}/status/200", addr)
@@ -55,7 +55,7 @@ async fn test_health_monitor_real_integration() {
     let health_info = monitor
         .get_engine_health("reqwest")
         .await
-        .expect("Engine should be found");
+        .expect("Failed to get engine health");
 
     // Allow for minor network delays in test environment
     assert!(
@@ -87,6 +87,6 @@ async fn test_health_monitor_real_integration_failure() {
     let monitor = EngineHealthMonitor::new_with_config(engines, config);
     monitor.perform_health_check().await;
 
-    let health_info = monitor.get_engine_health("reqwest").await.unwrap();
+    let health_info = monitor.get_engine_health("reqwest").await.expect("Failed to get engine health");
     assert_eq!(health_info.health, EngineHealth::Unhealthy);
 }

@@ -19,13 +19,13 @@ use uuid::Uuid;
 #[tokio::test]
 async fn test_real_task_lifecycle_with_search_integration() {
     // Setup real database
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
     let db_pool = Arc::new(db);
 
     // Run migrations
     migration::Migrator::up(db_pool.as_ref(), None)
         .await
-        .unwrap();
+        .expect("Failed to run database migrations");
 
     // Create real task repository
     let task_repo = Arc::new(TaskRepositoryImpl::new(
@@ -93,8 +93,8 @@ async fn test_real_task_lifecycle_with_search_integration() {
     };
 
     // Save tasks to real database
-    let saved_task1 = task_repo.create(&task1).await.unwrap();
-    let saved_task2 = task_repo.create(&task2).await.unwrap();
+    let saved_task1 = task_repo.create(&task1).await.expect("Failed to create task 1");
+    let saved_task2 = task_repo.create(&task2).await.expect("Failed to create task 2");
 
     // Verify tasks were saved correctly
     assert_eq!(saved_task1.id, task1_id);
@@ -113,7 +113,7 @@ async fn test_real_task_lifecycle_with_search_integration() {
         offset: 0,
     };
 
-    let (tasks, total_count) = task_repo.query_tasks(query_params).await.unwrap();
+    let (tasks, total_count) = task_repo.query_tasks(query_params).await.expect("Failed to query tasks");
     assert_eq!(total_count, 2);
     assert_eq!(tasks.len(), 2);
 
@@ -122,7 +122,7 @@ async fn test_real_task_lifecycle_with_search_integration() {
     updated_task1.status = TaskStatus::Completed;
     updated_task1.completed_at = Some(DateTime::<FixedOffset>::from(Utc::now()));
 
-    let _updated = task_repo.update(&updated_task1).await.unwrap();
+    let _updated = task_repo.update(&updated_task1).await.expect("Failed to update task");
 
     // Test sync wait with real repository
     let start = std::time::Instant::now();
@@ -161,7 +161,7 @@ async fn test_real_task_lifecycle_with_search_integration() {
     let search_results = search_engine
         .parse_search_results(real_search_html)
         .await
-        .unwrap();
+        .expect("Failed to parse search results");
     assert_eq!(search_results.len(), 2);
 
     // Verify search results
@@ -187,13 +187,13 @@ async fn test_real_task_lifecycle_with_search_integration() {
 #[tokio::test]
 async fn test_real_task_error_handling() {
     // Setup real database
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
     let db_pool = Arc::new(db);
 
     // Run migrations
     migration::Migrator::up(db_pool.as_ref(), None)
         .await
-        .unwrap();
+        .expect("Failed to run database migrations");
 
     // Create real task repository
     let task_repo = Arc::new(TaskRepositoryImpl::new(
@@ -225,13 +225,13 @@ async fn test_real_task_error_handling() {
 #[tokio::test]
 async fn test_real_concurrent_task_processing() {
     // Setup real database
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
     let db_pool = Arc::new(db);
 
     // Run migrations
     migration::Migrator::up(db_pool.as_ref(), None)
         .await
-        .unwrap();
+        .expect("Failed to run database migrations");
 
     // Create real task repository
     let task_repo = Arc::new(TaskRepositoryImpl::new(
@@ -269,7 +269,7 @@ async fn test_real_concurrent_task_processing() {
             lock_expires_at: None,
         };
 
-        task_repo.create(&task).await.unwrap();
+        task_repo.create(&task).await.expect("Failed to create task");
     }
 
     // Simulate concurrent task completion

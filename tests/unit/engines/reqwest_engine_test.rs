@@ -1,3 +1,4 @@
+use crate::common::constants::timeouts::{QUICK_TEST_TIMEOUT, API_REQUEST_TIMEOUT};
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
@@ -30,7 +31,7 @@ mod tests {
                     Response::builder()
                         .header("content-type", "text/html")
                         .body("<html><body>Test content</body></html>".to_string())
-                        .unwrap()
+                        .expect("Failed to build response")
                 }),
             )
             .route(
@@ -38,13 +39,12 @@ mod tests {
                 get(|| async { StatusCode::INTERNAL_SERVER_ERROR.into_response() }),
             );
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind to address");
+            let addr = listener.local_addr().expect("Failed to get local address");
+        
+            tokio::spawn(async move {
+                axum::serve(listener, app).await.expect("Failed to start server");
+            });
         format!("http://{}", addr)
     }
 
@@ -57,7 +57,7 @@ mod tests {
         let request = ScrapeRequest {
             url: server_url.clone(),
             headers: HashMap::new(),
-            timeout: Duration::from_secs(5),
+            timeout: QUICK_TEST_TIMEOUT,
             needs_js: false,
             needs_screenshot: false,
             screenshot_config: None,
@@ -76,7 +76,7 @@ mod tests {
         }
         assert!(result.is_ok());
 
-        let response = result.unwrap();
+        let response = result.expect("Failed to get scrape response");
         assert_eq!(response.status_code, 200);
         assert!(response.content.contains("Test content"));
         assert!(response.content_type.contains("text/html"));
@@ -93,7 +93,7 @@ mod tests {
         let request = ScrapeRequest {
             url: format!("{}/error", server_url),
             headers: HashMap::new(),
-            timeout: Duration::from_secs(10),
+            timeout: API_REQUEST_TIMEOUT,
             needs_js: false,
             needs_screenshot: false,
             screenshot_config: None,
@@ -109,7 +109,7 @@ mod tests {
         let result = engine.scrape(&request).await;
         assert!(result.is_ok());
 
-        let response = result.unwrap();
+        let response = result.expect("Failed to get scrape response");
         assert_eq!(response.status_code, 500);
 
         std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
@@ -122,7 +122,7 @@ mod tests {
         let basic_request = ScrapeRequest {
             url: "https://example.com".to_string(),
             headers: HashMap::new(),
-            timeout: Duration::from_secs(10),
+            timeout: API_REQUEST_TIMEOUT,
             needs_js: false,
             needs_screenshot: false,
             screenshot_config: None,
@@ -137,7 +137,7 @@ mod tests {
         let js_request = ScrapeRequest {
             url: "https://example.com".to_string(),
             headers: HashMap::new(),
-            timeout: Duration::from_secs(10),
+            timeout: API_REQUEST_TIMEOUT,
             needs_js: true,
             needs_screenshot: false,
             screenshot_config: None,
@@ -152,7 +152,7 @@ mod tests {
         let screenshot_request = ScrapeRequest {
             url: "https://example.com".to_string(),
             headers: HashMap::new(),
-            timeout: Duration::from_secs(10),
+            timeout: API_REQUEST_TIMEOUT,
             needs_js: false,
             needs_screenshot: true,
             screenshot_config: None,

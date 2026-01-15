@@ -20,11 +20,11 @@ use chrono::Duration;
 #[tokio::test]
 async fn test_postgres_task_queue_real_implementation() {
     // 使用内存 SQLite 数据库进行测试
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
     let db_pool = Arc::new(db);
-    
+
     // 运行迁移
-    migration::Migrator::up(db_pool.as_ref(), None).await.unwrap();
+    migration::Migrator::up(db_pool.as_ref(), None).await.expect("Failed to run database migrations");
     
     // 创建任务仓库
     let task_repo = Arc::new(TaskRepositoryImpl::new(
@@ -62,23 +62,23 @@ async fn test_postgres_task_queue_real_implementation() {
     // 测试任务入队
     let result = queue.enqueue(task.clone()).await;
     assert!(result.is_ok());
-    
+
     // 验证任务已存储到数据库
-    let stored_task = task_repo.find_by_id(&task.id).await.unwrap();
+    let stored_task = task_repo.find_by_id(&task.id).await.expect("Failed to query task");
     assert!(stored_task.is_some());
-    assert_eq!(stored_task.unwrap().id, task.id);
-    
+    assert_eq!(stored_task.expect("Task not found").id, task.id);
+
     // 测试任务出队
-    let dequeued_task = queue.dequeue(Uuid::new_v4()).await.unwrap();
+    let dequeued_task = queue.dequeue(Uuid::new_v4()).await.expect("Failed to dequeue task");
     assert!(dequeued_task.is_some());
-    assert_eq!(dequeued_task.unwrap().id, task.id);
-    
+    assert_eq!(dequeued_task.expect("Task not found").id, task.id);
+
     // 测试完成任务
     let complete_result = queue.complete(task.id).await;
     assert!(complete_result.is_ok());
-    
+
     // 验证任务状态已更新
-    let completed_task = task_repo.find_by_id(&task.id).await.unwrap();
+    let completed_task = task_repo.find_by_id(&task.id).await.expect("Failed to query task");
     assert!(completed_task.is_some());
-    assert_eq!(completed_task.unwrap().status, TaskStatus::Completed);
+    assert_eq!(completed_task.expect("Task not found").status, TaskStatus::Completed);
 }

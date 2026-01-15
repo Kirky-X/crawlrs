@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
+use crate::common::constants::timeouts::CRAWL_TASK_TIMEOUT;
 
 async fn wait_for_tasks_completion(
     app: &crate::integration::helpers::test_app::TestApp,
@@ -272,11 +273,11 @@ async fn test_competitive_analysis_scenario() {
     }
 
     let start_time = std::time::Instant::now();
-    let timeout = Duration::from_secs(120);
+    let timeout = CRAWL_TASK_TIMEOUT;
 
     loop {
         if start_time.elapsed() > timeout {
-            panic!("Competitive analysis timed out");
+            panic!("Competitive analysis timed out after {:?}", timeout);
         }
 
         let all_done = analysis_tasks.iter().all(|task_id| {

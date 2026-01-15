@@ -105,7 +105,7 @@ async fn test_s3_storage_save_and_get() {
     let result = storage.get(key).await;
     assert!(result.is_ok(), "Failed to get data: {:?}", result.err());
 
-    let retrieved_data = result.unwrap();
+    let retrieved_data = result.expect("Failed to get data");
     assert_eq!(
         retrieved_data,
         Some(data.to_vec()),
@@ -135,10 +135,10 @@ async fn test_s3_storage_exists() {
         "Failed to check existence: {:?}",
         result.err()
     );
-    assert!(!result.unwrap(), "File should not exist yet");
+    assert!(!result.expect("Failed to check existence"), "File should not exist yet");
 
     // 保存文件
-    storage.save(key, data).await.unwrap();
+    storage.save(key, data).await.expect("Failed to save file");
 
     // 检查存在的文件
     let result = storage.exists(key).await;
@@ -147,7 +147,7 @@ async fn test_s3_storage_exists() {
         "Failed to check existence: {:?}",
         result.err()
     );
-    assert!(result.unwrap(), "File should exist now");
+    assert!(result.expect("Failed to check existence"), "File should exist now");
 
     // 清理
     let _ = storage.delete(key).await;
@@ -166,17 +166,17 @@ async fn test_s3_storage_delete() {
     let data = b"Test delete";
 
     // 保存文件
-    storage.save(key, data).await.unwrap();
+    storage.save(key, data).await.expect("Failed to save file");
 
     // 确认文件存在
-    assert!(storage.exists(key).await.unwrap());
+    assert!(storage.exists(key).await.expect("Failed to check existence"));
 
     // 删除文件
     let result = storage.delete(key).await;
     assert!(result.is_ok(), "Failed to delete: {:?}", result.err());
 
     // 确认文件不存在
-    assert!(!storage.exists(key).await.unwrap());
+    assert!(!storage.exists(key).await.expect("Failed to check existence"));
 }
 
 #[tokio::test]
@@ -208,7 +208,7 @@ async fn test_s3_storage_large_file() {
         result.err()
     );
 
-    let retrieved_data = result.unwrap();
+    let retrieved_data = result.expect("Failed to get large file");
     assert_eq!(retrieved_data, Some(data), "Large file data does not match");
 
     // 清理
@@ -238,14 +238,14 @@ async fn test_create_storage_repository_s3() {
         result.err()
     );
 
-    let storage = result.unwrap();
+    let storage = result.expect("Failed to create storage");
 
     // 测试基本操作
     let key = "test/factory.txt";
     let data = b"Factory test";
 
-    storage.save(key, data).await.unwrap();
-    let retrieved = storage.get(key).await.unwrap();
+    storage.save(key, data).await.expect("Failed to save file");
+    let retrieved = storage.get(key).await.expect("Failed to get file");
     assert_eq!(retrieved, Some(data.to_vec()));
 
     // 清理

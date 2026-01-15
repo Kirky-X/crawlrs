@@ -58,13 +58,13 @@ fn test_extraction_service_basic_selectors() {
         },
     );
 
-    let settings = Settings::new().unwrap();
+    let settings = Settings::new().expect("Failed to load settings");
     let (result, _) =
-        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
+        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).expect("Failed to extract data");
 
     assert_eq!(result["title"], "Hello World");
 
-    let paragraphs = result["paragraphs"].as_array().unwrap();
+    let paragraphs = result["paragraphs"].as_array().expect("Missing 'paragraphs' array in result");
     assert_eq!(paragraphs.len(), 2);
     assert_eq!(paragraphs[0], "Paragraph 1");
     assert_eq!(paragraphs[1], "Paragraph 2");
@@ -87,9 +87,9 @@ fn test_extraction_service_missing_elements() {
         },
     );
 
-    let settings = Settings::new().unwrap();
+    let settings = Settings::new().expect("Failed to load settings");
     let (result, _) =
-        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
+        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).expect("Failed to extract data");
     assert_eq!(result["missing"], Value::Null);
 }
 
@@ -108,10 +108,10 @@ fn test_extraction_service_empty_array() {
         },
     );
 
-    let settings = Settings::new().unwrap();
+    let settings = Settings::new().expect("Failed to load settings");
     let (result, _) =
-        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).unwrap();
-    let list = result["missing_list"].as_array().unwrap();
+        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings)).expect("Failed to extract data");
+    let list = result["missing_list"].as_array().expect("Missing 'missing_list' array in result");
     assert!(list.is_empty());
 }
 
@@ -160,12 +160,12 @@ async fn test_extraction_service_with_llm() {
         }),
     );
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind to address");
+    let addr = listener.local_addr().expect("Failed to get local address");
     let server_url = format!("http://{}", addr);
 
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(listener, app).await.expect("Failed to start server");
     });
 
     // Use Real LLMService with Local Server
@@ -176,7 +176,7 @@ async fn test_extraction_service_with_llm() {
     );
 
     let service = ExtractionService::new(Box::new(llm_service));
-    let (result, _) = service.extract_data(html, &rules).await.unwrap();
+    let (result, _) = service.extract_data(html, &rules).await.expect("Failed to extract data");
 
     assert_eq!(result["product_info"]["name"], "Product X");
     assert_eq!(result["product_info"]["price"], 100);

@@ -19,10 +19,10 @@ use uuid::Uuid;
 
 async fn setup_app_with_db() -> (Router, DatabaseConnection) {
     // Create in-memory SQLite database for testing
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
 
     // Run migrations to create tables
-    Migrator::up(&db, None).await.unwrap();
+    Migrator::up(&db, None).await.expect("Failed to run database migrations");
 
     // Create test team and API key
     let team_id = Uuid::new_v4();
@@ -35,7 +35,7 @@ async fn setup_app_with_db() -> (Router, DatabaseConnection) {
         vec![team_id.into()],
     ))
     .await
-    .unwrap();
+    .expect("Failed to insert team");
 
     db.execute(Statement::from_sql_and_values(
         DbBackend::Sqlite,
@@ -43,7 +43,7 @@ async fn setup_app_with_db() -> (Router, DatabaseConnection) {
         vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
     ))
     .await
-    .unwrap();
+    .expect("Failed to insert API key");
 
     let auth_state = AuthState {
         db: Arc::new(db.clone()),
@@ -70,10 +70,10 @@ async fn test_auth_middleware_missing_header() {
             Request::builder()
                 .uri("/protected")
                 .body(Body::empty())
-                .unwrap(),
+                .expect("Failed to build request"),
         )
         .await
-        .unwrap();
+        .expect("Failed to get response");
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
@@ -88,10 +88,10 @@ async fn test_auth_middleware_invalid_header() {
                 .uri("/protected")
                 .header("Authorization", "Bearer invalid-key")
                 .body(Body::empty())
-                .unwrap(),
+                .expect("Failed to build request"),
         )
         .await
-        .unwrap();
+        .expect("Failed to get response");
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
@@ -108,10 +108,10 @@ async fn test_auth_middleware_valid_header() {
             vec![],
         ))
         .await
-        .unwrap()
-        .unwrap()
+        .expect("Failed to query API key")
+        .expect("API key not found")
         .try_get_by::<String, _>(0)
-        .unwrap();
+        .expect("Failed to get API key from query result");
 
     let response = app
         .oneshot(
@@ -119,10 +119,10 @@ async fn test_auth_middleware_valid_header() {
                 .uri("/protected")
                 .header("Authorization", format!("Bearer {}", api_key))
                 .body(Body::empty())
-                .unwrap(),
+                .expect("Failed to build request"),
         )
         .await
-        .unwrap();
+        .expect("Failed to get response");
 
     assert_eq!(response.status(), StatusCode::OK);
 }
@@ -130,10 +130,10 @@ async fn test_auth_middleware_valid_header() {
 #[tokio::test]
 async fn test_auth_middleware_rejects_nil_uuid() {
     // Create in-memory SQLite database for testing
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = Database::connect("sqlite::memory:").await.expect("Failed to create in-memory database");
 
     // Run migrations to create tables
-    Migrator::up(&db, None).await.unwrap();
+    Migrator::up(&db, None).await.expect("Failed to run database migrations");
 
     // Create API key with nil UUID (SECURITY ISSUE)
     let nil_uuid = Uuid::nil();
@@ -146,7 +146,7 @@ async fn test_auth_middleware_rejects_nil_uuid() {
             vec![nil_uuid.into()],
         ))
         .await
-        .unwrap();
+        .expect("Failed to insert team record");
 
     db.execute(Statement::from_sql_and_values(
             DbBackend::Sqlite,
@@ -154,7 +154,7 @@ async fn test_auth_middleware_rejects_nil_uuid() {
             vec![Uuid::new_v4().into(), api_key_with_nil.clone().into(), nil_uuid.into()],
         ))
         .await
-        .unwrap();
+        .expect("Failed to insert API key record");
 
     let auth_state = AuthState {
         db: Arc::new(db.clone()),
@@ -176,10 +176,10 @@ async fn test_auth_middleware_rejects_nil_uuid() {
                 .uri("/protected")
                 .header("Authorization", format!("Bearer {}", api_key_with_nil))
                 .body(Body::empty())
-                .unwrap(),
+                .expect("Failed to build request"),
         )
         .await
-        .unwrap();
+        .expect("Failed to get response");
 
     // Should return UNAUTHORIZED, not OK
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
