@@ -1005,6 +1005,7 @@ fn benchmark_extract_operations(c: &mut Criterion) {
                         is_array: false,
                         use_llm: None,
                         llm_prompt: None,
+                        output_format: None,
                     },
                 ),
                 (
@@ -1015,6 +1016,7 @@ fn benchmark_extract_operations(c: &mut Criterion) {
                         is_array: false,
                         use_llm: None,
                         llm_prompt: None,
+                        output_format: None,
                     },
                 ),
                 (
@@ -1025,6 +1027,7 @@ fn benchmark_extract_operations(c: &mut Criterion) {
                         is_array: true,
                         use_llm: None,
                         llm_prompt: None,
+                        output_format: None,
                     },
                 ),
             ]
