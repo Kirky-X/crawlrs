@@ -11,6 +11,7 @@ use super::app::{
     ConcurrencySettings, DatabaseSettings, ProxySettings, RateLimitingSettings, RedisSettings,
     ServerSettings,
 };
+use super::engines::EngineSettings;
 use super::llm::LLMSettings;
 use super::search::{BingSearchSettings, GoogleSearchSettings, SearchSettings};
 use super::storage::{StorageSettings, WebhookSettings};
@@ -61,6 +62,7 @@ pub enum ConfigSecurityError {
 /// * `concurrency` - 并发控制和资源限制配置
 /// * `storage` - 数据存储配置（本地文件系统或 S3）
 /// * `webhook` - Webhook 功能配置
+/// * `engines` - 抓取引擎配置（FlareSolverr、Fire Engine 等）
 ///
 /// # 示例
 ///
@@ -99,6 +101,8 @@ pub struct Settings {
     pub llm: LLMSettings,
     /// HTTP 代理配置
     pub proxy: ProxySettings,
+    /// 引擎配置
+    pub engines: EngineSettings,
 }
 
 impl Settings {
@@ -184,7 +188,16 @@ impl Settings {
             // 10. 设置代理默认配置
             .set_default("proxy.url", "http://localhost:10808")? // 默认代理地址
             .set_default("proxy.enabled", false)? // 默认禁用代理
-            // 11. 加载配置文件（可选）
+            // 11. 设置引擎默认配置
+            .set_default("engines.flaresolverr.enabled", false)? // 默认禁用 FlareSolverr
+            .set_default("engines.flaresolverr.url", "http://localhost:8191/v1")? // FlareSolverr 默认地址
+            .set_default("engines.flaresolverr.timeout_seconds", 30)? // 默认超时 30 秒
+            .set_default("engines.flaresolverr.max_retries", 3)? // 默认重试 3 次
+            .set_default("engines.fire_cdp.enabled", false)? // 默认禁用 Fire CDP
+            .set_default("engines.fire_cdp.url", "http://localhost:8191/v1")? // Fire CDP 默认地址
+            .set_default("engines.fire_tls.enabled", false)? // 默认禁用 Fire TLS
+            .set_default("engines.fire_tls.url", "http://localhost:8191/v1")? // Fire TLS 默认地址
+            // 12. 加载配置文件（可选）
             .add_source(File::with_name("config/default").required(false)) // 加载默认配置
             .add_source(File::with_name(&format!("config/{}", env)).required(false)) // 加载环境特定配置
             // 10. 加载环境变量（最高优先级）

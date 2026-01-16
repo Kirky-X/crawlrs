@@ -171,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("HTTP proxy enabled: {}", settings.proxy.url);
     }
 
-    let engines = initialize_engines(&settings.proxy);
+    let engines = initialize_engines(&settings.proxy, &settings.engines);
     let router = Arc::new(EngineRouter::new(engines));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 
@@ -492,8 +492,10 @@ fn initialize_storage_repository(
 
 /// 初始化抓取引擎列表
 #[allow(deprecated)]
+#[allow(unused_variables)]
 fn initialize_engines(
     proxy_config: &crawlrs::config::app::ProxySettings,
+    engine_config: &crawlrs::config::engines::EngineSettings,
 ) -> Vec<Arc<dyn ScraperEngine>> {
     #[allow(unused_mut)]
     let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::with_proxy(
@@ -504,14 +506,28 @@ fn initialize_engines(
     engines.push(Arc::new(PlaywrightEngine));
 
     #[cfg(feature = "engine-fire-tls")]
-    engines.push(Arc::new(FireEngineTls::with_proxy(
-        proxy_config.url.clone(),
-    )));
+    if engine_config.fire_tls.enabled {
+        info!(
+            "Fire Engine TLS enabled with URL: {}",
+            engine_config.fire_tls.url
+        );
+        engines.push(Arc::new(FireEngineTls::with_url_and_proxy(
+            engine_config.fire_tls.url.clone(),
+            proxy_config.url.clone(),
+        )));
+    }
 
     #[cfg(feature = "engine-fire-cdp")]
-    engines.push(Arc::new(FireEngineCdp::with_proxy(
-        proxy_config.url.clone(),
-    )));
+    if engine_config.fire_cdp.enabled {
+        info!(
+            "Fire Engine CDP enabled with URL: {}",
+            engine_config.fire_cdp.url
+        );
+        engines.push(Arc::new(FireEngineCdp::with_url_and_proxy(
+            engine_config.fire_cdp.url.clone(),
+            proxy_config.url.clone(),
+        )));
+    }
 
     engines
 }

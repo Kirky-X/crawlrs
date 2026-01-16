@@ -119,3 +119,19 @@ fire_tls_default = 40               # Default score for basic requests
 [proxy]
 url = "http://localhost:10808"
 enabled = false
+
+# Engine Configuration
+# Configure scraping engines (FlareSolverr, Fire Engine, etc.)
+[engines.flaresolverr]
+enabled = true
+url = "http://localhost:8191/v1"
+timeout_seconds = 30
+max_retries = 3
+
+[engines.fire_cdp]
+enabled = false
+url = "http://localhost:8191/v1"
+
+[engines.fire_tls]
+enabled = false
+url = "http://localhost:8191/v1"

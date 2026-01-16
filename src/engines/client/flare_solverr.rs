@@ -83,6 +83,16 @@ impl FlareSolverrEngine {
         Self::with_config(FlareSolverrConfig::default())
     }
 
+    /// Create a new FlareSolverrEngine from configuration URL
+    pub fn with_url(url: impl Into<String>) -> Self {
+        let config = FlareSolverrConfig {
+            url: url.into(),
+            timeout_seconds: 60,
+            session_id: None,
+        };
+        Self::with_config(config)
+    }
+
     /// Create a new FlareSolverrEngine with custom configuration
     pub fn with_config(config: FlareSolverrConfig) -> Self {
         let client = ClientBuilder::new()

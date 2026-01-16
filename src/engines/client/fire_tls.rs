@@ -70,6 +70,15 @@ impl FireEngineTls {
         }
     }
 
+    /// 从配置 URL 创建 FireEngineTls 实例
+    pub fn with_url(url: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: url.into(),
+            proxy_url: None,
+        }
+    }
+
     /// 创建带代理配置的 FireEngineTls 实例
     pub fn with_proxy(proxy_url: impl Into<String>) -> Self {
         Self {
@@ -77,6 +86,15 @@ impl FireEngineTls {
             base_url: std::env::var("FIRE_ENGINE_TLS_URL")
                 .or_else(|_| std::env::var("FIRE_ENGINE_URL"))
                 .unwrap_or_else(|_| "http://localhost:8191/v1".to_string()),
+            proxy_url: Some(proxy_url.into()),
+        }
+    }
+
+    /// 从配置 URL 和代理创建 FireEngineTls 实例
+    pub fn with_url_and_proxy(url: impl Into<String>, proxy_url: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: url.into(),
             proxy_url: Some(proxy_url.into()),
         }
     }
