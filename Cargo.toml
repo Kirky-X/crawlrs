@@ -139,6 +139,8 @@ brotli = "3.0"
 bytes = "1.0"
 aws-sdk-s3 = "1.118.0"
 aws-config = "1.8.12"
+genai = "0.5.0"
+toml = "0.9.11"
 
 
 
@@ -199,6 +201,10 @@ name = "test_unified_search"
 path = "examples/search/test_unified_search.rs"
 
 [[example]]
+name = "test_css_selector"
+path = "examples/test_css_selector.rs"
+
+[[example]]
 name = "test_playwright_basic"
 path = "examples/browser/test_playwright_basic.rs"
 
@@ -209,3 +215,15 @@ path = "examples/browser/test_google_homepage.rs"
 [[example]]
 name = "test_flaresolverr_direct"
 path = "examples/browser/test_flaresolverr_direct.rs"
+
+[[example]]
+name = "test_extraction"
+path = "examples/test_extraction.rs"
+
+[[example]]
+name = "test_extraction_comprehensive"
+path = "examples/test_extraction_comprehensive.rs"
+
+[[example]]
+name = "test_llm_extraction"
+path = "examples/test_llm_extraction.rs"
