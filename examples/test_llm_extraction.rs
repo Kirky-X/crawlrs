@@ -1,20 +1,20 @@
+use crawlrs::config::settings::Settings;
 use crawlrs::domain::services::extraction_service::{ExtractionRule, ExtractionService};
 use crawlrs::domain::services::llm_service::LLMService;
-use crawlrs::config::settings::Settings;
-use std::collections::HashMap;
 use serde_json::json;
+use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 强制设置环境变量，确保在 genai 客户端初始化前生效
     std::env::set_var("CRAWLRS__DATABASE__URL", "postgres://localhost/test");
     std::env::set_var("OLLAMA_HOST", "http://172.24.160.1:11434");
-    
+
     let mut settings = Settings::new().expect("Failed to load settings");
-    
+
     // 使用 OpenAI 适配器连接 Ollama 的兼容接口，这样对自定义 IP 的支持更稳定
     settings.llm.provider = Some("openai".to_string());
-    settings.llm.model = Some("qwen3:8b".to_string()); 
+    settings.llm.model = Some("qwen3:8b".to_string());
     settings.llm.api_base_url = Some("http://172.24.160.1:11434/v1".to_string());
     settings.llm.api_key = Some("ollama-is-ok".to_string());
 
@@ -34,7 +34,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             attr: None,
             is_array: false,
             use_llm: Some(true),
-            llm_prompt: Some("请将以下新闻正文内容整理成标准 Markdown 格式，保留标题层级、列表、引用等结构".to_string()),
+            llm_prompt: Some(
+                "请将以下新闻正文内容整理成标准 Markdown 格式，保留标题层级、列表、引用等结构"
+                    .to_string(),
+            ),
             output_format: Some("markdown".to_string()),
         },
     );
@@ -42,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (markdown_result, markdown_usage) = service
         .extract_data(&html, &markdown_rules, Some("https://news.cctv.com/"))
         .await?;
-    
+
     println!("Markdown Result:\n{:#?}", markdown_result["content_md"]);
     println!("Markdown Token Usage: {:#?}\n", markdown_usage);
 
@@ -64,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (json_result, json_usage) = service
         .extract_data(&html, &json_rules, Some("https://news.cctv.com/"))
         .await?;
-    
+
     println!("JSON Result:\n{:#?}", json_result["summary_json"]);
     println!("JSON Token Usage: {:#?}", json_usage);
 
