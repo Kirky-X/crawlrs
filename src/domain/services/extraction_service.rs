@@ -18,8 +18,8 @@ pub struct ExtractionRule {
     pub selector: Option<String>, // Make selector optional for LLM extraction
     pub attr: Option<String>,     // If None, extract text
     pub is_array: bool,
-    pub use_llm: Option<bool>,      // New field to enable LLM extraction
-    pub llm_prompt: Option<String>, // Optional specific prompt for this rule
+    pub use_llm: Option<bool>,         // New field to enable LLM extraction
+    pub llm_prompt: Option<String>,    // Optional specific prompt for this rule
     pub output_format: Option<String>, // "json" (default) or "plaintext"
 }
 
@@ -174,7 +174,7 @@ impl ExtractionService {
             if rule.use_llm.unwrap_or(false) {
                 // LLM Extraction Flow
                 let format = rule.output_format.as_deref().unwrap_or("json");
-                
+
                 let prompt = rule
                     .llm_prompt
                     .clone()
@@ -308,13 +308,26 @@ impl ExtractionService {
         // 递归获取文本，从根元素开始
         Self::collect_clean_text(document.root_element(), &mut text_parts);
 
-        text_parts.join(" ").split_whitespace().collect::<Vec<_>>().join(" ")
+        text_parts
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn collect_clean_text(node: scraper::ElementRef, text_parts: &mut Vec<String>) {
         let name = node.value().name();
         // 过滤常见的噪音标签
-        if name == "script" || name == "style" || name == "nav" || name == "footer" || name == "head" || name == "iframe" || name == "noscript" || name == "aside" || name == "form" {
+        if name == "script"
+            || name == "style"
+            || name == "nav"
+            || name == "footer"
+            || name == "head"
+            || name == "iframe"
+            || name == "noscript"
+            || name == "aside"
+            || name == "form"
+        {
             return;
         }
 
@@ -324,8 +337,11 @@ impl ExtractionService {
                 if !trimmed.is_empty() {
                     // 额外检查：如果文本块内包含典型的代码模式，则丢弃（防止某些未被标签包裹的代码泄露）
                     let lower = trimmed.to_lowercase();
-                    if !((lower.contains("var ") || lower.contains("function(") || lower.contains("window.")) 
-                         && (trimmed.contains(';') || trimmed.contains('{'))) {
+                    if !((lower.contains("var ")
+                        || lower.contains("function(")
+                        || lower.contains("window."))
+                        && (trimmed.contains(';') || trimmed.contains('{')))
+                    {
                         text_parts.push(trimmed.to_string());
                     }
                 }
@@ -396,9 +412,10 @@ mod tests {
 
         let settings = Settings::new().expect("Failed to load settings");
 
-        let (result, _) = ExtractionService::extract(&html, &rules, &settings, Some("https://news.cctv.com/"))
-            .await
-            .expect("Extraction failed");
+        let (result, _) =
+            ExtractionService::extract(&html, &rules, &settings, Some("https://news.cctv.com/"))
+                .await
+                .expect("Extraction failed");
 
         // 保存结果
         std::fs::create_dir_all("temp/extraction_test").ok();
@@ -495,9 +512,7 @@ mod tests {
                 attr: None,
                 is_array: false,
                 use_llm: Some(true),
-                llm_prompt: Some(
-                    "请返回 JSON 对象，包含 title 和 category 字段".to_string(),
-                ),
+                llm_prompt: Some("请返回 JSON 对象，包含 title 和 category 字段".to_string()),
                 output_format: None,
             },
         );
@@ -600,10 +615,10 @@ mod tests {
     async fn test_real_llm_extraction() {
         use crate::config::settings::Settings;
         let mut settings = Settings::new().expect("Failed to load settings");
-        
+
         // 配置本地 LLM
         settings.llm.provider = Some("ollama".to_string());
-        settings.llm.model = Some("qwen3:8b".to_string()); 
+        settings.llm.model = Some("qwen3:8b".to_string());
         settings.llm.api_base_url = Some("http://172.24.160.1:11434".to_string());
 
         let service = ExtractionService::new(Box::new(LLMService::new(&settings)));
