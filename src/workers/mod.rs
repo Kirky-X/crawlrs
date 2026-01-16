@@ -13,6 +13,7 @@ pub mod constants;
 pub mod expiration_worker;
 pub mod manager;
 pub mod scrape_worker;
+pub mod task_state_machine;
 pub mod webhook_worker;
 pub mod worker;
 

@@ -42,6 +42,7 @@ use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseI
 use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
+use crate::workers::task_state_machine::{TaskStateEvent, TaskStateMachine};
 
 // Regex cache for crawl pattern matching
 use thiserror::Error;
@@ -1283,27 +1284,35 @@ where
     }
 
     async fn handle_failure(&self, task: &mut Task) -> Result<()> {
-        let new_attempt_count = task.attempt_count + 1;
+        let mut state_machine = TaskStateMachine::new(task.clone());
+        let new_attempt_count = state_machine.task().attempt_count + 1;
 
         if !self.retry_policy.should_retry(new_attempt_count as u32) {
-            warn!("Task failed after {} retries", task.max_retries);
-            self.repository.mark_failed(task.id).await?;
+            warn!(
+                "Task failed after {} retries",
+                state_machine.task().max_retries
+            );
+            state_machine.handle_event(TaskStateEvent::Fail)?;
+            self.repository.update(state_machine.task()).await?;
         } else {
-            // 使用可配置的重试策略计算退避时间
             let backoff_duration = self
                 .retry_policy
                 .calculate_backoff(new_attempt_count as u32);
             let next_retry =
                 Utc::now() + chrono::Duration::milliseconds(backoff_duration.as_millis() as i64);
 
-            task.attempt_count = new_attempt_count;
-            task.scheduled_at = Some(next_retry.into());
-            task.status = TaskStatus::Queued;
+            state_machine.task_mut().attempt_count = new_attempt_count;
+            state_machine.task_mut().scheduled_at = Some(next_retry.into());
+            state_machine.handle_event(TaskStateEvent::Retry)?;
 
-            self.repository.update(task).await?;
+            self.repository.update(state_machine.task()).await?;
             info!(
                 "Scheduled retry {}/{} for task {} in {:?} (backoff: {:?})",
-                new_attempt_count, task.max_retries, task.id, backoff_duration, next_retry
+                new_attempt_count,
+                state_machine.task().max_retries,
+                state_machine.task().id,
+                backoff_duration,
+                next_retry
             );
         }
 

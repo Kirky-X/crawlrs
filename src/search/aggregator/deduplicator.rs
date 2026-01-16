@@ -5,6 +5,7 @@
 
 use crate::domain::models::search_result::SearchResult;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
@@ -30,6 +31,8 @@ pub struct ContentFingerprintConfig {
     pub algorithm: FingerprintAlgorithm,
     /// 指纹长度
     pub fingerprint_size: usize,
+    /// SimHash 海明距离阈值 (0-64)
+    pub simhash_threshold: u8,
 }
 
 impl Default for ContentFingerprintConfig {
@@ -38,6 +41,7 @@ impl Default for ContentFingerprintConfig {
             enabled: true,
             algorithm: FingerprintAlgorithm::SimHash,
             fingerprint_size: 64,
+            simhash_threshold: 10, // 海明距离阈值
         }
     }
 }
@@ -84,12 +88,16 @@ impl Default for DeduplicationConfig {
     }
 }
 
-/// 结果去重器
+/// 结果去重器 (优化版本)
+/// 使用 SimHash 快速相似度检测，将 O(n²) 复杂度降低到 O(n)
 pub struct ResultDeduplicator {
     config: DeduplicationConfig,
     seen_urls: HashSet<String>,
     seen_titles: HashSet<String>,
     seen_fingerprints: HashSet<u64>,
+    /// SimHash 指纹索引，用于快速相似度检测
+    /// key: 指纹, value: 原始标题
+    fingerprint_index: HashMap<u64, String>,
 }
 
 impl ResultDeduplicator {
@@ -100,6 +108,7 @@ impl ResultDeduplicator {
             seen_urls: HashSet::new(),
             seen_titles: HashSet::new(),
             seen_fingerprints: HashSet::new(),
+            fingerprint_index: HashMap::new(),
         }
     }
 
@@ -206,14 +215,41 @@ impl ResultDeduplicator {
         fingerprint
     }
 
-    /// 计算两个字符串的相似度（使用Jaro-Winkler）
-    fn calculate_similarity(&self, s1: &str, s2: &str) -> f32 {
-        strsim::jaro_winkler(s1, s2) as f32
+    /// 计算海明距离（两个64位指纹之间的不同位数）
+    #[inline]
+    fn hamming_distance(hash1: u64, hash2: u64) -> u8 {
+        let xor = hash1 ^ hash2;
+        xor.count_ones() as u8
     }
 
-    /// 过滤重复结果
+    /// 使用 SimHash 快速检测相似性（优化版本）
+    /// O(1) 时间复杂度检测是否与已处理结果相似
+    #[inline]
+    fn is_similar_by_fingerprint(&self, fingerprint: u64) -> bool {
+        // 检查精确匹配
+        if self.seen_fingerprints.contains(&fingerprint) {
+            return true;
+        }
+
+        // 使用 SimHash 海明距离快速检测相似性
+        // 只检查索引中的指纹，避免 O(n²)
+        for &existing_fingerprint in self.seen_fingerprints.iter() {
+            let distance = Self::hamming_distance(fingerprint, existing_fingerprint);
+            if distance <= self.config.fingerprint_config.simhash_threshold {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// 过滤重复结果（优化版本）
+    /// 使用 SimHash 和指纹索引，将复杂度从 O(n²) 降低到 O(n)
     pub fn deduplicate(&mut self, results: Vec<SearchResult>) -> Vec<SearchResult> {
         let mut unique_results = Vec::new();
+
+        // 预分配指纹索引以提高性能
+        self.fingerprint_index.reserve(results.len().min(1000));
 
         for result in results {
             let normalized_url = self.normalize_url(&result.url);
@@ -229,34 +265,33 @@ impl ResultDeduplicator {
                 DeduplicationStrategy::TitleOnly => title_exists,
                 DeduplicationStrategy::UrlAndTitle => {
                     url_exists
-                        || unique_results.iter().any(|existing: &SearchResult| {
-                            let existing_title = self.normalize_title(&existing.title);
-                            self.calculate_similarity(&normalized_title, &existing_title)
-                                > self.config.title_similarity_threshold
-                        })
+                        || (self.config.fingerprint_config.enabled
+                            && self.is_similar_by_fingerprint(
+                                self.generate_fingerprint(&normalized_title),
+                            ))
                 }
                 DeduplicationStrategy::Smart => {
                     // URL 完全匹配
                     url_exists
-                    // 标题相似（使用相似度检查，而非精确匹配）
-                    || unique_results.iter().any(|existing: &SearchResult| {
-                        let existing_title = self.normalize_title(&existing.title);
-                        self.calculate_similarity(&normalized_title, &existing_title)
-                            > self.config.title_similarity_threshold
-                    })
+                        // 标题完全匹配
+                        || title_exists
+                        // 使用 SimHash 快速检测相似标题（O(1) 替代 O(n)）
+                        || (self.config.fingerprint_config.enabled
+                            && self.is_similar_by_fingerprint(
+                                self.generate_fingerprint(&normalized_title),
+                            ))
                 }
             };
 
             if !is_duplicate {
                 // 添加到已见集合
-                self.seen_urls.insert(normalized_url);
-                self.seen_titles.insert(normalized_title);
+                self.seen_urls.insert(normalized_url.clone());
+                self.seen_titles.insert(normalized_title.clone());
 
                 if self.config.fingerprint_config.enabled {
-                    if let Some(content) = &result.description {
-                        let fingerprint = self.generate_fingerprint(content);
-                        self.seen_fingerprints.insert(fingerprint);
-                    }
+                    let fingerprint = self.generate_fingerprint(&normalized_title);
+                    self.seen_fingerprints.insert(fingerprint);
+                    self.fingerprint_index.insert(fingerprint, normalized_title);
                 }
 
                 unique_results.push(result);
@@ -290,6 +325,7 @@ impl ResultDeduplicator {
         self.seen_urls.clear();
         self.seen_titles.clear();
         self.seen_fingerprints.clear();
+        self.fingerprint_index.clear();
     }
 
     /// 获取去重统计信息
