@@ -8,7 +8,15 @@
 //! 提供安全的 API Key 哈希存储和验证功能
 //! 使用 bcrypt 算法进行密码学安全的哈希处理
 
+use anyhow::{anyhow, Context, Result};
 use bcrypt::{hash, verify, DEFAULT_COST};
+
+/// 安全模块错误类型
+#[derive(Debug, thiserror::Error)]
+pub enum SecurityError {
+    #[error("API key hashing failed: {0}")]
+    HashingFailed(String),
+}
 
 /// 计算 API Key 的哈希值
 ///
@@ -20,7 +28,7 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 ///
 /// # 返回值
 ///
-/// * bcrypt 哈希字符串
+/// * Result 包含 bcrypt 哈希字符串
 ///
 /// # 示例
 ///
@@ -31,8 +39,10 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 /// let hash = hash_api_key(key);
 /// assert!(!hash.is_empty());
 /// ```
-pub fn hash_api_key(api_key: &str) -> String {
-    hash(api_key, DEFAULT_COST).expect("Failed to hash API key")
+pub fn hash_api_key(api_key: &str) -> Result<String> {
+    hash(api_key, DEFAULT_COST)
+        .context("Failed to hash API key")
+        .map_err(|e| anyhow!("Hashing failed: {}", e))
 }
 
 /// 验证 API Key 是否匹配哈希值
@@ -75,20 +85,20 @@ mod tests {
     #[test]
     fn test_hash_api_key() {
         let key = "test_api_key_12345";
-        let hash = hash_api_key(key);
+        let hash = hash_api_key(key).unwrap();
 
         // bcrypt 哈希应该以 $2b$ 开头
         assert!(hash.starts_with("$2b$"));
 
         // bcrypt 每次生成不同的哈希（随机盐），这是安全特性
-        let hash2 = hash_api_key(key);
+        let hash2 = hash_api_key(key).unwrap();
         assert_ne!(hash, hash2);
         // 但两者都能验证通过同一个 key
         assert!(verify_api_key(key, &hash));
         assert!(verify_api_key(key, &hash2));
 
         // 不同的输入应该产生不同的哈希
-        let hash3 = hash_api_key("different_key");
+        let hash3 = hash_api_key("different_key").unwrap();
         assert_ne!(hash, hash3);
         // 不同的 key 不能通过验证
         assert!(!verify_api_key("different_key", &hash));
@@ -98,7 +108,7 @@ mod tests {
     #[test]
     fn test_verify_api_key() {
         let key = "test_api_key_12345";
-        let hash = hash_api_key(key);
+        let hash = hash_api_key(key).unwrap();
 
         // 正确的密钥应该验证成功
         assert!(verify_api_key(key, &hash));
@@ -110,8 +120,8 @@ mod tests {
     #[test]
     fn test_hash_is_deterministic() {
         let key = "consistent_key";
-        let hash1 = hash_api_key(key);
-        let hash2 = hash_api_key(key);
+        let hash1 = hash_api_key(key).unwrap();
+        let hash2 = hash_api_key(key).unwrap();
 
         // bcrypt 每次生成不同的哈希（随机盐），这是预期行为
         // 正确的测试：验证两者都能通过同一个 key
@@ -134,7 +144,7 @@ mod tests {
     #[test]
     fn test_verify_rejects_wrong_key() {
         let key = "secure_api_key_xyz";
-        let hash = hash_api_key(key);
+        let hash = hash_api_key(key).unwrap();
 
         assert!(!verify_api_key("wrong_key_123", &hash));
         assert!(!verify_api_key("", &hash));

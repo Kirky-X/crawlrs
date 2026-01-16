@@ -194,9 +194,10 @@ impl GoogleSearchEngine {
         Ok(results)
     }
 
-    /// Escape HTML entities to prevent XSS
+    /// Escape HTML entities to prevent XSS attacks
+    /// Uses encode_text to convert special characters to safe entities
     fn escape_html(text: &str) -> String {
-        html_escape::decode_html_entities(text).trim().to_string()
+        html_escape::encode_text(text).trim().to_string()
     }
 }
 
@@ -213,25 +214,41 @@ impl SearchEngine for GoogleSearchEngine {
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
+        // Test fallback mode - only enabled in development/test environments
         if std::env::var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS").unwrap_or_default() == "true" {
-            return Ok(Response {
-                items: vec![
-                    ResponseItem {
-                        title: format!("Test Result 1 for {}", request.query),
-                        url: "https://google.com/1".to_string(),
-                        description: "Test description 1".to_string(),
-                        engine: SearchEngineType::Google,
-                    },
-                    ResponseItem {
-                        title: format!("Test Result 2 for {}", request.query),
-                        url: "https://google.com/2".to_string(),
-                        description: "Test description 2".to_string(),
-                        engine: SearchEngineType::Google,
-                    },
-                ],
-                total_results: Some(2),
-                engine: SearchEngineType::Google,
-            });
+            // Check environment to prevent accidental test mode in production
+            let env = std::env::var("CRAWLRS_ENV").unwrap_or_default();
+            let is_dev_env = matches!(
+                env.as_str(),
+                "development" | "dev" | "test" | "testing" | ""
+            );
+
+            if !is_dev_env {
+                tracing::warn!(
+                    "GOOGLE_HTTP_FALLBACK_TEST_RESULTS ignored in production (CRAWLRS_ENV={})",
+                    env
+                );
+            } else {
+                tracing::info!("Using test fallback results for Google search");
+                return Ok(Response {
+                    items: vec![
+                        ResponseItem {
+                            title: format!("Test Result 1 for {}", request.query),
+                            url: "https://google.com/1".to_string(),
+                            description: "Test description 1".to_string(),
+                            engine: SearchEngineType::Google,
+                        },
+                        ResponseItem {
+                            title: format!("Test Result 2 for {}", request.query),
+                            url: "https://google.com/2".to_string(),
+                            description: "Test description 2".to_string(),
+                            engine: SearchEngineType::Google,
+                        },
+                    ],
+                    total_results: Some(2),
+                    engine: SearchEngineType::Google,
+                });
+            }
         }
 
         let page = 1;

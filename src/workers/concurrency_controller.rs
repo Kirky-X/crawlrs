@@ -62,6 +62,12 @@ impl ConcurrencyController {
     /// 如果获取成功返回 Ok(true)，如果达到限制返回 Ok(false)，错误返回 Err
     pub async fn acquire_permit(&self, task: &crate::domain::models::task::Task) -> Result<bool> {
         let team_id = task.team_id;
+        // Pre-allocate String with capacity to avoid reallocations
+        let mut task_id_str = String::with_capacity(64);
+        task_id_str.push_str(&team_id.to_string());
+        task_id_str.push(':');
+        task_id_str.push_str(&task.id.to_string());
+
         let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
         let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
         let now = Utc::now().timestamp() as f64;
@@ -76,7 +82,7 @@ impl ConcurrencyController {
                 CONCURRENCY_CONTROL_LUA,
                 &[&team_active_tasks_key, &team_concurrency_limit_key],
                 &[
-                    &task.id.to_string(),
+                    &task_id_str,
                     &now.to_string(),
                     &stale_threshold.to_string(),
                     &default_limit.to_string(),
@@ -91,8 +97,10 @@ impl ConcurrencyController {
     /// 释放信号量许可
     pub async fn release_permit(&self, team_id: Uuid, task_id: Uuid) -> Result<()> {
         let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
+        // Pre-allocate String for task_id
+        let task_id_str = task_id.to_string();
         self.redis
-            .zrem(&team_active_tasks_key, &task_id.to_string())
+            .zrem(&team_active_tasks_key, &task_id_str)
             .await?;
         Ok(())
     }

@@ -7,7 +7,7 @@ use chardetng::EncodingDetector;
 use encoding_rs::Encoding;
 use lru::LruCache;
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use thiserror::Error;
 use tracing::{debug, warn};
 
@@ -254,14 +254,14 @@ impl TextEncodingProcessor {
 
     /// 获取缓存的检测结果
     fn get_cached_detection(&self, key: &str) -> Option<EncodingDetection> {
-        self.encoding_cache.lock().ok()?.get(key).cloned()
+        let mut cache = self.encoding_cache.lock();
+        cache.get(key).cloned()
     }
 
     /// 缓存检测结果
     fn cache_detection_result(&self, key: &str, detection: &EncodingDetection) {
-        if let Ok(mut cache) = self.encoding_cache.lock() {
-            cache.put(key.to_string(), detection.clone());
-        }
+        let mut cache = self.encoding_cache.lock();
+        cache.put(key.to_string(), detection.clone());
     }
 
     /// 应用缓存的转换结果
@@ -291,12 +291,7 @@ impl TextEncodingProcessor {
 
     /// 获取处理器统计信息
     pub fn get_stats(&self) -> TextProcessorStats {
-        let cache_size = self
-            .encoding_cache
-            .lock()
-            .ok()
-            .map(|c| c.len())
-            .unwrap_or(0);
+        let cache_size = self.encoding_cache.lock().len();
         TextProcessorStats {
             cache_size,
             cache_capacity: 1000,

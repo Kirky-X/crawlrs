@@ -9,9 +9,9 @@
 //! regex compilation patterns across the codebase.
 
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use regex::Regex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 /// Thread-safe regex cache with lazy initialization.
 ///
@@ -40,10 +40,10 @@ impl RegexCache {
     ///
     /// # Errors
     ///
-    /// Returns an error if regex compilation fails or if the lock is poisoned.
+    /// Returns an error if regex compilation fails.
     #[inline]
     pub fn get_or_insert(&self, pattern: &str) -> Result<Regex, String> {
-        let mut cache = self.cache.lock().map_err(|e| e.to_string())?;
+        let mut cache = self.cache.lock();
 
         if let Some(regex) = cache.get(pattern) {
             return Ok(regex.clone());
@@ -61,7 +61,7 @@ impl RegexCache {
     ///
     /// # Errors
     ///
-    /// Returns an error if regex compilation fails or if the lock is poisoned.
+    /// Returns an error if regex compilation fails.
     #[inline]
     pub fn get_or_insert_escaped(&self, literal: &str) -> Result<Regex, String> {
         let pattern = format!(r"\b{}\b", regex::escape(literal));
@@ -69,37 +69,24 @@ impl RegexCache {
     }
 
     /// Clears all cached regex patterns.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the lock is poisoned.
     #[inline]
-    pub fn clear(&self) -> Result<(), String> {
-        let mut cache = self.cache.lock().map_err(|e| e.to_string())?;
+    pub fn clear(&self) {
+        let mut cache = self.cache.lock();
         cache.clear();
-        Ok(())
     }
 
     /// Returns the current number of cached regex patterns.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the lock is poisoned.
     #[inline]
-    pub fn len(&self) -> Result<usize, String> {
-        let cache = self.cache.lock().map_err(|e| e.to_string())?;
-        Ok(cache.len())
+    pub fn len(&self) -> usize {
+        let cache = self.cache.lock();
+        cache.len()
     }
 
     /// Returns true if the cache is empty.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the lock is poisoned.
     #[inline]
-    pub fn is_empty(&self) -> Result<bool, String> {
-        let cache = self.cache.lock().map_err(|e| e.to_string())?;
-        Ok(cache.is_empty())
+    pub fn is_empty(&self) -> bool {
+        let cache = self.cache.lock();
+        cache.is_empty()
     }
 }
 
@@ -131,7 +118,7 @@ mod tests {
     #[test]
     fn test_regex_cache_new() {
         let cache = RegexCache::new();
-        assert!(cache.is_empty().unwrap());
+        assert!(cache.is_empty());
     }
 
     #[test]
@@ -141,17 +128,17 @@ mod tests {
         // First insert
         let regex1 = cache.get_or_insert(r"\d+").unwrap();
         assert_eq!(regex1.as_str(), r"\d+");
-        assert_eq!(cache.len().unwrap(), 1);
+        assert_eq!(cache.len(), 1);
 
         // Get cached
         let regex2 = cache.get_or_insert(r"\d+").unwrap();
         assert_eq!(regex1.as_str(), regex2.as_str());
-        assert_eq!(cache.len().unwrap(), 1);
+        assert_eq!(cache.len(), 1);
 
         // Different pattern
         let regex3 = cache.get_or_insert(r"\w+").unwrap();
         assert_eq!(regex3.as_str(), r"\w+");
-        assert_eq!(cache.len().unwrap(), 2);
+        assert_eq!(cache.len(), 2);
     }
 
     #[test]
@@ -171,9 +158,9 @@ mod tests {
         let cache = RegexCache::new();
 
         cache.get_or_insert(r"\d+").unwrap();
-        assert!(!cache.is_empty().unwrap());
+        assert!(!cache.is_empty());
 
-        cache.clear().unwrap();
-        assert!(cache.is_empty().unwrap());
+        cache.clear();
+        assert!(cache.is_empty());
     }
 }

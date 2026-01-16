@@ -158,6 +158,7 @@ impl<R: CreditsRepository> CreditsService<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::models::credits::CreditsTransaction;
     use crate::domain::repositories::credits_repository::CreditsRepositoryError;
     use async_trait::async_trait;
 
@@ -175,7 +176,10 @@ mod tests {
             _description: String,
             _reference_id: Option<Uuid>,
         ) -> Result<(), CreditsRepositoryError> {
-            self.deducted.lock().unwrap().push((team_id, amount));
+            self.deducted
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((team_id, amount));
             Ok(())
         }
 
@@ -196,8 +200,8 @@ mod tests {
 
         async fn get_transaction_history(
             &self,
-            team_id: Uuid,
-            limit: Option<u32>,
+            _team_id: Uuid,
+            _limit: Option<u32>,
         ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
             Ok(vec![])
         }

@@ -40,9 +40,16 @@ impl SogouSearchEngine {
             return String::new();
         }
 
-        // 如果已经是完整URL，直接返回
+        // 处理直接完整URL (仅允许 http/https)
         if url.starts_with("http://") || url.starts_with("https://") {
-            return url.to_string();
+            // 验证 URL 格式并检查协议
+            if let Ok(parsed) = url::Url::parse(url) {
+                // 只允许 http/https 协议
+                if parsed.scheme() == "http" || parsed.scheme() == "https" {
+                    return url.to_string();
+                }
+            }
+            return String::new();
         }
 
         // 处理搜狗中转链接: /link?url=...
@@ -50,19 +57,22 @@ impl SogouSearchEngine {
             // 提取参数中的URL并解码
             let encoded_url = url.trim_start_matches("/link?url=");
             // URL解码
-            return match urlencoding::decode(encoded_url) {
-                Ok(decoded) => decoded.into_owned(),
-                Err(_) => encoded_url.to_string(),
+            match urlencoding::decode(encoded_url) {
+                Ok(decoded) => {
+                    // 递归验证解码后的 URL
+                    return self.resolve_url(&decoded);
+                }
+                Err(_) => return String::new(),
             };
         }
 
-        // 处理其他相对路径
+        // 处理其他相对路径 (仅搜狗域名)
         if url.starts_with("/") {
             return format!("https://www.sogou.com{}", url);
         }
 
-        // 其他情况返回原URL
-        url.to_string()
+        // 其他情况拒绝
+        String::new()
     }
 
     pub fn parse_search_results(

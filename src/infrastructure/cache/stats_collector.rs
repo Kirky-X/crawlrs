@@ -9,7 +9,8 @@
 //! repetitive `.lock().expect()` patterns in cache implementations.
 
 use crate::infrastructure::cache::types::CacheStats;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 /// Thread-safe cache statistics collector.
 ///
@@ -48,57 +49,50 @@ impl CacheStatsCollector {
     /// Records a cache hit.
     #[inline]
     pub fn record_hit(&self) {
-        if let Ok(mut guard) = self.stats.lock() {
-            guard.hits += 1;
-        }
+        let mut guard = self.stats.lock();
+        guard.hits += 1;
     }
 
     /// Records a cache miss.
     #[inline]
     pub fn record_miss(&self) {
-        if let Ok(mut guard) = self.stats.lock() {
-            guard.misses += 1;
-        }
+        let mut guard = self.stats.lock();
+        guard.misses += 1;
     }
 
     /// Records cache evictions.
     #[inline]
     pub fn record_evictions(&self, count: usize) {
-        if let Ok(mut guard) = self.stats.lock() {
-            guard.evictions += count as u64;
-        }
+        let mut guard = self.stats.lock();
+        guard.evictions += count as u64;
     }
 
     /// Records a cache store operation.
     #[inline]
     pub fn record_store(&self) {
-        if let Ok(mut guard) = self.stats.lock() {
-            guard.stores += 1;
-        }
+        let mut guard = self.stats.lock();
+        guard.stores += 1;
     }
 
     /// Records cache compression savings.
     #[inline]
     pub fn record_compression_saves(&self, bytes_saved: u64) {
-        if let Ok(mut guard) = self.stats.lock() {
-            guard.compression_saves += bytes_saved;
-        }
+        let mut guard = self.stats.lock();
+        guard.compression_saves += bytes_saved;
     }
 
     /// Records preheat hits.
     #[inline]
     pub fn record_preheat_hit(&self) {
-        if let Ok(mut guard) = self.stats.lock() {
-            guard.preheat_hits += 1;
-        }
+        let mut guard = self.stats.lock();
+        guard.preheat_hits += 1;
     }
 
     /// Records preheat hits for multiple entries.
     #[inline]
     pub fn record_preheat_hits(&self, count: usize) {
-        if let Ok(mut guard) = self.stats.lock() {
-            guard.preheat_hits += count as u64;
-        }
+        let mut guard = self.stats.lock();
+        guard.preheat_hits += count as u64;
     }
 
     /// Executes a closure while holding the stats lock.
@@ -110,7 +104,7 @@ impl CacheStatsCollector {
     where
         F: FnOnce(&CacheStats) -> R,
     {
-        let guard = self.stats.lock().unwrap();
+        let guard = self.stats.lock();
         f(&guard)
     }
 
@@ -123,42 +117,42 @@ impl CacheStatsCollector {
     where
         F: FnOnce(&mut CacheStats) -> R,
     {
-        let mut guard = self.stats.lock().unwrap();
+        let mut guard = self.stats.lock();
         f(&mut guard)
     }
 
     /// Takes a snapshot of the current statistics.
     #[inline]
     pub fn snapshot(&self) -> CacheStats {
-        let guard = self.stats.lock().unwrap();
+        let guard = self.stats.lock();
         guard.clone()
     }
 
     /// Resets all statistics to zero.
     #[inline]
     pub fn reset(&self) {
-        let mut guard = self.stats.lock().unwrap();
+        let mut guard = self.stats.lock();
         *guard = CacheStats::default();
     }
 
     /// Returns the number of hits.
     #[inline]
     pub fn hits(&self) -> u64 {
-        let guard = self.stats.lock().unwrap();
+        let guard = self.stats.lock();
         guard.hits
     }
 
     /// Returns the number of misses.
     #[inline]
     pub fn misses(&self) -> u64 {
-        let guard = self.stats.lock().unwrap();
+        let guard = self.stats.lock();
         guard.misses
     }
 
     /// Returns the hit ratio (hits / total accesses).
     #[inline]
     pub fn hit_ratio(&self) -> f64 {
-        let guard = self.stats.lock().unwrap();
+        let guard = self.stats.lock();
         let total = guard.hits + guard.misses;
         if total == 0 {
             0.0
@@ -170,14 +164,14 @@ impl CacheStatsCollector {
     /// Returns the total number of evictions.
     #[inline]
     pub fn evictions(&self) -> u64 {
-        let guard = self.stats.lock().unwrap();
+        let guard = self.stats.lock();
         guard.evictions
     }
 
     /// Returns the total number of stores.
     #[inline]
     pub fn stores(&self) -> u64 {
-        let guard = self.stats.lock().unwrap();
+        let guard = self.stats.lock();
         guard.stores
     }
 

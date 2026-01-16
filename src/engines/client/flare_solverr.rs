@@ -37,12 +37,32 @@ pub struct FlareSolverrConfig {
 
 impl Default for FlareSolverrConfig {
     fn default() -> Self {
+        let url = std::env::var("FLARESOLVERR_URL")
+            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+
+        // Validate URL format and protocol
+        let validated_url = validate_flaresolverr_url(&url)
+            .expect("Invalid FLARESOLVERR_URL: must be http:// or https:// with valid format");
+
         Self {
-            url: std::env::var("FLARESOLVERR_URL")
-                .unwrap_or_else(|_| "http://localhost:8191".to_string()),
+            url: validated_url,
             timeout_seconds: 60,
             session_id: None,
         }
+    }
+}
+
+/// Validate FlareSolverr URL - only allow http/https protocols
+fn validate_flaresolverr_url(url: &str) -> Result<String, String> {
+    let parsed = url::Url::parse(url).map_err(|_| "Invalid URL format".to_string())?;
+
+    // Only allow http and https protocols
+    match parsed.scheme() {
+        "http" | "https" => Ok(url.to_string()),
+        _ => Err(format!(
+            "Invalid protocol '{}': FLARESOLVERR_URL must use http or https",
+            parsed.scheme()
+        )),
     }
 }
 

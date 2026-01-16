@@ -57,16 +57,15 @@ pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
 
     // Content-Security-Policy
     // Restricts resource loading to same origin
+    // Note: 'unsafe-inline' removed for better XSS protection
+    // If inline styles are needed, consider using nonces or hashes
     if let Some(value) = response.headers_mut().get_mut("content-security-policy") {
-        *value = HeaderValue::from_static(
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
-        );
+        *value =
+            HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self'");
     } else {
         response.headers_mut().insert(
             "content-security-policy",
-            HeaderValue::from_static(
-                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
-            ),
+            HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self'"),
         );
     }
 

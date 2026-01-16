@@ -171,7 +171,13 @@ pub async fn auth_middleware(
     };
 
     // Hash the token for lookup
-    let token_hash = security::hash_api_key(&token_str);
+    let token_hash = match security::hash_api_key(&token_str) {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::error!("Failed to hash API key: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
 
     // Query DB to validate token and get API Key info
     match api_key::Entity::find()
