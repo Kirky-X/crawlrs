@@ -10,6 +10,7 @@ pub mod crawl_text_integration;
 /// 提供通用的工具函数和辅助功能
 /// 包括文本处理、URL工具、错误处理等功能
 pub mod errors;
+pub mod http_client;
 pub mod port_sniffer;
 pub mod regex_cache;
 pub mod retry_policy;

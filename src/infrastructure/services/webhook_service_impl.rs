@@ -5,12 +5,12 @@
 
 use crate::domain::models::webhook::WebhookEvent;
 use crate::domain::services::webhook_service::WebhookService;
+use crate::utils::http_client::create_http_client_with_timeout;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use std::time::Duration;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -64,10 +64,7 @@ pub struct WebhookServiceImpl {
 impl WebhookServiceImpl {
     /// 创建新的 Webhook 服务实现
     pub fn new(secret: String) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_default();
+        let client = create_http_client_with_timeout(10);
 
         Self { client, secret }
     }

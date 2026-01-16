@@ -6,8 +6,10 @@
 use crate::impl_basic_error_conversions;
 #[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::utils::http_client::HTTP_CLIENT;
 use crate::utils::retry_policy::RetryPolicy;
 use anyhow::Result;
+use reqwest;
 use reqwest::Client;
 use robotstxt::DefaultMatcher;
 use std::collections::HashMap;
@@ -120,7 +122,7 @@ impl RobotsChecker {
     /// 返回新的Robots检查器实例
     pub fn new(redis_client: Option<Arc<RedisClient>>) -> Self {
         Self {
-            client: Client::new(),
+            client: HTTP_CLIENT.clone(),
             memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             redis_client,
             retry_policy: RetryPolicy {

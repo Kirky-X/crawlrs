@@ -1,4 +1,5 @@
 use crate::config::settings::Settings;
+use crate::utils::http_client::HTTP_CLIENT;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use genai::chat::{ChatMessage, ChatRequest};
@@ -28,7 +29,6 @@ pub trait LLMServiceTrait: Send + Sync {
 /// LLM服务 - 处理与LLM提供商的交互
 pub struct LLMService {
     client: Client,
-    http_client: reqwest::Client,
     model: String,
     provider: String,
     api_base_url: Option<String>,
@@ -74,7 +74,6 @@ impl LLMService {
 
         Self {
             client: Client::default(),
-            http_client: reqwest::Client::new(),
             model,
             provider,
             api_base_url,
@@ -86,12 +85,17 @@ impl LLMService {
     pub fn new_with_config(_api_key: String, model: String, api_base_url: String) -> Self {
         let mut templates = HashMap::new();
         // Fallback templates if loading fails
-        templates.insert("json".to_string(), "Extract JSON from {{text}} using schema {{schema}}".to_string());
-        templates.insert("markdown".to_string(), "Extract Markdown from {{text}}".to_string());
-        
+        templates.insert(
+            "json".to_string(),
+            "Extract JSON from {{text}} using schema {{schema}}".to_string(),
+        );
+        templates.insert(
+            "markdown".to_string(),
+            "Extract Markdown from {{text}}".to_string(),
+        );
+
         Self {
             client: Client::default(),
-            http_client: reqwest::Client::new(),
             model,
             provider: "openai".to_string(),
             api_base_url: Some(api_base_url),
@@ -103,7 +107,7 @@ impl LLMService {
     fn load_templates() -> Result<HashMap<String, String>> {
         let content = fs::read_to_string("config/prompts.toml")?;
         let v: Value = toml::from_str(&content)?;
-        
+
         let mut templates = HashMap::new();
         if let Some(extraction) = v.get("extraction") {
             if let Some(json_tpl) = extraction.get("json").and_then(|t| t.as_str()) {
@@ -131,7 +135,7 @@ impl LLMService {
             .replace("{{text}}", text)
             .replace("{{schema}}", &serde_json::to_string_pretty(schema)?);
 
-            let (content, usage) = if let Some(base_url) = &self.api_base_url {
+        let (content, usage) = if let Some(base_url) = &self.api_base_url {
             // 如果提供了显式地址，直接使用 reqwest 发送 OpenAI 兼容请求，避开 genai 的环境变干扰
             let url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
                 format!("{}/chat/completions", base_url.trim_end_matches('/'))
@@ -148,7 +152,7 @@ impl LLMService {
                 "temperature": 0.0
             });
 
-            let mut request = self.http_client.post(&url).json(&body);
+            let mut request = HTTP_CLIENT.post(&url).json(&body);
             if let Some(key) = &self.api_key {
                 request = request.bearer_auth(key);
             } else {
@@ -161,8 +165,11 @@ impl LLMService {
                 return Err(anyhow::anyhow!("LLM returned error: {}", err));
             }
 
-            let res_json: Value = res.json().await.context("Failed to parse LLM JSON response")?;
-            
+            let res_json: Value = res
+                .json()
+                .await
+                .context("Failed to parse LLM JSON response")?;
+
             let content = res_json["choices"][0]["message"]["content"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("Empty content from LLM"))?
@@ -170,23 +177,26 @@ impl LLMService {
 
             let usage = TokenUsage {
                 prompt_tokens: res_json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                completion_tokens: res_json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                completion_tokens: res_json["usage"]["completion_tokens"].as_u64().unwrap_or(0)
+                    as u32,
                 total_tokens: res_json["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
             };
 
             (content, usage)
         } else {
             // 否则使用 genai 默认逻辑
-            let chat_req = ChatRequest::new(vec![
-                ChatMessage::user(prompt),
-            ]);
+            let chat_req = ChatRequest::new(vec![ChatMessage::user(prompt)]);
 
             let model_id = format!("{}:{}", self.provider, self.model);
-            
+
             let chat_res = match self.client.exec_chat(&model_id, chat_req, None).await {
                 Ok(res) => res,
                 Err(e) => {
-                    return Err(anyhow::anyhow!("LLM call failed for model {}: {:?}", model_id, e));
+                    return Err(anyhow::anyhow!(
+                        "LLM call failed for model {}: {:?}",
+                        model_id,
+                        e
+                    ));
                 }
             };
 
@@ -194,7 +204,7 @@ impl LLMService {
                 .content_text_as_str()
                 .ok_or_else(|| anyhow::anyhow!("LLM returned empty content"))?
                 .to_string();
-            
+
             // genai 0.5.0 的 TokenUsage 获取方式
             let usage = TokenUsage {
                 prompt_tokens: 0, // genai 0.5.0 暂未直接暴露此结构，保持兼容
@@ -212,8 +222,10 @@ impl LLMService {
                 .trim_start_matches("```")
                 .trim_end_matches("```")
                 .trim();
-            let data = serde_json::from_str::<Value>(clean_content)
-                .context(format!("Failed to parse LLM JSON response: {}", clean_content))?;
+            let data = serde_json::from_str::<Value>(clean_content).context(format!(
+                "Failed to parse LLM JSON response: {}",
+                clean_content
+            ))?;
             Ok((data, usage))
         } else {
             Ok((json!({ "content": content }), usage))

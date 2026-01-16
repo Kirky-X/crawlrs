@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::utils::http_client::create_http_client_with_timeout;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -41,8 +42,6 @@ pub trait GeoLocationServiceTrait: Send + Sync {
 pub struct GeoLocationService {
     /// API端点 (默认为 ipapi.co)
     api_endpoint: String,
-    /// HTTP客户端
-    client: reqwest::Client,
 }
 
 impl Default for GeoLocationService {
@@ -56,22 +55,12 @@ impl GeoLocationService {
     pub fn new() -> Self {
         Self {
             api_endpoint: "https://ipapi.co".to_string(),
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                .build()
-                .unwrap_or_default(),
         }
     }
 
     /// 使用自定义API端点创建服务实例
     pub fn with_endpoint(api_endpoint: String) -> Self {
-        Self {
-            api_endpoint,
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                .build()
-                .unwrap_or_default(),
-        }
+        Self { api_endpoint }
     }
 }
 
@@ -85,8 +74,8 @@ impl GeoLocationServiceTrait for GeoLocationService {
         let url = format!("{}/{}/json/", self.api_endpoint, ip_str);
 
         // 发送请求
-        let response = self
-            .client
+        let client = create_http_client_with_timeout(5);
+        let response = client
             .get(&url)
             .header("User-Agent", "crawlrs/0.1.0")
             .send()
