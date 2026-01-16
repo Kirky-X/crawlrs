@@ -19,7 +19,13 @@ mod tests {
         println!("✓ Search service configuration loaded successfully from default.toml");
         println!(
             "  Google API Key configured: {}",
-            if settings.google_search.api_key.as_ref().expect("Google API key not found").is_empty() {
+            if settings
+                .google_search
+                .api_key
+                .as_ref()
+                .expect("Google API key not found")
+                .is_empty()
+            {
                 "[EMPTY]"
             } else {
                 "[SET]"
@@ -27,7 +33,13 @@ mod tests {
         );
         println!(
             "  Google CX configured: {}",
-            if settings.google_search.cx.as_ref().expect("Google CX not found").is_empty() {
+            if settings
+                .google_search
+                .cx
+                .as_ref()
+                .expect("Google CX not found")
+                .is_empty()
+            {
                 "[EMPTY]"
             } else {
                 "[SET]"
@@ -36,8 +48,18 @@ mod tests {
 
         // Test that the configuration can be used to create error messages
         // (this simulates what the search service does when API keys are missing)
-        if settings.google_search.api_key.as_ref().expect("Google API key not found").is_empty()
-            || settings.google_search.cx.as_ref().expect("Google CX not found").is_empty()
+        if settings
+            .google_search
+            .api_key
+            .as_ref()
+            .expect("Google API key not found")
+            .is_empty()
+            || settings
+                .google_search
+                .cx
+                .as_ref()
+                .expect("Google CX not found")
+                .is_empty()
         {
             let error_msg = "No search engine configured. Please set google_search.api_key and google_search.cx in config/default.toml.";
             println!("  Expected error message: {}", error_msg);

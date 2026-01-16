@@ -48,6 +48,7 @@ async fn test_extract_with_rules_credit_deduction() {
             is_array: false,
             use_llm: Some(false),
             llm_prompt: None,
+            output_format: None,
         },
     );
 
@@ -59,6 +60,7 @@ async fn test_extract_with_rules_credit_deduction() {
             is_array: true,
             use_llm: Some(false), // 传统CSS选择器提取，不使用LLM
             llm_prompt: None,
+            output_format: None,
         },
     );
 
@@ -234,6 +236,7 @@ async fn test_extract_css_only_no_credit_deduction() {
             is_array: false,
             use_llm: Some(false),
             llm_prompt: None,
+            output_format: None,
         },
     );
 
@@ -245,6 +248,7 @@ async fn test_extract_css_only_no_credit_deduction() {
             is_array: true,
             use_llm: Some(false), // 传统CSS选择器提取，不使用LLM
             llm_prompt: None,
+            output_format: None,
         },
     );
 
