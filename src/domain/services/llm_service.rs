@@ -1,14 +1,12 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
-
 use crate::config::settings::Settings;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use serde_json::{json, Value};
-
+use genai::chat::{ChatMessage, ChatRequest};
+use genai::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::fs;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TokenUsage {
@@ -19,183 +17,206 @@ pub struct TokenUsage {
 
 #[async_trait]
 pub trait LLMServiceTrait: Send + Sync {
-    async fn extract_data(&self, text: &str, schema: &Value) -> Result<(Value, TokenUsage)>;
+    async fn extract_data(
+        &self,
+        text: &str,
+        schema: &Value,
+        format: &str,
+    ) -> Result<(Value, TokenUsage)>;
 }
 
 /// LLM服务 - 处理与LLM提供商的交互
-///
-/// # 功能
-///
-/// 提供与大型语言模型（LLM）提供商的交互接口，支持数据提取功能
-///
-/// # 配置
-///
-/// 通过配置文件进行配置：
-/// - `llm.api_key` - LLM API密钥
-/// - `llm.model` - 使用的模型名称（默认为 gpt-3.5-turbo）
-/// - `llm.api_base_url` - LLM API基础URL
 pub struct LLMService {
-    api_key: Option<String>,
+    client: Client,
+    http_client: reqwest::Client,
     model: String,
-    api_base_url: String,
-    client: reqwest::Client,
+    provider: String,
+    api_base_url: Option<String>,
+    api_key: Option<String>,
+    templates: HashMap<String, String>,
 }
 
 #[async_trait]
 impl LLMServiceTrait for LLMService {
-    async fn extract_data(&self, text: &str, schema: &Value) -> Result<(Value, TokenUsage)> {
-        LLMService::extract_data(self, text, schema).await
-    }
-}
-
-impl Default for LLMService {
-    fn default() -> Self {
-        // This is a temporary implementation - in production, settings should be passed
-        Self {
-            api_key: None,
-            model: "gpt-3.5-turbo".to_string(),
-            api_base_url: "https://api.openai.com/v1".to_string(),
-            client: reqwest::Client::new(),
-        }
+    async fn extract_data(
+        &self,
+        text: &str,
+        schema: &Value,
+        format: &str,
+    ) -> Result<(Value, TokenUsage)> {
+        self.extract_data_internal(text, schema, format).await
     }
 }
 
 impl LLMService {
     pub fn new(settings: &Settings) -> Self {
-        let api_key = if settings
+        let templates = Self::load_templates().unwrap_or_default();
+        let mut provider = settings
             .llm
-            .api_key
-            .as_ref()
-            .is_none_or(|key| key.is_empty())
-        {
-            None
-        } else {
-            settings.llm.api_key.clone()
-        };
+            .provider
+            .clone()
+            .unwrap_or_else(|| "openai".to_string());
+        let model = settings
+            .llm
+            .model
+            .clone()
+            .unwrap_or_else(|| "gpt-3.5-turbo".to_string());
+        let api_base_url = settings.llm.api_base_url.clone();
+        let api_key = settings.llm.api_key.clone();
 
-        Self {
-            api_key,
-            model: settings
-                .llm
-                .model
-                .clone()
-                .unwrap_or_else(|| "gpt-3.5-turbo".to_string()),
-            api_base_url: settings
-                .llm
-                .api_base_url
-                .clone()
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
-            client: reqwest::ClientBuilder::new()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
-        }
-    }
-
-    pub fn new_with_config(api_key: String, model: String, api_base_url: String) -> Self {
-        Self {
-            api_key: Some(api_key),
-            model,
-            api_base_url,
-            client: reqwest::Client::new(),
-        }
-    }
-
-    /// 使用LLM从文本中提取结构化数据
-    ///
-    /// # 参数
-    /// * `text` - 输入文本（例如HTML内容或纯文本）
-    /// * `schema` - JSON模式，描述期望的输出结构
-    ///
-    /// # 返回值
-    /// * `Result<(Value, TokenUsage)>` - 提取的数据和令牌使用情况
-    ///
-    /// # 错误
-    /// * 当LLM API密钥未配置时返回错误
-    /// * 当LLM服务调用失败时返回错误
-    pub async fn extract_data(&self, text: &str, schema: &Value) -> Result<(Value, TokenUsage)> {
-        let api_key = self
-            .api_key
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("LLM API key not configured"))?;
-
-        // Truncate text to avoid token limits (simplified)
-        let truncated_text = if text.len() > 10000 {
-            &text[..10000]
-        } else {
-            text
-        };
-
-        let prompt = format!(
-            "Extract data from the following text according to this JSON schema: {}. \
-            Return ONLY the valid JSON object, no markdown formatting. \
-            Text: {}",
-            schema, truncated_text
-        );
-
-        let request_body = json!({
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a helpful data extraction assistant. You output only valid JSON."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            "temperature": 0.0
-        });
-
-        let url = format!("{}/chat/completions", self.api_base_url);
-        let response = self
-            .client
-            .post(url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .json(&request_body)
-            .send()
-            .await
-            .context("Failed to send request to LLM API")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(
-                "LLM API returned error: {} - {}",
-                status,
-                error_text
-            ));
-        }
-
-        let body: Value = response
-            .json()
-            .await
-            .context("Failed to parse LLM API response")?;
-
-        let usage = if let Some(usage_val) = body.get("usage") {
-            TokenUsage {
-                prompt_tokens: usage_val["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                completion_tokens: usage_val["completion_tokens"].as_u64().unwrap_or(0) as u32,
-                total_tokens: usage_val["total_tokens"].as_u64().unwrap_or(0) as u32,
+        // 核心研究成果应用：如果检测到是本地 Ollama 地址，我们“假装”它是 OpenAI
+        // 这样可以避开 genai 内置适配器对 localhost 的强行转换
+        if let Some(url) = &api_base_url {
+            if url.contains("172.24.160.1") || url.contains(":11434") {
+                provider = "openai".to_string();
             }
+        }
+
+        Self {
+            client: Client::default(),
+            http_client: reqwest::Client::new(),
+            model,
+            provider,
+            api_base_url,
+            api_key,
+            templates,
+        }
+    }
+
+    pub fn new_with_config(_api_key: String, model: String, api_base_url: String) -> Self {
+        let mut templates = HashMap::new();
+        // Fallback templates if loading fails
+        templates.insert("json".to_string(), "Extract JSON from {{text}} using schema {{schema}}".to_string());
+        templates.insert("markdown".to_string(), "Extract Markdown from {{text}}".to_string());
+        
+        Self {
+            client: Client::default(),
+            http_client: reqwest::Client::new(),
+            model,
+            provider: "openai".to_string(),
+            api_base_url: Some(api_base_url),
+            api_key: Some(_api_key),
+            templates,
+        }
+    }
+
+    fn load_templates() -> Result<HashMap<String, String>> {
+        let content = fs::read_to_string("config/prompts.toml")?;
+        let v: Value = toml::from_str(&content)?;
+        
+        let mut templates = HashMap::new();
+        if let Some(extraction) = v.get("extraction") {
+            if let Some(json_tpl) = extraction.get("json").and_then(|t| t.as_str()) {
+                templates.insert("json".to_string(), json_tpl.to_string());
+            }
+            if let Some(md_tpl) = extraction.get("markdown").and_then(|t| t.as_str()) {
+                templates.insert("markdown".to_string(), md_tpl.to_string());
+            }
+        }
+        Ok(templates)
+    }
+
+    pub async fn extract_data_internal(
+        &self,
+        text: &str,
+        schema: &Value,
+        format: &str,
+    ) -> Result<(Value, TokenUsage)> {
+        let template = self
+            .templates
+            .get(format)
+            .ok_or_else(|| anyhow::anyhow!("Template not found for format: {}", format))?;
+
+        let prompt = template
+            .replace("{{text}}", text)
+            .replace("{{schema}}", &serde_json::to_string_pretty(schema)?);
+
+            let (content, usage) = if let Some(base_url) = &self.api_base_url {
+            // 如果提供了显式地址，直接使用 reqwest 发送 OpenAI 兼容请求，避开 genai 的环境变干扰
+            let url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+                format!("{}/chat/completions", base_url.trim_end_matches('/'))
+            } else if base_url.contains(":11434") {
+                // 如果是 Ollama 端口但没带 /v1，自动补全
+                format!("{}/v1/chat/completions", base_url.trim_end_matches('/'))
+            } else {
+                format!("{}/chat/completions", base_url.trim_end_matches('/'))
+            };
+
+            let body = json!({
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.0
+            });
+
+            let mut request = self.http_client.post(&url).json(&body);
+            if let Some(key) = &self.api_key {
+                request = request.bearer_auth(key);
+            } else {
+                request = request.bearer_auth("ollama");
+            }
+
+            let res = request.send().await.context("Direct LLM call failed")?;
+            if !res.status().is_success() {
+                let err = res.text().await.unwrap_or_default();
+                return Err(anyhow::anyhow!("LLM returned error: {}", err));
+            }
+
+            let res_json: Value = res.json().await.context("Failed to parse LLM JSON response")?;
+            
+            let content = res_json["choices"][0]["message"]["content"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Empty content from LLM"))?
+                .to_string();
+
+            let usage = TokenUsage {
+                prompt_tokens: res_json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                completion_tokens: res_json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                total_tokens: res_json["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
+            };
+
+            (content, usage)
         } else {
-            TokenUsage::default()
+            // 否则使用 genai 默认逻辑
+            let chat_req = ChatRequest::new(vec![
+                ChatMessage::user(prompt),
+            ]);
+
+            let model_id = format!("{}:{}", self.provider, self.model);
+            
+            let chat_res = match self.client.exec_chat(&model_id, chat_req, None).await {
+                Ok(res) => res,
+                Err(e) => {
+                    return Err(anyhow::anyhow!("LLM call failed for model {}: {:?}", model_id, e));
+                }
+            };
+
+            let content = chat_res
+                .content_text_as_str()
+                .ok_or_else(|| anyhow::anyhow!("LLM returned empty content"))?
+                .to_string();
+            
+            // genai 0.5.0 的 TokenUsage 获取方式
+            let usage = TokenUsage {
+                prompt_tokens: 0, // genai 0.5.0 暂未直接暴露此结构，保持兼容
+                completion_tokens: 0,
+                total_tokens: 0,
+            };
+
+            (content, usage)
         };
 
-        if let Some(content) = body["choices"][0]["message"]["content"].as_str() {
-            // Clean up potential markdown code blocks
+        if format == "json" {
             let clean_content = content
                 .trim()
                 .trim_start_matches("```json")
                 .trim_start_matches("```")
-                .trim_end_matches("```");
-
+                .trim_end_matches("```")
+                .trim();
             let data = serde_json::from_str::<Value>(clean_content)
-                .context("Failed to parse extracted JSON content")?;
+                .context(format!("Failed to parse LLM JSON response: {}", clean_content))?;
             Ok((data, usage))
         } else {
-            Err(anyhow::anyhow!("Invalid response format from LLM API"))
+            Ok((json!({ "content": content }), usage))
         }
     }
 }

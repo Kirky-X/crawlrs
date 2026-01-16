@@ -21,9 +21,7 @@ pub use app::RateLimitingSettings;
 pub use app::RedisSettings;
 pub use app::ServerSettings;
 
-pub use engines::{
-    EngineSettings, FireCdpSettings, FireTlsSettings, FlareSolverrSettings,
-};
+pub use engines::{EngineSettings, FireCdpSettings, FireTlsSettings, FlareSolverrSettings};
 
 pub use search::BingSearchSettings;
 pub use search::GoogleSearchSettings;

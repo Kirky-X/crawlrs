@@ -20,6 +20,8 @@ use serde::Deserialize;
 /// * `api_base_url` - LLM API 基础 URL，默认 "https://api.openai.com/v1"
 #[derive(Debug, Clone, Deserialize)]
 pub struct LLMSettings {
+    /// LLM 提供商 (openai, ollama, anthropic, etc)
+    pub provider: Option<String>,
     /// LLM API 密钥
     pub api_key: Option<String>,
     /// 使用的模型名称

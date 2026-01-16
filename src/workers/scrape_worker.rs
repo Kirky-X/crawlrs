@@ -519,6 +519,7 @@ where
                         &processed_response.content,
                         rules,
                         &self.settings,
+                        Some(&task.url),
                     )
                     .await
                     {
@@ -718,6 +719,7 @@ where
                     &processed_scrape_resp.content,
                     &rules,
                     &self.settings,
+                    Some(&url),
                 )
                 .await?;
 
@@ -772,6 +774,7 @@ where
                     is_array: false,
                     use_llm: Some(true),
                     llm_prompt: Some(prompt),
+                    output_format: None,
                 },
             );
 
@@ -781,6 +784,7 @@ where
                     &processed_scrape_resp.content,
                     &rules,
                     &self.settings,
+                    Some(&url),
                 )
                 .await?;
 
@@ -1058,6 +1062,7 @@ where
                     &processed_response.content,
                     rules,
                     &self.settings,
+                    Some(&task.url),
                 )
                 .await
                 {
