@@ -48,7 +48,7 @@ fn main() {
 
         for (url, description) in test_urls {
             println!("\n🔍 测试 {}: {}", description, url);
-            
+
             let request = ScrapeRequest {
                 url: url.to_string(),
                 headers: HashMap::new(),
@@ -69,7 +69,7 @@ fn main() {
                     println!("状态码: {:?}", response.status_code);
                     println!("内容长度: {} 字符", response.content.len());
                     println!("使用引擎: {:?}", response.engine_used);
-                    
+
                     if response.content.len() > 100 {
                         println!("前100个字符: {}", &response.content[..100]);
                     }
@@ -78,7 +78,7 @@ fn main() {
                     println!("❌ 访问 {} 失败: {:?}", description, e);
                 }
             }
-            
+
             // 等待一下，避免过于频繁的请求
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
