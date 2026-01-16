@@ -31,7 +31,7 @@ mod tests {
         // Since we are not setting up the real API key here, we expect an error or some response
         // but we mainly want to check the signature and basic flow
         if let Err(e) = &result {
-             println!("Expected error during test: {}", e);
+            println!("Expected error during test: {}", e);
         }
     }
 

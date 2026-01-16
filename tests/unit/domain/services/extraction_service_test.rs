@@ -62,8 +62,9 @@ fn test_extraction_service_basic_selectors() {
     );
 
     let settings = Settings::new().expect("Failed to load settings");
-    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules, &settings, None))
-        .expect("Failed to extract data");
+    let (result, _) =
+        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings, None))
+            .expect("Failed to extract data");
 
     assert_eq!(result["title"], "Hello World");
 
@@ -94,8 +95,9 @@ fn test_extraction_service_missing_elements() {
     );
 
     let settings = Settings::new().expect("Failed to load settings");
-    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules, &settings, None))
-        .expect("Failed to extract data");
+    let (result, _) =
+        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings, None))
+            .expect("Failed to extract data");
     assert_eq!(result["missing"], Value::Null);
 }
 
@@ -116,8 +118,9 @@ fn test_extraction_service_empty_array() {
     );
 
     let settings = Settings::new().expect("Failed to load settings");
-    let (result, _) = tokio_test::block_on(ExtractionService::extract(html, &rules, &settings, None))
-        .expect("Failed to extract data");
+    let (result, _) =
+        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings, None))
+            .expect("Failed to extract data");
     let list = result["missing_list"]
         .as_array()
         .expect("Missing 'missing_list' array in result");
@@ -377,7 +380,7 @@ async fn test_extraction_service_comprehensive_with_real_html_and_llm() {
 
     // ===== CSS 提取结果断言 =====
 
-     // page_title：应包含新闻主标题和频道信息
+    // page_title：应包含新闻主标题和频道信息
     let page_title = result["page_title"]
         .as_str()
         .expect("page_title should be a string");
@@ -464,14 +467,12 @@ async fn test_extraction_service_comprehensive_with_real_html_and_llm() {
         llm_summary
     );
     assert_eq!(
-        llm_summary["title"],
-        "消费与外贸走势",
+        llm_summary["title"], "消费与外贸走势",
         "unexpected llm_summary.title: {}",
         llm_summary["title"]
     );
     assert_eq!(
-        llm_summary["category"],
-        "宏观经济与对外开放",
+        llm_summary["category"], "宏观经济与对外开放",
         "unexpected llm_summary.category: {}",
         llm_summary["category"]
     );
