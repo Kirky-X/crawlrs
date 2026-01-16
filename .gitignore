@@ -81,6 +81,7 @@ openspec/
 
 # iFlow directory
 .iflow/
+IFLOW.md
 
 # -----------------------------------------------------------------------------
 # Section 3: Project-Specific Directories
