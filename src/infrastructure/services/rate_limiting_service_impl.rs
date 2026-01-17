@@ -272,8 +272,10 @@ impl RateLimitingServiceImpl {
 
     /// 获取自定义速率限制配置
     async fn get_custom_rate_limit_config(&self, api_key: &str) -> Option<RateLimitConfig> {
-        let config_key = format!("{}:config:{}", self.config.redis_key_prefix, api_key);
-        let fallback_key = format!("rate_limit_config:{}", api_key);
+        // 使用哈希后的 API key 避免明文暴露
+        let hashed_key = self.hash_api_key_for_redis(api_key);
+        let config_key = self.build_redis_key(&format!("config:{}", hashed_key));
+        let fallback_key = self.build_redis_key(&format!("fallback:config:{}", hashed_key));
 
         tracing::debug!(
             "Looking for rate limit config with keys: primary={}, fallback={}",

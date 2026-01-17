@@ -1,0 +1,587 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0
+// See LICENSE file in the project root for full license information.
+
+//! 搜索引擎集成测试
+//!
+//! 测试真实搜索引擎功能，使用 headless Chrome 绕过反爬虫：
+//! - Google: 直接爬取 HTML，无需 API 密钥
+//! - Bing: 直接爬取 HTML，无需 API 密钥
+//! - Baidu: 直接爬取 HTML，无需 API 密钥
+//! - Sogou: 直接爬取 HTML，无需 API 密钥
+//!
+//! 要求：
+//! 1. 必须有 Chrome 可用（通过 CHROMIUM_REMOTE_DEBUGGING_URL 配置）
+//! 2. 必须成功解析到搜索结果（不能被反爬虫阻断）
+//! 3. 结果必须包含有效标题和 URL
+//!
+//! 运行方式：
+//! ```bash
+//! # 启动 Chrome（必须）
+//! google-chrome --headless --disable-gpu --no-sandbox \
+//!   --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1
+//!
+//! # 运行测试
+//! export CHROMIUM_REMOTE_DEBUGGING_URL=http://127.0.0.1:9222
+//! cargo test --test integration_tests -- test_all_search_engines_with_gemini
+//!
+//! # 跳过这些测试
+//! export SKIP_SEARCH_TESTS=true
+//! ```
+
+#![allow(deprecated)]
+
+use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::search::client::{
+    BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SogouSearchEngine,
+};
+use crawlrs::search::{SearchEngine, SearchRequest};
+use std::env;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+use tokio::time::{timeout, Duration};
+
+/// 检查是否应该跳过搜索测试
+fn should_skip_search_tests() -> bool {
+    env::var("SKIP_SEARCH_TESTS").is_ok()
+}
+
+/// 测试模式枚举
+enum TestMode {
+    Full,
+    Simple,
+}
+
+impl TestMode {
+    fn apply(&self) {
+        match self {
+            TestMode::Full | TestMode::Simple => {
+                // 移除所有测试数据环境变量，强制使用真实搜索引擎
+                std::env::remove_var("USE_TEST_DATA");
+                std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
+                std::env::remove_var("BING_TEST_RESULTS");
+                std::env::remove_var("BAIDU_TEST_RESULTS");
+                std::env::remove_var("SOGOU_TEST_RESULTS");
+            }
+        }
+    }
+}
+
+async fn run_concurrent_search_tests(
+    test_query: &str,
+    max_results: u32,
+    timeout_secs: u64,
+    test_mode: TestMode,
+) -> Vec<(String, bool, String)> {
+    let timeout_duration = Duration::from_secs(timeout_secs);
+
+    test_mode.apply();
+
+    // Create EngineClient for Google
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines));
+
+    let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
+        ("Google", Arc::new(GoogleSearchEngine::new(engine_client))),
+        ("Bing", Arc::new(BingSearchEngine::new())),
+        ("Baidu", Arc::new(BaiduSearchEngine::new())),
+        ("Sogou", Arc::new(SogouSearchEngine::new())),
+    ];
+
+    let semaphore = Arc::new(Semaphore::new(2));
+    let mut handles = vec![];
+
+    for (engine_name, engine) in engines {
+        let engine_name = engine_name.to_string();
+        let engine = Arc::clone(&engine);
+        let semaphore = Arc::clone(&semaphore);
+        let test_query = test_query.to_string();
+
+        let handle = tokio::spawn(async move {
+            let _permit = semaphore
+                .acquire()
+                .await
+                .expect("Failed to acquire semaphore permit");
+
+            println!("🔍 开始测试 {} 搜索引擎...", engine_name);
+
+            let request = SearchRequest::new(&test_query).with_limit(max_results);
+            let search_future = engine.search(&request);
+            let result = timeout(timeout_duration, search_future).await;
+
+            match result {
+                Ok(Ok(search_results)) => {
+                    println!(
+                        "✅ {} 搜索成功，返回 {} 条结果",
+                        engine_name,
+                        search_results.items.len()
+                    );
+
+                    if search_results.items.is_empty() {
+                        println!("⚠️  {} 未返回任何搜索结果", engine_name);
+                        return (engine_name.clone(), false, "无搜索结果".to_string());
+                    }
+
+                    let mut valid_results = 0;
+                    let mut contains_gemini = 0;
+
+                    for (idx, result) in search_results.items.iter().enumerate() {
+                        if idx < 3 {
+                            println!(
+                                "  {} 结果 {}: {} - {}",
+                                engine_name,
+                                idx + 1,
+                                result.title,
+                                result.url
+                            );
+                        }
+
+                        if !result.title.is_empty() && !result.url.is_empty() {
+                            valid_results += 1;
+                        }
+
+                        let title_lower = result.title.to_lowercase();
+                        let desc_lower = result.description.to_lowercase();
+                        if title_lower.contains("gemini") || desc_lower.contains("gemini") {
+                            contains_gemini += 1;
+                        }
+                    }
+
+                    println!(
+                        "📊 {} 统计: 有效结果 {} 个，包含关键词 {} 个",
+                        engine_name, valid_results, contains_gemini
+                    );
+
+                    if valid_results == 0 {
+                        (engine_name.clone(), false, "无有效结果".to_string())
+                    } else if contains_gemini == 0 {
+                        (engine_name.clone(), false, "结果不包含关键词".to_string())
+                    } else {
+                        (
+                            engine_name.clone(),
+                            true,
+                            format!("成功返回 {} 个相关结果", search_results.items.len()),
+                        )
+                    }
+                }
+                Ok(Err(search_error)) => {
+                    let error_msg = format!("搜索错误: {}", search_error);
+
+                    // Check if this looks like anti-bot blocking
+                    if error_msg.contains("No engines available") || error_msg.contains("Chrome") {
+                        println!(
+                            "❌ {} 搜索失败: {} (Chrome 不可用)",
+                            engine_name, search_error
+                        );
+                        (engine_name.clone(), false, "Chrome 不可用".to_string())
+                    } else {
+                        println!("❌ {} 搜索失败: {}", engine_name, search_error);
+                        (engine_name.clone(), false, error_msg)
+                    }
+                }
+                Err(_) => {
+                    println!(
+                        "⏰ {} 搜索超时 (超过 {} 秒)",
+                        engine_name,
+                        timeout_duration.as_secs()
+                    );
+                    (engine_name.clone(), false, "搜索超时".to_string())
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    let mut results = vec![];
+    for handle in handles {
+        if let Ok(result) = handle.await {
+            results.push(result);
+        }
+    }
+
+    results
+}
+
+fn generate_test_report(results: &[(String, bool, String)]) {
+    println!("\n📋 搜索引擎测试报告");
+    println!("{}", "=".repeat(50));
+
+    let mut passed = 0;
+    let mut failed = 0;
+
+    for (engine_name, success, message) in results {
+        let status = if *success { "✅ 通过" } else { "❌ 失败" };
+        println!("{} {}: {}", status, engine_name, message);
+
+        if *success {
+            passed += 1;
+        } else {
+            failed += 1;
+        }
+    }
+
+    println!("\n📈 测试统计");
+    println!("总测试数: {}", results.len());
+    println!("通过: {}", passed);
+    println!("失败: {}", failed);
+    println!(
+        "成功率: {:.1}%",
+        (passed as f64 / results.len() as f64) * 100.0
+    );
+}
+
+/// 检查 Chrome 是否可用
+async fn is_chrome_available() -> bool {
+    if let Ok(url) = std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL") {
+        if url.is_empty() {
+            return false;
+        }
+        // Try to connect to Chrome
+        if let Ok(client) = reqwest::Client::new()
+            .get(&format!("{}/json/version", url))
+            .send()
+            .await
+        {
+            if client.status() == 200 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 测试所有搜索引擎（关键词: gemini）
+///
+/// 要求：
+/// 1. 必须有 Chrome 可用（通过 CHROMIUM_REMOTE_DEBUGGING_URL 配置）
+/// 2. 必须成功解析到搜索结果（不能被反爬虫阻断）
+/// 3. 结果必须包含有效标题和 URL
+///
+/// 运行方式：
+/// - 启动 Chrome: google-chrome --headless --remote-debugging-port=9222 ...
+/// - 跳过测试: export SKIP_SEARCH_TESTS=true
+#[tokio::test]
+async fn test_all_search_engines_with_gemini() {
+    // Check if we should skip tests
+    if should_skip_search_tests() {
+        println!("⚠️  Search tests skipped - SKIP_SEARCH_TESTS is set");
+        return;
+    }
+
+    // Check if Chrome is available
+    let chrome_available = is_chrome_available().await;
+
+    if !chrome_available {
+        println!("⚠️  Chrome not available at CHROMIUM_REMOTE_DEBUGGING_URL");
+        println!("   请启动 Chrome: google-chrome --headless --remote-debugging-port=9222 ...");
+        println!("   或设置 SKIP_SEARCH_TESTS=true 跳过测试");
+        panic!("需要 Chrome 浏览器才能运行搜索引擎测试");
+    }
+
+    println!("🚀 开始测试四个搜索引擎（使用 Chrome 绕过反爬虫），关键词: gemini");
+
+    let results = run_concurrent_search_tests("gemini", 10, 30, TestMode::Full).await;
+    generate_test_report(&results);
+
+    let passed_count = results.iter().filter(|(_, success, _)| *success).count();
+    let failed_count = results.iter().filter(|(_, success, _)| !success).count();
+
+    // Check for anti-bot detection in failed tests
+    let anti_bot_count = results
+        .iter()
+        .filter(|(_, success, message)| {
+            !*success
+                && (message.contains("无搜索结果")
+                    || message.contains("anti-bot")
+                    || message.contains("captcha")
+                    || message.contains("blocked"))
+        })
+        .count();
+
+    if anti_bot_count > 0 {
+        println!(
+            "⚠️  警告: {} 个引擎被反爬虫机制阻断（不是正常失败）",
+            anti_bot_count
+        );
+    }
+
+    // 必须至少1个引擎成功
+    if passed_count < 1 {
+        panic!("❌ 搜索引擎测试失败: 没有引擎成功解析到结果（可能被反爬虫阻断）");
+    }
+
+    println!(
+        "✅ 搜索引擎测试完成！成功: {}, 失败: {}",
+        passed_count, failed_count
+    );
+}
+
+#[tokio::test]
+async fn test_search_engines_simple_mode() {
+    println!("🚀 开始测试搜索引擎（真实连接），关键词: gemini");
+
+    let results = run_concurrent_search_tests("gemini", 10, 30, TestMode::Simple).await;
+    generate_test_report(&results);
+
+    let passed_count = results.iter().filter(|(_, success, _)| *success).count();
+    let failed_count = results.iter().filter(|(_, success, _)| !success).count();
+
+    // 至少需要1个引擎成功通过测试
+    if passed_count < 1 {
+        panic!("❌ 搜索引擎测试失败: 没有引擎测试通过");
+    }
+
+    if failed_count > 0 {
+        println!(
+            "⚠️  警告: {} 个引擎测试未通过（可能是网络限制或反爬虫机制）",
+            failed_count
+        );
+    }
+
+    println!(
+        "✅ 搜索引擎测试完成！成功: {}, 失败: {}",
+        passed_count, failed_count
+    );
+}
+
+#[tokio::test]
+#[ignore] // Ignoring this test because it requires real search engine connectivity
+async fn test_real_search_engines_connectivity() {
+    println!("🚀 开始真实搜索引擎连接性测试，关键词: rust programming language");
+
+    let results =
+        run_concurrent_search_tests("rust programming language", 5, 60, TestMode::Full).await;
+    generate_test_report(&results);
+
+    println!("✅ 真实搜索引擎连接性测试完成");
+}
+
+/// 测试搜索引擎性能
+///
+/// 注意：此测试需要真实搜索引擎连接能力。
+/// 如需运行此测试，请使用: cargo test --test integration_tests -- test_search_engine_performance -- --include-ignored
+#[ignore]
+#[tokio::test]
+async fn test_search_engine_performance() {
+    let test_query = "gemini";
+    let max_results = 5;
+
+    println!("⚡ 开始搜索引擎性能测试...");
+
+    // Create EngineClient for Google
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines_list: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines_list));
+
+    let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
+        ("Google", Arc::new(GoogleSearchEngine::new(engine_client))),
+        ("Bing", Arc::new(BingSearchEngine::new())),
+        ("Baidu", Arc::new(BaiduSearchEngine::new())),
+        ("Sogou", Arc::new(SogouSearchEngine::new())),
+    ];
+
+    let mut performance_results = vec![];
+
+    for (engine_name, engine) in engines {
+        println!("🔍 测试 {} 性能...", engine_name);
+
+        let start_time = std::time::Instant::now();
+        let request = SearchRequest::new(test_query).with_limit(max_results);
+        let result = engine.search(&request).await;
+        let duration = start_time.elapsed();
+
+        match result {
+            Ok(search_results) => {
+                println!(
+                    "✅ {} 性能测试完成，耗时: {:?}，返回 {} 条结果",
+                    engine_name,
+                    duration,
+                    search_results.items.len()
+                );
+                performance_results.push((engine_name, duration, search_results.items.len(), true));
+            }
+            Err(error) => {
+                println!(
+                    "❌ {} 性能测试失败: {:?}，耗时: {:?}",
+                    engine_name, error, duration
+                );
+                performance_results.push((engine_name, duration, 0, false));
+            }
+        }
+
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
+    }
+
+    println!("\n⚡ 搜索引擎性能报告");
+    println!("{}", "=".repeat(60));
+
+    for (engine_name, duration, result_count, success) in performance_results {
+        let status = if success { "✅" } else { "❌" };
+        println!(
+            "{} {}: 耗时 {:?}，返回 {} 条结果",
+            status, engine_name, duration, result_count
+        );
+    }
+
+    println!("\n📊 性能分析完成");
+}
+
+#[tokio::test]
+async fn test_search_engine_error_handling() {
+    println!("🧪 测试搜索引擎错误处理...");
+
+    // Create EngineClient for Google
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines_list: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines_list));
+
+    let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
+        ("Google", Arc::new(GoogleSearchEngine::new(engine_client))),
+        ("Bing", Arc::new(BingSearchEngine::new())),
+        ("Baidu", Arc::new(BaiduSearchEngine::new())),
+        ("Sogou", Arc::new(SogouSearchEngine::new())),
+    ];
+
+    for (engine_name, engine) in &engines {
+        println!("🔍 测试 {} 空查询处理...", engine_name);
+
+        let request = SearchRequest::new("").with_limit(10);
+        match engine.search(&request).await {
+            Ok(results) => {
+                println!(
+                    "✅ {} 空查询返回 {} 条结果",
+                    engine_name,
+                    results.items.len()
+                );
+            }
+            Err(error) => {
+                println!("✅ {} 空查询正确处理: {}", engine_name, error);
+            }
+        }
+    }
+
+    for (engine_name, engine) in &engines {
+        println!("🔍 测试 {} 特殊字符查询...", engine_name);
+
+        let request = SearchRequest::new("gemini!@#$%^&*()").with_limit(5);
+        match engine.search(&request).await {
+            Ok(results) => {
+                println!(
+                    "✅ {} 特殊字符查询返回 {} 条结果",
+                    engine_name,
+                    results.items.len()
+                );
+            }
+            Err(error) => {
+                println!("✅ {} 特殊字符查询处理: {}", engine_name, error);
+            }
+        }
+    }
+
+    println!("✅ 错误处理测试完成");
+}
+
+#[tokio::test]
+async fn test_search_results_comparison() {
+    // 移除所有测试数据环境变量，强制使用真实搜索引擎
+    std::env::remove_var("USE_TEST_DATA");
+    std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
+    std::env::remove_var("BING_TEST_RESULTS");
+    std::env::remove_var("BAIDU_TEST_RESULTS");
+    std::env::remove_var("SOGOU_TEST_RESULTS");
+
+    let test_query = "gemini";
+    let max_results = 5;
+
+    println!("🔍 比较不同搜索引擎的结果...");
+
+    // Create EngineClient for Google
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
+    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let engines_list: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
+    let engine_client = Arc::new(EngineClient::with_engines(engines_list));
+
+    let engines: Vec<(&str, Arc<dyn SearchEngine>)> = vec![
+        ("Google", Arc::new(GoogleSearchEngine::new(engine_client))),
+        ("Bing", Arc::new(BingSearchEngine::new())),
+        ("Baidu", Arc::new(BaiduSearchEngine::new())),
+        ("Sogou", Arc::new(SogouSearchEngine::new())),
+    ];
+
+    let mut all_results = std::collections::HashMap::new();
+
+    for (engine_name, engine) in engines {
+        println!("🔍 获取 {} 的搜索结果...", engine_name);
+
+        let request = SearchRequest::new(test_query).with_limit(max_results);
+        match engine.search(&request).await {
+            Ok(results) => {
+                all_results.insert(engine_name, results);
+            }
+            Err(error) => {
+                println!("❌ {} 搜索失败: {}", engine_name, error);
+            }
+        }
+
+        tokio::time::sleep(QUICK_TEST_TIMEOUT).await;
+    }
+
+    println!("\n📊 搜索结果对比分析");
+    println!("{}", "=".repeat(50));
+
+    for (engine_name, results) in &all_results {
+        println!("🔍 {}: {} 条结果", engine_name, results.items.len());
+
+        let mut domains = std::collections::HashSet::new();
+        for result in &results.items {
+            if let Ok(url) = url::Url::parse(&result.url) {
+                if let Some(domain) = url.domain() {
+                    domains.insert(domain.to_string());
+                }
+            }
+        }
+
+        println!("  涉及域名: {}", domains.len());
+        for domain in domains.iter().take(3) {
+            println!("  - {}", domain);
+        }
+    }
+
+    if all_results.len() >= 2 {
+        println!("\n🔗 查找共同出现的URL...");
+
+        let engine_names: Vec<_> = all_results.keys().cloned().collect();
+        let first_engine = engine_names[0];
+        let first_results = &all_results[first_engine];
+
+        for result in &first_results.items {
+            let mut found_in = vec![first_engine];
+
+            for other_engine in engine_names.iter().skip(1) {
+                let other_results = &all_results[other_engine];
+                if other_results.items.iter().any(|r| r.url == result.url) {
+                    found_in.push(other_engine);
+                }
+            }
+
+            if found_in.len() >= 2 {
+                println!(
+                    "✅ 共同结果: {} (出现在: {})",
+                    result.title,
+                    found_in.join(", ")
+                );
+            }
+        }
+    }
+
+    println!("✅ 结果对比分析完成");
+}

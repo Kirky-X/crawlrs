@@ -41,7 +41,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use sea_orm::{ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -179,13 +179,8 @@ pub async fn auth_middleware(
         }
     };
 
-    // Query DB to validate token and get API Key info
     match api_key::Entity::find()
-        .filter(
-            Condition::any()
-                .add(api_key::Column::Key.eq(token_str.clone()))
-                .add(api_key::Column::KeyHash.eq(token_hash)),
-        )
+        .filter(api_key::Column::KeyHash.eq(token_hash))
         .one(state.db.as_ref())
         .await
     {
@@ -369,7 +364,9 @@ fn determine_required_scope(path: &str, method: &str) -> Option<ScopePermission>
     if method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE" {
         // POST to /v1/search and /v1/scrape are write operations
         // They create tasks and consume credits
-        if (path.contains("/v1/search") || path.contains("/v1/scrape")) && method == "POST" {
+        if (is_path_prefix(path, "/v1/search") || is_path_prefix(path, "/v1/scrape"))
+            && method == "POST"
+        {
             return Some(ScopePermission::Write);
         }
         return Some(ScopePermission::Write);

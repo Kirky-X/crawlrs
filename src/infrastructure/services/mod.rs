@@ -9,3 +9,9 @@
 /// 包括限流服务等核心功能
 pub mod rate_limiting_service_impl;
 pub mod webhook_service_impl;
+
+/// Webhook 服务公共接口
+/// 导出验证函数供接收方使用
+pub mod webhook_service {
+    pub use super::webhook_service_impl::verify_webhook_signature;
+}

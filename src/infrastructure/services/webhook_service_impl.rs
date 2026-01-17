@@ -17,17 +17,57 @@ type HmacSha256 = Hmac<Sha256>;
 /// 最大允许的时间戳偏差（秒）
 /// 用于防止重放攻击
 /// 接收方 webhook handler 应使用此常量验证时间戳
-#[allow(dead_code)]
 const MAX_TIMESTAMP_AGE: i64 = 300; // 5分钟
 
 /// 验证 webhook 时间戳是否在有效期内
 /// 用于防止重放攻击
 /// 接收方 webhook handler 应调用此函数验证请求时间戳
-#[allow(dead_code)]
 fn validate_timestamp(timestamp: i64) -> bool {
     let now = Utc::now().timestamp();
     let diff = (now - timestamp).abs();
     diff <= MAX_TIMESTAMP_AGE
+}
+
+/// 为负载生成签名（包含时间戳以防止重放攻击）
+fn generate_signature(secret: &str, payload: &str, timestamp: i64) -> String {
+    let message = format!("{}.{}", timestamp, payload);
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(mac) => mac,
+        Err(e) => {
+            tracing::error!("Failed to initialize HMAC: {}", e);
+            return String::new();
+        }
+    };
+    mac.update(message.as_bytes());
+    let result = mac.finalize();
+    hex::encode(result.into_bytes())
+}
+
+/// 验证 webhook 签名
+/// 供接收方使用以验证 webhook  authenticity 和 freshness
+pub fn verify_webhook_signature(
+    secret: &str,
+    payload: &str,
+    timestamp: i64,
+    signature: &str,
+) -> bool {
+    // 首先验证时间戳是否在有效期内
+    if !validate_timestamp(timestamp) {
+        tracing::warn!("Webhook timestamp is outside valid window");
+        return false;
+    }
+
+    // 重新计算签名并比较
+    let expected_signature = generate_signature(secret, payload, timestamp);
+    constant_time_eq(signature, &expected_signature)
+}
+
+/// 常数时间字符串比较以防止时序攻击
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes().zip(b.bytes()).all(|(x, y)| x == y)
 }
 
 /// 脱敏 webhook 响应消息
@@ -69,19 +109,9 @@ impl WebhookServiceImpl {
         Self { client, secret }
     }
 
-    /// 为负载生成签名
+    /// 为负载生成签名（包含时间戳以防止重放攻击）
     fn generate_signature(&self, payload: &str, timestamp: i64) -> String {
-        let message = format!("{}.{}", timestamp, payload);
-        let mut mac = match HmacSha256::new_from_slice(self.secret.as_bytes()) {
-            Ok(mac) => mac,
-            Err(e) => {
-                tracing::error!("Failed to initialize HMAC: {}", e);
-                return String::new();
-            }
-        };
-        mac.update(message.as_bytes());
-        let result = mac.finalize();
-        hex::encode(result.into_bytes())
+        generate_signature(&self.secret, payload, timestamp)
     }
 }
 

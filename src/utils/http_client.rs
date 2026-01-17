@@ -25,12 +25,14 @@ const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 /// - 30秒默认超时
 /// - 连接池配置（10个空闲连接/host，90秒空闲超时）
 /// - Chrome 120 User-Agent
+/// - 禁用自动重定向以防止 SSRF 攻击
 pub static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
         .user_agent(DEFAULT_USER_AGENT)
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT))
         .pool_max_idle_per_host(DEFAULT_POOL_MAX_IDLE_PER_HOST)
         .pool_idle_timeout(Duration::from_secs(DEFAULT_POOL_IDLE_TIMEOUT))
+        .redirect(reqwest::redirect::Policy::none()) // 禁用自动重定向防止 SSRF
         .build()
         .unwrap_or_else(|_| Client::new())
 });
@@ -53,6 +55,7 @@ pub fn create_http_client_with_timeout(timeout_secs: u64) -> Client {
         .timeout(Duration::from_secs(timeout_secs))
         .pool_max_idle_per_host(DEFAULT_POOL_MAX_IDLE_PER_HOST)
         .pool_idle_timeout(Duration::from_secs(DEFAULT_POOL_IDLE_TIMEOUT))
+        .redirect(reqwest::redirect::Policy::none()) // 禁用自动重定向防止 SSRF
         .build()
         .unwrap_or_else(|_| Client::new())
 }

@@ -943,11 +943,16 @@ where
 
         info!("Found {} unique links on {}", unique_links.len(), task.url);
 
+        // 使用批量查询优化 N+1 问题
+        // unique_links 是 HashSet<String>，需要转换为 Vec<String>
+        let links_vec: Vec<String> = unique_links.iter().cloned().collect();
+        let existing_urls = self.repository.find_existing_urls(&links_vec).await?;
+        let existing_url_set: std::collections::HashSet<String> =
+            existing_urls.into_iter().collect();
+
         for link in unique_links.iter() {
             // 检查是否已经抓取过 (去重)
-            // 这里简单使用 repository 检查 URL 是否存在
-            // 在大规模系统中可能需要 BloomFilter 或 Redis Set
-            if self.repository.exists_by_url(link).await? {
+            if existing_url_set.contains(link) {
                 continue;
             }
 

@@ -230,10 +230,12 @@ pub async fn query_tasks<T: TaskRepository>(
         // 从批量查询结果中快速查找（O(1) 复杂度）
         if let Some(ref results_map) = task_id_to_result {
             if let Some(scrape_result) = results_map.get(&task.id) {
+                // 对 HTML content 进行转义以防止 XSS 攻击
+                let escaped_content = html_escape::encode_text(&scrape_result.content);
                 result = Some(serde_json::json!({
                     "id": scrape_result.id,
                     "status_code": scrape_result.status_code,
-                    "content": scrape_result.content,
+                    "content": escaped_content,
                     "metadata": scrape_result.meta_data,
                 }));
             }

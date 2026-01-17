@@ -108,6 +108,12 @@ pub fn is_internal_url(url_str: &str) -> bool {
         return true;
     }
 
+    // IPv6 unique local addresses (ULA) - fc00::/7
+    // fc00::/8 is reserved, fd00::/8 is used for private networks (RFC 4193)
+    if host.starts_with("fc") || host.starts_with("fd") {
+        return true;
+    }
+
     // IPv6 site-local (fec0::/10 - deprecated but some networks may still use it)
     if host.starts_with("fec0:")
         || host.starts_with("fed0:")
@@ -180,6 +186,14 @@ mod tests {
         // Deprecated but included for completeness
         assert!(is_internal_url("http://[fec0::1]"));
         assert!(is_internal_url("http://[fef0::1]"));
+    }
+
+    #[test]
+    fn test_ipv6_unique_local() {
+        // RFC 4193 - Unique Local Addresses (ULA) fc00::/7
+        assert!(is_internal_url("http://[fd00::1]"));
+        assert!(is_internal_url("http://[fd12:3456:789a::1]"));
+        assert!(is_internal_url("http://[fc00::1]")); // Reserved but block it
     }
 
     #[test]
