@@ -44,6 +44,16 @@ impl TaskRepositoryImpl {
     pub fn new(db: Arc<DatabaseConnection>, lock_duration: Duration) -> Self {
         Self { db, lock_duration }
     }
+
+    /// 获取数据库连接
+    pub fn db(&self) -> &Arc<DatabaseConnection> {
+        &self.db
+    }
+
+    /// 克隆数据库连接
+    pub fn db_clone(&self) -> Arc<DatabaseConnection> {
+        self.db.clone()
+    }
 }
 
 impl From<task_entity::Model> for Task {

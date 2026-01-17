@@ -66,3 +66,8 @@ pub mod queue;
 ///
 /// 提供示例测试工具函数
 pub mod examples;
+
+/// 引导模块
+///
+/// 提供应用程序初始化的结构化方式
+pub mod bootstrap;

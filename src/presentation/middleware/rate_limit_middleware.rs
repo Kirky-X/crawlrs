@@ -70,6 +70,16 @@ impl RateLimiter {
         }
     }
 
+    /// Get a reference to the Redis client
+    pub fn redis_client(&self) -> &RedisClient {
+        &self.redis_client
+    }
+
+    /// Get a clone of the Redis client
+    pub fn redis_client_clone(&self) -> RedisClient {
+        self.redis_client.clone()
+    }
+
     /// 检查API密钥的请求速率是否超出限制（原子操作）
     ///
     /// # 参数

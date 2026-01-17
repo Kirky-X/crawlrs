@@ -1,0 +1,238 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0
+// See LICENSE file in the project root for full license information.
+
+//! Application services initialization.
+
+use std::sync::Arc;
+use tracing::info;
+
+use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
+use crate::bootstrap::infrastructure::InfrastructureComponents;
+use crate::bootstrap::infrastructure::Repositories;
+use crate::config::settings::Settings;
+use crate::domain::services::rate_limiting_service::{
+    ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy, RateLimitingService,
+};
+use crate::domain::services::team_service::TeamService;
+use crate::engines::engine_client::EngineClient;
+use crate::engines::router::EngineRouter;
+use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::infrastructure::services::rate_limiting_service_impl::{
+    RateLimitingConfig, RateLimitingServiceImpl,
+};
+use crate::infrastructure::services::webhook_service_impl::WebhookServiceImpl;
+use crate::presentation::middleware::rate_limit_middleware::RateLimiter;
+use crate::presentation::middleware::team_semaphore::TeamSemaphore;
+use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
+use crate::search::ab_test::SearchABTestEngine;
+use crate::search::aggregator::SearchAggregator;
+use crate::search::engine_trait::SearchEngine;
+use crate::search::smart as smart_search;
+use crate::utils::robots::RobotsChecker;
+
+/// All application services.
+#[derive(Clone)]
+pub struct ServicesComponents {
+    /// Rate limiter for API requests.
+    pub rate_limiter: Arc<RateLimiter>,
+    /// Team semaphore for concurrency control.
+    pub team_semaphore: Arc<TeamSemaphore>,
+    /// Rate limiting service for distributed rate limiting.
+    pub rate_limiting_service: Arc<dyn RateLimitingService>,
+    /// Create scrape use case.
+    pub create_scrape_use_case: Arc<CreateScrapeUseCase>,
+    /// Webhook service.
+    pub webhook_service: Arc<WebhookServiceImpl>,
+    /// Team service.
+    pub team_service: Arc<TeamService>,
+    /// Robots.txt checker.
+    pub robots_checker: Arc<RobotsChecker>,
+    /// Search engine service.
+    pub search_engine_service: Arc<dyn SearchEngine>,
+    /// Task queue.
+    pub queue: Arc<dyn TaskQueue>,
+}
+
+/// Initialize rate limiter.
+///
+/// # Arguments
+///
+/// * `redis_client` - Redis client for distributed rate limiting
+/// * `default_rpm` - Default requests per minute limit
+///
+/// # Returns
+///
+/// Returns an initialized rate limiter.
+pub fn init_rate_limiter(redis_client: Arc<RedisClient>, default_rpm: u32) -> Arc<RateLimiter> {
+    Arc::new(RateLimiter::new((*redis_client).clone(), default_rpm))
+}
+
+/// Initialize team semaphore for concurrency control.
+///
+/// # Arguments
+///
+/// * `default_team_limit` - Default concurrent limit per team
+///
+/// # Returns
+///
+/// Returns an initialized team semaphore.
+pub fn init_team_semaphore(default_team_limit: u64) -> Arc<TeamSemaphore> {
+    Arc::new(TeamSemaphore::new(default_team_limit as usize))
+}
+
+/// Initialize rate limiting service.
+///
+/// # Arguments
+///
+/// * `redis_client` - Redis client for distributed rate limiting
+/// * `repositories` - Application repositories
+/// * `settings` - Application settings
+///
+/// # Returns
+///
+/// Returns an initialized rate limiting service.
+pub fn init_rate_limiting_service(
+    redis_client: Arc<RedisClient>,
+    repositories: &Repositories,
+    settings: &Settings,
+) -> Arc<dyn RateLimitingService> {
+    let rate_limiting_config = RateLimitingConfig {
+        redis_key_prefix: "crawlrs".to_string(),
+        rate_limit: RateLimitConfig {
+            strategy: RateLimitStrategy::TokenBucket,
+            requests_per_second: settings.rate_limiting.default_rpm / 60,
+            requests_per_minute: settings.rate_limiting.default_rpm,
+            requests_per_hour: settings.rate_limiting.default_rpm * 60,
+            bucket_capacity: Some(settings.rate_limiting.default_rpm),
+            enabled: settings.rate_limiting.enabled,
+        },
+        concurrency: ConcurrencyConfig {
+            strategy: ConcurrencyStrategy::DistributedSemaphore,
+            max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
+            max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
+            lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds as u64,
+            enabled: true,
+        },
+        backlog_process_interval_seconds: 30,
+        rate_limit_ttl_seconds: 3600,
+    };
+
+    Arc::new(RateLimitingServiceImpl::new(
+        redis_client.clone(),
+        repositories.task_repo.clone(),
+        repositories.tasks_backlog_repo.clone(),
+        repositories.credits_repo.clone(),
+        rate_limiting_config,
+    ))
+}
+
+/// Initialize search engine service.
+///
+/// # Arguments
+///
+/// * `engine_client` - Engine client for making requests
+/// * `settings` - Application settings
+///
+/// # Returns
+///
+/// Returns an initialized search engine.
+pub fn init_search_engine(
+    engine_client: Arc<EngineClient>,
+    settings: &Settings,
+) -> Arc<dyn SearchEngine> {
+    let search_engines: Vec<Arc<dyn SearchEngine>> = vec![
+        smart_search::create_google_smart_search(engine_client.clone()),
+        smart_search::create_baidu_smart_search(engine_client.clone()),
+        smart_search::create_sogou_smart_search(engine_client.clone()),
+        smart_search::create_bing_smart_search(engine_client.clone()),
+    ];
+
+    let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
+
+    if settings.search.ab_test_enabled {
+        info!(
+            "Search A/B testing enabled, weight: {}",
+            settings.search.variant_b_weight
+        );
+        Arc::new(SearchABTestEngine::new(
+            search_aggregator.clone(),
+            search_aggregator,
+            settings.search.variant_b_weight,
+        ))
+    } else {
+        search_aggregator
+    }
+}
+
+/// Initialize all application services.
+///
+/// # Arguments
+///
+/// * `infrastructure` - Initialized infrastructure components
+/// * `engine_router` - Engine router for creating use cases
+/// * `settings` - Application settings
+///
+/// # Returns
+///
+/// Returns all initialized services.
+pub fn init_services(
+    infrastructure: &InfrastructureComponents,
+    engine_router: Arc<EngineRouter>,
+    settings: &Settings,
+) -> ServicesComponents {
+    let redis_client = infrastructure.redis_client.clone();
+    let repositories = &infrastructure.repositories;
+
+    // Initialize rate limiter
+    let rate_limiter = init_rate_limiter(redis_client.clone(), settings.rate_limiting.default_rpm);
+
+    // Initialize team semaphore
+    let team_semaphore = init_team_semaphore(settings.concurrency.default_team_limit as u64);
+
+    // Initialize rate limiting service
+    let rate_limiting_service =
+        init_rate_limiting_service(redis_client.clone(), repositories, settings);
+
+    // Initialize create scrape use case
+    let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(engine_router.clone()));
+
+    // Initialize webhook service
+    let webhook_service = Arc::new(WebhookServiceImpl::new(
+        settings.webhook.secret().to_string(),
+    ));
+
+    // Initialize team service
+    let team_service = Arc::new(TeamService::new(
+        Arc::new(crate::infrastructure::geolocation::GeoLocationService::new()),
+        repositories.geo_restriction_repo.clone(),
+    ));
+
+    // Initialize robots checker
+    let robots_checker = Arc::new(RobotsChecker::new(Some(redis_client.clone())));
+
+    // Initialize search engine
+    let search_engine_service = init_search_engine(
+        Arc::new(EngineClient::with_router(engine_router.clone())),
+        settings,
+    );
+
+    // Initialize task queue
+    let queue: Arc<dyn TaskQueue> =
+        Arc::new(PostgresTaskQueue::new(repositories.task_repo.clone()));
+
+    info!("Services initialized");
+
+    ServicesComponents {
+        rate_limiter,
+        team_semaphore,
+        rate_limiting_service,
+        create_scrape_use_case,
+        webhook_service,
+        team_service,
+        robots_checker,
+        search_engine_service,
+        queue,
+    }
+}
