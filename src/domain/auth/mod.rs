@@ -12,6 +12,11 @@ use uuid::Uuid;
 ///
 /// Represents the fine-grained permissions for an API Key.
 /// Scopes control what endpoints an API Key can access.
+///
+/// # 安全提示
+///
+/// `search_limit` 和 `scrape_limit` 字段包含配额限制信息，
+/// 外部模块应使用 `allows_search_count()` 和 `allows_scrape_count()` 方法检查限制。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ApiKeyScope {
     /// Permission to access read-only endpoints (search, scrape GET)
@@ -20,10 +25,10 @@ pub struct ApiKeyScope {
     pub write: bool,
     /// Permission to access administrative endpoints (team, billing)
     pub admin: bool,
-    /// Maximum number of search requests per hour
-    pub search_limit: u32,
-    /// Maximum number of scrape requests per hour
-    pub scrape_limit: u32,
+    /// Maximum number of search requests per hour (敏感信息)
+    pub(crate) search_limit: u32,
+    /// Maximum number of scrape requests per hour (敏感信息)
+    pub(crate) scrape_limit: u32,
 }
 
 impl Default for ApiKeyScope {
@@ -207,6 +212,11 @@ pub struct FeatureFlagOverride {
 }
 
 /// Audit log entry for authentication and authorization decisions
+///
+/// # 安全提示
+///
+/// `ip_address`、`trace_id`、`user_agent`、`request_path`、`request_method` 字段
+/// 包含敏感的用户信息，仅对 crate 可见，外部模块应使用相应的 getter 方法访问。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditLogEntry {
     pub id: Uuid,
@@ -216,13 +226,60 @@ pub struct AuditLogEntry {
     pub decision: AuditDecision,
     pub denial_reason: Option<String>,
     pub scope_used: Option<ApiKeyScope>,
-    pub ip_address: Option<std::net::IpAddr>,
-    pub trace_id: Option<Uuid>,
-    pub user_agent: Option<String>,
-    pub request_path: Option<String>,
-    pub request_method: Option<String>,
+    /// IP 地址 (敏感信息)
+    pub(crate) ip_address: Option<std::net::IpAddr>,
+    /// 追踪 ID (敏感信息)
+    pub(crate) trace_id: Option<Uuid>,
+    /// 用户代理 (敏感信息)
+    pub(crate) user_agent: Option<String>,
+    /// 请求路径 (敏感信息)
+    pub(crate) request_path: Option<String>,
+    /// 请求方法 (敏感信息)
+    pub(crate) request_method: Option<String>,
     pub metadata: serde_json::Value,
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl AuditLogEntry {
+    /// 获取 IP 地址
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回用户 IP 地址，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn ip_address(&self) -> Option<std::net::IpAddr> {
+        self.ip_address
+    }
+
+    /// 获取追踪 ID
+    pub fn trace_id(&self) -> Option<Uuid> {
+        self.trace_id
+    }
+
+    /// 获取用户代理
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回用户代理字符串，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn user_agent(&self) -> Option<&str> {
+        self.user_agent.as_deref()
+    }
+
+    /// 获取请求路径
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回请求路径，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn request_path(&self) -> Option<&str> {
+        self.request_path.as_deref()
+    }
+
+    /// 获取请求方法
+    pub fn request_method(&self) -> Option<&str> {
+        self.request_method.as_deref()
+    }
 }
 
 /// Audit decision type

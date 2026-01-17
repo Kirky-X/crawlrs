@@ -7,13 +7,34 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// 积分实体
+///
+/// 表示团队的积分余额，用于跟踪资源使用情况
+///
+/// # 安全提示
+///
+/// `balance` 字段包含敏感的财务信息，仅对 crate 可见。
+/// 外部模块应使用 `balance()` 方法读取余额。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credits {
     pub id: Uuid,
     pub team_id: Uuid,
-    pub balance: i64,
+    /// 积分余额 (敏感信息)
+    pub(crate) balance: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl Credits {
+    /// 获取积分余额
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回积分余额，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn balance(&self) -> i64 {
+        self.balance
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

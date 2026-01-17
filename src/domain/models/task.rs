@@ -15,6 +15,11 @@ use uuid::Uuid;
 /// 表示系统中一个待处理的工作单元，可以是网页抓取、
 /// 网站爬取或内容提取等不同类型的任务。任务具有状态、
 /// 优先级、重试机制和锁定机制等属性。
+///
+/// # 安全提示
+///
+/// `lock_token` 和 `lock_expires_at` 字段用于分布式任务锁定，
+/// 外部模块不应直接访问这些字段。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Task {
     /// 任务唯一标识符
@@ -51,10 +56,10 @@ pub struct Task {
     pub crawl_id: Option<Uuid>,
     /// 更新时间，任务信息最后更新的时间戳
     pub updated_at: DateTime<FixedOffset>,
-    /// 锁定令牌，用于分布式环境下的任务锁定
-    pub lock_token: Option<Uuid>,
-    /// 锁定过期时间，锁定自动释放的时间点
-    pub lock_expires_at: Option<DateTime<FixedOffset>>,
+    /// 锁定令牌，用于分布式环境下的任务锁定（敏感信息）
+    pub(crate) lock_token: Option<Uuid>,
+    /// 锁定过期时间，锁定自动释放的时间点（敏感信息）
+    pub(crate) lock_expires_at: Option<DateTime<FixedOffset>>,
 }
 
 /// 任务类型枚举

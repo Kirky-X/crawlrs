@@ -15,15 +15,20 @@ use serde::Deserialize;
 ///
 /// # 字段说明
 ///
-/// * `url` - PostgreSQL 数据库连接字符串
+/// * `url` - PostgreSQL 数据库连接字符串（敏感信息，仅 crate 可见）
 /// * `max_connections` - 连接池中最大连接数，默认 100
 /// * `min_connections` - 连接池中最小连接数，默认 10
 /// * `connect_timeout` - 连接超时时间（秒），默认 10 秒
 /// * `idle_timeout` - 空闲连接超时时间（秒），默认 300 秒
+///
+/// # 安全提示
+///
+/// `url` 字段包含数据库连接字符串，可能包含敏感信息（密码等）。
+/// 该字段仅对 crate 可见，外部模块应使用 `url()` 方法访问。
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseSettings {
-    /// 数据库连接URL
-    pub url: String,
+    /// 数据库连接URL (敏感信息)
+    pub(crate) url: String,
     /// 最大连接数
     pub max_connections: Option<u32>,
     /// 最小连接数
@@ -34,17 +39,46 @@ pub struct DatabaseSettings {
     pub idle_timeout: Option<u64>,
 }
 
+impl DatabaseSettings {
+    /// 获取数据库连接URL
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回包含敏感信息的连接字符串，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+}
+
 /// Redis配置设置
 ///
 /// 配置 Redis 连接参数
 ///
 /// # 字段说明
 ///
-/// * `url` - Redis 连接字符串，格式为 redis://host:port/db
+/// * `url` - Redis 连接字符串，格式为 redis://host:port/db（敏感信息，仅 crate 可见）
+///
+/// # 安全提示
+///
+/// `url` 字段包含 Redis 连接字符串，可能包含敏感信息（密码等）。
+/// 该字段仅对 crate 可见，外部模块应使用 `url()` 方法访问。
 #[derive(Debug, Clone, Deserialize)]
 pub struct RedisSettings {
-    /// Redis连接URL
-    pub url: String,
+    /// Redis连接URL (敏感信息)
+    pub(crate) url: String,
+}
+
+impl RedisSettings {
+    /// 获取 Redis 连接URL
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回包含敏感信息的连接字符串，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn url(&self) -> &str {
+        &self.url
+    }
 }
 
 /// 服务器配置设置
@@ -104,8 +138,13 @@ pub struct ConcurrencySettings {
 ///
 /// # 字段说明
 ///
-/// * `url` - 代理服务器URL，支持 http、https、socks5 协议
+/// * `url` - 代理服务器URL，支持 http、https、socks5 协议（敏感信息，仅 crate 可见）
 /// * `enabled` - 是否启用代理，默认 false
+///
+/// # 安全提示
+///
+/// `url` 字段可能包含代理认证信息（用户名和密码）。
+/// 该字段仅对 crate 可见，外部模块应使用 `url()` 方法访问。
 ///
 /// # 示例
 ///
@@ -115,18 +154,30 @@ pub struct ConcurrencySettings {
 ///
 /// #[derive(Debug, Clone, Deserialize)]
 /// pub struct ProxySettings {
-///     pub url: String,
+///     pub(crate) url: String,
 ///     pub enabled: bool,
 /// }
 /// ```
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProxySettings {
-    /// 代理服务器URL
+    /// 代理服务器URL (可能包含认证信息)
     /// 格式: http://host:port, https://host:port, socks5://host:port
     /// 包含认证: http://user:pass@host:port
-    pub url: String,
+    pub(crate) url: String,
     /// 是否启用代理
     pub enabled: bool,
+}
+
+impl ProxySettings {
+    /// 获取代理服务器URL
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回可能包含认证信息的代理 URL，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn url(&self) -> &str {
+        &self.url
+    }
 }
 
 impl Default for ProxySettings {

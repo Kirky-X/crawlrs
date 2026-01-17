@@ -231,15 +231,15 @@ impl Settings {
             "password",
         ];
 
-        if self.webhook.secret.is_empty() {
+        if self.webhook.secret().is_empty() {
             return Err(ConfigSecurityError::EmptyWebhookSecret);
-        } else if weak_secrets.contains(&self.webhook.secret.as_str()) {
+        } else if weak_secrets.contains(&self.webhook.secret()) {
             return Err(ConfigSecurityError::WeakWebhookSecret(
-                self.webhook.secret.clone(),
+                self.webhook.secret().to_string(),
             ));
-        } else if self.webhook.secret.len() < 32 {
+        } else if self.webhook.secret().len() < 32 {
             return Err(ConfigSecurityError::ShortWebhookSecret(
-                self.webhook.secret.len(),
+                self.webhook.secret().len(),
             ));
         }
 
@@ -247,8 +247,7 @@ impl Settings {
         if self.storage.storage_type == "s3" {
             if self
                 .storage
-                .s3_access_key
-                .as_ref()
+                .s3_access_key()
                 .map(|s| s.is_empty())
                 .unwrap_or(true)
             {
@@ -257,8 +256,7 @@ impl Settings {
 
             if self
                 .storage
-                .s3_secret_key
-                .as_ref()
+                .s3_secret_key()
                 .map(|s| s.len() < 32)
                 .unwrap_or(false)
             {
@@ -271,9 +269,9 @@ impl Settings {
             return Err(ConfigSecurityError::RateLimitingDisabled);
         }
 
-        if self.database.url.contains("password=password")
-            || self.database.url.contains("password=postgres")
-            || self.database.url.contains("password=admin")
+        if self.database.url().contains("password=password")
+            || self.database.url().contains("password=postgres")
+            || self.database.url().contains("password=admin")
         {
             return Err(ConfigSecurityError::WeakDatabasePassword);
         }
@@ -286,8 +284,8 @@ impl Settings {
         if is_production {
             // Extract password from URL for validation
             // URL format: postgres://user:password@host/db
-            let password_length = if let Some(at_pos) = self.database.url.find('@') {
-                if let Some(colon_pos) = self.database.url[..at_pos].find(':') {
+            let password_length = if let Some(at_pos) = self.database.url().find('@') {
+                if let Some(colon_pos) = self.database.url()[..at_pos].find(':') {
                     // Password is between colon and @
                     at_pos - colon_pos - 1
                 } else {

@@ -80,11 +80,16 @@ impl EngineError {
 }
 
 /// 抓取请求
+///
+/// # 安全提示
+///
+/// `headers` 和 `proxy` 字段可能包含敏感信息（认证信息、代理凭据等），
+/// 仅对 crate 可见，外部模块应使用相应的 getter 方法访问。
 pub struct ScrapeRequest {
     /// 目标URL
     pub url: String,
-    /// 请求头
-    pub headers: HashMap<String, String>,
+    /// 请求头 (可能包含认证信息)
+    pub(crate) headers: HashMap<String, String>,
     /// 超时时间
     pub timeout: Duration,
     /// 是否需要JavaScript支持
@@ -95,8 +100,8 @@ pub struct ScrapeRequest {
     pub screenshot_config: Option<ScreenshotConfig>,
     /// 是否移动端
     pub mobile: bool,
-    /// 代理配置 (URL)
-    pub proxy: Option<String>,
+    /// 代理配置 (URL，可能包含认证信息)
+    pub(crate) proxy: Option<String>,
     /// 是否跳过TLS验证
     pub skip_tls_verification: bool,
     /// 是否需要TLS指纹对抗
@@ -107,6 +112,28 @@ pub struct ScrapeRequest {
     pub actions: Vec<ScrapeAction>,
     /// 同步等待时长（毫秒）
     pub sync_wait_ms: u32,
+}
+
+impl ScrapeRequest {
+    /// 获取请求头
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回可能包含认证信息的请求头，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn headers(&self) -> &HashMap<String, String> {
+        &self.headers
+    }
+
+    /// 获取代理配置
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回可能包含认证信息的代理 URL，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn proxy(&self) -> Option<&str> {
+        self.proxy.as_deref()
+    }
 }
 
 impl ScrapeRequest {

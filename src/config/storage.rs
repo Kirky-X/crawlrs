@@ -19,9 +19,14 @@ use serde::Deserialize;
 /// * `local_path` - 本地存储路径，当 storage_type="local" 时使用，默认 "./storage"
 /// * `s3_region` - S3 区域，当 storage_type="s3" 时使用
 /// * `s3_bucket` - S3 存储桶名称，当 storage_type="s3" 时使用
-/// * `s3_access_key` - S3 访问密钥，当 storage_type="s3" 时使用
-/// * `s3_secret_key` - S3 密钥，当 storage_type="s3" 时使用
+/// * `s3_access_key` - S3 访问密钥，当 storage_type="s3" 时使用（敏感信息，仅 crate 可见）
+/// * `s3_secret_key` - S3 密钥，当 storage_type="s3" 时使用（敏感信息，仅 crate 可见）
 /// * `s3_endpoint` - S3 端点（可选），用于 MinIO 等兼容服务
+///
+/// # 安全提示
+///
+/// `s3_access_key` 和 `s3_secret_key` 字段包含 S3 访问凭据。
+/// 这些字段仅对 crate 可见，外部模块应使用相应的 getter 方法访问。
 #[derive(Debug, Clone, Deserialize)]
 pub struct StorageSettings {
     /// 存储类型 (local, s3)
@@ -32,12 +37,34 @@ pub struct StorageSettings {
     pub s3_region: Option<String>,
     /// S3 存储桶名称
     pub s3_bucket: Option<String>,
-    /// S3 访问密钥
-    pub s3_access_key: Option<String>,
-    /// S3 密钥
-    pub s3_secret_key: Option<String>,
+    /// S3 访问密钥 (敏感信息)
+    pub(crate) s3_access_key: Option<String>,
+    /// S3 密钥 (敏感信息)
+    pub(crate) s3_secret_key: Option<String>,
     /// S3 端点 (可选，用于 MinIO 等兼容服务)
     pub s3_endpoint: Option<String>,
+}
+
+impl StorageSettings {
+    /// 获取 S3 访问密钥
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回 S3 访问密钥，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn s3_access_key(&self) -> Option<&str> {
+        self.s3_access_key.as_deref()
+    }
+
+    /// 获取 S3 密钥
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回 S3 密钥，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn s3_secret_key(&self) -> Option<&str> {
+        self.s3_secret_key.as_deref()
+    }
 }
 
 /// Webhook配置设置
@@ -46,9 +73,26 @@ pub struct StorageSettings {
 ///
 /// # 字段说明
 ///
-/// * `secret` - Webhook 签名密钥，用于验证请求真实性，默认 "your-secret-key"
+/// * `secret` - Webhook 签名密钥，用于验证请求真实性（敏感信息，仅 crate 可见）
+///
+/// # 安全提示
+///
+/// `secret` 字段包含 Webhook 签名密钥，泄露可能导致伪造请求。
+/// 该字段仅对 crate 可见，外部模块应使用 `secret()` 方法访问。
 #[derive(Debug, Clone, Deserialize)]
 pub struct WebhookSettings {
-    /// Webhook签名密钥
-    pub secret: String,
+    /// Webhook签名密钥 (敏感信息)
+    pub(crate) secret: String,
+}
+
+impl WebhookSettings {
+    /// 获取 Webhook 签名密钥
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回 Webhook 签名密钥，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn secret(&self) -> &str {
+        &self.secret
+    }
 }

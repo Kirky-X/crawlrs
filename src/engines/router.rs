@@ -18,28 +18,33 @@ use tracing::{info, warn};
 /// 路由层指标收集器
 ///
 /// 收集引擎路由过程中的各种指标，用于监控和优化
+///
+/// # 安全提示
+///
+/// 所有字段都是内部实现细节，仅对 crate 可见。
+/// 外部模块应使用提供的公共方法访问聚合统计数据。
 #[derive(Debug, Default)]
 pub struct RouterMetrics {
     /// 总请求数
-    pub total_requests: AtomicU64,
+    pub(crate) total_requests: AtomicU64,
     /// 成功请求数
-    pub successful_requests: AtomicU64,
+    pub(crate) successful_requests: AtomicU64,
     /// 失败请求数
-    pub failed_requests: AtomicU64,
+    pub(crate) failed_requests: AtomicU64,
     /// 候选引擎数量统计
-    pub candidate_count_total: AtomicU64,
+    pub(crate) candidate_count_total: AtomicU64,
     /// 尝试次数统计
-    pub attempt_count_total: AtomicU64,
+    pub(crate) attempt_count_total: AtomicU64,
     /// 引擎选择次数
-    pub engine_selection_total: AtomicU64,
+    pub(crate) engine_selection_total: AtomicU64,
     /// 按引擎名称的延迟统计 (引擎名 -> 总延迟纳秒) - 使用 DashMap 优化并发性能
-    pub engine_latencies: Arc<DashMap<String, u64>>,
+    pub(crate) engine_latencies: Arc<DashMap<String, u64>>,
     /// 按引擎名称的成功次数 - 使用 DashMap 优化并发性能
-    pub engine_success_count: Arc<DashMap<String, u64>>,
+    pub(crate) engine_success_count: Arc<DashMap<String, u64>>,
     /// 按引擎名称的失败次数 - 使用 DashMap 优化并发性能
-    pub engine_failure_count: Arc<DashMap<String, u64>>,
+    pub(crate) engine_failure_count: Arc<DashMap<String, u64>>,
     /// 失败类型统计 (错误类型 -> 次数) - 使用 DashMap 优化并发性能
-    pub failure_classification: Arc<DashMap<String, u64>>,
+    pub(crate) failure_classification: Arc<DashMap<String, u64>>,
 }
 
 impl RouterMetrics {
