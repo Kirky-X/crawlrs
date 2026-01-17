@@ -16,24 +16,24 @@
 
 ## 📖 Table of Contents
 
-- [Overview](#-overview)
-- [Performance Benchmarks](#-performance-benchmarks)
-- [Key Features](#-key-features)
-- [Installation](#-installation)
-- [Quick Start](#-quick-start)
-- [Configuration](#-configuration)
-- [API Documentation](#-api-documentation)
-- [Architecture](#-architecture)
-- [Deployment](#-deployment)
-- [Testing](#-testing)
-- [Roadmap](#-roadmap)
-- [Contributing](#-contributing)
-- [License](#-license)
-- [Support](#-support)
+- [Overview](#overview)
+- [Performance Benchmarks](#performance-benchmarks)
+- [Key Features](#key-features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [API Documentation](#api-documentation)
+- [Architecture](#architecture)
+- [Deployment](#deployment)
+- [Testing](#testing)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+- [Support](#support)
 
 ---
 
-## 📝 Overview
+## 📝 Overview <span id="overview"></span>
 
 **crawlrs** is a high-performance, enterprise-level web data collection platform designed for developers. It provides comprehensive capabilities including:
 
@@ -56,7 +56,7 @@ Built with Rust, crawlrs delivers exceptional performance:
 
 ---
 
-## 📊 Performance Benchmarks
+## 📊 Performance Benchmarks <span id="performance-benchmarks"></span>
 
 Compared to Node.js implementations:
 
@@ -69,7 +69,7 @@ Compared to Node.js implementations:
 
 ---
 
-## ✨ Key Features
+## ✨ Key Features <span id="key-features"></span>
 
 ### 🚀 High Performance
 
@@ -119,7 +119,7 @@ Compared to Node.js implementations:
 
 ---
 
-## 📦 Installation
+## 📦 Installation <span id="installation"></span>
 
 ### Prerequisites
 
@@ -168,7 +168,7 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start <span id="quick-start"></span>
 
 Get up and running in under 5 minutes!
 
@@ -232,7 +232,7 @@ curl http://localhost:8080/health
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ Configuration <span id="configuration"></span>
 
 ### Environment Variables
 
@@ -246,7 +246,7 @@ curl http://localhost:8080/health
 
 ---
 
-## 📚 API Documentation
+## 📚 API Documentation <span id="api-documentation"></span>
 
 > **Complete API Reference:** [API_REFERENCE.md](docs/API_REFERENCE.md) | **User Guide:** [USER_GUIDE.md](docs/USER_GUIDE.md)
 
@@ -280,25 +280,10 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture <span id="architecture"></span>
 
 crawlrs follows Domain-Driven Design (DDD) principles with clean architecture layers:
 
-<!--
-┌─────────────────────────────────────────────────────┐
-│         Presentation Layer (Axum)                  │
-│  - HTTP Handlers  - Middleware  - Routes          │
-├─────────────────────────────────────────────────────┤
-│         Application Layer                          │
-│  - Use Cases  - DTOs  - Request Validation       │
-├─────────────────────────────────────────────────────┤
-│         Domain Layer                              │
-│  - Models  - Services  - Repository Interfaces   │
-├─────────────────────────────────────────────────────┤
-│         Infrastructure Layer                      │
-│  - Database  - Cache  - Storage  - External APIs │
-└─────────────────────────────────────────────────────┘
--->
 
 ### Mermaid 版本
 
@@ -348,7 +333,7 @@ flowchart TD
 
 ---
 
-## 🚢 Deployment
+## 🚢 Deployment <span id="deployment"></span>
 
 ### Docker Deployment
 
@@ -384,7 +369,7 @@ docker-compose up -d
 
 ---
 
-## 🧪 Testing
+## 🧪 Testing <span id="testing"></span>
 
 ```bash
 # Run unit tests
@@ -408,7 +393,7 @@ cargo fmt
 
 ---
 
-## 🗺️ Roadmap
+## 🗺️ Roadmap <span id="roadmap"></span>
 
 ### v0.2.0 (Planned)
 
@@ -430,7 +415,7 @@ cargo fmt
 
 ---
 
-## 🤝 Contributing
+## 🤝 Contributing <span id="contributing"></span>
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
@@ -451,7 +436,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ---
 
-## 📄 License
+## 📄 License <span id="license"></span>
 
 This project is licensed under Apache License 2.0 - see [LICENSE](LICENSE) file for details.
 
@@ -473,7 +458,7 @@ limitations under the License.
 
 ---
 
-## 💬 Support
+## 💬 Support <span id="support"></span>
 
 | Resource | Link |
 |----------|------|
@@ -500,6 +485,6 @@ limitations under the License.
 
 **Built with ❤️ in Rust**
 
-[⬆ Back to Top](#-crawlrs)
+[⬆ Back to Top](#overview)
 
 </div>

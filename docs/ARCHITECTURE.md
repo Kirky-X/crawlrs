@@ -1533,8 +1533,6 @@ resources:
 
 - [API Reference](API_REFERENCE.md)
 - [User Guide](USER_GUIDE.md)
-- [PRD](docs/prd.md)
-- [TDD](docs/tdd.md)
 
 ---
 

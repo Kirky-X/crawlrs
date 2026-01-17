@@ -15,24 +15,24 @@
 
 ## 📖 目录
 
-- [概述](#-概述)
-- [性能基准](#-性能基准)
-- [核心特性](#-核心特性)
-- [安装](#-安装)
-- [快速开始](#-快速开始)
-- [配置](#-配置)
-- [API 文档](#-api-文档)
-- [架构](#-架构)
-- [部署](#-部署)
-- [测试](#-测试)
-- [路线图](#-路线图)
-- [贡献](#-贡献)
-- [许可证](#-许可证)
-- [支持](#-支持)
+- [概述](#概述)
+- [性能基准](#性能基准)
+- [核心特性](#核心特性)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [配置](#配置)
+- [API 文档](#api-文档)
+- [架构](#架构)
+- [部署](#部署)
+- [测试](#测试)
+- [路线图](#路线图)
+- [贡献](#贡献)
+- [许可证](#许可证)
+- [支持](#支持)
 
 ---
 
-## 📝 概述
+## 📝 概述 <span id="概述"></span>
 
 **crawlrs** 是一个面向开发者的高性能企业级网页数据采集平台，提供全面的数据采集能力：
 
@@ -55,7 +55,7 @@
 
 ---
 
-## 📊 性能基准
+## 📊 性能基准 <span id="性能基准"></span>
 
 与 Node.js 实现相比：
 
@@ -68,7 +68,7 @@
 
 ---
 
-## ✨ 核心特性
+## ✨ 核心特性 <span id="核心特性"></span>
 
 ### 🚀 高性能
 
@@ -118,7 +118,7 @@
 
 ---
 
-## 📦 安装
+## 📦 安装 <span id="安装"></span>
 
 ### 前置要求
 
@@ -167,7 +167,7 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 
 ---
 
-## 🚀 快速开始
+## 🚀 快速开始 <span id="快速开始"></span>
 
 5 分钟内启动并运行！
 
@@ -231,7 +231,7 @@ curl http://localhost:8080/health
 
 ---
 
-## ⚙️ 配置
+## ⚙️ 配置 <span id="配置"></span>
 
 ### 环境变量
 
@@ -245,7 +245,7 @@ curl http://localhost:8080/health
 
 ---
 
-## 📚 API 文档
+## 📚 API 文档 <span id="api-文档"></span>
 
 > **完整 API 参考:** [API_REFERENCE.md](docs/API_REFERENCE.md) | **用户指南:** [USER_GUIDE.md](docs/USER_GUIDE.md)
 
@@ -279,25 +279,41 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 
 ---
 
-## 🏗️ 架构
+## 🏗️ 架构 <span id="架构"></span>
 
 crawlrs 遵循领域驱动设计（DDD）原则，采用清晰的分层架构：
 
+```mermaid
+flowchart TB
+    subgraph Presentation [表现层 - Axum]
+        A[HTTP 处理器]
+        B[中间件]
+        C[路由]
+    end
+
+    subgraph Application [应用层]
+        D[Use Cases]
+        E[DTOs]
+        F[请求验证]
+    end
+
+    subgraph Domain [领域层]
+        G[Models]
+        H[Services]
+        I[Repository 接口]
+    end
+
+    subgraph Infrastructure [基础设施层]
+        J[Database]
+        K[Cache]
+        L[Storage]
+        M[External APIs]
+    end
+
+    Presentation --> Application --> Domain --> Infrastructure
 ```
-┌─────────────────────────────────────────────────────┐
-│         表现层 (Axum)                        │
-│  - HTTP 处理器  - 中间件  - 路由          │
-├─────────────────────────────────────────────────────┤
-│         应用层                                 │
-│  - Use Cases  - DTOs  - 请求验证            │
-├─────────────────────────────────────────────────────┤
-│         领域层                                 │
-│  - Models  - Services  - Repository 接口       │
-├─────────────────────────────────────────────────────┤
-│         基础设施层                             │
-│  - Database  - Cache  - Storage  - External APIs │
-└─────────────────────────────────────────────────────┘
-```
+
+> **详细架构:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 > **详细架构:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
@@ -315,7 +331,7 @@ crawlrs 遵循领域驱动设计（DDD）原则，采用清晰的分层架构：
 
 ---
 
-## 🚢 部署
+## 🚢 部署 <span id="部署"></span>
 
 ### Docker 部署
 
@@ -351,7 +367,7 @@ docker-compose up -d
 
 ---
 
-## 🧪 测试
+## 🧪 测试 <span id="测试"></span>
 
 ```bash
 # 运行单元测试
@@ -375,7 +391,7 @@ cargo fmt
 
 ---
 
-## 🗺️ 路线图
+## 🗺️ 路线图 <span id="路线图"></span>
 
 ### v0.2.0 (计划中)
 
@@ -397,7 +413,7 @@ cargo fmt
 
 ---
 
-## 🤝 贡献
+## 🤝 贡献 <span id="贡献"></span>
 
 欢迎贡献！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解指南。
 
@@ -418,7 +434,7 @@ cargo fmt
 
 ---
 
-## 📄 许可证
+## 📄 许可证 <span id="许可证"></span>
 
 本项目在 Apache License 2.0 下获得许可 - 详见 [LICENSE](LICENSE) 文件。
 
@@ -440,7 +456,7 @@ limitations under the License.
 
 ---
 
-## 💬 支持
+## 💬 支持 <span id="支持"></span>
 
 | 资源 | 链接 |
 |----------|------|
@@ -467,6 +483,6 @@ limitations under the License.
 
 **使用 ❤️ 在 Rust 中构建**
 
-[⬆ 返回顶部](#-crawlrs)
+[⬆ 返回顶部](#概述)
 
 </div>
