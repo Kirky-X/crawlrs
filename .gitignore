@@ -224,7 +224,7 @@ cargo-lock.json.backup
 # Section 11: Documentation Exclusions
 # -----------------------------------------------------------------------------
 # Uncomment if these docs should not be tracked
-# docs/prd.md
+docs/prd.md
 # docs/task.md
 # docs/tdd.md
 # docs/test.md
