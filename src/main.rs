@@ -167,16 +167,16 @@ async fn start_worker_service(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 1. Initialize telemetry and metrics
-    telemetry::init_all();
-
-    // 2. Load and configure settings
+    // 1. Load and configure settings
     let is_production = env::var("CRAWLRS_ENV")
         .map(|v| v.eq_ignore_ascii_case("production") || v.eq_ignore_ascii_case("prod"))
         .unwrap_or(false);
 
     let (settings, _port) = config::load_and_configure(is_production)?;
     let settings = Arc::new(settings);
+
+    // 2. Initialize telemetry and metrics
+    telemetry::init_all(&settings.logging);
 
     // 3. Set proxy environment variables if enabled
     if settings.proxy.enabled {

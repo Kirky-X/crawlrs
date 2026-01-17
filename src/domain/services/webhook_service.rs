@@ -6,12 +6,13 @@
 use crate::domain::models::webhook::WebhookEvent;
 use anyhow::Result;
 use async_trait::async_trait;
+use shaku::Interface;
 
 /// Webhook服务特质
 ///
 /// 定义Webhook发送的核心逻辑
 #[async_trait]
-pub trait WebhookService: Send + Sync {
+pub trait WebhookService: Interface + Send + Sync {
     /// 发送Webhook事件
     ///
     /// # 参数

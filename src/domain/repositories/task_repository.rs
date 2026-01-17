@@ -7,6 +7,7 @@ use crate::domain::models::task::{Task, TaskStatus, TaskType};
 use async_trait::async_trait;
 use chrono::{DateTime, FixedOffset};
 use sea_orm::DbErr;
+use shaku::Interface;
 use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
@@ -40,7 +41,7 @@ pub struct TaskQueryParams {
 ///
 /// 定义任务数据访问接口
 #[async_trait]
-pub trait TaskRepository: Send + Sync {
+pub trait TaskRepository: Interface + Send + Sync {
     /// 创建新任务
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError>;
     /// 根据ID查找任务

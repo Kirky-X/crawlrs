@@ -129,6 +129,25 @@ pub mod webhook {
     pub const RETRY_DELAY_SECS: u64 = 5;
 }
 
+/// 测试相关常量
+#[cfg(test)]
+pub mod testing {
+    use std::time::Duration;
+
+    /// API 请求超时时间（10秒）
+    pub const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+    /// 快速测试超时时间（10秒）
+    pub const QUICK_TEST_TIMEOUT: Duration = Duration::from_secs(10);
+    /// E2E 测试超时时间（90秒）
+    pub const E2E_TEST_TIMEOUT: Duration = Duration::from_secs(90);
+    /// 爬虫任务超时时间（90秒）
+    pub const CRAWL_TASK_TIMEOUT: Duration = Duration::from_secs(90);
+}
+
+/// 导出测试常量（仅在测试模式下）
+#[cfg(test)]
+pub use testing::*;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -17,6 +17,7 @@ use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::engines::traits::ScraperEngine;
 use std::sync::Arc;
+use tracing::info;
 
 /// All engine-related components.
 #[derive(Clone)]

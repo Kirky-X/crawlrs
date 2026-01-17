@@ -13,7 +13,8 @@ use super::app::{
 };
 use super::engines::EngineSettings;
 use super::llm::LLMSettings;
-use super::search::{BingSearchSettings, GoogleSearchSettings, SearchSettings};
+use super::logging::LoggingSettings;
+use super::search::{BingSearchSettings, SearchSettings};
 use super::storage::{StorageSettings, WebhookSettings};
 
 /// 配置安全错误
@@ -91,8 +92,6 @@ pub struct Settings {
     pub storage: StorageSettings,
     /// Webhook 配置
     pub webhook: WebhookSettings,
-    /// Google Custom Search API 配置
-    pub google_search: GoogleSearchSettings,
     /// Bing Search API 配置
     pub bing_search: BingSearchSettings,
     /// 搜索配置 (包含 A/B 测试)
@@ -103,6 +102,8 @@ pub struct Settings {
     pub proxy: ProxySettings,
     /// 引擎配置
     pub engines: EngineSettings,
+    /// 日志配置
+    pub logging: LoggingSettings,
 }
 
 impl Settings {
@@ -176,9 +177,6 @@ impl Settings {
             // 7. 设置搜索 A/B 测试默认配置
             .set_default("search.ab_test_enabled", false)? // 默认关闭 A/B 测试
             .set_default("search.variant_b_weight", 0.1)? // 默认分配 10% 流量到 B 变体
-            // 8. 设置 Google Custom Search API 默认配置
-            .set_default("google_search.api_key", "")? // Google Search API 密钥
-            .set_default("google_search.cx", "")? // Google Custom Search Engine ID
             // 8. 设置 Bing Search API 默认配置
             .set_default("bing_search.api_key", "")?
             // 9. 设置 LLM 默认配置
@@ -197,7 +195,13 @@ impl Settings {
             .set_default("engines.fire_cdp.url", "http://localhost:8191/v1")? // Fire CDP 默认地址
             .set_default("engines.fire_tls.enabled", false)? // 默认禁用 Fire TLS
             .set_default("engines.fire_tls.url", "http://localhost:8191/v1")? // Fire TLS 默认地址
-            // 12. 加载配置文件（可选）
+            // 13. 设置日志默认配置
+            .set_default("logging.console.enabled", true)? // 默认启用控制台输出
+            .set_default("logging.file.enabled", false)? // 默认禁用文件输出
+            .set_default("logging.file.path", "logs/crawlrs.log")? // 默认日志文件路径
+            .set_default("logging.file.max_file_size_mb", 100)? // 默认单个文件最大 100MB
+            .set_default("logging.file.file_count", 10)? // 默认保留 10 个日志文件
+            // 14. 加载配置文件（可选）
             .add_source(File::with_name("config/default").required(false)) // 加载默认配置
             .add_source(File::with_name(&format!("config/{}", env)).required(false)) // 加载环境特定配置
             // 10. 加载环境变量（最高优先级）

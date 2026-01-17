@@ -5,14 +5,19 @@
 
 //! Telemetry and metrics initialization.
 
+use crate::config::LoggingSettings;
 use tracing::info;
 
 /// Initialize telemetry and tracing systems.
 ///
 /// This function sets up the global tracing subscriber for structured logging
 /// across the application.
-pub fn init_telemetry() {
-    crate::utils::telemetry::init_telemetry();
+///
+/// # Parameters
+///
+/// * `settings` - 日志配置
+pub fn init_telemetry(settings: &LoggingSettings) {
+    crate::utils::telemetry::init_telemetry(settings);
     info!("Telemetry initialized");
 }
 
@@ -29,7 +34,11 @@ pub fn init_metrics() {
 ///
 /// This is a convenience function that calls both [`init_telemetry`] and
 /// [`init_metrics`] in sequence.
-pub fn init_all() {
-    init_telemetry();
+///
+/// # Parameters
+///
+/// * `settings` - 日志配置
+pub fn init_all(settings: &LoggingSettings) {
+    init_telemetry(settings);
     init_metrics();
 }

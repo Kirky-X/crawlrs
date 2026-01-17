@@ -11,6 +11,7 @@
 pub mod app;
 pub mod engines;
 pub mod llm;
+pub mod logging;
 pub mod search;
 pub mod storage;
 
@@ -23,8 +24,9 @@ pub use app::ServerSettings;
 
 pub use engines::{EngineSettings, FireCdpSettings, FireTlsSettings, FlareSolverrSettings};
 
+pub use logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
+
 pub use search::BingSearchSettings;
-pub use search::GoogleSearchSettings;
 pub use search::SearchSettings;
 
 pub use storage::StorageSettings;

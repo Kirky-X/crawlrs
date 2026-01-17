@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use shaku::Interface;
 use uuid::Uuid;
 
 /// 限流策略类型
@@ -115,7 +116,7 @@ pub enum ConcurrencyResult {
 /// 限流与并发控制服务接口
 #[async_trait]
 #[cfg(feature = "rate-limiting")]
-pub trait RateLimitingService: Send + Sync {
+pub trait RateLimitingService: Interface + Send + Sync {
     /// 检查API限流
     async fn check_rate_limit(
         &self,

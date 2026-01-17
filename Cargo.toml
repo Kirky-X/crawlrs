@@ -97,6 +97,7 @@ sysinfo = "0.33"
 # Logging and observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
 metrics = { version = "0.24.3", optional = true }
 metrics-exporter-prometheus = { version = "0.18.1", default-features = false, features = ["http-listener"], optional = true }
 
@@ -173,9 +174,9 @@ path = "benches/benchmark.rs"
 name = "crawlrs"
 path = "src/main.rs"
 
-[[bin]]
-name = "crawlrs-shaku"
-path = "src/main_shaku.rs"
+# [[bin]]
+# name = "crawlrs-shaku"
+# path = "src/main_shaku.rs"
 
 [workspace]
 # members = ["examples"]  # Removed: examples is now an independent workspace

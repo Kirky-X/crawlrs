@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use async_trait::async_trait;
+use shaku::Interface;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -20,7 +21,7 @@ pub enum CreditsRepositoryError {
 }
 
 #[async_trait]
-pub trait CreditsRepository: Send + Sync {
+pub trait CreditsRepository: Interface + Send + Sync {
     /// Get credits balance for a team
     async fn get_balance(&self, team_id: Uuid) -> Result<i64, CreditsRepositoryError>;
 
