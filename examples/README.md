@@ -2,6 +2,26 @@
 
 crawlrs 项目示例集合，包含所有功能特性的使用示例。
 
+## 独立 Workspace
+
+本目录是 crawlrs 项目的独立示例 workspace，与主项目分离，可独立编译和运行。
+
+### 运行示例
+
+```bash
+# 在 examples 目录下运行（需要使用 --bin 而非 --example）
+cd examples
+
+# 运行特定示例
+cargo run --bin basic_scrape
+
+# 编译所有示例
+cargo build --all-features
+
+# 或者从主目录运行
+cargo run --example basic_scrape
+```
+
 ## 目录结构
 
 ```
@@ -161,8 +181,7 @@ cargo run --example browser
 1. 确定示例所属的功能目录
 2. 参考同类示例的代码风格
 3. 添加完整的文档字符串
-4. 创建对应的README条目（如果需要）
-5. 在 `examples/mod.rs` 中导出模块
+4. 在 `Cargo.toml` 中添加新的 `[[bin]]` 入口
 
 ### 示例规范
 

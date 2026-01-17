@@ -11,6 +11,9 @@ authors = ["Kirky.X <Kirky-X@outlook.com>"]
 description = "Example programs demonstrating crawlrs library usage"
 default-run = "basic_scrape"
 
+# Explicitly declare this as an independent workspace (not part of main crawlrs workspace)
+[workspace]
+
 [dependencies]
 # crawlrs 主项目 - 从父目录引用
 crawlrs = { path = "..", default-features = true }

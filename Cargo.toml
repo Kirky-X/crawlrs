@@ -141,6 +141,10 @@ aws-config = "1.8.12"
 genai = "0.5.0"
 toml = "0.9.11"
 
+# Dependency Injection
+shaku = "0.6"
+shaku_axum = "0.6"
+
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full", "test-util"] }
 wiremock = "0.5"
@@ -168,3 +172,10 @@ path = "benches/benchmark.rs"
 [[bin]]
 name = "crawlrs"
 path = "src/main.rs"
+
+[[bin]]
+name = "crawlrs-shaku"
+path = "src/main_shaku.rs"
+
+[workspace]
+# members = ["examples"]  # Removed: examples is now an independent workspace
