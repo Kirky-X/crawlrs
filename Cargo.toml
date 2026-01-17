@@ -9,8 +9,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
 
-exclude = ["examples/mod.rs"]
-autoexamples = false
+exclude = []
 
 [features]
 # 默认开启基础功能，使用 Postgres
@@ -142,8 +141,6 @@ aws-config = "1.8.12"
 genai = "0.5.0"
 toml = "0.9.11"
 
-
-
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full", "test-util"] }
 wiremock = "0.5"
@@ -171,59 +168,3 @@ path = "benches/benchmark.rs"
 [[bin]]
 name = "crawlrs"
 path = "src/main.rs"
-
-[[example]]
-name = "test_smart_search"
-path = "examples/search/test_smart_search.rs"
-
-[[example]]
-name = "test_baidu"
-path = "examples/search/test_baidu.rs"
-
-[[example]]
-name = "test_bing"
-path = "examples/search/test_bing.rs"
-
-[[example]]
-name = "test_google"
-path = "examples/search/test_google.rs"
-
-[[example]]
-name = "test_sogou"
-path = "examples/search/test_sogou.rs"
-
-[[example]]
-name = "test_playwright_google"
-path = "examples/browser/test_playwright_google.rs"
-
-[[example]]
-name = "test_unified_search"
-path = "examples/search/test_unified_search.rs"
-
-[[example]]
-name = "test_css_selector"
-path = "examples/test_css_selector.rs"
-
-[[example]]
-name = "test_playwright_basic"
-path = "examples/browser/test_playwright_basic.rs"
-
-[[example]]
-name = "test_google_homepage"
-path = "examples/browser/test_google_homepage.rs"
-
-[[example]]
-name = "test_flaresolverr_direct"
-path = "examples/browser/test_flaresolverr_direct.rs"
-
-[[example]]
-name = "test_extraction"
-path = "examples/test_extraction.rs"
-
-[[example]]
-name = "test_extraction_comprehensive"
-path = "examples/test_extraction_comprehensive.rs"
-
-[[example]]
-name = "test_llm_extraction"
-path = "examples/test_llm_extraction.rs"

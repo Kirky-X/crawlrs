@@ -1,0 +1,278 @@
+# Copyright (c) 2025 Kirky.X
+#
+# Licensed under the Apache License, Version 2.0
+# See LICENSE file in the project root for full license information.
+
+[package]
+name = "crawlrs-examples"
+version = "0.1.0"
+edition = "2021"
+authors = ["Kirky.X <Kirky-X@outlook.com>"]
+description = "Example programs demonstrating crawlrs library usage"
+
+[dependencies]
+# crawlrs 主项目 - 从父目录引用
+crawlrs = { path = "..", default-features = false }
+
+# 异步运行时
+tokio = { version = "1.35", features = ["full"] }
+
+# 日志记录
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# 其他常用依赖
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Advanced examples
+[[bin]]
+name = "async_batch"
+path = "advanced/async_batch.rs"
+
+[[bin]]
+name = "async_streams"
+path = "advanced/async_streams.rs"
+
+[[bin]]
+name = "custom_engines"
+path = "advanced/custom_engines.rs"
+
+[[bin]]
+name = "error_handling"
+path = "advanced/error_handling.rs"
+
+[[bin]]
+name = "metrics_export"
+path = "advanced/metrics_export.rs"
+
+# Auth examples
+[[bin]]
+name = "api_key_auth"
+path = "auth/api_key_auth.rs"
+
+[[bin]]
+name = "bearer_token"
+path = "auth/bearer_token.rs"
+
+[[bin]]
+name = "scope_validation"
+path = "auth/scope_validation.rs"
+
+[[bin]]
+name = "team_isolation"
+path = "auth/team_isolation.rs"
+
+# Browser examples
+[[bin]]
+name = "engine_router_demo"
+path = "browser/engine_router_demo.rs"
+
+[[bin]]
+name = "test_flaresolverr_direct"
+path = "browser/test_flaresolverr_direct.rs"
+
+[[bin]]
+name = "test_google_homepage"
+path = "browser/test_google_homepage.rs"
+
+[[bin]]
+name = "test_google_preview"
+path = "browser/test_google_preview.rs"
+
+[[bin]]
+name = "test_playwright_basic"
+path = "browser/test_playwright_basic.rs"
+
+# Cache examples
+[[bin]]
+name = "cache_configuration"
+path = "cache/cache_configuration.rs"
+
+[[bin]]
+name = "redis_cache"
+path = "cache/redis_cache.rs"
+
+[[bin]]
+name = "ttl_management"
+path = "cache/ttl_management.rs"
+
+# Crawl examples
+[[bin]]
+name = "basic_crawl"
+path = "crawl/basic_crawl.rs"
+
+[[bin]]
+name = "depth_control"
+path = "crawl/depth_control.rs"
+
+[[bin]]
+name = "filter_patterns"
+path = "crawl/filter_patterns.rs"
+
+[[bin]]
+name = "result_pagination"
+path = "crawl/result_pagination.rs"
+
+[[bin]]
+name = "robots_compliance"
+path = "crawl/robots_compliance.rs"
+
+[[bin]]
+name = "status_tracking"
+path = "crawl/status_tracking.rs"
+
+# Extract examples
+[[bin]]
+name = "css_selector"
+path = "extract/css_selector.rs"
+
+[[bin]]
+name = "llm_extraction"
+path = "extract/llm_extraction.rs"
+
+[[bin]]
+name = "multi_rules"
+path = "extract/multi_rules.rs"
+
+[[bin]]
+name = "output_formats"
+path = "extract/output_formats.rs"
+
+[[bin]]
+name = "structured_data"
+path = "extract/structured_data.rs"
+
+[[bin]]
+name = "xpath_extraction"
+path = "extract/xpath_extraction.rs"
+
+# Proxy examples
+[[bin]]
+name = "http_proxy"
+path = "proxy/http_proxy.rs"
+
+[[bin]]
+name = "proxy_auth"
+path = "proxy/proxy_auth.rs"
+
+[[bin]]
+name = "rotate_proxies"
+path = "proxy/rotate_proxies.rs"
+
+# Rate limiting examples
+[[bin]]
+name = "basic_rate_limit"
+path = "rate-limiting/basic_rate_limit.rs"
+
+[[bin]]
+name = "circuit_breaker"
+path = "rate-limiting/circuit_breaker.rs"
+
+[[bin]]
+name = "team_concurrency"
+path = "rate-limiting/team_concurrency.rs"
+
+# Scrape examples
+[[bin]]
+name = "basic_scrape"
+path = "scrape/basic_scrape.rs"
+
+[[bin]]
+name = "custom_headers"
+path = "scrape/custom_headers.rs"
+
+[[bin]]
+name = "extraction_rules"
+path = "scrape/extraction_rules.rs"
+
+[[bin]]
+name = "form_extraction"
+path = "scrape/form_extraction.rs"
+
+[[bin]]
+name = "multi_format_output"
+path = "scrape/multi_format_output.rs"
+
+[[bin]]
+name = "page_actions"
+path = "scrape/page_actions.rs"
+
+[[bin]]
+name = "screenshot"
+path = "scrape/screenshot.rs"
+
+# Search examples
+[[bin]]
+name = "test_baidu"
+path = "search/test_baidu.rs"
+
+[[bin]]
+name = "test_bing"
+path = "search/test_bing.rs"
+
+[[bin]]
+name = "test_google"
+path = "search/test_google.rs"
+
+[[bin]]
+name = "test_harness"
+path = "search/test_harness.rs"
+
+[[bin]]
+name = "test_smart_search"
+path = "search/test_smart_search.rs"
+
+[[bin]]
+name = "test_smart_search_demo"
+path = "search/test_smart_search_demo.rs"
+
+[[bin]]
+name = "test_sogou"
+path = "search/test_sogou.rs"
+
+[[bin]]
+name = "test_unified_search"
+path = "search/test_unified_search.rs"
+
+# Teams examples
+[[bin]]
+name = "basic_teams"
+path = "teams/basic_teams.rs"
+
+[[bin]]
+name = "credits_management"
+path = "teams/credits_management.rs"
+
+[[bin]]
+name = "geo_restrictions"
+path = "teams/geo_restrictions.rs"
+
+# Text encoding examples
+[[bin]]
+name = "text_encoding_integration_demo"
+path = "text_encoding/text_encoding_integration_demo.rs"
+
+# Test examples (root level)
+[[bin]]
+name = "test_llm_extraction"
+path = "test_llm_extraction.rs"
+
+# Webhooks examples
+[[bin]]
+name = "basic_webhook"
+path = "webhooks/basic_webhook.rs"
+
+[[bin]]
+name = "retry_logic"
+path = "webhooks/retry_logic.rs"
+
+[[bin]]
+name = "task_events"
+path = "webhooks/task_events.rs"
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
