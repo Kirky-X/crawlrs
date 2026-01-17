@@ -9,10 +9,11 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
 description = "Example programs demonstrating crawlrs library usage"
+default-run = "basic_scrape"
 
 [dependencies]
 # crawlrs 主项目 - 从父目录引用
-crawlrs = { path = "..", default-features = false }
+crawlrs = { path = "..", default-features = true }
 
 # 异步运行时
 tokio = { version = "1.35", features = ["full"] }
