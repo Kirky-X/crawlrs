@@ -28,13 +28,13 @@ pub struct Crawl {
     /// 爬取状态，跟踪任务的执行进度
     pub status: CrawlStatus,
     /// 爬取配置，JSON格式的任务参数和规则
-    pub config: serde_json::Value,
+    pub(crate) config: serde_json::Value,
     /// 总任务数，该爬取任务包含的子任务总数
-    pub total_tasks: i32,
+    pub(crate) total_tasks: i32,
     /// 已完成任务数，成功完成的子任务数量
-    pub completed_tasks: i32,
+    pub(crate) completed_tasks: i32,
     /// 失败任务数，执行失败的子任务数量
-    pub failed_tasks: i32,
+    pub(crate) failed_tasks: i32,
     /// 创建时间，任务创建的时间戳
     pub created_at: DateTime<Utc>,
     /// 更新时间，任务状态最后更新的时间戳
@@ -94,5 +94,39 @@ impl FromStr for CrawlStatus {
             "cancelled" => Ok(CrawlStatus::Cancelled),
             _ => Err(()),
         }
+    }
+}
+
+impl Crawl {
+    /// 获取爬取配置
+    pub fn config(&self) -> &serde_json::Value {
+        &self.config
+    }
+
+    /// 获取总任务数
+    pub fn total_tasks(&self) -> i32 {
+        self.total_tasks
+    }
+
+    /// 获取已完成任务数
+    pub fn completed_tasks(&self) -> i32 {
+        self.completed_tasks
+    }
+
+    /// 获取失败任务数
+    pub fn failed_tasks(&self) -> i32 {
+        self.failed_tasks
+    }
+
+    /// 计算任务完成百分比
+    ///
+    /// # 返回值
+    ///
+    /// 返回 0.0 到 100.0 之间的完成百分比
+    pub fn progress_percentage(&self) -> f64 {
+        if self.total_tasks == 0 {
+            return 100.0;
+        }
+        (self.completed_tasks as f64 / self.total_tasks as f64) * 100.0
     }
 }

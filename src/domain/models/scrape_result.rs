@@ -26,9 +26,9 @@ pub struct ScrapeResult {
     /// 内容类型，HTTP响应的Content-Type头信息
     pub content_type: String,
     /// 响应头，完整的HTTP响应头部信息
-    pub headers: serde_json::Value,
+    pub(crate) headers: serde_json::Value,
     /// 元数据，额外的爬取信息和统计
-    pub meta_data: serde_json::Value,
+    pub(crate) meta_data: serde_json::Value,
     /// 截图数据，网页截图的base64编码（可选）
     pub screenshot: Option<String>,
     /// 响应时间（毫秒），从发起请求到收到响应的总时间
@@ -73,5 +73,15 @@ impl ScrapeResult {
             response_time_ms,
             created_at: Utc::now(),
         }
+    }
+
+    /// 获取响应头
+    pub fn headers(&self) -> &serde_json::Value {
+        &self.headers
+    }
+
+    /// 获取元数据
+    pub fn meta_data(&self) -> &serde_json::Value {
+        &self.meta_data
     }
 }

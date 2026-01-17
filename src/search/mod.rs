@@ -36,20 +36,7 @@ pub use ab_test::SearchABTestEngine;
 pub use adapter::{GenericSearchEngineAdapter, SearchEngineAdapter};
 pub use aggregator::deduplicator::ResultDeduplicator as Deduplicator;
 pub use aggregator::SearchAggregator;
-pub use client::{
-    BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SearchClient, SogouSearchEngine,
-    SHARED_HTTP_CLIENT,
-};
 pub use engine_trait::{SearchEngine, SearchRequest};
 pub use error::SearchError;
-pub use factory::{create_default_router, SearchEngineFactory, SearchEngineFactoryConfig};
 pub use response::{Response, ResponseItem};
-pub use router::{
-    EngineMetrics, RouterStats, SearchEngineRouter, SearchEngineRouterConfig,
-    SmartSearchEngineWrapper,
-};
-pub use smart::{
-    create_baidu_smart_search, create_bing_smart_search, create_google_smart_search,
-    create_sogou_smart_search, SmartSearchEngine, SmartSearchEngineConfig,
-};
 pub use types::{EngineHealth, SearchEngineType};

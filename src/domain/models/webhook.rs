@@ -71,10 +71,10 @@ pub struct WebhookEvent {
     pub max_retries: i32,
     /// 响应状态码，最后一次发送的HTTP响应状态
     pub response_status: Option<i32>,
-    /// 响应体，最后一次发送的HTTP响应内容
-    pub response_body: Option<String>,
-    /// 错误信息，发送失败时的错误描述
-    pub error_message: Option<String>,
+    /// 响应体，最后一次发送的HTTP响应内容（敏感信息）
+    pub(crate) response_body: Option<String>,
+    /// 错误信息，发送失败时的错误描述（敏感信息）
+    pub(crate) error_message: Option<String>,
     /// 下次重试时间，计划的下一次重试时间点
     pub next_retry_at: Option<DateTime<Utc>>,
     /// 创建时间，事件创建的时间戳
@@ -132,4 +132,16 @@ pub enum WebhookStatus {
     Failed,
     /// 死信，事件发送失败且已达到最大重试次数
     Dead,
+}
+
+impl WebhookEvent {
+    /// 获取响应体（仅供内部使用）
+    pub(crate) fn response_body(&self) -> Option<&String> {
+        self.response_body.as_ref()
+    }
+
+    /// 获取错误信息（仅供内部使用）
+    pub(crate) fn error_message(&self) -> Option<&String> {
+        self.error_message.as_ref()
+    }
 }

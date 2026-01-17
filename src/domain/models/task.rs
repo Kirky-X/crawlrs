@@ -35,17 +35,17 @@ pub struct Task {
     /// 目标URL，任务要处理的具体网址
     pub url: String,
     /// 任务负载数据，包含任务执行所需的参数和配置
-    pub payload: serde_json::Value,
+    pub(crate) payload: serde_json::Value,
     /// 重试次数（累计重试次数）
-    pub retry_count: i32,
+    pub(crate) retry_count: i32,
     /// 已重试次数，记录任务已经尝试执行的次数
-    pub attempt_count: i32,
+    pub(crate) attempt_count: i32,
     /// 最大重试次数，任务失败时的最大重试限制
-    pub max_retries: i32,
+    pub(crate) max_retries: i32,
     /// 计划执行时间，可选的延迟执行时间
-    pub scheduled_at: Option<DateTime<FixedOffset>>,
+    pub(crate) scheduled_at: Option<DateTime<FixedOffset>>,
     /// 过期时间，任务超过此时间将不再执行
-    pub expires_at: Option<DateTime<FixedOffset>>,
+    pub(crate) expires_at: Option<DateTime<FixedOffset>>,
     /// 创建时间，任务创建的时间戳
     pub created_at: DateTime<FixedOffset>,
     /// 开始执行时间，任务开始处理的时间戳
@@ -293,5 +293,45 @@ impl Task {
     /// 如果任务处于失败状态且未达到最大重试次数则返回true，否则返回false
     pub fn can_retry(&self) -> bool {
         self.status == TaskStatus::Failed && self.attempt_count < self.max_retries
+    }
+
+    /// 获取任务负载数据
+    pub fn payload(&self) -> &serde_json::Value {
+        &self.payload
+    }
+
+    /// 获取重试次数
+    pub fn retry_count(&self) -> i32 {
+        self.retry_count
+    }
+
+    /// 获取已重试次数
+    pub fn attempt_count(&self) -> i32 {
+        self.attempt_count
+    }
+
+    /// 获取最大重试次数
+    pub fn max_retries(&self) -> i32 {
+        self.max_retries
+    }
+
+    /// 获取计划执行时间
+    pub fn scheduled_at(&self) -> Option<DateTime<FixedOffset>> {
+        self.scheduled_at
+    }
+
+    /// 获取过期时间
+    pub fn expires_at(&self) -> Option<DateTime<FixedOffset>> {
+        self.expires_at
+    }
+
+    /// 获取锁定令牌（仅供内部使用）
+    pub(crate) fn lock_token(&self) -> Option<Uuid> {
+        self.lock_token
+    }
+
+    /// 获取锁定过期时间（仅供内部使用）
+    pub(crate) fn lock_expires_at(&self) -> Option<DateTime<FixedOffset>> {
+        self.lock_expires_at
     }
 }

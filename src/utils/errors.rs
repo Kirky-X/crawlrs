@@ -363,4 +363,27 @@ mod tests {
     fn test_should_hide_detailed_errors_by_default() {
         assert!(!should_show_detailed_errors());
     }
+
+    #[test]
+    fn test_sanitize_error_message_empty_input() {
+        let msg = "";
+        let sanitized = sanitize_error_message(msg);
+        assert_eq!(sanitized, "");
+    }
+
+    #[test]
+    fn test_sanitize_error_message_very_long_input() {
+        let msg = "A".repeat(10000);
+        let sanitized = sanitize_error_message(&msg);
+        // Should still sanitize if patterns exist
+        assert!(sanitized.contains('A') || sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_sanitize_error_message_multiple_patterns() {
+        let msg = "Error: table: users column: name SQL: SELECT * FROM users";
+        let sanitized = sanitize_error_message(msg);
+        assert!(sanitized.contains("[REDACTED]"));
+        assert!(sanitized.contains("[SQL_REDACTED]"));
+    }
 }
