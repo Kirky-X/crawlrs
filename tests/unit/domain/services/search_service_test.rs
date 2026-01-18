@@ -1,3 +1,4 @@
+#![cfg(test)]
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
@@ -13,17 +14,16 @@ mod tests {
         let settings = Settings::new().expect("Failed to load settings");
 
         // Verify that the search configuration is properly loaded from default.toml
-        assert!(settings.google_search.api_key.is_some());
-        assert!(settings.google_search.cx.is_some());
+        assert!(settings.bing_search.api_key.is_some());
 
         println!("✓ Search service configuration loaded successfully from default.toml");
         println!(
-            "  Google API Key configured: {}",
+            "  Bing API Key configured: {}",
             if settings
-                .google_search
+                .bing_search
                 .api_key
                 .as_ref()
-                .expect("Google API key not found")
+                .expect("Bing API key not found")
                 .is_empty()
             {
                 "[EMPTY]"
@@ -32,39 +32,21 @@ mod tests {
             }
         );
         println!(
-            "  Google CX configured: {}",
-            if settings
-                .google_search
-                .cx
-                .as_ref()
-                .expect("Google CX not found")
-                .is_empty()
-            {
-                "[EMPTY]"
-            } else {
-                "[SET]"
-            }
+            "  Default Search Engine: {:?}",
+            settings.search.default_engine
         );
 
         // Test that the configuration can be used to create error messages
-        // (this simulates what the search service does when API keys are missing)
         if settings
-            .google_search
+            .bing_search
             .api_key
             .as_ref()
-            .expect("Google API key not found")
+            .expect("Bing API key not found")
             .is_empty()
-            || settings
-                .google_search
-                .cx
-                .as_ref()
-                .expect("Google CX not found")
-                .is_empty()
         {
-            let error_msg = "No search engine configured. Please set google_search.api_key and google_search.cx in config/default.toml.";
+            let error_msg = "No search engine configured. Please set bing_search.api_key in config/default.toml.";
             println!("  Expected error message: {}", error_msg);
-            assert!(error_msg.contains("google_search.api_key"));
-            assert!(error_msg.contains("google_search.cx"));
+            assert!(error_msg.contains("bing_search.api_key"));
             assert!(error_msg.contains("config/default.toml"));
         }
     }

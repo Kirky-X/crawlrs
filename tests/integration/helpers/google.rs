@@ -5,7 +5,7 @@
 
 #![allow(deprecated)]
 
-use crate::common::constants::timeouts::CRAWL_TASK_TIMEOUT;
+use crawlrs::common::constants::testing::CRAWL_TASK_TIMEOUT;
 use crawlrs::search::client::google::GoogleSearchEngine;
 
 #[cfg(feature = "engine-fire-cdp")]
@@ -41,6 +41,7 @@ pub struct FlareSolverrGoogleEngine {
 }
 
 #[allow(dead_code)]
+#[cfg(feature = "engine-flaresolverr")]
 impl FlareSolverrGoogleEngine {
     pub fn new(flaresolverr_url: String) -> Self {
         Self {

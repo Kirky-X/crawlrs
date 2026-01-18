@@ -1,4 +1,4 @@
-use crate::common::constants::timeouts::{E2E_TEST_TIMEOUT, QUICK_TEST_TIMEOUT};
+use crawlrs::common::constants::testing::{E2E_TEST_TIMEOUT, QUICK_TEST_TIMEOUT};
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0

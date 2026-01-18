@@ -83,8 +83,8 @@ pub fn is_internal_url(url_str: &str) -> bool {
     }
 
     // IPv4 private range 172.16.0.0 - 172.31.255.255
-    if host.starts_with("172.") {
-        if let Some(second_octet) = host[4..].split('.').next() {
+    if let Some(rest) = host.strip_prefix("172.") {
+        if let Some(second_octet) = rest.split('.').next() {
             if let Ok(num) = second_octet.parse::<u8>() {
                 if (16..=31).contains(&num) {
                     return true;
@@ -104,7 +104,7 @@ pub fn is_internal_url(url_str: &str) -> bool {
         if let Some(second_octet) = host.get(2..3) {
             let second_octet_upper = second_octet.to_ascii_uppercase();
             if let Some(c) = second_octet_upper.chars().next() {
-                if c >= '8' && c <= 'B' {
+                if ('8'..='B').contains(&c) {
                     return true;
                 }
             }

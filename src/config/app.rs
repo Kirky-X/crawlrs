@@ -266,7 +266,7 @@ impl WorkerCount {
 
                 // 使用逻辑核心数的1-2倍，但限制在合理范围
                 let workers = logical_cores * 2;
-                workers.max(2).min(16)
+                workers.clamp(2, 16)
             }
             WorkerCount::Fixed(n) => *n,
             _ => 5, // 默认值

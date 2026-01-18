@@ -1,4 +1,7 @@
-use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
+#![cfg(test)]
+
+#![cfg(test)]
+use crawlrs::common::constants::testing::QUICK_TEST_TIMEOUT;
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
@@ -107,10 +110,7 @@ async fn test_extract_with_rules_credit_deduction() {
         .await;
     match task_model {
         Ok(Some(task)) => {
-            println!(
-                "DEBUG: DB task status: {}, lock_expires_at: {:?}",
-                task.status, task.lock_expires_at
-            );
+            println!("DEBUG: DB task status: {}", task.status);
         }
         Ok(None) => {
             println!("DEBUG: Task not found in DB");

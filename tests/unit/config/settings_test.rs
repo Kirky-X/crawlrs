@@ -19,25 +19,14 @@ mod tests {
         match Settings::new() {
             Ok(settings) => {
                 println!("✓ Configuration loaded successfully");
-                println!("Google Search Config:");
+                println!("Search Config:");
+                println!("  Default Engine: {:?}", settings.search.default_engine);
                 println!(
-                    "  API Key: {}",
-                    if settings.google_search.api_key.is_some() {
-                        "[SET]"
-                    } else {
-                        "[NOT SET]"
-                    }
-                );
-                println!(
-                    "  CX: {}",
-                    if settings.google_search.cx.is_some() {
-                        "[SET]"
-                    } else {
-                        "[NOT SET]"
-                    }
+                    "  Enable A/B Testing: {}",
+                    settings.search.enable_ab_testing
                 );
 
-                println!("\nLLM Config:");
+                println!("\nBing Search Config:");
                 println!(
                     "  API Key: {}",
                     if settings.llm.api_key.is_some() {
@@ -56,9 +45,8 @@ mod tests {
                 println!("  URL: {}", settings.redis.url);
 
                 // Verify that the new config sections are present
-                assert!(settings.google_search.api_key.is_some());
-                assert!(settings.google_search.cx.is_some());
-                assert!(settings.llm.api_key.is_some());
+                assert!(settings.bing_search.api_key.is_some());
+                assert!(settings.search.default_engine.is_some());
                 assert!(settings.llm.model.is_some());
                 assert!(settings.llm.api_base_url.is_some());
 

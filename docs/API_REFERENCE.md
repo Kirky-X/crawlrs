@@ -28,6 +28,7 @@
   - [Search API](#search-api)
   - [Extract API](#extract-api)
   - [Task API](#task-api)
+  - [Task API v2](#task-api-v2)
   - [Team API](#team-api)
   - [Webhook API](#webhook-api)
   - [Audit API](#audit-api)
@@ -472,9 +473,9 @@ Search using various search engines.
 |-----------|-------|----------|-------------|
 | `engine` | string | Yes | Search engine: `google`, `bing`, `baidu`, `sogou` |
 | `query` | string | Yes | Search query |
-| `num_results` | integer | No | Number of results (default: 10, max: 100) |
-| `language` | string | No | Search language (default: `en`) |
-| `region` | string | No | Search region (default: `us`) |
+| `limit` | integer | No | Number of results (default: 10, max: 100) |
+| `lang` | string | No | Search language (default: `en`) |
+| `country` | string | No | Search region (default: `us`) |
 | `safe_search` | boolean | No | Enable safe search (default: false) |
 | `webhook` | string | No | Webhook URL for notifications |
 | `sync_wait_ms` | integer | No | Wait time for synchronous response |
@@ -484,9 +485,16 @@ Search using various search engines.
 {
   "success": true,
   "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "engine": "google",
     "query": "Rust web scraping",
+    "results": [
+      {
+        "title": "Web Scraping with Rust",
+        "url": "https://example.com/rust-scraping",
+        "description": "Learn how to scrape websites using Rust",
+        "engine": "google"
+      }
+    ],
+    "crawl_id": "550e8400-e29b-41d4-a716-446655440000",
     "credits_used": 5
   }
 }
@@ -702,6 +710,73 @@ Extract structured data from HTML.
       "events": ["task.completed", "task.failed"],
       "active": true
     }
+  }
+}
+```
+
+---
+
+### Task API v2
+
+#### Query Tasks
+
+**Endpoint:** `POST /v2/tasks/query`
+
+**Request Body:**
+```json
+{
+  "filters": {
+    "status": ["completed", "running"],
+    "type": ["scrape", "crawl", "search"],
+    "created_after": "2025-01-01T00:00:00Z",
+    "created_before": "2025-01-15T00:00:00Z"
+  },
+  "pagination": {
+    "page": 1,
+    "limit": 20
+  },
+  "sort": {
+    "field": "created_at",
+    "order": "desc"
+  }
+}
+```
+
+**Response (Success):**
+```json
+{
+  "success": true,
+  "data": {
+    "tasks": [...],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 150
+    }
+  }
+}
+```
+
+#### Cancel Tasks
+
+**Endpoint:** `DELETE /v2/tasks/cancel`
+
+**Request Body:**
+```json
+{
+  "task_ids": [
+    "550e8400-e29b-41d4-a716-446655440000",
+    "660e8400-e29b-41d4-a716-446655440001"
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "cancelled_count": 2
   }
 }
 ```

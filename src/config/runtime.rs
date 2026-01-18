@@ -11,21 +11,12 @@ use serde::Deserialize;
 use std::time::Duration;
 
 /// 运行时配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RuntimeConfig {
     /// Worker相关配置
     pub worker: WorkerConfig,
     /// 后台任务配置
     pub background_tasks: BackgroundTaskConfig,
-}
-
-impl Default for RuntimeConfig {
-    fn default() -> Self {
-        Self {
-            worker: WorkerConfig::default(),
-            background_tasks: BackgroundTaskConfig::default(),
-        }
-    }
 }
 
 /// Worker配置

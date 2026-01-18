@@ -5,7 +5,9 @@
 
 #![allow(deprecated)]
 
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::search::client::baidu::BaiduSearchEngine;
 use crawlrs::search::client::bing::BingSearchEngine;
 use crawlrs::search::client::google::GoogleSearchEngine;
@@ -13,11 +15,20 @@ use crawlrs::search::client::sogou::SogouSearchEngine;
 use crawlrs::search::engine_trait::SearchEngine;
 use std::sync::Arc;
 
+#[cfg(feature = "engine-fire-cdp")]
 fn create_engine_client() -> Arc<EngineClient> {
+    use crawlrs::engines::client::fire_cdp::FireEngineCdp;
+
     let reqwest_engine = Arc::new(ReqwestEngine::new());
-    let fire_engine_cdp = Arc::new(crawlrs::engines::client::fire_cdp::FireEngineCdp::new());
+    let fire_engine_cdp = Arc::new(FireEngineCdp::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
     Arc::new(EngineClient::with_engines(engines))
+}
+
+#[cfg(not(feature = "engine-fire-cdp"))]
+fn create_engine_client() -> Arc<EngineClient> {
+    let reqwest_engine = Arc::new(ReqwestEngine::new());
+    Arc::new(EngineClient::with_engines(vec![reqwest_engine]))
 }
 
 #[allow(dead_code)]

@@ -8,9 +8,11 @@
 
 use super::helpers::browser_helpers::create_scrape_request;
 use super::helpers::google_helpers::{get_chrome_ws_url, set_chrome_ws_url};
-use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
+use crawlrs::common::constants::testing::QUICK_TEST_TIMEOUT;
 #[cfg(feature = "engine-playwright")]
 use crawlrs::engines::client::playwright::PlaywrightEngine;
+#[cfg(feature = "engine-playwright")]
+use crawlrs::engines::traits::ScraperEngine;
 
 pub async fn test_simple_http_page() -> bool {
     println!("\n1. 测试访问 httpbin.org...");
@@ -109,6 +111,7 @@ pub async fn test_google_search_with_query(query: &str, timeout_secs: u64) -> bo
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_browser_connection_simple -- --include-ignored
 #[ignore]
 #[tokio::test]
+#[ignore]
 async fn test_browser_connection_simple() {
     println!("=== 浏览器连接测试 ===");
 
@@ -127,6 +130,7 @@ async fn test_browser_connection_simple() {
 }
 
 #[tokio::test]
+#[ignore]
 #[ignore] // Ignoring this test because it requires Chrome at localhost:9222
 async fn test_browser_connection_debug() {
     println!("=== 浏览器连接调试测试 ===");
@@ -153,6 +157,7 @@ async fn test_browser_connection_debug() {
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_playwright_direct -- --include-ignored
 #[ignore]
 #[tokio::test]
+#[ignore]
 async fn test_playwright_direct() {
     println!("=== 直接测试Playwright连接 ===");
 
@@ -177,6 +182,7 @@ async fn test_playwright_direct() {
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_browser_with_remote_chrome -- --include-ignored
 #[ignore]
 #[tokio::test]
+#[ignore]
 async fn test_browser_with_remote_chrome() {
     println!("=== 使用远程Chrome测试浏览器功能 ===");
 

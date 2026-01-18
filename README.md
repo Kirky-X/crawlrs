@@ -162,10 +162,10 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 | `metrics` | Prometheus metrics export | ✅ Yes |
 | `db-postgres` | PostgreSQL database support | ✅ Yes |
 | `db-sqlite` | SQLite database support | ❌ No |
-| `search-google` | Google search integration | ❌ No |
-| `search-bing` | Bing search integration | ❌ No |
-| `search-baidu` | Baidu search integration | ❌ No |
-| `search-sogou` | Sogou search integration | ❌ No |
+| `search-google` | Google search integration | ✅ Yes |
+| `search-bing` | Bing search integration | ✅ Yes |
+| `search-baidu` | Baidu search integration | ✅ Yes |
+| `search-sogou` | Sogou search integration | ✅ Yes |
 
 ---
 

@@ -1,4 +1,7 @@
-use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
+#![cfg(test)]
+
+#![cfg(test)]
+use crawlrs::common::constants::testing::QUICK_TEST_TIMEOUT;
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
@@ -27,6 +30,7 @@ fn skip_if_no_chrome() {
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_page_interactions -- --include-ignored
 #[ignore]
 #[tokio::test]
+#[ignore]
 async fn test_scrape_with_page_interactions() {
     skip_if_no_chrome();
     if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
@@ -129,6 +133,7 @@ async fn test_scrape_with_page_interactions() {
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_click_action -- --include-ignored
 #[ignore]
 #[tokio::test]
+#[ignore]
 async fn test_scrape_with_click_action() {
     skip_if_no_chrome();
     if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
@@ -224,6 +229,7 @@ async fn test_scrape_with_click_action() {
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_input_action -- --include-ignored
 #[ignore]
 #[tokio::test]
+#[ignore]
 async fn test_scrape_with_input_action() {
     skip_if_no_chrome();
     if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
@@ -322,6 +328,7 @@ async fn test_scrape_with_input_action() {
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_screenshot_action -- --include-ignored
 #[ignore]
 #[tokio::test]
+#[ignore]
 async fn test_scrape_with_screenshot_action() {
     skip_if_no_chrome();
     if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
@@ -416,6 +423,7 @@ async fn test_scrape_with_screenshot_action() {
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_scrape_with_complex_interactions -- --include-ignored
 #[ignore]
 #[tokio::test]
+#[ignore]
 async fn test_scrape_with_complex_interactions() {
     skip_if_no_chrome();
     if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {

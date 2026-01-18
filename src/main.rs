@@ -197,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 5. Initialize engines
     let engine_components =
-        engines::init_engine_components(&settings.proxy.url(), &settings.engines);
+        engines::init_engine_components(settings.proxy.url(), &settings.engines);
 
     // 6. Initialize services
     let services = services::init_services(

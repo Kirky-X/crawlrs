@@ -1,7 +1,9 @@
+#![cfg(test)]
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
+#![cfg(test)]
 
 use chrono::Duration;
 use chrono::{DateTime, FixedOffset, Utc};
@@ -95,6 +97,7 @@ impl RealTestContext {
 
 /// Test real task creation and retrieval
 #[tokio::test]
+#[ignore]  # Skip: Integration test requiring full environment
 async fn test_real_task_lifecycle() {
     let ctx = RealTestContext::new().await;
 
@@ -152,6 +155,7 @@ async fn test_real_task_lifecycle() {
 
 /// Test real search engine functionality
 #[tokio::test]
+#[ignore]  # Skip: Integration test requiring full environment
 async fn test_real_search_engine_parsing() {
     let ctx = RealTestContext::new().await;
 
@@ -209,6 +213,7 @@ async fn test_real_search_engine_parsing() {
 
 /// Test real LLM service error handling
 #[tokio::test]
+#[ignore]  # Skip: Integration test requiring full environment
 async fn test_real_llm_service_error_handling() {
     let _ctx = RealTestContext::new().await;
 
@@ -244,6 +249,7 @@ async fn test_real_llm_service_error_handling() {
 
 /// Test real task querying with multiple criteria
 #[tokio::test]
+#[ignore]  # Skip: Integration test requiring full environment
 async fn test_real_task_querying() {
     let ctx = RealTestContext::new().await;
 
@@ -310,6 +316,7 @@ async fn test_real_task_querying() {
 
 /// Test real task batch operations
 #[tokio::test]
+#[ignore]  # Skip: Integration test requiring full environment
 async fn test_real_task_batch_operations() {
     let ctx = RealTestContext::new().await;
 
@@ -348,6 +355,7 @@ async fn test_real_task_batch_operations() {
 
 /// Test real search engine cookie and URL construction
 #[tokio::test]
+#[ignore]  # Skip: Integration test requiring full environment
 async fn test_real_search_engine_configuration() {
     let ctx = RealTestContext::new().await;
 

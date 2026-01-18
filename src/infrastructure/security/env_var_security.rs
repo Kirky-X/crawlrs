@@ -149,7 +149,6 @@ pub struct EnvVarSecurityReport {
 #[derive(Debug, Clone)]
 pub struct EnvVarSecurityMonitor {
     whitelist: Arc<EnvVarWhitelist>,
-    checked_vars: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 impl EnvVarSecurityMonitor {
@@ -157,16 +156,17 @@ impl EnvVarSecurityMonitor {
     pub fn new(whitelist: EnvVarWhitelist) -> Self {
         Self {
             whitelist: Arc::new(whitelist),
-            checked_vars: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
     }
+}
 
-    /// 创建默认配置的安全监控器
-    pub fn default() -> Self {
+impl Default for EnvVarSecurityMonitor {
+    fn default() -> Self {
         Self::new(EnvVarWhitelist::default())
     }
+}
 
-    /// 检查单个环境变量是否安全
+impl EnvVarSecurityMonitor {
     pub fn check_variable(&self, name: &str, value: &str) -> EnvVarCheckResult {
         let name = name.to_uppercase();
 
@@ -346,14 +346,6 @@ impl EnvVarValidator {
             monitor,
             required_vars: HashSet::from_iter(required_vars),
         }
-    }
-
-    /// 创建默认验证器
-    pub fn default() -> Self {
-        Self::new(
-            EnvVarSecurityMonitor::default(),
-            vec!["APP_ENVIRONMENT", "DATABASE_URL"],
-        )
     }
 
     /// 验证所有必需的环境变量

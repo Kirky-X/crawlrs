@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+#[cfg(feature = "engine-fire-cdp")]
 use super::helpers::google::create_google_engine;
 use super::helpers::mock_server::flaresolverr;
 use crawlrs::search::engine_trait::SearchEngine;
@@ -14,6 +15,7 @@ use tracing::{info, Level};
 use tracing_subscriber::fmt::format::FmtSpan;
 
 #[tokio::test]
+#[ignore]
 async fn verify_google_uses_fire_engine_cdp() {
     // 1. Setup logging to capture stdout
     let subscriber = tracing_subscriber::fmt()

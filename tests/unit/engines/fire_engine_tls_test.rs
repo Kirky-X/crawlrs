@@ -1,4 +1,4 @@
-use crate::common::constants::timeouts::API_REQUEST_TIMEOUT;
+use crawlrs::common::constants::testing::API_REQUEST_TIMEOUT;
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0

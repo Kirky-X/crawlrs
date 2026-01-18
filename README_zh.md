@@ -161,10 +161,10 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 | `metrics` | Prometheus 指标导出 | ✅ 是 |
 | `db-postgres` | PostgreSQL 数据库支持 | ✅ 是 |
 | `db-sqlite` | SQLite 数据库支持 | ❌ 否 |
-| `search-google` | Google 搜索集成 | ❌ 否 |
-| `search-bing` | Bing 搜索集成 | ❌ 否 |
-| `search-baidu` | 百度搜索集成 | ❌ 否 |
-| `search-sogou` | 搜狗搜索集成 | ❌ 否 |
+| `search-google` | Google 搜索集成 | ✅ 是 |
+| `search-bing` | Bing 搜索集成 | ✅ 是 |
+| `search-baidu` | 百度搜索集成 | ✅ 是 |
+| `search-sogou` | 搜狗搜索集成 | ✅ 是 |
 
 ---
 

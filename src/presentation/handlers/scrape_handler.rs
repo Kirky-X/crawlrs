@@ -88,21 +88,18 @@ pub async fn create_scrape(
     }
 
     // 2. 检查配额
-    match rate_limiting_service
+    if let Err(e) = rate_limiting_service
         .check_and_deduct_quota(
             team_id,
-            1, // 每个抓取消耗 1 Credit
+            1,
             crate::domain::models::credits::CreditsTransactionType::Scrape,
             format!("Scrape URL: {}", payload.url),
-            None, // 任务尚未创建
+            None,
         )
         .await
     {
-        Ok(_) => {}
-        Err(e) => {
-            error!("Quota check failed for team {}: {}", team_id, e);
-            return errors::payment_required(e.to_string());
-        }
+        error!("Quota check failed for team {}: {}", team_id, e);
+        return errors::payment_required(e.to_string());
     }
 
     let task = Task::new(

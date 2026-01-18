@@ -28,7 +28,11 @@ use uuid::Uuid;
 use crawlrs::config::settings::Settings;
 #[cfg(feature = "engine-playwright")]
 use crawlrs::engines::client::playwright::PlaywrightEngine;
+#[cfg(feature = "engine-reqwest")]
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
+#[cfg(any(feature = "engine-reqwest", feature = "engine-playwright"))]
+use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::geolocation::GeoLocationService;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
@@ -291,13 +295,25 @@ impl TestAppFixture {
         ));
 
         let reqwest_engine = Arc::new(ReqwestEngine::new());
-        let playwright_engine = Arc::new(PlaywrightEngine);
 
+        #[cfg(feature = "engine-playwright")]
+        let playwright_engine = Arc::new(PlaywrightEngine);
+        #[cfg(not(feature = "engine-playwright"))]
+        let playwright_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
+
+        #[cfg(feature = "engine-playwright")]
         let engines_for_client: Vec<Arc<dyn ScraperEngine>> =
             vec![reqwest_engine.clone(), playwright_engine.clone()];
+        #[cfg(not(feature = "engine-playwright"))]
+        let engines_for_client: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine.clone()];
+
         let engine_client = Arc::new(EngineClient::with_engines(engines_for_client));
 
+        #[cfg(feature = "engine-playwright")]
         let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
+        #[cfg(not(feature = "engine-playwright"))]
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+
         let router = Arc::new(crawlrs::engines::router::EngineRouter::new(engines));
 
         let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(Arc::new(
@@ -315,7 +331,9 @@ impl TestAppFixture {
                 10000,
             ));
 
-        let geo_location_service = GeoLocationService::new();
+        let geo_location_service: Arc<
+            dyn crawlrs::infrastructure::geolocation::GeoLocationServiceTrait,
+        > = Arc::new(GeoLocationService::new());
         let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
         let team_service = Arc::new(crawlrs::domain::services::team_service::TeamService::new(
             geo_location_service,
@@ -434,6 +452,7 @@ fn create_router(
         team_id,
         api_key_id: uuid::Uuid::nil(),
         scope: crawlrs::domain::auth::ApiKeyScope::default(),
+        api_key_cache: None,
     };
 
     let public_routes = axum::Router::new()

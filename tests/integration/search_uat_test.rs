@@ -4,7 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use super::helpers::create_test_app;
-use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
+use crawlrs::common::constants::testing::QUICK_TEST_TIMEOUT;
 use reqwest::StatusCode;
 use serde_json::json;
 use std::time::Instant;

@@ -29,11 +29,12 @@ pub fn create_scrape_request(url: String, needs_js: bool, timeout_secs: u64) -> 
 }
 
 #[allow(dead_code)]
+#[cfg(feature = "engine-playwright")]
 pub async fn test_page_access(url: &str, needs_js: bool, timeout_secs: u64) -> bool {
     let engine = PlaywrightEngine;
     let request = create_scrape_request(url.to_string(), needs_js, timeout_secs);
 
-    match client.scrape(&request).await {
+    match engine.scrape(&request).await {
         Ok(response) => {
             println!("✅ 成功访问 {}", url);
             println!("状态码: {:?}", response.status_code);
@@ -45,6 +46,13 @@ pub async fn test_page_access(url: &str, needs_js: bool, timeout_secs: u64) -> b
             false
         }
     }
+}
+
+#[allow(dead_code)]
+#[cfg(not(feature = "engine-playwright"))]
+pub async fn test_page_access(_url: &str, _needs_js: bool, _timeout_secs: u64) -> bool {
+    println!("⚠️  Playwright not available, skipping test");
+    false
 }
 
 #[allow(dead_code)]

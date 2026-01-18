@@ -11,7 +11,7 @@
 //! - 搜索引擎测试辅助函数
 //! - URL 可访问性检查
 
-use crate::common::constants::timeouts::API_REQUEST_TIMEOUT;
+use crawlrs::common::constants::testing::API_REQUEST_TIMEOUT;
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::SearchEngine;
 use crate::domain::search::engine::SearchError;

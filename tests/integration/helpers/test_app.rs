@@ -84,9 +84,15 @@ use crawlrs::config::settings::Settings;
 use crawlrs::domain::auth::ApiKeyScope;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::domain::services::rate_limiting_service::RateLimitConfig;
+#[cfg(feature = "engine-fire-cdp")]
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
+#[cfg(feature = "engine-playwright")]
 use crawlrs::engines::client::playwright::PlaywrightEngine;
+#[cfg(feature = "engine-reqwest")]
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
+#[cfg(any(feature = "engine-reqwest", feature = "engine-playwright"))]
+use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::geolocation::{GeoLocationService, GeoLocationServiceTrait};
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
@@ -474,9 +480,22 @@ pub async fn create_test_app_with_rate_limit_options(
     ));
 
     let reqwest_engine = Arc::new(ReqwestEngine::new());
+
+    #[cfg(feature = "engine-playwright")]
     let playwright_engine = Arc::new(PlaywrightEngine);
+    #[cfg(not(feature = "engine-playwright"))]
+    let playwright_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
+
+    #[cfg(feature = "engine-fire-cdp")]
     let fire_engine = Arc::new(FireEngineCdp::new());
+    #[cfg(not(feature = "engine-fire-cdp"))]
+    let fire_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
+
+    #[cfg(any(feature = "engine-playwright", feature = "engine-fire-cdp"))]
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine, fire_engine];
+    #[cfg(not(any(feature = "engine-playwright", feature = "engine-fire-cdp")))]
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+
     let router = Arc::new(crawlrs::engines::router::EngineRouter::new(engines));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 
@@ -558,11 +577,15 @@ pub async fn create_test_app_with_rate_limit_options(
     let llm_service = Box::new(crawlrs::domain::services::llm_service::LLMService::new(
         &settings,
     ));
-    let _extraction_service = Arc::new(
-        crawlrs::domain::services::extraction_service::ExtractionService::new(llm_service),
+    let create_scrape_use_case = Arc::new(
+        crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(
+            engine_client.clone(),
+        ),
     );
     let create_scrape_use_case = Arc::new(
-        crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(router.clone()),
+        crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(
+            engine_client.clone(),
+        ),
     );
 
     // 创建 Webhook 服务
@@ -708,6 +731,7 @@ fn create_router(
         team_id,
         api_key_id: Uuid::new_v4(),
         scope: ApiKeyScope::default(),
+        api_key_cache: None,
     };
 
     let public_routes = axum::Router::new()
@@ -1030,8 +1054,17 @@ pub async fn create_test_app_no_worker() -> TestApp {
     ));
 
     let reqwest_engine = Arc::new(ReqwestEngine::new());
+
+    #[cfg(feature = "engine-playwright")]
     let playwright_engine = Arc::new(PlaywrightEngine);
+    #[cfg(not(feature = "engine-playwright"))]
+    let playwright_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
+
+    #[cfg(feature = "engine-playwright")]
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
+    #[cfg(not(feature = "engine-playwright"))]
+    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+
     let router = Arc::new(crawlrs::engines::router::EngineRouter::new(engines));
 
     let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(Arc::new(

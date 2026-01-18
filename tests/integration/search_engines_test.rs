@@ -32,8 +32,10 @@
 
 #![allow(deprecated)]
 
-use crate::common::constants::timeouts::QUICK_TEST_TIMEOUT;
+use crawlrs::common::constants::testing::QUICK_TEST_TIMEOUT;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::search::client::{
     BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SogouSearchEngine,
 };

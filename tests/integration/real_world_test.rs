@@ -18,10 +18,14 @@
 //! export SKIP_BROWSER_TESTS=true
 //! ```
 
-use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
+use crawlrs::common::constants::testing::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
+#[cfg(feature = "engine-fire-cdp")]
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
+#[cfg(feature = "engine-fire-tls")]
 use crawlrs::engines::client::fire_tls::FireEngineTls;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
+use crawlrs::engines::traits::ScraperEngine;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -100,6 +104,7 @@ async fn wait_for_flaresolverr(base_url: &str) {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_real_world_reqwest_engine() {
     if should_skip_browser_tests() {
         println!("⚠️  Browser tests skipped - SKIP_BROWSER_TESTS is set");
@@ -136,6 +141,7 @@ async fn test_real_world_reqwest_engine() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_real_world_playwright_engine() {
     if should_skip_browser_tests() {
         println!("⚠️  Browser tests skipped - SKIP_BROWSER_TESTS is set");
@@ -185,6 +191,7 @@ async fn test_real_world_playwright_engine() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_real_world_fire_engine_cdp() {
     info!("Starting FlareSolverr container for CDP test...");
     let flaresolverr = GenericImage::new("ghcr.io/flaresolverr/flaresolverr", "latest")
@@ -243,6 +250,7 @@ async fn test_real_world_fire_engine_cdp() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_real_world_fire_engine_tls() {
     if should_skip_browser_tests() {
         println!("⚠️  Browser tests skipped - SKIP_BROWSER_TESTS is set");

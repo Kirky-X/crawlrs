@@ -3,9 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::common::constants::timeouts::E2E_TEST_TIMEOUT;
 use crate::integration::helpers::create_test_app;
 use axum::http::StatusCode;
+use crawlrs::common::constants::testing::E2E_TEST_TIMEOUT;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;

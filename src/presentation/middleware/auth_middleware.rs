@@ -94,7 +94,7 @@ impl ApiKeyCache {
             .filter(|key| {
                 self.cache
                     .get(key.as_str())
-                    .map_or(false, |r| now.duration_since(r.cached_at) >= self.ttl)
+                    .is_some_and(|r| now.duration_since(r.cached_at) >= self.ttl)
             })
             .cloned()
             .collect();

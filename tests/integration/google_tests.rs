@@ -3,8 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+#[cfg(feature = "engine-fire-cdp")]
 use super::helpers::google_helpers::{create_google_engine, get_chrome_ws_url, set_chrome_ws_url};
-use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
+use crawlrs::common::constants::testing::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
 use crawlrs::search::client::google::GoogleSearchEngine;
 use crawlrs::search::response::{Response, ResponseItem};
 use crawlrs::search::types::SearchEngineType;
@@ -271,6 +272,7 @@ impl FlareSolverrGoogleEngine {
 }
 
 #[tokio::test]
+#[ignore]
 #[ignore] // Ignoring this test because it requires FlareSolverr service at localhost:8191
 async fn test_flaresolverr_connection() {
     println!("=== 测试FlareSolverr服务 ===");
@@ -287,6 +289,7 @@ async fn test_flaresolverr_connection() {
 
 #[tokio::test]
 #[ignore]
+#[ignore]
 async fn test_flaresolverr_google_search() {
     println!("=== 测试FlareSolverr Google搜索 ===");
 
@@ -299,6 +302,7 @@ async fn test_flaresolverr_google_search() {
 }
 
 #[tokio::test]
+#[ignore]
 #[ignore]
 async fn test_google_with_remote_chrome() {
     println!("=== 使用远程Chrome测试Google搜索 ===");
@@ -316,6 +320,7 @@ async fn test_google_with_remote_chrome() {
 }
 
 #[tokio::test]
+#[ignore]
 #[ignore] // Ignoring this test because it requires remote Chrome
 async fn test_google_with_timeout() {
     println!("=== 使用远程Chrome测试Google搜索（增加超时时间） ===");
@@ -344,6 +349,7 @@ async fn test_google_with_timeout() {
 /// 如需运行此测试，请使用: cargo test --test integration_tests -- test_google_multiple_queries -- --include-ignored
 #[ignore]
 #[tokio::test]
+#[ignore]
 async fn test_google_multiple_queries() {
     println!("=== 测试Google搜索引擎多种查询 ===");
 
