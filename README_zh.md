@@ -155,6 +155,7 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 | `engine-playwright` | 基于 Chromium 的浏览器自动化 | ❌ 否 |
 | `engine-fire-cdp` | Fire 引擎 CDP 支持 | ❌ 否 |
 | `engine-fire-tls` | Fire 引擎 TLS 支持 | ❌ 否 |
+| `engine-flaresolverr` | FlareSolverr 反爬虫保护 | ❌ 否 |
 | `redis-cache` | Redis 缓存支持 | ✅ 是 |
 | `rate-limiting` | 基于 Redis 的速率限制 | ✅ 是 |
 | `metrics` | Prometheus 指标导出 | ✅ 是 |
@@ -321,12 +322,12 @@ flowchart TB
 
 | 组件 | 技术 | 版本 |
 |-----------|------------|---------|
-| Web 框架 | Axum | 0.7+ |
-| 异步运行时 | Tokio | 1.35+ |
-| 数据库 ORM | Sea-ORM | 0.12+ |
+| Web 框架 | Axum | 0.8 |
+| 异步运行时 | Tokio | 1.48 |
+| 数据库 ORM | Sea-ORM | 1.0 |
 | 数据库 | PostgreSQL / SQLite | 14+ / 3.x |
 | 缓存 | Redis | 7+ |
-| HTTP 客户端 | Reqwest | 0.11+ |
+| HTTP 客户端 | Reqwest | 0.12 |
 | 浏览器自动化 | Playwright | 0.40+ |
 
 ---

@@ -260,9 +260,11 @@ Scrape a single web page.
 ```json
 {
   "success": true,
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "https://example.com",
-  "credits_used": 10
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "url": "https://example.com",
+    "credits_used": 10
+  }
 }
 ```
 
@@ -277,14 +279,16 @@ Scrape a single web page.
 ```json
 {
   "success": true,
-  "task": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "completed",
-    "url": "https://example.com",
-    "result": {
-      "html": "...",
-      "markdown": "...",
-      "text": "..."
+  "data": {
+    "task": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "completed",
+      "url": "https://example.com",
+      "result": {
+        "html": "...",
+        "markdown": "...",
+        "text": "..."
+      }
     }
   }
 }
@@ -301,7 +305,9 @@ Scrape a single web page.
 ```json
 {
   "success": true,
-  "message": "Scrape task cancelled"
+  "data": {
+    "message": "Scrape task cancelled"
+  }
 }
 ```
 
@@ -354,9 +360,11 @@ Crawl multiple pages from a starting URL.
 ```json
 {
   "success": true,
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "https://example.com",
-  "credits_used": 50
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "url": "https://example.com",
+    "credits_used": 50
+  }
 }
 ```
 
@@ -371,13 +379,15 @@ Crawl multiple pages from a starting URL.
 ```json
 {
   "success": true,
-  "task": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "running",
-    "url": "https://example.com",
-    "progress": {
-      "pages_processed": 45,
-      "total_pages": 100
+  "data": {
+    "task": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "running",
+      "url": "https://example.com",
+      "progress": {
+        "pages_processed": 45,
+        "total_pages": 100
+      }
     }
   }
 }
@@ -398,17 +408,19 @@ Crawl multiple pages from a starting URL.
 ```json
 {
   "success": true,
-  "results": [
-    {
-      "url": "https://example.com/page1",
-      "html": "...",
-      "markdown": "..."
+  "data": {
+    "results": [
+      {
+        "url": "https://example.com/page1",
+        "html": "...",
+        "markdown": "..."
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 100
     }
-  ],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 100
   }
 }
 ```
@@ -424,7 +436,9 @@ Crawl multiple pages from a starting URL.
 ```json
 {
   "success": true,
-  "message": "Crawl task cancelled"
+  "data": {
+    "message": "Crawl task cancelled"
+  }
 }
 ```
 
@@ -469,10 +483,12 @@ Search using various search engines.
 ```json
 {
   "success": true,
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "engine": "google",
-  "query": "Rust web scraping",
-  "credits_used": 5
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "engine": "google",
+    "query": "Rust web scraping",
+    "credits_used": 5
+  }
 }
 ```
 
@@ -557,15 +573,17 @@ Extract structured data from HTML.
 }
 ```
 
-**Response:**
+**Response (Success):**
 ```json
 {
   "success": true,
-  "tasks": [...],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 150
+  "data": {
+    "tasks": [...],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 150
+    }
   }
 }
 ```
@@ -588,7 +606,9 @@ Extract structured data from HTML.
 ```json
 {
   "success": true,
-  "cancelled_count": 2
+  "data": {
+    "cancelled_count": 2
+  }
 }
 ```
 
@@ -604,10 +624,12 @@ Extract structured data from HTML.
 ```json
 {
   "success": true,
-  "restrictions": {
-    "allowed_countries": ["US", "UK", "CA"],
-    "blocked_countries": ["CN", "RU"],
-    "enabled": true
+  "data": {
+    "restrictions": {
+      "allowed_countries": ["US", "UK", "CA"],
+      "blocked_countries": ["CN", "RU"],
+      "enabled": true
+    }
   }
 }
 ```
@@ -629,7 +651,9 @@ Extract structured data from HTML.
 ```json
 {
   "success": true,
-  "message": "Geo restrictions updated"
+  "data": {
+    "message": "Geo restrictions updated"
+  }
 }
 ```
 
@@ -671,11 +695,13 @@ Extract structured data from HTML.
 ```json
 {
   "success": true,
-  "webhook": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "url": "https://your-webhook.com/callback",
-    "events": ["task.completed", "task.failed"],
-    "active": true
+  "data": {
+    "webhook": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "url": "https://your-webhook.com/callback",
+      "events": ["task.completed", "task.failed"],
+      "active": true
+    }
   }
 }
 ```
@@ -699,21 +725,23 @@ Extract structured data from HTML.
 ```json
 {
   "success": true,
-  "logs": [
-    {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "event_type": "api_request",
-      "timestamp": "2025-01-15T00:00:00Z",
-      "api_key_id": "770e8400-e29b-41d4-a716-446655440000",
-      "endpoint": "/v1/scrape",
-      "ip_address": "192.168.1.1",
-      "user_agent": "Mozilla/5.0..."
+  "data": {
+    "logs": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "event_type": "api_request",
+        "timestamp": "2025-01-15T00:00:00Z",
+        "api_key_id": "770e8400-e29b-41d4-a716-446655440000",
+        "endpoint": "/v1/scrape",
+        "ip_address": "192.168.1.1",
+        "user_agent": "Mozilla/5.0..."
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 500
     }
-  ],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 500
   }
 }
 ```
@@ -733,20 +761,22 @@ Extract structured data from HTML.
 ```json
 {
   "success": true,
-  "denied_requests": [
-    {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "timestamp": "2025-01-15T00:00:00Z",
-      "reason": "rate_limit_exceeded",
-      "api_key_id": "770e8400-e29b-41d4-a716-446655440000",
-      "endpoint": "/v1/scrape",
-      "ip_address": "192.168.1.1"
+  "data": {
+    "denied_requests": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "timestamp": "2025-01-15T00:00:00Z",
+        "reason": "rate_limit_exceeded",
+        "api_key_id": "770e8400-e29b-41d4-a716-446655440000",
+        "endpoint": "/v1/scrape",
+        "ip_address": "192.168.1.1"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 100
     }
-  ],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 100
   }
 }
 ```

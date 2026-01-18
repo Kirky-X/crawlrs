@@ -156,6 +156,7 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 | `engine-playwright` | Browser automation with Chromium | ❌ No |
 | `engine-fire-cdp` | Fire Engine CDP support | ❌ No |
 | `engine-fire-tls` | Fire Engine TLS support | ❌ No |
+| `engine-flaresolverr` | FlareSolverr anti-bot protection | ❌ No |
 | `redis-cache` | Redis caching support | ✅ Yes |
 | `rate-limiting` | Rate limiting with Redis | ✅ Yes |
 | `metrics` | Prometheus metrics export | ✅ Yes |
@@ -323,12 +324,12 @@ flowchart TD
 
 | Component | Technology | Version |
 |-----------|------------|---------|
-| Web Framework | Axum | 0.7+ |
-| Async Runtime | Tokio | 1.35+ |
-| Database ORM | Sea-ORM | 0.12+ |
+| Web Framework | Axum | 0.8 |
+| Async Runtime | Tokio | 1.48 |
+| Database ORM | Sea-ORM | 1.0 |
 | Database | PostgreSQL / SQLite | 14+ / 3.x |
 | Cache | Redis | 7+ |
-| HTTP Client | Reqwest | 0.11+ |
+| HTTP Client | Reqwest | 0.12 |
 | Browser Automation | Playwright | 0.40+ |
 
 ---
