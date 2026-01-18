@@ -3,6 +3,10 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! CrawlService - Core business logic for web crawling
+
+#![allow(unused_variables)]
+
 /// Load degradation thresholds
 const HIGH_LOAD_THRESHOLD: f64 = 0.8;
 const MEDIUM_LOAD_THRESHOLD: f64 = 0.6;

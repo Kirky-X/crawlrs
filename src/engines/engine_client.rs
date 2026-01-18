@@ -496,7 +496,6 @@ impl Default for EngineClient {
 }
 
 /// Convert internal errors to public EngineError
-#[allow(deprecated)]
 fn convert_error(e: crate::engines::traits::EngineError) -> EngineError {
     match e {
         crate::engines::traits::EngineError::RequestFailed(msg) => EngineError::RequestFailed(msg),

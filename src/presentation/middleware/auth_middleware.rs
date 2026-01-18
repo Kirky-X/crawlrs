@@ -4,30 +4,8 @@
 // See LICENSE file in the project root for full license information.
 
 //! Unified authentication middleware with scope and feature flag support
-//!
-//! This module provides comprehensive authentication middleware that consolidates
-//! the functionality from both `auth_middleware.rs` and `auth_middleware_enhanced.rs`.
-//!
-//! ## Features
-//! - API Key authentication with hashed token support
-//! - Scope-based authorization
-//! - Feature flag support
-//! - Audit logging integration
-//!
-//! ## Usage
-//!
-//! ```rust
-//! use crate::presentation::middleware::auth_middleware::{auth_middleware, AuthState};
-//! use axum::{Router, routing::get, middleware::from_fn_with_state};
-//!
-//! async fn handler() -> &'static str {
-//!     "Hello, authenticated user!"
-//! }
-//!
-//! let app = Router::new()
-//!     .route("/", get(handler))
-//!     .layer(middleware::from_fn_with_state(auth_state, auth_middleware));
-//! ```
+
+#![allow(dead_code)]
 
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use crate::domain::services::audit_service::AuditService;

@@ -26,7 +26,7 @@ use crate::{
             scrape_result_repo_impl::ScrapeResultRepositoryImpl, task_repo_impl::TaskRepositoryImpl,
         },
     },
-    presentation::handlers::response_builder::errors::{self, *},
+    presentation::handlers::response_builder::errors,
     presentation::handlers::response_builder::{access_denied, success_response},
     presentation::handlers::task_handler::wait_for_tasks_completion,
     presentation::helpers::ssrf_helper::is_internal_url,

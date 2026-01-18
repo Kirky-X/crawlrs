@@ -3,6 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! EngineRouter - Internal routing logic for engine selection
+//!
+//! This module handles the internal routing logic for selecting appropriate
+//! scraping engines based on request requirements. Uses deprecated traits
+//! for backwards compatibility during migration to EngineClient API.
+//! This is an internal implementation detail.
+
 #![allow(deprecated)]
 
 use crate::engines::circuit_breaker::CircuitBreaker;

@@ -4,6 +4,9 @@
 // See LICENSE file in the project root for full license information.
 
 //! Scraper engines initialization and configuration.
+//! Uses deprecated traits for backwards compatibility.
+
+#![allow(deprecated)]
 
 use crate::config::engines::EngineSettings;
 #[cfg(feature = "engine-fire-cdp")]
@@ -17,7 +20,6 @@ use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::engines::traits::ScraperEngine;
 use std::sync::Arc;
-use tracing::info;
 
 /// All engine-related components.
 #[derive(Clone)]
@@ -44,6 +46,7 @@ pub struct EngineComponents {
 ///
 /// Returns a vector of initialized engines.
 #[allow(deprecated)]
+#[allow(unused_variables)]
 pub fn init_engines(
     proxy_url: &str,
     engine_config: &EngineSettings,
@@ -57,7 +60,7 @@ pub fn init_engines(
 
     #[cfg(feature = "engine-fire-tls")]
     if engine_config.fire_tls.enabled {
-        info!(
+        tracing::info!(
             "Fire Engine TLS enabled with URL: {}",
             engine_config.fire_tls.url
         );
@@ -69,7 +72,7 @@ pub fn init_engines(
 
     #[cfg(feature = "engine-fire-cdp")]
     if engine_config.fire_cdp.enabled {
-        info!(
+        tracing::info!(
             "Fire Engine CDP enabled with URL: {}",
             engine_config.fire_cdp.url
         );

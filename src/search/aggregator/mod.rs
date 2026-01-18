@@ -3,6 +3,14 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! SearchAggregator - Search result aggregation and caching
+//!
+//! This module handles aggregating results from multiple search engines
+//! with caching and deduplication support.
+//! Uses deprecated constants for backwards compatibility.
+
+#![allow(deprecated)]
+
 pub mod deduplicator;
 pub mod enhanced;
 

@@ -3,6 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! CreateScrapeUseCase - Use case for creating scrape tasks
+//!
+//! This module implements the use case for creating scrape tasks.
+//! Uses deprecated traits for backwards compatibility during migration
+//! to EngineClient API.
+
 #![allow(deprecated)]
 
 use std::collections::HashMap;
@@ -31,6 +37,7 @@ impl CreateScrapeUseCase {
         Self { engine_router }
     }
 
+    #[allow(deprecated)]
     pub async fn execute(
         &self,
         request_dto: ScrapeRequestDto,
@@ -42,6 +49,7 @@ impl CreateScrapeUseCase {
             .map_err(|e| DomainError::EngineError(e.to_string()))
     }
 
+    #[allow(deprecated)]
     fn map_dto_to_request(&self, dto: ScrapeRequestDto) -> Result<ScrapeRequest, DomainError> {
         let options = dto.options.unwrap_or(ScrapeOptionsDto {
             headers: None,

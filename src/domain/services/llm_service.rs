@@ -1,3 +1,12 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0
+// See LICENSE file in the project root for full license information.
+
+//! LLMService - LLM provider interaction handling
+
+#![allow(deprecated)]
+
 use crate::config::settings::Settings;
 use crate::utils::http_client::HTTP_CLIENT;
 use anyhow::{Context, Result};

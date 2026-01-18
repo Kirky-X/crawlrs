@@ -3,6 +3,10 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Telemetry initialization - logging and tracing setup
+
+#![allow(unused_variables)]
+
 use crate::config::{FileLoggingSettings, LoggingSettings};
 use std::path::Path;
 use tracing_appender::{non_blocking, rolling};

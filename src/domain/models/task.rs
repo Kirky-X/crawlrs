@@ -3,6 +3,10 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Task entity - represents a work unit in the system
+
+#![allow(dead_code)]
+
 use chrono::{DateTime, FixedOffset, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
