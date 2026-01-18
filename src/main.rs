@@ -78,7 +78,10 @@ async fn start_api_service(
         services.rate_limiting_service.clone(),
         settings.concurrency.default_team_limit as usize,
     ));
-    let backlog_worker = AbstractWorker::new(backlog_processor, std::time::Duration::from_secs(30));
+    let backlog_worker = AbstractWorker::new(
+        backlog_processor,
+        std::time::Duration::from_secs(settings.timeouts.workers.backlog_interval_seconds),
+    );
     tokio::spawn(async move {
         backlog_worker.run().await;
     });
@@ -156,7 +159,10 @@ async fn start_worker_service(
         services.rate_limiting_service.clone(),
         settings.concurrency.default_team_limit as usize,
     ));
-    let backlog_worker = AbstractWorker::new(backlog_processor, std::time::Duration::from_secs(30));
+    let backlog_worker = AbstractWorker::new(
+        backlog_processor,
+        std::time::Duration::from_secs(settings.timeouts.workers.backlog_interval_seconds),
+    );
     tokio::spawn(async move {
         backlog_worker.run().await;
     });
@@ -194,8 +200,12 @@ async fn main() -> anyhow::Result<()> {
         engines::init_engine_components(&settings.proxy.url(), &settings.engines);
 
     // 6. Initialize services
-    let services =
-        services::init_services(&infrastructure, engine_components.router.clone(), &settings);
+    let services = services::init_services(
+        &infrastructure,
+        engine_components.router.clone(),
+        engine_components.engine_client.clone(),
+        &settings,
+    );
 
     // 7. Start service based on type
     match ServiceType::from_args() {

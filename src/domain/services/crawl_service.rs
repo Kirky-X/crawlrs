@@ -109,7 +109,10 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
             .await
         {
             Ok(tasks) => Ok(tasks),
-            Err(e) => Err(DomainError::EngineError(e.to_string())),
+            Err(e) => {
+                tracing::error!("Crawl service error: {:?}", e);
+                Err(DomainError::CrawlError(e.to_string()))
+            }
         }
     }
 

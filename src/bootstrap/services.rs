@@ -186,6 +186,7 @@ pub fn init_search_engine(
 ///
 /// * `infrastructure` - Initialized infrastructure components
 /// * `engine_router` - Engine router for creating use cases
+/// * `engine_client` - Engine client for scraping operations
 /// * `settings` - Application settings
 ///
 /// # Returns
@@ -194,6 +195,7 @@ pub fn init_search_engine(
 pub fn init_services(
     infrastructure: &InfrastructureComponents,
     engine_router: Arc<EngineRouter>,
+    engine_client: Arc<EngineClient>,
     settings: &Settings,
 ) -> ServicesComponents {
     let redis_client = infrastructure.redis_client.clone();
@@ -210,7 +212,7 @@ pub fn init_services(
         init_rate_limiting_service(redis_client.clone(), repositories, settings);
 
     // Initialize create scrape use case
-    let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(engine_router.clone()));
+    let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(engine_client.clone()));
 
     // Initialize webhook service
     let webhook_service = Arc::new(WebhookServiceImpl::new(

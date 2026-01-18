@@ -321,7 +321,9 @@ where
         // Resolve engine router directly to handle actions if they exist
         let scrape_request = Self::build_scrape_request(&task).unwrap_or_else(|e| {
             error!("Failed to parse task payload, using default: {}", e);
-            ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(30))
+            ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(
+                self.settings.timeouts.engines.default_timeout_seconds,
+            ))
         });
 
         let response = self.engine_client.scrape(&scrape_request).await;
@@ -462,7 +464,7 @@ where
 
         let request = ScrapeRequest::new(task.url.clone()).with_options(ScrapeOptions {
             headers,
-            timeout: Duration::from_secs(30),
+            timeout: Duration::from_secs(self.settings.timeouts.engines.default_timeout_seconds),
             needs_js: false, // 爬虫默认不需要 JS，除非配置指定
             needs_screenshot: false,
             screenshot_config: None,
@@ -677,7 +679,7 @@ where
         // 1. Scrape Content
         let scrape_req = ScrapeRequest::new(url.clone()).with_options(ScrapeOptions {
             headers: HashMap::new(),
-            timeout: Duration::from_secs(30),
+            timeout: Duration::from_secs(self.settings.timeouts.engines.default_timeout_seconds),
             needs_js: false,
             needs_screenshot: false,
             screenshot_config: None,

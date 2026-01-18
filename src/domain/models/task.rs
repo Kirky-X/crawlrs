@@ -202,11 +202,40 @@ pub enum DomainError {
     /// SSRF防护触发
     #[error("SSRF protection triggered: {0}")]
     SsrfProtection(String),
+
+    /// 超时错误，当请求超时时发生
+    #[error("Timeout error: {0}")]
+    TimeoutError(String),
+
+    /// 网络错误，当网络连接问题时发生
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    /// 安全错误，当安全检查失败时发生
+    #[error("Security error: {0}")]
+    SecurityError(String),
+
+    /// 爬取错误，当爬取过程中发生错误时发生
+    #[error("Crawl error: {0}")]
+    CrawlError(String),
 }
 
 impl From<anyhow::Error> for DomainError {
     fn from(error: anyhow::Error) -> Self {
-        DomainError::EngineError(error.to_string())
+        // 根据错误内容进行分类
+        let error_msg = error.to_string().to_lowercase();
+
+        if error_msg.contains("timeout") {
+            DomainError::TimeoutError(error_msg)
+        } else if error_msg.contains("connection") || error_msg.contains("network") {
+            DomainError::NetworkError(error_msg)
+        } else if error_msg.contains("parse") || error_msg.contains("validation") {
+            DomainError::ValidationError(error_msg)
+        } else if error_msg.contains("security") || error_msg.contains("ssrf") {
+            DomainError::SecurityError(error_msg)
+        } else {
+            DomainError::EngineError(error_msg)
+        }
     }
 }
 
