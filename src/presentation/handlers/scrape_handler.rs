@@ -26,6 +26,8 @@ use crate::{
             scrape_result_repo_impl::ScrapeResultRepositoryImpl, task_repo_impl::TaskRepositoryImpl,
         },
     },
+    presentation::handlers::response_builder::errors::{self, *},
+    presentation::handlers::response_builder::{access_denied, success_response},
     presentation::handlers::task_handler::wait_for_tasks_completion,
     presentation::helpers::ssrf_helper::is_internal_url,
     presentation::middleware::auth_middleware::AuthState,
@@ -48,27 +50,13 @@ pub async fn create_scrape(
     // 验证 sync_wait_ms 范围
     if let Some(ms) = payload.sync_wait_ms {
         if ms > 30000 {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": "sync_wait_ms must be <= 30000"
-                })),
-            )
-                .into_response();
+            return errors::unprocessable_entity("sync_wait_ms must be <= 30000");
         }
     }
 
     if is_internal_url(&payload.url) {
         tracing::error!("SSRF Protection: Blocking internal URL {}", payload.url);
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "success": false,
-                "error": "SSRF protection: Internal URLs are not allowed"
-            })),
-        )
-            .into_response();
+        return errors::bad_request("SSRF protection: Internal URLs are not allowed");
     }
 
     // 1. 检查限流
@@ -77,14 +65,7 @@ pub async fn create_scrape(
         .await
     {
         Ok(RateLimitResult::Denied { reason }) => {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": format!("Rate limit exceeded: {}", reason)
-                })),
-            )
-                .into_response();
+            return errors::too_many_requests(format!("Rate limit exceeded: {}", reason));
         }
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
@@ -120,14 +101,7 @@ pub async fn create_scrape(
         Ok(_) => {}
         Err(e) => {
             error!("Quota check failed for team {}: {}", team_id, e);
-            return (
-                StatusCode::PAYMENT_REQUIRED,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": e.to_string()
-                })),
-            )
-                .into_response();
+            return errors::payment_required(e.to_string());
         }
     }
 
@@ -185,21 +159,14 @@ pub async fn create_scrape(
                 StatusCode::CREATED // 异步模式
             };
 
-            (status_code, Json(response)).into_response()
+            success_response(status_code, response)
         }
         Err(e) => {
             error!(
                 "Failed to enqueue task for team {}: {}. Payload: {:?}",
                 team_id, e, payload
             );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": e.to_string()
-                })),
-            )
-                .into_response()
+            errors::internal_server_error(e.to_string())
         }
     }
 }
@@ -213,14 +180,7 @@ pub async fn cancel_scrape(
     match repository.find_by_id(id).await {
         Ok(Some(task)) => {
             if task.team_id != team_id {
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({
-                        "success": false,
-                        "error": "Access denied"
-                    })),
-                )
-                    .into_response();
+                return access_denied();
             }
 
             // Update task status to cancelled
@@ -234,35 +194,14 @@ pub async fn cancel_scrape(
                     .into_response(),
                 Err(e) => {
                     error!("Failed to cancel task {}: {}", id, e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({
-                            "success": false,
-                            "error": "Internal server error"
-                        })),
-                    )
-                        .into_response()
+                    errors::internal_server_error("Internal server error")
                 }
             }
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "success": false,
-                "error": "Task not found"
-            })),
-        )
-            .into_response(),
+        Ok(None) => errors::not_found("Task not found"),
         Err(e) => {
             error!("Failed to get task {} for cancellation: {}", id, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": "Internal server error"
-                })),
-            )
-                .into_response()
+            errors::internal_server_error("Internal server error")
         }
     }
 }
@@ -277,14 +216,7 @@ pub async fn get_scrape_status(
     match task_repository.find_by_id(id).await {
         Ok(Some(task)) => {
             if task.team_id != team_id {
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({
-                        "success": false,
-                        "error": "Access denied"
-                    })),
-                )
-                    .into_response();
+                return access_denied();
             }
 
             // Fetch scrape result if task is completed
@@ -332,24 +264,10 @@ pub async fn get_scrape_status(
             )
                 .into_response()
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "success": false,
-                "error": "Task not found"
-            })),
-        )
-            .into_response(),
+        Ok(None) => errors::not_found("Task not found"),
         Err(e) => {
             error!("Failed to get task status {}: {}", id, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": "Internal server error"
-                })),
-            )
-                .into_response()
+            errors::internal_server_error("Internal server error")
         }
     }
 }

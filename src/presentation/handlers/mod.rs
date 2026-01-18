@@ -11,6 +11,7 @@ pub mod audit_handler;
 pub mod crawl_handler;
 pub mod extract_handler;
 pub mod metrics_handler;
+pub mod response_builder;
 pub mod scrape_handler;
 pub mod search_handler;
 pub mod task_handler;

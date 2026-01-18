@@ -26,6 +26,8 @@ use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimiti
 use crate::domain::services::team_service::TeamService;
 use crate::infrastructure::geolocation::GeoLocationService;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
+use crate::presentation::handlers::response_builder::errors;
+use crate::presentation::handlers::response_builder::success_response;
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::presentation::helpers::ssrf_helper::is_internal_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
@@ -57,25 +59,11 @@ where
 
     // 验证 config 字段 (简化验证)
     if payload.config.max_depth > 5 {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({
-                "success": false,
-                "error": "max_depth must be between 0 and 5"
-            })),
-        )
-            .into_response();
+        return errors::unprocessable_entity("max_depth must be between 0 and 5");
     }
 
     if is_internal_url(&payload.url) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": "SSRF protection: Internal URLs are not allowed"
-            })),
-        )
-            .into_response();
+        return errors::bad_request("SSRF protection: Internal URLs are not allowed");
     }
 
     // 1. 检查限流
@@ -84,14 +72,7 @@ where
         .await
     {
         Ok(RateLimitResult::Denied { reason }) => {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(json!({
-                    "success": false,
-                    "error": format!("Rate limit exceeded: {}", reason)
-                })),
-            )
-                .into_response();
+            return errors::too_many_requests(format!("Rate limit exceeded: {}", reason));
         }
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
@@ -124,14 +105,7 @@ where
         )
         .await
     {
-        return (
-            StatusCode::PAYMENT_REQUIRED,
-            Json(json!({
-                "success": false,
-                "error": e.to_string()
-            })),
-        )
-            .into_response();
+        return errors::payment_required(e.to_string());
     }
 
     let use_case = CrawlUseCase::new(
@@ -199,7 +173,7 @@ where
                 StatusCode::CREATED // 任务已创建（可能已完成）
             };
 
-            (status_code, Json(crawl)).into_response()
+            success_response(status_code, crawl)
         }
         Err(e) => {
             let (status, msg): (StatusCode, String) = e.into();
