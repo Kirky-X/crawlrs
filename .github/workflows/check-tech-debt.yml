@@ -1,0 +1,61 @@
+name: Code Quality Check
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  check-tech-debt:
+    name: Check Tech Debt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rust-version: stable
+
+      - name: Check for new anyhow usage
+        id: anyhow-check
+        run: |
+          # Count current anyhow::Result usage
+          CURRENT_ANYHOW=$(rg "anyhow::Result" --type rust | wc -l)
+          echo "Current anyhow::Result usage: $CURRENT_ANYHOW files"
+          echo "anyhow_count=$CURRENT_ANYHOW" >> $GITHUB_OUTPUT
+
+          # Check for new anyhow::Result in this PR
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            # Get files changed in this PR
+            NEW_ANYHOW=$(git diff --name-only origin/${{ github.base_ref }} HEAD | xargs rg -l "anyhow::Result" 2>/dev/null | wc -l || echo "0")
+            echo "New anyhow::Result files in this PR: $NEW_ANYHOW"
+            if [ "$NEW_ANYHOW" -gt 0 ]; then
+              echo "::warning::Found $NEW_ANYHOW new file(s) using anyhow::Result. Consider using custom error types instead."
+              git diff --name-only origin/${{ github.base_ref }} HEAD | xargs rg "anyhow::Result" 2>/dev/null || true
+            fi
+          fi
+
+      - name: Check for hardcoded worker count
+        run: |
+          # Check for hardcoded worker count in main.rs
+          if rg "start_workers\([0-9]\)" src/main.rs > /dev/null; then
+            echo "::warning::Found hardcoded worker count in main.rs. Consider using configuration."
+          fi
+
+      - name: Check for hardcoded Duration values
+        id: duration-check
+        run: |
+          # Count hardcoded Duration::from_secs (excluding tests)
+          HARDCODE_DURATION=$(rg "Duration::from_secs\(" --type rust src/ | grep -v "#[cfg(test)]" | grep -v "mod tests" | wc -l)
+          echo "Hardcoded Duration values (non-test): $HARDCODE_DURATION files"
+          echo "duration_count=$HARDCODE_DURATION" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        run: |
+          echo "=== Tech Debt Summary ==="
+          echo "anyhow::Result files: ${{ steps.anyhow-check.outputs.anyhow_count }}"
+          echo "Hardcoded Duration files: ${{ steps.duration-check.outputs.duration_count }}"
+          echo "========================"

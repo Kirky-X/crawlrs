@@ -145,7 +145,9 @@ async fn start_worker_service(
     );
 
     // Start workers
-    worker_manager.start_workers(5).await;
+    let worker_count = settings.workers.count.resolve();
+    tracing::info!("Starting {} worker(s)", worker_count);
+    worker_manager.start_workers(worker_count).await;
 
     // Start backlog worker
     let backlog_processor = Arc::new(BacklogWorker::new(

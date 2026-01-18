@@ -131,6 +131,33 @@ url = "http://localhost:8191/v1"
 enabled = false
 url = "http://localhost:8191/v1"
 
+# Worker Configuration
+# Configure background worker processes
+[workers]
+# Worker count: "auto" to detect CPU cores, or a fixed number
+count = "auto"
+# Alternative: count = 5
+
+# Timeout Configuration
+# Configure operation timeouts
+[timeouts.workers]
+webhook_interval_seconds = 5
+backlog_interval_seconds = 30
+
+[timeouts.engines]
+default_timeout_seconds = 30
+playwright_timeout_seconds = 30
+flaresolverr_timeout_seconds = 30
+
+[timeouts.retry]
+initial_backoff_seconds = 1
+max_backoff_seconds = 60
+
+[timeouts.cache]
+default_ttl_seconds = 300
+memory_ttl_seconds = 300
+redis_ttl_seconds = 300
+
 # Logging Configuration
 # 日志配置，支持控制台和文件输出
 [logging]

@@ -12,6 +12,7 @@ pub mod app;
 pub mod engines;
 pub mod llm;
 pub mod logging;
+pub mod runtime;
 pub mod search;
 pub mod storage;
 

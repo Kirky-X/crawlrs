@@ -15,6 +15,7 @@
 /// 领域层是系统的核心，不依赖于任何外部实现，
 /// 体现了纯粹的业务逻辑和业务规则。
 pub mod auth;
+pub mod errors;
 pub mod models;
 pub mod repositories;
 pub mod search;

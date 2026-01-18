@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use super::app::{
     ConcurrencySettings, DatabaseSettings, ProxySettings, RateLimitingSettings, RedisSettings,
-    ServerSettings,
+    ServerSettings, TimeoutSettings, WorkerSettings,
 };
 use super::engines::EngineSettings;
 use super::llm::LLMSettings;
@@ -104,6 +104,10 @@ pub struct Settings {
     pub engines: EngineSettings,
     /// 日志配置
     pub logging: LoggingSettings,
+    /// Worker配置
+    pub workers: WorkerSettings,
+    /// 超时配置
+    pub timeouts: TimeoutSettings,
 }
 
 impl Settings {
@@ -195,7 +199,20 @@ impl Settings {
             .set_default("engines.fire_cdp.url", "http://localhost:8191/v1")? // Fire CDP 默认地址
             .set_default("engines.fire_tls.enabled", false)? // 默认禁用 Fire TLS
             .set_default("engines.fire_tls.url", "http://localhost:8191/v1")? // Fire TLS 默认地址
-            // 13. 设置日志默认配置
+            // 12. 设置Worker默认配置
+            .set_default("workers.count", "auto")? // 默认自动检测CPU核心数
+            // 13. 设置超时默认配置
+            .set_default("timeouts.workers.webhook_interval_seconds", 5)?
+            .set_default("timeouts.workers.backlog_interval_seconds", 30)?
+            .set_default("timeouts.engines.default_timeout_seconds", 30)?
+            .set_default("timeouts.engines.playwright_timeout_seconds", 30)?
+            .set_default("timeouts.engines.flaresolverr_timeout_seconds", 30)?
+            .set_default("timeouts.retry.initial_backoff_seconds", 1)?
+            .set_default("timeouts.retry.max_backoff_seconds", 60)?
+            .set_default("timeouts.cache.default_ttl_seconds", 300)?
+            .set_default("timeouts.cache.memory_ttl_seconds", 300)?
+            .set_default("timeouts.cache.redis_ttl_seconds", 300)?
+            // 14. 设置日志默认配置
             .set_default("logging.console.enabled", true)? // 默认启用控制台输出
             .set_default("logging.file.enabled", false)? // 默认禁用文件输出
             .set_default("logging.file.path", "logs/crawlrs.log")? // 默认日志文件路径
