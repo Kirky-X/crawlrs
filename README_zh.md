@@ -1,6 +1,6 @@
 <div align="center">
 
-![Logo](resources/logo.png)
+![Logo](docs/image/logo.png)
 
 ### 🚀 使用 Rust 构建的企业级网页数据采集平台
 
@@ -187,7 +187,7 @@ redis:
 
 server:
   host: "0.0.0.0"
-  port: 8080
+  port: 8899
 
 rate_limiting:
   enabled: true
@@ -197,6 +197,14 @@ rate_limiting:
 cache:
   enabled: true
   default_ttl: 300
+
+search:
+  default_engine: "baidu"
+  engines:
+    google_enabled: true
+    bing_enabled: true
+    baidu_enabled: true
+    sogou_enabled: true
 ```
 
 ### 2️⃣ 数据库设置
@@ -236,12 +244,12 @@ curl http://localhost:8080/health
 
 ### 环境变量
 
-| 变量 | 描述 | 默认值 | 必需 |
-|----------|-------------|----------|-----------|
+| 环境变量 | 描述 | 默认值 | 必需 |
+|-------------|----------|--------|------|
 | `DATABASE_URL` | PostgreSQL 连接字符串 | - | 是 |
 | `REDIS_URL` | Redis 连接字符串 | - | 否 |
 | `SERVER_HOST` | 服务器绑定地址 | 0.0.0.0 | 否 |
-| `SERVER_PORT` | 服务器端口 | 8080 | 否 |
+| `SERVER_PORT` | 服务器端口 | 8899 | 否 |
 | `LOG_LEVEL` | 日志级别 | info | 否 |
 
 ---

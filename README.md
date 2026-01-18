@@ -1,6 +1,6 @@
 <div align="center">
 
-![Logo](resources/logo.png)
+![Logo](docs/image/logo.png)
 
 ### 🚀 Enterprise-grade Web Scraping Platform built with Rust
 
@@ -188,7 +188,7 @@ redis:
 
 server:
   host: "0.0.0.0"
-  port: 8080
+  port: 8899
 
 rate_limiting:
   enabled: true
@@ -198,6 +198,14 @@ rate_limiting:
 cache:
   enabled: true
   default_ttl: 300
+
+search:
+  default_engine: "baidu"
+  engines:
+    google_enabled: true
+    bing_enabled: true
+    baidu_enabled: true
+    sogou_enabled: true
 ```
 
 ### 2️⃣ Database Setup
@@ -242,7 +250,7 @@ curl http://localhost:8080/health
 | `DATABASE_URL` | PostgreSQL connection string | - | Yes |
 | `REDIS_URL` | Redis connection string | - | No |
 | `SERVER_HOST` | Server bind address | 0.0.0.0 | No |
-| `SERVER_PORT` | Server port | 8080 | No |
+| `SERVER_PORT` | Server port | 8899 | No |
 | `LOG_LEVEL` | Logging level | info | No |
 
 ---

@@ -1293,19 +1293,6 @@ CREATE TABLE audit_logs (
 
 ## Deployment Architecture
 
-### Single Instance Deployment
-
-<!--
-┌─────────────────────────────────────────────────────┐
-│              Docker Container                  │
-│  ┌──────────────────────────────────────────┐ │
-│  │  crawlrs Application                │ │
-│  │  - Axum Server (port 8080)      │ │
-│  │  - Worker Pool (N workers)        │ │
-│  └──────────────┬───────────────────────┘ │
-└─────────────────┼───────────────────────────┘
-                  │
-       ┌──────────┴──────────┬──────────┐
        ▼                     ▼          ▼
 ┌────────────┐     ┌────────────┐  ┌────────────┐
 │ Postgres   │     │   Redis    │  │    S3      │
@@ -1320,7 +1307,7 @@ CREATE TABLE audit_logs (
 flowchart TB
     subgraph Container [Docker Container]
         subgraph App [crawlrs Application]
-            S1[Axum Server<br/>port 8080]
+            S1[Axum Server<br/>port 8899]
             S2[Worker Pool<br/>N workers]
         end
     end
