@@ -11,6 +11,9 @@
 use anyhow::{anyhow, Context, Result};
 use bcrypt::{hash, verify, DEFAULT_COST};
 
+// 重新导出环境变量安全模块
+pub mod env_var_security;
+
 /// 安全模块错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum SecurityError {
