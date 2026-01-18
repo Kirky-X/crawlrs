@@ -14,14 +14,15 @@ use uuid::Uuid;
 pub struct WaitHelpers;
 
 impl WaitHelpers {
-    async fn poll_with_timeout<T, F>(
+    async fn poll_with_timeout_async<T, F, Fut>(
         mut condition: F,
         timeout: Duration,
         interval: Duration,
         error_message: String,
     ) -> Result<T, String>
     where
-        F: FnMut() -> Option<T>,
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Option<T>>,
     {
         let start = std::time::Instant::now();
 
@@ -30,7 +31,7 @@ impl WaitHelpers {
                 return Err(error_message);
             }
 
-            if let Some(result) = condition() {
+            if let Some(result) = condition().await {
                 return Ok(result);
             }
 
@@ -43,11 +44,20 @@ impl WaitHelpers {
         task_id: Uuid,
         timeout_secs: u64,
     ) -> Result<Task, String> {
-        Self::poll_with_timeout(
-            || {
-                task_repo.find_by_id(task_id).ok().flatten().filter(|task| {
-                    task.status == TaskStatus::Completed || task.status == TaskStatus::Failed
-                })
+        let task_id_clone = task_id;
+        let task_repo_ref = task_repo;
+
+        Self::poll_with_timeout_async(
+            move || async move {
+                match task_repo_ref.find_by_id(task_id_clone).await {
+                    Ok(Some(task))
+                        if task.status == TaskStatus::Completed
+                            || task.status == TaskStatus::Failed =>
+                    {
+                        Some(task)
+                    }
+                    _ => None,
+                }
             },
             Duration::from_secs(timeout_secs),
             Duration::from_millis(100),
@@ -65,13 +75,15 @@ impl WaitHelpers {
         expected_status: TaskStatus,
         timeout_secs: u64,
     ) -> Result<Task, String> {
-        Self::poll_with_timeout(
-            || {
-                task_repo
-                    .find_by_id(task_id)
-                    .ok()
-                    .flatten()
-                    .filter(|task| task.status == expected_status)
+        let task_id_clone = task_id;
+        let task_repo_ref = task_repo;
+
+        Self::poll_with_timeout_async(
+            move || async move {
+                match task_repo_ref.find_by_id(task_id_clone).await {
+                    Ok(Some(task)) if task.status == expected_status => Some(task),
+                    _ => None,
+                }
             },
             Duration::from_secs(timeout_secs),
             Duration::from_millis(100),
@@ -123,15 +135,16 @@ impl WaitHelpers {
         Self::wait_for_task_status(task_repo, task_id, TaskStatus::Cancelled, timeout_secs).await
     }
 
-    pub async fn poll_until<T, F>(
-        condition: F,
+    pub async fn poll_until<T, F, Fut>(
+        mut condition: F,
         timeout_secs: u64,
         interval_ms: u64,
     ) -> Result<T, String>
     where
-        F: FnMut() -> Option<T>,
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Option<T>>,
     {
-        Self::poll_with_timeout(
+        Self::poll_with_timeout_async(
             condition,
             Duration::from_secs(timeout_secs),
             Duration::from_millis(interval_ms),

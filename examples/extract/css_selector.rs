@@ -54,44 +54,44 @@ async fn main() {
 
     let examples = vec![
         CssSelectorExample {
-            name: "标签选择器",
-            selector: "h1",
-            description: "选择所有<h1>元素",
+            name: "标签选择器".to_string(),
+            selector: "h1".to_string(),
+            description: "选择所有<h1>元素".to_string(),
         },
         CssSelectorExample {
-            name: "ID选择器",
-            selector: "#header",
-            description: "选择id=\"header\"的元素",
+            name: "ID选择器".to_string(),
+            selector: "#header".to_string(),
+            description: "选择id=\"header\"的元素".to_string(),
         },
         CssSelectorExample {
-            name: "类选择器",
-            selector: ".article",
-            description: "选择class=\"article\"的元素",
+            name: "类选择器".to_string(),
+            selector: ".article".to_string(),
+            description: "选择class=\"article\"的元素".to_string(),
         },
         CssSelectorExample {
-            name: "属性选择器",
-            selector: "[href]",
-            description: "选择有href属性的元素",
+            name: "属性选择器".to_string(),
+            selector: "[href]".to_string(),
+            description: "选择有href属性的元素".to_string(),
         },
         CssSelectorExample {
-            name: "后代选择器",
-            selector: "div p",
-            description: "选择<div>内的所有<p>元素",
+            name: "后代选择器".to_string(),
+            selector: "div p".to_string(),
+            description: "选择<div>内的所有<p>元素".to_string(),
         },
         CssSelectorExample {
-            name: "子元素选择器",
-            selector: "ul > li",
-            description: "选择<ul>的直接子元素<li>",
+            name: "子元素选择器".to_string(),
+            selector: "ul > li".to_string(),
+            description: "选择<ul>的直接子元素<li>".to_string(),
         },
         CssSelectorExample {
-            name: "相邻兄弟",
-            selector: "h1 + p",
-            description: "选择<h1>后面紧邻的<p>",
+            name: "相邻兄弟".to_string(),
+            selector: "h1 + p".to_string(),
+            description: "选择<h1>后面紧邻的<p>".to_string(),
         },
         CssSelectorExample {
-            name: "伪类选择器",
-            selector: "a:first-child",
-            description: "选择作为父元素第一个子元素的<a>",
+            name: "伪类选择器".to_string(),
+            selector: "a:first-child".to_string(),
+            description: "选择作为父元素第一个子元素的<a>".to_string(),
         },
     ];
 
@@ -185,8 +185,8 @@ fn extract_first(html: &str, selector: &str) -> Option<String> {
         "title" => regex::Regex::new(r"<title>([^<]*)</title>")
             .unwrap()
             .captures(html)
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str().to_string()),
+            .and_then(|c: &regex::Captures| c.get(1))
+            .map(|m: regex::Match| m.as_str().to_string()),
         _ => None,
     }
 }
@@ -196,14 +196,14 @@ fn extract_all(html: &str, selector: &str) -> Vec<String> {
         "article h2" => regex::Regex::new(r"<article[^>]*>[\s\S]*?<h2>([^<]*)</h2>")
             .unwrap()
             .captures_iter(html)
-            .filter_map(|c| c.get(1))
-            .map(|m| m.as_str().to_string())
+            .filter_map(|c: &regex::Captures| c.get(1))
+            .map(|m: regex::Match| m.as_str().to_string())
             .collect(),
         ".summary" | "p.summary" => regex::Regex::new(r#"<p[^>]*class="summary"[^>]*>([^<]*)</p>"#)
             .unwrap()
             .captures_iter(html)
-            .filter_map(|c| c.get(1))
-            .map(|m| m.as_str().to_string())
+            .filter_map(|c: &regex::Captures| c.get(1))
+            .map(|m: regex::Match| m.as_str().to_string())
             .collect(),
         _ => Vec::new(),
     }
@@ -214,8 +214,8 @@ fn extract_attributes(html: &str, selector: &str, attr: &str) -> Vec<String> {
         "a[href]" => regex::Regex::new(r#"<a[^>]+href="([^"]*)""#)
             .unwrap()
             .captures_iter(html)
-            .filter_map(|c| c.get(1))
-            .map(|m| m.as_str().to_string())
+            .filter_map(|c: &regex::Captures| c.get(1))
+            .map(|m: regex::Match| m.as_str().to_string())
             .collect(),
         _ => Vec::new(),
     }

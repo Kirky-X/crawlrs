@@ -886,7 +886,7 @@ impl EngineRouter {
         let mut errors = Vec::new();
 
         for (_, engine) in candidates {
-            match engine.scrape(request).await {
+            match engine.scrape(&request).await {
                 Ok(response) => results.push((engine.name().to_string(), response)),
                 Err(e) => errors.push((engine.name().to_string(), e)),
             }

@@ -5,6 +5,7 @@
 
 #![allow(deprecated)]
 
+#[cfg(feature = "engine-playwright")]
 use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
 use std::time::Duration;
@@ -32,7 +33,7 @@ pub async fn test_page_access(url: &str, needs_js: bool, timeout_secs: u64) -> b
     let engine = PlaywrightEngine;
     let request = create_scrape_request(url.to_string(), needs_js, timeout_secs);
 
-    match engine.scrape(&request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             println!("✅ 成功访问 {}", url);
             println!("状态码: {:?}", response.status_code);

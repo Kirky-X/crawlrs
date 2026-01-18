@@ -21,9 +21,7 @@
 //!
 //! 成功时将显示爬取状态、内容长度等信息。
 
-use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
-use crawlrs::engines::traits::ScraperEngine;
 use std::time::Duration;
 use tracing::info;
 
@@ -36,8 +34,7 @@ async fn main() {
     info!("=====================================\n");
 
     // 创建引擎客户端
-    let engine = ReqwestEngine;
-    let client = EngineClient::new(engine);
+    let client = EngineClient::new();
 
     // 目标URL
     let url = "https://example.com";
@@ -49,16 +46,15 @@ async fn main() {
 
     // 执行爬取
     info!("🔄 正在爬取页面...");
-    match client.scrape(request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             info!("✅ 爬取成功!");
             info!("  状态码: {}", response.status_code);
             info!("  内容长度: {} 字节", response.content.len());
-            info!("  MIME类型: {:?}", response.metadata.content_type);
+            info!("  MIME类型: {:?}", response.content_type);
 
             // 显示部分内容（避免输出过长）
-            let preview =
-                String::from_utf8_lossy(&response.content[..200.min(response.content.len())]);
+            let preview = &response.content[..200.min(response.content.len())];
             info!("  内容预览:\n{}", preview);
         }
         Err(e) => {

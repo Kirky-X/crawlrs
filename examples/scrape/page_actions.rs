@@ -21,9 +21,7 @@
 //!
 //! 页面交互功能需要启用 `engine-playwright` 特性。
 
-use crawlrs::engines::client::reqwest::ReqwestEngine;
-use crawlrs::engines::engine_client::{EngineClient, PageAction, ScrapeOptions};
-use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::engines::engine_client::{EngineClient, PageAction, ScrapeOptionsBuilder};
 use std::time::Duration;
 use tracing::info;
 
@@ -34,8 +32,7 @@ async fn main() {
     info!("🚀 开始页面交互示例");
     info!("=====================================\n");
 
-    let engine = ReqwestEngine;
-    let client = EngineClient::new(engine);
+    let client = EngineClient::new();
     let url = "https://example.com";
 
     info!("🎮 目标页面: {}", url);
@@ -45,29 +42,29 @@ async fn main() {
     info!("1️⃣  等待操作（Wait）");
     info!("-----------------------------");
     info!("   场景: 等待页面加载完成或等待指定时间");
-    info!("   API: PageAction::Wait { milliseconds: 3000 }");
+    info!("   API: PageAction::Wait {{ milliseconds: 3000 }}");
     info!("");
 
     // 2. 点击操作
     info!("2️⃣  点击操作（Click）");
     info!("-----------------------------");
     info!("   场景: 点击按钮、链接或其他可点击元素");
-    info!("   API: PageAction::Click { selector: \".submit-btn\" }");
+    info!("   API: PageAction::Click {{ selector: \".submit-btn\" }}");
     info!("");
 
     // 3. 滚动操作
     info!("3️⃣  滚动操作（Scroll）");
     info!("-----------------------------");
     info!("   场景: 滚动页面以加载更多内容");
-    info!("   API: PageAction::Scroll { direction: \"down\" }");
-    info!("   支持方向: up, down");
+    info!("   API: PageAction::Scroll {{ direction: ScrollDirection::Down }}");
+    info!("   支持方向: Up, Down, Bottom, Top");
     info!("");
 
     // 4. 输入操作
     info!("4️⃣  输入操作（Input）");
     info!("-----------------------------");
     info!("   场景: 在输入框中输入文本");
-    info!("   API: PageAction::Input { selector: \"#search\", text: \"hello\" }");
+    info!("   API: PageAction::Input {{ selector: \"#search\", text: \"hello\" }}");
     info!("");
 
     // 5. 完整交互示例
@@ -80,19 +77,19 @@ async fn main() {
         PageAction::Wait { milliseconds: 2000 },
         // 向下滚动以加载更多内容
         PageAction::Scroll {
-            direction: "down".to_string(),
+            direction: crawlrs::engines::engine_client::ScrollDirection::Down,
         },
         // 等待加载
         PageAction::Wait { milliseconds: 1000 },
         // 再次滚动
         PageAction::Scroll {
-            direction: "down".to_string(),
+            direction: crawlrs::engines::engine_client::ScrollDirection::Down,
         },
         // 等待加载完成
         PageAction::Wait { milliseconds: 1000 },
         // 滚动回顶部
         PageAction::Scroll {
-            direction: "up".to_string(),
+            direction: crawlrs::engines::engine_client::ScrollDirection::Up,
         },
     ];
 
@@ -102,12 +99,7 @@ async fn main() {
         match action {
             PageAction::Wait { milliseconds } => info!("   [{:2}] 等待 {}ms", i + 1, milliseconds),
             PageAction::Click { selector } => info!("   [{:2}] 点击选择器: {}", i + 1, selector),
-            PageAction::Scroll { direction } => info!("   [{:2}] 滚动方向: {}", i + 1, direction),
-            PageAction::Screenshot { full_page } => info!(
-                "   [{:2}] 截图 (全页: {})",
-                i + 1,
-                full_page.unwrap_or(false)
-            ),
+            PageAction::Scroll { direction } => info!("   [{:2}] 滚动方向: {:?}", i + 1, direction),
             PageAction::Input { selector, text } => {
                 info!("   [{:2}] 输入到 {}: \"{}\"", i + 1, selector, text)
             }
@@ -118,13 +110,14 @@ async fn main() {
     // 实际执行（演示）
     info!("🔄 准备执行交互动作...");
 
-    let options = ScrapeOptions::default()
-        .actions(actions.clone())
-        .timeout(Duration::from_secs(120));
+    let options = ScrapeOptionsBuilder::default()
+        .actions(actions)
+        .timeout(Duration::from_secs(120))
+        .build();
 
     let request = crawlrs::engines::engine_client::ScrapeRequest::new(url).with_options(options);
 
-    match client.scrape(request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             info!("✅ 交互执行完成");
             info!("  状态码: {}", response.status_code);

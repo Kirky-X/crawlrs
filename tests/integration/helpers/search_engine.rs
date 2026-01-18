@@ -5,9 +5,7 @@
 
 #![allow(deprecated)]
 
-use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
-use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::search::client::baidu::BaiduSearchEngine;
 use crawlrs::search::client::bing::BingSearchEngine;
 use crawlrs::search::client::google::GoogleSearchEngine;

@@ -33,7 +33,7 @@ async fn main() {
         sync_wait_ms: 3000,
     };
 
-    match engine.scrape(&request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             println!("✅ Google homepage loaded!");
             println!("   Status: {}", response.status_code);
@@ -70,7 +70,7 @@ async fn main() {
         sync_wait_ms: 5000,
     };
 
-    match engine.scrape(&request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             println!("✅ Google search loaded!");
             println!("   Status: {}", response.status_code);

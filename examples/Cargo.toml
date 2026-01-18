@@ -19,7 +19,7 @@ default-run = "basic_scrape"
 crawlrs = { path = "..", default-features = true }
 
 # 异步运行时
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1.49", features = ["full"] }
 
 # 日志记录
 tracing = "0.1"
@@ -29,6 +29,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+regex = "1.12.2"
 
 # Advanced examples
 [[bin]]

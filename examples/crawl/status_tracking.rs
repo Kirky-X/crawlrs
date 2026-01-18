@@ -76,11 +76,11 @@ impl CrawlProgress {
 
     fn display(&self) {
         let status_str = match &self.status {
-            CrawlStatus::Pending => "⏳ 等待中",
-            CrawlStatus::Running => "🔄 运行中",
-            CrawlStatus::Completed => "✅ 完成",
+            CrawlStatus::Pending => "⏳ 等待中".to_string(),
+            CrawlStatus::Running => "🔄 运行中".to_string(),
+            CrawlStatus::Completed => "✅ 完成".to_string(),
             CrawlStatus::Failed(e) => format!("❌ 失败: {}", e),
-            CrawlStatus::Cancelled => "🛑 已取消",
+            CrawlStatus::Cancelled => "🛑 已取消".to_string(),
         };
 
         info!("  状态: {}", status_str);

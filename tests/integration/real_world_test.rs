@@ -21,9 +21,7 @@
 use crate::common::constants::timeouts::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
 use crawlrs::engines::client::fire_tls::FireEngineTls;
-use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
-use crawlrs::engines::traits::ScraperEngine;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;

@@ -55,6 +55,7 @@ async fn setup_app_with_db() -> (Router, DatabaseConnection) {
         team_id: Uuid::nil(), // Will be set by middleware
         api_key_id: Uuid::nil(),
         scope: crawlrs::domain::auth::ApiKeyScope::default(),
+        api_key_cache: None,
     };
 
     let app = Router::new()
@@ -170,6 +171,7 @@ async fn test_auth_middleware_rejects_nil_uuid() {
         team_id: Uuid::nil(), // Will be set by middleware
         api_key_id: Uuid::nil(),
         scope: crawlrs::domain::auth::ApiKeyScope::default(),
+        api_key_cache: None,
     };
 
     let app = Router::new()

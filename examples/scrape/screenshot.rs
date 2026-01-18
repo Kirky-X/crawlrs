@@ -20,9 +20,7 @@
 //!
 //! 截图功能需要启用 `engine-playwright` 特性。
 
-use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScreenshotConfig};
-use crawlrs::engines::traits::ScraperEngine;
 use std::time::Duration;
 use tracing::info;
 
@@ -33,8 +31,8 @@ async fn main() {
     info!("🚀 开始页面截图示例");
     info!("=====================================\n");
 
-    let engine = ReqwestEngine;
-    let client = EngineClient::new(engine);
+    let client = EngineClient::new();
+    let client = EngineClient::new();
     let url = "https://example.com";
 
     info!("📸 目标页面: {}", url);
@@ -50,7 +48,7 @@ async fn main() {
 
     let request = crawlrs::engines::engine_client::ScrapeRequest::new(url).with_options(options);
 
-    match client.scrape(request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             if let Some(screenshot) = response.screenshot {
                 info!("✅ 截图成功");

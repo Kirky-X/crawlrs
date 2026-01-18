@@ -65,6 +65,7 @@ async fn main() {
 
     let request = CrawlRequestDto {
         url: "https://example.com".to_string(),
+        validated_url: None,
         name: Some("示例爬取任务".to_string()),
         config,
         sync_wait_ms: Some(5000),

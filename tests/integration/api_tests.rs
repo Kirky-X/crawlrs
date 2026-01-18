@@ -253,7 +253,6 @@ async fn test_team_concurrency_limit() {
 async fn test_circuit_breaker_and_engine_fallback() {
     use crawlrs::engines::circuit_breaker::{CircuitBreaker, CircuitConfig};
     use crawlrs::engines::client::playwright::PlaywrightEngine;
-    use crawlrs::engines::client::reqwest::ReqwestEngine;
     use crawlrs::engines::router::{EngineRouter, LoadBalancingStrategy};
     use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
     use std::collections::HashMap;

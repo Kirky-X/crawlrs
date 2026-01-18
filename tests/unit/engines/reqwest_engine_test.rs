@@ -17,7 +17,6 @@ mod tests {
         routing::get,
         Router,
     };
-    use crawlrs::engines::client::reqwest::ReqwestEngine;
     use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
     use std::collections::HashMap;
     use std::time::Duration;
@@ -53,7 +52,7 @@ mod tests {
         std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "true");
         let server_url = start_test_server().await;
 
-        let engine = ReqwestEngine;
+        let client = EngineClient::new();
         let request = ScrapeRequest {
             url: server_url.clone(),
             headers: HashMap::new(),
@@ -70,7 +69,7 @@ mod tests {
             sync_wait_ms: 0,
         };
 
-        let result = engine.scrape(&request).await;
+        let result = client.scrape(&request).await;
         if let Err(e) = &result {
             tracing::error!("Scrape failed: {:?}", e);
         }
@@ -89,7 +88,7 @@ mod tests {
         std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "true");
         let server_url = start_test_server().await;
 
-        let engine = ReqwestEngine;
+        let client = EngineClient::new();
         let request = ScrapeRequest {
             url: format!("{}/error", server_url),
             headers: HashMap::new(),
@@ -106,7 +105,7 @@ mod tests {
             sync_wait_ms: 0,
         };
 
-        let result = engine.scrape(&request).await;
+        let result = client.scrape(&request).await;
         assert!(result.is_ok());
 
         let response = result.expect("Failed to get scrape response");
@@ -117,7 +116,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reqwest_engine_support_score() {
-        let engine = ReqwestEngine;
+        let client = EngineClient::new();
 
         let basic_request = ScrapeRequest {
             url: "https://example.com".to_string(),
@@ -167,7 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reqwest_engine_name() {
-        let engine = ReqwestEngine;
+        let client = EngineClient::new();
         assert_eq!(engine.name(), "reqwest");
     }
 }

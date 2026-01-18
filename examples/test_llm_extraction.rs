@@ -1,22 +1,19 @@
 use crawlrs::config::settings::Settings;
 use crawlrs::domain::services::extraction_service::{ExtractionRule, ExtractionService};
 use crawlrs::domain::services::llm_service::LLMService;
-use serde_json::json;
 use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 强制设置环境变量，确保在 genai 客户端初始化前生效
+    // 使用环境变量设置 LLM 配置（安全方式）
     std::env::set_var("CRAWLRS__DATABASE__URL", "postgres://localhost/test");
     std::env::set_var("OLLAMA_HOST", "http://172.24.160.1:11434");
+    std::env::set_var("CRAWLRS__LLM__PROVIDER", "openai");
+    std::env::set_var("CRAWLRS__LLM__MODEL", "qwen3:8b");
+    std::env::set_var("CRAWLRS__LLM__API_BASE_URL", "http://172.24.160.1:11434/v1");
+    std::env::set_var("CRAWLRS__LLM__API_KEY", "ollama-is-ok");
 
-    let mut settings = Settings::new().expect("Failed to load settings");
-
-    // 使用 OpenAI 适配器连接 Ollama 的兼容接口，这样对自定义 IP 的支持更稳定
-    settings.llm.provider = Some("openai".to_string());
-    settings.llm.model = Some("qwen3:8b".to_string());
-    settings.llm.api_base_url = Some("http://172.24.160.1:11434/v1".to_string());
-    settings.llm.api_key = Some("ollama-is-ok".to_string());
+    let settings = Settings::new().expect("Failed to load settings");
 
     let service = ExtractionService::new(Box::new(LLMService::new(&settings)));
 

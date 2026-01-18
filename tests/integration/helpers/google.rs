@@ -8,12 +8,15 @@
 use crate::common::constants::timeouts::CRAWL_TASK_TIMEOUT;
 use crawlrs::search::client::google::GoogleSearchEngine;
 
+#[cfg(feature = "engine-fire-cdp")]
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
+#[cfg(feature = "engine-fire-tls")]
 use crawlrs::engines::client::fire_tls::FireEngineTls;
 use crawlrs::engines::engine_client::EngineClient;
 use std::sync::Arc;
 
 #[allow(dead_code)]
+#[cfg(feature = "engine-fire-cdp")]
 pub fn create_google_engine() -> GoogleSearchEngine {
     let mut engines: Vec<Arc<dyn crawlrs::engines::traits::ScraperEngine>> = Vec::new();
     let fire_engine_cdp = Arc::new(FireEngineCdp::new());
@@ -25,11 +28,13 @@ pub fn create_google_engine() -> GoogleSearchEngine {
 }
 
 #[allow(dead_code)]
+#[cfg(feature = "engine-flaresolverr")]
 pub fn create_flaresolverr_google_engine(flaresolverr_url: &str) -> FlareSolverrGoogleEngine {
     FlareSolverrGoogleEngine::new(flaresolverr_url.to_string())
 }
 
 #[allow(dead_code)]
+#[cfg(feature = "engine-flaresolverr")]
 pub struct FlareSolverrGoogleEngine {
     flaresolverr_url: String,
     client: reqwest::Client,

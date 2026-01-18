@@ -16,9 +16,7 @@
 //! cargo run --example extraction_rules
 //!
 
-use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::ScrapeRequest;
-use crawlrs::engines::traits::ScraperEngine;
 use std::time::Duration;
 use tracing::info;
 
@@ -61,7 +59,7 @@ async fn main() {
     info!("🚀 开始提取规则示例");
     info!("=====================================\n");
 
-    let engine = ReqwestEngine;
+    let client = EngineClient::new();
     let url = "https://example.com";
 
     info!("🎯 目标: {}", url);
@@ -103,7 +101,7 @@ async fn main() {
 
     let request = ScrapeRequest::new(url).timeout(Duration::from_secs(30));
 
-    match engine.scrape(&request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             info!("✅ 爬取成功");
             info!("  状态码: {}", response.status_code);
@@ -114,7 +112,7 @@ async fn main() {
             info!("3️⃣  应用提取规则");
             info!("-----------------------------");
 
-            let content = String::from_utf8_lossy(&response.content);
+            let content = &response.content;
             apply_extraction_rules(&content, &rules);
         }
         Err(e) => {

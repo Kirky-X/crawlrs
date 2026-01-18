@@ -20,6 +20,50 @@ pub struct FireEngineTls {
     proxy_url: Option<String>,
 }
 
+impl FireEngineTls {
+    /// 创建新的 FireEngineTls 实例
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder().build().unwrap_or_default();
+        Self {
+            client,
+            base_url: String::new(),
+            proxy_url: None,
+        }
+    }
+
+    /// 创建带有代理配置的 FireEngineTls 实例
+    pub fn with_proxy(proxy: &str) -> Self {
+        let proxy_result = reqwest::Proxy::https(proxy);
+        let client_builder = reqwest::Client::builder();
+        let client_builder = match proxy_result {
+            Ok(p) => client_builder.proxy(p),
+            Err(_) => client_builder,
+        };
+        let client = client_builder.build().unwrap_or_default();
+        Self {
+            client,
+            base_url: String::new(),
+            proxy_url: Some(proxy.to_string()),
+        }
+    }
+
+    /// 创建带有 base URL 和代理配置的实例
+    pub fn with_url_and_proxy(base_url: &str, proxy: Option<&str>) -> Self {
+        let proxy_result = proxy.map(|p| reqwest::Proxy::https(p)).transpose();
+        let client_builder = reqwest::Client::builder();
+        let client_builder = match proxy_result {
+            Ok(Some(p)) => client_builder.proxy(p),
+            _ => client_builder,
+        };
+        let client = client_builder.build().unwrap_or_default();
+        Self {
+            client,
+            base_url: base_url.to_string(),
+            proxy_url: proxy.map(|s| s.to_string()),
+        }
+    }
+}
+
 impl Default for FireEngineTls {
     fn default() -> Self {
         Self::new()
@@ -64,7 +108,7 @@ impl ScraperEngine for FireEngineTls {
             .await
             .map_err(|e| EngineError::RequestFailed(e.to_string()))?;
 
-        let flare_resp: FlaresolverrResponse = resp
+        let flare_resp: FlareSolverrResponse = resp
             .json()
             .await
             .map_err(|e| EngineError::RequestFailed(e.to_string()))?;
@@ -80,56 +124,51 @@ impl ScraperEngine for FireEngineTls {
             .solution
             .ok_or_else(|| EngineError::Other("Flaresolverr returned no solution".to_string()))?;
 
-        // Convert headers
-        let mut headers = std::collections::HashMap::with_capacity(32);
-        if let serde_json::Value::Object(map) = solution.headers {
-            for (k, v) in map {
-                if let Some(s) = v.as_str() {
-                    headers.insert(k, s.to_string());
-                }
-            }
-        }
+        // Convert headers - headers is already HashMap<String, String>
+        let headers = solution.headers;
+
+        let content_type = headers
+            .get("content-type")
+            .or_else(|| headers.get("Content-Type"))
+            .cloned()
+            .unwrap_or_else(|| "text/html".to_string());
 
         Ok(ScrapeResponse {
             status_code: solution.status,
             content: solution.response,
             screenshot: None,
-            content_type: "text/html".to_string(),
+            content_type,
             headers,
             response_time_ms: start.elapsed().as_millis() as u64,
         })
     }
 
     fn support_score(&self, request: &ScrapeRequest) -> u8 {
-        // 如果需要 TLS 指纹且不需要截图，这是最佳选择
-        if request.needs_tls_fingerprint && !request.needs_screenshot {
-            return 100;
+        // 如果明确请求使用 Fire Engine (TLS 模式)
+        if request.use_fire_engine {
+            return 95;
         }
 
-        // 如果需要 JS 或交互动作，不支持
-        if request.needs_js || !request.actions.is_empty() {
-            return 0;
+        // 如果需要 TLS 指纹但不需要截图，TLS Engine 是最佳选择
+        if request.needs_tls_fingerprint {
+            return 90;
         }
 
-        // 成本较高，默认优先级低
-        40
+        // 如果需要 JS，支持
+        if request.needs_js {
+            return 60;
+        }
+
+        // 如果有交互动作，支持但不是最佳
+        if !request.actions.is_empty() {
+            return 50;
+        }
+
+        // 成本低，速度快，默认优先级高
+        70
     }
 
     fn name(&self) -> &'static str {
         "fire_engine_tls"
-    }
-
-    // 覆盖能力方法 - FireEngineTls 不支持截图和 JavaScript，但支持 TLS 指纹
-
-    fn supports_screenshot(&self) -> bool {
-        false
-    }
-
-    fn supports_javascript(&self) -> bool {
-        false
-    }
-
-    fn supports_tls_fingerprint(&self) -> bool {
-        true
     }
 }

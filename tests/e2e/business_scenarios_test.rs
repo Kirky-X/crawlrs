@@ -18,7 +18,9 @@ async fn wait_for_tasks_completion(
     let mut retries = 0;
 
     loop {
-        let all_completed = task_ids.iter().all(|task_id| {
+        let mut all_completed = true;
+
+        for task_id in task_ids {
             let status_response = app
                 .server
                 .get(&format!("/v1/scrape/{}", task_id))
@@ -26,7 +28,8 @@ async fn wait_for_tasks_completion(
                 .await;
 
             if status_response.status_code() != StatusCode::OK {
-                return false;
+                all_completed = false;
+                continue;
             }
 
             let status_data: serde_json::Value = status_response.json();
@@ -35,11 +38,13 @@ async fn wait_for_tasks_completion(
                 .expect("Missing 'status' field in task response");
 
             match status {
-                "queued" | "active" => false,
+                "queued" | "active" => {
+                    all_completed = false;
+                }
                 "failed" => panic!("Task {} failed", task_id),
-                _ => true,
+                _ => {}
             }
-        });
+        }
 
         if all_completed {
             break;
@@ -95,19 +100,18 @@ async fn test_ecommerce_product_monitoring_scenario() {
 
     wait_for_tasks_completion(&app, &task_ids, 90).await;
 
-    let results: Vec<serde_json::Value> = task_ids
-        .iter()
-        .map(|task_id| {
-            let final_response = app
-                .server
-                .get(&format!("/v1/scrape/{}", task_id))
-                .add_header("Authorization", format!("Bearer {}", app.api_key))
-                .await;
+    let mut results: Vec<serde_json::Value> = Vec::new();
 
-            assert_eq!(final_response.status_code(), StatusCode::OK);
-            final_response.json()
-        })
-        .collect();
+    for task_id in &task_ids {
+        let final_response = app
+            .server
+            .get(&format!("/v1/scrape/{}", task_id))
+            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .await;
+
+        assert_eq!(final_response.status_code(), StatusCode::OK);
+        results.push(final_response.json());
+    }
 
     assert_eq!(results.len(), product_urls.len());
 
@@ -280,7 +284,9 @@ async fn test_competitive_analysis_scenario() {
             panic!("Competitive analysis timed out after {:?}", timeout);
         }
 
-        let all_done = analysis_tasks.iter().all(|task_id| {
+        let mut all_done = true;
+
+        for task_id in &analysis_tasks {
             let status_response = app
                 .server
                 .get(&format!("/v1/scrape/{}", task_id))
@@ -288,7 +294,8 @@ async fn test_competitive_analysis_scenario() {
                 .await;
 
             if status_response.status_code() != StatusCode::OK {
-                return false;
+                all_done = false;
+                continue;
             }
 
             let status_data: serde_json::Value = status_response.json();
@@ -297,11 +304,13 @@ async fn test_competitive_analysis_scenario() {
                 .expect("Missing 'status' field in task response");
 
             match status {
-                "pending" | "running" => false,
+                "pending" | "running" => {
+                    all_done = false;
+                }
                 "failed" => panic!("Task {} failed", task_id),
-                _ => true,
+                _ => {}
             }
-        });
+        }
 
         if all_done {
             break;
@@ -310,19 +319,18 @@ async fn test_competitive_analysis_scenario() {
         sleep(Duration::from_millis(1000)).await;
     }
 
-    let analysis_results: Vec<serde_json::Value> = analysis_tasks
-        .iter()
-        .map(|task_id| {
-            let result_response = app
-                .server
-                .get(&format!("/v1/scrape/{}", task_id))
-                .add_header("Authorization", format!("Bearer {}", app.api_key))
-                .await;
+    let mut analysis_results: Vec<serde_json::Value> = Vec::new();
 
-            assert_eq!(result_response.status_code(), StatusCode::OK);
-            result_response.json()
-        })
-        .collect();
+    for task_id in &analysis_tasks {
+        let result_response = app
+            .server
+            .get(&format!("/v1/scrape/{}", task_id))
+            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .await;
+
+        assert_eq!(result_response.status_code(), StatusCode::OK);
+        analysis_results.push(result_response.json());
+    }
 
     assert_eq!(analysis_results.len(), competitor_sites.len());
 

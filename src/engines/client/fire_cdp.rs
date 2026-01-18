@@ -21,6 +21,50 @@ pub struct FireEngineCdp {
     proxy_url: Option<String>,
 }
 
+impl FireEngineCdp {
+    /// 创建新的 FireEngineCdp 实例
+    pub fn new() -> Self {
+        let client = reqwest::Client::builder().build().unwrap_or_default();
+        Self {
+            client,
+            base_url: String::new(),
+            proxy_url: None,
+        }
+    }
+
+    /// 创建带有代理配置的 FireEngineCdp 实例
+    pub fn with_proxy(proxy: &str) -> Self {
+        let proxy_result = reqwest::Proxy::https(proxy);
+        let client_builder = reqwest::Client::builder();
+        let client_builder = match proxy_result {
+            Ok(p) => client_builder.proxy(p),
+            Err(_) => client_builder,
+        };
+        let client = client_builder.build().unwrap_or_default();
+        Self {
+            client,
+            base_url: String::new(),
+            proxy_url: Some(proxy.to_string()),
+        }
+    }
+
+    /// 创建带有 base URL 和代理配置的实例
+    pub fn with_url_and_proxy(base_url: &str, proxy: Option<&str>) -> Self {
+        let proxy_result = proxy.map(|p| reqwest::Proxy::https(p)).transpose();
+        let client_builder = reqwest::Client::builder();
+        let client_builder = match proxy_result {
+            Ok(Some(p)) => client_builder.proxy(p),
+            _ => client_builder,
+        };
+        let client = client_builder.build().unwrap_or_default();
+        Self {
+            client,
+            base_url: base_url.to_string(),
+            proxy_url: proxy.map(|s| s.to_string()),
+        }
+    }
+}
+
 impl Default for FireEngineCdp {
     fn default() -> Self {
         Self::new()
@@ -59,7 +103,7 @@ impl ScraperEngine for FireEngineCdp {
             .await
             .map_err(|e| EngineError::RequestFailed(e.to_string()))?;
 
-        let flare_resp: FlaresolverrResponse = resp
+        let flare_resp: FlareSolverrResponse = resp
             .json()
             .await
             .map_err(|e| EngineError::RequestFailed(e.to_string()))?;
@@ -75,15 +119,8 @@ impl ScraperEngine for FireEngineCdp {
             .solution
             .ok_or_else(|| EngineError::Other("Flaresolverr returned no solution".to_string()))?;
 
-        // Convert headers
-        let mut headers = std::collections::HashMap::with_capacity(32);
-        if let serde_json::Value::Object(map) = solution.headers {
-            for (k, v) in map {
-                if let Some(s) = v.as_str() {
-                    headers.insert(k, s.to_string());
-                }
-            }
-        }
+        // Convert headers - headers is already HashMap<String, String>
+        let headers = solution.headers;
 
         let content_type = headers
             .get("content-type")
@@ -94,7 +131,7 @@ impl ScraperEngine for FireEngineCdp {
         Ok(ScrapeResponse {
             status_code: solution.status,
             content: solution.response,
-            screenshot: solution.screenshot,
+            screenshot: None, // FlareSolverr doesn't return screenshots in this struct
             content_type,
             headers,
             response_time_ms: start.elapsed().as_millis() as u64,

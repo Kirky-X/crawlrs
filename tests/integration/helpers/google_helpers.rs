@@ -5,4 +5,5 @@
 
 pub use super::chrome::get_chrome_ws_url;
 pub use super::chrome::set_chrome_ws_url;
+#[cfg(feature = "engine-fire-cdp")]
 pub use super::google::create_google_engine;

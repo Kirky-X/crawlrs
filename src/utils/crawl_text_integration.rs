@@ -41,8 +41,8 @@ impl CrawlTextIntegration {
         if !self.enabled {
             debug!("文本处理功能已禁用，直接返回原始内容");
             return Ok(ProcessedScrapeResponse {
-                original_content: String::from_utf8_lossy(content).to_string(),
-                processed_content: String::from_utf8_lossy(content).to_string(),
+                original_content: String::from_utf8_lossy(content).into_owned(),
+                processed_content: String::from_utf8_lossy(content).into_owned(),
                 content_type: content_type.map(|s| s.to_string()),
                 status_code,
                 url: url.to_string(),
@@ -87,8 +87,8 @@ impl CrawlTextIntegration {
             Err(e) => {
                 error!("文本处理失败: URL={}, 错误={}", url, e);
                 Ok(ProcessedScrapeResponse {
-                    original_content: String::from_utf8_lossy(content).to_string(),
-                    processed_content: String::from_utf8_lossy(content).to_string(),
+                    original_content: String::from_utf8_lossy(content).into_owned(),
+                    processed_content: String::from_utf8_lossy(content).into_owned(),
                     content_type: content_type.map(|s| s.to_string()),
                     status_code,
                     url: url.to_string(),
@@ -112,8 +112,8 @@ impl CrawlTextIntegration {
                 .into_iter()
                 .map(|response| {
                     Ok(ProcessedScrapeResponse {
-                        original_content: String::from_utf8_lossy(&response.content).to_string(),
-                        processed_content: String::from_utf8_lossy(&response.content).to_string(),
+                        original_content: String::from_utf8_lossy(&response.content).into_owned(),
+                        processed_content: String::from_utf8_lossy(&response.content).into_owned(),
                         content_type: response.content_type.clone(),
                         status_code: response.status_code,
                         url: response.url.clone(),
@@ -167,8 +167,8 @@ impl CrawlTextIntegration {
                 Err(e) => {
                     warn!("批量处理中的单个项目失败: URL={}, 错误={}", response.url, e);
                     Ok(ProcessedScrapeResponse {
-                        original_content: String::from_utf8_lossy(&response.content).to_string(),
-                        processed_content: String::from_utf8_lossy(&response.content).to_string(),
+                        original_content: String::from_utf8_lossy(&response.content).into_owned(),
+                        processed_content: String::from_utf8_lossy(&response.content).into_owned(),
                         content_type: response.content_type,
                         status_code: response.status_code,
                         url: response.url,

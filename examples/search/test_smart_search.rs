@@ -13,10 +13,7 @@
 //! - 自定义配置参数
 //! - 测试数据模式
 
-use crawlrs::engines::client::{PlaywrightEngine, ReqwestEngine};
 use crawlrs::engines::engine_client::EngineClient;
-use crawlrs::engines::router::EngineRouter;
-use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::search::engine_trait::SearchEngine;
 use crawlrs::search::engine_trait::SearchRequest;
 use crawlrs::search::factory::SearchEngineFactory;
@@ -170,11 +167,7 @@ async fn demo_test_data_mode() {
 }
 
 fn create_test_client() -> Arc<EngineClient> {
-    let reqwest_engine = Arc::new(ReqwestEngine);
-    let playwright_engine = Arc::new(PlaywrightEngine);
-    let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
-    let router = Arc::new(EngineRouter::new(engines));
-    Arc::new(EngineClient::with_router(router))
+    Arc::new(EngineClient::new())
 }
 
 fn create_google_smart_search(client: Arc<EngineClient>) -> Arc<SmartSearchEngine> {

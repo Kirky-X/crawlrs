@@ -32,7 +32,7 @@ async fn main() {
         sync_wait_ms: 5000,
     };
 
-    match engine.scrape(&request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             println!("✅ Page loaded!");
             println!("   Status: {}", response.status_code);

@@ -17,9 +17,7 @@
 //! cargo run --example custom_headers
 //! ```
 
-use crawlrs::engines::client::reqwest::ReqwestEngine;
-use crawlrs::engines::engine_client::ScrapeRequest;
-use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::info;
@@ -31,7 +29,7 @@ async fn main() {
     info!("🚀 开始自定义请求头示例");
     info!("=====================================\n");
 
-    let engine = ReqwestEngine;
+    let client = EngineClient::new();
     let url = "https://httpbin.org/headers";
 
     info!("🎯 目标: {}", url);
@@ -43,13 +41,17 @@ async fn main() {
     info!("-----------------------------");
     let request = ScrapeRequest::new(url).timeout(Duration::from_secs(30));
 
-    match engine.scrape(&request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
-            let content = String::from_utf8_lossy(&response.content);
             info!("✅ 默认请求头:");
             info!(
                 "  {}",
-                content.lines().take(5).collect::<Vec<_>>().join("\n  ")
+                response
+                    .content
+                    .lines()
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
             );
         }
         Err(e) => info!("❌ 请求失败: {:?}", e),
@@ -67,9 +69,8 @@ async fn main() {
 
     let request = ScrapeRequest::new(url).timeout(Duration::from_secs(30));
 
-    match engine.scrape(&request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
-            let content = String::from_utf8_lossy(&response.content);
             info!("✅ 自定义User-Agent已发送");
             info!("  响应包含我们设置的头信息");
         }
@@ -114,7 +115,7 @@ async fn main() {
 
     let request = ScrapeRequest::new(url).timeout(Duration::from_secs(30));
 
-    match engine.scrape(&request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             info!("✅ 请求成功发送");
             info!("  状态码: {}", response.status_code);

@@ -21,9 +21,7 @@
 //! cargo run --example multi_format_output
 //! ```
 
-use crawlrs::engines::client::reqwest::ReqwestEngine;
-use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions};
-use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeOptionsBuilder};
 use std::time::Duration;
 use tracing::info;
 
@@ -34,20 +32,18 @@ async fn main() {
     info!("🚀 开始多格式输出示例");
     info!("=====================================\n");
 
-    let engine = ReqwestEngine;
-    let client = EngineClient::new(engine);
+    let client = EngineClient::new();
     let url = "https://httpbin.org/html";
 
     // 1. HTML格式（默认）
     info!("📄 1. HTML格式输出");
     info!("-----------------------------");
     let request = crawlrs::engines::engine_client::ScrapeRequest::new(url);
-    match client.scrape(request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             info!("✅ 成功获取HTML内容");
             info!("  长度: {} 字节", response.content.len());
-            let preview =
-                String::from_utf8_lossy(&response.content[..200.min(response.content.len())]);
+            let preview = &response.content[..200.min(response.content.len())];
             info!("  预览: {}...", preview);
         }
         Err(e) => info!("❌ 获取失败: {:?}", e),
@@ -58,10 +54,10 @@ async fn main() {
     info!("📝 2. Markdown格式（通过文本提取）");
     info!("-----------------------------");
     let request = crawlrs::engines::engine_client::ScrapeRequest::new(url);
-    match client.scrape(request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             // 简单演示：去除HTML标签模拟Markdown
-            let content = String::from_utf8_lossy(&response.content);
+            let content = &response.content;
             let markdown: String = content
                 .lines()
                 .map(|line| {
@@ -94,14 +90,14 @@ async fn main() {
     info!("📊 3. JSON格式输出");
     info!("-----------------------------");
     let request = crawlrs::engines::engine_client::ScrapeRequest::new(url);
-    match client.scrape(request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             // 假设响应可以序列化为JSON
             info!("✅ 成功获取JSON结构");
             info!("  原始长度: {} 字节", response.content.len());
 
             // 尝试解析为JSON
-            if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&response.content) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response.content) {
                 info!(
                     "  解析成功，包含键: {:?}",
                     json.as_object()
@@ -118,13 +114,14 @@ async fn main() {
     info!("-----------------------------");
     info!("⚠️  截图功能需要Playwright引擎，演示基本流程");
 
-    let options = ScrapeOptions::default()
+    let options = ScrapeOptionsBuilder::default()
         .needs_screenshot(true)
-        .timeout(Duration::from_secs(60));
+        .timeout(Duration::from_secs(60))
+        .build();
 
     let request = crawlrs::engines::engine_client::ScrapeRequest::new(url).with_options(options);
 
-    match client.scrape(request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
             if let Some(screenshot) = response.screenshot {
                 info!("✅ 成功获取截图");

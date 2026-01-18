@@ -15,9 +15,7 @@
 use crate::common::constants::timeouts::{
     CRAWL_TASK_TIMEOUT, E2E_TEST_TIMEOUT, QUICK_TEST_TIMEOUT,
 };
-use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
-use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::search::client::baidu::BaiduSearchEngine;
 use crawlrs::search::client::bing::BingSearchEngine;
 use crawlrs::search::engine_trait::SearchEngine;
@@ -184,7 +182,7 @@ async fn test_random_news_scrape() {
     println!("🔧 使用 User-Agent: {}", random_user_agent());
 
     let start_time = std::time::Instant::now();
-    let result = engine.scrape(&request).await;
+    let result = client.scrape(&request).await;
     let duration = start_time.elapsed();
 
     match result {

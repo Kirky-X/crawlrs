@@ -1023,9 +1023,7 @@ async fn test_uat025_degradation_strategy() {
 #[tokio::test]
 async fn test_uat005_engine_degradation() {
     use async_trait::async_trait;
-    use crawlrs::engines::client::reqwest::ReqwestEngine;
     use crawlrs::engines::engine_client::EngineClient;
-    use crawlrs::engines::traits::ScraperEngine;
     use crawlrs::search::aggregator::SearchAggregator;
     use crawlrs::search::client::bing::BingSearchEngine;
     use crawlrs::search::client::google::GoogleSearchEngine;
@@ -1341,9 +1339,7 @@ async fn test_uat019_team_concurrency_limit() {
 /// 3. 验证聚合结果的正确性和响应时间
 #[tokio::test]
 async fn test_uat025_search_concurrency_perf() {
-    use crawlrs::engines::client::reqwest::ReqwestEngine;
     use crawlrs::engines::engine_client::EngineClient;
-    use crawlrs::engines::traits::ScraperEngine;
     use crawlrs::search::aggregator::SearchAggregator;
     use crawlrs::search::client::bing::BingSearchEngine;
     use crawlrs::search::client::google::GoogleSearchEngine;

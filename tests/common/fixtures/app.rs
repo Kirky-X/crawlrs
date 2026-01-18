@@ -26,10 +26,9 @@ use tower::Service;
 use uuid::Uuid;
 
 use crawlrs::config::settings::Settings;
+#[cfg(feature = "engine-playwright")]
 use crawlrs::engines::client::playwright::PlaywrightEngine;
-use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
-use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::geolocation::GeoLocationService;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;

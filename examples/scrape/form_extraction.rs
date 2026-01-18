@@ -16,9 +16,7 @@
 //! cargo run --example form_extraction
 //! ```
 
-use crawlrs::engines::client::reqwest::ReqwestEngine;
-use crawlrs::engines::engine_client::{EngineClient, PageAction, ScrapeRequest};
-use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
 use std::time::Duration;
 use tracing::info;
 
@@ -42,8 +40,7 @@ async fn main() {
     info!("🚀 开始表单数据提取示例");
     info!("=====================================\n");
 
-    let engine = ReqwestEngine;
-    let client = EngineClient::new(engine);
+    let client = EngineClient::new();
 
     // 示例表单页面
     let url = "https://httpbin.org/forms/post";
@@ -54,15 +51,15 @@ async fn main() {
     // 爬取页面
     let request = ScrapeRequest::new(url).timeout(Duration::from_secs(30));
 
-    match client.scrape(request).await {
+    match client.scrape(&request).await {
         Ok(response) => {
-            let content = String::from_utf8_lossy(&response.content);
+            let content = &response.content;
             info!("✅ 页面获取成功");
             info!("  内容长度: {} 字节", content.len());
             info!("");
 
             // 解析表单数据
-            let form_data = extract_form_data(&content);
+            let form_data = extract_form_data(content);
 
             info!("📋 检测到的表单字段:");
             info!("-----------------------------");

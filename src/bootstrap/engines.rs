@@ -65,8 +65,8 @@ pub fn init_engines(
             engine_config.fire_tls.url
         );
         engines.push(Arc::new(FireEngineTls::with_url_and_proxy(
-            engine_config.fire_tls.url.clone(),
-            proxy_url.to_string(),
+            &engine_config.fire_tls.url,
+            Some(proxy_url),
         )));
     }
 
@@ -77,8 +77,8 @@ pub fn init_engines(
             engine_config.fire_cdp.url
         );
         engines.push(Arc::new(FireEngineCdp::with_url_and_proxy(
-            engine_config.fire_cdp.url.clone(),
-            proxy_url.to_string(),
+            &engine_config.fire_cdp.url,
+            Some(proxy_url),
         )));
     }
 

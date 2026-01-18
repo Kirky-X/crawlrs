@@ -12,9 +12,7 @@
 //! Run with: cargo run --features "search-google,engine-reqwest,engine-flaresolverr" --example test_google
 
 use crawlrs::engines::client::flare_solverr::FlareSolverrEngine;
-use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
-use crawlrs::engines::traits::ScraperEngine;
 use crawlrs::search::client::google::GoogleSearchEngine;
 use crawlrs::search::SearchEngine;
 use std::sync::Arc;
