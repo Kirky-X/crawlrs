@@ -181,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
     // 3. Set proxy environment variables if enabled
     if settings.proxy.enabled {
         env::set_var("CRAWLRS_PROXY_URL", settings.proxy.url());
-        tracing::info!("HTTP proxy enabled: {}", settings.proxy.url());
+        tracing::info!("HTTP proxy enabled (credentials hidden)");
     }
 
     // 4. Initialize infrastructure (database, redis, repositories)

@@ -19,6 +19,15 @@ use url::Url;
 /// 1. 仅在受控的测试环境中使用
 /// 2. 永远不要在生产环境或 CI/CD 流程中设置此环境变量
 pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
+    // URL 长度限制：防止 SSRF 和资源耗尽攻击
+    const MAX_URL_LENGTH: usize = 2048;
+    if url_str.len() > MAX_URL_LENGTH {
+        return Err(anyhow::anyhow!(
+            "URL exceeds maximum length of {} characters",
+            MAX_URL_LENGTH
+        ));
+    }
+
     // 检查是否禁用 SSRF 保护（仅用于测试环境）
     // 安全警告：生产环境必须启用 SSRF 保护
     let ssrf_disabled = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default();
