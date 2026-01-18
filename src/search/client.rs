@@ -24,12 +24,14 @@ pub mod bing;
 pub mod google;
 pub mod html_parser;
 pub mod http_client;
+pub mod shared_utils;
 pub mod sogou;
 
 pub use baidu::BaiduSearchEngine;
 pub use bing::BingSearchEngine;
 pub use google::GoogleSearchEngine;
 pub use http_client::SHARED_HTTP_CLIENT;
+pub use shared_utils::{parse_first_selector, safe_parse_selector};
 pub use sogou::SogouSearchEngine;
 
 #[derive(Clone)]

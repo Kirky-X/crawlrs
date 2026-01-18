@@ -3,7 +3,14 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+#![deprecated(
+    since = "0.1.0",
+    note = "Use `crate::common::constants` instead. This module will be removed in a future version."
+)]
+
 /// 全局常量定义 - 避免代码中的魔法数字和硬编码值
+///
+/// ⚠️ 已废弃 - 请使用 `crate::common::constants`
 ///
 /// 这些常量用于在整个项目中保持一致性和可维护性
 /// 遵循代码审查报告中发现的优化建议
