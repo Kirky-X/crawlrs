@@ -12,7 +12,7 @@ const HIGH_LOAD_THRESHOLD: f64 = 0.8;
 const MEDIUM_LOAD_THRESHOLD: f64 = 0.6;
 const MEDIUM_LOAD_DEPTH_FACTOR: f64 = 0.75;
 
-use crate::domain::models::task::{Task, TaskStatus};
+use crate::domain::models::task::{DomainError, Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
 #[cfg(feature = "metrics")]
 use crate::infrastructure::observability::metrics::{get_cpu_usage, get_memory_usage};
@@ -76,12 +76,12 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
     /// # 返回值
     ///
     /// * `Ok(Vec<Task>)` - 新创建的任务列表
-    /// * `Err(anyhow::Error)` - 处理过程中出现的错误
+    /// * `Err(DomainError)` - 处理过程中出现的错误
     pub async fn process_crawl_result(
         &self,
         parent_task: &Task,
         html_content: &str,
-    ) -> Result<Vec<Task>> {
+    ) -> Result<Vec<Task>, DomainError> {
         tracing::debug!("Processing crawl result for task: {}", parent_task.id);
 
         let config = self.parse_crawl_config(parent_task)?;
@@ -103,11 +103,17 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
 
         let links = self.discover_links(html_content, &parent_task.url, &config)?;
 
-        self.create_tasks_from_links(parent_task, &links, config, effective_max_depth)
+        // Convert anyhow::Result to Result<_, DomainError>
+        match self
+            .create_tasks_from_links(parent_task, &links, config, effective_max_depth)
             .await
+        {
+            Ok(tasks) => Ok(tasks),
+            Err(e) => Err(DomainError::EngineError(e.to_string())),
+        }
     }
 
-    fn parse_crawl_config(&self, parent_task: &Task) -> Result<CrawlConfig> {
+    fn parse_crawl_config(&self, parent_task: &Task) -> anyhow::Result<CrawlConfig> {
         let depth = parent_task
             .payload
             .get("depth")
@@ -190,7 +196,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         html_content: &str,
         base_url: &str,
         config: &CrawlConfig,
-    ) -> Result<HashSet<String>> {
+    ) -> anyhow::Result<HashSet<String>> {
         let links = LinkDiscoverer::extract_links(html_content, base_url)?;
         let filtered =
             LinkDiscoverer::filter_links(links, &config.include_patterns, &config.exclude_patterns);
@@ -203,7 +209,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         links: &HashSet<String>,
         config: CrawlConfig,
         effective_max_depth: u64,
-    ) -> Result<Vec<Task>> {
+    ) -> anyhow::Result<Vec<Task>> {
         let filtered_vec: Vec<String> = links.iter().cloned().collect();
         let existing_urls = self.repo.find_existing_urls(&filtered_vec).await?;
 
@@ -266,7 +272,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         link: &str,
         config: &CrawlConfig,
         _effective_max_depth: u64,
-    ) -> Result<Option<Task>> {
+    ) -> anyhow::Result<Option<Task>> {
         let mut payload = parent_task.payload.clone();
         payload["depth"] = serde_json::json!(config.depth + 1);
 
@@ -353,7 +359,7 @@ pub struct LinkDiscoverer;
 
 impl LinkDiscoverer {
     /// 将glob模式转换为正则表达式
-    fn glob_to_regex(pattern: &str) -> Result<Regex> {
+    fn glob_to_regex(pattern: &str) -> anyhow::Result<Regex> {
         // 简单的glob到regex转换
         let mut regex_pattern = String::new();
 
@@ -383,7 +389,7 @@ impl LinkDiscoverer {
     ///
     /// * `Ok(HashSet<String>)` - 提取到的链接集合
     /// * `Err(anyhow::Error)` - 提取过程中出现的错误
-    pub fn extract_links(html_content: &str, base_url: &str) -> Result<HashSet<String>> {
+    pub fn extract_links(html_content: &str, base_url: &str) -> anyhow::Result<HashSet<String>> {
         debug!(base_url);
         let fragment = Html::parse_document(html_content);
         let selector =

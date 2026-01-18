@@ -156,12 +156,12 @@ impl FromStr for TaskStatus {
 /// 领域错误类型
 ///
 /// 表示在领域层可能发生的各种错误情况，包括状态转换错误、
-/// 验证失败和引擎相关的错误。
+/// 验证失败、引擎相关错误和资源限制等。
 #[derive(Error, Debug)]
 pub enum DomainError {
     /// 无效的状态转换，当任务状态转换不符合业务规则时发生
-    #[error("Invalid state transition")]
-    InvalidStateTransition,
+    #[error("Invalid state transition from {from:?} to {to:?}")]
+    InvalidStateTransition { from: TaskStatus, to: TaskStatus },
 
     /// 验证错误，当输入数据不符合领域规则时发生
     #[error("Validation error: {0}")]
@@ -170,6 +170,44 @@ pub enum DomainError {
     /// 引擎错误，当底层执行引擎出现问题时发生
     #[error("Engine error: {0}")]
     EngineError(String),
+
+    /// 资源限制错误，当超出系统资源限制时发生
+    #[error("Resource limit exceeded: {0}")]
+    ResourceLimitExceeded(String),
+
+    /// 未找到错误，当请求的资源不存在时发生
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    /// 权限错误，当操作没有足够权限时发生
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+
+    /// 速率限制错误，当请求超出速率限制时发生
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitExceeded(String),
+
+    /// 锁定错误，当任务锁定失败或冲突时发生
+    #[error("Lock error: {0}")]
+    LockError(String),
+
+    /// 过期错误，当任务已过期无法执行时发生
+    #[error("Task expired")]
+    TaskExpired,
+
+    /// URL验证错误
+    #[error("Invalid URL: {0}")]
+    InvalidUrl(String),
+
+    /// SSRF防护触发
+    #[error("SSRF protection triggered: {0}")]
+    SsrfProtection(String),
+}
+
+impl From<anyhow::Error> for DomainError {
+    fn from(error: anyhow::Error) -> Self {
+        DomainError::EngineError(error.to_string())
+    }
 }
 
 impl Task {
@@ -229,7 +267,10 @@ impl Task {
                 self.started_at = Some(Utc::now().into());
                 Ok(self)
             }
-            _ => Err(DomainError::InvalidStateTransition),
+            _ => Err(DomainError::InvalidStateTransition {
+                from: self.status,
+                to: TaskStatus::Active,
+            }),
         }
     }
 
@@ -248,7 +289,10 @@ impl Task {
                 self.completed_at = Some(Utc::now().into());
                 Ok(self)
             }
-            _ => Err(DomainError::InvalidStateTransition),
+            _ => Err(DomainError::InvalidStateTransition {
+                from: self.status,
+                to: TaskStatus::Completed,
+            }),
         }
     }
 
@@ -267,7 +311,10 @@ impl Task {
                 self.completed_at = Some(Utc::now().into());
                 Ok(self)
             }
-            _ => Err(DomainError::InvalidStateTransition),
+            _ => Err(DomainError::InvalidStateTransition {
+                from: self.status,
+                to: TaskStatus::Failed,
+            }),
         }
     }
 
@@ -286,7 +333,10 @@ impl Task {
                 self.completed_at = Some(Utc::now().into());
                 Ok(self)
             }
-            _ => Err(DomainError::InvalidStateTransition),
+            _ => Err(DomainError::InvalidStateTransition {
+                from: self.status,
+                to: TaskStatus::Cancelled,
+            }),
         }
     }
 
