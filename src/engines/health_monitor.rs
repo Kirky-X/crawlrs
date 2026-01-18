@@ -87,22 +87,7 @@ pub struct EngineHealthMonitor {
 impl EngineHealthMonitor {
     /// 创建新的健康监控器
     pub fn new(engines: Vec<Arc<dyn ScraperEngine>>) -> Self {
-        let mut health_status = HashMap::with_capacity(8);
-
-        for engine in &engines {
-            let engine_name = engine.name().to_string();
-            health_status.insert(
-                engine_name.clone(),
-                HealthCheckInfo {
-                    engine_name,
-                    health: EngineHealth::Healthy,
-                    last_check: Utc::now(),
-                    consecutive_failures: 0,
-                    avg_response_time_ms: None,
-                    error_message: None,
-                },
-            );
-        }
+        let health_status = Self::initialize_health_status(&engines);
 
         Self {
             engines,
@@ -116,9 +101,22 @@ impl EngineHealthMonitor {
         engines: Vec<Arc<dyn ScraperEngine>>,
         config: HealthCheckConfig,
     ) -> Self {
+        let health_status = Self::initialize_health_status(&engines);
+
+        Self {
+            engines,
+            health_status: Arc::new(RwLock::new(health_status)),
+            config,
+        }
+    }
+
+    /// 内部初始化方法 - 提取公共的 health_status 初始化逻辑
+    fn initialize_health_status(
+        engines: &[Arc<dyn ScraperEngine>],
+    ) -> HashMap<String, HealthCheckInfo> {
         let mut health_status = HashMap::with_capacity(8);
 
-        for engine in &engines {
+        for engine in engines {
             let engine_name = engine.name().to_string();
             health_status.insert(
                 engine_name.clone(),
@@ -133,11 +131,7 @@ impl EngineHealthMonitor {
             );
         }
 
-        Self {
-            engines,
-            health_status: Arc::new(RwLock::new(health_status)),
-            config,
-        }
+        health_status
     }
 
     /// 获取所有引擎的健康状态

@@ -22,6 +22,14 @@ pub mod fire_tls;
 #[cfg(feature = "engine-flaresolverr")]
 pub mod flare_solverr;
 
+/// 共享的 FlareSolverr 类型定义
+#[cfg(any(
+    feature = "engine-fire-cdp",
+    feature = "engine-fire-tls",
+    feature = "engine-flaresolverr"
+))]
+pub mod flaresolverr_types;
+
 // Re-exports
 
 /// Reqwest 引擎 (始终可用)

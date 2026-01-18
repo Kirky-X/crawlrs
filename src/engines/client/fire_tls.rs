@@ -4,8 +4,10 @@
 // See LICENSE file in the project root for full license information.
 
 use super::super::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+use crate::engines::client::flaresolverr_types::{
+    FlareSolverrRequest, FlareSolverrResponse, FlareSolverrSolution,
+};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 /// Fire Engine (TLS) 实现
@@ -16,88 +18,6 @@ pub struct FireEngineTls {
     base_url: String,
     /// 代理配置
     proxy_url: Option<String>,
-}
-
-#[derive(Serialize)]
-struct FlaresolverrRequest {
-    cmd: String,
-    url: String,
-    #[serde(rename = "maxTimeout")]
-    max_timeout: u64,
-    /// 代理配置（通过自定义头部传递）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "customHeaders")]
-    custom_headers: Option<std::collections::HashMap<String, String>>,
-}
-
-#[derive(Deserialize, Debug)]
-struct FlaresolverrResponse {
-    status: String,
-    message: String,
-    solution: Option<FlaresolverrSolution>,
-    #[serde(rename = "startTimestamp")]
-    #[allow(dead_code)]
-    start_timestamp: u64,
-    #[serde(rename = "endTimestamp")]
-    #[allow(dead_code)]
-    end_timestamp: u64,
-    #[allow(dead_code)]
-    version: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct FlaresolverrSolution {
-    #[allow(dead_code)]
-    url: String,
-    status: u16,
-    headers: serde_json::Value,
-    response: String,
-    #[allow(dead_code)]
-    cookies: Vec<serde_json::Value>,
-    #[serde(rename = "userAgent")]
-    #[allow(dead_code)]
-    user_agent: String,
-}
-
-impl FireEngineTls {
-    pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            base_url: std::env::var("FIRE_ENGINE_TLS_URL")
-                .or_else(|_| std::env::var("FIRE_ENGINE_URL"))
-                .unwrap_or_else(|_| "http://localhost:8191/v1".to_string()),
-            proxy_url: None,
-        }
-    }
-
-    /// 从配置 URL 创建 FireEngineTls 实例
-    pub fn with_url(url: impl Into<String>) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            base_url: url.into(),
-            proxy_url: None,
-        }
-    }
-
-    /// 创建带代理配置的 FireEngineTls 实例
-    pub fn with_proxy(proxy_url: impl Into<String>) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            base_url: std::env::var("FIRE_ENGINE_TLS_URL")
-                .or_else(|_| std::env::var("FIRE_ENGINE_URL"))
-                .unwrap_or_else(|_| "http://localhost:8191/v1".to_string()),
-            proxy_url: Some(proxy_url.into()),
-        }
-    }
-
-    /// 从配置 URL 和代理创建 FireEngineTls 实例
-    pub fn with_url_and_proxy(url: impl Into<String>, proxy_url: impl Into<String>) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            base_url: url.into(),
-            proxy_url: Some(proxy_url.into()),
-        }
-    }
 }
 
 impl Default for FireEngineTls {
@@ -129,12 +49,12 @@ impl ScraperEngine for FireEngineTls {
             headers
         });
 
-        let req_body = FlaresolverrRequest {
-            cmd: "request.get".to_string(),
-            url: request.url.clone(),
-            max_timeout: request.timeout.as_millis() as u64,
-            custom_headers,
-        };
+        let req_body = FlareSolverrRequest::new(
+            "request.get".to_string(),
+            request.url.clone(),
+            request.timeout.as_millis() as u64,
+        )
+        .with_headers(custom_headers.unwrap_or_default());
 
         let resp = self
             .client

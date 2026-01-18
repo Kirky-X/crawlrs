@@ -138,6 +138,18 @@ impl CircuitBreaker {
         configs.insert(engine_name.to_string(), config);
     }
 
+    /// 创建默认的熔断器状态
+    fn create_default_state() -> CircuitState {
+        CircuitState {
+            status: Status::Closed,
+            failure_timestamps: VecDeque::new(),
+            last_failure: None,
+            total_requests: 0,
+            total_failures: 0,
+            total_successes: 0,
+        }
+    }
+
     /// 获取引擎配置
     ///
     /// # 参数
@@ -170,14 +182,7 @@ impl CircuitBreaker {
         let mut states = self.states.write();
         let state = states
             .entry(engine_name.to_string())
-            .or_insert(CircuitState {
-                status: Status::Closed,
-                failure_timestamps: VecDeque::new(),
-                last_failure: None,
-                total_requests: 0,
-                total_failures: 0,
-                total_successes: 0,
-            });
+            .or_insert(Self::create_default_state());
 
         match state.status {
             Status::Closed => false,
@@ -235,14 +240,7 @@ impl CircuitBreaker {
         let mut states = self.states.write();
         let state = states
             .entry(engine_name.to_string())
-            .or_insert(CircuitState {
-                status: Status::Closed,
-                failure_timestamps: VecDeque::new(),
-                last_failure: None,
-                total_requests: 0,
-                total_failures: 0,
-                total_successes: 0,
-            });
+            .or_insert(Self::create_default_state());
 
         let now = Instant::now();
         state.total_requests += 1;
