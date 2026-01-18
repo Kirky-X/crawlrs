@@ -3,17 +3,30 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Scrape request DTO with input validation
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use validator::Validate;
+
+/// Maximum allowed URL length (2048 characters)
+pub const MAX_URL_LENGTH: usize = 2048;
+/// Maximum number of allowed tags in include/exclude lists
+pub const MAX_TAG_COUNT: usize = 50;
+/// Maximum number of allowed actions
+pub const MAX_ACTION_COUNT: usize = 20;
+/// Maximum metadata object depth
+pub const MAX_METADATA_DEPTH: usize = 5;
 
 /// 爬取请求数据传输对象
 ///
 /// 用于封装客户端发起的网页爬取请求的相关参数
 /// 拒绝未知字段以增强安全性
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct ScrapeRequestDto {
     /// 要爬取的网页URL (仅支持 http/https)
+    #[validate(length(min = 1, max = 2048))]
     pub url: String,
     /// 请求的数据格式列表
     pub formats: Option<Vec<String>>,
@@ -37,10 +50,16 @@ pub struct ScrapeRequestDto {
     /// 自定义元数据
     pub metadata: Option<serde_json::Value>,
     /// 同步等待时长（毫秒，默认 5000，最大 30000）
+    #[validate(range(
+        min = 0,
+        max = 30000,
+        message = "sync_wait_ms must be between 0 and 30000"
+    ))]
     pub sync_wait_ms: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScrapeOptionsDto {
     /// 自定义HTTP请求头
     pub headers: Option<Value>,

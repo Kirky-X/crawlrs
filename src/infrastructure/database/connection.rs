@@ -37,8 +37,13 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DatabaseConnecti
         opt.idle_timeout(Duration::from_secs(idle));
     }
 
-    opt.max_lifetime(Duration::from_secs(3600))
-        .sqlx_logging(true);
+    opt.max_lifetime(Duration::from_secs(3600));
+
+    // 根据环境决定是否启用SQL日志，生产环境禁用以防止敏感信息泄露
+    let is_production = std::env::var("CRAWLRS_ENV")
+        .map(|v| v.eq_ignore_ascii_case("production") || v.eq_ignore_ascii_case("prod"))
+        .unwrap_or(false);
+    opt.sqlx_logging(!is_production);
 
     Database::connect(opt).await
 }
