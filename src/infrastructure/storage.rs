@@ -157,14 +157,18 @@ impl LocalStorage {
         let base = Path::new(&self.base_path);
         let joined = base.join(key);
 
-        if let Ok(canonical) = joined.canonicalize() {
-            if let Ok(base_canonical) = base.canonicalize() {
-                if !canonical.starts_with(&base_canonical) {
-                    return Err(StorageError::InvalidKey(
-                        "Path escapes base directory".to_string(),
-                    ));
-                }
-            }
+        // Use ? operator to flatten nested conditions
+        let canonical = joined.canonicalize().map_err(|e| {
+            StorageError::InvalidKey(format!("Path canonicalization failed: {}", e))
+        })?;
+        let base_canonical = base.canonicalize().map_err(|e| {
+            StorageError::InvalidKey(format!("Base path canonicalization failed: {}", e))
+        })?;
+
+        if !canonical.starts_with(&base_canonical) {
+            return Err(StorageError::InvalidKey(
+                "Path escapes base directory".to_string(),
+            ));
         }
 
         Ok(joined.to_string_lossy().to_string())

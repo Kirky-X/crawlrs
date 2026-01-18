@@ -224,3 +224,81 @@ mod tests {
         assert_eq!(client.inner.engines.len(), 4);
     }
 }
+
+// ========== Shared Utilities ==========
+
+// Shared utilities for search engine clients
+// Provides common utilities to eliminate code duplication across search engine implementations.
+
+use url::Url;
+
+/// Encode a search query for use in URLs
+pub fn encode_search_query(query: &str) -> String {
+    urlencoding::encode(query).to_string()
+}
+
+/// Build a simple paginated search URL
+pub fn build_search_url(
+    base_url: &str,
+    query_param: &str,
+    query: &str,
+    page: u32,
+    results_per_page: u32,
+) -> String {
+    let encoded_query = encode_search_query(query);
+    let offset = (page - 1) * results_per_page;
+    format!(
+        "{}?{}={}&start={}",
+        base_url, query_param, encoded_query, offset
+    )
+}
+
+/// Validate and normalize a URL from search results
+pub fn validate_result_url(url: &str, allowed_schemes: &[&str]) -> Option<String> {
+    if url.is_empty() {
+        return None;
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return None;
+    }
+    match Url::parse(url) {
+        Ok(parsed) => {
+            if allowed_schemes.contains(&parsed.scheme()) {
+                Some(url.to_string())
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod shared_tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_search_query() {
+        let encoded = encode_search_query("hello world");
+        assert!(encoded.contains("hello%20world"));
+    }
+
+    #[test]
+    fn test_build_search_url() {
+        let url = build_search_url("https://example.com/search", "q", "test", 2, 10);
+        assert!(url.contains("q=test"));
+        assert!(url.contains("start=10"));
+    }
+
+    #[test]
+    fn test_validate_result_url_valid() {
+        let result = validate_result_url("https://example.com", &["http", "https"]);
+        assert_eq!(result, Some("https://example.com".to_string()));
+    }
+
+    #[test]
+    fn test_validate_result_url_invalid_scheme() {
+        let result = validate_result_url("ftp://example.com", &["http", "https"]);
+        assert!(result.is_none());
+    }
+}

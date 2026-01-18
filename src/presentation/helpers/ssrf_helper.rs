@@ -82,10 +82,10 @@ pub fn is_internal_url(url_str: &str) -> bool {
         return true;
     }
 
+    // IPv4 private range 172.16.0.0 - 172.31.255.255
     if host.starts_with("172.") {
-        let parts: Vec<&str> = host.split('.').collect();
-        if parts.len() >= 2 {
-            if let Ok(num) = parts[1].parse::<u8>() {
+        if let Some(second_octet) = host[4..].split('.').next() {
+            if let Ok(num) = second_octet.parse::<u8>() {
                 if (16..=31).contains(&num) {
                     return true;
                 }

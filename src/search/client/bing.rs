@@ -63,25 +63,41 @@ impl BingSearchEngine {
     }
 
     /// Decode Bing redirect URLs that are Base64 encoded
+    ///
+    /// Flattens 5-level nested conditions into early returns for better readability.
     pub fn decode_bing_url(&self, url: &str) -> String {
-        if url.starts_with("https://www.bing.com/ck/a?") {
-            if let Ok(parsed_url) = Url::parse(url) {
-                if let Some(u_param) = parsed_url.query_pairs().find(|(key, _)| key == "u") {
-                    let encoded = &u_param.1[2..]; // Remove 'a1' prefix
-
-                    // Add padding if needed
-                    let padding = "=".repeat((4 - encoded.len() % 4) % 4);
-                    let padded_encoded = format!("{}{}", encoded, padding);
-
-                    if let Ok(decoded_bytes) = URL_SAFE.decode(padded_encoded) {
-                        if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
-                            return decoded_str;
-                        }
-                    }
-                }
-            }
+        // Early return if not a Bing redirect URL
+        if !url.starts_with("https://www.bing.com/ck/a?") {
+            return url.to_string();
         }
-        url.to_string()
+
+        // Parse URL and extract 'u' parameter
+        let parsed_url = match Url::parse(url) {
+            Ok(url) => url,
+            Err(_) => return url.to_string(),
+        };
+
+        let u_param = match parsed_url.query_pairs().find(|(key, _)| key == "u") {
+            Some(param) => param,
+            None => return url.to_string(),
+        };
+
+        let encoded = &u_param.1[2..]; // Remove 'a1' prefix
+
+        // Add padding if needed
+        let padding = "=".repeat((4 - encoded.len() % 4) % 4);
+        let padded_encoded = format!("{}{}", encoded, padding);
+
+        // Decode Base64 and convert to string
+        let decoded_bytes = match URL_SAFE.decode(padded_encoded) {
+            Ok(bytes) => bytes,
+            Err(_) => return url.to_string(),
+        };
+
+        match String::from_utf8(decoded_bytes) {
+            Ok(decoded_str) => decoded_str,
+            Err(_) => url.to_string(),
+        }
     }
 
     pub fn build_bing_url(&self, query: &str, page: u32) -> String {

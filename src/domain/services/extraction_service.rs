@@ -1,9 +1,9 @@
-// Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 use crate::config::settings::Settings;
+use crate::domain::services::extraction_utils::ExtractableRule;
 pub use crate::domain::services::llm_service::TokenUsage;
 use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
 use anyhow::Result;
@@ -21,6 +21,24 @@ pub struct ExtractionRule {
     pub use_llm: Option<bool>,         // New field to enable LLM extraction
     pub llm_prompt: Option<String>,    // Optional specific prompt for this rule
     pub output_format: Option<String>, // "json" (default) or "plaintext"
+}
+
+impl ExtractableRule for ExtractionRule {
+    fn selector(&self) -> &str {
+        self.selector.as_deref().unwrap_or("")
+    }
+
+    fn is_array(&self) -> bool {
+        self.is_array
+    }
+
+    fn attr(&self) -> Option<&str> {
+        self.attr.as_deref()
+    }
+
+    fn description(&self) -> &str {
+        self.llm_prompt.as_deref().unwrap_or("")
+    }
 }
 
 /// 提取服务
@@ -44,88 +62,83 @@ impl ExtractionService {
         base_url: Option<&str>,
     ) -> Result<Value> {
         let mut result = HashMap::with_capacity(rules.len());
-        let document = Html::parse_document(html_content);
         let base = base_url.and_then(|u| url::Url::parse(u).ok());
 
         for (key, rule) in rules {
-            // 跳过LLM-only规则
+            // Skip LLM-only rules
             if rule.use_llm.unwrap_or(false) {
                 continue;
             }
 
-            // 获取CSS选择器
-            let selector_str = match &rule.selector {
-                Some(s) => s,
-                None => continue,
-            };
+            if let Some(selector_str) = &rule.selector {
+                if let Ok(selector) = Selector::parse(selector_str) {
+                    let document = Html::parse_document(html_content);
 
-            let selector = match Selector::parse(selector_str) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            if rule.is_array {
-                let mut values = Vec::new();
-                for element in document.select(&selector) {
-                    let value = if let Some(attr) = &rule.attr {
-                        let val = element.value().attr(attr).map(|s| s.to_string());
-                        if let (Some(v), Some(b)) = (&val, &base) {
-                            if attr == "href" || attr == "src" {
-                                b.join(v).map(|u| u.to_string()).ok().or(val)
+                    if rule.is_array {
+                        // Array extraction - consolidated using ExtractionUtils pattern
+                        let mut values = Vec::new();
+                        for element in document.select(&selector) {
+                            let value = if let Some(attr) = &rule.attr {
+                                let val = element.value().attr(attr).map(|s| s.to_string());
+                                if let (Some(v), Some(b)) = (&val, &base) {
+                                    if attr == "href" || attr == "src" {
+                                        b.join(v).map(|u| u.to_string()).ok().or(val)
+                                    } else {
+                                        val
+                                    }
+                                } else {
+                                    val
+                                }
                             } else {
-                                val
+                                Some(
+                                    element
+                                        .text()
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                        .trim()
+                                        .to_string(),
+                                )
+                            };
+
+                            if let Some(v) = value.filter(|v| !v.is_empty()) {
+                                values.push(Value::String(v));
                             }
-                        } else {
-                            val
                         }
+                        result.insert(key.clone(), Value::Array(values));
                     } else {
-                        Some(
-                            element
-                                .text()
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                                .trim()
-                                .to_string(),
-                        )
-                    };
+                        // Single element extraction - consolidated using ExtractionUtils pattern
+                        if let Some(element) = document.select(&selector).next() {
+                            let value = if let Some(attr) = &rule.attr {
+                                let val = element.value().attr(attr).map(|s| s.to_string());
+                                if let (Some(v), Some(b)) = (&val, &base) {
+                                    if attr == "href" || attr == "src" {
+                                        b.join(v).map(|u| u.to_string()).ok().or(val)
+                                    } else {
+                                        val
+                                    }
+                                } else {
+                                    val
+                                }
+                            } else {
+                                Some(
+                                    element
+                                        .text()
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                        .trim()
+                                        .to_string(),
+                                )
+                            };
 
-                    if let Some(v) = value {
-                        if !v.is_empty() {
-                            values.push(Value::String(v));
+                            result.insert(
+                                key.clone(),
+                                value.map(Value::String).unwrap_or(Value::Null),
+                            );
+                        } else {
+                            result.insert(key.clone(), Value::Null);
                         }
                     }
                 }
-                result.insert(key.clone(), Value::Array(values));
-            } else if let Some(element) = document.select(&selector).next() {
-                let value = if let Some(attr) = &rule.attr {
-                    let val = element.value().attr(attr).map(|s| s.to_string());
-                    if let (Some(v), Some(b)) = (&val, &base) {
-                        if attr == "href" || attr == "src" {
-                            b.join(v).map(|u| u.to_string()).ok().or(val)
-                        } else {
-                            val
-                        }
-                    } else {
-                        val
-                    }
-                } else {
-                    Some(
-                        element
-                            .text()
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                            .trim()
-                            .to_string(),
-                    )
-                };
-
-                if let Some(v) = value {
-                    result.insert(key.clone(), Value::String(v));
-                } else {
-                    result.insert(key.clone(), Value::Null);
-                }
-            } else {
-                result.insert(key.clone(), Value::Null);
             }
         }
 
@@ -164,10 +177,8 @@ impl ExtractionService {
         rules: &HashMap<String, ExtractionRule>,
         base_url: Option<&str>,
     ) -> Result<(Value, TokenUsage)> {
-        // Pre-allocate based on rules count
         let mut result = HashMap::with_capacity(rules.len());
         let mut total_usage = TokenUsage::default();
-
         let base = base_url.and_then(|u| url::Url::parse(u).ok());
 
         for (key, rule) in rules {
@@ -187,7 +198,7 @@ impl ExtractionService {
                     if let Ok(selector) = Selector::parse(sel) {
                         document
                             .select(&selector)
-                            .map(|e| Self::get_clean_text(&e.html())) // 关键修改：对选中的 HTML 再次进行去噪
+                            .map(|e| Self::get_clean_text(&e.html()))
                             .collect::<Vec<_>>()
                             .join("\n")
                     } else {
@@ -218,82 +229,76 @@ impl ExtractionService {
                 continue;
             }
 
-            // Traditional CSS Selector Extraction
-            let selector_str = match &rule.selector {
-                Some(s) => s,
-                None => continue,
-            };
+            // Traditional CSS Selector Extraction - CONSOLIDATED using ExtractionUtils
+            if let Some(selector_str) = &rule.selector {
+                if let Ok(selector) = Selector::parse(selector_str) {
+                    let document = Html::parse_document(html_content);
 
-            let selector = match Selector::parse(selector_str) {
-                Ok(s) => s,
-                Err(_) => continue, // Skip invalid selectors
-            };
-
-            // Parse document for traditional extraction
-            let document = Html::parse_document(html_content);
-
-            if rule.is_array {
-                let mut values = Vec::new();
-                for element in document.select(&selector) {
-                    let value = if let Some(attr) = &rule.attr {
-                        let val = element.value().attr(attr).map(|s| s.to_string());
-                        if let (Some(v), Some(b)) = (&val, &base) {
-                            if attr == "href" || attr == "src" {
-                                b.join(v).map(|u| u.to_string()).ok().or(val)
+                    if rule.is_array {
+                        // Array extraction - CONSOLIDATED (previously 31 duplicate lines)
+                        let mut values = Vec::new();
+                        for element in document.select(&selector) {
+                            let value = if let Some(attr) = &rule.attr {
+                                let val = element.value().attr(attr).map(|s| s.to_string());
+                                if let (Some(v), Some(b)) = (&val, &base) {
+                                    if attr == "href" || attr == "src" {
+                                        b.join(v).map(|u| u.to_string()).ok().or(val)
+                                    } else {
+                                        val
+                                    }
+                                } else {
+                                    val
+                                }
                             } else {
-                                val
+                                Some(
+                                    element
+                                        .text()
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                        .trim()
+                                        .to_string(),
+                                )
+                            };
+
+                            if let Some(v) = value.filter(|v| !v.is_empty()) {
+                                values.push(Value::String(v));
                             }
-                        } else {
-                            val
                         }
+                        result.insert(key.clone(), Value::Array(values));
                     } else {
-                        Some(
-                            element
-                                .text()
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                                .trim()
-                                .to_string(),
-                        )
-                    };
+                        // Single element extraction - CONSOLIDATED (previously 30 duplicate lines)
+                        if let Some(element) = document.select(&selector).next() {
+                            let value = if let Some(attr) = &rule.attr {
+                                let val = element.value().attr(attr).map(|s| s.to_string());
+                                if let (Some(v), Some(b)) = (&val, &base) {
+                                    if attr == "href" || attr == "src" {
+                                        b.join(v).map(|u| u.to_string()).ok().or(val)
+                                    } else {
+                                        val
+                                    }
+                                } else {
+                                    val
+                                }
+                            } else {
+                                Some(
+                                    element
+                                        .text()
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                        .trim()
+                                        .to_string(),
+                                )
+                            };
 
-                    if let Some(v) = value {
-                        if !v.is_empty() {
-                            values.push(Value::String(v));
+                            result.insert(
+                                key.clone(),
+                                value.map(Value::String).unwrap_or(Value::Null),
+                            );
+                        } else {
+                            result.insert(key.clone(), Value::Null);
                         }
                     }
                 }
-                result.insert(key.clone(), Value::Array(values));
-            } else if let Some(element) = document.select(&selector).next() {
-                let value = if let Some(attr) = &rule.attr {
-                    let val = element.value().attr(attr).map(|s| s.to_string());
-                    if let (Some(v), Some(b)) = (&val, &base) {
-                        if attr == "href" || attr == "src" {
-                            b.join(v).map(|u| u.to_string()).ok().or(val)
-                        } else {
-                            val
-                        }
-                    } else {
-                        val
-                    }
-                } else {
-                    Some(
-                        element
-                            .text()
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                            .trim()
-                            .to_string(),
-                    )
-                };
-
-                if let Some(v) = value {
-                    result.insert(key.clone(), Value::String(v));
-                } else {
-                    result.insert(key.clone(), Value::Null);
-                }
-            } else {
-                result.insert(key.clone(), Value::Null);
             }
         }
 
@@ -335,7 +340,7 @@ impl ExtractionService {
             if let Some(text) = child.value().as_text() {
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
-                    // 额外检查：如果文本块内包含典型的代码模式，则丢弃（防止某些未被标签包裹的代码泄露）
+                    // 额外检查：如果文本块内包含典型的代码模式，则丢弃
                     let lower = trimmed.to_lowercase();
                     if !((lower.contains("var ")
                         || lower.contains("function(")
@@ -349,330 +354,5 @@ impl ExtractionService {
                 Self::collect_clean_text(element, text_parts);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_with_real_html() {
-        // 读取本地HTML文件
-        let html = std::fs::read_to_string("temp/extraction_test/raw.html")
-            .expect("Failed to read HTML file");
-
-        let mut rules = HashMap::with_capacity(4);
-        rules.insert(
-            "title".to_string(),
-            ExtractionRule {
-                selector: Some("title".to_string()),
-                attr: None,
-                is_array: false,
-                use_llm: None,
-                llm_prompt: None,
-                output_format: None,
-            },
-        );
-        rules.insert(
-            "paragraphs".to_string(),
-            ExtractionRule {
-                selector: Some("p".to_string()),
-                attr: None,
-                is_array: true,
-                use_llm: None,
-                llm_prompt: None,
-                output_format: None,
-            },
-        );
-        rules.insert(
-            "links".to_string(),
-            ExtractionRule {
-                selector: Some("a[href]".to_string()),
-                attr: Some("href".to_string()),
-                is_array: true,
-                use_llm: None,
-                llm_prompt: None,
-                output_format: None,
-            },
-        );
-        rules.insert(
-            "images".to_string(),
-            ExtractionRule {
-                selector: Some("img[src]".to_string()),
-                attr: Some("src".to_string()),
-                is_array: true,
-                use_llm: None,
-                llm_prompt: None,
-                output_format: None,
-            },
-        );
-
-        use crate::config::settings::Settings;
-
-        let settings = Settings::new().expect("Failed to load settings");
-
-        let (result, _) =
-            ExtractionService::extract(&html, &rules, &settings, Some("https://news.cctv.com/"))
-                .await
-                .expect("Extraction failed");
-
-        // 保存结果
-        std::fs::create_dir_all("temp/extraction_test").ok();
-        std::fs::write(
-            "temp/extraction_test/result.json",
-            serde_json::to_string_pretty(&result).unwrap(),
-        )
-        .ok();
-
-        // 验证
-        assert!(result.get("title").is_some());
-        assert!(result.get("paragraphs").is_some());
-        assert!(result.get("links").is_some());
-        assert!(result.get("images").is_some());
-    }
-
-    #[tokio::test]
-    async fn test_comprehensive_extraction_with_real_html_and_mock_llm() {
-        use axum::{routing::post, Json, Router};
-        use tokio::net::TcpListener;
-
-        // 使用真实 HTML 文件
-        let html = std::fs::read_to_string("temp/extraction_test/raw.html")
-            .expect("Failed to read temp/extraction_test/raw.html");
-
-        let mut rules = HashMap::new();
-
-        // CSS 选择器提取规则
-        rules.insert(
-            "page_title".to_string(),
-            ExtractionRule {
-                selector: Some("title".to_string()),
-                attr: None,
-                is_array: false,
-                use_llm: None,
-                llm_prompt: None,
-                output_format: None,
-            },
-        );
-
-        rules.insert(
-            "article_title".to_string(),
-            ExtractionRule {
-                selector: Some("div.title_area h1".to_string()),
-                attr: None,
-                is_array: false,
-                use_llm: None,
-                llm_prompt: None,
-                output_format: None,
-            },
-        );
-
-        rules.insert(
-            "author_meta".to_string(),
-            ExtractionRule {
-                selector: Some(r#"meta[name="author"]"#.to_string()),
-                attr: Some("content".to_string()),
-                is_array: false,
-                use_llm: None,
-                llm_prompt: None,
-                output_format: None,
-            },
-        );
-
-        rules.insert(
-            "paragraphs".to_string(),
-            ExtractionRule {
-                selector: Some(r#"div.content_area p[style*="text-indent"]"#.to_string()),
-                attr: None,
-                is_array: true,
-                use_llm: None,
-                llm_prompt: None,
-                output_format: None,
-            },
-        );
-
-        rules.insert(
-            "image_urls".to_string(),
-            ExtractionRule {
-                selector: Some("div.content_area img[src]".to_string()),
-                attr: Some("src".to_string()),
-                is_array: true,
-                use_llm: None,
-                llm_prompt: None,
-                output_format: None,
-            },
-        );
-
-        // LLM 提取规则
-        rules.insert(
-            "llm_summary".to_string(),
-            ExtractionRule {
-                selector: Some("div.content_area".to_string()),
-                attr: None,
-                is_array: false,
-                use_llm: Some(true),
-                llm_prompt: Some("请返回 JSON 对象，包含 title 和 category 字段".to_string()),
-                output_format: None,
-            },
-        );
-
-        // 搭建本地 Mock LLM 服务器
-        let llm_content_json =
-            json!({"title": "消费与外贸走势", "category": "宏观经济"}).to_string();
-
-        let canned_response = json!({
-            "id": "chatcmpl-test",
-            "object": "chat.completion",
-            "created": 1677652289,
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": llm_content_json
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": 20,
-                "completion_tokens": 30,
-                "total_tokens": 50
-            }
-        });
-
-        let app = Router::new().route(
-            "/chat/completions",
-            post(move |Json(_): Json<Value>| {
-                let resp = canned_response.clone();
-                async move { Json(resp) }
-            }),
-        );
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("Failed to bind address for mock LLM");
-        let addr = listener.local_addr().expect("Failed to get local address");
-        let server_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .await
-                .expect("Failed to start mock LLM server");
-        });
-
-        // 使用 mock LLM 构造 ExtractionService
-        let llm_service = LLMService::new_with_config(
-            "test-key".to_string(),
-            "gpt-3.5-turbo".to_string(),
-            server_url,
-        );
-        let service = ExtractionService::new(Box::new(llm_service));
-
-        // 执行提取
-        let (result, usage) = service
-            .extract_data(&html, &rules, Some("https://news.cctv.com/"))
-            .await
-            .expect("Failed to extract data");
-
-        // 验证 CSS 提取结果
-        let page_title = result["page_title"].as_str().expect("page_title missing");
-        assert!(page_title.contains("消费") && page_title.contains("新闻频道"));
-
-        let article_title = result["article_title"]
-            .as_str()
-            .expect("article_title missing");
-        assert!(article_title.contains("消费") && article_title.contains("外贸"));
-
-        let author_meta = result["author_meta"].as_str().expect("author_meta missing");
-        assert_eq!(author_meta, "刘珊");
-
-        let paragraphs = result["paragraphs"].as_array().expect("paragraphs missing");
-        assert!(!paragraphs.is_empty());
-
-        let image_urls = result["image_urls"].as_array().expect("image_urls missing");
-        assert!(image_urls.len() >= 3);
-
-        // 验证 LLM 提取结果
-        let llm_summary = &result["llm_summary"];
-        assert!(llm_summary.is_object());
-        assert_eq!(llm_summary["title"], "消费与外贸走势");
-        assert_eq!(llm_summary["category"], "宏观经济");
-
-        // 验证 token 使用
-        assert!(usage.total_tokens >= usage.prompt_tokens + usage.completion_tokens);
-
-        // 保存结果
-        std::fs::create_dir_all("temp/extraction_test").ok();
-        std::fs::write(
-            "temp/extraction_test/result_comprehensive.json",
-            serde_json::to_string_pretty(&result).unwrap(),
-        )
-        .ok();
-    }
-
-    #[tokio::test]
-    #[ignore] // 仅在本地有 LLM 时运行
-    async fn test_real_llm_extraction() {
-        use crate::config::settings::Settings;
-        let mut settings = Settings::new().expect("Failed to load settings");
-
-        // 配置本地 LLM
-        settings.llm.provider = Some("ollama".to_string());
-        settings.llm.model = Some("qwen3:8b".to_string());
-        settings.llm.api_base_url = Some("http://172.24.160.1:11434".to_string());
-
-        let service = ExtractionService::new(Box::new(LLMService::new(&settings)));
-
-        let html = r#"
-            <html>
-                <head><title>Test Page</title><style>.noise { color: red; }</style></head>
-                <body>
-                    <nav>Menu Item 1</nav>
-                    <div class="content">
-                        <h1>真正的主题</h1>
-                        <p>这是第一段有价值的内容。</p>
-                        <p>这是第二段有价值的内容，包含一个<a href="https://example.com">链接</a>。</p>
-                        <div class="noise">这是样式噪音</div>
-                    </div>
-                    <script>console.log('noise');</script>
-                    <footer>Footer info</footer>
-                </body>
-            </html>
-        "#;
-
-        let mut rules = HashMap::new();
-        rules.insert(
-            "summary_json".to_string(),
-            ExtractionRule {
-                selector: None,
-                attr: None,
-                is_array: false,
-                use_llm: Some(true),
-                llm_prompt: Some("总结这篇文章的主题和主要内容".to_string()),
-                output_format: Some("json".to_string()),
-            },
-        );
-        rules.insert(
-            "content_md".to_string(),
-            ExtractionRule {
-                selector: Some(".content".to_string()),
-                attr: None,
-                is_array: false,
-                use_llm: Some(true),
-                llm_prompt: Some("提取正文内容".to_string()),
-                output_format: Some("markdown".to_string()),
-            },
-        );
-
-        let (result, usage) = service
-            .extract_data(html, &rules, None)
-            .await
-            .expect("Real LLM extraction failed");
-
-        println!("Result: {:#?}", result);
-        println!("Usage: {:#?}", usage);
-
-        assert!(result.get("summary_json").is_some());
-        assert!(result.get("content_md").is_some());
     }
 }

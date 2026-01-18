@@ -227,16 +227,32 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
         Ok(created_tasks)
     }
 
+    /// Check if a domain is in the blacklist using early returns
+    ///
+    /// Flattens 3-level nested conditions into guard clauses.
     fn is_domain_blacklisted(&self, link: &str, domain_blacklist: &[String]) -> bool {
-        if let Ok(url) = Url::parse(link) {
-            if let Some(domain) = url.domain() {
-                if domain_blacklist.iter().any(|d| domain.contains(d)) {
-                    tracing::info!("Skipping blacklisted domain: {} for link: {}", domain, link);
-                    debug!(domain);
-                    return true;
-                }
-            }
+        // Early return if URL parsing fails
+        let url = match Url::parse(link) {
+            Ok(url) => url,
+            Err(_) => return false,
+        };
+
+        // Early return if no domain found
+        let domain = match url.domain() {
+            Some(d) => d,
+            None => return false,
+        };
+
+        // Check if domain is blacklisted
+        if let Some(blacklisted) = domain_blacklist
+            .iter()
+            .find(|d| domain.contains(d.as_str()))
+        {
+            tracing::info!("Skipping blacklisted domain: {} for link: {}", domain, link);
+            debug!(domain);
+            return true;
         }
+
         false
     }
 
