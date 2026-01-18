@@ -45,7 +45,7 @@ Welcome to crawlrs, the high-performance web scraping platform built with Rust. 
 
 | Concept | Description |
 |---------|-------------|
-| **Task** | A unit of work (scrape, crawl, search, extract) |
+| **Task** | A unit of work (scrape, crawl, extract) |
 | **API Key** | Your authentication credential with specific permissions |
 | **Team** | A logical group of API keys with shared limits |
 | **Credits** | Resource consumption unit for tracking usage |

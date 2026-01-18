@@ -424,7 +424,6 @@ pub struct Task {
 **Task Types:**
 - `Scrape` - Single page scrape
 - `Crawl` - Multi-page crawl
-- `Search` - Search engine query
 - `Extract` - Data extraction
 
 **Task Statuses:**

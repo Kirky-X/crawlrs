@@ -727,7 +727,7 @@ Extract structured data from HTML.
 {
   "filters": {
     "status": ["completed", "running"],
-    "type": ["scrape", "crawl", "search"],
+    "type": ["scrape", "crawl", "extract"],
     "created_after": "2025-01-01T00:00:00Z",
     "created_before": "2025-01-15T00:00:00Z"
   },
