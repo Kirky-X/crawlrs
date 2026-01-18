@@ -1766,6 +1766,7 @@ dependencies = [
  "uuid 1.19.0",
  "validator",
  "wiremock",
+ "zeroize",
 ]
 
 [[package]]

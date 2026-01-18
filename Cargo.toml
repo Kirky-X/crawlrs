@@ -123,6 +123,7 @@ hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 bcrypt = "0.15"
+zeroize = "1.8"
 
 # Rate limiting and circuit breaking
 governor = "0.10"

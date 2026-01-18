@@ -25,7 +25,7 @@ use serde::Deserialize;
 ///
 /// `url` 字段包含数据库连接字符串，可能包含敏感信息（密码等）。
 /// 该字段仅对 crate 可见，外部模块应使用 `url()` 方法访问。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct DatabaseSettings {
     /// 数据库连接URL (敏感信息)
     pub(crate) url: String,
@@ -51,6 +51,18 @@ impl DatabaseSettings {
     }
 }
 
+impl std::fmt::Debug for DatabaseSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DatabaseSettings")
+            .field("url", &"[REDACTED]")
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("idle_timeout", &self.idle_timeout)
+            .finish()
+    }
+}
+
 /// Redis配置设置
 ///
 /// 配置 Redis 连接参数
@@ -63,7 +75,7 @@ impl DatabaseSettings {
 ///
 /// `url` 字段包含 Redis 连接字符串，可能包含敏感信息（密码等）。
 /// 该字段仅对 crate 可见，外部模块应使用 `url()` 方法访问。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct RedisSettings {
     /// Redis连接URL (敏感信息)
     pub(crate) url: String,
@@ -78,6 +90,14 @@ impl RedisSettings {
     /// 不要记录到日志或暴露给用户。
     pub fn url(&self) -> &str {
         &self.url
+    }
+}
+
+impl std::fmt::Debug for RedisSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisSettings")
+            .field("url", &"[REDACTED]")
+            .finish()
     }
 }
 
@@ -158,7 +178,7 @@ pub struct ConcurrencySettings {
 ///     pub enabled: bool,
 /// }
 /// ```
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct ProxySettings {
     /// 代理服务器URL (可能包含认证信息)
     /// 格式: http://host:port, https://host:port, socks5://host:port
@@ -177,6 +197,15 @@ impl ProxySettings {
     /// 不要记录到日志或暴露给用户。
     pub fn url(&self) -> &str {
         &self.url
+    }
+}
+
+impl std::fmt::Debug for ProxySettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxySettings")
+            .field("url", &"[REDACTED]")
+            .field("enabled", &self.enabled)
+            .finish()
     }
 }
 
