@@ -57,7 +57,7 @@ impl CreateScrapeUseCase {
         self.engine_client
             .scrape(&scrape_request)
             .await
-            .map_err(|e| map_engine_error(e))
+            .map_err(map_engine_error)
     }
 
     fn map_dto_to_request(&self, dto: ScrapeRequestDto) -> Result<ScrapeRequest, DomainError> {
