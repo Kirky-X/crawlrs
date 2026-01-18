@@ -3,9 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[path = "../common/mod.rs"]
-mod common;
-
 pub mod api;
 pub mod api_tests;
 pub mod browser_tests;

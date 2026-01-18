@@ -1,0 +1,10 @@
+// Search router unit tests
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn test_router_exists() {
+        // Router tests would go here
+        // For now, this is a placeholder
+    }
+}
