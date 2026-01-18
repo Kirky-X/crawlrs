@@ -68,6 +68,7 @@ pub fn create_protected_routes(
         team_id: uuid::Uuid::nil(),
         api_key_id: uuid::Uuid::nil(),
         scope: ApiKeyScope::default(),
+        api_key_cache: None,
     };
 
     Router::new()
@@ -178,6 +179,7 @@ pub fn create_v2_routes(
         team_id: uuid::Uuid::nil(),
         api_key_id: uuid::Uuid::nil(),
         scope: ApiKeyScope::default(),
+        api_key_cache: None,
     };
 
     task_routes()

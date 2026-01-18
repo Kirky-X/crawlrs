@@ -59,6 +59,42 @@ pub fn init_telemetry(settings: &LoggingSettings) {
     }
 }
 
+/// 确保日志目录存在
+///
+/// # 参数
+///
+/// * `file_settings` - 文件日志配置
+fn ensure_log_directory_exists(file_settings: &FileLoggingSettings) {
+    if let Some(parent) = Path::new(&file_settings.path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
+                eprintln!("Failed to create log directory: {}", e);
+            });
+        }
+    }
+}
+
+/// 创建滚动文件 appender
+///
+/// # 参数
+///
+/// * `file_settings` - 文件日志配置
+///
+/// # 返回值
+///
+/// * file_appender - 滚动文件 appender
+fn create_file_appender(file_settings: &FileLoggingSettings) -> rolling::RollingFileAppender {
+    rolling::daily(
+        Path::new(&file_settings.path)
+            .parent()
+            .unwrap_or_else(|| Path::new(".")),
+        Path::new(&file_settings.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("crawlrs.log"),
+    )
+}
+
 /// 初始化文件日志
 ///
 /// # 参数
@@ -69,27 +105,8 @@ pub fn init_telemetry(settings: &LoggingSettings) {
 ///
 /// * guard - 守护者（用于刷新缓冲区）
 fn init_file_logging(file_settings: &FileLoggingSettings) -> non_blocking::WorkerGuard {
-    // 创建日志目录（如果不存在）
-    if let Some(parent) = Path::new(&file_settings.path).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-                eprintln!("Failed to create log directory: {}", e);
-            });
-        }
-    }
-
-    // 创建滚动文件 appender
-    let file_appender = rolling::daily(
-        Path::new(&file_settings.path)
-            .parent()
-            .unwrap_or_else(|| Path::new(".")),
-        Path::new(&file_settings.path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("crawlrs.log"),
-    );
-
-    // 使用非阻塞写入器
+    ensure_log_directory_exists(file_settings);
+    let file_appender = create_file_appender(file_settings);
     let (non_blocking, guard) = non_blocking(file_appender);
     guard
 }
@@ -104,27 +121,8 @@ fn init_file_logging(file_settings: &FileLoggingSettings) -> non_blocking::Worke
 ///
 /// * non_blocking - 非阻塞写入器
 fn create_file_writer(file_settings: &FileLoggingSettings) -> non_blocking::NonBlocking {
-    // 创建日志目录（如果不存在）
-    if let Some(parent) = Path::new(&file_settings.path).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-                eprintln!("Failed to create log directory: {}", e);
-            });
-        }
-    }
-
-    // 创建滚动文件 appender
-    let file_appender = rolling::daily(
-        Path::new(&file_settings.path)
-            .parent()
-            .unwrap_or_else(|| Path::new(".")),
-        Path::new(&file_settings.path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("crawlrs.log"),
-    );
-
-    // 使用非阻塞写入器
+    ensure_log_directory_exists(file_settings);
+    let file_appender = create_file_appender(file_settings);
     let (non_blocking, _guard) = non_blocking(file_appender);
     non_blocking
 }

@@ -99,13 +99,16 @@ pub fn is_internal_url(url_str: &str) -> bool {
     }
 
     // IPv6 link-local (fe80::/10 = fe80: to febf:ffff:...)
-    // Cover all prefixes: fe8x, fe9x, feax, febx
-    if host.starts_with("fe8")
-        || host.starts_with("fe9")
-        || host.starts_with("fea")
-        || host.starts_with("feb")
-    {
-        return true;
+    // Check if second hex digit is between 8 and B (inclusive)
+    if host.starts_with("fe") {
+        if let Some(second_octet) = host.get(2..3) {
+            let second_octet_upper = second_octet.to_ascii_uppercase();
+            if let Some(c) = second_octet_upper.chars().next() {
+                if c >= '8' && c <= 'B' {
+                    return true;
+                }
+            }
+        }
     }
 
     // IPv6 unique local addresses (ULA) - fc00::/7

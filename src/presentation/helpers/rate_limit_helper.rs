@@ -64,7 +64,8 @@ pub async fn check_rate_limit<T: RateLimitingService>(
 mod tests {
     use super::*;
     use crate::domain::services::rate_limiting_service::{
-        ConcurrencyConfig, ConcurrencyResult, RateLimitConfig, RateLimitResult, RateLimitingError,
+        BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
+        QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
     };
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -76,7 +77,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl RateLimitingService for MockRateLimitingService {
+    impl RateLimitService for MockRateLimitingService {
         async fn check_rate_limit(
             &self,
             _api_key: &str,
@@ -86,6 +87,28 @@ mod tests {
             Ok(self.result.clone())
         }
 
+        async fn get_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<RateLimitConfig, RateLimitingError> {
+            unimplemented!()
+        }
+
+        async fn update_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+            _config: RateLimitConfig,
+        ) -> Result<(), RateLimitingError> {
+            unimplemented!()
+        }
+
+        async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait]
+    impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
             _team_id: Uuid,
@@ -109,25 +132,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn get_team_rate_limit_config(
-            &self,
-            _team_id: Uuid,
-        ) -> Result<RateLimitConfig, RateLimitingError> {
-            unimplemented!()
-        }
-
         async fn get_team_concurrency_config(
             &self,
             _team_id: Uuid,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
-            unimplemented!()
-        }
-
-        async fn update_team_rate_limit_config(
-            &self,
-            _team_id: Uuid,
-            _config: RateLimitConfig,
-        ) -> Result<(), RateLimitingError> {
             unimplemented!()
         }
 
@@ -138,15 +146,17 @@ mod tests {
         ) -> Result<(), RateLimitingError> {
             unimplemented!()
         }
+    }
 
-        async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
-            Ok(0)
-        }
-
+    #[async_trait]
+    impl BacklogService for MockRateLimitingService {
         async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
+    }
 
+    #[async_trait]
+    impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
             _team_id: Uuid,
@@ -162,6 +172,10 @@ mod tests {
             Ok(1000)
         }
     }
+
+    // 实现组合 trait（向后兼容）
+    #[async_trait]
+    impl RateLimitingService for MockRateLimitingService {}
 
     #[tokio::test]
     async fn test_allowed_passed() {

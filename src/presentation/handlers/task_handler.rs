@@ -38,6 +38,7 @@ use validator::Validate;
 /// # 智能轮询逻辑
 /// - 初始轮询间隔：base_poll_interval_ms
 /// - 动态调整范围：500ms - 2000ms
+/// - 最大轮询次数：60次（防止过多数据库查询）
 /// - 根据任务完成进度调整间隔
 /// - 任务完成率越高，轮询间隔越长
 pub async fn wait_for_tasks_completion<T: TaskRepository>(
@@ -49,71 +50,37 @@ pub async fn wait_for_tasks_completion<T: TaskRepository>(
 ) -> Result<(), AppError> {
     let start_time = Instant::now();
     let timeout_duration = Duration::from_millis(sync_wait_ms as u64);
-    let min_interval = 500u64; // 最小轮询间隔 500ms
-    let max_interval = 2000u64; // 最大轮询间隔 2000ms
+    let min_interval = 500u64;
+    let max_interval = 2000u64;
+    let max_poll_count = 60u32;
 
     let mut current_interval = base_poll_interval_ms.clamp(min_interval, max_interval);
     let mut last_completion_rate = 0.0f64;
+    let mut poll_count = 0u32;
 
     while start_time.elapsed() < timeout_duration {
-        // 查询所有任务的状态
-        let (tasks, _) = task_repo
-            .query_tasks(TaskQueryParams {
-                team_id,
-                task_ids: Some(task_ids.to_vec()),
-                limit: task_ids.len() as u32,
-                ..Default::default()
-            })
-            .await?;
+        poll_count += 1;
+        if poll_count_exceeded(poll_count, max_poll_count) {
+            return Ok(());
+        }
 
-        // 计算任务完成率
-        let completed_count = tasks
-            .iter()
-            .filter(|task| {
-                matches!(
-                    task.status,
-                    TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
-                )
-            })
-            .count();
+        let tasks = query_tasks_for_poll(task_repo, team_id, task_ids).await?;
+        let completion_rate = calculate_completion_rate(&tasks, task_ids);
 
-        let completion_rate = if task_ids.is_empty() {
-            1.0
-        } else {
-            completed_count as f64 / task_ids.len() as f64
-        };
-
-        // 如果所有任务都已完成，立即返回
         if completion_rate >= 1.0 {
             return Ok(());
         }
 
-        // 动态调整轮询间隔
-        // - 完成率提升时，增加轮询间隔
-        // - 完成率下降或不变时，减少轮询间隔
-        // - 根据完成率线性调整间隔：完成率越高，间隔越长
-        let completion_progress = completion_rate - last_completion_rate;
-        let rate_based_interval =
-            min_interval + ((max_interval - min_interval) as f64 * completion_rate) as u64;
-
-        if completion_progress > 0.0 {
-            // 完成率有提升，倾向于增加间隔
-            current_interval = ((current_interval as f64 * 1.2).max(rate_based_interval as f64)
-                as u64)
-                .clamp(min_interval, max_interval);
-        } else if completion_progress < 0.0 {
-            // 完成率下降，减少间隔
-            current_interval = ((current_interval as f64 * 0.8).min(rate_based_interval as f64)
-                as u64)
-                .clamp(min_interval, max_interval);
-        } else {
-            // 完成率不变，使用基于完成率的间隔
-            current_interval = rate_based_interval.clamp(min_interval, max_interval);
-        }
-
+        let new_interval = calculate_next_interval(
+            completion_rate,
+            last_completion_rate,
+            current_interval,
+            min_interval,
+            max_interval,
+        );
+        current_interval = new_interval;
         last_completion_rate = completion_rate;
 
-        // 等待下一轮轮询，但确保不会超出超时时间
         let remaining_time = timeout_duration.saturating_sub(start_time.elapsed());
         let wait_duration = Duration::from_millis(current_interval).min(remaining_time);
 
@@ -122,8 +89,79 @@ pub async fn wait_for_tasks_completion<T: TaskRepository>(
         }
     }
 
-    // 超时返回，但不报错，只是表示同步等待结束
     Ok(())
+}
+
+/// 检查是否达到最大轮询次数
+#[inline]
+fn poll_count_exceeded(count: u32, max_count: u32) -> bool {
+    if count >= max_count {
+        tracing::debug!("Reached max poll count ({}) for task completion", max_count);
+        true
+    } else {
+        false
+    }
+}
+
+/// 查询任务状态用于轮询
+async fn query_tasks_for_poll<T: TaskRepository>(
+    task_repo: &T,
+    team_id: uuid::Uuid,
+    task_ids: &[uuid::Uuid],
+) -> Result<Vec<crate::domain::models::task::Task>, AppError> {
+    let (tasks, _) = task_repo
+        .query_tasks(TaskQueryParams {
+            team_id,
+            task_ids: Some(task_ids.to_vec()),
+            limit: task_ids.len() as u32,
+            ..Default::default()
+        })
+        .await?;
+    Ok(tasks)
+}
+
+/// 计算任务完成率
+#[inline]
+fn calculate_completion_rate(
+    tasks: &[crate::domain::models::task::Task],
+    task_ids: &[uuid::Uuid],
+) -> f64 {
+    if task_ids.is_empty() {
+        return 1.0;
+    }
+
+    let completed_count = tasks
+        .iter()
+        .filter(|task| {
+            matches!(
+                task.status,
+                TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+            )
+        })
+        .count();
+
+    completed_count as f64 / task_ids.len() as f64
+}
+
+/// 根据完成进度计算下一次轮询间隔
+#[inline]
+fn calculate_next_interval(
+    completion_rate: f64,
+    last_rate: f64,
+    current_interval: u64,
+    min_interval: u64,
+    max_interval: u64,
+) -> u64 {
+    let progress = completion_rate - last_rate;
+    let rate_based = min_interval + ((max_interval - min_interval) as f64 * completion_rate) as u64;
+
+    match progress {
+        p if p > 0.0 => ((current_interval as f64 * 1.2).max(rate_based as f64) as u64)
+            .clamp(min_interval, max_interval),
+        p if p < 0.0 => ((current_interval as f64 * 0.8).min(rate_based as f64) as u64)
+            .clamp(min_interval, max_interval),
+        _ => rate_based.clamp(min_interval, max_interval),
+    }
 }
 
 /// 统一任务查询处理器
@@ -137,151 +175,197 @@ pub async fn query_tasks<T: TaskRepository>(
     let start_time = Instant::now();
 
     // 验证请求参数
-    if let Err(errors) = request.validate() {
-        return Err(AppError::from(anyhow::anyhow!(
-            "Validation error: {:?}",
-            errors
-        )));
-    }
+    validate_request(&request)?;
 
-    // 设置默认值
-    let limit = request.limit.unwrap_or(100).min(1000);
-    let offset = request.offset.unwrap_or(0);
-    let include_results = request.include_results.unwrap_or(false);
-    let sync_wait_ms = request.sync_wait_ms.unwrap_or(5000);
+    // 设置默认值并提取参数
+    let (limit, offset, include_results, sync_wait_ms) = apply_defaults(&request);
 
-    // 克隆过滤条件，避免值移动问题
+    // 克隆过滤条件供后续使用
     let task_types_clone = request.task_types.clone();
     let statuses_clone = request.statuses.clone();
 
-    // 执行查询（使用认证上下文中提取的 team_id）
-    let (mut tasks, total) = task_repo
+    // 执行任务查询
+    let (mut tasks, total) =
+        execute_task_query(task_repo.as_ref(), team_id, &request, limit, offset).await?;
+
+    // 处理同步等待模式
+    let sync_mode = sync_wait_ms > 0 && !tasks.is_empty();
+    let mut waited_time_ms = 0u64;
+
+    if sync_mode {
+        waited_time_ms =
+            handle_sync_wait(task_repo.as_ref(), &tasks, team_id, sync_wait_ms).await?;
+
+        // 重新查询任务状态
+        if waited_time_ms > 0 {
+            (tasks, _) =
+                execute_task_query(task_repo.as_ref(), team_id, &request, limit, offset).await?;
+        }
+    }
+
+    // 获取抓取结果（如果需要）
+    let task_id_to_result = if include_results && !tasks.is_empty() {
+        fetch_scrape_results(scrape_result_repo.as_ref(), &tasks).await?
+    } else {
+        None
+    };
+
+    // 构建任务信息列表
+    let task_infos = build_task_infos(&tasks, task_id_to_result.as_ref());
+
+    // 构建并返回响应
+    let response_time_ms = start_time.elapsed().as_millis() as u64;
+    let has_more = (offset + limit) < total as u32;
+    let status = determine_sync_status(sync_mode, waited_time_ms, sync_wait_ms);
+
+    Ok(Json(TaskQueryResponseDto {
+        success: true,
+        status,
+        data: TaskQueryDataDto {
+            tasks: task_infos,
+            total,
+            has_more,
+        },
+        credits_used: 1,
+        response_time_ms,
+    }))
+}
+
+/// 验证请求参数
+fn validate_request(request: &TaskQueryRequestDto) -> Result<(), AppError> {
+    if let Err(errors) = request.validate() {
+        Err(AppError::from(anyhow::anyhow!(
+            "Validation error: {:?}",
+            errors
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+/// 应用请求默认值并提取参数
+fn apply_defaults(request: &TaskQueryRequestDto) -> (u32, u32, bool, u32) {
+    (
+        request.limit.unwrap_or(100).min(1000),
+        request.offset.unwrap_or(0),
+        request.include_results.unwrap_or(false),
+        request.sync_wait_ms.unwrap_or(5000),
+    )
+}
+
+/// 执行任务查询
+async fn execute_task_query<T: TaskRepository>(
+    task_repo: &T,
+    team_id: uuid::Uuid,
+    request: &TaskQueryRequestDto,
+    limit: u32,
+    offset: u32,
+) -> Result<(Vec<crate::domain::models::task::Task>, u64), AppError> {
+    task_repo
         .query_tasks(TaskQueryParams {
-            team_id, // 使用认证上下文的 team_id，而非请求体的 team_id
+            team_id,
             task_ids: request.task_ids.clone(),
-            task_types: request.task_types,
-            statuses: request.statuses,
+            task_types: request.task_types.clone(),
+            statuses: request.statuses.clone(),
             created_after: request.created_after,
             created_before: request.created_before,
             crawl_id: request.crawl_id,
             limit,
             offset,
         })
-        .await?;
+        .await
+        .map_err(|e| AppError::from(anyhow::anyhow!("Query failed: {:?}", e)))
+}
 
-    // 同步等待机制：如果指定了sync_wait_ms且任务列表不为空，等待任务完成
-    let sync_mode = sync_wait_ms > 0 && !tasks.is_empty();
-    let mut waited_time_ms = 0u64;
+/// 处理同步等待模式
+async fn handle_sync_wait<T: TaskRepository>(
+    task_repo: &T,
+    tasks: &[crate::domain::models::task::Task],
+    team_id: uuid::Uuid,
+    sync_wait_ms: u32,
+) -> Result<u64, AppError> {
+    let task_ids: Vec<uuid::Uuid> = tasks.iter().map(|task| task.id).collect();
+    let wait_start = Instant::now();
 
-    if sync_mode {
-        let task_ids: Vec<uuid::Uuid> = tasks.iter().map(|task| task.id).collect();
-        let wait_start = Instant::now();
+    wait_for_tasks_completion(task_repo, &task_ids, team_id, sync_wait_ms, 1000).await?;
 
-        // 智能轮询等待任务完成，轮询间隔动态调整（500ms-2000ms）
-        // 根据任务完成进度自动调整轮询频率，完成率越高轮询越慢
-        wait_for_tasks_completion(
-            task_repo.as_ref(),
-            &task_ids,
-            team_id, // 使用认证上下文的 team_id
-            sync_wait_ms,
-            1000, // 基础轮询间隔1秒
-        )
-        .await?;
+    Ok(wait_start.elapsed().as_millis() as u64)
+}
 
-        waited_time_ms = wait_start.elapsed().as_millis() as u64;
+/// 获取抓取结果
+async fn fetch_scrape_results(
+    scrape_result_repo: &ScrapeResultRepositoryImpl,
+    tasks: &[crate::domain::models::task::Task],
+) -> Result<
+    Option<
+        std::collections::HashMap<uuid::Uuid, crate::domain::models::scrape_result::ScrapeResult>,
+    >,
+    AppError,
+> {
+    let task_ids: Vec<uuid::Uuid> = tasks.iter().map(|task| task.id).collect();
+    let results = scrape_result_repo.find_by_task_ids(&task_ids).await?;
 
-        // 重新查询任务状态以获取最新状态
-        if waited_time_ms > 0 {
-            (tasks, _) = task_repo
-                .query_tasks(TaskQueryParams {
-                    team_id, // 使用认证上下文的 team_id
-                    task_ids: request.task_ids.clone(),
-                    task_types: task_types_clone,
-                    statuses: statuses_clone,
-                    created_after: request.created_after,
-                    created_before: request.created_before,
-                    crawl_id: request.crawl_id,
-                    limit,
-                    offset,
-                })
-                .await?;
-        }
+    let mut map = std::collections::HashMap::with_capacity(results.len());
+    for result in results {
+        map.insert(result.task_id, result);
     }
+    Ok(Some(map))
+}
 
-    // 如果需要包含结果数据，批量查询所有结果（避免 N+1 查询）
-    let task_id_to_result = if include_results && !tasks.is_empty() {
-        let task_ids: Vec<uuid::Uuid> = tasks.iter().map(|task| task.id).collect();
-        let results = scrape_result_repo.find_by_task_ids(&task_ids).await?;
-
-        let mut map = std::collections::HashMap::with_capacity(64);
-        for result in results {
-            map.insert(result.task_id, result);
-        }
-        Some(map)
-    } else {
-        None
-    };
-
-    // 构建任务信息列表
-    let mut task_infos = Vec::new();
-    for task in tasks {
-        let mut result = None;
-
-        // 从批量查询结果中快速查找（O(1) 复杂度）
-        if let Some(ref results_map) = task_id_to_result {
-            if let Some(scrape_result) = results_map.get(&task.id) {
-                // 对 HTML content 进行转义以防止 XSS 攻击
-                let escaped_content = html_escape::encode_text(&scrape_result.content);
-                result = Some(serde_json::json!({
-                    "id": scrape_result.id,
-                    "status_code": scrape_result.status_code,
-                    "content": escaped_content,
-                    "metadata": scrape_result.meta_data,
-                }));
+/// 构建任务信息列表
+fn build_task_infos(
+    tasks: &[crate::domain::models::task::Task],
+    results_map: Option<
+        &std::collections::HashMap<uuid::Uuid, crate::domain::models::scrape_result::ScrapeResult>,
+    >,
+) -> Vec<TaskInfoDto> {
+    tasks
+        .iter()
+        .map(|task| {
+            let result = results_map
+                .and_then(|m| m.get(&task.id))
+                .map(build_scrape_result_json);
+            TaskInfoDto {
+                id: task.id,
+                task_type: task.task_type,
+                status: task.status,
+                priority: task.priority,
+                url: task.url.clone(),
+                attempt_count: task.attempt_count,
+                max_retries: task.max_retries,
+                created_at: task.created_at,
+                started_at: task.started_at,
+                completed_at: task.completed_at,
+                crawl_id: task.crawl_id,
+                result,
             }
-        }
+        })
+        .collect()
+}
 
-        task_infos.push(TaskInfoDto {
-            id: task.id,
-            task_type: task.task_type,
-            status: task.status,
-            priority: task.priority,
-            url: task.url,
-            attempt_count: task.attempt_count,
-            max_retries: task.max_retries,
-            created_at: task.created_at,
-            started_at: task.started_at,
-            completed_at: task.completed_at,
-            crawl_id: task.crawl_id,
-            result,
-        });
+/// 构建抓取结果 JSON
+fn build_scrape_result_json(
+    scrape_result: &crate::domain::models::scrape_result::ScrapeResult,
+) -> serde_json::Value {
+    let escaped_content = html_escape::encode_text(&scrape_result.content);
+    serde_json::json!({
+        "id": scrape_result.id,
+        "status_code": scrape_result.status_code,
+        "content": escaped_content,
+        "metadata": scrape_result.meta_data,
+    })
+}
+
+/// 确定同步状态
+fn determine_sync_status(sync_mode: bool, waited_time_ms: u64, sync_wait_ms: u32) -> String {
+    if !sync_mode {
+        return "async".to_string();
     }
-
-    let response_time_ms = start_time.elapsed().as_millis() as u64;
-    let has_more = (offset + limit) < total as u32;
-
-    // 构建响应状态，包含同步等待信息
-    let status = if sync_mode {
-        if waited_time_ms >= sync_wait_ms as u64 {
-            "sync_timeout" // 同步等待超时
-        } else {
-            "sync_completed" // 同步等待完成
-        }
+    if waited_time_ms >= sync_wait_ms as u64 {
+        "sync_timeout".to_string()
     } else {
-        "async" // 异步模式
-    };
-
-    Ok(Json(TaskQueryResponseDto {
-        success: true,
-        status: status.to_string(),
-        data: TaskQueryDataDto {
-            tasks: task_infos,
-            total,
-            has_more,
-        },
-        credits_used: 1, // 查询任务消耗1个credit
-        response_time_ms,
-    }))
+        "sync_completed".to_string()
+    }
 }
 
 /// 统一任务取消处理器
@@ -375,7 +459,7 @@ pub async fn cancel_tasks<T: TaskRepository>(
             total_cancelled,
             total_failed,
         },
-        credits_used: total_cancelled as u32, // 每个取消的任务消耗1个credit
+        credits_used: total_cancelled as u32, // 每个取消的任务消耗1个credit，批量取消按数量计费
         response_time_ms,
     }))
 }

@@ -51,6 +51,46 @@ pub struct RateLimitConfig {
     pub enabled: bool,
 }
 
+impl RateLimitConfig {
+    /// 验证配置的有效性
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.requests_per_second == 0 {
+            return Err(ValidationError::ZeroRate(
+                "requests_per_second cannot be zero",
+            ));
+        }
+        if self.requests_per_minute == 0 {
+            return Err(ValidationError::ZeroRate(
+                "requests_per_minute cannot be zero",
+            ));
+        }
+        if self.requests_per_hour == 0 {
+            return Err(ValidationError::ZeroRate(
+                "requests_per_hour cannot be zero",
+            ));
+        }
+        // 确保速率一致：每秒速率不应超过每分钟速率/60，每分钟速率不应超过每小时速率/60
+        if self.requests_per_second > self.requests_per_minute / 60 {
+            return Err(ValidationError::InconsistentRates(
+                "requests_per_second exceeds requests_per_minute / 60".to_string(),
+            ));
+        }
+        if self.requests_per_minute > self.requests_per_hour / 60 {
+            return Err(ValidationError::InconsistentRates(
+                "requests_per_minute exceeds requests_per_hour / 60".to_string(),
+            ));
+        }
+        if let Some(capacity) = self.bucket_capacity {
+            if capacity == 0 {
+                return Err(ValidationError::ZeroCapacity(
+                    "bucket_capacity cannot be zero".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
@@ -79,6 +119,38 @@ pub struct ConcurrencyConfig {
     pub enabled: bool,
 }
 
+impl ConcurrencyConfig {
+    /// 验证配置的有效性
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.max_concurrent_tasks == 0 {
+            return Err(ValidationError::ZeroCapacity(
+                "max_concurrent_tasks cannot be zero".to_string(),
+            ));
+        }
+        if self.max_concurrent_per_team == 0 {
+            return Err(ValidationError::ZeroCapacity(
+                "max_concurrent_per_team cannot be zero".to_string(),
+            ));
+        }
+        if self.lock_timeout_seconds == 0 {
+            return Err(ValidationError::InvalidTimeout(
+                "lock_timeout_seconds cannot be zero".to_string(),
+            ));
+        }
+        if self.lock_timeout_seconds < 60 {
+            return Err(ValidationError::InvalidTimeout(
+                "lock_timeout_seconds should be at least 60 seconds".to_string(),
+            ));
+        }
+        if self.max_concurrent_per_team > self.max_concurrent_tasks {
+            return Err(ValidationError::InconsistentRates(
+                "max_concurrent_per_team exceeds max_concurrent_tasks".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl Default for ConcurrencyConfig {
     fn default() -> Self {
         Self {
@@ -91,7 +163,7 @@ impl Default for ConcurrencyConfig {
     }
 }
 
-/// 限流结果
+/// 限流与并发控制结果
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RateLimitResult {
     /// 允许通过
@@ -113,10 +185,12 @@ pub enum ConcurrencyResult {
     Queued { backlog_id: Uuid },
 }
 
-/// 限流与并发控制服务接口
+// === 拆分后的接口 ===
+
+/// 限流服务接口（核心限流功能）
 #[async_trait]
 #[cfg(feature = "rate-limiting")]
-pub trait RateLimitingService: Interface + Send + Sync {
+pub trait RateLimitService: Interface + Send + Sync {
     /// 检查API限流
     async fn check_rate_limit(
         &self,
@@ -124,6 +198,27 @@ pub trait RateLimitingService: Interface + Send + Sync {
         endpoint: &str,
     ) -> Result<RateLimitResult, RateLimitingError>;
 
+    /// 获取团队的限流配置
+    async fn get_team_rate_limit_config(
+        &self,
+        team_id: Uuid,
+    ) -> Result<RateLimitConfig, RateLimitingError>;
+
+    /// 更新团队的限流配置
+    async fn update_team_rate_limit_config(
+        &self,
+        team_id: Uuid,
+        config: RateLimitConfig,
+    ) -> Result<(), RateLimitingError>;
+
+    /// 清理过期的限流记录
+    async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError>;
+}
+
+/// 并发控制服务接口
+#[async_trait]
+#[cfg(feature = "rate-limiting")]
+pub trait ConcurrencyControlService: Interface + Send + Sync {
     /// 检查团队并发限制
     async fn check_team_concurrency(
         &self,
@@ -141,24 +236,11 @@ pub trait RateLimitingService: Interface + Send + Sync {
     /// 获取团队的当前并发数
     async fn get_team_current_concurrency(&self, team_id: Uuid) -> Result<u32, RateLimitingError>;
 
-    /// 获取团队的限流配置
-    async fn get_team_rate_limit_config(
-        &self,
-        team_id: Uuid,
-    ) -> Result<RateLimitConfig, RateLimitingError>;
-
     /// 获取团队的并发配置
     async fn get_team_concurrency_config(
         &self,
         team_id: Uuid,
     ) -> Result<ConcurrencyConfig, RateLimitingError>;
-
-    /// 更新团队的限流配置
-    async fn update_team_rate_limit_config(
-        &self,
-        team_id: Uuid,
-        config: RateLimitConfig,
-    ) -> Result<(), RateLimitingError>;
 
     /// 更新团队的并发配置
     async fn update_team_concurrency_config(
@@ -166,13 +248,20 @@ pub trait RateLimitingService: Interface + Send + Sync {
         team_id: Uuid,
         config: ConcurrencyConfig,
     ) -> Result<(), RateLimitingError>;
+}
 
-    /// 清理过期的限流记录
-    async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError>;
-
+/// 积压任务服务接口
+#[async_trait]
+#[cfg(feature = "rate-limiting")]
+pub trait BacklogService: Interface + Send + Sync {
     /// 处理积压任务
     async fn process_backlog_tasks(&self, team_id: Uuid) -> Result<u32, RateLimitingError>;
+}
 
+/// 配额/积分服务接口
+#[async_trait]
+#[cfg(feature = "rate-limiting")]
+pub trait QuotaService: Interface + Send + Sync {
     /// 检查并扣除团队配额（Credits）
     async fn check_and_deduct_quota(
         &self,
@@ -185,6 +274,14 @@ pub trait RateLimitingService: Interface + Send + Sync {
 
     /// 获取团队配额余额
     async fn get_quota_balance(&self, team_id: Uuid) -> Result<i64, RateLimitingError>;
+}
+
+/// 组合接口：提供所有限流与并发控制功能（向后兼容）
+#[async_trait]
+#[cfg(feature = "rate-limiting")]
+pub trait RateLimitingService:
+    RateLimitService + ConcurrencyControlService + BacklogService + QuotaService + Send + Sync
+{
 }
 
 /// 限流与并发控制错误类型
@@ -200,15 +297,31 @@ pub enum RateLimitingError {
     ConfigurationError(String),
 
     #[cfg(feature = "rate-limiting")]
-    #[error("Redis连接错误: {0}")]
-    RedisError(#[from] redis::RedisError),
+    #[error("Redis连接错误: 服务暂时不可用")]
+    RedisError,
 
-    #[error("数据库错误: {0}")]
-    DatabaseError(#[from] crate::domain::repositories::task_repository::RepositoryError),
+    #[error("数据库操作失败，请稍后重试")]
+    DatabaseError,
 
-    #[error("积分系统错误: {0}")]
-    CreditsError(#[from] crate::domain::repositories::credits_repository::CreditsRepositoryError),
+    #[error("积分系统暂时不可用")]
+    CreditsError,
 
     #[error("其他错误: {0}")]
     Other(#[from] anyhow::Error),
+}
+
+/// 配置验证错误类型
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("速率限制不能为零: {0}")]
+    ZeroRate(&'static str),
+
+    #[error("容量不能为零: {0}")]
+    ZeroCapacity(String),
+
+    #[error("超时时间无效: {0}")]
+    InvalidTimeout(String),
+
+    #[error("速率配置不一致: {0}")]
+    InconsistentRates(String),
 }

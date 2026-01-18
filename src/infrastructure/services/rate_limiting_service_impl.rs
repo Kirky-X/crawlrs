@@ -18,8 +18,8 @@ use crate::domain::repositories::{
     tasks_backlog_repository::TasksBacklogRepository,
 };
 use crate::domain::services::rate_limiting_service::{
-    ConcurrencyConfig, ConcurrencyResult, RateLimitConfig, RateLimitResult, RateLimitingError,
-    RateLimitingService,
+    BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult, QuotaService,
+    RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError, RateLimitingService,
 };
 #[cfg(feature = "rate-limiting")]
 use crate::infrastructure::cache::redis_client::RedisClient;
@@ -85,7 +85,8 @@ impl RateLimitingServiceImpl {
     /// 获取Redis连接
     async fn get_redis_conn(&self) -> Result<redis::aio::MultiplexedConnection, RateLimitingError> {
         self.redis.get_connection().await.map_err(|e| {
-            RateLimitingError::Other(anyhow::anyhow!("Redis connection failed: {}", e))
+            tracing::error!("Redis connection failed: {}", e);
+            RateLimitingError::RedisError
         })
     }
 
@@ -172,7 +173,10 @@ impl RateLimitingServiceImpl {
             .arg(now)
             .invoke_async(&mut conn)
             .await
-            .map_err(RateLimitingError::RedisError)?;
+            .map_err(|e| {
+                tracing::error!("Redis script error: {}", e);
+                RateLimitingError::RedisError
+            })?;
 
         if result[0] == 1 {
             Ok(RateLimitResult::Allowed)
@@ -226,7 +230,10 @@ impl RateLimitingServiceImpl {
             .arg(&token)
             .invoke_async(&mut conn)
             .await
-            .map_err(RateLimitingError::RedisError)?;
+            .map_err(|e| {
+                tracing::error!("Redis semaphore script error: {}", e);
+                RateLimitingError::RedisError
+            })?;
 
         Ok(result == 1)
     }
@@ -235,9 +242,10 @@ impl RateLimitingServiceImpl {
     async fn release_semaphore(&self, key: String, token: String) -> Result<(), RateLimitingError> {
         let mut conn = self.get_redis_conn().await?;
 
-        conn.zrem::<_, _, ()>(&key, token)
-            .await
-            .map_err(RateLimitingError::RedisError)?;
+        conn.zrem::<_, _, ()>(&key, token).await.map_err(|e| {
+            tracing::error!("Redis zrem error: {}", e);
+            RateLimitingError::RedisError
+        })?;
 
         Ok(())
     }
@@ -265,7 +273,10 @@ impl RateLimitingServiceImpl {
             .arg(now)
             .invoke_async(&mut conn)
             .await
-            .map_err(RateLimitingError::RedisError)?;
+            .map_err(|e| {
+                tracing::error!("Redis concurrency script error: {}", e);
+                RateLimitingError::RedisError
+            })?;
 
         Ok(current as u32)
     }
@@ -356,7 +367,7 @@ impl RateLimitingServiceImpl {
 
 #[async_trait]
 #[cfg(feature = "rate-limiting")]
-impl RateLimitingService for RateLimitingServiceImpl {
+impl RateLimitService for RateLimitingServiceImpl {
     async fn check_rate_limit(
         &self,
         api_key: &str,
@@ -464,6 +475,57 @@ impl RateLimitingService for RateLimitingServiceImpl {
         Ok(per_hour_result)
     }
 
+    async fn get_team_rate_limit_config(
+        &self,
+        _team_id: Uuid,
+    ) -> Result<RateLimitConfig, RateLimitingError> {
+        Ok(self.config.rate_limit.clone())
+    }
+
+    async fn update_team_rate_limit_config(
+        &self,
+        _team_id: Uuid,
+        _config: RateLimitConfig,
+    ) -> Result<(), RateLimitingError> {
+        // 这里可以实现团队特定的限流配置更新逻辑
+        // 目前返回默认配置
+        Ok(())
+    }
+
+    async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
+        // 清理过期的限流记录
+        let mut conn = self.get_redis_conn().await?;
+
+        let pattern = format!("{}:*", self.config.redis_key_prefix);
+        let keys: Vec<String> = conn.keys(&pattern).await.map_err(|e| {
+            tracing::error!("Redis keys error: {}", e);
+            RateLimitingError::RedisError
+        })?;
+
+        let mut cleaned_count = 0;
+        for key in keys {
+            let ttl: i64 = conn.ttl(&key).await.map_err(|e| {
+                tracing::error!("Redis ttl error: {}", e);
+                RateLimitingError::RedisError
+            })?;
+
+            if ttl == -2 {
+                // 键已过期
+                let _: i64 = conn.del(&key).await.map_err(|e| {
+                    tracing::error!("Redis del error: {}", e);
+                    RateLimitingError::RedisError
+                })?;
+                cleaned_count += 1;
+            }
+        }
+
+        Ok(cleaned_count)
+    }
+}
+
+#[async_trait]
+#[cfg(feature = "rate-limiting")]
+impl ConcurrencyControlService for RateLimitingServiceImpl {
     async fn check_team_concurrency(
         &self,
         team_id: Uuid,
@@ -493,7 +555,10 @@ impl RateLimitingService for RateLimitingServiceImpl {
                 .task_repository
                 .find_by_id(task_id)
                 .await
-                .map_err(RateLimitingError::DatabaseError)?;
+                .map_err(|e| {
+                    tracing::error!("Database error finding task: {:?}", e);
+                    RateLimitingError::DatabaseError
+                })?;
 
             if let Some(task) = task {
                 let backlog =
@@ -510,15 +575,16 @@ impl RateLimitingService for RateLimitingServiceImpl {
                     .tasks_backlog_repository
                     .create(&backlog)
                     .await
-                    .map_err(RateLimitingError::DatabaseError)?;
+                    .map_err(|e| {
+                        tracing::error!("Database error creating backlog: {:?}", e);
+                        RateLimitingError::DatabaseError
+                    })?;
 
                 Ok(ConcurrencyResult::Queued {
                     backlog_id: saved_backlog.id,
                 })
             } else {
-                Err(RateLimitingError::DatabaseError(
-                    crate::domain::repositories::task_repository::RepositoryError::NotFound,
-                ))
+                Err(RateLimitingError::DatabaseError)
             }
         }
     }
@@ -544,28 +610,11 @@ impl RateLimitingService for RateLimitingServiceImpl {
         self.get_current_concurrency(semaphore_key).await
     }
 
-    async fn get_team_rate_limit_config(
-        &self,
-        _team_id: Uuid,
-    ) -> Result<RateLimitConfig, RateLimitingError> {
-        Ok(self.config.rate_limit.clone())
-    }
-
     async fn get_team_concurrency_config(
         &self,
         _team_id: Uuid,
     ) -> Result<ConcurrencyConfig, RateLimitingError> {
         Ok(self.config.concurrency.clone())
-    }
-
-    async fn update_team_rate_limit_config(
-        &self,
-        _team_id: Uuid,
-        _config: RateLimitConfig,
-    ) -> Result<(), RateLimitingError> {
-        // 这里可以实现团队特定的限流配置更新逻辑
-        // 目前返回默认配置
-        Ok(())
     }
 
     async fn update_team_concurrency_config(
@@ -577,44 +626,21 @@ impl RateLimitingService for RateLimitingServiceImpl {
         // 目前返回默认配置
         Ok(())
     }
+}
 
-    async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
-        // 清理过期的限流记录
-        let mut conn = self.get_redis_conn().await?;
-
-        let pattern = format!("{}:*", self.config.redis_key_prefix);
-        let keys: Vec<String> = conn
-            .keys(&pattern)
-            .await
-            .map_err(RateLimitingError::RedisError)?;
-
-        let mut cleaned_count = 0;
-        for key in keys {
-            let ttl: i64 = conn
-                .ttl(&key)
-                .await
-                .map_err(RateLimitingError::RedisError)?;
-
-            if ttl == -2 {
-                // 键已过期
-                let _: i64 = conn
-                    .del(&key)
-                    .await
-                    .map_err(RateLimitingError::RedisError)?;
-                cleaned_count += 1;
-            }
-        }
-
-        Ok(cleaned_count)
-    }
-
+#[async_trait]
+#[cfg(feature = "rate-limiting")]
+impl BacklogService for RateLimitingServiceImpl {
     async fn process_backlog_tasks(&self, team_id: Uuid) -> Result<u32, RateLimitingError> {
         // 获取待处理的积压任务
         let pending_backlogs = self
             .tasks_backlog_repository
             .get_pending_tasks(Some(team_id), Some(10))
             .await
-            .map_err(RateLimitingError::DatabaseError)?;
+            .map_err(|e| {
+                tracing::error!("Database error getting pending tasks: {:?}", e);
+                RateLimitingError::DatabaseError
+            })?;
 
         let mut processed_count = 0;
 
@@ -629,7 +655,10 @@ impl RateLimitingService for RateLimitingServiceImpl {
                 self.tasks_backlog_repository
                     .update(&expired_backlog)
                     .await
-                    .map_err(RateLimitingError::DatabaseError)?;
+                    .map_err(|e| {
+                        tracing::error!("Database error updating backlog: {:?}", e);
+                        RateLimitingError::DatabaseError
+                    })?;
 
                 continue;
             }
@@ -652,7 +681,10 @@ impl RateLimitingService for RateLimitingServiceImpl {
                     .task_repository
                     .find_by_id(backlog.task_id)
                     .await
-                    .map_err(RateLimitingError::DatabaseError)?;
+                    .map_err(|e| {
+                        tracing::error!("Database error finding task: {:?}", e);
+                        RateLimitingError::DatabaseError
+                    })?;
 
                 if let Some(mut task) = task {
                     if task.status == crate::domain::models::task::TaskStatus::Queued {
@@ -662,10 +694,10 @@ impl RateLimitingService for RateLimitingServiceImpl {
                         task.lock_token = None;
                         task.lock_expires_at =
                             Some((chrono::Utc::now() + chrono::Duration::seconds(300)).into());
-                        self.task_repository
-                            .update(&task)
-                            .await
-                            .map_err(RateLimitingError::DatabaseError)?;
+                        self.task_repository.update(&task).await.map_err(|e| {
+                            tracing::error!("Database error updating task: {:?}", e);
+                            RateLimitingError::DatabaseError
+                        })?;
                     }
                 }
 
@@ -678,7 +710,10 @@ impl RateLimitingService for RateLimitingServiceImpl {
                 self.tasks_backlog_repository
                     .update(&updated_backlog)
                     .await
-                    .map_err(RateLimitingError::DatabaseError)?;
+                    .map_err(|e| {
+                        tracing::error!("Database error updating backlog: {:?}", e);
+                        RateLimitingError::DatabaseError
+                    })?;
 
                 processed_count += 1;
             } else {
@@ -689,7 +724,11 @@ impl RateLimitingService for RateLimitingServiceImpl {
 
         Ok(processed_count)
     }
+}
 
+#[async_trait]
+#[cfg(feature = "rate-limiting")]
+impl QuotaService for RateLimitingServiceImpl {
     async fn check_and_deduct_quota(
         &self,
         team_id: Uuid,
@@ -703,7 +742,10 @@ impl RateLimitingService for RateLimitingServiceImpl {
             .credits_repository
             .get_balance(team_id)
             .await
-            .map_err(RateLimitingError::CreditsError)?;
+            .map_err(|e| {
+                tracing::error!("Credits error getting balance: {:?}", e);
+                RateLimitingError::CreditsError
+            })?;
 
         if balance < amount {
             return Err(RateLimitingError::RateLimitExceeded(format!(
@@ -715,7 +757,10 @@ impl RateLimitingService for RateLimitingServiceImpl {
         self.credits_repository
             .deduct_credits(team_id, amount, transaction_type, description, reference_id)
             .await
-            .map_err(RateLimitingError::CreditsError)?;
+            .map_err(|e| {
+                tracing::error!("Credits error deducting: {:?}", e);
+                RateLimitingError::CreditsError
+            })?;
 
         Ok(())
     }
@@ -724,6 +769,14 @@ impl RateLimitingService for RateLimitingServiceImpl {
         self.credits_repository
             .get_balance(team_id)
             .await
-            .map_err(RateLimitingError::CreditsError)
+            .map_err(|e| {
+                tracing::error!("Credits error getting balance: {:?}", e);
+                RateLimitingError::CreditsError
+            })
     }
 }
+
+/// 为 RateLimitingServiceImpl 实现组合 trait RateLimitingService（向后兼容）
+#[async_trait]
+#[cfg(feature = "rate-limiting")]
+impl RateLimitingService for RateLimitingServiceImpl {}

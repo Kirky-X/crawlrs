@@ -98,23 +98,37 @@ pub fn init_rate_limiting_service(
     repositories: &Repositories,
     settings: &Settings,
 ) -> Arc<dyn RateLimitingService> {
+    let rate_limit_config = RateLimitConfig {
+        strategy: RateLimitStrategy::TokenBucket,
+        requests_per_second: settings.rate_limiting.default_rpm / 60,
+        requests_per_minute: settings.rate_limiting.default_rpm,
+        requests_per_hour: settings.rate_limiting.default_rpm * 60,
+        bucket_capacity: Some(settings.rate_limiting.default_rpm),
+        enabled: settings.rate_limiting.enabled,
+    };
+
+    // Validate rate limit config
+    if let Err(e) = rate_limit_config.validate() {
+        tracing::error!("Rate limit configuration error: {}", e);
+    }
+
+    let concurrency_config = ConcurrencyConfig {
+        strategy: ConcurrencyStrategy::DistributedSemaphore,
+        max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
+        max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
+        lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds as u64,
+        enabled: true,
+    };
+
+    // Validate concurrency config
+    if let Err(e) = concurrency_config.validate() {
+        tracing::error!("Concurrency configuration error: {}", e);
+    }
+
     let rate_limiting_config = RateLimitingConfig {
         redis_key_prefix: "crawlrs".to_string(),
-        rate_limit: RateLimitConfig {
-            strategy: RateLimitStrategy::TokenBucket,
-            requests_per_second: settings.rate_limiting.default_rpm / 60,
-            requests_per_minute: settings.rate_limiting.default_rpm,
-            requests_per_hour: settings.rate_limiting.default_rpm * 60,
-            bucket_capacity: Some(settings.rate_limiting.default_rpm),
-            enabled: settings.rate_limiting.enabled,
-        },
-        concurrency: ConcurrencyConfig {
-            strategy: ConcurrencyStrategy::DistributedSemaphore,
-            max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
-            max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
-            lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds as u64,
-            enabled: true,
-        },
+        rate_limit: rate_limit_config,
+        concurrency: concurrency_config,
         backlog_process_interval_seconds: 30,
         rate_limit_ttl_seconds: 3600,
     };

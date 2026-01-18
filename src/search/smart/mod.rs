@@ -225,8 +225,8 @@ impl SmartSearchEngine {
                     tokio::time::sleep(Duration::from_secs(retry_after_seconds)).await;
                     Ok(())
                 }
-                Err(RateLimitingError::RedisError(e)) => {
-                    error!("Redis连接错误，降级处理: {}", e);
+                Err(RateLimitingError::RedisError) => {
+                    error!("Redis连接错误，降级处理");
                     Ok(())
                 }
                 Err(e) => {

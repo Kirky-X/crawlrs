@@ -144,6 +144,97 @@ pub mod testing {
     pub const CRAWL_TASK_TIMEOUT: Duration = Duration::from_secs(90);
 }
 
+/// 环境变量名称常量
+/// 使用常量定义环境变量名称，避免拼写错误，提高可维护性
+pub mod env_vars {
+    /// 应用程序环境
+    pub const ENV: &str = "CRAWLRS_ENV";
+    /// 应用程序环境（备用名称）
+    pub const APP_ENVIRONMENT: &str = "APP_ENVIRONMENT";
+
+    // === 速率限制相关 ===
+    /// 禁用速率限制
+    pub const RATE_LIMITING_ENABLED: &str = "CRAWLRS_RATE_LIMITING_ENABLED";
+
+    // === SSRF 保护相关 ===
+    /// 禁用 SSRF 保护
+    pub const DISABLE_SSRF_PROTECTION: &str = "CRAWLRS_DISABLE_SSRF_PROTECTION";
+    /// 启用网络测试
+    pub const ENABLE_NETWORK_TESTS: &str = "CRAWLRS_ENABLE_NETWORK_TESTS";
+
+    // === 代理相关 ===
+    /// 代理 URL
+    pub const PROXY_URL: &str = "CRAWLRS_PROXY_URL";
+
+    // === 测试相关 ===
+    /// 测试模式：不复用浏览器
+    pub const TEST_NO_BROWSER_REUSE: &str = "CRAWLRS_TEST_NO_BROWSER_REUSE";
+
+    // === 调试相关 ===
+    /// 调试：保存 HTML
+    pub const DEBUG_SAVE_HTML: &str = "DEBUG_SAVE_HTML";
+
+    // === 健康检查相关 ===
+    /// 健康检查 URL
+    pub const HEALTH_CHECK_URL: &str = "CRAWLRS_HEALTH_CHECK_URL";
+
+    // === 搜索引擎测试结果 ===
+    /// 百度测试结果
+    pub const BAIDU_TEST_RESULTS: &str = "BAIDU_TEST_RESULTS";
+    /// 必应测试结果
+    pub const BING_TEST_RESULTS: &str = "BING_TEST_RESULTS";
+    /// 谷歌 HTTP 回退测试结果
+    pub const GOOGLE_HTTP_FALLBACK_TEST_RESULTS: &str = "GOOGLE_HTTP_FALLBACK_TEST_RESULTS";
+    /// 搜狗测试结果
+    pub const SOGOU_TEST_RESULTS: &str = "SOGOU_TEST_RESULTS";
+    /// 使用测试数据
+    pub const USE_TEST_DATA: &str = "USE_TEST_DATA";
+
+    // === 跳过测试 ===
+    /// 跳过搜索测试
+    pub const SKIP_SEARCH_TESTS: &str = "SKIP_SEARCH_TESTS";
+    /// 跳过浏览器测试
+    pub const SKIP_BROWSER_TESTS: &str = "SKIP_BROWSER_TESTS";
+
+    // === 浏览器远程调试 ===
+    /// Chromium 远程调试 URL
+    pub const CHROMIUM_REMOTE_DEBUGGING_URL: &str = "CHROMIUM_REMOTE_DEBUGGING_URL";
+
+    // === Fire 引擎相关 ===
+    /// Fire 引擎 CDP URL
+    pub const FIRE_ENGINE_CDP_URL: &str = "FIRE_ENGINE_CDP_URL";
+    /// Fire 引擎 TLS URL
+    pub const FIRE_ENGINE_TLS_URL: &str = "FIRE_ENGINE_TLS_URL";
+    /// Fire 引擎基础 URL
+    pub const FIRE_ENGINE_URL: &str = "FIRE_ENGINE_URL";
+
+    // === FlareSolverr ===
+    /// FlareSolverr URL
+    pub const FLARESOLVERR_URL: &str = "FLARESOLVERR_URL";
+
+    // === 测试用环境变量 ===
+    /// 测试数据库 URL
+    pub const TEST_DATABASE_URL: &str = "TEST_DATABASE_URL";
+    /// 测试数据库密码
+    pub const TEST_DATABASE_PASSWORD: &str = "TEST_DATABASE_PASSWORD";
+    /// 测试 Redis URL
+    pub const TEST_REDIS_URL: &str = "TEST_REDIS_URL";
+    /// 测试 Redis 端口
+    pub const TEST_REDIS_PORT: &str = "TEST_REDIS_PORT";
+    /// 测试 Webhook 密钥
+    pub const TEST_WEBHOOK_SECRET: &str = "TEST_WEBHOOK_SECRET";
+    /// 测试 S3 访问密钥
+    pub const TEST_S3_ACCESS_KEY: &str = "TEST_S3_ACCESS_KEY";
+    /// 测试 S3 密钥
+    pub const TEST_S3_SECRET_KEY: &str = "TEST_S3_SECRET_KEY";
+    /// 测试 S3 端点
+    pub const TEST_S3_ENDPOINT: &str = "TEST_S3_ENDPOINT";
+    /// 跳过 S3 测试
+    pub const SKIP_S3_TESTS: &str = "SKIP_S3_TESTS";
+    /// 测试 Fire 引擎 CDP URL
+    pub const TEST_FIRE_ENGINE_CDP_URL: &str = "TEST_FIRE_ENGINE_CDP_URL";
+}
+
 /// 导出测试常量（仅在测试模式下）
 #[cfg(test)]
 pub use testing::*;

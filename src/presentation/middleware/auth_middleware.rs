@@ -42,9 +42,101 @@ use axum::{
     response::Response,
 };
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use uuid::Uuid;
+
+/// LRU Cache for authenticated API keys to reduce database queries
+pub struct ApiKeyCache {
+    /// LRU cache storing API key validation results
+    cache: HashMap<String, CachedAuthResult>,
+    /// Track access order for LRU eviction
+    access_order: Vec<String>,
+    /// Maximum cache size
+    max_size: usize,
+    /// TTL for cache entries (5 minutes)
+    ttl: Duration,
+}
+
+#[derive(Clone)]
+pub struct CachedAuthResult {
+    team_id: Uuid,
+    api_key_id: Uuid,
+    scope: ApiKeyScope,
+    cached_at: Instant,
+}
+
+impl ApiKeyCache {
+    fn new(max_size: usize, ttl_seconds: u64) -> Self {
+        Self {
+            cache: HashMap::with_capacity(max_size),
+            access_order: Vec::with_capacity(max_size),
+            max_size,
+            ttl: Duration::from_secs(ttl_seconds),
+        }
+    }
+
+    fn get(&mut self, key: &str) -> Option<CachedAuthResult> {
+        // Check if key exists and not expired
+        if let Some(result) = self.cache.get(key) {
+            if result.cached_at.elapsed() < self.ttl {
+                // Update access order - move key to end (most recently used)
+                self.access_order.retain(|k| k != key);
+                self.access_order.push(key.to_string());
+                return Some(result.clone());
+            } else {
+                // Remove expired entry
+                self.cache.remove(key);
+                self.access_order.retain(|k| k != key);
+            }
+        }
+        None
+    }
+
+    fn insert(&mut self, key: String, result: CachedAuthResult) {
+        // Evict oldest entry if cache is full
+        if self.cache.len() >= self.max_size && !self.access_order.is_empty() {
+            if let Some(oldest_key) = self.access_order.first().cloned() {
+                self.cache.remove(&oldest_key);
+                self.access_order.remove(0);
+            }
+        }
+        self.cache.insert(key.clone(), result);
+        self.access_order.push(key);
+    }
+
+    fn clear_expired(&mut self) {
+        let now = Instant::now();
+        let expired_keys: Vec<String> = self
+            .access_order
+            .iter()
+            .filter(|key| {
+                self.cache
+                    .get(key.as_str())
+                    .map_or(false, |r| now.duration_since(r.cached_at) >= self.ttl)
+            })
+            .cloned()
+            .collect();
+
+        for key in &expired_keys {
+            self.cache.remove(key.as_str());
+        }
+        self.access_order.retain(|k| !expired_keys.contains(k));
+    }
+}
+
+impl std::fmt::Debug for ApiKeyCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKeyCache")
+            .field("size", &self.cache.len())
+            .field("max_size", &self.max_size)
+            .field("ttl_seconds", &self.ttl.as_secs())
+            .finish()
+    }
+}
 
 /// Authentication state with enhanced features
 ///
@@ -62,6 +154,8 @@ pub struct AuthState {
     pub api_key_id: Uuid,
     /// Scope permissions for the API key
     pub scope: ApiKeyScope,
+    /// API Key validation cache (PERF-002)
+    pub api_key_cache: Option<Arc<RwLock<ApiKeyCache>>>,
 }
 
 impl AuthState {
@@ -78,6 +172,7 @@ impl AuthState {
             team_id,
             api_key_id,
             scope,
+            api_key_cache: None,
         }
     }
 
@@ -95,6 +190,26 @@ impl AuthState {
             team_id,
             api_key_id,
             scope: default_scope,
+            api_key_cache: None,
+        }
+    }
+
+    /// Create AuthState with cache support
+    pub fn with_cache(
+        db: Arc<DatabaseConnection>,
+        auth_scope_service: Option<AuthScopeService>,
+        team_id: Uuid,
+        api_key_id: Uuid,
+        scope: ApiKeyScope,
+        cache: Arc<RwLock<ApiKeyCache>>,
+    ) -> Self {
+        Self {
+            db,
+            auth_scope_service,
+            team_id,
+            api_key_id,
+            scope,
+            api_key_cache: Some(cache),
         }
     }
 
@@ -173,14 +288,36 @@ pub async fn auth_middleware(
     // Hash the token for lookup
     let token_hash = match security::hash_api_key(&token_str) {
         Ok(hash) => hash,
-        Err(e) => {
-            tracing::error!("Failed to hash API key: {}", e);
+        Err(_e) => {
+            tracing::error!("Failed to hash API key: hash operation failed");
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
 
+    // PERF-002: Check cache first before database query
+    if let Some(ref cache) = state.api_key_cache {
+        let mut cache_guard = cache.write().await;
+        if let Some(cached_result) = cache_guard.get(&token_hash) {
+            debug!("API Key authentication cache hit for key hash");
+            // Reconstruct AuthState from cache
+            let auth_state = AuthState::with_cache(
+                state.db.clone(),
+                state.auth_scope_service.clone(),
+                cached_result.team_id,
+                cached_result.api_key_id,
+                cached_result.scope.clone(),
+                cache.clone(),
+            );
+            req.extensions_mut().insert(auth_state.clone());
+            req.extensions_mut().insert(cached_result.team_id);
+            req.extensions_mut().insert(cached_result.api_key_id);
+            debug!("API Key authentication successful (cached)");
+            return Ok(next.run(req).await);
+        }
+    }
+
     match api_key::Entity::find()
-        .filter(api_key::Column::KeyHash.eq(token_hash))
+        .filter(api_key::Column::KeyHash.eq(&token_hash))
         .one(state.db.as_ref())
         .await
     {
@@ -194,17 +331,21 @@ pub async fn auth_middleware(
                 return Err(StatusCode::UNAUTHORIZED);
             }
 
-            // Check if key is inactive (assuming there's an is_active column or similar)
-            // For now, we proceed with authentication but log a warning if needed
+            // Check if key is inactive or expired
+            // 使用明确的过期检查逻辑：如果是更新过的 key，检查是否过期
             if let Some(updated_at) = key.updated_at {
                 let now = chrono::Utc::now();
-                if updated_at < now {
-                    // Key might be deactivated based on updated_at timestamp
-                    // This is a simplified check - in production, you'd have an explicit is_active field
-                    debug!(
-                        "API key {} was updated in the past, may need re-validation",
-                        key.id
+                let days_since_update = (now.signed_duration_since(updated_at)).num_days();
+
+                // 如果 key 在过去 90 天内更新过，认为是活跃的
+                // 如果超过 90 天未更新，则拒绝访问，要求重新生成 key
+                if days_since_update > 90 {
+                    tracing::warn!(
+                        "API key {} has not been updated in {} days, may be expired",
+                        key.id,
+                        days_since_update
                     );
+                    return Err(StatusCode::UNAUTHORIZED);
                 }
             }
 
@@ -241,17 +382,28 @@ pub async fn auth_middleware(
             // Load actual scope from database
             auth_state.load_scope_from_db().await;
 
+            // PERF-002: Cache the successful authentication result
+            if let Some(ref cache) = state.api_key_cache {
+                let mut cache_guard = cache.write().await;
+                cache_guard.insert(
+                    token_hash.clone(),
+                    CachedAuthResult {
+                        team_id: key.team_id,
+                        api_key_id: key.id,
+                        scope: auth_state.scope.clone(),
+                        cached_at: Instant::now(),
+                    },
+                );
+            }
+
             // Inject auth state and extracted values into request extensions
             req.extensions_mut().insert(auth_state.clone());
             req.extensions_mut().insert(key.team_id);
             req.extensions_mut().insert(key.id);
             req.extensions_mut().insert(token_str);
 
-            // 日志只记录认证成功，不记录具体密钥信息
-            debug!(
-                "API Key authentication successful for team: {:?}",
-                key.team_id
-            );
+            // 日志只记录认证成功，不记录具体密钥信息或详细 team_id
+            debug!("API Key authentication successful");
 
             // Log successful authentication to audit service
             if let Some(audit_service) = req.extensions().get::<Arc<AuditService>>() {

@@ -256,3 +256,76 @@ async fn test_auth_middleware_wrong_auth_type() {
     // Should reject non-Bearer auth
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn test_api_key_cache_reduces_db_queries() {
+    use crawlrs::presentation::middleware::auth_middleware::ApiKeyCache;
+    use std::time::Duration;
+
+    // 创建缓存实例 (5分钟TTL, 100个槽位)
+    let mut cache = ApiKeyCache::new(100, 300);
+
+    // 创建测试数据
+    let team_id = Uuid::new_v4();
+    let api_key_id = Uuid::new_v4();
+    let test_key = "test-api-key-for-cache";
+
+    // 首次查询应该返回 None
+    assert!(cache.get(test_key).is_none());
+
+    // 插入缓存数据
+    let auth_result = crawlrs::presentation::middleware::auth_middleware::CachedAuthResult {
+        team_id,
+        api_key_id,
+        scope: crawlrs::domain::auth::ApiKeyScope::default(),
+        cached_at: std::time::Instant::now(),
+    };
+    cache.insert(test_key.to_string(), auth_result.clone());
+
+    // 第二次查询应该命中缓存
+    let cached = cache.get(test_key);
+    assert!(cached.is_some());
+    assert_eq!(cached.unwrap().team_id, team_id);
+
+    // 测试 LRU 淘汰: 创建超过容量的事件
+    for i in 0..150 {
+        let key = format!("key-{}", i);
+        let result = crawlrs::presentation::middleware::auth_middleware::CachedAuthResult {
+            team_id: Uuid::new_v4(),
+            api_key_id: Uuid::new_v4(),
+            scope: crawlrs::domain::auth::ApiKeyScope::default(),
+            cached_at: std::time::Instant::now(),
+        };
+        cache.insert(key, result);
+    }
+
+    // 最早的 key 应该被淘汰
+    assert!(cache.get(test_key).is_none());
+}
+
+#[tokio::test]
+async fn test_api_key_cache_expires_after_ttl() {
+    use crawlrs::presentation::middleware::auth_middleware::ApiKeyCache;
+
+    // 创建短 TTL 的缓存 (1秒)
+    let mut cache = ApiKeyCache::new(100, 1);
+
+    let test_key = "expiring-key";
+    let auth_result = crawlrs::presentation::middleware::auth_middleware::CachedAuthResult {
+        team_id: Uuid::new_v4(),
+        api_key_id: Uuid::new_v4(),
+        scope: crawlrs::domain::auth::ApiKeyScope::default(),
+        cached_at: std::time::Instant::now(),
+    };
+
+    cache.insert(test_key.to_string(), auth_result.clone());
+
+    // 应该命中
+    assert!(cache.get(test_key).is_some());
+
+    // 等待过期
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 应该过期
+    assert!(cache.get(test_key).is_none());
+}
