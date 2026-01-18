@@ -223,12 +223,12 @@ cargo-lock.json.backup
 # -----------------------------------------------------------------------------
 # Section 11: Documentation Exclusions
 # -----------------------------------------------------------------------------
-# Uncomment if these docs should not be tracked
+# Project documentation files that should not be tracked
 docs/prd.md
-# docs/task.md
-# docs/tdd.md
-# docs/test.md
-# docs/uat.md
+docs/task.md
+docs/tdd.md
+docs/test.md
+docs/uat.md
 
 # -----------------------------------------------------------------------------
 # Section 12: Cargo and Rust Specific
