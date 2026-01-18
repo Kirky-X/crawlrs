@@ -16,6 +16,7 @@ pub mod regex_cache;
 pub mod retry_policy;
 pub mod robots;
 pub mod search_test;
+pub mod secret;
 pub mod telemetry;
 pub mod text_processing;
 pub mod url;
@@ -28,3 +29,5 @@ pub use crate::utils::text_processing::{
 };
 
 pub use crate::utils::url::{is_safe_ip, resolve_url, validate_url, ValidationError};
+
+pub use crate::utils::secret::{Clearable, SecretString};
