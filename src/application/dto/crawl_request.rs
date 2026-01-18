@@ -3,12 +3,24 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Crawl request DTO with URL validation
+
+use crate::utils::SafeUrl;
 use serde::{Deserialize, Serialize};
+
+/// Maximum crawl depth limit
+pub const MAX_CRAWL_DEPTH: u32 = 100;
+/// Maximum concurrent pages
+pub const MAX_CONCURRENCY: u32 = 50;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CrawlRequestDto {
+    /// URL to crawl
     pub url: String,
+    /// Validated SafeUrl (populated after validation)
+    #[serde(skip)]
+    pub validated_url: Option<SafeUrl>,
     pub name: Option<String>,
     pub config: CrawlConfigDto,
     /// 同步等待时长（毫秒，默认 5000，最大 30000）
