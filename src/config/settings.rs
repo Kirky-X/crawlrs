@@ -165,9 +165,9 @@ impl Settings {
             .set_default("server.port", 8899)? // 默认端口 8899
             .set_default("server.enable_port_detection", true)? // 默认启用端口嗅探
             // 2. 设置数据库连接池默认配置
-            .set_default("database.max_connections", 100)? // 最大连接数 100
-            .set_default("database.min_connections", 10)? // 最小连接数 10
-            .set_default("database.connect_timeout", 10)? // 连接超时 10 秒
+            .set_default("database.max_connections", 150)? // 增加到 150 以提高并发性能
+            .set_default("database.min_connections", 20)? // 增加到 20 以减少连接建立开销
+            .set_default("database.connect_timeout", 15)? // 增加到 15 秒以适应 Docker 环境
             .set_default("database.idle_timeout", 300)? // 空闲超时 300 秒（5 分钟）
             // 3. 设置存储默认配置
             .set_default("storage.storage_type", "local")? // 默认使用本地存储
@@ -209,9 +209,9 @@ impl Settings {
             .set_default("timeouts.engines.flaresolverr_timeout_seconds", 30)?
             .set_default("timeouts.retry.initial_backoff_seconds", 1)?
             .set_default("timeouts.retry.max_backoff_seconds", 60)?
-            .set_default("timeouts.cache.default_ttl_seconds", 300)?
-            .set_default("timeouts.cache.memory_ttl_seconds", 300)?
-            .set_default("timeouts.cache.redis_ttl_seconds", 300)?
+            .set_default("timeouts.cache.default_ttl_seconds", 600)? // 增加到 10 分钟
+            .set_default("timeouts.cache.memory_ttl_seconds", 600)? // 增加到 10 分钟
+            .set_default("timeouts.cache.redis_ttl_seconds", 7200)? // 增加到 2 小时
             // 14. 设置日志默认配置
             .set_default("logging.console.enabled", true)? // 默认启用控制台输出
             .set_default("logging.file.enabled", false)? // 默认禁用文件输出

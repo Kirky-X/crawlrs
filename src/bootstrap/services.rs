@@ -12,6 +12,7 @@ use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
 use crate::bootstrap::infrastructure::InfrastructureComponents;
 use crate::bootstrap::infrastructure::Repositories;
 use crate::config::settings::Settings;
+use crate::domain::services::audit_service::AuditService;
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy, RateLimitingService,
 };
@@ -53,6 +54,8 @@ pub struct ServicesComponents {
     pub search_engine_service: Arc<dyn SearchEngine>,
     /// Task queue.
     pub queue: Arc<dyn TaskQueue>,
+    /// Audit service.
+    pub audit_service: Arc<AuditService>,
 }
 
 /// Initialize rate limiter.
@@ -238,6 +241,9 @@ pub fn init_services(
     let queue: Arc<dyn TaskQueue> =
         Arc::new(PostgresTaskQueue::new(repositories.task_repo.clone()));
 
+    // Initialize audit service
+    let audit_service = Arc::new(AuditService::new(infrastructure.db.clone()));
+
     info!("Services initialized");
 
     ServicesComponents {
@@ -250,5 +256,6 @@ pub fn init_services(
         robots_checker,
         search_engine_service,
         queue,
+        audit_service,
     }
 }

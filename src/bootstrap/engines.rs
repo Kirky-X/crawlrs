@@ -13,6 +13,8 @@ use crate::config::engines::EngineSettings;
 use crate::engines::client::fire_cdp::FireEngineCdp;
 #[cfg(feature = "engine-fire-tls")]
 use crate::engines::client::fire_tls::FireEngineTls;
+#[cfg(feature = "engine-flaresolverr")]
+use crate::engines::client::flare_solverr::FlareSolverrEngine;
 #[cfg(feature = "engine-playwright")]
 use crate::engines::client::playwright::PlaywrightEngine;
 use crate::engines::client::reqwest::ReqwestEngine;
@@ -79,6 +81,17 @@ pub fn init_engines(
         engines.push(Arc::new(FireEngineCdp::with_url_and_proxy(
             &engine_config.fire_cdp.url,
             Some(proxy_url),
+        )));
+    }
+
+    #[cfg(feature = "engine-flaresolverr")]
+    if engine_config.flaresolverr.enabled {
+        tracing::info!(
+            "FlareSolverr enabled with URL: {}",
+            engine_config.flaresolverr.url
+        );
+        engines.push(Arc::new(FlareSolverrEngine::with_url(
+            &engine_config.flaresolverr.url,
         )));
     }
 

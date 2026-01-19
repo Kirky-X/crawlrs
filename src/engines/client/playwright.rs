@@ -268,6 +268,22 @@ impl ScraperEngine for PlaywrightEngine {
             page.goto(&request.url).await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
+            // Wait for network to be idle (important for JS-heavy sites like Google)
+            // Since chromiumoxide doesn't have wait_for_load_state, we use a delay approach
+            // This ensures all dynamic content is loaded
+            tokio::time::sleep(Duration::from_secs(5)).await;
+
+            // Try to detect if we got a bot detection page
+            let content = page.content().await
+                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+
+            if content.contains("如果您在几秒钟内没有被重定向") || 
+               content.contains("Having trouble accessing Google") ||
+               content.contains("enablejs") {
+                tracing::warn!("Detected bot detection page from Google");
+                // Still return the content, let the parser handle it
+            }
+
             // 执行页面交互动作
             for action in &request.actions {
                 match action {

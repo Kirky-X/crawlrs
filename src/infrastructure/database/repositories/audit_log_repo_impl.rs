@@ -8,6 +8,7 @@ use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
 };
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::auth::{AuditDecision, AuditLogEntry};
@@ -17,11 +18,11 @@ use crate::infrastructure::database::entities::auth::audit_log::{
 
 #[derive(Clone)]
 pub struct AuditLogRepository {
-    db: DatabaseConnection,
+    db: Arc<DatabaseConnection>,
 }
 
 impl AuditLogRepository {
-    pub fn new(db: DatabaseConnection) -> Self {
+    pub fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
 
@@ -50,7 +51,7 @@ impl AuditLogRepository {
                 ..Default::default()
             };
 
-        AuditEntity::insert(active_model).exec(&self.db).await?;
+        AuditEntity::insert(active_model).exec(&*self.db).await?;
         Ok(entry)
     }
 
@@ -65,7 +66,7 @@ impl AuditLogRepository {
             .order_by(AuditColumn::CreatedAt, Order::Desc)
             .limit(limit)
             .offset(offset)
-            .all(&self.db)
+            .all(&*self.db)
             .await?;
 
         Ok(logs.into_iter().map(|l| l.into()).collect())
@@ -82,7 +83,7 @@ impl AuditLogRepository {
             .order_by(AuditColumn::CreatedAt, Order::Desc)
             .limit(limit)
             .offset(offset)
-            .all(&self.db)
+            .all(&*self.db)
             .await?;
 
         Ok(logs.into_iter().map(|l| l.into()).collect())
@@ -95,7 +96,7 @@ impl AuditLogRepository {
         let logs = AuditEntity::find()
             .filter(AuditColumn::TraceId.eq(trace_id))
             .order_by(AuditColumn::CreatedAt, Order::Asc)
-            .all(&self.db)
+            .all(&*self.db)
             .await?;
 
         Ok(logs.into_iter().map(|l| l.into()).collect())
@@ -111,7 +112,7 @@ impl AuditLogRepository {
             .filter(AuditColumn::Decision.eq(AuditDecision::Deny.to_string()))
             .order_by(AuditColumn::CreatedAt, Order::Desc)
             .limit(limit)
-            .all(&self.db)
+            .all(&*self.db)
             .await?;
 
         Ok(logs.into_iter().map(|l| l.into()).collect())
@@ -120,7 +121,7 @@ impl AuditLogRepository {
     pub async fn count_by_decision(&self, decision: AuditDecision) -> Result<u64, sea_orm::DbErr> {
         let count = AuditEntity::find()
             .filter(AuditColumn::Decision.eq(decision.to_string()))
-            .count(&self.db)
+            .count(&*self.db)
             .await?;
 
         Ok(count)
@@ -131,7 +132,7 @@ impl AuditLogRepository {
 
         let result = AuditEntity::delete_many()
             .filter(AuditColumn::CreatedAt.lt(cutoff))
-            .exec(&self.db)
+            .exec(&*self.db)
             .await?;
 
         Ok(result.rows_affected as u64)

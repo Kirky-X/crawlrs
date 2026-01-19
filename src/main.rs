@@ -87,7 +87,7 @@ async fn start_api_service(
     });
 
     // Build and configure the API application
-    let app = routes::build_api_app(&infrastructure, &services, &settings);
+    let app = routes::build_api_app(&infrastructure, &services, settings.clone());
 
     // Start the server
     let addr = format!("{}:{}", settings.server.host, settings.server.port);

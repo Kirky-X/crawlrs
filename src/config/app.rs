@@ -393,11 +393,11 @@ fn default_max_backoff() -> u64 {
     60
 }
 fn default_cache_ttl() -> u64 {
-    300
+    600 // 增加到 10 分钟
 }
 fn default_memory_ttl() -> u64 {
-    300
+    600 // 增加到 10 分钟
 }
 fn default_redis_ttl() -> u64 {
-    300
+    7200 // 增加到 2 小时
 }

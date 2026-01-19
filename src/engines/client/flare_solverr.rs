@@ -119,6 +119,17 @@ impl FlareSolverrEngine {
         self.session_id.as_deref()
     }
 
+    /// Get the API URL for FlareSolverr
+    /// Handles URLs with or without trailing /v1 to avoid duplication
+    fn api_url(&self) -> String {
+        let base_url = self.config.url.trim_end_matches('/');
+        if base_url.ends_with("/v1") {
+            base_url.to_string()
+        } else {
+            format!("{}/v1", base_url)
+        }
+    }
+
     /// Create a new session
     pub async fn create_session(&mut self) -> Result<String, EngineError> {
         #[derive(Serialize)]
@@ -135,7 +146,7 @@ impl FlareSolverrEngine {
 
         let response: SessionResponse = self
             .client
-            .post(&format!("{}/v1", self.config.url))
+            .post(&self.api_url())
             .json(&request)
             .send()
             .await
@@ -175,7 +186,7 @@ impl FlareSolverrEngine {
 
         let response: GenericResponse = self
             .client
-            .post(&format!("{}/v1", self.config.url))
+            .post(&self.api_url())
             .json(&request)
             .send()
             .await
@@ -342,24 +353,45 @@ impl ScraperEngine for FlareSolverrEngine {
             );
         }
 
+        // Build the base URL for FlareSolverr API
+        // Ensure no double slashes or duplicate /v1
+        let base_url = self.config.url.trim_end_matches('/');
+        let api_url = if base_url.ends_with("/v1") {
+            base_url.to_string()
+        } else {
+            format!("{}/v1", base_url)
+        };
+
         debug!(
             "FlareSolverr request: url={}, session={:?}",
             request.url, fs_request.session
         );
 
         // Send request to FlareSolverr
-        let response: FlareSolverrResponse = self
+        let raw_response = self
             .client
-            .post(&format!("{}/v1", self.config.url))
+            .post(&api_url)
             .json(&fs_request)
             .send()
             .await
-            .map_err(|e| EngineError::Other(format!("FlareSolverr request failed: {}", e)))?
-            .json()
+            .map_err(|e| EngineError::Other(format!("FlareSolverr request failed: {}", e)))?;
+
+        // Get raw text first to debug any encoding issues
+        let raw_text = raw_response
+            .text()
             .await
-            .map_err(|e| {
-                EngineError::Other(format!("Failed to parse FlareSolverr response: {}", e))
-            })?;
+            .map_err(|e| EngineError::Other(format!("Failed to get response text: {}", e)))?;
+
+        debug!("FlareSolverr raw response length: {}", raw_text.len());
+
+        // Try to parse as JSON
+        let response: FlareSolverrResponse = serde_json::from_str(&raw_text).map_err(|e| {
+            EngineError::Other(format!(
+                "Failed to parse FlareSolverr response: {} (first 200 chars: {:?})",
+                e,
+                &raw_text[..raw_text.len().min(200)]
+            ))
+        })?;
 
         // Check response status
         if response.status != "ok" {
@@ -374,6 +406,22 @@ impl ScraperEngine for FlareSolverrEngine {
         let solution = response.solution.ok_or_else(|| {
             EngineError::Other("No solution in FlareSolverr response".to_string())
         })?;
+
+        // Check for CAPTCHA or bot detection pages
+        let html_content = &solution.response;
+        let is_captcha_page = html_content.contains("captcha")
+            || html_content.contains("CAPTCHA")
+            || html_content.contains("unusual traffic")
+            || html_content.contains("Our systems have detected")
+            || html_content.contains("recaptcha")
+            || html_content.contains("verify you are human");
+
+        if is_captcha_page {
+            warn!("FlareSolverr returned CAPTCHA/bot detection page");
+            return Err(EngineError::Other(
+                "FlareSolverr blocked by CAPTCHA or bot detection".to_string(),
+            ));
+        }
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 

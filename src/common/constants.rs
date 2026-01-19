@@ -324,14 +324,8 @@ mod tests {
 
     #[test]
     fn test_cache_constants() {
-        assert_eq!(cache::DEFAULT_TTL_SECS, 300);
-        assert_eq!(cache::MAX_CACHE_ENTRIES, 10000);
-    }
-
-    #[test]
-    fn test_task_constants() {
-        assert_eq!(task::MAX_CONCURRENT_TASKS, 100);
-        assert_eq!(task::TASK_TIMEOUT_SECS, 300);
+        assert_eq!(cache_config::DEFAULT_TTL_SECS, 300);
+        assert_eq!(cache_config::MAX_CACHE_ENTRIES, 10000);
     }
 
     #[test]

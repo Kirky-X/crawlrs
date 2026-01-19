@@ -16,16 +16,17 @@ use crate::infrastructure::repositories::{
     webhook_repo_impl::WebhookRepoImpl,
 };
 use crate::presentation::handlers::{
-    crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
-    webhook_handler,
+    audit_handler, crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
+    team_handler, webhook_handler,
 };
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crate::presentation::routes::{self, task::task_routes};
 use axum::{
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Extension, Router,
 };
+use std::sync::Arc;
 
 /// Create the public API routes (no authentication required).
 pub fn create_public_routes() -> Router {
@@ -41,11 +42,11 @@ pub fn create_public_routes() -> Router {
 ///
 /// * `repositories` - Application repositories
 /// * `services` - Application services
-/// * `settings` - Application settings
+/// * `settings` - Application settings (Arc wrapped)
 pub fn create_protected_routes(
     repositories: &crate::bootstrap::infrastructure::Repositories,
     services: &ServicesComponents,
-    settings: &Settings,
+    settings: Arc<Settings>,
 ) -> Router {
     let geo_restriction_repo = repositories.geo_restriction_repo.clone();
     let team_semaphore = services.team_semaphore.clone();
@@ -136,6 +137,16 @@ pub fn create_protected_routes(
                 >,
             ),
         )
+        .route(
+            "/v1/teams/geo-restrictions",
+            get(team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
+        )
+        .route(
+            "/v1/teams/geo-restrictions",
+            put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
+        )
+        .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
+        .route("/v1/audit/denied", get(audit_handler::get_denied_requests))
         .layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
             crate::presentation::middleware::auth_middleware::auth_middleware,
@@ -147,7 +158,7 @@ pub fn create_protected_routes(
         .layer(Extension(result_repo))
         .layer(Extension(redis_client))
         .layer(Extension(rate_limiter))
-        .layer(Extension(settings.clone()))
+        .layer(Extension(settings))
         .layer(Extension(rate_limiting_service))
         .layer(Extension(crawl_repo))
         .layer(Extension(webhook_repo))
@@ -206,7 +217,7 @@ pub fn create_v2_routes(
 ///
 /// * `infrastructure` - Initialized infrastructure components
 /// * `services` - Initialized services
-/// * `settings` - Application settings
+/// * `settings` - Application settings (Arc wrapped)
 ///
 /// # Returns
 ///
@@ -214,11 +225,11 @@ pub fn create_v2_routes(
 pub fn build_api_app(
     infrastructure: &InfrastructureComponents,
     services: &ServicesComponents,
-    settings: &Settings,
+    settings: Arc<Settings>,
 ) -> Router {
     let public_routes = create_public_routes();
     let protected_routes =
-        create_protected_routes(&infrastructure.repositories, services, settings);
+        create_protected_routes(&infrastructure.repositories, services, settings.clone());
     let v2_routes = create_v2_routes(&infrastructure.repositories, services);
 
     let redis_client = infrastructure.redis_client.clone();
@@ -249,8 +260,9 @@ pub fn build_api_app(
         .layer(Extension(infrastructure.repositories.crawl_repo.clone()))
         .layer(Extension(credits_repo))
         .layer(Extension(geo_restriction_repo))
-        .layer(Extension(settings.clone()))
+        .layer(Extension(settings))
         .layer(Extension(search_engine_service))
         .layer(Extension(tasks_backlog_repo.clone()))
         .layer(Extension(rate_limiting_service.clone()))
+        .layer(Extension(services.audit_service.clone()))
 }

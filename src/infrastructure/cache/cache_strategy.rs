@@ -31,7 +31,7 @@ impl Default for CacheStrategyConfig {
     fn default() -> Self {
         Self {
             cache_type: CacheType::Memory,
-            ttl_seconds: 300,
+            ttl_seconds: 600, // 增加到 10 分钟以提高缓存命中率
             max_entries: 10000,
             enable_compression: true,
             enable_preload: false,
@@ -66,8 +66,8 @@ pub struct LayeredCacheConfig {
 impl Default for LayeredCacheConfig {
     fn default() -> Self {
         Self {
-            memory_ttl: 60,
-            redis_ttl: 3600,
+            memory_ttl: 120, // 增加到 2 分钟
+            redis_ttl: 7200, // 增加到 2 小时
             memory_max_entries: 1000,
         }
     }

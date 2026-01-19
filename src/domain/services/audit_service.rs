@@ -8,6 +8,7 @@
 use crate::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
 use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepository;
 use sea_orm::DatabaseConnection;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::debug;
 use uuid::Uuid;
@@ -263,7 +264,7 @@ pub struct AuditService {
 
 impl AuditService {
     /// Create a new service
-    pub fn new(db: DatabaseConnection) -> Self {
+    pub fn new(db: Arc<DatabaseConnection>) -> Self {
         Self {
             audit_repo: AuditLogRepository::new(db),
         }

@@ -194,7 +194,11 @@ class CrawlrsAPIClient:
         """搜索接口"""
         body = {"query": query, "limit": limit}
         if engines:
-            body["engines"] = engines
+            # API expects 'sources' or 'engine', not 'engines'
+            if len(engines) == 1:
+                body["engine"] = engines[0]
+            else:
+                body["sources"] = engines
         if sync_wait_ms:
             body["sync_wait_ms"] = sync_wait_ms
 
@@ -251,7 +255,8 @@ class CrawlrsAPIClient:
         sync_wait_ms: Optional[int] = None,
     ) -> TestResult:
         """抓取接口"""
-        body = {"url": url, "config": config or {"max_depth": 1}}
+        # API expects options with: headers, wait_for, timeout, js_rendering, etc.
+        body = {"url": url, "options": config or {"timeout": 30}}
         if sync_wait_ms:
             body["sync_wait_ms"] = sync_wait_ms
 

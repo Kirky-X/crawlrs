@@ -43,7 +43,7 @@ def scrape_test_params():
     """抓取测试参数"""
     return {
         "url": "https://example.com",
-        "options": {"wait_for_selector": "body", "timeout": 30000},
+        "options": {"wait_for": 1000, "timeout": 30},
     }
 
 
