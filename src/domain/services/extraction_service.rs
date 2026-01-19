@@ -6,6 +6,7 @@ use crate::config::settings::Settings;
 use crate::domain::services::extraction_utils::ExtractableRule;
 pub use crate::domain::services::llm_service::TokenUsage;
 use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
+use crate::utils::http_client::HTTP_CLIENT;
 use anyhow::Result;
 use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -146,7 +147,7 @@ impl ExtractionService {
         settings: &Settings,
         base_url: Option<&str>,
     ) -> Result<(Value, TokenUsage)> {
-        let service = Self::new(Box::new(LLMService::new(settings)));
+        let service = Self::new(Box::new(LLMService::new(settings, HTTP_CLIENT.clone())));
         service.extract_data(html_content, rules, base_url).await
     }
 
@@ -156,7 +157,7 @@ impl ExtractionService {
         schema: &Value,
         settings: &Settings,
     ) -> Result<(Value, TokenUsage)> {
-        let llm_service = LLMService::new(settings);
+        let llm_service = LLMService::new(settings, HTTP_CLIENT.clone());
 
         // 1. Noise removal
         let clean_text = Self::get_clean_text(html_content);

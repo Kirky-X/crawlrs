@@ -32,6 +32,7 @@ use crate::search::aggregator::SearchAggregator;
 use crate::search::engine_trait::SearchEngine;
 use crate::search::smart as smart_search;
 use crate::utils::robots::RobotsChecker;
+use crate::utils::http_client::HTTP_CLIENT;
 
 /// All application services.
 #[derive(Clone)]
@@ -217,9 +218,10 @@ pub fn init_services(
     // Initialize create scrape use case
     let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(engine_client.clone()));
 
-    // Initialize webhook service
+    // Initialize webhook service (使用依赖注入的单例 HTTP_CLIENT)
     let webhook_service = Arc::new(WebhookServiceImpl::new(
         settings.webhook.secret().to_string(),
+        HTTP_CLIENT.clone(),
     ));
 
     // Initialize team service

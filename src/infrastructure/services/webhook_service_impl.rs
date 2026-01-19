@@ -5,12 +5,12 @@
 
 use crate::domain::models::webhook::WebhookEvent;
 use crate::domain::services::webhook_service::WebhookService;
-use crate::utils::http_client::create_http_client_with_timeout;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::sync::Arc;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -95,17 +95,20 @@ fn sanitize_webhook_response(body: &str) -> String {
 
 /// Webhook服务实现
 pub struct WebhookServiceImpl {
-    /// HTTP 客户端
-    client: reqwest::Client,
+    /// HTTP 客户端 (通过依赖注入的单例)
+    client: Arc<reqwest::Client>,
     /// 签名密钥
     secret: String,
 }
 
 impl WebhookServiceImpl {
-    /// 创建新的 Webhook 服务实现
-    pub fn new(secret: String) -> Self {
-        let client = create_http_client_with_timeout(10);
-
+    /// 创建新的 Webhook 服务实现 (使用依赖注入)
+    ///
+    /// # Arguments
+    ///
+    /// * `secret` - Webhook 签名密钥
+    /// * `client` - HTTP 客户端实例 (通过 Arc 共享)
+    pub fn new(secret: String, client: Arc<reqwest::Client>) -> Self {
         Self { client, secret }
     }
 

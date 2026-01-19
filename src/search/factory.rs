@@ -137,16 +137,18 @@ impl SearchEngineFactory {
 
     /// 创建并注册 Bing 搜索引擎
     pub fn register_bing_engine(&mut self) {
-        let bing_engine = Arc::new(BingSearchEngine::new());
+        let engine_client = self.create_engine_client_with_fire_engines();
+        let bing_engine = Arc::new(BingSearchEngine::new(engine_client));
         self.router.register_engine(bing_engine);
-        info!("Bing 搜索引擎已注册");
+        info!("Bing 搜索引擎已注册（使用 EngineClient）");
     }
 
     /// 创建并注册 Baidu 搜索引擎
     pub fn register_baidu_engine(&mut self) {
-        let baidu_engine = Arc::new(BaiduSearchEngine::new());
+        let engine_client = self.create_engine_client_with_fire_engines();
+        let baidu_engine = Arc::new(BaiduSearchEngine::new(engine_client));
         self.router.register_engine(baidu_engine);
-        info!("Baidu 搜索引擎已注册");
+        info!("Baidu 搜索引擎已注册（使用 EngineClient）");
     }
 
     /// 创建并注册 Sogou 搜索引擎
@@ -401,17 +403,20 @@ pub fn create_google_engine() -> Arc<dyn SearchEngine> {
 
 /// 便捷函数：创建 Bing 搜索引擎
 pub fn create_bing_engine() -> Arc<dyn SearchEngine> {
-    Arc::new(BingSearchEngine::new())
+    let engine_client = Arc::new(EngineClient::new());
+    Arc::new(BingSearchEngine::new(engine_client))
 }
 
 /// 便捷函数：创建 Baidu 搜索引擎
 pub fn create_baidu_engine() -> Arc<dyn SearchEngine> {
-    Arc::new(BaiduSearchEngine::new())
+    let engine_client = Arc::new(EngineClient::new());
+    Arc::new(BaiduSearchEngine::new(engine_client))
 }
 
 /// 便捷函数：创建 Sogou 搜索引擎
 pub fn create_sogou_engine() -> Arc<dyn SearchEngine> {
-    Arc::new(SogouSearchEngine::new())
+    let engine_client = Arc::new(EngineClient::new());
+    Arc::new(SogouSearchEngine::new(engine_client))
 }
 
 /// 便捷函数：获取引擎类型列表

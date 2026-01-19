@@ -3,9 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::engines::engine_client::{EngineClient, ScrapeRequest as EngineScrapeRequest, ScrapeOptions};
 use crate::search::{
     client::html_parser::HtmlParser,
-    client::http_client::SHARED_HTTP_CLIENT,
     engine_trait::SearchEngine,
     error::SearchError,
     response::{Response, ResponseItem},
@@ -15,23 +15,26 @@ use crate::search::{
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use std::collections::HashMap;
+use std::sync::Arc;
 use url::Url;
 
-/// Bing Search Engine implementation with connection pooling
+/// Bing Search Engine implementation with EngineClient support
 pub struct BingSearchEngine {
     parser: HtmlParser,
+    engine_client: Arc<EngineClient>,
 }
 
 impl Default for BingSearchEngine {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(EngineClient::new()))
     }
 }
 
 impl BingSearchEngine {
-    pub fn new() -> Self {
+    pub fn new(engine_client: Arc<EngineClient>) -> Self {
         Self {
             parser: HtmlParser::for_bing(),
+            engine_client,
         }
     }
 
@@ -175,28 +178,40 @@ impl SearchEngine for BingSearchEngine {
 
         let url = self.build_bing_url(&request.query, 1);
 
-        let response = SHARED_HTTP_CLIENT
-            .get(&url)
-            .header(
-                "Accept",
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            )
-            .header("Accept-Language", "en-US,en;q=0.5")
-            .header("DNT", "1")
-            .header("Connection", "keep-alive")
-            .header("Upgrade-Insecure-Requests", "1")
-            .send()
-            .await
-            .map_err(SearchError::Network)?;
+        // 构建请求头
+        let mut headers = HashMap::new();
+        headers.insert("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string());
+        headers.insert("Accept-Language".to_string(), "en-US,en;q=0.5".to_string());
+        headers.insert("DNT".to_string(), "1".to_string());
+        headers.insert("Connection".to_string(), "keep-alive".to_string());
+        headers.insert("Upgrade-Insecure-Requests".to_string(), "1".to_string());
 
-        if !response.status().is_success() {
+        // 使用 EngineClient 进行请求
+        let options = ScrapeOptions {
+            headers,
+            timeout: std::time::Duration::from_secs(30),
+            ..Default::default()
+        };
+
+        let engine_request = EngineScrapeRequest {
+            url,
+            options,
+        };
+
+        let scrape_response = self
+            .engine_client
+            .scrape(&engine_request)
+            .await
+            .map_err(|e| SearchError::Engine(format!("EngineClient error: {}", e)))?;
+
+        if scrape_response.status_code < 200 || scrape_response.status_code >= 300 {
             return Err(SearchError::Engine(format!(
                 "HTTP error {}",
-                response.status()
+                scrape_response.status_code
             )));
         }
 
-        let html = response.text().await.map_err(SearchError::Network)?;
+        let html = scrape_response.content;
         let items = self.parse_search_results(&html).await?;
         let total_count = items.len() as u64;
 

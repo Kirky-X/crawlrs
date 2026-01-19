@@ -3,8 +3,8 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::engines::engine_client::{EngineClient, ScrapeRequest as EngineScrapeRequest, ScrapeOptions};
 use crate::search::{
-    client::http_client::SHARED_HTTP_CLIENT,
     engine_trait::SearchEngine,
     error::SearchError,
     response::{Response, ResponseItem},
@@ -13,24 +13,28 @@ use crate::search::{
 };
 use async_trait::async_trait;
 use scraper::{Html, Selector};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// 安全解析CSS选择器，如果解析失败则返回None
 fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
     Selector::parse(selector_str).ok()
 }
 
-/// Sogou Search Engine implementation
-pub struct SogouSearchEngine;
+/// Sogou Search Engine implementation with EngineClient support
+pub struct SogouSearchEngine {
+    engine_client: Arc<EngineClient>,
+}
 
 impl Default for SogouSearchEngine {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(EngineClient::new()))
     }
 }
 
 impl SogouSearchEngine {
-    pub fn new() -> Self {
-        Self
+    pub fn new(engine_client: Arc<EngineClient>) -> Self {
+        Self { engine_client }
     }
 
     /// 解析并补全搜狗搜索结果中的URL
@@ -168,26 +172,49 @@ impl SearchEngine for SogouSearchEngine {
             });
         }
 
-        let url = "https://www.sogou.com/web";
+        let base_url = "https://www.sogou.com/web";
 
-        let response = SHARED_HTTP_CLIENT
-            .get(url)
-            .query(&[
-                ("query", request.query.clone()),
-                ("num", request.limit.to_string()),
-            ])
-            .send()
+        // 构建带查询参数的完整 URL
+        let full_url = format!(
+            "{}?query={}&num={}",
+            base_url,
+            urlencoding::encode(&request.query),
+            request.limit
+        );
+
+        // 构建请求头
+        let mut headers = HashMap::new();
+        headers.insert("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string());
+        headers.insert("Accept-Language".to_string(), "zh-CN,zh;q=0.9,en;q=0.8".to_string());
+        headers.insert("DNT".to_string(), "1".to_string());
+        headers.insert("Connection".to_string(), "keep-alive".to_string());
+
+        // 使用 EngineClient 进行请求
+        let options = ScrapeOptions {
+            headers,
+            timeout: std::time::Duration::from_secs(30),
+            ..Default::default()
+        };
+
+        let engine_request = EngineScrapeRequest {
+            url: full_url,
+            options,
+        };
+
+        let scrape_response = self
+            .engine_client
+            .scrape(&engine_request)
             .await
-            .map_err(SearchError::Network)?;
+            .map_err(|e| SearchError::Engine(format!("EngineClient error: {}", e)))?;
 
-        if !response.status().is_success() {
+        if scrape_response.status_code < 200 || scrape_response.status_code >= 300 {
             return Err(SearchError::Engine(format!(
                 "Sogou search error: {}",
-                response.status()
+                scrape_response.status_code
             )));
         }
 
-        let html_content = response.text().await.map_err(SearchError::Network)?;
+        let html_content = scrape_response.content;
         let items = self.parse_search_results(&html_content)?;
         let total_count = items.len() as u64;
 

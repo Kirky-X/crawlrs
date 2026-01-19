@@ -8,7 +8,6 @@
 #![allow(deprecated)]
 
 use crate::config::settings::Settings;
-use crate::utils::http_client::HTTP_CLIENT;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use genai::chat::{ChatMessage, ChatRequest};
@@ -17,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
+use std::sync::Arc;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TokenUsage {
@@ -37,28 +37,24 @@ pub trait LLMServiceTrait: Send + Sync {
 
 /// LLM服务 - 处理与LLM提供商的交互
 pub struct LLMService {
+    /// HTTP 客户端 (通过依赖注入的单例)
+    http_client: Arc<reqwest::Client>,
+    /// LLM 客户端
     client: Client,
+    /// 使用的模型
     model: String,
+    /// 提供商
     provider: String,
+    /// API 基础 URL
     api_base_url: Option<String>,
+    /// API 密钥
     api_key: Option<String>,
+    /// 提示模板
     templates: HashMap<String, String>,
 }
 
-#[async_trait]
-impl LLMServiceTrait for LLMService {
-    async fn extract_data(
-        &self,
-        text: &str,
-        schema: &Value,
-        format: &str,
-    ) -> Result<(Value, TokenUsage)> {
-        self.extract_data_internal(text, schema, format).await
-    }
-}
-
 impl LLMService {
-    pub fn new(settings: &Settings) -> Self {
+    pub fn new(settings: &Settings, http_client: Arc<reqwest::Client>) -> Self {
         let templates = Self::load_templates().unwrap_or_default();
         let mut provider = settings
             .llm
@@ -73,7 +69,7 @@ impl LLMService {
         let api_base_url = settings.llm.api_base_url.clone();
         let api_key = settings.llm.api_key.clone();
 
-        // 核心研究成果应用：如果检测到是本地 Ollama 地址，我们“假装”它是 OpenAI
+        // 核心研究成果应用：如果检测到是本地 Ollama 地址，我们"假装"它是 OpenAI
         // 这样可以避开 genai 内置适配器对 localhost 的强行转换
         if let Some(url) = &api_base_url {
             if url.contains("172.24.160.1") || url.contains(":11434") {
@@ -82,6 +78,7 @@ impl LLMService {
         }
 
         Self {
+            http_client,
             client: Client::default(),
             model,
             provider,
@@ -91,7 +88,7 @@ impl LLMService {
         }
     }
 
-    pub fn new_with_config(_api_key: String, model: String, api_base_url: String) -> Self {
+    pub fn new_with_config(_api_key: String, model: String, api_base_url: String, http_client: Arc<reqwest::Client>) -> Self {
         let mut templates = HashMap::new();
         // Fallback templates if loading fails
         templates.insert(
@@ -104,6 +101,7 @@ impl LLMService {
         );
 
         Self {
+            http_client,
             client: Client::default(),
             model,
             provider: "openai".to_string(),
@@ -128,7 +126,21 @@ impl LLMService {
         }
         Ok(templates)
     }
+}
 
+#[async_trait]
+impl LLMServiceTrait for LLMService {
+    async fn extract_data(
+        &self,
+        text: &str,
+        schema: &Value,
+        format: &str,
+    ) -> Result<(Value, TokenUsage)> {
+        self.extract_data_internal(text, schema, format).await
+    }
+}
+
+impl LLMService {
     pub async fn extract_data_internal(
         &self,
         text: &str,
@@ -161,7 +173,7 @@ impl LLMService {
                 "temperature": 0.0
             });
 
-            let mut request = HTTP_CLIENT.post(&url).json(&body);
+            let mut request = self.http_client.post(&url).json(&body);
             if let Some(key) = &self.api_key {
                 request = request.bearer_auth(key);
             } else {

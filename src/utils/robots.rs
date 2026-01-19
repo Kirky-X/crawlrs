@@ -78,8 +78,8 @@ struct CachedRobots {
 /// Robots.txt检查器
 #[derive(Clone)]
 pub struct RobotsChecker {
-    /// HTTP客户端
-    client: Client,
+    /// HTTP客户端 (Arc 包装，支持依赖注入)
+    client: Arc<Client>,
 
     /// 内存缓存
     memory_cache: Arc<Mutex<HashMap<String, CachedRobots>>>,

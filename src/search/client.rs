@@ -61,23 +61,23 @@ impl SearchClient {
             // 注册所有支持的搜索引擎（真实实现）
             // 默认注册所有引擎
 
-            // Create a default EngineClient with ReqwestEngine for Google
+            // Create a default EngineClient with ReqwestEngine for all engines
             let reqwest_engine = Arc::new(ReqwestEngine::new());
             let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
-            let engine_client = Arc::new(EngineClient::with_engines(engines));
+            let engine_client = Arc::new(EngineClient::with_engines(engines.clone()));
 
             inner
                 .engines
-                .push(Arc::new(GoogleSearchEngine::new(engine_client)) as Arc<dyn SearchEngine>);
+                .push(Arc::new(GoogleSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
             inner
                 .engines
-                .push(Arc::new(BingSearchEngine::new()) as Arc<dyn SearchEngine>);
+                .push(Arc::new(BingSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
             inner
                 .engines
-                .push(Arc::new(BaiduSearchEngine::new()) as Arc<dyn SearchEngine>);
+                .push(Arc::new(BaiduSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
             inner
                 .engines
-                .push(Arc::new(SogouSearchEngine::new()) as Arc<dyn SearchEngine>);
+                .push(Arc::new(SogouSearchEngine::new(engine_client)) as Arc<dyn SearchEngine>);
 
             SearchClient {
                 inner: Arc::new(inner),

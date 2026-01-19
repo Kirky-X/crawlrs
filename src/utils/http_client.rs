@@ -10,6 +10,7 @@
 
 use once_cell::sync::Lazy;
 use reqwest::Client;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// 默认 HTTP 客户端配置
@@ -18,23 +19,21 @@ const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 10;
 const DEFAULT_POOL_IDLE_TIMEOUT: u64 = 90;
 const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-/// 全局共享的 HTTP 客户端单例
+/// 全局共享的 HTTP 客户端单例（Arc 包装版本）
 ///
-/// 使用 once_cell::sync::Lazy 确保在整个应用生命周期中只初始化一次。
-/// 配置包括：
-/// - 30秒默认超时
-/// - 连接池配置（10个空闲连接/host，90秒空闲超时）
-/// - Chrome 120 User-Agent
-/// - 禁用自动重定向以防止 SSRF 攻击
-pub static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
-    Client::builder()
-        .user_agent(DEFAULT_USER_AGENT)
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT))
-        .pool_max_idle_per_host(DEFAULT_POOL_MAX_IDLE_PER_HOST)
-        .pool_idle_timeout(Duration::from_secs(DEFAULT_POOL_IDLE_TIMEOUT))
-        .redirect(reqwest::redirect::Policy::none()) // 禁用自动重定向防止 SSRF
-        .build()
-        .unwrap_or_else(|_| Client::new())
+/// 通过 Arc<Client> 实现线程安全的共享访问，适合依赖注入模式。
+/// 所有服务应通过依赖注入使用此单例。
+pub static HTTP_CLIENT: Lazy<Arc<Client>> = Lazy::new(|| {
+    Arc::new(
+        Client::builder()
+            .user_agent(DEFAULT_USER_AGENT)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT))
+            .pool_max_idle_per_host(DEFAULT_POOL_MAX_IDLE_PER_HOST)
+            .pool_idle_timeout(Duration::from_secs(DEFAULT_POOL_IDLE_TIMEOUT))
+            .redirect(reqwest::redirect::Policy::none()) // 禁用自动重定向防止 SSRF
+            .build()
+            .unwrap_or_else(|_| Client::new()),
+    )
 });
 
 /// 创建配置了自定义超时时间的 HTTP 客户端
@@ -62,13 +61,13 @@ pub fn create_http_client_with_timeout(timeout_secs: u64) -> Client {
 
 /// 创建使用默认配置的 HTTP 客户端
 ///
-/// 返回一个与 HTTP_CLIENT 配置相同的独立 Client 实例。
+/// 返回一个与 HTTP_CLIENT 配置相同的 Arc<Client> 实例。
 /// 适用于需要在运行时创建新客户端的场景。
 ///
 /// # Returns
 ///
-/// 配置与默认 HTTP_CLIENT 一致的 `reqwest::Client`
-pub fn create_http_client() -> Client {
+/// 配置与默认 HTTP_CLIENT 一致的 `Arc<Client>`
+pub fn create_http_client() -> Arc<Client> {
     HTTP_CLIENT.clone()
 }
 
