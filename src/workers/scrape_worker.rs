@@ -16,6 +16,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlConfigDto;
+use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
 use crate::config::settings::Settings;
@@ -42,46 +43,10 @@ use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseI
 use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
+use crate::workers::errors::ScrapeWorkerError;
 use crate::workers::task_state_machine::{TaskStateEvent, TaskStateMachine};
 
-// Regex cache for crawl pattern matching
-use thiserror::Error;
-
-/// Worker 错误类型
-#[derive(Error, Debug)]
-pub enum ScrapeWorkerError {
-    #[error("正则表达式编译错误: {0}")]
-    RegexError(String),
-
-    #[error("正则表达式缓存锁获取失败")]
-    CacheLockError,
-
-    #[error("选择器解析错误: {0}")]
-    SelectorError(String),
-
-    #[error("任务处理错误: {0}")]
-    TaskError(String),
-}
-
-// From implementations for ScrapeWorkerError
-impl From<String> for ScrapeWorkerError {
-    fn from(msg: String) -> Self {
-        ScrapeWorkerError::TaskError(msg)
-    }
-}
-
-impl From<&str> for ScrapeWorkerError {
-    fn from(msg: &str) -> Self {
-        ScrapeWorkerError::TaskError(msg.to_string())
-    }
-}
-
-impl From<anyhow::Error> for ScrapeWorkerError {
-    fn from(err: anyhow::Error) -> Self {
-        ScrapeWorkerError::TaskError(err.to_string())
-    }
-}
-
+/// 从缓存获取正则表达式
 fn get_cached_regex(pattern: &str) -> Result<regex::Regex, ScrapeWorkerError> {
     RegexCache::global()
         .get_or_insert(pattern)
@@ -401,32 +366,27 @@ where
         }
     }
 
-    async fn process_crawl_task(&self, mut task: Task) -> Result<()> {
-        // 1. 解析 Crawl 任务特定的 Payload
-        // Payload 格式: { "crawl_id": "...", "depth": 0, "config": { ... } }
+    /// 解析 Crawl 任务特定的 Payload
+    async fn parse_crawl_payload(&self, task: &Task) -> Result<(Uuid, u32, CrawlConfigDto)> {
         let payload = &task.payload;
         let crawl_id = match payload.get("crawl_id").and_then(|v| v.as_str()) {
             Some(id) => Uuid::parse_str(id).unwrap_or_default(),
             None => {
-                error!("Missing crawl_id in task payload");
-                self.repository.mark_failed(task.id).await?;
-                return Ok(());
+                return Err(anyhow::anyhow!("Missing crawl_id in task payload"));
             }
         };
 
         let depth = payload.get("depth").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
         let config: CrawlConfigDto =
-            match serde_json::from_value(payload.get("config").cloned().unwrap_or(json!({}))) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Invalid crawl config: {}", e);
-                    self.handle_failure(&mut task).await?;
-                    return Ok(());
-                }
-            };
+            serde_json::from_value(payload.get("config").cloned().unwrap_or(json!({})))?;
 
-        // Robots.txt Check
+        Ok((crawl_id, depth, config))
+    }
+
+    /// 检查 Robots.txt 并返回是否允许访问
+    async fn check_robots_txt(&self, task: &Task) -> bool {
         let user_agent = "crawlrs-bot";
+
         if !self
             .robots_checker
             .is_allowed(&task.url, user_agent)
@@ -434,10 +394,7 @@ where
             .unwrap_or(true)
         {
             info!("Access denied by robots.txt for {}", task.url);
-            // Mark as failed or maybe a specific status like "Skipped" or "Blocked"
-            // For now, mark as failed but maybe we should add a reason
-            self.repository.mark_failed(task.id).await?;
-            return Ok(());
+            return false;
         }
 
         if let Some(delay) = self
@@ -450,7 +407,27 @@ where
             sleep(delay).await;
         }
 
-        // 2. 构建抓取请求
+        true
+    }
+
+    async fn process_crawl_task(&self, mut task: Task) -> Result<()> {
+        // 1. 解析 Crawl 任务特定的 Payload
+        let (crawl_id, depth, config) = match self.parse_crawl_payload(&task).await {
+            Ok(result) => result,
+            Err(e) => {
+                error!("Failed to parse crawl payload: {}", e);
+                self.repository.mark_failed(task.id).await?;
+                return Ok(());
+            }
+        };
+
+        // 2. Robots.txt Check
+        if !self.check_robots_txt(&task).await {
+            self.repository.mark_failed(task.id).await?;
+            return Ok(());
+        }
+
+        // 3. 构建抓取请求
         let mut headers = HashMap::with_capacity(16);
         if let Some(h) = &config.headers {
             if let Some(obj) = h.as_object() {
@@ -662,22 +639,19 @@ where
         }
     }
 
-    async fn process_extract_task(&self, mut task: Task) -> Result<()> {
-        info!("Processing extract task {}", task.id);
-
-        let payload: crate::application::dto::extract_request::ExtractRequestDto =
-            serde_json::from_value(task.payload.clone())
-                .context("Failed to parse extract task input")?;
-
-        debug!(has_rules = payload.rules.is_some());
-        if let Some(ref rules) = payload.rules {
-            debug!(rules_count = rules.len());
-        }
+    /// 解析 Extract 任务特定的 Payload
+    async fn parse_extract_payload(&self, task: &Task) -> Result<(ExtractRequestDto, String)> {
+        let payload: ExtractRequestDto = serde_json::from_value(task.payload.clone())
+            .context("Failed to parse extract task input")?;
 
         let url = payload.urls.first().context("No URL provided")?.clone();
 
-        // 1. Scrape Content
-        let scrape_req = ScrapeRequest::new(url.clone()).with_options(ScrapeOptions {
+        Ok((payload, url))
+    }
+
+    /// 构建 Extract 任务的 ScrapeRequest
+    fn build_extract_request(&self, url: &str) -> ScrapeRequest {
+        ScrapeRequest::new(url.to_string()).with_options(ScrapeOptions {
             headers: HashMap::new(),
             timeout: Duration::from_secs(self.settings.timeouts.engines.default_timeout_seconds),
             needs_js: false,
@@ -690,12 +664,24 @@ where
             use_fire_engine: false,
             actions: vec![],
             sync_wait_ms: 0,
-        });
+        })
+    }
 
-        // Execute scrape
+    async fn process_extract_task(&self, mut task: Task) -> Result<()> {
+        info!("Processing extract task {}", task.id);
+
+        // 1. 解析 Payload
+        let (payload, url) = self.parse_extract_payload(&task).await?;
+        debug!(has_rules = payload.rules.is_some());
+        if let Some(ref rules) = payload.rules {
+            debug!(rules_count = rules.len());
+        }
+
+        // 2. 构建并执行 Scrape 请求
+        let scrape_req = self.build_extract_request(&url);
         let scrape_resp = self.engine_client.scrape(&scrape_req).await?;
 
-        // 文本编码处理 - 集成文本处理功能
+        // 3. 文本编码处理
         let processed_content = match self.process_text_encoding(&task, &scrape_resp).await {
             Ok(content) => content,
             Err(e) => {

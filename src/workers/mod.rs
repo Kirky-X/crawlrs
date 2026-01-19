@@ -10,6 +10,7 @@
 pub mod backlog_worker;
 pub mod concurrency_controller;
 pub mod constants;
+pub mod errors;
 pub mod expiration_worker;
 pub mod manager;
 pub mod scrape_worker;
@@ -17,4 +18,5 @@ pub mod task_state_machine;
 pub mod webhook_worker;
 pub mod worker;
 
+pub use errors::ScrapeWorkerError;
 pub use worker::{AbstractWorker, ProcessResult, Worker, WorkerProcess};
