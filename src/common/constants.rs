@@ -29,30 +29,69 @@ pub mod network {
     pub const MAX_CONCURRENT_CONNECTIONS: usize = 100;
 }
 
-/// 缓存相关常量
-pub mod cache {
-    /// 默认 TTL（秒）
-    pub const DEFAULT_TTL_SECS: u64 = 300;
-    /// 最大缓存条目数
-    pub const MAX_CACHE_ENTRIES: usize = 10000;
-    /// 缓存预热批次大小
-    pub const PREHEAT_BATCH_SIZE: usize = 100;
-    /// LRU 缓存大小
-    pub const LRU_CACHE_SIZE: usize = 256;
+/// 监控相关常量
+pub mod metrics {
+    /// 指标收集间隔（秒）
+    pub const COLLECTION_INTERVAL_SECS: u64 = 60;
+    /// 性能历史最大条目数
+    pub const MAX_PERFORMANCE_HISTORY: usize = 1000;
+    /// 性能历史清理数量
+    pub const PERFORMANCE_HISTORY_CLEANUP_COUNT: usize = 100;
+    /// 性能历史最大条目数
+    pub const PERFORMANCE_HISTORY_MAX_SIZE: usize = 1000;
 }
 
-/// 任务相关常量
-pub mod task {
-    /// 最大并发任务数
-    pub const MAX_CONCURRENT_TASKS: usize = 100;
-    /// 任务超时时间（秒）
-    pub const TASK_TIMEOUT_SECS: u64 = 300;
-    /// 任务锁持续时间（秒）
-    pub const TASK_LOCK_DURATION_SECS: i64 = 300;
-    /// 最大重试次数
-    pub const MAX_RETRIES: u32 = 3;
-    /// 默认优先级
-    pub const DEFAULT_PRIORITY: i32 = 5;
+/// 缓存配置常量 - 避免cache_strategy.rs中的魔法数字
+pub mod cache_config {
+    pub const DEFAULT_TTL_SECS: u64 = 300; // 5分钟
+    pub const ROBOTS_TTL_SECS: u64 = 3600; // 1小时
+    pub const REDIS_CACHE_TTL_SECS: u64 = 86400; // 24小时
+    pub const MAX_CACHE_ENTRIES: usize = 10000;
+    pub const MEMORY_CACHE_MAX_SIZE: usize = 1000;
+    pub const EVICTION_BUFFER_PERCENT: usize = 10;
+}
+
+/// 重试策略常量 - 避免robots.rs中的魔法数字
+pub mod retry_config {
+    pub const MAX_RETRIES: u32 = 5;
+    pub const INITIAL_BACKOFF_MS: u64 = 2000; // 2秒
+    pub const MAX_BACKOFF_MS: u64 = 10000; // 10秒
+}
+
+/// API安全常量 - 避免settings.rs中的弱密码检测
+pub mod security_limits {
+    pub const MIN_WEBHOOK_SECRET_LENGTH: usize = 32;
+    pub const MIN_S3_SECRET_LENGTH: usize = 32;
+    pub const WEAK_SECRET_LENGTH: usize = 8;
+}
+
+/// 数据库连接池常量 - 避免settings.rs中的魔法数字
+pub mod database_config {
+    pub const DEFAULT_MAX_CONNECTIONS: u32 = 100;
+    pub const DEFAULT_MIN_CONNECTIONS: u32 = 10;
+    pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
+    pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 300;
+}
+
+/// 服务器配置常量 - 避免settings.rs中的魔法数字
+pub mod server_config {
+    pub const DEFAULT_HOST: &str = "0.0.0.0";
+    pub const DEFAULT_PORT: u16 = 8899;
+    pub const DEFAULT_RATE_LIMIT_RPM: u32 = 100;
+    pub const DEFAULT_TEAM_LIMIT: u32 = 10;
+    pub const DEFAULT_TASK_LOCK_DURATION_SECS: u64 = 300;
+}
+
+/// 爬虫任务常量 - 避免handler中的硬编码值
+pub mod crawl_task {
+    pub const CRAWL_TASK_CREDITS_COST: i64 = 10;
+    pub const SCRAPE_TASK_CREDITS_COST: i64 = 5;
+    pub const EXTRACT_TASK_CREDITS_COST: i64 = 8;
+    pub const MAX_CONCURRENT_CRAWLS: u32 = 10;
+    pub const DEFAULT_MAX_RETRIES: u32 = 3;
+    pub const BASE_POLL_INTERVAL_MS: u64 = 1000;
+    pub const DEFAULT_TIMEOUT_MS: u64 = 5000;
+    pub const MAX_SYNC_WAIT_MS: u32 = 30000;
 }
 
 /// 数据库相关常量
@@ -99,16 +138,44 @@ pub mod search {
     pub const ENGINE_COUNT: usize = 8;
     /// 平滑因子
     pub const SMOOTHING_FACTOR: f64 = 0.1;
+    /// A/B测试配置常量
+    pub const DEFAULT_VARIANT_B_WEIGHT: f64 = 0.1;
+    pub const PERFORMANCE_CHECK_PROBABILITY: f64 = 0.01;
 }
 
-/// 监控相关常量
-pub mod metrics {
-    /// 指标收集间隔（秒）
-    pub const COLLECTION_INTERVAL_SECS: u64 = 60;
-    /// 性能历史最大条目数
-    pub const MAX_PERFORMANCE_HISTORY: usize = 1000;
-    /// 性能历史清理数量
-    pub const PERFORMANCE_HISTORY_CLEANUP_COUNT: usize = 100;
+/// 评分权重常量 - 避免relevance_scorer.rs中的魔法数字
+pub mod scoring_weights {
+    pub const TITLE_EXACT_MATCH: f64 = 2.0;
+    pub const TITLE_PARTIAL_MATCH: f64 = 1.5;
+    pub const DESCRIPTION_MATCH: f64 = 1.2;
+    pub const SECONDARY_MATCH: f64 = 0.8;
+    pub const TERTIARY_MATCH: f64 = 0.6;
+    pub const BASE_SCORE: f64 = 0.5;
+    pub const PENALTY_FACTOR: f64 = 0.8;
+    pub const BOOST_FACTOR: f64 = 1.2;
+}
+
+/// 系统负载阈值常量 - 避免crawl_service.rs中的魔法数字
+pub mod load_thresholds {
+    pub const HIGH_LOAD: f64 = 0.8;
+    pub const MEDIUM_LOAD: f64 = 0.6;
+    pub const MEDIUM_LOAD_DEPTH_FACTOR: f64 = 0.75;
+}
+
+/// 处理时间限制常量 - 避免processor.rs中的魔法数字
+pub mod processing_limits {
+    pub const MAX_TEXT_PROCESSING_TIME_SECS: u64 = 30;
+    pub const MAX_EXTRACTION_TIME_SECS: u64 = 60;
+    pub const MAX_ROBOTS_FETCH_TIME_SECS: u64 = 5;
+    pub const MAX_CONTENT_SIZE_MB: usize = 10;
+}
+
+/// 资源使用阈值常量 - 避免metrics.rs中的魔法数字
+pub mod resource_thresholds {
+    pub const CPU_USAGE_HIGH: f64 = 0.9;
+    pub const CPU_USAGE_MEDIUM: f64 = 0.8;
+    pub const MEMORY_USAGE_HIGH: f64 = 0.9;
+    pub const MEMORY_USAGE_MEDIUM: f64 = 0.8;
 }
 
 /// 日志相关常量
