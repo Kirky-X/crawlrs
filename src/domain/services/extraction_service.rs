@@ -7,10 +7,11 @@ use crate::domain::services::extraction_utils::ExtractableRule;
 pub use crate::domain::services::llm_service::TokenUsage;
 use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
 use anyhow::Result;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use url::Url;
 
 /// 提取规则
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,61 +76,22 @@ impl ExtractionService {
                     let document = Html::parse_document(html_content);
 
                     if rule.is_array {
-                        // Array extraction - consolidated using ExtractionUtils pattern
+                        // Array extraction - 使用辅助方法优化
                         let mut values = Vec::new();
                         for element in document.select(&selector) {
-                            let value = if let Some(attr) = &rule.attr {
-                                let val = element.value().attr(attr).map(|s| s.to_string());
-                                if let (Some(v), Some(b)) = (&val, &base) {
-                                    if attr == "href" || attr == "src" {
-                                        b.join(v).map(|u| u.to_string()).ok().or(val)
-                                    } else {
-                                        val
-                                    }
-                                } else {
-                                    val
-                                }
-                            } else {
-                                Some(
-                                    element
-                                        .text()
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                        .trim()
-                                        .to_string(),
-                                )
-                            };
-
-                            if let Some(v) = value.filter(|v| !v.is_empty()) {
+                            if let Some(v) =
+                                Self::extract_element_value(element, &rule.attr, base.as_ref())
+                                    .filter(|v| !v.is_empty())
+                            {
                                 values.push(Value::String(v));
                             }
                         }
                         result.insert(key.clone(), Value::Array(values));
                     } else {
-                        // Single element extraction - consolidated using ExtractionUtils pattern
+                        // Single element extraction - 使用辅助方法优化
                         if let Some(element) = document.select(&selector).next() {
-                            let value = if let Some(attr) = &rule.attr {
-                                let val = element.value().attr(attr).map(|s| s.to_string());
-                                if let (Some(v), Some(b)) = (&val, &base) {
-                                    if attr == "href" || attr == "src" {
-                                        b.join(v).map(|u| u.to_string()).ok().or(val)
-                                    } else {
-                                        val
-                                    }
-                                } else {
-                                    val
-                                }
-                            } else {
-                                Some(
-                                    element
-                                        .text()
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                        .trim()
-                                        .to_string(),
-                                )
-                            };
-
+                            let value =
+                                Self::extract_element_value(element, &rule.attr, base.as_ref());
                             result.insert(
                                 key.clone(),
                                 value.map(Value::String).unwrap_or(Value::Null),
@@ -143,6 +105,38 @@ impl ExtractionService {
         }
 
         Ok(json!(result))
+    }
+
+    /// 提取单个元素的属性值 - 消除深层嵌套
+    fn extract_element_value(
+        element: ElementRef,
+        attr: &Option<String>,
+        base: Option<&Url>,
+    ) -> Option<String> {
+        // Guard: 如果有属性，尝试提取属性值
+        if let Some(attr_name) = attr {
+            let val = element.value().attr(attr_name).map(|s| s.to_string());
+
+            // Guard: 如果有base URL且属性是链接类型，解析相对路径
+            if let (Some(v), Some(b)) = (&val, base) {
+                if attr_name == "href" || attr_name == "src" {
+                    return b.join(v).map(|u| u.to_string()).ok().or(val);
+                }
+                return val;
+            }
+
+            return val;
+        }
+
+        // 默认：提取元素文本内容
+        Some(
+            element
+                .text()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string(),
+        )
     }
 
     /// 提取数据（完整版本，需要Settings用于LLM）

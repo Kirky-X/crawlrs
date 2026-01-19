@@ -14,8 +14,6 @@ const MEDIUM_LOAD_DEPTH_FACTOR: f64 = 0.75;
 
 use crate::domain::models::task::{DomainError, Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
-#[cfg(feature = "metrics")]
-use crate::infrastructure::observability::metrics::{get_cpu_usage, get_memory_usage};
 use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
 use anyhow::Result;
 use chrono::Utc;
@@ -26,6 +24,33 @@ use std::sync::Arc;
 use tracing::debug;
 use url::Url;
 use uuid::Uuid;
+
+/// 系统监控 Trait - 用于抽象系统资源监控功能
+/// 遵循依赖倒置原则，领域层通过 Trait 依赖抽象而非具体实现
+#[cfg(feature = "metrics")]
+#[async_trait::async_trait]
+pub trait SystemMonitor: Send + Sync {
+    /// 获取 CPU 使用率
+    fn get_cpu_usage() -> f64;
+    /// 获取内存使用率
+    fn get_memory_usage() -> f64;
+}
+
+/// 默认系统监控实现（使用基础设施层功能）
+#[cfg(feature = "metrics")]
+pub struct DefaultSystemMonitor;
+
+#[cfg(feature = "metrics")]
+#[async_trait::async_trait]
+impl SystemMonitor for DefaultSystemMonitor {
+    fn get_cpu_usage() -> f64 {
+        crate::infrastructure::observability::metrics::get_cpu_usage()
+    }
+
+    fn get_memory_usage() -> f64 {
+        crate::infrastructure::observability::metrics::get_memory_usage()
+    }
+}
 
 /// 爬取服务
 ///
@@ -164,8 +189,8 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
 
     #[cfg(feature = "metrics")]
     fn apply_load_degradation(&self, depth: u64, max_depth: u64) -> u64 {
-        let cpu_usage = get_cpu_usage();
-        let mem_usage = get_memory_usage();
+        let cpu_usage = DefaultSystemMonitor::get_cpu_usage();
+        let mem_usage = DefaultSystemMonitor::get_memory_usage();
 
         if cpu_usage > HIGH_LOAD_THRESHOLD || mem_usage > HIGH_LOAD_THRESHOLD {
             tracing::warn!(
