@@ -3,8 +3,8 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use crawlrs::search::aggregator::enhanced::EnhancedSearchAggregatorBuilder;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 /// 缓存性能基准测试
 ///
@@ -13,30 +13,24 @@ fn benchmark_cache_hit_rate(c: &mut Criterion) {
     let mut group = c.benchmark_group("cache_performance");
 
     for ttl in [300, 600, 1800, 3600].iter() {
-        group.bench_with_input(
-            BenchmarkId::new("cache_ttl", ttl),
-            ttl,
-            |b, &ttl| {
-                b.to_async(tokio::runtime::Runtime::new().unwrap())
-                    .iter(|| async {
-                        let aggregator = EnhancedSearchAggregatorBuilder::new()
-                            .cache_ttl_seconds(*ttl)
-                            .build()
-                            .await
-                            .unwrap();
+        group.bench_with_input(BenchmarkId::new("cache_ttl", ttl), ttl, |b, &ttl| {
+            b.to_async(tokio::runtime::Runtime::new().unwrap())
+                .iter(|| async {
+                    let aggregator = EnhancedSearchAggregatorBuilder::new()
+                        .cache_ttl_seconds(*ttl)
+                        .build()
+                        .await
+                        .unwrap();
 
-                        // 第一次查询（缓存未命中）
-                        let _ = aggregator.search("rust programming", 10, None, None).await;
+                    // 第一次查询（缓存未命中）
+                    let _ = aggregator.search("rust programming", 10, None, None).await;
 
-                        // 后续查询（应该命中缓存）
-                        for _ in 0..10 {
-                            black_box(
-                                aggregator.search("rust programming", 10, None, None).await,
-                            );
-                        }
-                    });
-            },
-        );
+                    // 后续查询（应该命中缓存）
+                    for _ in 0..10 {
+                        black_box(aggregator.search("rust programming", 10, None, None).await);
+                    }
+                });
+        });
     }
 
     group.finish();

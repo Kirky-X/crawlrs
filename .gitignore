@@ -102,6 +102,12 @@ tests/crate/
 # OpenSpec documentation
 openspec/
 
+# Debug HTML output
+debug_html/
+
+# Benchmark results
+.benchmarks/
+
 # -----------------------------------------------------------------------------
 # Section 4: Environment and Configuration Files
 # -----------------------------------------------------------------------------

@@ -31,22 +31,22 @@ pub fn routes() -> Router {
     let public_routes = Router::new()
         .route("/health", get(health_check))
         .route("/metrics", get(metrics_handler::metrics))
-        .route("/v1/version", get(version));
+        .route("/api/v1/version", get(version));
 
     let protected_routes = Router::new()
-        .route("/v1/scrape", post(scrape_handler::create_scrape))
-        .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
-        .route("/v1/scrape/{id}", delete(scrape_handler::cancel_scrape))
+        .route("/api/v1/scrape", post(scrape_handler::create_scrape))
+        .route("/api/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
+        .route("/api/v1/scrape/{id}", delete(scrape_handler::cancel_scrape))
         .route(
-            "/v1/extract",
+            "/api/v1/extract",
             post(extract_handler::extract::<DatabaseGeoRestrictionRepository>),
         )
         .route(
-            "/v1/webhooks",
+            "/api/v1/webhooks",
             post(webhook_handler::create_webhook::<WebhookRepoImpl>),
         )
         .route(
-            "/v1/crawl",
+            "/api/v1/crawl",
             post(
                 crawl_handler::create_crawl::<
                     CrawlRepositoryImpl,
@@ -58,7 +58,7 @@ pub fn routes() -> Router {
             ),
         )
         .route(
-            "/v1/crawl/{id}",
+            "/api/v1/crawl/{id}",
             get(crawl_handler::get_crawl::<
                 CrawlRepositoryImpl,
                 TaskRepositoryImpl,
@@ -68,7 +68,7 @@ pub fn routes() -> Router {
             >),
         )
         .route(
-            "/v1/crawl/{id}/results",
+            "/api/v1/crawl/{id}/results",
             get(crawl_handler::get_crawl_results::<
                 CrawlRepositoryImpl,
                 TaskRepositoryImpl,
@@ -78,7 +78,7 @@ pub fn routes() -> Router {
             >),
         )
         .route(
-            "/v1/crawl/{id}",
+            "/api/v1/crawl/{id}",
             delete(
                 crawl_handler::cancel_crawl::<
                     CrawlRepositoryImpl,
@@ -90,7 +90,7 @@ pub fn routes() -> Router {
             ),
         )
         .route(
-            "/v1/search",
+            "/api/v1/search",
             post(
                 search_handler::search::<
                     CrawlRepositoryImpl,
@@ -100,15 +100,15 @@ pub fn routes() -> Router {
             ),
         )
         .route(
-            "/v1/teams/geo-restrictions",
+            "/api/v1/teams/geo-restrictions",
             get(team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
         )
         .route(
-            "/v1/teams/geo-restrictions",
+            "/api/v1/teams/geo-restrictions",
             put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
         )
-        .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
-        .route("/v1/audit/denied", get(audit_handler::get_denied_requests));
+        .route("/api/v1/audit/logs", get(audit_handler::get_audit_logs))
+        .route("/api/v1/audit/denied", get(audit_handler::get_denied_requests));
 
     let v2_routes = task_routes();
 

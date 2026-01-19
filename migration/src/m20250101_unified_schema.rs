@@ -32,7 +32,11 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Teams::AllowedCountries).json().null())
                     .col(ColumnDef::new(Teams::IpWhitelist).json().null())
                     .col(ColumnDef::new(Teams::GeoEnabled).boolean().default(false))
-                    .col(ColumnDef::new(Teams::IpWhitelistEnabled).boolean().default(false))
+                    .col(
+                        ColumnDef::new(Teams::IpWhitelistEnabled)
+                            .boolean()
+                            .default(false),
+                    )
                     .col(
                         ColumnDef::new(Teams::CreatedAt)
                             .timestamp_with_time_zone()
@@ -197,13 +201,22 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(TaskResults::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(TaskResults::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(TaskResults::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(TaskResults::TaskId).uuid().not_null())
                     .col(ColumnDef::new(TaskResults::Engine).string().not_null())
                     .col(ColumnDef::new(TaskResults::Status).string().not_null())
                     .col(ColumnDef::new(TaskResults::Data).json().null())
                     .col(ColumnDef::new(TaskResults::Error).string().null())
-                    .col(ColumnDef::new(TaskResults::ExecutionTimeMs).integer().null())
+                    .col(
+                        ColumnDef::new(TaskResults::ExecutionTimeMs)
+                            .integer()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(TaskResults::CreatedAt)
                             .timestamp_with_time_zone()
@@ -374,24 +387,53 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(WebhookEvents::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(WebhookEvents::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(WebhookEvents::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(WebhookEvents::TeamId).uuid().not_null())
                     .col(ColumnDef::new(WebhookEvents::WebhookId).uuid().not_null())
                     .col(ColumnDef::new(WebhookEvents::EventType).string().not_null())
                     .col(ColumnDef::new(WebhookEvents::Status).string().not_null())
                     .col(ColumnDef::new(WebhookEvents::Payload).json().not_null())
-                    .col(ColumnDef::new(WebhookEvents::WebhookUrl).string().not_null())
-                    .col(ColumnDef::new(WebhookEvents::ResponseStatus).integer().null())
-                    .col(ColumnDef::new(WebhookEvents::AttemptCount).integer().default(0))
-                    .col(ColumnDef::new(WebhookEvents::MaxRetries).integer().default(3))
-                    .col(ColumnDef::new(WebhookEvents::NextRetryAt).timestamp_with_time_zone().null())
+                    .col(
+                        ColumnDef::new(WebhookEvents::WebhookUrl)
+                            .string()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(WebhookEvents::ResponseStatus)
+                            .integer()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(WebhookEvents::AttemptCount)
+                            .integer()
+                            .default(0),
+                    )
+                    .col(
+                        ColumnDef::new(WebhookEvents::MaxRetries)
+                            .integer()
+                            .default(3),
+                    )
+                    .col(
+                        ColumnDef::new(WebhookEvents::NextRetryAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(WebhookEvents::CreatedAt)
                             .timestamp_with_time_zone()
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
-                    .col(ColumnDef::new(WebhookEvents::DeliveredAt).timestamp_with_time_zone().null())
+                    .col(
+                        ColumnDef::new(WebhookEvents::DeliveredAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_webhook_events_team")
@@ -423,14 +465,27 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(TasksBacklog::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(TasksBacklog::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(TasksBacklog::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(TasksBacklog::TaskId).uuid().not_null())
                     .col(ColumnDef::new(TasksBacklog::TeamId).uuid().not_null())
                     .col(ColumnDef::new(TasksBacklog::TaskType).string().not_null())
                     .col(ColumnDef::new(TasksBacklog::Priority).integer().default(0))
                     .col(ColumnDef::new(TasksBacklog::Payload).json().not_null())
-                    .col(ColumnDef::new(TasksBacklog::MaxRetries).integer().default(3))
-                    .col(ColumnDef::new(TasksBacklog::RetryCount).integer().default(0))
+                    .col(
+                        ColumnDef::new(TasksBacklog::MaxRetries)
+                            .integer()
+                            .default(3),
+                    )
+                    .col(
+                        ColumnDef::new(TasksBacklog::RetryCount)
+                            .integer()
+                            .default(0),
+                    )
                     .col(ColumnDef::new(TasksBacklog::Status).string().not_null())
                     .col(
                         ColumnDef::new(TasksBacklog::CreatedAt)
@@ -444,9 +499,21 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
-                    .col(ColumnDef::new(TasksBacklog::ScheduledAt).timestamp_with_time_zone().null())
-                    .col(ColumnDef::new(TasksBacklog::ExpiresAt).timestamp_with_time_zone().null())
-                    .col(ColumnDef::new(TasksBacklog::ProcessedAt).timestamp_with_time_zone().null())
+                    .col(
+                        ColumnDef::new(TasksBacklog::ScheduledAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(TasksBacklog::ExpiresAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(TasksBacklog::ProcessedAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_tasks_backlog_team")

@@ -28,12 +28,12 @@ use axum::{
 };
 use std::sync::Arc;
 
-/// Create the public API routes (no authentication required).
+/// Create public API routes (no authentication required).
 pub fn create_public_routes() -> Router {
     Router::new()
         .route("/health", get(routes::health_check))
         .route("/metrics", get(metrics_handler::metrics))
-        .route("/v1/version", get(routes::version))
+        .route("/api/v1/version", get(routes::version))
 }
 
 /// Create the protected API routes (authentication required).
@@ -73,18 +73,18 @@ pub fn create_protected_routes(
     };
 
     Router::new()
-        .route("/v1/scrape", post(scrape_handler::create_scrape))
-        .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
+        .route("/api/v1/scrape", post(scrape_handler::create_scrape))
+        .route("/api/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
         .route(
-            "/v1/extract",
+            "/api/v1/extract",
             post(extract_handler::extract::<DatabaseGeoRestrictionRepository>),
         )
         .route(
-            "/v1/webhooks",
+            "/api/v1/webhooks",
             post(webhook_handler::create_webhook::<WebhookRepoImpl>),
         )
         .route(
-            "/v1/crawl",
+            "/api/v1/crawl",
             post(
                 crawl_handler::create_crawl::<
                     CrawlRepositoryImpl,
@@ -96,7 +96,7 @@ pub fn create_protected_routes(
             ),
         )
         .route(
-            "/v1/crawl/{id}",
+            "/api/v1/crawl/{id}",
             get(crawl_handler::get_crawl::<
                 CrawlRepositoryImpl,
                 TaskRepositoryImpl,
@@ -106,7 +106,7 @@ pub fn create_protected_routes(
             >),
         )
         .route(
-            "/v1/crawl/{id}/results",
+            "/api/v1/crawl/{id}/results",
             get(crawl_handler::get_crawl_results::<
                 CrawlRepositoryImpl,
                 TaskRepositoryImpl,
@@ -116,7 +116,7 @@ pub fn create_protected_routes(
             >),
         )
         .route(
-            "/v1/crawl/{id}",
+            "/api/v1/crawl/{id}",
             delete(
                 crawl_handler::cancel_crawl::<
                     CrawlRepositoryImpl,
@@ -128,7 +128,7 @@ pub fn create_protected_routes(
             ),
         )
         .route(
-            "/v1/search",
+            "/api/v1/search",
             post(
                 search_handler::search::<
                     CrawlRepositoryImpl,
@@ -138,15 +138,15 @@ pub fn create_protected_routes(
             ),
         )
         .route(
-            "/v1/teams/geo-restrictions",
+            "/api/v1/teams/geo-restrictions",
             get(team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
         )
         .route(
-            "/v1/teams/geo-restrictions",
+            "/api/v1/teams/geo-restrictions",
             put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
         )
-        .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
-        .route("/v1/audit/denied", get(audit_handler::get_denied_requests))
+        .route("/api/v1/audit/logs", get(audit_handler::get_audit_logs))
+        .route("/api/v1/audit/denied", get(audit_handler::get_denied_requests))
         .layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
             crate::presentation::middleware::auth_middleware::auth_middleware,
