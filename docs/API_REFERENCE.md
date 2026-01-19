@@ -4,7 +4,7 @@
 <div align="center">
 
 ![API Version](https://img.shields.io/badge/api-0.1.0-blue)
-![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8080-green)
+![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green)
 ![License](https://img.shields.io/badge/license-Apache%202.0-orange)
 
 **Version:** 0.1.0 | **Base URL:** `http://localhost:8080` | **Updated:** 2025-01-15

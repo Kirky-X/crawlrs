@@ -78,6 +78,14 @@ tmp/
 .pytest_cache/
 .opencode/
 openspec/
+lib64/
+parts/
+wheels/
+share/python-wheels/
+pip-wheel-metadata/
+*.egg-info/
+.installed.cfg
+MANIFEST
 
 # iFlow directory
 .iflow/

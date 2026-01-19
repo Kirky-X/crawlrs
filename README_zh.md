@@ -232,7 +232,7 @@ cargo run --bin crawlrs
 
 ```bash
 # 健康检查
-curl http://localhost:8080/health
+curl http://localhost:8899/health
 
 # 预期响应：
 # {"status":"healthy"}
@@ -268,7 +268,7 @@ Authorization: Bearer YOUR_API_KEY
 
 # 示例 curl
 curl -H "Authorization: Bearer crawlrs_sk_abc123" \
-  http://localhost:8080/api/v1/scrape
+  http://localhost:8899/v1/scrape
 ```
 
 > **⚠️ 安全提示:** 永远不要将 API 密钥提交到版本控制系统。使用环境变量。
