@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlRequestDto;
 use crate::application::use_cases::crawl_use_case::{CrawlUseCase, CrawlUseCaseError};
+use crate::common::constants::crawl_task::CRAWL_TASK_CREDITS_COST;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
@@ -26,6 +27,7 @@ use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimiti
 use crate::domain::services::team_service::TeamService;
 use crate::infrastructure::geolocation::GeoLocationService;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
+use crate::presentation::handlers::extract_task_ids;
 use crate::presentation::handlers::response_builder::errors;
 use crate::presentation::handlers::response_builder::success_response;
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
@@ -98,7 +100,7 @@ where
     if let Err(e) = rate_limiting_service
         .check_and_deduct_quota(
             team_id,
-            10, // 爬取任务通常比抓取消耗更多，假设消耗 10 Credits
+            CRAWL_TASK_CREDITS_COST, // 爬取任务通常比抓取消耗更多，假设消耗 10 Credits
             crate::domain::models::credits::CreditsTransactionType::Crawl,
             format!("Crawl URL: {}", payload.url),
             None, // 初始扣费，尚未创建具体任务ID
@@ -136,8 +138,8 @@ where
                 match task_repository_impl.find_by_crawl_id(crawl.id).await {
                     Ok(tasks) => {
                         if !tasks.is_empty() {
-                            let task_ids: Vec<uuid::Uuid> =
-                                tasks.iter().map(|task| task.id).collect();
+                            // 使用辅助方法提取任务ID
+                            let task_ids = extract_task_ids(&tasks);
 
                             // 调用智能轮询等待函数
                             match wait_for_tasks_completion(

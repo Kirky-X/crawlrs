@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::{
     application::dto::{scrape_request::ScrapeRequestDto, scrape_response::ScrapeResponseDto},
+    common::constants::crawl_task::MAX_SYNC_WAIT_MS,
     config::settings::Settings,
     domain::models::task::{Task, TaskType},
     domain::repositories::{
@@ -49,7 +50,7 @@ pub async fn create_scrape(
 
     // 验证 sync_wait_ms 范围
     if let Some(ms) = payload.sync_wait_ms {
-        if ms > 30000 {
+        if ms > MAX_SYNC_WAIT_MS {
             return errors::unprocessable_entity("sync_wait_ms must be <= 30000");
         }
     }
@@ -109,10 +110,11 @@ pub async fn create_scrape(
         serde_json::to_value(&payload).unwrap_or_default(),
     );
 
+    let sync_wait_ms = payload.sync_wait_ms.unwrap_or(0);
+
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
             // 处理同步等待逻辑
-            let sync_wait_ms = payload.sync_wait_ms.unwrap_or(5000);
             let mut waited_time_ms = 0u64;
 
             if sync_wait_ms > 0 {

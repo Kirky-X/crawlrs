@@ -17,6 +17,7 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
 use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::presentation::errors::AppError;
+use crate::presentation::handlers::extract_task_ids;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use anyhow;
 use axum::{extract::Extension, Json};
@@ -288,7 +289,7 @@ async fn handle_sync_wait<T: TaskRepository>(
     team_id: uuid::Uuid,
     sync_wait_ms: u32,
 ) -> Result<u64, AppError> {
-    let task_ids: Vec<uuid::Uuid> = tasks.iter().map(|task| task.id).collect();
+    let task_ids = extract_task_ids(tasks);
     let wait_start = Instant::now();
 
     wait_for_tasks_completion(task_repo, &task_ids, team_id, sync_wait_ms, 1000).await?;
@@ -306,7 +307,7 @@ async fn fetch_scrape_results(
     >,
     AppError,
 > {
-    let task_ids: Vec<uuid::Uuid> = tasks.iter().map(|task| task.id).collect();
+    let task_ids = extract_task_ids(tasks);
     let results = scrape_result_repo.find_by_task_ids(&task_ids).await?;
 
     let mut map = std::collections::HashMap::with_capacity(results.len());

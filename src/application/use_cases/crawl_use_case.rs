@@ -262,12 +262,13 @@ where
         let now = Utc::now();
 
         // 3. 创建爬取任务实体
+        let url = dto.url.clone();
         let crawl = Crawl {
             id: crawl_id,
             team_id,
             name: dto.name.unwrap_or_else(|| "Untitled Crawl".to_string()), // 默认名称
-            root_url: dto.url.clone(),
-            url: dto.url.clone(),
+            root_url: url.clone(),
+            url,
             status: CrawlStatus::Queued, // 初始状态为排队中
             config: json!(dto.config),   // 序列化配置为 JSON
             total_tasks: 1,              // 初始任务数 1
