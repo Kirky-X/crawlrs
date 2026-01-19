@@ -5,16 +5,11 @@
 
 pub use sea_orm_migration::prelude::*;
 
-mod m20251211_complete_schema;
-mod m20251222_geographic_restrictions;
-mod m20260113_api_key_hash;
-mod m20260119_audit_log;
-mod m20260119_audit_log_indexes;
+mod m20250101_unified_schema;
 
 /// 数据库迁移器
 ///
 /// 管理数据库模式迁移，负责数据库结构的版本控制
-/// 包含所有数据库迁移的定义和执行逻辑
 pub struct Migrator;
 
 #[async_trait::async_trait]
@@ -25,12 +20,6 @@ impl MigratorTrait for Migrator {
     ///
     /// 返回迁移列表
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![
-            Box::new(m20251211_complete_schema::Migration),
-            Box::new(m20251222_geographic_restrictions::Migration),
-            Box::new(m20260113_api_key_hash::Migration),
-            Box::new(m20260119_audit_log::Migration),
-            Box::new(m20260119_audit_log_indexes::Migration),
-        ]
+        vec![Box::new(m20250101_unified_schema::Migration)]
     }
 }
