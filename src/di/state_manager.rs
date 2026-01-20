@@ -13,7 +13,7 @@ use std::sync::RwLock;
 use thiserror::Error;
 
 /// Component state enumeration
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ComponentState {
     /// Component is not yet initialized
     NotInitialized,
@@ -52,7 +52,6 @@ pub struct ComponentStateInfo {
 /// This manager tracks the initialization state of all components
 /// registered in the DI container and provides methods for querying
 /// and managing component states.
-#[derive(Default)]
 pub struct DependencyStateManager {
     /// Map of component names to their states
     states: RwLock<HashMap<String, ComponentStateInfo>>,

@@ -8,70 +8,126 @@
 //! This module provides Shaku components for search layer dependencies
 //! including SearchClient, SearchAggregator, and individual search engine implementations.
 
-use shaku::Component;
 use std::sync::Arc;
 
-use crate::domain::search::engine::SearchEngine;
+use crate::engines::engine_client::EngineClient;
 use crate::search::aggregator::SearchAggregator;
-use crate::search::client::SearchClient;
+use crate::search::client::{SearchClient, SearchClientTrait};
+use crate::search::types::SearchEngineType;
 
-/// Component parameters for SearchModule
-#[derive(shaku::ComponentParameters)]
-pub struct SearchModuleParameters {
-    /// Search engine settings
-    pub settings: Arc<crate::config::settings::Settings>,
+/// Trait for HttpClient component
+pub trait HttpClientTrait: Send + Sync {
+    fn get_client(&self) -> Arc<reqwest::Client>;
+}
+
+/// HttpClient component for unified HTTP client management
+pub struct HttpClientComponent {
+    /// The HTTP client
+    client: Arc<reqwest::Client>,
+}
+
+impl HttpClientComponent {
+    /// Create a new HttpClientComponent with explicit dependencies
+    pub fn new(client: Arc<reqwest::Client>) -> Self {
+        Self { client }
+    }
+}
+
+impl HttpClientTrait for HttpClientComponent {
+    fn get_client(&self) -> Arc<reqwest::Client> {
+        self.client.clone()
+    }
+}
+
+/// Trait for EngineClient component
+pub trait EngineClientTrait: Send + Sync {
+    fn get_client(&self) -> Arc<EngineClient>;
+}
+
+/// EngineClient component for unified engine client management
+pub struct EngineClientComponent {
+    /// The engine client
+    client: Arc<EngineClient>,
+}
+
+impl EngineClientComponent {
+    /// Create a new EngineClientComponent with explicit dependencies
+    pub fn new(client: Arc<EngineClient>) -> Self {
+        Self { client }
+    }
+}
+
+impl EngineClientTrait for EngineClientComponent {
+    fn get_client(&self) -> Arc<EngineClient> {
+        self.client.clone()
+    }
+}
+
+/// Trait for SearchAggregator component
+pub trait SearchAggregatorTrait: Send + Sync {
+    fn get_aggregator(&self) -> &SearchAggregator;
 }
 
 /// SearchAggregator component
-#[derive(Component)]
-#[shaku(interface = SearchAggregator)]
 pub struct SearchAggregatorComponent {
-    /// Vector of search engines
-    #[shaku(inject)]
-    engines: Vec<Arc<dyn SearchEngine>>,
-
-    /// Timeout in milliseconds
-    timeout_ms: u64,
+    /// Search aggregator
+    aggregator: Arc<SearchAggregator>,
 }
 
 impl SearchAggregatorComponent {
-    pub fn new(engines: Vec<Arc<dyn SearchEngine>>, timeout_ms: u64) -> Self {
+    /// Create a new SearchAggregatorComponent with explicit dependencies
+    pub fn new(aggregator: Arc<SearchAggregator>) -> Self {
+        Self { aggregator }
+    }
+}
+
+impl SearchAggregatorTrait for SearchAggregatorComponent {
+    fn get_aggregator(&self) -> &SearchAggregator {
+        &self.aggregator
+    }
+}
+
+/// SearchClient component
+#[allow(dead_code)]
+pub struct SearchClientComponent {
+    /// Search client
+    client: Arc<SearchClient>,
+}
+
+impl SearchClientComponent {
+    /// Create a new SearchClientComponent with explicit dependencies
+    pub fn new(engine_client: Arc<EngineClient>) -> Self {
         Self {
-            engines,
-            timeout_ms,
+            client: Arc::new(SearchClient::new(engine_client)),
         }
     }
 }
 
-impl SearchAggregator for SearchAggregatorComponent {
-    // Implementation delegated to internal aggregator
-}
+#[async_trait::async_trait]
+impl SearchClientTrait for SearchClientComponent {
+    async fn search(&self, query: &str) -> crate::search::client::SearchCommand {
+        crate::search::client::SearchCommand::new((*self.client).clone(), query)
+    }
 
-/// SearchClient component
-#[derive(Component)]
-#[shaku(interface = SearchClient)]
-pub struct SearchClientComponent {
-    /// Search aggregator
-    #[shaku(inject)]
-    aggregator: Arc<dyn SearchAggregator>,
-}
+    async fn search_with_engine(
+        &self,
+        query: &str,
+        engine: crate::search::types::SearchEngineType,
+    ) -> Result<
+        crate::search::response::Response<crate::search::response::ResponseItem>,
+        crate::search::error::SearchError,
+    > {
+        self.client.search_with_engine(query, engine).await
+    }
 
-impl SearchClient for SearchClientComponent {
-    // Implementation delegated to internal client
-}
+    fn default_engine(&self) -> crate::search::types::SearchEngineType {
+        self.client.default_engine()
+    }
 
-/// Search module for Shaku DI
-///
-/// This module provides all search components including:
-/// - SearchClient (main interface for search operations)
-/// - SearchAggregator (result aggregation and deduplication)
-/// - Individual search engine implementations
-shaku::module! {
-    pub SearchModule {
-        components = [
-            SearchAggregatorComponent,
-            SearchClientComponent,
-        ],
-        providers = []
+    fn register_engine(&self, engine: Arc<dyn crate::search::engine_trait::SearchEngine>) {
+        // This would require interior mutability, skipping for now
+        let _ = engine;
     }
 }
+
+// Search module components - for Shaku DI

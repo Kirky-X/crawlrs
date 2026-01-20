@@ -8,19 +8,21 @@
 //! This module provides Shaku-compatible state management for Axum,
 //! enabling clean dependency injection in HTTP handlers.
 
-use axum::{async_trait, Extract, FromRequest, Request};
-use shaku::{HasComponent, Interface, Module};
 use std::sync::Arc;
 
-use crate::di::AppModule;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
+use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
+use crate::domain::services::auth_scope_service::AuthScopeService;
+use crate::domain::services::audit_service::AuditService;
+use crate::domain::services::llm_service::LLMService;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
+use crate::domain::services::search_service::SearchServiceTrait;
 use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
@@ -29,6 +31,7 @@ use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
+use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsCheckerTrait;
 
 /// State extracted from Shaku module for use in Axum handlers
@@ -52,6 +55,8 @@ pub struct AppState {
     pub webhook_event_repo: Arc<dyn WebhookEventRepository>,
     /// Storage repository
     pub storage_repo: Arc<dyn StorageRepository>,
+    /// Tasks backlog repository
+    pub tasks_backlog_repo: Arc<dyn TasksBacklogRepository>,
     /// Task queue
     pub task_queue: Arc<dyn TaskQueue>,
     /// Rate limiting service
@@ -70,45 +75,16 @@ pub struct AppState {
     pub engine_client: Arc<EngineClient>,
     /// Search client
     pub search_client: Arc<SearchClient>,
-}
-
-impl AppState {
-    /// Create a new AppState from an AppModule
-    pub fn from_module(module: &AppModule) -> Result<Self, shaku::Error> {
-        Ok(Self {
-            db: module.resolve()?,
-            redis_client: module.resolve()?,
-            task_repo: module.resolve()?,
-            credits_repo: module.resolve()?,
-            crawl_repo: module.resolve()?,
-            result_repo: module.resolve()?,
-            webhook_repo: module.resolve()?,
-            webhook_event_repo: module.resolve()?,
-            storage_repo: module.resolve()?,
-            task_queue: module.resolve()?,
-            rate_limiting_service: module.resolve()?,
-            team_service: module.resolve()?,
-            webhook_service: module.resolve()?,
-            robots_checker: module.resolve()?,
-            team_semaphore: module.resolve()?,
-            engine_router: module.resolve()?,
-            engine_client: module.resolve()?,
-            search_client: module.resolve()?,
-        })
-    }
-}
-
-#[async_trait]
-impl<S> FromRequest<S> for AppState
-where
-    S: Send,
-{
-    type Rejection = ();
-
-    async fn from_request(req: &Request, _state: &S) -> Result<Self, Self::Rejection> {
-        // Try to extract from extensions
-        req.extensions().get::<AppState>().cloned().ok_or(())
-    }
+    /// Search service (trait object for DI)
+    pub search_service: Arc<dyn SearchServiceTrait>,
+    /// Auth scope service for API key permission management
+    pub auth_scope_service: Option<Arc<AuthScopeService>>,
+    /// LLM service for LLM operations
+    pub llm_service: Arc<LLMService>,
+    /// Regex cache for performance optimization
+    pub regex_cache: Arc<RegexCache>,
+    /// Audit service
+    pub audit_service: Arc<AuditService>,
 }
 
 /// Trait for extracting dependencies from AppState
@@ -140,18 +116,30 @@ pub trait AppStateExt {
     fn engine_client(&self) -> Arc<EngineClient>;
     /// Get search client
     fn search_client(&self) -> Arc<SearchClient>;
+    /// Get search service
+    fn search_service(&self) -> Arc<dyn SearchServiceTrait>;
+    /// Get auth scope service
+    fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>>;
+    /// Get LLM service
+    fn llm_service(&self) -> Arc<LLMService>;
+    /// Get regex cache
+    fn regex_cache(&self) -> Arc<RegexCache>;
     /// Get Redis client
     fn redis_client(&self) -> Arc<RedisClient>;
     /// Get database connection
     fn db(&self) -> Arc<sea_orm::DbConn>;
     /// Get storage repository
     fn storage_repo(&self) -> Arc<dyn StorageRepository>;
+    /// Get tasks backlog repository
+    fn tasks_backlog_repo(&self) -> Arc<dyn TasksBacklogRepository>;
     /// Get task queue
     fn task_queue(&self) -> Arc<dyn TaskQueue>;
     /// Get robots checker
     fn robots_checker(&self) -> Arc<dyn RobotsCheckerTrait>;
     /// Get team semaphore
     fn team_semaphore(&self) -> Arc<TeamSemaphore>;
+    /// Get audit service
+    fn audit_service(&self) -> Arc<AuditService>;
 }
 
 impl AppStateExt for AppState {
@@ -203,6 +191,22 @@ impl AppStateExt for AppState {
         self.search_client.clone()
     }
 
+    fn search_service(&self) -> Arc<dyn SearchServiceTrait> {
+        self.search_service.clone()
+    }
+
+    fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>> {
+        self.auth_scope_service.clone()
+    }
+
+    fn llm_service(&self) -> Arc<LLMService> {
+        self.llm_service.clone()
+    }
+
+    fn regex_cache(&self) -> Arc<RegexCache> {
+        self.regex_cache.clone()
+    }
+
     fn redis_client(&self) -> Arc<RedisClient> {
         self.redis_client.clone()
     }
@@ -215,6 +219,10 @@ impl AppStateExt for AppState {
         self.storage_repo.clone()
     }
 
+    fn tasks_backlog_repo(&self) -> Arc<dyn TasksBacklogRepository> {
+        self.tasks_backlog_repo.clone()
+    }
+
     fn task_queue(&self) -> Arc<dyn TaskQueue> {
         self.task_queue.clone()
     }
@@ -225,5 +233,9 @@ impl AppStateExt for AppState {
 
     fn team_semaphore(&self) -> Arc<TeamSemaphore> {
         self.team_semaphore.clone()
+    }
+
+    fn audit_service(&self) -> Arc<AuditService> {
+        self.audit_service.clone()
     }
 }
