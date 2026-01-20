@@ -17,7 +17,7 @@ use crate::infrastructure::repositories::{
     webhook_event_repo_impl::WebhookEventRepoImpl, webhook_repo_impl::WebhookRepoImpl,
 };
 use anyhow::Result;
-use migration::{Migrator, MigratorTrait};
+use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
@@ -59,12 +59,15 @@ pub struct Repositories {
 ///
 /// Returns a connected database pool.
 pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
+    // Create SQLx connection pool for migrations
+    let sqlx_pool = PgPool::connect(&settings.database.url()).await?;
     let db = connection::create_pool(&settings.database).await?;
     let db = Arc::new(db);
     info!("Database connection established");
 
+    // Run migrations using SQLx
     info!("Running database migrations...");
-    Migrator::up(db.as_ref(), None).await?;
+    sqlx::migrate!("./migrations-sqlx").run(&sqlx_pool).await?;
     info!("Database migrations applied");
 
     Ok(db)

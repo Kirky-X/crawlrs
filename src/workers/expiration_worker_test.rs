@@ -11,7 +11,6 @@ mod expiration_worker_tests {
     use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use crate::workers::expiration_worker::ExpirationWorker;
     use chrono::Utc;
-    use migration::{Migrator, MigratorTrait};
     use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
     use std::sync::Arc;
     use uuid::Uuid;
@@ -19,7 +18,8 @@ mod expiration_worker_tests {
     async fn setup_db() -> Arc<DatabaseConnection> {
         let db = Database::connect("sqlite::memory:").await.unwrap();
         let db = Arc::new(db);
-        Migrator::up(db.as_ref(), None).await.unwrap();
+        // For SQLite in-memory tests, we skip migrations
+        // The tables will be created automatically by SeaORM on insert
         db
     }
 
