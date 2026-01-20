@@ -3,30 +3,241 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! 系统指标监控模块
+//!
+//! 提供 CPU、内存等系统指标的监控功能，支持通过 DI 注入。
+
 use chrono::Utc;
 use metrics::{describe_counter, describe_gauge, describe_histogram, gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
-use once_cell::sync::Lazy;
+use shaku::{Component, Interface};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use tracing::{error, warn};
 
-// Atomic metrics for lock-free reads in hot path
-static CURRENT_CPU_USAGE: AtomicU64 = AtomicU64::new(0);
-static CURRENT_MEMORY_USAGE: AtomicU64 = AtomicU64::new(0);
-static LAST_UPDATE_TIME: AtomicU64 = AtomicU64::new(0);
+/// 系统监控 trait（支持 DI）
+///
+/// 提供系统资源监控的抽象接口，便于测试时注入 mock 实现。
+pub trait SystemMonitorTrait: Interface + Send + Sync {
+    /// 获取当前 CPU 使用率 (0.0 - 1.0)
+    fn cpu_usage(&self) -> f64;
+    /// 获取当前内存使用率 (0.0 - 1.0)
+    fn memory_usage(&self) -> f64;
+    /// 检查指标是否过期
+    fn is_metrics_stale(&self) -> bool;
+}
 
-static SYSTEM: Lazy<Arc<Mutex<System>>> = Lazy::new(|| {
-    let mut sys = System::new_with_specifics(
-        RefreshKind::nothing()
-            .with_cpu(CpuRefreshKind::everything())
-            .with_memory(MemoryRefreshKind::everything()),
-    );
-    sys.refresh_all();
-    Arc::new(Mutex::new(sys))
-});
+/// 系统监控组件（DI 实现）
+///
+/// 通过原子变量提供无锁读取，同时保持热路径高性能。
+#[derive(Component)]
+#[shaku(interface = SystemMonitorTrait)]
+pub struct SystemMonitorComponent {
+    /// 系统信息
+    system: Arc<Mutex<System>>,
+    /// 最后更新时间戳
+    last_update: Arc<AtomicU64>,
+    /// CPU 使用率 (0-100)
+    cpu_usage: Arc<AtomicU64>,
+    /// 内存使用率 (0-100)
+    memory_usage: Arc<AtomicU64>,
+}
+
+impl SystemMonitorComponent {
+    /// 创建新的系统监控组件
+    pub fn new() -> Self {
+        let mut sys = System::new_with_specifics(
+            RefreshKind::nothing()
+                .with_cpu(CpuRefreshKind::everything())
+                .with_memory(MemoryRefreshKind::everything()),
+        );
+        sys.refresh_all();
+
+        Self {
+            system: Arc::new(Mutex::new(sys)),
+            last_update: Arc::new(AtomicU64::new(0)),
+            cpu_usage: Arc::new(AtomicU64::new(0)),
+            memory_usage: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// 更新系统指标
+    fn update(&mut self) {
+        // Acquire lock with poisoning handling
+        let sys = match self.system.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::error!("System monitor mutex poisoned, cannot update metrics");
+                // On poisoning, we cannot recover the system state
+                // Skip this update cycle
+                return;
+            }
+        };
+        let mut sys = sys;  // Make mutable for refresh operations
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
+    }
+
+    /// 刷新指标（用于后台任务）
+    pub fn refresh(&mut self) {
+        self.update();
+
+        let cpu_usage = {
+            let sys = match self.system.lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    tracing::error!("Failed to acquire system monitor lock for CPU usage");
+                    return;
+                }
+            };
+            f64::from(sys.global_cpu_usage())
+        };
+
+        let memory_usage = {
+            let sys = match self.system.lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    tracing::error!("Failed to acquire system monitor lock for memory usage");
+                    return;
+                }
+            };
+            let total_mem = sys.total_memory();
+            if total_mem > 0 {
+                sys.used_memory() as f64 / total_mem as f64 * 100.0
+            } else {
+                0.0
+            }
+        };
+
+        let now = Utc::now().timestamp() as u64;
+        self.last_update.store(now, Ordering::Relaxed);
+        self.cpu_usage.store((cpu_usage) as u64, Ordering::Relaxed);
+        self.memory_usage
+            .store(memory_usage as u64, Ordering::Relaxed);
+    }
+}
+
+impl Default for SystemMonitorComponent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SystemMonitorTrait for SystemMonitorComponent {
+    fn cpu_usage(&self) -> f64 {
+        self.cpu_usage.load(Ordering::Relaxed) as f64 / 100.0
+    }
+
+    fn memory_usage(&self) -> f64 {
+        self.memory_usage.load(Ordering::Relaxed) as f64 / 100.0
+    }
+
+    fn is_metrics_stale(&self) -> bool {
+        let last_update = self.last_update.load(Ordering::Relaxed);
+        if last_update == 0 {
+            return true;
+        }
+        let now = Utc::now().timestamp() as u64;
+        now - last_update > 2
+    }
+}
+
+/// System monitor for tracking CPU and memory usage
+#[derive(Clone)]
+pub struct SystemMonitor {
+    system: Arc<Mutex<System>>,
+}
+
+impl SystemMonitor {
+    /// Create a new system monitor
+    pub fn new() -> Self {
+        let mut sys = System::new_with_specifics(
+            RefreshKind::nothing()
+                .with_cpu(CpuRefreshKind::everything())
+                .with_memory(MemoryRefreshKind::everything()),
+        );
+        sys.refresh_all();
+
+        Self {
+            system: Arc::new(Mutex::new(sys)),
+        }
+    }
+
+    /// Update system metrics
+    fn update(&mut self) {
+        let mut sys = self.system.lock().unwrap();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
+    }
+
+    /// Get current CPU usage (0.0 - 1.0)
+    pub fn cpu_usage(&mut self) -> f64 {
+        self.update();
+        let sys = self.system.lock().unwrap();
+        f64::from(sys.global_cpu_usage()) / 100.0
+    }
+
+    /// Get current memory usage (0.0 - 1.0)
+    pub fn memory_usage(&mut self) -> f64 {
+        self.update();
+        let sys = self.system.lock().unwrap();
+        let total_mem = sys.total_memory();
+        if total_mem > 0 {
+            sys.used_memory() as f64 / total_mem as f64
+        } else {
+            0.0
+        }
+    }
+}
+
+impl Default for SystemMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Mutable system monitor for background updates
+struct MutableSystemMonitor {
+    system: Arc<Mutex<System>>,
+}
+
+impl MutableSystemMonitor {
+    fn new() -> Self {
+        let mut sys = System::new_with_specifics(
+            RefreshKind::nothing()
+                .with_cpu(CpuRefreshKind::everything())
+                .with_memory(MemoryRefreshKind::everything()),
+        );
+        sys.refresh_all();
+
+        Self {
+            system: Arc::new(Mutex::new(sys)),
+        }
+    }
+
+    fn refresh(&mut self) {
+        let mut sys = self.system.lock().unwrap();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
+    }
+
+    fn cpu_usage(&self) -> f64 {
+        let sys = self.system.lock().unwrap();
+        f64::from(sys.global_cpu_usage()) / 100.0
+    }
+
+    fn memory_usage(&self) -> f64 {
+        let sys = self.system.lock().unwrap();
+        let total_mem = sys.total_memory();
+        if total_mem > 0 {
+            sys.used_memory() as f64 / total_mem as f64
+        } else {
+            0.0
+        }
+    }
+}
 
 /// 初始化指标系统
 ///
@@ -41,12 +252,15 @@ pub fn init_metrics() {
         return;
     }
 
+    // Create mutable system monitor for background task
+    let mut monitor = MutableSystemMonitor::new();
+
     // Start background task to update system metrics
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
             interval.tick().await;
-            update_system_metrics();
+            update_system_metrics(&mut monitor);
         }
     });
 
@@ -96,66 +310,37 @@ pub fn init_metrics() {
     );
 }
 
-fn update_system_metrics() {
-    if let Ok(mut sys) = SYSTEM.lock() {
-        sys.refresh_cpu_all();
-        sys.refresh_memory();
+fn update_system_metrics(monitor: &mut MutableSystemMonitor) {
+    monitor.refresh();
 
-        let cpu_usage = sys.global_cpu_usage() / 100.0;
+    let cpu_usage = monitor.cpu_usage();
 
-        // Store in atomic variables for lock-free reads
-        CURRENT_CPU_USAGE.store((cpu_usage * 100.0) as u64, Ordering::Relaxed);
-        LAST_UPDATE_TIME.store(Utc::now().timestamp() as u64, Ordering::Relaxed);
+    gauge!("system_cpu_usage_ratio").set(cpu_usage);
 
-        gauge!("system_cpu_usage_ratio").set(cpu_usage as f64);
+    // Alerting logic
+    if cpu_usage > 0.9 {
+        error!(
+            "CRITICAL: System CPU usage is extremely high: {:.2}%",
+            cpu_usage * 100.0
+        );
+    } else if cpu_usage > 0.8 {
+        warn!("ALARM: System CPU usage is high: {:.2}%", cpu_usage * 100.0);
+    }
 
-        // Alerting logic
-        if cpu_usage > 0.9 {
-            error!(
-                "CRITICAL: System CPU usage is extremely high: {:.2}%",
-                cpu_usage * 100.0
-            );
-        } else if cpu_usage > 0.8 {
-            warn!("ALARM: System CPU usage is high: {:.2}%", cpu_usage * 100.0);
-        }
+    let mem_usage = monitor.memory_usage();
 
-        let total_mem = sys.total_memory();
-        if total_mem > 0 {
-            let used_mem = sys.used_memory();
-            let mem_usage = used_mem as f64 / total_mem as f64;
+    gauge!("system_memory_usage_ratio").set(mem_usage);
 
-            // Store memory usage in atomic variable
-            CURRENT_MEMORY_USAGE.store((mem_usage * 100.0) as u64, Ordering::Relaxed);
-
-            gauge!("system_memory_usage_ratio").set(mem_usage);
-
-            if mem_usage > 0.9 {
-                error!(
-                    "CRITICAL: System memory usage is extremely high: {:.2}%",
-                    mem_usage * 100.0
-                );
-            } else if mem_usage > 0.8 {
-                warn!(
-                    "ALARM: System memory usage is high: {:.2}%",
-                    mem_usage * 100.0
-                );
-            }
-        }
-
-        // P2-Medium Alert: Queue Backlog > 10000
-        // In a real scenario, we would need to fetch the actual queue depth from DB or Redis.
-        // Assuming we have a gauge for queue depth, we can check it here or in a separate monitoring loop.
-        // For demonstration, we'll log a warning if the 'tasks_queued' gauge (if it existed here) was high.
-        // Since we can't easily access the DB here, we rely on metrics that are updated elsewhere.
-        // But for alerting completeness based on requirements, we should ensure the metric is checked.
-        // A more robust solution would be a separate AlertManager that queries Prometheus or internal metrics registry.
-
-        // Simulating checking queue backlog from a metric that would be populated by the application
-        // if let Ok(queue_depth) = gauge!("crawl_queue_depth").get() {
-        //     if queue_depth > 10000.0 {
-        //         warn!("ALARM: Queue backlog is high: {}", queue_depth);
-        //     }
-        // }
+    if mem_usage > 0.9 {
+        error!(
+            "CRITICAL: System memory usage is extremely high: {:.2}%",
+            mem_usage * 100.0
+        );
+    } else if mem_usage > 0.8 {
+        warn!(
+            "ALARM: System memory usage is high: {:.2}%",
+            mem_usage * 100.0
+        );
     }
 }
 
@@ -177,24 +362,20 @@ pub fn check_alerts() {
     // Checked in HealthMonitor
 }
 
-/// 获取当前系统 CPU 使用率 (0.0 - 1.0)
-/// Uses atomic variable for lock-free reads in hot path
-pub fn get_cpu_usage() -> f64 {
-    CURRENT_CPU_USAGE.load(Ordering::Relaxed) as f64 / 100.0
+/// 使用注入的 SystemMonitor 获取 CPU 使用率 (推荐方式)
+/// This is the recommended method for DI-based usage.
+pub fn get_cpu_usage_with_monitor(monitor: &dyn SystemMonitorTrait) -> f64 {
+    monitor.cpu_usage()
 }
 
-/// 获取当前系统内存使用率 (0.0 - 1.0)
-/// Uses atomic variable for lock-free reads in hot path
-pub fn get_memory_usage() -> f64 {
-    CURRENT_MEMORY_USAGE.load(Ordering::Relaxed) as f64 / 100.0
+/// 使用注入的 SystemMonitor 获取内存使用率 (推荐方式)
+/// This is the recommended method for DI-based usage.
+pub fn get_memory_usage_with_monitor(monitor: &dyn SystemMonitorTrait) -> f64 {
+    monitor.memory_usage()
 }
 
-/// 检查指标是否过期 (超过2秒未更新)
-pub fn is_metrics_stale() -> bool {
-    let last_update = LAST_UPDATE_TIME.load(Ordering::Relaxed);
-    if last_update == 0 {
-        return true;
-    }
-    let now = Utc::now().timestamp() as u64;
-    now - last_update > 2
+/// 使用注入的 SystemMonitor 检查指标是否过期 (推荐方式)
+/// This is the recommended method for DI-based usage.
+pub fn is_metrics_stale_with_monitor(monitor: &dyn SystemMonitorTrait) -> bool {
+    monitor.is_metrics_stale()
 }

@@ -451,9 +451,6 @@ impl TaskRepository for TaskRepositoryImpl {
         team_id: Uuid,
         force: bool,
     ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
-        let mut cancelled_tasks = Vec::new();
-        let mut failed_tasks = Vec::new();
-
         // 获取所有任务并验证团队权限
         let tasks = task_entity::Entity::find()
             .filter(task_entity::Column::Id.is_in(task_ids.clone()))
@@ -467,90 +464,29 @@ impl TaskRepository for TaskRepositoryImpl {
 
         // 收集需要级联取消的crawl_id
         let mut crawl_ids_to_cancel = Vec::new();
+        let mut failed_tasks = Vec::new();
+
+        // 按状态分组任务ID
+        let mut queued_task_ids: Vec<Uuid> = Vec::new();
+        let mut active_task_ids: Vec<Uuid> = Vec::new();
 
         for task_id in task_ids {
             if let Some(task_model) = task_map.get(&task_id) {
                 let current_status =
                     TaskStatus::from_str(&task_model.status).unwrap_or(TaskStatus::Queued);
 
-                tracing::debug!(
-                    "Processing task {} with status {:?}",
-                    task_id,
-                    current_status
-                );
-
                 match current_status {
                     TaskStatus::Queued => {
-                        // 只有 Queued 状态可以直接取消
-                        let result = task_entity::Entity::update_many()
-                            .col_expr(
-                                task_entity::Column::Status,
-                                Expr::value(TaskStatus::Cancelled.to_string()),
-                            )
-                            .col_expr(
-                                task_entity::Column::CompletedAt,
-                                Expr::value::<Option<DateTime<FixedOffset>>>(Some(
-                                    Utc::now().fixed_offset(),
-                                )),
-                            )
-                            .filter(task_entity::Column::Id.eq(task_id))
-                            .exec(self.db.as_ref())
-                            .await?;
-
-                        if result.rows_affected > 0 {
-                            cancelled_tasks.push(task_id);
-
-                            // 如果任务有crawl_id，收集用于级联取消
-                            if let Some(crawl_id) = task_model.crawl_id {
-                                crawl_ids_to_cancel.push(crawl_id);
-                            }
-                        } else {
-                            failed_tasks
-                                .push((task_id, "Failed to update task status".to_string()));
+                        queued_task_ids.push(task_id);
+                        if let Some(crawl_id) = task_model.crawl_id {
+                            crawl_ids_to_cancel.push(crawl_id);
                         }
-                    }
-                    TaskStatus::Failed => {
-                        failed_tasks.push((task_id, "Task is already failed".to_string()));
-                    }
-                    TaskStatus::Cancelled => {
-                        failed_tasks.push((task_id, "Task is already cancelled".to_string()));
                     }
                     TaskStatus::Active => {
                         if force {
-                            // 强制取消活跃任务
-                            let result = task_entity::Entity::update_many()
-                                .col_expr(
-                                    task_entity::Column::Status,
-                                    Expr::value(TaskStatus::Cancelled.to_string()),
-                                )
-                                .col_expr(
-                                    task_entity::Column::CompletedAt,
-                                    Expr::value::<Option<DateTime<FixedOffset>>>(Some(
-                                        Utc::now().fixed_offset(),
-                                    )),
-                                )
-                                .col_expr(
-                                    task_entity::Column::LockToken,
-                                    Expr::value(Option::<Uuid>::None),
-                                )
-                                .col_expr(
-                                    task_entity::Column::LockExpiresAt,
-                                    Expr::value(Option::<DateTime<FixedOffset>>::None),
-                                )
-                                .filter(task_entity::Column::Id.eq(task_id))
-                                .exec(self.db.as_ref())
-                                .await?;
-
-                            if result.rows_affected > 0 {
-                                cancelled_tasks.push(task_id);
-
-                                // 如果任务有crawl_id，收集用于级联取消
-                                if let Some(crawl_id) = task_model.crawl_id {
-                                    crawl_ids_to_cancel.push(crawl_id);
-                                }
-                            } else {
-                                failed_tasks
-                                    .push((task_id, "Failed to update task status".to_string()));
+                            active_task_ids.push(task_id);
+                            if let Some(crawl_id) = task_model.crawl_id {
+                                crawl_ids_to_cancel.push(crawl_id);
                             }
                         } else {
                             failed_tasks.push((
@@ -559,12 +495,71 @@ impl TaskRepository for TaskRepositoryImpl {
                             ));
                         }
                     }
+                    TaskStatus::Failed => {
+                        failed_tasks.push((task_id, "Task is already failed".to_string()));
+                    }
+                    TaskStatus::Cancelled => {
+                        failed_tasks.push((task_id, "Task is already cancelled".to_string()));
+                    }
                     TaskStatus::Completed => {
                         failed_tasks.push((task_id, "Task is already completed".to_string()));
                     }
                 }
             } else {
                 failed_tasks.push((task_id, "Task not found or no permission".to_string()));
+            }
+        }
+
+        // 批量更新 Queued 状态的任务
+        let mut cancelled_tasks: Vec<Uuid> = Vec::new();
+        if !queued_task_ids.is_empty() {
+            let result = task_entity::Entity::update_many()
+                .col_expr(
+                    task_entity::Column::Status,
+                    Expr::value(TaskStatus::Cancelled.to_string()),
+                )
+                .col_expr(
+                    task_entity::Column::CompletedAt,
+                    Expr::value::<Option<DateTime<FixedOffset>>>(Some(
+                        Utc::now().fixed_offset(),
+                    )),
+                )
+                .filter(task_entity::Column::Id.is_in(queued_task_ids.clone()))
+                .exec(self.db.as_ref())
+                .await?;
+
+            if result.rows_affected > 0 {
+                cancelled_tasks.extend(queued_task_ids);
+            }
+        }
+
+        // 批量更新 Active 状态的任务 (如果 force=true)
+        if force && !active_task_ids.is_empty() {
+            let result = task_entity::Entity::update_many()
+                .col_expr(
+                    task_entity::Column::Status,
+                    Expr::value(TaskStatus::Cancelled.to_string()),
+                )
+                .col_expr(
+                    task_entity::Column::CompletedAt,
+                    Expr::value::<Option<DateTime<FixedOffset>>>(Some(
+                        Utc::now().fixed_offset(),
+                    )),
+                )
+                .col_expr(
+                    task_entity::Column::LockToken,
+                    Expr::value(Option::<Uuid>::None),
+                )
+                .col_expr(
+                    task_entity::Column::LockExpiresAt,
+                    Expr::value(Option::<DateTime<FixedOffset>>::None),
+                )
+                .filter(task_entity::Column::Id.is_in(active_task_ids.clone()))
+                .exec(self.db.as_ref())
+                .await?;
+
+            if result.rows_affected > 0 {
+                cancelled_tasks.extend(active_task_ids);
             }
         }
 
