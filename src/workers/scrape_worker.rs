@@ -30,6 +30,7 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+use crate::domain::services::llm_service::LLMService;
 use crate::utils::regex_cache::RegexCache;
 
 use crate::engines::engine_client::{
@@ -41,66 +42,61 @@ use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::queue::task_queue::TaskQueue;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
 use crate::utils::retry_policy::RetryPolicy;
-use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
+use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
 use crate::workers::errors::ScrapeWorkerError;
 use crate::workers::task_state_machine::{TaskStateEvent, TaskStateMachine};
 
 /// 从缓存获取正则表达式
-fn get_cached_regex(pattern: &str) -> Result<regex::Regex, ScrapeWorkerError> {
-    RegexCache::global()
+fn get_cached_regex(
+    pattern: &str,
+    cache: &RegexCache,
+) -> Result<regex::Regex, ScrapeWorkerError> {
+    cache
         .get_or_insert(pattern)
         .map_err(ScrapeWorkerError::RegexError)
 }
 
 /// 抓取工作者
-pub struct ScrapeWorker<R, S, C, CRR>
-where
-    R: TaskRepository + Send + Sync,
-    S: ScrapeResultRepository + Send + Sync,
-    C: CrawlRepository + Send + Sync,
-    CRR: CreditsRepository + Send + Sync,
-{
-    repository: Arc<R>,
-    result_repository: Arc<S>,
-    crawl_repository: Arc<C>,
+pub struct ScrapeWorker {
+    repository: Arc<dyn TaskRepository>,
+    result_repository: Arc<dyn ScrapeResultRepository>,
+    crawl_repository: Arc<dyn CrawlRepository>,
     storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
     webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
-    credits_repository: Arc<CRR>,
+    credits_repository: Arc<dyn CreditsRepository>,
     engine_client: Arc<EngineClient>,
     _create_scrape_use_case: Arc<CreateScrapeUseCase>,
     #[cfg(feature = "redis-cache")]
     redis: RedisClient,
-    robots_checker: Arc<RobotsChecker>,
+    robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
     worker_id: Uuid,
     default_concurrency_limit: usize,
     retry_policy: RetryPolicy,
+    llm_service: LLMService,
+    regex_cache: RegexCache,
 }
 
-impl<R, S, C, CRR> ScrapeWorker<R, S, C, CRR>
-where
-    R: TaskRepository + Send + Sync,
-    S: ScrapeResultRepository + Send + Sync,
-    C: CrawlRepository + Send + Sync,
-    CRR: CreditsRepository + Send + Sync,
-{
+impl ScrapeWorker {
     /// 创建新的抓取工作器实例
     #[allow(clippy::too_many_arguments)]
     #[cfg(feature = "redis-cache")]
     pub fn new(
-        repository: Arc<R>,
-        result_repository: Arc<S>,
-        crawl_repository: Arc<C>,
+        repository: Arc<dyn TaskRepository>,
+        result_repository: Arc<dyn ScrapeResultRepository>,
+        crawl_repository: Arc<dyn CrawlRepository>,
         storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
         webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
-        credits_repository: Arc<CRR>,
+        credits_repository: Arc<dyn CreditsRepository>,
         engine_client: Arc<EngineClient>,
         _create_scrape_use_case: Arc<CreateScrapeUseCase>,
         redis: RedisClient,
-        robots_checker: Arc<RobotsChecker>,
+        robots_checker: Arc<dyn RobotsCheckerTrait>,
         settings: Arc<Settings>,
         default_concurrency_limit: usize,
+        llm_service: LLMService,
+        regex_cache: RegexCache,
     ) -> Self {
         // 根据任务类型选择合适的重试策略
         let retry_policy = RetryPolicy::slow(); // 网络请求适合慢速重试策略
@@ -120,14 +116,13 @@ where
             worker_id: Uuid::new_v4(),
             default_concurrency_limit,
             retry_policy,
+            llm_service,
+            regex_cache,
         }
     }
 
     /// 运行抓取工作器
-    pub async fn run<Q>(&self, queue: Q)
-    where
-        Q: TaskQueue + Send + Sync,
-    {
+    pub async fn run(&self, queue: Arc<dyn TaskQueue>) {
         info!("Scrape worker {} started", self.worker_id);
 
         loop {
@@ -145,10 +140,7 @@ where
         }
     }
 
-    async fn process_next_task<Q>(&self, queue: &Q) -> Result<bool>
-    where
-        Q: TaskQueue,
-    {
+    async fn process_next_task(&self, queue: &dyn TaskQueue) -> Result<bool> {
         let task_opt = queue.dequeue(self.worker_id).await?;
 
         if let Some(task) = task_opt {
@@ -497,7 +489,7 @@ where
                     match crate::domain::services::extraction_service::ExtractionService::extract(
                         &processed_response.content,
                         rules,
-                        &self.settings,
+                        Box::new(self.llm_service.clone()),
                         Some(&task.url),
                     )
                     .await
@@ -706,7 +698,7 @@ where
                 crate::domain::services::extraction_service::ExtractionService::extract(
                     &processed_scrape_resp.content,
                     &rules,
-                    &self.settings,
+                    Box::new(self.llm_service.clone()),
                     Some(&url),
                 )
                 .await?;
@@ -771,7 +763,7 @@ where
                 crate::domain::services::extraction_service::ExtractionService::extract(
                     &processed_scrape_resp.content,
                     &rules,
-                    &self.settings,
+                    Box::new(self.llm_service.clone()),
                     Some(&url),
                 )
                 .await?;
@@ -812,7 +804,7 @@ where
                 crate::domain::services::extraction_service::ExtractionService::extract_with_schema(
                     &processed_scrape_resp.content,
                     &_schema,
-                    &self.settings,
+                    Box::new(self.llm_service.clone()),
                 )
                     .await?;
 
@@ -992,7 +984,7 @@ where
         if let Some(includes) = &config.include_patterns {
             let mut matched = false;
             for pattern in includes {
-                if let Ok(re) = get_cached_regex(pattern) {
+                if let Ok(re) = get_cached_regex(pattern, &self.regex_cache) {
                     if re.is_match(url) {
                         matched = true;
                         break;
@@ -1011,7 +1003,7 @@ where
         // 2. 检查排除模式 (如果有配置，不能匹配任何一个)
         if let Some(excludes) = &config.exclude_patterns {
             for pattern in excludes {
-                if let Ok(re) = get_cached_regex(pattern) {
+                if let Ok(re) = get_cached_regex(pattern, &self.regex_cache) {
                     if re.is_match(url) {
                         return false;
                     }
@@ -1054,7 +1046,7 @@ where
                 match crate::domain::services::extraction_service::ExtractionService::extract(
                     &processed_response.content,
                     rules,
-                    &self.settings,
+                    Box::new(self.llm_service.clone()),
                     Some(&task.url),
                 )
                 .await
@@ -1493,35 +1485,25 @@ where
 /// ScrapeWorker 构建器
 ///
 /// 使用 Builder 模式简化复杂对象的创建过程
-pub struct ScrapeWorkerBuilder<R, S, C, CRR>
-where
-    R: TaskRepository + Send + Sync,
-    S: ScrapeResultRepository + Send + Sync,
-    C: CrawlRepository + Send + Sync,
-    CRR: CreditsRepository + Send + Sync,
-{
-    repository: Option<Arc<R>>,
-    result_repository: Option<Arc<S>>,
-    crawl_repository: Option<Arc<C>>,
+pub struct ScrapeWorkerBuilder {
+    repository: Option<Arc<dyn TaskRepository>>,
+    result_repository: Option<Arc<dyn ScrapeResultRepository>>,
+    crawl_repository: Option<Arc<dyn CrawlRepository>>,
     storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
     webhook_event_repository: Option<Arc<dyn WebhookEventRepository + Send + Sync>>,
-    credits_repository: Option<Arc<CRR>>,
+    credits_repository: Option<Arc<dyn CreditsRepository>>,
     engine_client: Option<Arc<EngineClient>>,
     create_scrape_use_case: Option<Arc<CreateScrapeUseCase>>,
     #[cfg(feature = "redis-cache")]
     redis: Option<RedisClient>,
-    robots_checker: Option<Arc<RobotsChecker>>,
+    robots_checker: Option<Arc<dyn RobotsCheckerTrait>>,
     settings: Option<Arc<Settings>>,
     default_concurrency_limit: usize,
+    llm_service: Option<LLMService>,
+    regex_cache: Option<RegexCache>,
 }
 
-impl<R, S, C, CRR> Default for ScrapeWorkerBuilder<R, S, C, CRR>
-where
-    R: TaskRepository + Send + Sync,
-    S: ScrapeResultRepository + Send + Sync,
-    C: CrawlRepository + Send + Sync,
-    CRR: CreditsRepository + Send + Sync,
-{
+impl Default for ScrapeWorkerBuilder {
     fn default() -> Self {
         Self {
             repository: None,
@@ -1537,50 +1519,36 @@ where
             robots_checker: None,
             settings: None,
             default_concurrency_limit: 10,
+            llm_service: None,
+            regex_cache: None,
         }
     }
 }
 
-impl<R, S, C, CRR> ScrapeWorkerBuilder<R, S, C, CRR>
-where
-    R: TaskRepository + Send + Sync,
-    S: ScrapeResultRepository + Send + Sync,
-    C: CrawlRepository + Send + Sync,
-    CRR: CreditsRepository + Send + Sync,
-{
+impl ScrapeWorkerBuilder {
     /// 创建新的构建器
     #[cfg(feature = "redis-cache")]
     pub fn new() -> Self {
-        Self {
-            repository: None,
-            result_repository: None,
-            crawl_repository: None,
-            storage_repository: None,
-            webhook_event_repository: None,
-            credits_repository: None,
-            engine_client: None,
-            create_scrape_use_case: None,
-            redis: None,
-            robots_checker: None,
-            settings: None,
-            default_concurrency_limit: 10,
-        }
+        Self::default()
     }
 
     /// 设置任务仓储 (必需)
-    pub fn with_repository(mut self, repository: Arc<R>) -> Self {
+    pub fn with_repository(mut self, repository: Arc<dyn TaskRepository>) -> Self {
         self.repository = Some(repository);
         self
     }
 
     /// 设置结果仓储 (必需)
-    pub fn with_result_repository(mut self, result_repository: Arc<S>) -> Self {
+    pub fn with_result_repository(
+        mut self,
+        result_repository: Arc<dyn ScrapeResultRepository>,
+    ) -> Self {
         self.result_repository = Some(result_repository);
         self
     }
 
     /// 设置爬取仓储 (必需)
-    pub fn with_crawl_repository(mut self, crawl_repository: Arc<C>) -> Self {
+    pub fn with_crawl_repository(mut self, crawl_repository: Arc<dyn CrawlRepository>) -> Self {
         self.crawl_repository = Some(crawl_repository);
         self
     }
@@ -1604,7 +1572,10 @@ where
     }
 
     /// 设置积分仓储 (必需)
-    pub fn with_credits_repository(mut self, credits_repository: Arc<CRR>) -> Self {
+    pub fn with_credits_repository(
+        mut self,
+        credits_repository: Arc<dyn CreditsRepository>,
+    ) -> Self {
         self.credits_repository = Some(credits_repository);
         self
     }
@@ -1632,7 +1603,7 @@ where
     }
 
     /// 设置 Robots 检查器 (必需)
-    pub fn with_robots_checker(mut self, robots_checker: Arc<RobotsChecker>) -> Self {
+    pub fn with_robots_checker(mut self, robots_checker: Arc<dyn RobotsCheckerTrait>) -> Self {
         self.robots_checker = Some(robots_checker);
         self
     }
@@ -1649,10 +1620,22 @@ where
         self
     }
 
+    /// 设置 LLM 服务 (必需)
+    pub fn with_llm_service(mut self, llm_service: LLMService) -> Self {
+        self.llm_service = Some(llm_service);
+        self
+    }
+
+    /// 设置正则缓存 (必需)
+    pub fn with_regex_cache(mut self, regex_cache: RegexCache) -> Self {
+        self.regex_cache = Some(regex_cache);
+        self
+    }
+
     /// 构建 ScrapeWorker 实例
     #[allow(clippy::too_many_arguments)]
     #[cfg(feature = "redis-cache")]
-    pub fn build(self) -> Result<ScrapeWorker<R, S, C, CRR>, &'static str> {
+    pub fn build(self) -> Result<ScrapeWorker, &'static str> {
         let repository = self.repository.ok_or("repository is required")?;
         let result_repository = self
             .result_repository
@@ -1673,6 +1656,8 @@ where
         let redis = self.redis.ok_or("redis is required")?;
         let robots_checker = self.robots_checker.ok_or("robots_checker is required")?;
         let settings = self.settings.ok_or("settings is required")?;
+        let llm_service = self.llm_service.ok_or("llm_service is required")?;
+        let regex_cache = self.regex_cache.ok_or("regex_cache is required")?;
 
         Ok(ScrapeWorker::new(
             repository,
@@ -1687,6 +1672,8 @@ where
             robots_checker,
             settings,
             self.default_concurrency_limit,
+            llm_service,
+            regex_cache,
         ))
     }
 }

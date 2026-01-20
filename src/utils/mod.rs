@@ -3,7 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-pub mod constants;
 pub mod crawl_text_integration;
 /// 工具模块
 ///
@@ -21,11 +20,10 @@ pub mod telemetry;
 pub mod text_processing;
 pub mod url;
 
-// 向后兼容的重新导出
+// 向后兼容的重新导出 - 已清理，只保留结构体
 pub use crate::utils::text_processing::{
-    process_crawled_content, process_text_encoding, process_web_content, CrawlProcessingError,
-    CrawlTextProcessor, ProcessedCrawlContent, ProcessedWebContent, TextEncodingError,
-    TextEncodingProcessor, WebContentError, WebContentProcessor,
+    CrawlProcessingError, CrawlTextProcessor, ProcessedCrawlContent, ProcessedWebContent,
+    TextEncodingError, WebContentError, WebContentProcessor,
 };
 
 pub use crate::utils::url::{is_safe_ip, resolve_url, validate_url, SafeUrl, ValidationError};

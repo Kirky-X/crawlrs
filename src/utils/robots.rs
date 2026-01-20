@@ -6,7 +6,6 @@
 use crate::impl_basic_error_conversions;
 #[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
-use crate::utils::http_client::HTTP_CLIENT;
 use crate::utils::retry_policy::RetryPolicy;
 use anyhow::Result;
 use reqwest;
@@ -38,23 +37,33 @@ pub enum RobotsCheckerError {
 impl_basic_error_conversions!(RobotsCheckerError, ValidationError);
 
 /// Robots.txt缓存统计
-struct CacheStats {
-    pub hits: AtomicU64,
-    pub misses: AtomicU64,
+#[derive(Default, Clone)]
+pub struct CacheStats {
+    pub hits: Arc<AtomicU64>,
+    pub misses: Arc<AtomicU64>,
 }
 
-impl Default for CacheStats {
-    fn default() -> Self {
-        Self {
-            hits: AtomicU64::new(0),
-            misses: AtomicU64::new(0),
-        }
+impl CacheStats {
+    /// 获取缓存命中次数
+    pub fn hits(&self) -> u64 {
+        self.hits.load(Ordering::Relaxed)
+    }
+
+    /// 获取缓存未命中次数
+    pub fn misses(&self) -> u64 {
+        self.misses.load(Ordering::Relaxed)
+    }
+
+    /// 记录缓存命中
+    pub fn record_hit(&self) {
+        self.hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 记录缓存未命中
+    pub fn record_miss(&self) {
+        self.misses.fetch_add(1, Ordering::Relaxed);
     }
 }
-
-use once_cell::sync::Lazy;
-
-static CACHE_STATS: Lazy<CacheStats> = Lazy::new(CacheStats::default);
 
 /// Robots.txt检查器接口
 #[async_trait]
@@ -90,6 +99,9 @@ pub struct RobotsChecker {
 
     /// 重试策略
     retry_policy: RetryPolicy,
+
+    /// 缓存统计
+    cache_stats: Arc<CacheStats>,
 }
 
 #[async_trait]
@@ -107,22 +119,26 @@ impl RobotsCheckerTrait for RobotsChecker {
     }
 }
 
-impl Default for RobotsChecker {
-    fn default() -> Self {
-        Self::new(None)
-    }
-}
-
 #[cfg(feature = "redis-cache")]
 impl RobotsChecker {
-    /// 创建新的Robots检查器实例
+    /// 创建新的Robots检查器实例（通过依赖注入）
     ///
-    /// # 返回值
+    /// # Arguments
+    ///
+    /// * `http_client` - HTTP 客户端（通过依赖注入）
+    /// * `redis_client` - Redis 客户端（可选，用于缓存）
+    /// * `cache_stats` - 缓存统计（可选，用于追踪缓存命中率）
+    ///
+    /// # Returns
     ///
     /// 返回新的Robots检查器实例
-    pub fn new(redis_client: Option<Arc<RedisClient>>) -> Self {
+    pub fn new(
+        http_client: Arc<reqwest::Client>,
+        redis_client: Option<Arc<RedisClient>>,
+        cache_stats: Option<Arc<CacheStats>>,
+    ) -> Self {
         Self {
-            client: HTTP_CLIENT.clone(),
+            client: http_client,
             memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             redis_client,
             retry_policy: RetryPolicy {
@@ -131,6 +147,7 @@ impl RobotsChecker {
                 max_backoff: Duration::from_secs(10),
                 ..Default::default()
             },
+            cache_stats: cache_stats.unwrap_or_else(|| Arc::new(CacheStats::default())),
         }
     }
 
@@ -151,7 +168,7 @@ impl RobotsChecker {
             let mut cache = self.memory_cache.lock().await;
             if let Some(cached) = cache.get(&robots_url) {
                 if cached.expires_at > Instant::now() {
-                    CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
+                    self.cache_stats.record_hit();
                     return Ok(cached.content.clone());
                 } else {
                     cache.remove(&robots_url);
@@ -159,7 +176,7 @@ impl RobotsChecker {
             }
         }
 
-        CACHE_STATS.misses.fetch_add(1, Ordering::Relaxed);
+        self.cache_stats.record_miss();
 
         // 2. Check Redis cache
         let redis_key = format!("robots_cache:{}", robots_url);
@@ -174,7 +191,7 @@ impl RobotsChecker {
                         expires_at: Instant::now() + Duration::from_secs(3600),
                     },
                 );
-                CACHE_STATS.hits.fetch_add(1, Ordering::Relaxed);
+                self.cache_stats.record_hit();
                 return Ok(content);
             }
         }
@@ -301,10 +318,7 @@ impl RobotsChecker {
     }
 
     /// 获取缓存统计信息
-    pub fn get_cache_stats() -> (u64, u64) {
-        (
-            CACHE_STATS.hits.load(Ordering::Relaxed),
-            CACHE_STATS.misses.load(Ordering::Relaxed),
-        )
+    pub fn get_cache_stats(&self) -> (u64, u64) {
+        (self.cache_stats.hits(), self.cache_stats.misses())
     }
 }

@@ -7,11 +7,33 @@
 //!
 //! This module provides a thread-safe regex cache that eliminates duplicate
 //! regex compilation patterns across the codebase.
+//!
+//! # DI Support
+//!
+//! This module provides a `RegexCacheTrait` interface for dependency injection.
+//! Use `RegexCacheComponent` to register it in your DI container.
 
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use regex::Regex;
+use shaku::{Component, Interface};
 use std::collections::HashMap;
+use std::sync::Arc;
+
+/// 正则缓存 trait（支持 DI）
+///
+/// 提供正则表达式缓存的抽象接口，便于测试时注入 mock 实现。
+pub trait RegexCacheTrait: Interface + Send + Sync {
+    /// 获取或插入正则表达式
+    fn get_or_insert(&self, pattern: &str) -> Result<Regex, String>;
+    /// 获取或插入带转义的正则表达式
+    fn get_or_insert_escaped(&self, literal: &str) -> Result<Regex, String>;
+    /// 清空缓存
+    fn clear(&self);
+    /// 获取缓存大小
+    fn len(&self) -> usize;
+    /// 检查缓存是否为空
+    fn is_empty(&self) -> bool;
+}
 
 /// Thread-safe regex cache with lazy initialization.
 ///
@@ -20,11 +42,12 @@ use std::collections::HashMap;
 /// ```rust
 /// use crate::utils::regex_cache::RegexCache;
 ///
-/// let cache = RegexCache::global();
+/// let cache = RegexCache::new();
 /// let regex = cache.get_or_insert(r"\d+").unwrap();
 /// ```
+#[derive(Clone)]
 pub struct RegexCache {
-    cache: Mutex<HashMap<String, Regex>>,
+    cache: Arc<Mutex<HashMap<String, Regex>>>,
 }
 
 impl RegexCache {
@@ -32,7 +55,7 @@ impl RegexCache {
     #[inline]
     pub fn new() -> Self {
         Self {
-            cache: Mutex::new(HashMap::with_capacity(256)),
+            cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
         }
     }
 
@@ -90,24 +113,68 @@ impl RegexCache {
     }
 }
 
-impl Default for RegexCache {
-    #[inline]
+/// 正则缓存组件（DI 实现）
+///
+/// 实现了 `RegexCacheTrait` 接口，可通过 DI 容器注入。
+#[derive(Component)]
+#[shaku(interface = RegexCacheTrait)]
+pub struct RegexCacheComponent {
+    cache: Arc<Mutex<HashMap<String, Regex>>>,
+}
+
+impl RegexCacheComponent {
+    /// 创建新的正则缓存组件
+    pub fn new() -> Self {
+        Self {
+            cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
+        }
+    }
+}
+
+impl Default for RegexCacheComponent {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Global regex cache instance for convenience.
-///
-/// This static lazy instance can be used across the codebase
-/// without requiring explicit initialization.
-pub static GLOBAL_REGEX_CACHE: Lazy<RegexCache> = Lazy::new(RegexCache::new);
+impl RegexCacheTrait for RegexCacheComponent {
+    fn get_or_insert(&self, pattern: &str) -> Result<Regex, String> {
+        let mut cache = self.cache.lock();
 
-impl RegexCache {
-    /// Returns a reference to the global regex cache.
+        if let Some(regex) = cache.get(pattern) {
+            return Ok(regex.clone());
+        }
+
+        let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
+        cache.insert(pattern.to_string(), regex.clone());
+        Ok(regex)
+    }
+
+    fn get_or_insert_escaped(&self, literal: &str) -> Result<Regex, String> {
+        let pattern = format!(r"\b{}\b", regex::escape(literal));
+        self.get_or_insert(&pattern)
+    }
+
+    fn clear(&self) {
+        let mut cache = self.cache.lock();
+        cache.clear();
+    }
+
+    fn len(&self) -> usize {
+        let cache = self.cache.lock();
+        cache.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        let cache = self.cache.lock();
+        cache.is_empty()
+    }
+}
+
+impl Default for RegexCache {
     #[inline]
-    pub fn global() -> &'static Self {
-        &GLOBAL_REGEX_CACHE
+    fn default() -> Self {
+        Self::new()
     }
 }
 

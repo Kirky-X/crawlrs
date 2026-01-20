@@ -6,8 +6,8 @@
 use chardetng::EncodingDetector;
 use encoding_rs::Encoding;
 use lru::LruCache;
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, warn};
 
@@ -42,13 +42,11 @@ pub struct EncodingDetection {
 }
 
 /// 文本编码处理器
+#[derive(Clone)]
 pub struct TextEncodingProcessor {
-    encoding_cache: Mutex<LruCache<String, EncodingDetection>>,
+    encoding_cache: Arc<Mutex<LruCache<String, EncodingDetection>>>,
     short_text_threshold: usize,
 }
-
-/// 全局文本编码处理器实例
-static TEXT_PROCESSOR: Lazy<TextEncodingProcessor> = Lazy::new(TextEncodingProcessor::new);
 
 impl Default for TextEncodingProcessor {
     fn default() -> Self {
@@ -60,16 +58,21 @@ impl TextEncodingProcessor {
     /// 创建新的文本编码处理器
     pub fn new() -> Self {
         Self {
-            encoding_cache: Mutex::new(LruCache::new(
+            encoding_cache: Arc::new(Mutex::new(LruCache::new(
                 std::num::NonZeroUsize::new(1000).expect("Cache size must be non-zero"),
-            )),
+            ))),
             short_text_threshold: 1000,
         }
     }
 
-    /// 获取全局处理器实例
-    pub fn global() -> &'static Self {
-        &TEXT_PROCESSOR
+    /// 创建带有自定义配置的文本编码处理器
+    pub fn with_config(cache_size: usize, short_text_threshold: usize) -> Self {
+        Self {
+            encoding_cache: Arc::new(Mutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(cache_size).expect("Cache size must be non-zero"),
+            ))),
+            short_text_threshold,
+        }
     }
 
     /// 处理文本编码，确保输出为UTF-8格式
@@ -308,23 +311,20 @@ pub struct TextProcessorStats {
     pub short_text_threshold: usize,
 }
 
-/// 便捷函数：处理单个文本
-pub fn process_text_encoding(input: &[u8]) -> Result<String, TextEncodingError> {
-    TextEncodingProcessor::global().process_text(input)
+/// 处理单个文本（使用提供的处理器实例）
+pub fn process_with_processor(
+    processor: &TextEncodingProcessor,
+    input: &[u8],
+) -> Result<String, TextEncodingError> {
+    processor.process_text(input)
 }
 
-/// 便捷函数：批量处理文本
-pub fn process_text_batch(inputs: Vec<&[u8]>) -> Vec<Result<String, TextEncodingError>> {
-    TextEncodingProcessor::global().process_batch(inputs)
-}
-
-/// 便捷函数：处理字符串（UTF-8输入）
-pub fn process_string(input: &str) -> Result<String, TextEncodingError> {
-    if TextEncodingProcessor::global().contains_unicode_escapes(input) {
-        TextEncodingProcessor::global().normalize_unicode(input)
-    } else {
-        Ok(input.to_string())
-    }
+/// 批量处理文本（使用提供的处理器实例）
+pub fn process_batch_with_processor(
+    processor: &TextEncodingProcessor,
+    inputs: Vec<&[u8]>,
+) -> Vec<Result<String, TextEncodingError>> {
+    processor.process_batch(inputs)
 }
 
 #[cfg(test)]
@@ -349,8 +349,11 @@ mod tests {
 
     #[test]
     fn test_unicode_escape_sequence_conversion() {
+        let processor = TextEncodingProcessor::new();
         let input = "\u{4e00}\u{7ad9}\u{5f0f}\u{7f51}\u{7ad9}\u{5efa}\u{8bbe}";
-        let result = process_string(input).expect("Unicode conversion should succeed");
+        let result = processor
+            .process_text(input.as_bytes())
+            .expect("Unicode conversion should succeed");
         assert!(!result.is_empty());
     }
 

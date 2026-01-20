@@ -12,18 +12,12 @@ use tracing::info;
 /// 任务过期清理工作器
 ///
 /// 负责定期扫描并清理过期的任务
-pub struct ExpirationWorker<R>
-where
-    R: TaskRepository + Send + Sync + 'static,
-{
-    repository: Arc<R>,
+pub struct ExpirationWorker {
+    repository: Arc<dyn TaskRepository>,
 }
 
-impl<R> ExpirationWorker<R>
-where
-    R: TaskRepository + Send + Sync + 'static,
-{
-    pub fn new(repository: Arc<R>) -> Self {
+impl ExpirationWorker {
+    pub fn new(repository: Arc<dyn TaskRepository>) -> Self {
         Self { repository }
     }
 
@@ -36,10 +30,7 @@ where
 }
 
 #[async_trait]
-impl<R> WorkerProcess for ExpirationWorker<R>
-where
-    R: TaskRepository + Send + Sync + 'static,
-{
+impl WorkerProcess for ExpirationWorker {
     fn name(&self) -> &str {
         "expiration-worker"
     }

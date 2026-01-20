@@ -130,19 +130,3 @@ fn create_file_writer(file_settings: &FileLoggingSettings) -> non_blocking::NonB
     let (non_blocking, _guard) = non_blocking(file_appender);
     non_blocking
 }
-
-/// 兼容旧版本的初始化函数（仅控制台输出）
-///
-/// # Deprecated
-///
-/// 请使用 `init_telemetry(settings)` 代替
-#[deprecated(note = "Please use init_telemetry(settings) instead")]
-pub fn init_telemetry_legacy() {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,crawlrs=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-}

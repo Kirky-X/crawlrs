@@ -10,10 +10,12 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+use crate::domain::services::llm_service::LLMService;
 use crate::engines::engine_client::EngineClient;
 #[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::queue::task_queue::TaskQueue;
+use crate::utils::regex_cache::RegexCache;
 use crate::workers::expiration_worker::ExpirationWorker;
 use crate::workers::scrape_worker::ScrapeWorker;
 use crate::workers::{AbstractWorker, Worker};
@@ -23,72 +25,71 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use crate::config::settings::Settings;
-use crate::utils::robots::RobotsChecker;
+use crate::utils::robots::RobotsCheckerTrait;
 
 /// 工作管理器
-pub struct WorkerManager<Q, R, S, C, CRR>
-where
-    Q: TaskQueue + Clone + Send + Sync + 'static,
-    R: TaskRepository + Send + Sync + 'static,
-    S: ScrapeResultRepository + Send + Sync + 'static,
-    C: CrawlRepository + Send + Sync + 'static,
-    CRR: CreditsRepository + Send + Sync + 'static,
-{
-    queue: Q,
-    repository: Arc<R>,
-    result_repository: Arc<S>,
-    crawl_repository: Arc<C>,
+pub struct WorkerManager {
+    queue: Arc<dyn TaskQueue>,
+    repository: Arc<dyn TaskRepository>,
+    result_repository: Arc<dyn ScrapeResultRepository>,
+    crawl_repository: Arc<dyn CrawlRepository>,
     storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
     webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
-    credits_repository: Arc<CRR>,
+    credits_repository: Arc<dyn CreditsRepository>,
     engine_client: Arc<EngineClient>,
     create_scrape_use_case: Arc<CreateScrapeUseCase>,
     redis: RedisClient,
-    robots_checker: Arc<RobotsChecker>,
+    robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
     default_concurrency_limit: usize,
     handles: Vec<JoinHandle<()>>,
+    llm_service: LLMService,
+    regex_cache: RegexCache,
 }
 
-impl<Q, R, S, C, CRR> WorkerManager<Q, R, S, C, CRR>
-where
-    Q: TaskQueue + Clone + Send + Sync + 'static,
-    R: TaskRepository + Send + Sync + 'static,
-    S: ScrapeResultRepository + Send + Sync + 'static,
-    C: CrawlRepository + Send + Sync + 'static,
-    CRR: CreditsRepository + Send + Sync + 'static,
-{
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        queue: Q,
-        repository: Arc<R>,
-        result_repository: Arc<S>,
-        crawl_repository: Arc<C>,
-        storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
-        webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
-        credits_repository: Arc<CRR>,
-        engine_client: Arc<EngineClient>,
-        create_scrape_use_case: Arc<CreateScrapeUseCase>,
-        redis: RedisClient,
-        robots_checker: Arc<RobotsChecker>,
-        settings: Arc<Settings>,
-        default_concurrency_limit: usize,
-    ) -> Self {
+/// Worker Manager Dependencies
+pub struct WorkerManagerDeps {
+    pub queue: Arc<dyn TaskQueue>,
+    pub repository: Arc<dyn TaskRepository>,
+    pub result_repository: Arc<dyn ScrapeResultRepository>,
+    pub crawl_repository: Arc<dyn CrawlRepository>,
+    pub storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
+    pub webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
+    pub credits_repository: Arc<dyn CreditsRepository>,
+    pub engine_client: Arc<EngineClient>,
+    pub create_scrape_use_case: Arc<CreateScrapeUseCase>,
+    pub redis: RedisClient,
+    pub robots_checker: Arc<dyn RobotsCheckerTrait>,
+    pub http_client: Arc<reqwest::Client>,
+    pub llm_service: LLMService,
+    pub regex_cache: RegexCache,
+}
+
+/// Worker Manager Configuration
+pub struct WorkerManagerConfig {
+    pub settings: Arc<Settings>,
+    pub default_concurrency_limit: usize,
+}
+
+impl WorkerManager {
+    pub fn new(deps: WorkerManagerDeps, config: WorkerManagerConfig) -> Self {
         Self {
-            queue,
-            repository,
-            result_repository,
-            crawl_repository,
-            storage_repository,
-            webhook_event_repository,
-            credits_repository,
-            engine_client,
-            create_scrape_use_case,
-            redis,
-            robots_checker,
-            settings,
-            default_concurrency_limit,
+            queue: deps.queue,
+            repository: deps.repository,
+            result_repository: deps.result_repository,
+            crawl_repository: deps.crawl_repository,
+            storage_repository: deps.storage_repository,
+            webhook_event_repository: deps.webhook_event_repository,
+            credits_repository: deps.credits_repository,
+            engine_client: deps.engine_client,
+            create_scrape_use_case: deps.create_scrape_use_case,
+            redis: deps.redis,
+            robots_checker: deps.robots_checker,
+            settings: config.settings,
+            default_concurrency_limit: config.default_concurrency_limit,
             handles: Vec::new(),
+            llm_service: deps.llm_service,
+            regex_cache: deps.regex_cache,
         }
     }
 
@@ -122,6 +123,8 @@ where
                 self.robots_checker.clone(),
                 self.settings.clone(),
                 self.default_concurrency_limit,
+                self.llm_service.clone(),
+                self.regex_cache.clone(),
             );
 
             let queue = self.queue.clone();
@@ -152,14 +155,7 @@ where
     }
 }
 
-impl<Q, R, S, C, CRR> Drop for WorkerManager<Q, R, S, C, CRR>
-where
-    Q: TaskQueue + Clone + Send + Sync + 'static,
-    R: TaskRepository + Send + Sync + 'static,
-    S: ScrapeResultRepository + Send + Sync + 'static,
-    C: CrawlRepository + Send + Sync + 'static,
-    CRR: CreditsRepository + Send + Sync + 'static,
-{
+impl Drop for WorkerManager {
     fn drop(&mut self) {
         // Abort all worker handles to prevent them from running after the manager is dropped
         for handle in &self.handles {

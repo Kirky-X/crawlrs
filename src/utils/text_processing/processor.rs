@@ -3,12 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::utils::text_processing::encoding::{
-    process_text_encoding, TextEncodingError, TextEncodingProcessor,
-};
-use once_cell::sync::Lazy;
+use crate::utils::text_processing::encoding::{TextEncodingError, TextEncodingProcessor};
+use async_trait::async_trait;
 use regex::Regex;
+use shaku::{Component, Interface};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::{debug, error, info};
@@ -28,14 +28,243 @@ const ENCODING_PATTERN_HTML_META: &str = "html_meta";
 const ENCODING_PATTERN_XML_DECLARATION: &str = "xml_declaration";
 const ENCODING_PATTERN_HTTP_CONTENT_TYPE: &str = "http_content_type";
 
+/// 文本编码处理器 trait（支持 DI）
+#[async_trait]
+pub trait TextEncodingProcessorTrait: Interface + Send + Sync {
+    fn process_text(&self, content: &[u8]) -> Result<String, TextEncodingError>;
+    fn trim_newlines(&self, text: &str) -> String;
+}
+
+/// 文本编码处理器组件
+#[derive(Component)]
+#[shaku(interface = TextEncodingProcessorTrait)]
+#[allow(dead_code)]
+pub struct TextEncodingProcessorComponent {
+    default_encoding: &'static str,
+    detect_encoding: bool,
+}
+
+impl TextEncodingProcessorComponent {
+    pub fn new() -> Self {
+        Self {
+            default_encoding: "utf-8",
+            detect_encoding: true,
+        }
+    }
+}
+
+impl Default for TextEncodingProcessorComponent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TextEncodingProcessorTrait for TextEncodingProcessorComponent {
+    fn process_text(&self, content: &[u8]) -> Result<String, TextEncodingError> {
+        TextEncodingProcessor::new().process_text(content)
+    }
+
+    fn trim_newlines(&self, text: &str) -> String {
+        text.lines().map(|l| l.trim()).collect::<Vec<_>>().join(" ")
+    }
+}
+
+/// 网页内容处理器 trait（支持 DI）
+///
+/// 提供网页内容处理的抽象接口，便于测试时注入 mock 实现。
+#[async_trait]
+pub trait WebContentProcessorTrait: Interface + Send + Sync {
+    fn process_web_content(
+        &self,
+        content: &[u8],
+        content_type: Option<&str>,
+    ) -> Result<ProcessedWebContent, WebContentError>;
+    fn process_batch(
+        &self,
+        contents: Vec<(&[u8], Option<&str>)>,
+    ) -> Vec<Result<ProcessedWebContent, WebContentError>>;
+}
+
+/// 网页内容处理器组件（DI 实现）
+#[derive(Component)]
+#[shaku(interface = WebContentProcessorTrait)]
+pub struct WebContentProcessorComponent {
+    /// 文本编码处理器
+    #[shaku(inject)]
+    text_processor: Arc<dyn TextEncodingProcessorTrait>,
+    /// 编码模式
+    encoding_patterns: HashMap<&'static str, Regex>,
+    /// HTML 清理器
+    html_cleaner: HtmlCleaner,
+}
+
+impl WebContentProcessorComponent {
+    pub fn new(text_processor: Arc<dyn TextEncodingProcessorTrait>) -> Self {
+        Self {
+            text_processor,
+            encoding_patterns: Self::init_encoding_patterns()
+                .expect("Failed to initialize encoding patterns"),
+            html_cleaner: HtmlCleaner::new(),
+        }
+    }
+    fn init_encoding_patterns() -> Result<HashMap<&'static str, Regex>, TextProcessingError> {
+        let mut patterns = HashMap::with_capacity(4);
+
+        patterns.insert(
+            ENCODING_PATTERN_HTML_META,
+            Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#)
+                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
+        );
+        patterns.insert(
+            ENCODING_PATTERN_XML_DECLARATION,
+            Regex::new(r#"(?i)<\?xml[^>]*encoding\s*=\s*["']?([^"'>\s]+)["']?[^>]*\?>"#)
+                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
+        );
+        patterns.insert(
+            ENCODING_PATTERN_HTTP_CONTENT_TYPE,
+            Regex::new(r#"(?i)charset\s*=\s*([^;\s]+)"#)
+                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
+        );
+        Ok(patterns)
+    }
+}
+
+impl Default for WebContentProcessorComponent {
+    fn default() -> Self {
+        Self::new(Arc::new(TextEncodingProcessorComponent::default()))
+    }
+}
+
+impl WebContentProcessorTrait for WebContentProcessorComponent {
+    fn process_web_content(
+        &self,
+        content: &[u8],
+        content_type: Option<&str>,
+    ) -> Result<ProcessedWebContent, WebContentError> {
+        let text_content = self.process_encoding(content)?;
+        let is_html = self.detect_html_structure(&text_content);
+        let declared_encoding = self.extract_declared_encoding(&text_content);
+        debug!(
+            "检测到HTML结构: {}, 声明编码: {:?}",
+            is_html, declared_encoding
+        );
+        let extracted_text = if is_html {
+            self.extract_text_from_html(&text_content)?
+        } else {
+            text_content.clone()
+        };
+        let cleaned_text = self.clean_text(&extracted_text);
+        let detected_language = self.detect_language(&cleaned_text);
+        Ok(ProcessedWebContent {
+            original_content: text_content,
+            extracted_text: cleaned_text,
+            is_html,
+            declared_encoding,
+            detected_language,
+            content_type: content_type.map(|s| s.to_string()),
+            content_length: content.len(),
+        })
+    }
+
+    fn process_batch(
+        &self,
+        contents: Vec<(&[u8], Option<&str>)>,
+    ) -> Vec<Result<ProcessedWebContent, WebContentError>> {
+        contents
+            .into_iter()
+            .map(|(content, content_type)| self.process_web_content(content, content_type))
+            .collect()
+    }
+}
+
+impl WebContentProcessorComponent {
+    fn process_encoding(&self, content: &[u8]) -> Result<String, WebContentError> {
+        match self.text_processor.process_text(content) {
+            Ok(text) => {
+                debug!("文本编码处理成功");
+                Ok(text)
+            }
+            Err(e) => {
+                error!("文本编码处理失败: {}", e);
+                Err(WebContentError::EncodingError(e))
+            }
+        }
+    }
+
+    fn detect_html_structure(&self, content: &str) -> bool {
+        content.contains("<html")
+            || content.contains("<!DOCTYPE")
+            || content.contains("<head")
+            || content.contains("<body")
+            || content.contains("<div")
+            || content.contains("<p>")
+            || content.contains("<a ")
+    }
+
+    fn extract_declared_encoding(&self, content: &str) -> Option<String> {
+        if let Some(captures) = self.encoding_patterns.get("html_meta")?.captures(content) {
+            if let Some(encoding) = captures.get(1) {
+                return Some(encoding.as_str().to_lowercase());
+            }
+        }
+        if let Some(captures) = self
+            .encoding_patterns
+            .get("xml_declaration")?
+            .captures(content)
+        {
+            if let Some(encoding) = captures.get(1) {
+                return Some(encoding.as_str().to_lowercase());
+            }
+        }
+        None
+    }
+
+    fn extract_text_from_html(&self, html: &str) -> Result<String, WebContentError> {
+        self.html_cleaner.extract_text(html)
+    }
+
+    fn clean_text(&self, text: &str) -> String {
+        let mut cleaned = text.to_string();
+        cleaned = html_escape::decode_html_entities(&cleaned).to_string();
+        cleaned = cleaned
+            .chars()
+            .filter(|c| !c.is_control() || c.is_whitespace())
+            .collect();
+        cleaned = self.text_processor.trim_newlines(&cleaned);
+        cleaned.trim().to_string()
+    }
+
+    fn detect_language(&self, text: &str) -> Option<String> {
+        if text.is_empty() {
+            return None;
+        }
+        let chinese_ratio = text
+            .chars()
+            .filter(|c| {
+                let code = *c as u32;
+                (0x4E00..=0x9FFF).contains(&code)
+                    || (0x3400..=0x4DBF).contains(&code)
+                    || (0xF900..=0xFAFF).contains(&code)
+            })
+            .count() as f32
+            / text.len() as f32;
+        if chinese_ratio > 0.3 {
+            Some("zh".to_string())
+        } else if text.chars().filter(|c| c.is_ascii()).count() as f32 / text.len() as f32 > 0.8 {
+            Some("en".to_string())
+        } else {
+            Some("unknown".to_string())
+        }
+    }
+}
+
 /// 网页内容处理器
+#[derive(Clone)]
 pub struct WebContentProcessor {
-    text_processor: &'static TextEncodingProcessor,
+    text_processor: Arc<TextEncodingProcessor>,
     html_cleaner: HtmlCleaner,
     encoding_patterns: HashMap<&'static str, Regex>,
 }
-
-static WEB_PROCESSOR: Lazy<WebContentProcessor> = Lazy::new(WebContentProcessor::new);
 
 impl Default for WebContentProcessor {
     fn default() -> Self {
@@ -44,17 +273,29 @@ impl Default for WebContentProcessor {
 }
 
 impl WebContentProcessor {
+    /// Create a new WebContentProcessor with default TextEncodingProcessor
     pub fn new() -> Self {
+        Self::with_text_processor(TextEncodingProcessor::new())
+    }
+
+    /// Create a WebContentProcessor with a specific TextEncodingProcessor (for DI)
+    pub fn with_text_processor(text_processor: TextEncodingProcessor) -> Self {
         Self {
-            text_processor: TextEncodingProcessor::global(),
+            text_processor: Arc::new(text_processor),
             html_cleaner: HtmlCleaner::new(),
             encoding_patterns: Self::init_encoding_patterns()
                 .expect("Failed to initialize encoding patterns"),
         }
     }
 
-    pub fn global() -> &'static Self {
-        &WEB_PROCESSOR
+    /// Create a WebContentProcessor with an injected TextEncodingProcessor
+    pub fn with_injected_processor(text_processor: Arc<TextEncodingProcessor>) -> Self {
+        Self {
+            text_processor,
+            html_cleaner: HtmlCleaner::new(),
+            encoding_patterns: Self::init_encoding_patterns()
+                .expect("Failed to initialize encoding patterns"),
+        }
     }
 
     fn init_encoding_patterns() -> Result<HashMap<&'static str, Regex>, TextProcessingError> {
@@ -199,7 +440,9 @@ impl WebContentProcessor {
     }
 }
 
-struct HtmlCleaner {
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct HtmlCleaner {
     script_regex: Regex,
     style_regex: Regex,
     comment_regex: Regex,
@@ -257,11 +500,13 @@ pub enum WebContentError {
     ContentExtractionError(String),
 }
 
-pub fn process_web_content(
+/// 使用提供的处理器实例处理网页内容
+pub fn process_web_content_with_processor(
+    processor: &WebContentProcessor,
     content: &[u8],
     content_type: Option<&str>,
 ) -> Result<ProcessedWebContent, WebContentError> {
-    WebContentProcessor::global().process_web_content(content, content_type)
+    processor.process_web_content(content, content_type)
 }
 
 /// 爬虫文本处理器
@@ -332,8 +577,9 @@ impl CrawlTextProcessor {
         let (tx, rx) = mpsc::channel();
         let content = content.to_vec();
         let content_type = content_type.map(|s| s.to_string());
+        let processor = WebContentProcessor::new();
         thread::spawn(move || {
-            let result = process_web_content(&content, content_type.as_deref());
+            let result = processor.process_web_content(&content, content_type.as_deref());
             let _ = tx.send(result);
         });
         match rx.recv_timeout(self.max_processing_time) {
@@ -358,7 +604,8 @@ impl CrawlTextProcessor {
         if text.is_empty() {
             return Ok(String::new());
         }
-        match process_text_encoding(text.as_bytes()) {
+        let processor = TextEncodingProcessor::new();
+        match processor.process_text(text.as_bytes()) {
             Ok(processed) => Ok(processed),
             Err(e) => Err(CrawlProcessingError::TextEncodingError(e)),
         }
@@ -467,18 +714,22 @@ impl Default for CrawlProcessorConfig {
     }
 }
 
-pub fn process_crawled_content(
+/// 使用提供的处理器实例处理爬取的内容
+pub fn process_crawled_content_with_processor(
+    processor: &CrawlTextProcessor,
     content: &[u8],
     url: &str,
     content_type: Option<&str>,
 ) -> Result<ProcessedCrawlContent, CrawlProcessingError> {
-    CrawlTextProcessor::new().process_crawled_content(content, url, content_type)
+    processor.process_crawled_content(content, url, content_type)
 }
 
-pub fn process_crawled_batch(
+/// 使用提供的处理器实例批量处理爬取的内容
+pub fn process_crawled_batch_with_processor(
+    processor: &CrawlTextProcessor,
     batch: Vec<(&[u8], &str, Option<&str>)>,
 ) -> Vec<Result<ProcessedCrawlContent, CrawlProcessingError>> {
-    CrawlTextProcessor::new().process_batch(batch)
+    processor.process_batch(batch)
 }
 
 #[cfg(test)]
