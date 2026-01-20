@@ -2,11 +2,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::config::settings::Settings;
 use crate::domain::services::extraction_utils::ExtractableRule;
 pub use crate::domain::services::llm_service::TokenUsage;
-use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
-use crate::utils::http_client::HTTP_CLIENT;
+use crate::domain::services::llm_service::LLMServiceTrait;
 use anyhow::Result;
 use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -140,25 +138,36 @@ impl ExtractionService {
         )
     }
 
-    /// 提取数据（完整版本，需要Settings用于LLM）
+    /// 提取数据（完整版本，需要Settings用于LLM）- 通过依赖注入
+    ///
+    /// # Arguments
+    ///
+    /// * `html_content` - HTML 内容
+    /// * `rules` - 提取规则
+    /// * `llm_service` - LLM 服务（通过依赖注入）
+    /// * `base_url` - 基础 URL
     pub async fn extract(
         html_content: &str,
         rules: &HashMap<String, ExtractionRule>,
-        settings: &Settings,
+        llm_service: Box<dyn LLMServiceTrait>,
         base_url: Option<&str>,
     ) -> Result<(Value, TokenUsage)> {
-        let service = Self::new(Box::new(LLMService::new(settings, HTTP_CLIENT.clone())));
+        let service = Self::new(llm_service);
         service.extract_data(html_content, rules, base_url).await
     }
 
-    /// 使用全局 Schema 直接通过 LLM 提取数据
+    /// 使用全局 Schema 直接通过 LLM 提取数据 - 通过依赖注入
+    ///
+    /// # Arguments
+    ///
+    /// * `html_content` - HTML 内容
+    /// * `schema` - 数据 schema
+    /// * `llm_service` - LLM 服务（通过依赖注入）
     pub async fn extract_with_schema(
         html_content: &str,
         schema: &Value,
-        settings: &Settings,
+        llm_service: Box<dyn LLMServiceTrait>,
     ) -> Result<(Value, TokenUsage)> {
-        let llm_service = LLMService::new(settings, HTTP_CLIENT.clone());
-
         // 1. Noise removal
         let clean_text = Self::get_clean_text(html_content);
 
@@ -349,5 +358,16 @@ impl ExtractionService {
                 Self::collect_clean_text(element, text_parts);
             }
         }
+    }
+}
+
+// Implement Validate for ExtractionRule to enable DTO validation
+use validator::Validate;
+
+impl Validate for ExtractionRule {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+        // No custom validation needed - all fields are optional or have defaults
+        // The struct is valid by default
+        Ok(())
     }
 }
