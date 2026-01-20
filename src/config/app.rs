@@ -25,7 +25,7 @@ use serde::Deserialize;
 ///
 /// `url` 字段包含数据库连接字符串，可能包含敏感信息（密码等）。
 /// 该字段仅对 crate 可见，外部模块应使用 `url()` 方法访问。
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Default)]
 pub struct DatabaseSettings {
     /// 数据库连接URL (敏感信息)
     pub(crate) url: String,
@@ -75,7 +75,7 @@ impl std::fmt::Debug for DatabaseSettings {
 ///
 /// `url` 字段包含 Redis 连接字符串，可能包含敏感信息（密码等）。
 /// 该字段仅对 crate 可见，外部模块应使用 `url()` 方法访问。
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Default)]
 pub struct RedisSettings {
     /// Redis连接URL (敏感信息)
     pub(crate) url: String,
@@ -110,7 +110,7 @@ impl std::fmt::Debug for RedisSettings {
 /// * `host` - 服务器监听的主机地址，通常为 "0.0.0.0" 或 "127.0.0.1"
 /// * `port` - 服务器监听的端口号，默认 3000
 /// * `enable_port_detection` - 是否开启端口嗅探功能
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ServerSettings {
     /// 服务器监听主机地址
     pub host: String,
@@ -128,7 +128,7 @@ pub struct ServerSettings {
 ///
 /// * `enabled` - 是否启用速率限制，默认 true
 /// * `default_rpm` - 默认每分钟请求数限制，默认 100
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RateLimitingSettings {
     /// 是否启用速率限制
     pub enabled: bool,
@@ -144,7 +144,7 @@ pub struct RateLimitingSettings {
 ///
 /// * `default_team_limit` - 每个团队的最大并发任务数，默认 10
 /// * `task_lock_duration_seconds` - 任务锁持续时间，防止重复处理，默认 300 秒（5 分钟）
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConcurrencySettings {
     /// 默认团队并发限制
     pub default_team_limit: i64,
@@ -178,7 +178,7 @@ pub struct ConcurrencySettings {
 ///     pub enabled: bool,
 /// }
 /// ```
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Default)]
 pub struct ProxySettings {
     /// 代理服务器URL (可能包含认证信息)
     /// 格式: http://host:port, https://host:port, socks5://host:port
@@ -209,15 +209,6 @@ impl std::fmt::Debug for ProxySettings {
     }
 }
 
-impl Default for ProxySettings {
-    fn default() -> Self {
-        Self {
-            url: "http://localhost:10808".to_string(),
-            enabled: false,
-        }
-    }
-}
-
 /// Worker配置设置
 ///
 /// 配置后台Worker进程的数量和类型
@@ -225,7 +216,7 @@ impl Default for ProxySettings {
 /// # 字段说明
 ///
 /// * `count` - Worker数量配置，可以是固定数字或"auto"自动检测
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct WorkerSettings {
     /// Worker数量配置
     pub count: WorkerCount,
@@ -302,7 +293,7 @@ mod tests {
 /// 超时配置设置
 ///
 /// 配置各种操作的超时时间
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct TimeoutSettings {
     /// Worker相关超时
     pub workers: WorkerTimeoutSettings,
@@ -315,7 +306,7 @@ pub struct TimeoutSettings {
 }
 
 /// Worker超时设置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct WorkerTimeoutSettings {
     /// Webhook worker处理间隔（秒）
     #[serde(default = "default_webhook_interval")]
@@ -327,7 +318,7 @@ pub struct WorkerTimeoutSettings {
 }
 
 /// 引擎超时设置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct EngineTimeoutSettings {
     /// 默认请求超时（秒）
     #[serde(default = "default_engine_timeout")]
@@ -343,7 +334,7 @@ pub struct EngineTimeoutSettings {
 }
 
 /// 重试超时设置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RetryTimeoutSettings {
     /// 初始退避时间（秒）
     #[serde(default = "default_initial_backoff")]
@@ -355,7 +346,7 @@ pub struct RetryTimeoutSettings {
 }
 
 /// 缓存超时设置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct CacheTimeoutSettings {
     /// 默认TTL（秒）
     #[serde(default = "default_cache_ttl")]

@@ -76,7 +76,7 @@ pub enum ConfigSecurityError {
 ///     Ok(())
 /// }
 /// ```
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Settings {
     /// 数据库配置
     pub database: DatabaseSettings,
@@ -298,7 +298,10 @@ impl Settings {
         }
 
         // Additional production password validation
-        let env = std::env::var("CRAWLRS_ENV").unwrap_or_default();
+        // 使用配置服务获取环境，如果不可用则回退到环境变量
+        let env = std::env::var("CRAWLRS_ENV")
+            .or_else(|_| std::env::var("APP_ENVIRONMENT"))
+            .unwrap_or_else(|_| "development".to_string());
         let is_production =
             env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod");
 

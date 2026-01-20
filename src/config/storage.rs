@@ -27,7 +27,7 @@ use serde::Deserialize;
 ///
 /// `s3_access_key` 和 `s3_secret_key` 字段包含 S3 访问凭据。
 /// 这些字段仅对 crate 可见，外部模块应使用相应的 getter 方法访问。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct StorageSettings {
     /// 存储类型 (local, s3)
     pub storage_type: String,
@@ -79,7 +79,7 @@ impl StorageSettings {
 ///
 /// `secret` 字段包含 Webhook 签名密钥，泄露可能导致伪造请求。
 /// 该字段仅对 crate 可见，外部模块应使用 `secret()` 方法访问。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct WebhookSettings {
     /// Webhook签名密钥 (敏感信息)
     pub(crate) secret: String,

@@ -19,7 +19,7 @@ use serde::Deserialize;
 /// * `url` - FlareSolverr 服务器 URL
 /// * `timeout_seconds` - 请求超时时间（秒）
 /// * `max_retries` - 最大重试次数
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct FlareSolverrSettings {
     /// 是否启用 FlareSolverr 引擎
     pub enabled: bool,
@@ -39,7 +39,7 @@ pub struct FlareSolverrSettings {
 ///
 /// * `enabled` - 是否启用 Fire Engine CDP
 /// * `url` - Fire Engine CDP 服务器 URL
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct FireCdpSettings {
     /// 是否启用 Fire Engine CDP
     pub enabled: bool,
@@ -55,7 +55,7 @@ pub struct FireCdpSettings {
 ///
 /// * `enabled` - 是否启用 Fire Engine TLS
 /// * `url` - Fire Engine TLS 服务器 URL
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct FireTlsSettings {
     /// 是否启用 Fire Engine TLS
     pub enabled: bool,
@@ -66,7 +66,7 @@ pub struct FireTlsSettings {
 /// 引擎配置集合
 ///
 /// 包含所有抓取引擎的配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct EngineSettings {
     /// FlareSolverr 引擎配置
     pub flaresolverr: FlareSolverrSettings,

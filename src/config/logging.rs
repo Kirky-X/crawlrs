@@ -6,7 +6,7 @@
 use serde::Deserialize;
 
 /// 日志配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct LoggingSettings {
     /// 控制台输出配置
     pub console: ConsoleLoggingSettings,
@@ -15,7 +15,7 @@ pub struct LoggingSettings {
 }
 
 /// 控制台日志配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ConsoleLoggingSettings {
     /// 是否启用控制台输出
     #[serde(default = "default_console_enabled")]
@@ -23,7 +23,7 @@ pub struct ConsoleLoggingSettings {
 }
 
 /// 文件日志配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct FileLoggingSettings {
     /// 是否启用文件输出
     #[serde(default = "default_file_enabled")]

@@ -23,7 +23,7 @@ use serde::Deserialize;
 ///
 /// `api_key` 字段包含 LLM API 密钥，泄露可能导致未经授权的访问。
 /// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct LLMSettings {
     /// LLM 提供商 (openai, ollama, anthropic, etc)
     pub provider: Option<String>,
