@@ -7,9 +7,6 @@
 //!
 //! This module handles aggregating results from multiple search engines
 //! with caching and deduplication support.
-//! Uses deprecated constants for backwards compatibility.
-
-#![allow(deprecated)]
 
 pub mod deduplicator;
 pub mod enhanced;
@@ -26,13 +23,13 @@ use std::time::Instant;
 use strsim::jaro_winkler;
 use tracing::{info, warn};
 
+use crate::common::constants::cache_config;
 use crate::domain::models::search_result::SearchResult;
-use crate::domain::services::relevance_scorer::RelevanceScorer;
+use crate::domain::services::relevance_scorer::{DateParserComponent, RelevanceScorer};
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
 use crate::search::types::{EngineHealth, SearchEngineType};
-use crate::utils::constants::cache_config;
 
 /// 缓存键类型
 type CacheEntry = (Vec<SearchResult>, Instant);
@@ -150,7 +147,7 @@ impl SearchAggregator {
     // Helper method for deduplication and ranking with PRD-compliant relevance scoring
     fn deduplicate_and_rank(&self, results: Vec<SearchResult>, query: &str) -> Vec<SearchResult> {
         let mut unique_results: Vec<SearchResult> = Vec::new();
-        let scorer = RelevanceScorer::new(query);
+        let scorer = RelevanceScorer::for_query(query);
 
         for mut result in results {
             let is_duplicate = unique_results.iter().any(|existing| {
@@ -179,8 +176,9 @@ impl SearchAggregator {
                         result.title,
                         result.description.as_deref().unwrap_or("")
                     );
+                    let parser = DateParserComponent::with_defaults();
                     if let Some(published_date) =
-                        RelevanceScorer::extract_published_date(&combined_text)
+                        RelevanceScorer::extract_published_date_with_parser(&combined_text, &parser)
                     {
                         result.published_time = Some(published_date);
                     }

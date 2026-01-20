@@ -11,6 +11,8 @@ use tracing::{info, warn};
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::infrastructure::cache::cache_manager::CacheManager;
+#[cfg(feature = "redis-cache")]
+use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::cache::cache_strategy::CacheStrategyConfig;
 use crate::infrastructure::cache::types::CacheStats;
 
@@ -227,7 +229,8 @@ pub struct EnhancedSearchAggregatorBuilder {
     engines: Vec<Arc<dyn SearchEngine>>,
     timeout_ms: u64,
     cache_config: CacheStrategyConfig,
-    redis_url: Option<String>,
+    #[cfg(feature = "redis-cache")]
+    redis_client: Option<Arc<RedisClient>>,
 }
 
 impl EnhancedSearchAggregatorBuilder {
@@ -236,7 +239,8 @@ impl EnhancedSearchAggregatorBuilder {
             engines: Vec::new(),
             timeout_ms: 5000, // 默认5秒超时
             cache_config: CacheStrategyConfig::default(),
-            redis_url: None,
+            #[cfg(feature = "redis-cache")]
+            redis_client: None,
         }
     }
 
@@ -255,14 +259,37 @@ impl EnhancedSearchAggregatorBuilder {
         self
     }
 
+    /// 设置Redis客户端（遵循依赖注入原则）
+    #[cfg(feature = "redis-cache")]
+    pub fn redis_client(mut self, redis_client: Arc<RedisClient>) -> Self {
+        self.redis_client = Some(redis_client);
+        self
+    }
+
+    /// 设置Redis URL（便捷方法，将创建Redis客户端）
+    ///
+    /// # Deprecated
+    ///
+    /// 此方法为了向后兼容保留，新代码应使用 `redis_client()` 注入Redis客户端。
+    #[cfg(feature = "redis-cache")]
+    #[deprecated(since = "0.1.0", note = "Use `redis_client()` with injected RedisClient instead")]
     pub fn redis_url(mut self, redis_url: &str) -> Self {
-        self.redis_url = Some(redis_url.to_string());
+        // 创建Redis客户端（deprecated方法）
+        if let Ok(client) = RedisClient::new(redis_url) {
+            self.redis_client = Some(Arc::new(client));
+        }
         self
     }
 
     pub async fn build(self) -> Result<EnhancedSearchAggregator, anyhow::Error> {
+        #[cfg(feature = "redis-cache")]
         let cache_manager = Arc::new(
-            CacheManager::new(self.cache_config.clone(), self.redis_url.as_deref()).await?,
+            CacheManager::new(self.cache_config.clone(), self.redis_client).await?,
+        );
+
+        #[cfg(not(feature = "redis-cache"))]
+        let cache_manager = Arc::new(
+            CacheManager::new(self.cache_config.clone(), None).await?,
         );
 
         Ok(EnhancedSearchAggregator::new(

@@ -3,7 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::engines::engine_client::{EngineClient, ScrapeRequest as EngineScrapeRequest, ScrapeOptions};
+use crate::engines::engine_client::{
+    EngineClient, ScrapeOptions, ScrapeRequest as EngineScrapeRequest,
+};
 use crate::search::{
     client::html_parser::HtmlParser,
     engine_trait::SearchEngine,
@@ -22,12 +24,6 @@ use url::Url;
 pub struct BingSearchEngine {
     parser: HtmlParser,
     engine_client: Arc<EngineClient>,
-}
-
-impl Default for BingSearchEngine {
-    fn default() -> Self {
-        Self::new(Arc::new(EngineClient::new()))
-    }
 }
 
 impl BingSearchEngine {
@@ -180,7 +176,11 @@ impl SearchEngine for BingSearchEngine {
 
         // 构建请求头
         let mut headers = HashMap::new();
-        headers.insert("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string());
+        headers.insert(
+            "Accept".to_string(),
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                .to_string(),
+        );
         headers.insert("Accept-Language".to_string(), "en-US,en;q=0.5".to_string());
         headers.insert("DNT".to_string(), "1".to_string());
         headers.insert("Connection".to_string(), "keep-alive".to_string());
@@ -193,10 +193,7 @@ impl SearchEngine for BingSearchEngine {
             ..Default::default()
         };
 
-        let engine_request = EngineScrapeRequest {
-            url,
-            options,
-        };
+        let engine_request = EngineScrapeRequest { url, options };
 
         let scrape_response = self
             .engine_client

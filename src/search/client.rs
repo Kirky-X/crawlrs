@@ -3,14 +3,8 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#![allow(deprecated)]
-
-use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::EngineClient;
-use crate::engines::traits::ScraperEngine;
 use std::sync::Arc;
-
-use once_cell::sync::Lazy;
 
 use super::{
     engine_trait::{SearchEngine, SearchRequest},
@@ -30,9 +24,28 @@ pub mod sogou;
 pub use baidu::BaiduSearchEngine;
 pub use bing::BingSearchEngine;
 pub use google::GoogleSearchEngine;
-pub use http_client::SHARED_HTTP_CLIENT;
 pub use shared_utils::{parse_first_selector, safe_parse_selector};
 pub use sogou::SogouSearchEngine;
+
+/// Trait for SearchClient - enables dependency injection
+#[async_trait::async_trait]
+pub trait SearchClientTrait: Send + Sync {
+    /// Search with default engine
+    async fn search(&self, query: &str) -> SearchCommand;
+
+    /// Search with specific engine
+    async fn search_with_engine(
+        &self,
+        query: &str,
+        engine: SearchEngineType,
+    ) -> Result<Response<ResponseItem>, SearchError>;
+
+    /// Get the default engine type
+    fn default_engine(&self) -> SearchEngineType;
+
+    /// Register a new search engine
+    fn register_engine(&self, engine: Arc<dyn SearchEngine>);
+}
 
 #[derive(Clone)]
 struct SearchClientInner {
@@ -44,46 +57,37 @@ fn default_engine_type() -> SearchEngineType {
     SearchEngineType::Google
 }
 
-/// 搜索客户端单例
+/// 搜索客户端
 #[derive(Clone)]
 pub struct SearchClient {
     inner: Arc<SearchClientInner>,
 }
 
 impl SearchClient {
-    pub fn global() -> &'static Self {
-        static INSTANCE: Lazy<SearchClient> = Lazy::new(|| {
-            let mut inner = SearchClientInner {
-                engines: Vec::new(),
-                default_engine: default_engine_type(),
-            };
+    /// Create a new SearchClient
+    pub fn new(engine_client: Arc<EngineClient>) -> Self {
+        let mut inner = SearchClientInner {
+            engines: Vec::new(),
+            default_engine: default_engine_type(),
+        };
 
-            // 注册所有支持的搜索引擎（真实实现）
-            // 默认注册所有引擎
+        // Register all supported search engines
+        inner
+            .engines
+            .push(Arc::new(GoogleSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
+        inner
+            .engines
+            .push(Arc::new(BingSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
+        inner
+            .engines
+            .push(Arc::new(BaiduSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
+        inner
+            .engines
+            .push(Arc::new(SogouSearchEngine::new(engine_client)) as Arc<dyn SearchEngine>);
 
-            // Create a default EngineClient with ReqwestEngine for all engines
-            let reqwest_engine = Arc::new(ReqwestEngine::new());
-            let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
-            let engine_client = Arc::new(EngineClient::with_engines(engines.clone()));
-
-            inner
-                .engines
-                .push(Arc::new(GoogleSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
-            inner
-                .engines
-                .push(Arc::new(BingSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
-            inner
-                .engines
-                .push(Arc::new(BaiduSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
-            inner
-                .engines
-                .push(Arc::new(SogouSearchEngine::new(engine_client)) as Arc<dyn SearchEngine>);
-
-            SearchClient {
-                inner: Arc::new(inner),
-            }
-        });
-        &INSTANCE
+        SearchClient {
+            inner: Arc::new(inner),
+        }
     }
 
     pub fn register_engine(&mut self, engine: Arc<dyn SearchEngine>) {
@@ -115,6 +119,38 @@ impl SearchClient {
     }
 }
 
+#[async_trait::async_trait]
+impl SearchClientTrait for SearchClient {
+    async fn search(&self, query: &str) -> SearchCommand {
+        SearchCommand::new(self.clone(), query)
+    }
+
+    async fn search_with_engine(
+        &self,
+        query: &str,
+        engine: SearchEngineType,
+    ) -> Result<Response<ResponseItem>, SearchError> {
+        let request = SearchRequest::new(query).with_engine(engine);
+        let eng = self
+            .inner
+            .engines
+            .iter()
+            .find(|e| e.engine_type() == engine)
+            .ok_or_else(|| SearchError::NoEngineAvailable)?;
+
+        eng.search(&request).await
+    }
+
+    fn default_engine(&self) -> SearchEngineType {
+        self.inner.default_engine
+    }
+
+    fn register_engine(&self, _engine: Arc<dyn SearchEngine>) {
+        // This is a no-op for the default implementation
+        // since engines are registered during construction
+    }
+}
+
 /// 搜索命令构建器
 #[must_use]
 pub struct SearchCommand {
@@ -126,7 +162,7 @@ pub struct SearchCommand {
 }
 
 impl SearchCommand {
-    fn new(client: SearchClient, query: &str) -> Self {
+    pub fn new(client: SearchClient, query: &str) -> Self {
         Self {
             client,
             query: query.to_string(),
@@ -198,9 +234,16 @@ impl SearchCommand {
 mod tests {
     use super::*;
 
+    /// Create a SearchClient with all engines registered (for testing)
+    fn create_test_search_client() -> SearchClient {
+        use crate::engines::engine_client::EngineClient;
+        let engine_client = Arc::new(EngineClient::new());
+        SearchClient::new(engine_client)
+    }
+
     #[tokio::test]
     async fn test_search_command_builder() {
-        let client = SearchClient::global().clone();
+        let client = create_test_search_client();
         let cmd = client.search("test query").google().limit(5);
         assert_eq!(cmd.query, "test query");
         assert_eq!(cmd.engine, Some(SearchEngineType::Google));
@@ -222,7 +265,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_engines_registered() {
-        let client = SearchClient::global();
+        let client = create_test_search_client();
         assert_eq!(client.inner.engines.len(), 4);
     }
 }

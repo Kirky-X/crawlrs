@@ -41,12 +41,12 @@ pub trait TaskQueue: Send + Sync {
 }
 
 /// PostgreSQL任务队列实现
-pub struct PostgresTaskQueue<R: TaskRepository> {
+pub struct PostgresTaskQueue {
     /// 任务仓库
-    repository: Arc<R>,
+    repository: Arc<dyn TaskRepository>,
 }
 
-impl<R: TaskRepository> PostgresTaskQueue<R> {
+impl PostgresTaskQueue {
     /// 创建新的PostgreSQL任务队列实例
     ///
     /// # 参数
@@ -56,13 +56,13 @@ impl<R: TaskRepository> PostgresTaskQueue<R> {
     /// # 返回值
     ///
     /// 返回新的PostgreSQL任务队列实例
-    pub fn new(repository: Arc<R>) -> Self {
+    pub fn new(repository: Arc<dyn TaskRepository>) -> Self {
         Self { repository }
     }
 }
 
 #[async_trait]
-impl<R: TaskRepository> TaskQueue for PostgresTaskQueue<R> {
+impl TaskQueue for PostgresTaskQueue {
     /// 入队任务
     ///
     /// # 参数
