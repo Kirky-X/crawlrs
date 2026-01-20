@@ -6,14 +6,13 @@
 //! EngineRouter - Internal routing logic for engine selection
 //!
 //! This module handles the internal routing logic for selecting appropriate
-//! scraping engines based on request requirements. Uses deprecated traits
-//! for backwards compatibility during migration to EngineClient API.
+//! scraping engines based on request requirements.
 //! This is an internal implementation detail.
 
-#![allow(deprecated)]
-
 use crate::engines::circuit_breaker::CircuitBreaker;
-use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+use crate::engines::engine_client::{
+    EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+};
 use crate::engines::validators::validate_url;
 use dashmap::DashMap;
 use rand::seq::SliceRandom;
@@ -21,6 +20,33 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
+
+// === Section: EngineRouterTrait Definition ===
+
+/// Trait for EngineRouter - enables dependency injection
+#[async_trait::async_trait]
+pub trait EngineRouterTrait: Send + Sync {
+    /// Route a request to the optimal engine
+    async fn route(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError>;
+
+    /// Aggregate results from multiple engines
+    async fn aggregate(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError>;
+
+    /// Get engine statistics
+    fn get_engine_stats(&self) -> std::collections::HashMap<String, EngineStats>;
+
+    /// Reset statistics for a specific engine
+    fn reset_engine_stats(&self, engine_name: &str);
+
+    /// Get list of registered engine names
+    fn registered_engines(&self) -> Vec<String>;
+}
 
 /// 路由层指标收集器
 ///
@@ -364,7 +390,7 @@ impl EngineRouter {
     /// 返回最优引擎列表（按优先级排序）
     fn select_optimal_engines(
         &self,
-        request: &ScrapeRequest,
+        request: &InternalScrapeRequest,
     ) -> Vec<(f64, Arc<dyn ScraperEngine>)> {
         let mut candidates = Vec::new();
 
@@ -428,27 +454,27 @@ impl EngineRouter {
     /// 根据请求特征直接过滤不适合的引擎（使用能力方法替代硬编码引擎名）
     fn should_filter_by_feature(
         &self,
-        request: &ScrapeRequest,
+        request: &InternalScrapeRequest,
         engine: &Arc<dyn ScraperEngine>,
     ) -> Option<String> {
-        // 如果需要截图，排除不支持截图的引擎
-        if request.needs_screenshot && !engine.supports_screenshot() {
+        // 如果需要截图，排除得分很低的引擎
+        if request.needs_screenshot && engine.support_score(request) < 50 {
             return Some(format!(
                 "Engine {} does not support screenshots",
                 engine.name()
             ));
         }
 
-        // 如果需要 JS 或交互动作，排除不支持 JS 的引擎
-        if (request.needs_js || !request.actions.is_empty()) && !engine.supports_javascript() {
+        // 如果需要 JS 或交互动作，排除得分很低的引擎
+        if (request.needs_js || !request.actions.is_empty()) && engine.support_score(request) < 50 {
             return Some(format!(
                 "Engine {} does not support JavaScript",
                 engine.name()
             ));
         }
 
-        // 如果明确需要 TLS 指纹，排除不专门支持 TLS 指纹的引擎
-        if request.needs_tls_fingerprint && !engine.supports_tls_fingerprint() {
+        // 如果明确需要 TLS 指纹，检查得分
+        if request.needs_tls_fingerprint && engine.support_score(request) < 50 {
             return Some(format!(
                 "Engine {} is not optimized for TLS fingerprinting",
                 engine.name()
@@ -585,7 +611,10 @@ impl EngineRouter {
     ///
     /// * `Ok(ScrapeResponse)` - 抓取响应
     /// * `Err(EngineError)` - 抓取过程中出现的错误
-    pub async fn route(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+    pub async fn _route_impl(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
         if let Err(e) = validate_url(&request.url).await {
             return Err(EngineError::SsrfProtection(e.to_string()));
         }
@@ -600,7 +629,10 @@ impl EngineRouter {
     }
 
     /// Internal route implementation without timeout
-    async fn route_internal(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+    async fn route_internal(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
         let start_time = Instant::now();
 
         // 选择最优引擎
@@ -661,7 +693,7 @@ impl EngineRouter {
                 return Err(EngineError::Timeout(request.timeout));
             }
 
-            let attempt_request = ScrapeRequest {
+            let attempt_request = InternalScrapeRequest {
                 url: request.url.clone(),
                 headers: request.headers.clone(),
                 timeout: remaining,
@@ -749,10 +781,10 @@ impl EngineRouter {
     /// 并发竞速模式：同时发起多个引擎请求，返回最快成功的那个
     async fn route_race_mode(
         &self,
-        request: &ScrapeRequest,
+        request: &InternalScrapeRequest,
         candidates: Vec<(f64, Arc<dyn ScraperEngine>)>,
         start_time: Instant,
-    ) -> Result<ScrapeResponse, EngineError> {
+    ) -> Result<InternalScrapeResponse, EngineError> {
         use futures::future;
         use tokio::time;
 
@@ -783,7 +815,7 @@ impl EngineRouter {
             let engine_clone = engine.clone();
 
             let remaining_clone = remaining;
-            let request_clone = ScrapeRequest {
+            let request_clone = InternalScrapeRequest {
                 url: request.url.clone(),
                 headers: request.headers.clone(),
                 timeout: remaining_clone,
@@ -874,7 +906,10 @@ impl EngineRouter {
     ///
     /// * `Ok(ScrapeResponse)` - 聚合后的抓取响应
     /// * `Err(EngineError)` - 如果所有引擎都失败
-    pub async fn aggregate(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+    pub async fn _aggregate_impl(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
         let candidates = self.select_optimal_engines(request);
         if candidates.is_empty() {
             return Err(EngineError::AllEnginesFailed(
@@ -923,12 +958,12 @@ impl EngineRouter {
     }
 
     /// 获取引擎统计信息
-    pub fn get_engine_stats(&self) -> std::collections::HashMap<String, EngineStats> {
+    pub fn _get_engine_stats_impl(&self) -> std::collections::HashMap<String, EngineStats> {
         self.engine_stats.read().clone()
     }
 
     /// 重置引擎统计信息
-    pub fn reset_engine_stats(&self, engine_name: &str) {
+    pub fn _reset_engine_stats_impl(&self, engine_name: &str) {
         let mut stats = self.engine_stats.write();
         if let Some(stat) = stats.get_mut(engine_name) {
             *stat = EngineStats::default();
@@ -946,7 +981,7 @@ impl EngineRouter {
     }
 
     /// 获取所有已注册的引擎名称
-    pub fn registered_engines(&self) -> Vec<String> {
+    pub fn _registered_engines_impl(&self) -> Vec<String> {
         self.engines.iter().map(|e| e.name().to_string()).collect()
     }
 
@@ -955,6 +990,66 @@ impl EngineRouter {
     pub fn get_engines(&self) -> &Vec<Arc<dyn ScraperEngine>> {
         &self.engines
     }
+
+    /// Public wrapper for route (for backward compatibility)
+    pub async fn route(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        self._route_impl(request).await
+    }
+
+    /// Public wrapper for aggregate (for backward compatibility)
+    pub async fn aggregate(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        self._aggregate_impl(request).await
+    }
+
+    /// Public wrapper for get_engine_stats (for backward compatibility)
+    pub fn get_engine_stats(&self) -> std::collections::HashMap<String, EngineStats> {
+        self._get_engine_stats_impl()
+    }
+
+    /// Public wrapper for reset_engine_stats (for backward compatibility)
+    pub fn reset_engine_stats(&self, engine_name: &str) {
+        self._reset_engine_stats_impl(engine_name)
+    }
+
+    /// Public wrapper for registered_engines (for backward compatibility)
+    pub fn registered_engines(&self) -> Vec<String> {
+        self._registered_engines_impl()
+    }
+}
+
+#[async_trait::async_trait]
+impl EngineRouterTrait for EngineRouter {
+    async fn route(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        self._route_impl(request).await
+    }
+
+    async fn aggregate(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        self._aggregate_impl(request).await
+    }
+
+    fn get_engine_stats(&self) -> std::collections::HashMap<String, EngineStats> {
+        self._get_engine_stats_impl()
+    }
+
+    fn reset_engine_stats(&self, engine_name: &str) {
+        self._reset_engine_stats_impl(engine_name)
+    }
+
+    fn registered_engines(&self) -> Vec<String> {
+        self._registered_engines_impl()
+    }
 }
 
 #[cfg(test)]
@@ -962,10 +1057,17 @@ mod tests {
     use super::*;
     use crate::engines::client::reqwest::ReqwestEngine;
     use async_trait::async_trait;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_engine_router_creation() {
-        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::new())];
+        let http_client = Arc::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap(),
+        );
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::new(http_client))];
         let router = EngineRouter::new(engines);
 
         assert_eq!(router.strategy, LoadBalancingStrategy::SmartHybrid);
@@ -983,17 +1085,24 @@ mod tests {
         impl ScraperEngine for CountingEngine {
             async fn scrape(
                 &self,
-                _request: &ScrapeRequest,
-            ) -> Result<ScrapeResponse, EngineError> {
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 if self.ok {
-                    Ok(ScrapeResponse::new("http://1.1.1.1", "ok"))
+                    Ok(InternalScrapeResponse {
+                        status_code: 200,
+                        content: "ok".to_string(),
+                        screenshot: None,
+                        content_type: "text/html".to_string(),
+                        headers: HashMap::new(),
+                        response_time_ms: 10,
+                    })
                 } else {
                     Err(EngineError::Timeout(Duration::from_millis(10)))
                 }
             }
 
-            fn support_score(&self, _request: &ScrapeRequest) -> u8 {
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
                 100
             }
 
@@ -1026,7 +1135,21 @@ mod tests {
         router.set_strategy(LoadBalancingStrategy::RoundRobin);
         router.set_max_engine_attempts(2);
 
-        let request = ScrapeRequest::new("http://1.1.1.1");
+        let request = InternalScrapeRequest {
+            url: "http://1.1.1.1".to_string(),
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            sync_wait_ms: 0,
+        };
         let result = router.route(&request).await;
 
         assert!(result.is_err());
@@ -1055,12 +1178,13 @@ mod tests {
 #[cfg(test)]
 mod tests_impl {
     use super::*;
-    use crate::engines::traits::EngineError;
-    use crate::engines::traits::ScrapeRequest;
-    use crate::engines::traits::ScrapeResponse;
-    use crate::engines::traits::ScraperEngine;
+    use crate::engines::engine_client::{
+        EngineError, InternalScrapeRequest, InternalScrapeResponse, ScrapeResponse, ScraperEngine,
+    };
     use async_trait::async_trait;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::Duration;
 
     // A simple test engine that is a controllable implementation
     struct TestScraperEngineImpl {
@@ -1078,7 +1202,7 @@ mod tests_impl {
             name: &'static str,
             supported_domains: Vec<String>,
             weight: u8,
-            result: Result<ScrapeResponse, EngineError>,
+            result: Result<InternalScrapeResponse, EngineError>,
             max_calls: u32,
         ) -> Self {
             match result {
@@ -1106,23 +1230,37 @@ mod tests_impl {
 
     #[async_trait]
     impl ScraperEngine for TestScraperEngineImpl {
-        async fn scrape(&self, _request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+        async fn scrape(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
             let call_count = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
 
             if call_count <= self.max_calls {
                 if self.is_error {
                     return Err(EngineError::Timeout(Duration::from_secs(30)));
                 }
-                Ok(ScrapeResponse::new(
-                    "http://example.com",
-                    &self.response_content,
-                ))
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: self.response_content.clone(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 100,
+                })
             } else {
-                Ok(ScrapeResponse::new("http://example.com", "Default Result"))
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "Default Result".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 100,
+                })
             }
         }
 
-        fn support_score(&self, _request: &ScrapeRequest) -> u8 {
+        fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
             100
         }
 
@@ -1137,7 +1275,14 @@ mod tests_impl {
             "engine1",
             vec!["example.com".to_string()],
             1,
-            Ok(ScrapeResponse::new("http://example.com", "Result 1")),
+            Ok(InternalScrapeResponse {
+                status_code: 200,
+                content: "Result 1".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 100,
+            }),
             10, // max_calls
         );
 
@@ -1145,13 +1290,34 @@ mod tests_impl {
             "engine2",
             vec!["example.com".to_string()],
             1,
-            Ok(ScrapeResponse::new("http://example.com", "Result 2")),
+            Ok(InternalScrapeResponse {
+                status_code: 200,
+                content: "Result 2".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 100,
+            }),
             10, // max_calls
         );
 
         let router = EngineRouter::new(vec![Arc::new(engine1), Arc::new(engine2)]);
 
-        let request = ScrapeRequest::new("http://example.com");
+        let request = InternalScrapeRequest {
+            url: "http://example.com".to_string(),
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            sync_wait_ms: 0,
+        };
         let result = router.aggregate(&request).await;
 
         assert!(result.is_ok());
@@ -1173,13 +1339,34 @@ mod tests_impl {
             "engine2",
             vec!["example.com".to_string()],
             1,
-            Ok(ScrapeResponse::new("http://example.com", "Result 2")),
+            Ok(InternalScrapeResponse {
+                status_code: 200,
+                content: "Result 2".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 100,
+            }),
             10, // max_calls
         );
 
         let router = EngineRouter::new(vec![Arc::new(engine1), Arc::new(engine2)]);
 
-        let request = ScrapeRequest::new("http://example.com");
+        let request = InternalScrapeRequest {
+            url: "http://example.com".to_string(),
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            sync_wait_ms: 0,
+        };
         let result = router.aggregate(&request).await;
 
         assert!(result.is_ok());

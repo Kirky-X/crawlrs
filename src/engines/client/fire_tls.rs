@@ -3,18 +3,22 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use super::super::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
 use crate::engines::client::flaresolverr_types::{
     FlareSolverrRequest, FlareSolverrResponse, FlareSolverrSolution,
 };
+use crate::engines::engine_client::{
+    EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+};
 use async_trait::async_trait;
 use std::time::Instant;
+
+use std::sync::Arc;
 
 /// Fire Engine (TLS) 实现
 ///
 /// 专注于 TLS 指纹对抗，速度较快，但不支持截图和复杂的 JS 交互。
 pub struct FireEngineTls {
-    client: reqwest::Client,
+    client: Arc<reqwest::Client>,
     base_url: String,
     /// 代理配置
     proxy_url: Option<String>,
@@ -22,8 +26,7 @@ pub struct FireEngineTls {
 
 impl FireEngineTls {
     /// 创建新的 FireEngineTls 实例
-    pub fn new() -> Self {
-        let client = reqwest::Client::builder().build().unwrap_or_default();
+    pub fn new(client: Arc<reqwest::Client>) -> Self {
         Self {
             client,
             base_url: String::new(),
@@ -32,14 +35,7 @@ impl FireEngineTls {
     }
 
     /// 创建带有代理配置的 FireEngineTls 实例
-    pub fn with_proxy(proxy: &str) -> Self {
-        let proxy_result = reqwest::Proxy::https(proxy);
-        let client_builder = reqwest::Client::builder();
-        let client_builder = match proxy_result {
-            Ok(p) => client_builder.proxy(p),
-            Err(_) => client_builder,
-        };
-        let client = client_builder.build().unwrap_or_default();
+    pub fn with_proxy(client: Arc<reqwest::Client>, proxy: &str) -> Self {
         Self {
             client,
             base_url: String::new(),
@@ -48,14 +44,11 @@ impl FireEngineTls {
     }
 
     /// 创建带有 base URL 和代理配置的实例
-    pub fn with_url_and_proxy(base_url: &str, proxy: Option<&str>) -> Self {
-        let proxy_result = proxy.map(|p| reqwest::Proxy::https(p)).transpose();
-        let client_builder = reqwest::Client::builder();
-        let client_builder = match proxy_result {
-            Ok(Some(p)) => client_builder.proxy(p),
-            _ => client_builder,
-        };
-        let client = client_builder.build().unwrap_or_default();
+    pub fn with_url_and_proxy(
+        client: Arc<reqwest::Client>,
+        base_url: &str,
+        proxy: Option<&str>,
+    ) -> Self {
         Self {
             client,
             base_url: base_url.to_string(),
@@ -64,15 +57,12 @@ impl FireEngineTls {
     }
 }
 
-impl Default for FireEngineTls {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[async_trait]
 impl ScraperEngine for FireEngineTls {
-    async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+    async fn scrape(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
         // TLS Engine explicitly rejects screenshot requests
         if request.needs_screenshot {
             return Err(EngineError::Other(
@@ -133,7 +123,7 @@ impl ScraperEngine for FireEngineTls {
             .cloned()
             .unwrap_or_else(|| "text/html".to_string());
 
-        Ok(ScrapeResponse {
+        Ok(InternalScrapeResponse {
             status_code: solution.status,
             content: solution.response,
             screenshot: None,
@@ -143,7 +133,7 @@ impl ScraperEngine for FireEngineTls {
         })
     }
 
-    fn support_score(&self, request: &ScrapeRequest) -> u8 {
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
         // 如果明确请求使用 Fire Engine (TLS 模式)
         if request.use_fire_engine {
             return 95;

@@ -3,202 +3,371 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#![allow(deprecated)]
-
-use crate::engines::traits::{
-    EngineError, ScrapeAction, ScrapeRequest, ScrapeResponse, ScraperEngine,
+use crate::engines::engine_client::{
+    EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse,
+    InternalScreenshotConfig, ScraperEngine,
 };
 use crate::engines::validators;
+use crate::infrastructure::services::config_service::{BrowserConfigComponent, BrowserConfigTrait};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
-use std::sync::OnceLock;
+use shaku::{Component, Interface};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::task_local;
 
-task_local! {
-    pub static REMOTE_URL_OVERRIDE: String;
-    /// 代理配置（通过请求传递）
-    pub static PROXY_URL_OVERRIDE: Option<String>;
+/// Playwright context for browser operations
+///
+/// This struct provides a way to pass browser configuration through the call stack
+/// instead of using task-local storage or global state.
+/// For DI-based usage, prefer PlaywrightBrowserManagerComponent.
+#[derive(Clone, Debug)]
+pub struct PlaywrightContext {
+    /// Remote debugging URL for connecting to existing browser
+    pub remote_debugging_url: Option<String>,
+    /// Proxy URL for browser requests
+    pub proxy_url: Option<String>,
+    /// Test mode flag
+    pub test_mode: bool,
 }
 
-// Global browser instance to avoid re-launching Chrome on every request.
-// This significantly improves performance for browser-based scraping.
-// Changed to Arc<Mutex<Option<Arc<Browser>>>> to allow resetting in tests
-static BROWSER_INSTANCE: OnceLock<Arc<Mutex<Option<Arc<Browser>>>>> = OnceLock::new();
+impl Default for PlaywrightContext {
+    fn default() -> Self {
+        Self {
+            remote_debugging_url: None,
+            proxy_url: None,
+            test_mode: false,
+        }
+    }
+}
+
+impl PlaywrightContext {
+    /// Create a new context with custom values
+    pub fn new(
+        remote_debugging_url: Option<String>,
+        proxy_url: Option<String>,
+        test_mode: bool,
+    ) -> Self {
+        Self {
+            remote_debugging_url,
+            proxy_url,
+            test_mode,
+        }
+    }
+}
+
+/// 浏览器管理器 trait（支持 DI）
+///
+/// 提供浏览器实例管理的抽象接口，便于测试时注入 mock 实现。
+#[async_trait]
+pub trait BrowserManagerTrait: Interface + Send + Sync {
+    /// 获取或创建浏览器实例
+    async fn get_browser(&self) -> Result<Arc<Browser>, EngineError>;
+    /// 清理浏览器实例
+    async fn cleanup(&self);
+    /// 重置浏览器实例
+    fn reset(&self);
+    /// 检查浏览器健康状态
+    async fn check_health(&self, browser: &Browser) -> bool;
+}
+
+/// Playwright 浏览器管理器组件（DI 实现）
+#[derive(Component)]
+#[shaku(interface = BrowserManagerTrait)]
+pub struct PlaywrightBrowserManagerComponent {
+    /// 浏览器配置
+    #[shaku(inject)]
+    config: Arc<dyn BrowserConfigTrait>,
+    /// 浏览器实例
+    browser: Arc<Mutex<Option<Arc<Browser>>>>,
+}
+
+impl PlaywrightBrowserManagerComponent {
+    /// 创建新的浏览器管理器
+    pub fn new(config: Arc<dyn BrowserConfigTrait>) -> Self {
+        Self {
+            config,
+            browser: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+#[async_trait]
+impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
+    async fn get_browser(&self) -> Result<Arc<Browser>, EngineError> {
+        self.get_browser_with_recovery(3).await
+    }
+
+    async fn cleanup(&self) {
+        let mut guard = self.browser.lock().unwrap();
+        if let Some(browser) = guard.take() {
+            tracing::info!("Closing browser instance");
+            drop(browser);
+        }
+    }
+
+    fn reset(&self) {
+        let mut guard = self.browser.lock().unwrap();
+        *guard = None;
+    }
+
+    async fn check_health(&self, browser: &Browser) -> bool {
+        match browser.new_page("about:blank").await {
+            Ok(page) => {
+                let _ = page.close().await;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+impl PlaywrightBrowserManagerComponent {
+    /// 获取或创建浏览器（带自动恢复）
+    async fn get_browser_with_recovery(
+        &self,
+        max_attempts: u32,
+    ) -> Result<Arc<Browser>, EngineError> {
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+
+            match self.get_or_init_browser().await {
+                Ok(browser) => return Ok(browser),
+                Err(e) if attempts < max_attempts => {
+                    tracing::warn!(
+                        "Browser initialization attempt {} failed: {}, retrying...",
+                        attempts,
+                        e
+                    );
+                    self.cleanup().await;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// 内部函数：获取或初始化浏览器
+    async fn get_or_init_browser(&self) -> Result<Arc<Browser>, EngineError> {
+        let test_mode = self.config.is_test_mode();
+
+        // 尝试获取现有的浏览器实例
+        let browser_to_check = {
+            let browser_guard = self.browser.lock().unwrap();
+            browser_guard.as_ref().map(Arc::clone)
+        };
+
+        if let Some(browser) = browser_to_check {
+            if self.check_health(&browser).await {
+                if !test_mode {
+                    return Ok(browser);
+                }
+            }
+        }
+
+        // 需要创建新的浏览器
+        let remote_debugging_url = self.config.get_remote_debugging_url();
+
+        let proxy_url = self.config.get_proxy_url();
+
+        let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
+            tracing::info!("Connecting to remote Chrome instance at: {}", url);
+            Browser::connect(url).await.map_err(|e| {
+                EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
+            })?
+        } else {
+            let mut builder = BrowserConfig::builder()
+                .no_sandbox()
+                .request_timeout(Duration::from_secs(30));
+
+            builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
+
+            if let Some(ref proxy) = proxy_url {
+                tracing::info!("Using proxy for Playwright: {}", proxy);
+                builder = builder.arg(format!("--proxy-server={}", proxy));
+            }
+
+            Browser::launch(
+                builder
+                    .build()
+                    .map_err(|e| EngineError::Other(e.to_string()))?,
+            )
+            .await
+            .map_err(|e| EngineError::Other(e.to_string()))?
+        };
+
+        // 启动处理器任务
+        tokio::spawn(async move {
+            while let Some(h) = handler.next().await {
+                if let Err(e) = h {
+                    tracing::debug!("Browser handler event error (continuing): {:?}", e);
+                }
+            }
+        });
+
+        let browser = Arc::new(browser);
+
+        // 存储浏览器实例
+        {
+            let mut browser_guard = self.browser.lock().unwrap();
+            *browser_guard = Some(Arc::clone(&browser));
+        }
+
+        Ok(browser)
+    }
+}
 
 // Maximum number of recovery attempts
 const MAX_RECOVERY_ATTEMPTS: u32 = 3;
 
-// Asynchronously gets or initializes the shared browser instance.
-// This function ensures that the browser is launched only once.
-pub async fn get_browser() -> Result<Arc<Browser>, EngineError> {
-    get_browser_with_recovery(MAX_RECOVERY_ATTEMPTS).await
+/// Browser manager for handling browser instance lifecycle
+///
+/// This struct manages browser instance without using global state.
+/// It should be created per request or per application scope.
+#[derive(Clone)]
+pub struct BrowserManager {
+    /// Browser instance stored in memory
+    browser: Arc<Mutex<Option<Arc<Browser>>>>,
 }
 
-/// Gets or creates browser with automatic recovery on failure
-async fn get_browser_with_recovery(max_attempts: u32) -> Result<Arc<Browser>, EngineError> {
-    let mut attempts = 0;
-    loop {
-        attempts += 1;
-
-        match get_or_init_browser().await {
-            Ok(browser) => return Ok(browser),
-            Err(e) if attempts < max_attempts => {
-                tracing::warn!(
-                    "Browser initialization attempt {} failed: {}, retrying...",
-                    attempts,
-                    e
-                );
-                cleanup_browser().await;
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-            Err(e) => return Err(e),
+impl BrowserManager {
+    /// Create a new browser manager
+    pub fn new() -> Self {
+        Self {
+            browser: Arc::new(Mutex::new(None)),
         }
     }
-}
 
-/// Internal function to get or initialize browser
-async fn get_or_init_browser() -> Result<Arc<Browser>, EngineError> {
-    // Check if we're in test mode and should not reuse browser
-    let test_mode = std::env::var("CRAWLRS_TEST_NO_BROWSER_REUSE").is_ok();
-
-    // Get or initialize the browser instance
-    let browser_instance = BROWSER_INSTANCE.get_or_init(|| Arc::new(Mutex::new(None)));
-
-    // Try to get the existing browser (clone outside lock to avoid holding across await)
-    let browser_to_check = {
-        let browser_guard = browser_instance
-            .lock()
-            .map_err(|e| EngineError::Other(format!("Browser lock poisoned: {}", e)))?;
-        browser_guard.as_ref().map(Arc::clone)
-    };
-
-    if let Some(browser) = browser_to_check {
-        // Check if browser is still healthy (now outside the lock)
-        if check_browser_health(&browser).await {
-            // In test mode, don't reuse browser to avoid conflicts
-            if !test_mode {
-                return Ok(browser);
-            }
-        }
-        // Browser is not healthy or in test mode, drop it
+    /// Get or create browser using context
+    pub async fn get_browser(&self) -> Result<Arc<Browser>, EngineError> {
+        self.get_browser_with_recovery(MAX_RECOVERY_ATTEMPTS).await
     }
 
-    // Need to create a new browser
-    // Priority: CHROMIUM_REMOTE_DEBUGGING_URL env var > REMOTE_URL_OVERRIDE task_local
-    let remote_debugging_url = std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL")
-        .ok()
-        .filter(|url| !url.is_empty())
-        .or_else(|| {
-            REMOTE_URL_OVERRIDE
-                .try_with(|url| url.clone())
-                .ok()
-                .filter(|url| !url.is_empty())
-        });
+    /// Get or create browser with automatic recovery
+    async fn get_browser_with_recovery(
+        &self,
+        max_attempts: u32,
+    ) -> Result<Arc<Browser>, EngineError> {
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
 
-    // Get proxy URL from task_local or request
-    let proxy_url = std::env::var("CRAWLRS_PROXY_URL")
-        .ok()
-        .filter(|url| !url.is_empty())
-        .or_else(|| {
-            PROXY_URL_OVERRIDE
-                .try_with(|url| url.clone())
-                .ok()
-                .flatten()
-                .filter(|url| !url.is_empty())
-        });
+            match self.get_or_init_browser().await {
+                Ok(browser) => return Ok(browser),
+                Err(e) if attempts < max_attempts => {
+                    tracing::warn!(
+                        "Browser initialization attempt {} failed: {}, retrying...",
+                        attempts,
+                        e
+                    );
+                    self.cleanup().await;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
 
-    let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
-        tracing::info!("Connecting to remote Chrome instance at: {}", url);
-        Browser::connect(url)
+    /// Internal function to get or initialize browser
+    async fn get_or_init_browser(&self) -> Result<Arc<Browser>, EngineError> {
+        // 使用 BrowserConfigComponent 获取配置
+        let config: Arc<dyn BrowserConfigTrait> = Arc::new(BrowserConfigComponent::new());
+        let test_mode = config.is_test_mode();
+
+        // Try to get the existing browser (clone outside lock to avoid holding across await)
+        let browser_to_check = {
+            let browser_guard = self.browser.lock().unwrap();
+            browser_guard.as_ref().map(Arc::clone)
+        };
+
+        if let Some(browser) = browser_to_check {
+            // Check if browser is still healthy (now outside the lock)
+            if check_browser_health(&browser).await {
+                // In test mode, don't reuse browser to avoid conflicts
+                if !test_mode {
+                    return Ok(browser);
+                }
+            }
+            // Browser is not healthy or in test mode, drop it
+        }
+
+        // Need to create a new browser
+        let remote_debugging_url = config.get_remote_debugging_url();
+        let proxy_url = config.get_proxy_url();
+
+        let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
+            tracing::info!("Connecting to remote Chrome instance at: {}", url);
+            Browser::connect(url).await.map_err(|e| {
+                EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
+            })?
+        } else {
+            let mut builder = BrowserConfig::builder()
+                .no_sandbox()
+                .request_timeout(Duration::from_secs(30));
+
+            builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
+
+            if let Some(ref proxy) = proxy_url {
+                tracing::info!("Using proxy for Playwright: {}", proxy);
+                builder = builder.arg(format!("--proxy-server={}", proxy));
+            }
+
+            Browser::launch(
+                builder
+                    .build()
+                    .map_err(|e| EngineError::Other(e.to_string()))?,
+            )
             .await
-            .map_err(|e| EngineError::Other(format!("Failed to connect to remote Chrome: {}", e)))?
-    } else {
-        let mut builder = BrowserConfig::builder()
-            .no_sandbox()
-            .request_timeout(Duration::from_secs(30)); // Default timeout
+            .map_err(|e| EngineError::Other(e.to_string()))?
+        };
 
-        // Production environment setup
-        builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
-
-        // Add proxy server argument if configured
-        if let Some(ref proxy) = proxy_url {
-            tracing::info!("Using proxy for Playwright: {}", proxy);
-            builder = builder.arg(format!("--proxy-server={}", proxy));
-        }
-
-        Browser::launch(
-            builder
-                .build()
-                .map_err(|e| EngineError::Other(e.to_string()))?,
-        )
-        .await
-        .map_err(|e| EngineError::Other(e.to_string()))?
-    };
-
-    // Spawn a handler to process browser events
-    tokio::spawn(async move {
-        while let Some(h) = handler.next().await {
-            // Continue processing even if there's an error
-            // This prevents the handler from stopping unexpectedly
-            if let Err(e) = h {
-                tracing::debug!("Browser handler event error (continuing): {:?}", e);
+        // Spawn a handler to process browser events
+        tokio::spawn(async move {
+            while let Some(h) = handler.next().await {
+                if let Err(e) = h {
+                    tracing::debug!("Browser handler event error (continuing): {:?}", e);
+                }
             }
+        });
+
+        let browser = Arc::new(browser);
+
+        // Store the browser in the manager
+        {
+            let mut browser_guard = self.browser.lock().unwrap();
+            *browser_guard = Some(Arc::clone(&browser));
         }
-    });
 
-    let browser = Arc::new(browser);
-
-    // Store the browser in the global instance
-    {
-        let mut browser_guard = browser_instance
-            .lock()
-            .map_err(|e| EngineError::Other(format!("Browser lock poisoned: {}", e)))?;
-        *browser_guard = Some(Arc::clone(&browser));
+        Ok(browser)
     }
 
-    Ok(browser)
+    /// Clean up browser instance
+    pub async fn cleanup(&self) {
+        let mut guard = self.browser.lock().unwrap();
+        if let Some(browser) = guard.take() {
+            tracing::info!("Closing browser instance");
+            drop(browser);
+        }
+    }
+}
+
+impl Default for BrowserManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Check if browser is still healthy and can be used
 pub async fn check_browser_health(browser: &Browser) -> bool {
-    // Try to create a new page to check if browser is still responsive
     match browser.new_page("about:blank").await {
         Ok(page) => {
-            // Close the test page
             let _ = page.close().await;
             true
         }
         Err(_) => false,
-    }
-}
-
-/// Reset the global browser instance
-/// Note: OnceLock cannot be reset, so this is a no-op
-/// Tests should use different remote URLs or run separately
-pub fn reset_browser() {
-    // No-op: OnceLock cannot be reset
-    // Tests should run with --test-threads=1 or use unique remote URLs
-}
-
-/// Clean up and close the global browser instance
-/// This should be called when shutting down the application
-pub async fn cleanup_browser() {
-    let browser_instance = BROWSER_INSTANCE.get();
-
-    if let Some(instance) = browser_instance {
-        if let Ok(mut guard) = instance.lock() {
-            if let Some(browser) = guard.take() {
-                // Close all pages and then browser
-                tracing::info!("Closing browser instance");
-                drop(browser);
-            }
-        }
-        // If lock fails during cleanup, it's best-effort anyway
     }
 }
 
@@ -217,9 +386,12 @@ impl ScraperEngine for PlaywrightEngine {
     ///
     /// # 返回值
     ///
-    /// * `Ok(ScrapeResponse)` - 抓取响应
+    /// * `Ok(InternalScrapeResponse)` - 抓取响应
     /// * `Err(EngineError)` - 抓取过程中出现的错误
-    async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+    async fn scrape(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
         // SSRF protection
         validators::validate_url(&request.url)
             .await
@@ -237,10 +409,8 @@ impl ScraperEngine for PlaywrightEngine {
 
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
-            // Set proxy URL for browser configuration
-            let _proxy_guard = PROXY_URL_OVERRIDE.scope(request.proxy.clone(), async {});
-
-            let browser = get_browser().await?;
+            let browser_manager = BrowserManager::new();
+            let browser = browser_manager.get_browser().await?;
 
             // Create new page and navigate
             let page = browser.new_page("about:blank").await
@@ -287,10 +457,10 @@ impl ScraperEngine for PlaywrightEngine {
             // 执行页面交互动作
             for action in &request.actions {
                 match action {
-                    ScrapeAction::Wait { milliseconds } => {
+                    InternalPageAction::Wait { milliseconds } => {
                         tokio::time::sleep(Duration::from_millis(*milliseconds)).await;
                     }
-                    ScrapeAction::Click { selector } => {
+                    InternalPageAction::Click { selector } => {
                         page.find_element(selector)
                             .await
                             .map_err(|e| EngineError::BrowserError(format!("Click failed, element not found: {}", e)))?
@@ -298,7 +468,7 @@ impl ScraperEngine for PlaywrightEngine {
                             .await
                             .map_err(|e| EngineError::BrowserError(format!("Click failed: {}", e)))?;
                     }
-                    ScrapeAction::Scroll { direction } => {
+                    InternalPageAction::Scroll { direction } => {
                         let script = match direction.as_str() {
                             "down" => "window.scrollBy(0, window.innerHeight);",
                             "up" => "window.scrollBy(0, -window.innerHeight);",
@@ -310,11 +480,11 @@ impl ScraperEngine for PlaywrightEngine {
                             .await
                             .map_err(|e| EngineError::BrowserError(format!("Scroll failed: {}", e)))?;
                     }
-                    ScrapeAction::Screenshot { full_page: _ } => {
+                    InternalPageAction::Screenshot { full_page: _ } => {
                         // 此处动作生成的截图暂不直接返回，仅作为交互过程的一部分
                         // 如果需要保存，可能需要额外的逻辑处理
                     }
-                    ScrapeAction::Input { selector, text } => {
+                    InternalPageAction::Input { selector, text } => {
                         page.find_element(selector)
                             .await
                             .map_err(|e| EngineError::BrowserError(format!("Input failed, element not found: {}", e)))?
@@ -367,7 +537,7 @@ impl ScraperEngine for PlaywrightEngine {
             let mut screenshot: Option<String> = None;
 
             if request.needs_screenshot {
-                let config = request.screenshot_config.clone().unwrap_or(crate::engines::traits::ScreenshotConfig {
+                let config = request.screenshot_config.clone().unwrap_or(InternalScreenshotConfig {
                     full_page: true,
                     selector: None,
                     quality: Some(80),
@@ -410,7 +580,7 @@ impl ScraperEngine for PlaywrightEngine {
             // Note: The browser is no longer closed here to allow for reuse.
             // It will be closed when the application shuts down.
 
-            Ok(ScrapeResponse {
+            Ok(InternalScrapeResponse {
                 status_code,
                 content,
                 screenshot,
@@ -432,7 +602,7 @@ impl ScraperEngine for PlaywrightEngine {
     /// # 返回值
     ///
     /// 支持分数（0-100），需要JS或截图的请求返回100分
-    fn support_score(&self, request: &ScrapeRequest) -> u8 {
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
         if request.needs_js || request.needs_screenshot {
             return 100;
         }
@@ -458,6 +628,7 @@ impl ScraperEngine for PlaywrightEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engines::engine_client::InternalScrapeRequest;
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -466,7 +637,7 @@ mod tests {
         let engine = PlaywrightEngine;
 
         // Test with JS requirement
-        let request_js = ScrapeRequest {
+        let request_js = InternalScrapeRequest {
             url: "http://example.com".to_string(),
             headers: HashMap::new(),
             timeout: Duration::from_secs(30),
@@ -484,7 +655,7 @@ mod tests {
         assert_eq!(engine.support_score(&request_js), 100);
 
         // Test with Screenshot requirement
-        let request_screenshot = ScrapeRequest {
+        let request_screenshot = InternalScrapeRequest {
             url: "http://example.com".to_string(),
             headers: HashMap::new(),
             timeout: Duration::from_secs(30),
@@ -502,7 +673,7 @@ mod tests {
         assert_eq!(engine.support_score(&request_screenshot), 100);
 
         // Test with neither (basic request)
-        let request_basic = ScrapeRequest {
+        let request_basic = InternalScrapeRequest {
             url: "http://example.com".to_string(),
             headers: HashMap::new(),
             timeout: Duration::from_secs(30),

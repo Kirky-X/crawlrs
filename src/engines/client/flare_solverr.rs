@@ -13,11 +13,11 @@
 //! - Cloudflare-protected sites
 //! - Sites with strong anti-bot measures
 
-use crate::engines::traits::{
-    EngineError, ScrapeAction, ScrapeRequest, ScrapeResponse, ScraperEngine,
+use crate::engines::engine_client::{
+    EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use async_trait::async_trait;
-use reqwest::{Client, ClientBuilder};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -70,7 +70,7 @@ fn validate_flaresolverr_url(url: &str) -> Result<String, String> {
 #[derive(Debug, Clone)]
 pub struct FlareSolverrEngine {
     /// HTTP client for FlareSolverr API
-    client: Client,
+    client: Arc<Client>,
     /// FlareSolverr configuration
     config: FlareSolverrConfig,
     /// Session ID for persistent sessions
@@ -79,27 +79,22 @@ pub struct FlareSolverrEngine {
 
 impl FlareSolverrEngine {
     /// Create a new FlareSolverrEngine with default configuration
-    pub fn new() -> Self {
-        Self::with_config(FlareSolverrConfig::default())
+    pub fn new(client: Arc<Client>) -> Self {
+        Self::with_config(client, FlareSolverrConfig::default())
     }
 
     /// Create a new FlareSolverrEngine from configuration URL
-    pub fn with_url(url: impl Into<String>) -> Self {
+    pub fn with_url(client: Arc<Client>, url: impl Into<String>) -> Self {
         let config = FlareSolverrConfig {
             url: url.into(),
             timeout_seconds: 60,
             session_id: None,
         };
-        Self::with_config(config)
+        Self::with_config(client, config)
     }
 
     /// Create a new FlareSolverrEngine with custom configuration
-    pub fn with_config(config: FlareSolverrConfig) -> Self {
-        let client = ClientBuilder::new()
-            .timeout(Duration::from_secs(config.timeout_seconds + 10))
-            .build()
-            .expect("Failed to create HTTP client for FlareSolverr");
-
+    pub fn with_config(client: Arc<Client>, config: FlareSolverrConfig) -> Self {
         let session_id = config.session_id.clone();
 
         Self {
@@ -234,8 +229,8 @@ impl FlareSolverrEngineBuilder {
     }
 
     /// Build the FlareSolverrEngine
-    pub fn build(self) -> FlareSolverrEngine {
-        FlareSolverrEngine::with_config(self.config)
+    pub fn build(self, client: Arc<Client>) -> FlareSolverrEngine {
+        FlareSolverrEngine::with_config(client, self.config)
     }
 }
 
@@ -324,7 +319,10 @@ struct FlareSolverrSolution {
 #[async_trait]
 impl ScraperEngine for FlareSolverrEngine {
     /// Execute a scraping request using FlareSolverr
-    async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+    async fn scrape(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
         let start_time = std::time::Instant::now();
 
         // Build FlareSolverr request
@@ -332,7 +330,7 @@ impl ScraperEngine for FlareSolverrEngine {
             cmd: "request.get".to_string(),
             url: request.url.clone(),
             session: self.session_id.clone(),
-            max_timeout: Some(request.timeout.as_secs() as u64 * 1000), // Convert to milliseconds
+            max_timeout: Some(request.timeout.as_millis() as u64),
             return_screenshot: None,
             wait_in_seconds: if request.sync_wait_ms > 0 {
                 Some(request.sync_wait_ms as u64 / 1000)
@@ -434,7 +432,7 @@ impl ScraperEngine for FlareSolverrEngine {
         }
 
         // Build response - FlareSolverr returns HTML content
-        let scrape_response = ScrapeResponse {
+        let scrape_response = InternalScrapeResponse {
             status_code: solution.status,
             content: solution.response,
             content_type: headers
@@ -468,7 +466,7 @@ impl ScraperEngine for FlareSolverrEngine {
     /// - JavaScript-heavy sites (returns 100)
     /// - Cloudflare/protected sites (returns 100)
     /// - Static content (returns 80, slightly lower than Reqwest for performance)
-    fn support_score(&self, request: &ScrapeRequest) -> u8 {
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
         // FlareSolverr is excellent for JS rendering and anti-bot protection
         if request.needs_js {
             return 100;

@@ -6,16 +6,20 @@
 use crate::engines::client::flaresolverr_types::{
     FlareSolverrRequest, FlareSolverrResponse, FlareSolverrSolution,
 };
-use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+use crate::engines::engine_client::{
+    EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+};
 use async_trait::async_trait;
 use std::time::Instant;
+
+use std::sync::Arc;
 
 /// Fire Engine (CDP) 实现
 ///
 /// 支持完整的浏览器自动化，包括 JS 渲染、截图和 TLS 指纹对抗。
 /// 成本较高，速度较慢。
 pub struct FireEngineCdp {
-    client: reqwest::Client,
+    client: Arc<reqwest::Client>,
     base_url: String,
     /// 代理配置
     proxy_url: Option<String>,
@@ -23,8 +27,7 @@ pub struct FireEngineCdp {
 
 impl FireEngineCdp {
     /// 创建新的 FireEngineCdp 实例
-    pub fn new() -> Self {
-        let client = reqwest::Client::builder().build().unwrap_or_default();
+    pub fn new(client: Arc<reqwest::Client>) -> Self {
         Self {
             client,
             base_url: String::new(),
@@ -33,14 +36,8 @@ impl FireEngineCdp {
     }
 
     /// 创建带有代理配置的 FireEngineCdp 实例
-    pub fn with_proxy(proxy: &str) -> Self {
-        let proxy_result = reqwest::Proxy::https(proxy);
-        let client_builder = reqwest::Client::builder();
-        let client_builder = match proxy_result {
-            Ok(p) => client_builder.proxy(p),
-            Err(_) => client_builder,
-        };
-        let client = client_builder.build().unwrap_or_default();
+    /// 注意：这里的 proxy 仅用于设置 FireEngine 的内部配置，实际 HTTP Client 应该已经配置好或由调用方负责
+    pub fn with_proxy(client: Arc<reqwest::Client>, proxy: &str) -> Self {
         Self {
             client,
             base_url: String::new(),
@@ -49,14 +46,11 @@ impl FireEngineCdp {
     }
 
     /// 创建带有 base URL 和代理配置的实例
-    pub fn with_url_and_proxy(base_url: &str, proxy: Option<&str>) -> Self {
-        let proxy_result = proxy.map(|p| reqwest::Proxy::https(p)).transpose();
-        let client_builder = reqwest::Client::builder();
-        let client_builder = match proxy_result {
-            Ok(Some(p)) => client_builder.proxy(p),
-            _ => client_builder,
-        };
-        let client = client_builder.build().unwrap_or_default();
+    pub fn with_url_and_proxy(
+        client: Arc<reqwest::Client>,
+        base_url: &str,
+        proxy: Option<&str>,
+    ) -> Self {
         Self {
             client,
             base_url: base_url.to_string(),
@@ -65,15 +59,12 @@ impl FireEngineCdp {
     }
 }
 
-impl Default for FireEngineCdp {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[async_trait]
 impl ScraperEngine for FireEngineCdp {
-    async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+    async fn scrape(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
         let start = Instant::now();
 
         // Determine proxy to use: request-level override or engine-level default
@@ -128,7 +119,7 @@ impl ScraperEngine for FireEngineCdp {
             .cloned()
             .unwrap_or_else(|| "text/html".to_string());
 
-        Ok(ScrapeResponse {
+        Ok(InternalScrapeResponse {
             status_code: solution.status,
             content: solution.response,
             screenshot: None, // FlareSolverr doesn't return screenshots in this struct
@@ -138,7 +129,7 @@ impl ScraperEngine for FireEngineCdp {
         })
     }
 
-    fn support_score(&self, request: &ScrapeRequest) -> u8 {
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
         // 如果需要 TLS 指纹且需要截图，这是最佳选择
         if request.needs_tls_fingerprint && request.needs_screenshot {
             return 100;

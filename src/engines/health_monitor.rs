@@ -3,8 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#![allow(deprecated)]
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -13,7 +11,9 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::warn;
 
-use crate::engines::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+use crate::engines::engine_client::{
+    EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+};
 
 /// 引擎健康状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,14 +62,18 @@ pub struct HealthCheckConfig {
 
 impl Default for HealthCheckConfig {
     fn default() -> Self {
+        // 使用配置服务获取健康检查 URL，如果不可用则回退到环境变量
+        let target_url = std::env::var("CRAWLRS_HEALTH_CHECK_URL")
+            .or_else(|_| std::env::var("APP_ENVIRONMENT"))
+            .unwrap_or_else(|_| "https://www.google.com".to_string());
+
         Self {
             check_interval: Duration::from_secs(60),
             timeout: Duration::from_secs(10),
             max_consecutive_failures: 3,
             degraded_threshold_ms: 2000,
             unhealthy_threshold_ms: 5000,
-            target_url: std::env::var("CRAWLRS_HEALTH_CHECK_URL")
-                .unwrap_or_else(|_| "https://www.google.com".to_string()),
+            target_url,
         }
     }
 }
@@ -161,7 +165,7 @@ impl EngineHealthMonitor {
         let start_time = std::time::Instant::now();
 
         // 创建测试请求
-        let test_request = ScrapeRequest {
+        let test_request = InternalScrapeRequest {
             url: self.config.target_url.clone(),
             headers: std::collections::HashMap::new(),
             timeout: self.config.timeout,
@@ -316,14 +320,17 @@ pub enum AggregateHealthStatus {
 
 #[async_trait]
 impl ScraperEngine for EngineHealthMonitor {
-    async fn scrape(&self, _request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+    async fn scrape(
+        &self,
+        _request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
         // 健康监控器本身不执行抓取，只提供监控功能
         Err(EngineError::Other(
             "Health monitor cannot perform scraping".to_string(),
         ))
     }
 
-    fn support_score(&self, _request: &ScrapeRequest) -> u8 {
+    fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
         0
     }
 

@@ -13,8 +13,6 @@
 
 use crate::engines::health_monitor::{AggregateHealthStatus, EngineHealthMonitor};
 use crate::engines::router::EngineRouter;
-use crate::engines::traits::ScrapeRequest as InternalScrapeRequest;
-use crate::engines::traits::ScrapeResponse as InternalScrapeResponse;
 use crate::engines::validators::validate_url;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -285,6 +283,139 @@ impl ScrapeResponse {
     }
 }
 
+// === Internal Request/Response Types for Router ===
+// These are used internally by EngineRouter and engines
+
+/// Internal request type for engine operations
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct InternalScrapeRequest {
+    pub url: String,
+    pub headers: HashMap<String, String>,
+    pub timeout: Duration,
+    pub needs_js: bool,
+    pub needs_screenshot: bool,
+    pub screenshot_config: Option<InternalScreenshotConfig>,
+    pub mobile: bool,
+    pub proxy: Option<String>,
+    pub skip_tls_verification: bool,
+    pub needs_tls_fingerprint: bool,
+    pub use_fire_engine: bool,
+    pub actions: Vec<InternalPageAction>,
+    pub sync_wait_ms: u32,
+}
+
+/// Internal screenshot configuration
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct InternalScreenshotConfig {
+    pub full_page: bool,
+    pub selector: Option<String>,
+    pub quality: Option<u8>,
+    pub format: Option<String>,
+}
+
+/// Internal page action for engine operations
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum InternalPageAction {
+    Wait { milliseconds: u64 },
+    Click { selector: String },
+    Scroll { direction: String },
+    Input { selector: String, text: String },
+}
+
+/// Internal response type for engine operations
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct InternalScrapeResponse {
+    pub status_code: u16,
+    pub content: String,
+    pub screenshot: Option<String>,
+    pub content_type: String,
+    pub headers: HashMap<String, String>,
+    pub response_time_ms: u64,
+}
+
+/// Convert from public ScrapeRequest to internal format
+impl ScrapeRequest {
+    #[inline]
+    pub(crate) fn to_internal(&self) -> InternalScrapeRequest {
+        let options = &self.options;
+
+        let actions: Vec<InternalPageAction> = options
+            .actions
+            .iter()
+            .map(|action| match action {
+                PageAction::Wait { milliseconds } => InternalPageAction::Wait {
+                    milliseconds: *milliseconds,
+                },
+                PageAction::Click { selector } => InternalPageAction::Click {
+                    selector: selector.clone(),
+                },
+                PageAction::Scroll { direction } => {
+                    let direction_str = match direction {
+                        ScrollDirection::Down => "down",
+                        ScrollDirection::Up => "up",
+                        ScrollDirection::Bottom => "bottom",
+                        ScrollDirection::Top => "top",
+                    };
+                    InternalPageAction::Scroll {
+                        direction: direction_str.to_string(),
+                    }
+                }
+                PageAction::Input { selector, text } => InternalPageAction::Input {
+                    selector: selector.clone(),
+                    text: text.clone(),
+                },
+            })
+            .collect();
+
+        let screenshot_config =
+            options
+                .screenshot_config
+                .as_ref()
+                .map(|config| InternalScreenshotConfig {
+                    full_page: config.full_page,
+                    selector: config.selector.clone(),
+                    quality: config.quality,
+                    format: config.format.clone(),
+                });
+
+        InternalScrapeRequest {
+            url: self.url.clone(),
+            headers: options.headers.clone(),
+            timeout: options.timeout,
+            needs_js: options.needs_js,
+            needs_screenshot: options.needs_screenshot,
+            screenshot_config,
+            mobile: options.mobile,
+            proxy: options.proxy.clone(),
+            skip_tls_verification: options.skip_tls_verification,
+            needs_tls_fingerprint: options.needs_tls_fingerprint,
+            use_fire_engine: options.use_fire_engine,
+            actions,
+            sync_wait_ms: options.sync_wait_ms,
+        }
+    }
+}
+
+/// Convert from internal ScrapeResponse to public format
+impl InternalScrapeResponse {
+    #[inline]
+    pub fn to_public(&self, original_url: &str) -> ScrapeResponse {
+        ScrapeResponse {
+            status_code: self.status_code,
+            content: self.content.clone(),
+            screenshot: self.screenshot.clone(),
+            content_type: self.content_type.clone(),
+            headers: self.headers.clone(),
+            response_time_ms: self.response_time_ms,
+            final_url: Some(original_url.to_string()),
+        }
+    }
+}
+
 /// Engine error types for EngineClient operations.
 #[derive(Error, Debug)]
 pub enum EngineError {
@@ -297,6 +428,10 @@ pub enum EngineError {
     Timeout(Duration),
 
     /// All engines are unavailable
+    #[error("All engines failed: {0}")]
+    AllEnginesFailed(String),
+
+    /// No engines available for the request
     #[error("No engines available")]
     NoEnginesAvailable,
 
@@ -311,6 +446,14 @@ pub enum EngineError {
     /// Browser/Playwright error
     #[error("Browser error: {0}")]
     BrowserError(String),
+
+    /// Request expired (circuit breaker open)
+    #[error("Request expired")]
+    Expired,
+
+    /// Other error
+    #[error("Other error: {0}")]
+    Other(String),
 
     /// Internal error
     #[error("Internal error: {0}")]
@@ -347,8 +490,36 @@ impl EngineError {
             Self::SsrfProtection(_) => false,
             Self::BrowserError(_) => true,
             Self::Internal(_) => false,
+            Self::AllEnginesFailed(_) => false,
+            Self::Expired => false,
+            Self::Other(_) => false,
         }
     }
+}
+
+use async_trait::async_trait;
+
+/// ScraperEngine trait - abstraction for different scraping engines
+///
+/// This trait defines the interface that all scraping engines must implement.
+/// Each engine provides different capabilities (JS rendering, TLS fingerprinting, etc.)
+/// and is scored based on how well it matches the request requirements.
+#[async_trait]
+pub trait ScraperEngine: Send + Sync {
+    /// Perform a scraping request
+    async fn scrape(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError>;
+
+    /// Calculate a support score for the given request
+    ///
+    /// Returns a score from 0-100 indicating how well this engine
+    /// supports the request. Higher scores indicate better support.
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8;
+
+    /// Get the engine name
+    fn name(&self) -> &'static str;
 }
 
 /// Health status of the engine system.
@@ -405,7 +576,7 @@ impl EngineClient {
     }
 
     /// Create an EngineClient with engines pre-registered.
-    pub fn with_engines(engines: Vec<Arc<dyn crate::engines::traits::ScraperEngine>>) -> Self {
+    pub fn with_engines(engines: Vec<Arc<dyn ScraperEngine>>) -> Self {
         let router = Arc::new(EngineRouter::new(engines));
         let engines_for_health = router.get_engines().clone();
         let health_monitor = Arc::new(EngineHealthMonitor::new(engines_for_health));
@@ -439,14 +610,11 @@ impl EngineClient {
         }
 
         // Convert to internal request format
-        let internal_request = InternalScrapeRequest::from_public(request);
+        let internal_request = request.to_internal();
 
         // Route to appropriate engine
         match self.router.route(&internal_request).await {
-            Ok(response) => Ok(InternalScrapeResponse::from_internal(
-                response,
-                &request.url,
-            )),
+            Ok(response) => Ok(response.to_public(&request.url)),
             Err(e) => Err(convert_error(e)),
         }
     }
@@ -496,25 +664,24 @@ impl Default for EngineClient {
 }
 
 /// Convert internal errors to public EngineError
-fn convert_error(e: crate::engines::traits::EngineError) -> EngineError {
+fn convert_error(e: EngineError) -> EngineError {
     match e {
-        crate::engines::traits::EngineError::RequestFailed(msg) => EngineError::RequestFailed(msg),
-        crate::engines::traits::EngineError::Timeout(duration) => EngineError::Timeout(duration),
-        crate::engines::traits::EngineError::AllEnginesFailed(msg) => {
+        EngineError::RequestFailed(msg) => EngineError::RequestFailed(msg),
+        EngineError::Timeout(duration) => EngineError::Timeout(duration),
+        EngineError::AllEnginesFailed(msg) => {
             if msg.contains("No suitable engines") {
                 EngineError::NoEnginesAvailable
             } else {
                 EngineError::RequestFailed(msg)
             }
         }
-        crate::engines::traits::EngineError::SsrfProtection(msg) => {
-            EngineError::SsrfProtection(msg)
-        }
-        crate::engines::traits::EngineError::BrowserError(msg) => EngineError::BrowserError(msg),
-        crate::engines::traits::EngineError::Expired => {
-            EngineError::Internal("Request expired".to_string())
-        }
-        crate::engines::traits::EngineError::Other(msg) => EngineError::Internal(msg),
+        EngineError::SsrfProtection(msg) => EngineError::SsrfProtection(msg),
+        EngineError::BrowserError(msg) => EngineError::BrowserError(msg),
+        EngineError::Expired => EngineError::Internal("Request expired".to_string()),
+        EngineError::Other(msg) => EngineError::Internal(msg),
+        EngineError::NoEnginesAvailable => EngineError::NoEnginesAvailable,
+        EngineError::InvalidUrl(msg) => EngineError::InvalidUrl(msg),
+        EngineError::Internal(msg) => EngineError::Internal(msg),
     }
 }
 

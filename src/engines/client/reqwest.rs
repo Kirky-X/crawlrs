@@ -3,44 +3,41 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#![allow(deprecated)]
-
-use super::super::traits::{EngineError, ScrapeRequest, ScrapeResponse, ScraperEngine};
+use crate::engines::engine_client::{
+    EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+};
 use crate::engines::validators;
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// 默认超时时间
 const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
 
-/// 默认HTTP客户端（无代理）
-static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECONDS))
-        .cookie_store(true)
-        .build()
-        .expect("Failed to build HTTP client")
-});
-
 /// 抓取引擎
 ///
 /// 基于reqwest实现的基本HTTP抓取引擎
 pub struct ReqwestEngine {
+    /// HTTP 客户端（通过依赖注入，支持连接复用）
+    http_client: Arc<reqwest::Client>,
     /// 全局代理URL（如果配置）
     proxy_url: Option<String>,
 }
 
 impl ReqwestEngine {
-    /// 创建新的 ReqwestEngine 实例（无代理）
-    pub fn new() -> Self {
-        Self { proxy_url: None }
+    /// 创建新的 ReqwestEngine 实例
+    pub fn new(http_client: Arc<reqwest::Client>) -> Self {
+        Self {
+            http_client,
+            proxy_url: None,
+        }
     }
 
     /// 创建带代理配置的 ReqwestEngine 实例
-    pub fn with_proxy(proxy_url: impl Into<String>) -> Self {
+    pub fn with_proxy(http_client: Arc<reqwest::Client>, proxy_url: impl Into<String>) -> Self {
         Self {
+            http_client,
             proxy_url: Some(proxy_url.into()),
         }
     }
@@ -69,14 +66,8 @@ impl ReqwestEngine {
             }
         }
 
-        // 返回默认无代理客户端
-        HTTP_CLIENT.clone()
-    }
-}
-
-impl Default for ReqwestEngine {
-    fn default() -> Self {
-        Self::new()
+        // 返回注入的 HTTP 客户端（Arc 被克隆但引用计数不变）
+        (*self.http_client).clone()
     }
 }
 
@@ -90,9 +81,12 @@ impl ScraperEngine for ReqwestEngine {
     ///
     /// # 返回值
     ///
-    /// * `Ok(ScrapeResponse)` - 抓取响应
+    /// * `Ok(InternalScrapeResponse)` - 抓取响应
     /// * `Err(EngineError)` - 抓取过程中出现的错误
-    async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+    async fn scrape(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
         // SSRF protection: validate all URLs to prevent access to internal services
         validators::validate_url(&request.url)
             .await
@@ -171,7 +165,7 @@ impl ScraperEngine for ReqwestEngine {
             tokio::time::sleep(Duration::from_millis(request.sync_wait_ms as u64)).await;
         }
 
-        Ok(ScrapeResponse {
+        Ok(InternalScrapeResponse {
             status_code,
             content,
             screenshot: None,
@@ -190,7 +184,7 @@ impl ScraperEngine for ReqwestEngine {
     /// # 返回值
     ///
     /// 支持分数（0-100），不支持JS和截图的请求返回100分
-    fn support_score(&self, request: &ScrapeRequest) -> u8 {
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
         if request.needs_js || request.needs_screenshot {
             return 10; // Low priority for unsupported features
         }
