@@ -3,6 +3,11 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Storage repository module
+//!
+//! Defines the storage repository interface and provides a no-op implementation
+//! for cases where storage is not configured.
+
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -36,4 +41,29 @@ pub trait StorageRepository: Send + Sync {
 
     /// 检查存储中是否存在指定键
     async fn exists(&self, key: &str) -> Result<bool, StorageError>;
+}
+
+/// No-op storage implementation
+///
+/// Used when storage is not configured. All operations are no-ops that return success.
+#[derive(Debug, Clone, Default)]
+pub struct NoOpStorage;
+
+#[async_trait::async_trait]
+impl StorageRepository for NoOpStorage {
+    async fn save(&self, _key: &str, _data: &[u8]) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    async fn get(&self, _key: &str) -> Result<Option<Vec<u8>>, StorageError> {
+        Ok(None)
+    }
+
+    async fn delete(&self, _key: &str) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    async fn exists(&self, _key: &str) -> Result<bool, StorageError> {
+        Ok(false)
+    }
 }

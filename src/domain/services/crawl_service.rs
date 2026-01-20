@@ -31,24 +31,34 @@ use uuid::Uuid;
 #[async_trait::async_trait]
 pub trait SystemMonitor: Send + Sync {
     /// 获取 CPU 使用率
-    fn get_cpu_usage() -> f64;
+    fn get_cpu_usage(&self) -> f64;
     /// 获取内存使用率
-    fn get_memory_usage() -> f64;
+    fn get_memory_usage(&self) -> f64;
 }
 
 /// 默认系统监控实现（使用基础设施层功能）
 #[cfg(feature = "metrics")]
-pub struct DefaultSystemMonitor;
+pub struct DefaultSystemMonitor {
+    monitor: crate::infrastructure::observability::metrics::SystemMonitorComponent,
+}
+
+#[cfg(feature = "metrics")]
+impl DefaultSystemMonitor {
+    /// 创建新的系统监控器，接受 SystemMonitorComponent 作为参数
+    pub fn new(monitor: crate::infrastructure::observability::metrics::SystemMonitorComponent) -> Self {
+        Self { monitor }
+    }
+}
 
 #[cfg(feature = "metrics")]
 #[async_trait::async_trait]
 impl SystemMonitor for DefaultSystemMonitor {
-    fn get_cpu_usage() -> f64 {
-        crate::infrastructure::observability::metrics::get_cpu_usage()
+    fn get_cpu_usage(&self) -> f64 {
+        crate::infrastructure::observability::metrics::get_cpu_usage_with_monitor(&self.monitor)
     }
 
-    fn get_memory_usage() -> f64 {
-        crate::infrastructure::observability::metrics::get_memory_usage()
+    fn get_memory_usage(&self) -> f64 {
+        crate::infrastructure::observability::metrics::get_memory_usage_with_monitor(&self.monitor)
     }
 }
 
@@ -60,6 +70,9 @@ pub struct CrawlService<R: TaskRepository, C: RobotsCheckerTrait = RobotsChecker
     repo: Arc<R>,
     /// Robots.txt检查器
     robots_checker: C,
+    /// 系统监控器（用于负载降级）
+    #[cfg(feature = "metrics")]
+    system_monitor: Option<Box<dyn SystemMonitor>>,
 }
 
 impl<R: TaskRepository> CrawlService<R, RobotsChecker> {
@@ -68,21 +81,61 @@ impl<R: TaskRepository> CrawlService<R, RobotsChecker> {
     /// # 参数
     ///
     /// * `repo` - 任务仓库实例
+    /// * `robots_checker` - Robots.txt检查器
+    /// * `system_monitor` - 系统监控器（可选）
     ///
     /// # 返回值
     ///
     /// 返回新的爬取服务实例
-    pub fn new(repo: Arc<R>) -> Self {
+    #[cfg(feature = "metrics")]
+    pub fn new(
+        repo: Arc<R>,
+        robots_checker: RobotsChecker,
+        system_monitor: Option<Box<dyn SystemMonitor>>,
+    ) -> Self {
         Self {
             repo,
-            robots_checker: RobotsChecker::new(None),
+            robots_checker,
+            system_monitor,
+        }
+    }
+
+    /// 创建新的爬取服务实例（无 metrics 功能）
+    #[cfg(not(feature = "metrics"))]
+    pub fn new(
+        repo: Arc<R>,
+        robots_checker: RobotsChecker,
+        _system_monitor: Option<Box<dyn SystemMonitor>>,
+    ) -> Self {
+        Self {
+            repo,
+            robots_checker,
         }
     }
 }
 
 impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
     /// 使用自定义Robots检查器创建新的爬取服务实例
-    pub fn new_with_checker(repo: Arc<R>, checker: C) -> Self {
+    #[cfg(feature = "metrics")]
+    pub fn new_with_checker(
+        repo: Arc<R>,
+        checker: C,
+        system_monitor: Option<Box<dyn SystemMonitor>>,
+    ) -> Self {
+        Self {
+            repo,
+            robots_checker: checker,
+            system_monitor,
+        }
+    }
+
+    /// 使用自定义Robots检查器创建新的爬取服务实例（无 metrics 功能）
+    #[cfg(not(feature = "metrics"))]
+    pub fn new_with_checker(
+        repo: Arc<R>,
+        checker: C,
+        _system_monitor: Option<Box<dyn SystemMonitor>>,
+    ) -> Self {
         Self {
             repo,
             robots_checker: checker,
@@ -189,8 +242,12 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
 
     #[cfg(feature = "metrics")]
     fn apply_load_degradation(&self, depth: u64, max_depth: u64) -> u64 {
-        let cpu_usage = DefaultSystemMonitor::get_cpu_usage();
-        let mem_usage = DefaultSystemMonitor::get_memory_usage();
+        let Some(ref monitor) = self.system_monitor else {
+            return max_depth;
+        };
+
+        let cpu_usage = monitor.get_cpu_usage();
+        let mem_usage = monitor.get_memory_usage();
 
         if cpu_usage > HIGH_LOAD_THRESHOLD || mem_usage > HIGH_LOAD_THRESHOLD {
             tracing::warn!(

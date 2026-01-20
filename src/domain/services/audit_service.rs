@@ -256,6 +256,32 @@ mod tests {
     }
 }
 
+/// Trait for AuditService - enables dependency injection
+#[async_trait::async_trait]
+pub trait AuditServiceTrait: Send + Sync {
+    /// Create a new audit log entry
+    async fn log(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError>;
+
+    /// Log an allow decision
+    async fn log_allow(
+        &self,
+        action: String,
+        api_key_id: Uuid,
+        team_id: Uuid,
+        scope: ApiKeyScope,
+    ) -> Result<(), AuditServiceError>;
+
+    /// Log a deny decision
+    async fn log_deny(
+        &self,
+        action: String,
+        api_key_id: Option<Uuid>,
+        team_id: Option<Uuid>,
+        reason: String,
+        scope: Option<ApiKeyScope>,
+    ) -> Result<(), AuditServiceError>;
+}
+
 /// Service for managing audit logs
 #[derive(Clone)]
 pub struct AuditService {
@@ -271,7 +297,7 @@ impl AuditService {
     }
 
     /// Create a new audit log entry
-    pub async fn log(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
+    pub async fn _log_impl(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
         debug!(
             "Creating audit log: action={}, decision={}",
             entry.requested_action, entry.decision
@@ -284,7 +310,7 @@ impl AuditService {
     }
 
     /// Log an allow decision
-    pub async fn log_allow(
+    pub async fn _log_allow_impl(
         &self,
         action: impl Into<String>,
         api_key_id: Uuid,
@@ -297,11 +323,11 @@ impl AuditService {
             .with_scope(scope)
             .build();
 
-        self.log(entry).await
+        self._log_impl(entry).await
     }
 
     /// Log a deny decision
-    pub async fn log_deny(
+    pub async fn _log_deny_impl(
         &self,
         action: impl Into<String>,
         api_key_id: Option<Uuid>,
@@ -316,7 +342,37 @@ impl AuditService {
             .with_scope(scope.unwrap_or_default())
             .build();
 
-        self.log(entry).await
+        self._log_impl(entry).await
+    }
+
+    /// Create a new audit log entry (public wrapper)
+    pub async fn log(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
+        self._log_impl(entry).await
+    }
+
+    /// Log an allow decision (public wrapper)
+    pub async fn log_allow(
+        &self,
+        action: impl Into<String>,
+        api_key_id: Uuid,
+        team_id: Uuid,
+        scope: ApiKeyScope,
+    ) -> Result<(), AuditServiceError> {
+        self._log_allow_impl(action, api_key_id, team_id, scope)
+            .await
+    }
+
+    /// Log a deny decision (public wrapper)
+    pub async fn log_deny(
+        &self,
+        action: impl Into<String>,
+        api_key_id: Option<Uuid>,
+        team_id: Option<Uuid>,
+        reason: impl Into<String>,
+        scope: Option<ApiKeyScope>,
+    ) -> Result<(), AuditServiceError> {
+        self._log_deny_impl(action, api_key_id, team_id, reason, scope)
+            .await
     }
 
     /// Get audit logs for an API Key
@@ -363,5 +419,35 @@ impl AuditService {
             .cleanup_old_logs(retention_days)
             .await
             .map_err(Into::into)
+    }
+}
+
+#[async_trait::async_trait]
+impl AuditServiceTrait for AuditService {
+    async fn log(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
+        self._log_impl(entry).await
+    }
+
+    async fn log_allow(
+        &self,
+        action: String,
+        api_key_id: Uuid,
+        team_id: Uuid,
+        scope: ApiKeyScope,
+    ) -> Result<(), AuditServiceError> {
+        self._log_allow_impl(action, api_key_id, team_id, scope)
+            .await
+    }
+
+    async fn log_deny(
+        &self,
+        action: String,
+        api_key_id: Option<Uuid>,
+        team_id: Option<Uuid>,
+        reason: String,
+        scope: Option<ApiKeyScope>,
+    ) -> Result<(), AuditServiceError> {
+        self._log_deny_impl(action, api_key_id, team_id, reason, scope)
+            .await
     }
 }

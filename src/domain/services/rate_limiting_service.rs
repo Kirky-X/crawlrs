@@ -5,7 +5,6 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use shaku::Interface;
 use uuid::Uuid;
 
 /// 限流策略类型
@@ -189,8 +188,7 @@ pub enum ConcurrencyResult {
 
 /// 限流服务接口（核心限流功能）
 #[async_trait]
-#[cfg(feature = "rate-limiting")]
-pub trait RateLimitService: Interface + Send + Sync {
+pub trait RateLimitService: Send + Sync {
     /// 检查API限流
     async fn check_rate_limit(
         &self,
@@ -217,8 +215,7 @@ pub trait RateLimitService: Interface + Send + Sync {
 
 /// 并发控制服务接口
 #[async_trait]
-#[cfg(feature = "rate-limiting")]
-pub trait ConcurrencyControlService: Interface + Send + Sync {
+pub trait ConcurrencyControlService: Send + Sync {
     /// 检查团队并发限制
     async fn check_team_concurrency(
         &self,
@@ -252,16 +249,14 @@ pub trait ConcurrencyControlService: Interface + Send + Sync {
 
 /// 积压任务服务接口
 #[async_trait]
-#[cfg(feature = "rate-limiting")]
-pub trait BacklogService: Interface + Send + Sync {
+pub trait BacklogService: Send + Sync {
     /// 处理积压任务
     async fn process_backlog_tasks(&self, team_id: Uuid) -> Result<u32, RateLimitingError>;
 }
 
 /// 配额/积分服务接口
 #[async_trait]
-#[cfg(feature = "rate-limiting")]
-pub trait QuotaService: Interface + Send + Sync {
+pub trait QuotaService: Send + Sync {
     /// 检查并扣除团队配额（Credits）
     async fn check_and_deduct_quota(
         &self,
@@ -278,7 +273,6 @@ pub trait QuotaService: Interface + Send + Sync {
 
 /// 组合接口：提供所有限流与并发控制功能（向后兼容）
 #[async_trait]
-#[cfg(feature = "rate-limiting")]
 pub trait RateLimitingService:
     RateLimitService + ConcurrencyControlService + BacklogService + QuotaService + Send + Sync
 {

@@ -54,6 +54,17 @@ impl From<anyhow::Error> for SearchServiceError {
 
 use crate::search::engine_trait::SearchEngine;
 
+/// Search service trait for trait object support.
+#[async_trait::async_trait]
+pub trait SearchServiceTrait: Send + Sync {
+    /// Perform search operation.
+    async fn search(
+        &self,
+        team_id: Uuid,
+        dto: SearchRequestDto,
+    ) -> Result<SearchResponseDto, SearchServiceError>;
+}
+
 pub struct SearchService<CR, TR, CRR> {
     crawl_repo: Arc<CR>,
     task_repo: Arc<TR>,
@@ -241,5 +252,22 @@ where
             .collect();
 
         Ok(filtered_results)
+    }
+}
+
+/// Implement SearchServiceTrait for SearchService when CR, TR, CRR implement the trait bounds.
+#[async_trait::async_trait]
+impl<CR, TR, CRR> SearchServiceTrait for SearchService<CR, TR, CRR>
+where
+    CR: CrawlRepository + 'static,
+    TR: TaskRepository + 'static,
+    CRR: CreditsRepository + 'static,
+{
+    async fn search(
+        &self,
+        team_id: Uuid,
+        dto: SearchRequestDto,
+    ) -> Result<SearchResponseDto, SearchServiceError> {
+        Self::search(self, team_id, dto).await
     }
 }

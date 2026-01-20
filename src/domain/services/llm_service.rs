@@ -5,8 +5,6 @@
 
 //! LLMService - LLM provider interaction handling
 
-#![allow(deprecated)]
-
 use crate::config::settings::Settings;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -15,14 +13,103 @@ use genai::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs;
 use std::sync::Arc;
 
+/// Token usage tracking for LLM calls
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+}
+
+/// Trait for template loading - enables DI and testing
+pub trait TemplateLoaderTrait: Send + Sync {
+    /// Load all templates
+    fn load_templates(&self) -> Result<HashMap<String, String>>;
+}
+
+/// Template loader wrapped in Arc for Clone support
+pub type TemplateLoader = Arc<dyn TemplateLoaderTrait>;
+
+/// File-based template loader (production implementation)
+pub struct FileTemplateLoader {
+    file_path: String,
+}
+
+impl FileTemplateLoader {
+    pub fn new(file_path: impl Into<String>) -> Self {
+        Self {
+            file_path: file_path.into(),
+        }
+    }
+
+    /// Create with default path
+    pub fn default_path() -> Self {
+        Self::new("config/prompts.toml")
+    }
+}
+
+impl Default for FileTemplateLoader {
+    fn default() -> Self {
+        Self::default_path()
+    }
+}
+
+impl TemplateLoaderTrait for FileTemplateLoader {
+    fn load_templates(&self) -> Result<HashMap<String, String>> {
+        let content = std::fs::read_to_string(&self.file_path)?;
+        let v: Value = toml::from_str(&content)?;
+
+        let mut templates = HashMap::new();
+        if let Some(extraction) = v.get("extraction") {
+            if let Some(json_tpl) = extraction.get("json").and_then(|t| t.as_str()) {
+                templates.insert("json".to_string(), json_tpl.to_string());
+            }
+            if let Some(md_tpl) = extraction.get("markdown").and_then(|t| t.as_str()) {
+                templates.insert("markdown".to_string(), md_tpl.to_string());
+            }
+        }
+        Ok(templates)
+    }
+}
+
+/// In-memory template loader (for testing)
+#[derive(Debug, Default, Clone)]
+pub struct InMemoryTemplateLoader {
+    templates: HashMap<String, String>,
+}
+
+impl InMemoryTemplateLoader {
+    pub fn new() -> Self {
+        Self {
+            templates: HashMap::new(),
+        }
+    }
+
+    pub fn with_template(mut self, name: impl Into<String>, content: impl Into<String>) -> Self {
+        self.templates.insert(name.into(), content.into());
+        self
+    }
+
+    /// Add default extraction templates
+    pub fn with_default_templates(mut self) -> Self {
+        self.templates.insert(
+            "json".to_string(),
+            "Extract JSON from {{text}} using schema {{schema}}".to_string(),
+        );
+        self.templates.insert(
+            "markdown".to_string(),
+            "Extract Markdown from {{text}}".to_string(),
+        );
+        self
+    }
+}
+
+impl TemplateLoaderTrait for InMemoryTemplateLoader {
+    fn load_templates(&self) -> Result<HashMap<String, String>> {
+        Ok(self.templates.clone())
+    }
 }
 
 #[async_trait]
@@ -36,6 +123,7 @@ pub trait LLMServiceTrait: Send + Sync {
 }
 
 /// LLM服务 - 处理与LLM提供商的交互
+#[derive(Clone)]
 pub struct LLMService {
     /// HTTP 客户端 (通过依赖注入的单例)
     http_client: Arc<reqwest::Client>,
@@ -49,13 +137,20 @@ pub struct LLMService {
     api_base_url: Option<String>,
     /// API 密钥
     api_key: Option<String>,
-    /// 提示模板
+    /// 提示模板加载器
+    template_loader: TemplateLoader,
+    /// 提示模板（缓存）
     templates: HashMap<String, String>,
 }
 
 impl LLMService {
-    pub fn new(settings: &Settings, http_client: Arc<reqwest::Client>) -> Self {
-        let templates = Self::load_templates().unwrap_or_default();
+    /// Create LLMService with settings and custom template loader
+    pub fn new_with_template_loader(
+        settings: &Settings,
+        http_client: Arc<reqwest::Client>,
+        template_loader: TemplateLoader,
+    ) -> Self {
+        let templates = template_loader.load_templates().unwrap_or_default();
         let mut provider = settings
             .llm
             .provider
@@ -84,21 +179,29 @@ impl LLMService {
             provider,
             api_base_url,
             api_key,
+            template_loader,
             templates,
         }
     }
 
-    pub fn new_with_config(_api_key: String, model: String, api_base_url: String, http_client: Arc<reqwest::Client>) -> Self {
-        let mut templates = HashMap::new();
-        // Fallback templates if loading fails
-        templates.insert(
-            "json".to_string(),
-            "Extract JSON from {{text}} using schema {{schema}}".to_string(),
-        );
-        templates.insert(
-            "markdown".to_string(),
-            "Extract Markdown from {{text}}".to_string(),
-        );
+    /// Create LLMService with settings (uses FileTemplateLoader)
+    pub fn new(settings: &Settings, http_client: Arc<reqwest::Client>) -> Self {
+        Self::new_with_template_loader(
+            settings,
+            http_client,
+            Arc::new(FileTemplateLoader::default()),
+        )
+    }
+
+    /// Create LLMService with explicit config and custom template loader
+    pub fn new_with_config_and_loader(
+        _api_key: String,
+        model: String,
+        api_base_url: String,
+        http_client: Arc<reqwest::Client>,
+        template_loader: TemplateLoader,
+    ) -> Self {
+        let templates = template_loader.load_templates().unwrap_or_default();
 
         Self {
             http_client,
@@ -107,24 +210,32 @@ impl LLMService {
             provider: "openai".to_string(),
             api_base_url: Some(api_base_url),
             api_key: Some(_api_key),
+            template_loader,
             templates,
         }
     }
 
-    fn load_templates() -> Result<HashMap<String, String>> {
-        let content = fs::read_to_string("config/prompts.toml")?;
-        let v: Value = toml::from_str(&content)?;
+    /// Create LLMService with explicit config (uses InMemoryTemplateLoader with defaults)
+    pub fn new_with_config(
+        _api_key: String,
+        model: String,
+        api_base_url: String,
+        http_client: Arc<reqwest::Client>,
+    ) -> Self {
+        let template_loader: TemplateLoader =
+            Arc::new(InMemoryTemplateLoader::new().with_default_templates());
+        let templates = template_loader.load_templates().unwrap_or_default();
 
-        let mut templates = HashMap::new();
-        if let Some(extraction) = v.get("extraction") {
-            if let Some(json_tpl) = extraction.get("json").and_then(|t| t.as_str()) {
-                templates.insert("json".to_string(), json_tpl.to_string());
-            }
-            if let Some(md_tpl) = extraction.get("markdown").and_then(|t| t.as_str()) {
-                templates.insert("markdown".to_string(), md_tpl.to_string());
-            }
+        Self {
+            http_client,
+            client: Client::default(),
+            model,
+            provider: "openai".to_string(),
+            api_base_url: Some(api_base_url),
+            api_key: Some(_api_key),
+            template_loader,
+            templates,
         }
-        Ok(templates)
     }
 }
 

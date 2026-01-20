@@ -3,13 +3,18 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! 相关性评分服务
+//!
+//! 提供搜索结果相关性评分功能，支持通过 DI 注入自定义日期解析器。
+
 use chrono::{DateTime, Duration, Utc};
-use once_cell::sync::Lazy;
 use regex::Regex;
+use shaku::{Component, Interface};
 use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 
-use crate::utils::regex_cache::RegexCache;
+use crate::utils::regex_cache::RegexCacheTrait;
 
 /// Relevance scorer errors
 #[derive(Error, Debug)]
@@ -42,57 +47,126 @@ impl From<anyhow::Error> for RelevanceScorerError {
 
 type DateParser = fn(&str) -> Option<DateTime<Utc>>;
 
-static DATE_REGEXES: Lazy<Vec<(Regex, DateParser)>> = Lazy::new(|| {
-    vec![
-        // ISO 8601 format: 2024-01-15T10:30:00Z
-        (Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z").expect("Invalid ISO 8601 date regex"), |s| {
-            DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))
-        }),
-        // Date format: 2024-01-15
-        (Regex::new(r"\d{4}-\d{2}-\d{2}").expect("Invalid date format regex"), |s| {
-            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
-                .and_then(|date| date.and_hms_opt(0, 0, 0).map(|d| d.and_utc()))
-        }),
-        // Relative time: 2 hours ago, 3 days ago, 1 week ago
-        (Regex::new(r"(\d+)\s+(hour|hours|day|days|week|weeks|month|months|year|years)\s+ago").expect("Invalid relative time regex"), |s| {
-            let relative_regex = Regex::new(r"(\d+)\s+(hour|hours|day|days|week|weeks|month|months|year|years)").expect("Invalid relative time pattern regex");
-            let captures = relative_regex.captures(s)?;
-            let num: i64 = captures.get(1)?.as_str().parse().ok()?;
-            let unit = captures.get(2)?.as_str();
+/// 日期解析器 trait（支持 DI）
+///
+/// 提供日期提取的抽象接口，便于测试时注入 mock 实现。
+pub trait DateParserTrait: Interface + Send + Sync {
+    /// 从文本中提取日期
+    fn extract_date(&self, text: &str) -> Option<DateTime<Utc>>;
+}
 
-            let duration = match unit {
-                "hour" | "hours" => Duration::hours(num),
-                "day" | "days" => Duration::days(num),
-                "week" | "weeks" => Duration::weeks(num),
-                "month" | "months" => Duration::days(num * 30),
-                "year" | "years" => Duration::days(num * 365),
-                _ => return None,
-            };
+/// 默认日期解析器组件
+///
+/// 预编译了常用日期格式的正则表达式。
+#[derive(Component)]
+#[shaku(interface = DateParserTrait)]
+pub struct DateParserComponent {
+    /// 预编译的日期正则表达式
+    date_regexes: Vec<(Regex, DateParser)>,
+}
 
-            Some(Utc::now() - duration)
-        }),
-        // Common formats: Jan 15, 2024, January 15, 2024
-        (Regex::new(r"(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|September|Oct|October|Nov|November|Dec|December)\s+(\d{1,2}),?\s+(\d{4})").expect("Invalid month format regex"), |s| {
-            chrono::NaiveDate::parse_from_str(s, "%b %d, %Y").ok()
-                .or_else(|| chrono::NaiveDate::parse_from_str(s, "%B %d, %Y").ok())
-                .and_then(|date| date.and_hms_opt(0, 0, 0).map(|d| d.and_utc()))
-        }),
-    ]
-});
+impl DateParserComponent {
+    /// 创建新的日期解析器组件
+    pub fn new() -> Self {
+        Self {
+            date_regexes: Self::init_date_regexes(),
+        }
+    }
 
-fn get_cached_regex(term: &str) -> Result<Regex, RelevanceScorerError> {
-    RegexCache::global()
-        .get_or_insert_escaped(term)
-        .map_err(RelevanceScorerError::RegexError)
+    /// Factory function: Create a DateParserComponent with default settings
+    ///
+    /// This is the recommended factory function for creating date parsers.
+    pub fn with_defaults() -> Self {
+        Self::new()
+    }
+
+    fn init_date_regexes() -> Vec<(Regex, DateParser)> {
+        vec![
+            // ISO 8601 format: 2024-01-15T10:30:00Z
+            (Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z").expect("Invalid ISO 8601 date regex"), |s| {
+                DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.with_timezone(&Utc))
+            }),
+            // Date format: 2024-01-15
+            (Regex::new(r"\d{4}-\d{2}-\d{2}").expect("Invalid date format regex"), |s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+                    .and_then(|date| date.and_hms_opt(0, 0, 0).map(|d| d.and_utc()))
+            }),
+            // Relative time: 2 hours ago, 3 days ago, 1 week ago
+            (Regex::new(r"(\d+)\s+(hour|hours|day|days|week|weeks|month|months|year|years)\s+ago").expect("Invalid relative time regex"), |s| {
+                let relative_regex = Regex::new(r"(\d+)\s+(hour|hours|day|days|week|weeks|month|months|year|years)").expect("Invalid relative time pattern regex");
+                let captures = relative_regex.captures(s)?;
+                let num: i64 = captures.get(1)?.as_str().parse().ok()?;
+                let unit = captures.get(2)?.as_str();
+
+                let duration = match unit {
+                    "hour" | "hours" => Duration::hours(num),
+                    "day" | "days" => Duration::days(num),
+                    "week" | "weeks" => Duration::weeks(num),
+                    "month" | "months" => Duration::days(num * 30),
+                    "year" | "years" => Duration::days(num * 365),
+                    _ => return None,
+                };
+
+                Some(Utc::now() - duration)
+            }),
+            // Common formats: Jan 15, 2024, January 15, 2024
+            (Regex::new(r"(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|September|Oct|October|Nov|November|Dec|December)\s+(\d{1,2}),?\s+(\d{4})").expect("Invalid month format regex"), |s| {
+                chrono::NaiveDate::parse_from_str(s, "%b %d, %Y").ok()
+                    .or_else(|| chrono::NaiveDate::parse_from_str(s, "%B %d, %Y").ok())
+                    .and_then(|date| date.and_hms_opt(0, 0, 0).map(|d| d.and_utc()))
+            }),
+        ]
+    }
+}
+
+impl Default for DateParserComponent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DateParserTrait for DateParserComponent {
+    fn extract_date(&self, text: &str) -> Option<DateTime<Utc>> {
+        for (regex, parser) in self.date_regexes.iter() {
+            if let Some(captures) = regex.find(text) {
+                if let Some(date) = parser(captures.as_str()) {
+                    return Some(date);
+                }
+            }
+        }
+        None
+    }
 }
 
 pub struct RelevanceScorer {
     query_terms: Vec<String>,
     term_weights: HashMap<String, f64>,
+    /// Regex cache for word boundary matching (optional, for DI)
+    regex_cache: Option<Arc<dyn RegexCacheTrait>>,
 }
 
 impl RelevanceScorer {
+    /// Create a new RelevanceScorer without regex cache
     pub fn new(query: &str) -> Self {
+        Self::new_with_cache(query, None)
+    }
+
+    /// Factory function: Create a RelevanceScorer for a query
+    ///
+    /// This is the recommended factory function for query-based scoring.
+    pub fn for_query(query: &str) -> Self {
+        Self::new(query)
+    }
+
+    /// Factory function: Create a RelevanceScorer with a specific engine name
+    ///
+    /// Use this when scoring results from a specific search engine.
+    pub fn with_engine(engine_name: &str) -> Self {
+        Self::new(engine_name)
+    }
+
+    /// Create a new RelevanceScorer with regex cache for dependency injection
+    pub fn new_with_cache(query: &str, regex_cache: Option<Arc<dyn RegexCacheTrait>>) -> Self {
         let query_lower = query.to_lowercase();
         let terms: Vec<String> = query_lower
             .split_whitespace()
@@ -118,6 +192,7 @@ impl RelevanceScorer {
         Self {
             query_terms: terms,
             term_weights,
+            regex_cache,
         }
     }
 
@@ -186,10 +261,14 @@ impl RelevanceScorer {
 
     /// Check if term appears at word boundaries
     fn has_word_boundary_match(&self, text: &str, term: &str) -> bool {
-        match get_cached_regex(term) {
-            Ok(regex) => regex.is_match(text),
-            Err(_) => text.contains(term), // Fallback to simple contains
+        // Use injected regex cache if available, otherwise use simple contains
+        if let Some(cache) = &self.regex_cache {
+            match cache.get_or_insert_escaped(term) {
+                Ok(regex) => return regex.is_match(text),
+                Err(_) => return text.contains(term),
+            }
         }
+        text.contains(term) // Fallback to simple contains when no cache
     }
 
     /// Check if domain is authoritative (simplified heuristic)
@@ -211,16 +290,15 @@ impl RelevanceScorer {
             .any(|domain| url.contains(domain))
     }
 
-    /// Extract publication date from text
-    pub fn extract_published_date(text: &str) -> Option<DateTime<Utc>> {
-        for (regex, parser) in DATE_REGEXES.iter() {
-            if let Some(captures) = regex.find(text) {
-                if let Some(date) = parser(captures.as_str()) {
-                    return Some(date);
-                }
-            }
-        }
-        None
+    /// Extract publication date from text using injected DateParser
+    ///
+    /// This is the recommended method for DI-based usage.
+    /// Inject `Arc<dyn DateParserTrait>` via the constructor or use this method directly.
+    pub fn extract_published_date_with_parser(
+        text: &str,
+        date_parser: &dyn DateParserTrait,
+    ) -> Option<DateTime<Utc>> {
+        date_parser.extract_date(text)
     }
 
     /// Calculate freshness score based on publication date
@@ -264,13 +342,14 @@ mod tests {
     }
 
     #[test]
-    fn test_date_extraction() {
+    fn test_date_extraction_with_parser() {
         let text = "Published on 2024-01-15T10:30:00Z, updated 2 days ago";
-        let date = RelevanceScorer::extract_published_date(text);
+        let parser = DateParserComponent::new();
+        let date = RelevanceScorer::extract_published_date_with_parser(text, &parser);
         assert!(date.is_some());
 
         let text2 = "Posted January 15, 2024";
-        let date2 = RelevanceScorer::extract_published_date(text2);
+        let date2 = RelevanceScorer::extract_published_date_with_parser(text2, &parser);
         assert!(date2.is_some());
     }
 
