@@ -11,6 +11,8 @@
 use std::sync::Arc;
 
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
+use crate::di::infrastructure_module::RedisClientTrait;
+use crate::di::search_module::HttpClientTrait;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -25,8 +27,6 @@ use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::geolocation::GeoLocationServiceTrait;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::utils::robots::RobotsCheckerTrait;
-use crate::di::search_module::HttpClientTrait;
-use crate::di::infrastructure_module::RedisClientTrait;
 
 /// Trait for RateLimitingService component
 pub trait RateLimitingServiceTrait: Send + Sync {

@@ -94,8 +94,7 @@ pub struct AuthRateLimiter {
 
 impl std::fmt::Debug for AuthRateLimiter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthRateLimiter")
-            .finish_non_exhaustive()
+        f.debug_struct("AuthRateLimiter").finish_non_exhaustive()
     }
 }
 
@@ -566,12 +565,12 @@ fn get_client_ip(req: &Request) -> Option<String> {
             return ip_str.split(',').next().map(|s| s.trim().to_string());
         }
     }
-    
+
     // Check X-Real-IP header
     if let Some(real_ip) = req.headers().get("x-real-ip") {
         return real_ip.to_str().ok().map(|s| s.to_string());
     }
-    
+
     // Fall back to socket address
     req.extensions()
         .get::<std::net::SocketAddr>()

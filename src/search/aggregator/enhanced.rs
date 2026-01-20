@@ -11,9 +11,9 @@ use tracing::{info, warn};
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::infrastructure::cache::cache_manager::CacheManager;
+use crate::infrastructure::cache::cache_strategy::CacheStrategyConfig;
 #[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
-use crate::infrastructure::cache::cache_strategy::CacheStrategyConfig;
 use crate::infrastructure::cache::types::CacheStats;
 
 /// 增强的搜索聚合器，集成智能缓存策略
@@ -272,7 +272,10 @@ impl EnhancedSearchAggregatorBuilder {
     ///
     /// 此方法为了向后兼容保留，新代码应使用 `redis_client()` 注入Redis客户端。
     #[cfg(feature = "redis-cache")]
-    #[deprecated(since = "0.1.0", note = "Use `redis_client()` with injected RedisClient instead")]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use `redis_client()` with injected RedisClient instead"
+    )]
     pub fn redis_url(mut self, redis_url: &str) -> Self {
         // 创建Redis客户端（deprecated方法）
         if let Ok(client) = RedisClient::new(redis_url) {
@@ -283,14 +286,11 @@ impl EnhancedSearchAggregatorBuilder {
 
     pub async fn build(self) -> Result<EnhancedSearchAggregator, anyhow::Error> {
         #[cfg(feature = "redis-cache")]
-        let cache_manager = Arc::new(
-            CacheManager::new(self.cache_config.clone(), self.redis_client).await?,
-        );
+        let cache_manager =
+            Arc::new(CacheManager::new(self.cache_config.clone(), self.redis_client).await?);
 
         #[cfg(not(feature = "redis-cache"))]
-        let cache_manager = Arc::new(
-            CacheManager::new(self.cache_config.clone(), None).await?,
-        );
+        let cache_manager = Arc::new(CacheManager::new(self.cache_config.clone(), None).await?);
 
         Ok(EnhancedSearchAggregator::new(
             self.engines,

@@ -45,7 +45,9 @@ pub struct DefaultSystemMonitor {
 #[cfg(feature = "metrics")]
 impl DefaultSystemMonitor {
     /// 创建新的系统监控器，接受 SystemMonitorComponent 作为参数
-    pub fn new(monitor: crate::infrastructure::observability::metrics::SystemMonitorComponent) -> Self {
+    pub fn new(
+        monitor: crate::infrastructure::observability::metrics::SystemMonitorComponent,
+    ) -> Self {
         Self { monitor }
     }
 }

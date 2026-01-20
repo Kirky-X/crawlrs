@@ -12,13 +12,13 @@ use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
 use crate::bootstrap::infrastructure::InfrastructureComponents;
 use crate::bootstrap::infrastructure::Repositories;
 use crate::config::settings::Settings;
-use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::audit_service::AuditService;
+use crate::domain::services::auth_scope_service::AuthScopeService;
+use crate::domain::services::llm_service::LLMService;
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy, RateLimitingService,
 };
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
-use crate::domain::services::llm_service::LLMService;
 use crate::domain::services::team_service::TeamService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
@@ -35,8 +35,8 @@ use crate::search::ab_test::SearchABTestEngine;
 use crate::search::aggregator::SearchAggregator;
 use crate::search::engine_trait::SearchEngine;
 use crate::search::smart as smart_search;
-use crate::utils::robots::RobotsChecker;
 use crate::utils::regex_cache::RegexCache;
+use crate::utils::robots::RobotsChecker;
 
 /// All application services.
 #[derive(Clone)]
@@ -266,10 +266,7 @@ pub fn init_auth_scope_service(db: &sea_orm::DbConn) -> Arc<AuthScopeService> {
 /// # Returns
 ///
 /// Returns an initialized LLM service wrapped in Arc.
-pub fn init_llm_service(
-    settings: &Settings,
-    http_client: Arc<reqwest::Client>,
-) -> Arc<LLMService> {
+pub fn init_llm_service(settings: &Settings, http_client: Arc<reqwest::Client>) -> Arc<LLMService> {
     Arc::new(LLMService::new(settings, http_client))
 }
 
@@ -351,11 +348,7 @@ pub fn init_services(
     );
 
     // Initialize search service
-    let search_service = init_search_service(
-        repositories,
-        settings,
-        search_engine_service.clone(),
-    );
+    let search_service = init_search_service(repositories, settings, search_engine_service.clone());
 
     // Initialize auth scope service
     let auth_scope_service = Some(init_auth_scope_service(&infrastructure.db));

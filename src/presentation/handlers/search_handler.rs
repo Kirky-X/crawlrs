@@ -14,9 +14,7 @@ use std::sync::Arc;
 use crate::{
     application::dto::search_request::SearchRequestDto,
     domain::{
-        repositories::{
-            task_repository::TaskRepository,
-        },
+        repositories::task_repository::TaskRepository,
         services::rate_limiting_service::{RateLimitResult, RateLimitingService},
         services::search_service::{SearchServiceError, SearchServiceTrait},
     },

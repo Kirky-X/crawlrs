@@ -48,10 +48,7 @@ use crate::workers::errors::ScrapeWorkerError;
 use crate::workers::task_state_machine::{TaskStateEvent, TaskStateMachine};
 
 /// 从缓存获取正则表达式
-fn get_cached_regex(
-    pattern: &str,
-    cache: &RegexCache,
-) -> Result<regex::Regex, ScrapeWorkerError> {
+fn get_cached_regex(pattern: &str, cache: &RegexCache) -> Result<regex::Regex, ScrapeWorkerError> {
     cache
         .get_or_insert(pattern)
         .map_err(ScrapeWorkerError::RegexError)

@@ -28,18 +28,14 @@ pub async fn create_webhook<R: WebhookRepository>(
 ) -> Result<(StatusCode, Json<Webhook>), AppError> {
     let team_id = auth_state.team_id;
     let api_key = auth_state.api_key_id.to_string();
-    
+
     // Validate webhook URL for SSRF protection
     match validate_url(&payload.url).await {
         Ok(_) => {}
         Err(e) => {
-            tracing::warn!(
-                "Webhook URL validation failed for team {}: {}",
-                team_id,
-                e
-            );
+            tracing::warn!("Webhook URL validation failed for team {}: {}", team_id, e);
             return Err(AppError::Validation(
-                "Invalid webhook URL: potential security risk detected".to_string()
+                "Invalid webhook URL: potential security risk detected".to_string(),
             ));
         }
     }

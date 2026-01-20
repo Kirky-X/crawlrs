@@ -52,7 +52,10 @@ impl CacheManager {
     /// * `config` - 缓存策略配置
     /// * `redis_client` - 可选的Redis客户端实例，如果使用Redis缓存则需要提供
     #[cfg(feature = "redis-cache")]
-    pub async fn new(config: CacheStrategyConfig, redis_client: Option<Arc<RedisClient>>) -> Result<Self> {
+    pub async fn new(
+        config: CacheStrategyConfig,
+        redis_client: Option<Arc<RedisClient>>,
+    ) -> Result<Self> {
         let strategy = CacheStrategyFactory::create_strategy(config.clone(), redis_client.clone());
 
         Ok(Self {
@@ -73,7 +76,10 @@ impl CacheManager {
     /// * `config` - 缓存策略配置
     /// * `redis_url` - Redis连接URL，如果为None则不使用Redis
     #[cfg(feature = "redis-cache")]
-    #[deprecated(since = "0.1.0", note = "Use `new()` with injected RedisClient instead")]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use `new()` with injected RedisClient instead"
+    )]
     pub async fn from_url(config: CacheStrategyConfig, redis_url: Option<&str>) -> Result<Self> {
         let redis_client = if let Some(url) = redis_url {
             Some(Arc::new(RedisClient::new(url)?))

@@ -208,37 +208,39 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Create SearchClient for AppState
-    let search_client = Arc::new(crawlrs::search::client::SearchClient::new(engines.engine_client.clone()));
+    let search_client = Arc::new(crawlrs::search::client::SearchClient::new(
+        engines.engine_client.clone(),
+    ));
 
     // Create AppState using struct literal
     let app_state = AppState {
-            db: infrastructure.db,
-            redis_client: infrastructure.redis_client,
-            task_repo: infrastructure.repositories.task_repo,
-            credits_repo: infrastructure.repositories.credits_repo,
-            crawl_repo: infrastructure.repositories.crawl_repo,
-            result_repo: infrastructure.repositories.result_repo,
-            webhook_repo: infrastructure.repositories.webhook_repo,
-            webhook_event_repo: infrastructure.repositories.webhook_event_repo,
-            tasks_backlog_repo: infrastructure.repositories.tasks_backlog_repo,
-            storage_repo: infrastructure.storage_repo.unwrap_or_else(|| {
-                Arc::new(crawlrs::domain::repositories::storage_repository::NoOpStorage)
-            }),
-            task_queue: services.queue,
-            rate_limiting_service: services.rate_limiting_service,
-            team_service: services.team_service,
-            webhook_service: services.webhook_service,
-            robots_checker: services.robots_checker,
-            team_semaphore: services.team_semaphore,
-            engine_router: engines.router,
-            engine_client: engines.engine_client,
-            search_client,
-            search_service: services.search_service,
-            auth_scope_service: services.auth_scope_service,
-            audit_service: services.audit_service,
-            llm_service: services.llm_service,
-            regex_cache: services.regex_cache,
-        };
+        db: infrastructure.db,
+        redis_client: infrastructure.redis_client,
+        task_repo: infrastructure.repositories.task_repo,
+        credits_repo: infrastructure.repositories.credits_repo,
+        crawl_repo: infrastructure.repositories.crawl_repo,
+        result_repo: infrastructure.repositories.result_repo,
+        webhook_repo: infrastructure.repositories.webhook_repo,
+        webhook_event_repo: infrastructure.repositories.webhook_event_repo,
+        tasks_backlog_repo: infrastructure.repositories.tasks_backlog_repo,
+        storage_repo: infrastructure.storage_repo.unwrap_or_else(|| {
+            Arc::new(crawlrs::domain::repositories::storage_repository::NoOpStorage)
+        }),
+        task_queue: services.queue,
+        rate_limiting_service: services.rate_limiting_service,
+        team_service: services.team_service,
+        webhook_service: services.webhook_service,
+        robots_checker: services.robots_checker,
+        team_semaphore: services.team_semaphore,
+        engine_router: engines.router,
+        engine_client: engines.engine_client,
+        search_client,
+        search_service: services.search_service,
+        auth_scope_service: services.auth_scope_service,
+        audit_service: services.audit_service,
+        llm_service: services.llm_service,
+        regex_cache: services.regex_cache,
+    };
 
     tracing::info!("Application dependencies initialized successfully");
 

@@ -75,7 +75,7 @@ impl SystemMonitorComponent {
                 return;
             }
         };
-        let mut sys = sys;  // Make mutable for refresh operations
+        let mut sys = sys; // Make mutable for refresh operations
         sys.refresh_cpu_all();
         sys.refresh_memory();
     }

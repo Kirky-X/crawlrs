@@ -3,8 +3,8 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::services::extraction_utils::ExtractableRule;
-pub use crate::domain::services::llm_service::TokenUsage;
 use crate::domain::services::llm_service::LLMServiceTrait;
+pub use crate::domain::services::llm_service::TokenUsage;
 use anyhow::Result;
 use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};

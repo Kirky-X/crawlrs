@@ -118,8 +118,9 @@ fn parse_search_results_common(
         let description = html_escape::encode_text(
             &TextEncodingProcessor::new()
                 .process_text(raw_description.as_bytes())
-                .unwrap_or(raw_description.clone())
-        ).to_string();
+                .unwrap_or(raw_description.clone()),
+        )
+        .to_string();
 
         if !title.is_empty() && !url.is_empty() {
             let mut result = SearchResult::new(

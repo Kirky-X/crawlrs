@@ -520,9 +520,7 @@ impl TaskRepository for TaskRepositoryImpl {
                 )
                 .col_expr(
                     task_entity::Column::CompletedAt,
-                    Expr::value::<Option<DateTime<FixedOffset>>>(Some(
-                        Utc::now().fixed_offset(),
-                    )),
+                    Expr::value::<Option<DateTime<FixedOffset>>>(Some(Utc::now().fixed_offset())),
                 )
                 .filter(task_entity::Column::Id.is_in(queued_task_ids.clone()))
                 .exec(self.db.as_ref())
@@ -542,9 +540,7 @@ impl TaskRepository for TaskRepositoryImpl {
                 )
                 .col_expr(
                     task_entity::Column::CompletedAt,
-                    Expr::value::<Option<DateTime<FixedOffset>>>(Some(
-                        Utc::now().fixed_offset(),
-                    )),
+                    Expr::value::<Option<DateTime<FixedOffset>>>(Some(Utc::now().fixed_offset())),
                 )
                 .col_expr(
                     task_entity::Column::LockToken,

@@ -89,10 +89,7 @@ pub fn routes() -> Router {
                 >,
             ),
         )
-        .route(
-            "/v1/search",
-            post(search_handler::search),
-        )
+        .route("/v1/search", post(search_handler::search))
         .route(
             "/v1/teams/geo-restrictions",
             get(team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
