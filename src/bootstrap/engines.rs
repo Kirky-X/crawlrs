@@ -119,10 +119,10 @@ pub fn init_engines(
 #[allow(deprecated)]
 pub fn init_engine_components(
     http_client: Arc<reqwest::Client>,
-    proxy_url: &str,
+    proxy_url: String,
     _engine_config: &EngineSettings,
 ) -> EngineComponents {
-    let engines = init_engines(http_client, proxy_url, _engine_config);
+    let engines = init_engines(http_client, &proxy_url, _engine_config);
     let router = Arc::new(EngineRouter::new(engines.clone()));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 

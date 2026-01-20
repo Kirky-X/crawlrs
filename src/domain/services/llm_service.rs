@@ -138,6 +138,7 @@ pub struct LLMService {
     /// API 密钥
     api_key: Option<String>,
     /// 提示模板加载器
+    #[allow(dead_code)]
     template_loader: TemplateLoader,
     /// 提示模板（缓存）
     templates: HashMap<String, String>,

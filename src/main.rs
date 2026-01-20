@@ -188,13 +188,14 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Initializing application dependencies...");
 
     // Initialize infrastructure first (needed for http_client)
+    let proxy_url = settings.proxy.url();
     let infrastructure = crawlrs::bootstrap::infrastructure::init_infrastructure(&settings).await?;
     let http_client = infrastructure.http_client.clone();
 
     // Initialize engines (needed by services)
     let engines = crawlrs::bootstrap::engines::init_engine_components(
         http_client.clone(),
-        &settings.proxy.url(),
+        proxy_url.to_string(),
         &settings.engines,
     );
 

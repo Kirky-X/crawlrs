@@ -104,7 +104,7 @@ pub async fn init_redis(settings: &Settings) -> Result<Arc<RedisClient>> {
 pub fn init_http_client(settings: &Settings) -> Result<Arc<reqwest::Client>> {
     // Default timeout: 30 seconds
     let timeout_secs = settings.timeouts.engines.default_timeout_seconds;
-    let timeout = Duration::from_secs(timeout_secs as u64);
+    let timeout = Duration::from_secs(timeout_secs);
 
     // Build client builder with timeout
     let mut client_builder = reqwest::Client::builder()
