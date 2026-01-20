@@ -3,7 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use std::net::IpAddr;
+//! SSRF protection and URL validation utilities
+//!
+//! This module provides security-focused validation for URLs to prevent
+//! Server-Side Request Forgery (SSRF) attacks. Uses shared validation
+//! functions from [`crate::engines::shared`] for consistent security checks.
+
+use crate::engines::shared::{is_blocked_hostname, is_private_ip};
 use tokio::net::lookup_host;
 use url::Url;
 
@@ -11,13 +17,6 @@ use url::Url;
 ///
 /// 检查解析后的 IP 是否为私有地址或环回地址
 /// 包含 DNS Rebinding 攻击防护
-///
-/// # 安全警告
-///
-/// SSRF 保护是关键的安全功能，不应该在生产环境中禁用。
-/// 如果确实需要在测试环境中禁用，请确保：
-/// 1. 仅在受控的测试环境中使用
-/// 2. 永远不要在生产环境或 CI/CD 流程中设置此环境变量
 pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
     // URL 长度限制：防止 SSRF 和资源耗尽攻击
     const MAX_URL_LENGTH: usize = 2048;
@@ -26,38 +25,6 @@ pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
             "URL exceeds maximum length of {} characters",
             MAX_URL_LENGTH
         ));
-    }
-
-    // 检查是否禁用 SSRF 保护（仅用于测试环境）
-    // 安全警告：生产环境必须启用 SSRF 保护
-    let ssrf_disabled = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").unwrap_or_default();
-    if ssrf_disabled.eq_ignore_ascii_case("true") {
-        // 添加安全警告日志
-        tracing::warn!(
-            "SECURITY WARNING: SSRF protection is DISABLED for URL: {}. This should NEVER be enabled in production!",
-            url_str
-        );
-        // 检查是否在生产环境
-        let env = std::env::var("CRAWLRS_ENV").unwrap_or_default();
-        if env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod") {
-            return Err(anyhow::anyhow!(
-                "SECURITY ERROR: SSRF protection cannot be disabled in production environment"
-            ));
-        }
-        // 额外检查：如果不是明确的测试环境，也拒绝禁用
-        if !env.eq_ignore_ascii_case("test")
-            && !env.eq_ignore_ascii_case("development")
-            && !env.eq_ignore_ascii_case("dev")
-        {
-            tracing::error!(
-                "SECURITY ERROR: Attempted to disable SSRF protection in unknown environment: {}. This is not allowed.",
-                env
-            );
-            return Err(anyhow::anyhow!(
-                "SECURITY ERROR: SSRF protection can only be disabled in test/development environments"
-            ));
-        }
-        return Ok(());
     }
 
     let url = Url::parse(url_str)?;
@@ -132,131 +99,6 @@ pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 检查主机名是否在阻止列表中
-fn is_blocked_hostname(host: &str) -> bool {
-    let host_lower = host.to_lowercase();
-
-    // 使用 BTreeSet 避免重复并提供高效的查找
-    use std::collections::BTreeSet;
-    let blocked: BTreeSet<&str> = [
-        // 本地主机变体
-        "localhost",
-        "localhost.localdomain",
-        "ip6-localhost",
-        "ip6-loopback",
-        "0.0.0.0",
-        "::1",
-        "::",
-        // AWS 元数据端点
-        "169.254.169.254",
-        "metadata.google.internal",
-        // Azure 元数据端点
-        "metadata.azure.com",
-        "metadata.msftidentity.com",
-        // GCP 元数据端点
-        "metadata.google.internal",
-        // 其他云服务元数据端点
-        "metadata.nova.canonical.com",
-        "metadata.packet.csi.com",
-    ]
-    .into_iter()
-    .collect();
-
-    if blocked.contains(host_lower.as_str()) {
-        return true;
-    }
-
-    // 检查是否为纯 IP 地址形式的字符串
-    if let Ok(ip) = host_lower.parse::<std::net::IpAddr>() {
-        return is_private_ip(ip);
-    }
-
-    false
-}
-
-fn is_private_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ipv4) => {
-            // 10.0.0.0/8 - RFC 1918 私有地址
-            if ipv4.octets()[0] == 10 {
-                return true;
-            }
-            // 172.16.0.0/12 - RFC 1918 私有地址
-            if ipv4.octets()[0] == 172 && (ipv4.octets()[1] >= 16 && ipv4.octets()[1] <= 31) {
-                return true;
-            }
-            // 192.168.0.0/16 - RFC 1918 私有地址
-            if ipv4.octets()[0] == 192 && ipv4.octets()[1] == 168 {
-                return true;
-            }
-            // 127.0.0.0/8 - 环回地址
-            if ipv4.is_loopback() {
-                return true;
-            }
-            // 169.254.0.0/16 -链路本地地址 (Link-local)
-            if ipv4.is_link_local() {
-                return true;
-            }
-            // 224.0.0.0/4 - 多播地址
-            if ipv4.octets()[0] >= 224 && ipv4.octets()[0] <= 239 {
-                return true;
-            }
-            // 100.64.0.0/10 - 共享地址空间 (Carrier-Grade NAT)
-            if ipv4.octets()[0] == 100 && ipv4.octets()[1] >= 64 && ipv4.octets()[1] <= 127 {
-                return true;
-            }
-            // 0.0.0.0/8 - 广播源地址
-            if ipv4.octets()[0] == 0 {
-                return true;
-            }
-            // 255.255.255.255 - 广播地址
-            if ipv4.octets()[0] == 255
-                && ipv4.octets()[1] == 255
-                && ipv4.octets()[2] == 255
-                && ipv4.octets()[3] == 255
-            {
-                return true;
-            }
-            false
-        }
-        IpAddr::V6(ipv6) => {
-            // ::1/128 - IPv6 环回地址
-            if ipv6.is_loopback() {
-                return true;
-            }
-            // fc00::/7 - 唯一本地地址 (ULA)
-            if (ipv6.segments()[0] & 0xfe00) == 0xfc00 {
-                return true;
-            }
-            // fe80::/10 - 链路本地地址
-            if (ipv6.segments()[0] & 0xffc0) == 0xfe80 {
-                return true;
-            }
-            // ff00::/8 - 多播地址
-            if (ipv6.segments()[0] & 0xff00) == 0xff00 {
-                return true;
-            }
-            // ::/128 - 未指定地址
-            if ipv6.segments()[0] == 0
-                && ipv6.segments()[1] == 0
-                && ipv6.segments()[2] == 0
-                && ipv6.segments()[3] == 0
-                && ipv6.segments()[4] == 0
-                && ipv6.segments()[5] == 0
-                && ipv6.segments()[6] == 0
-                && ipv6.segments()[7] == 0
-            {
-                return true;
-            }
-            // 2001:db8::/32 - 文档示例地址
-            if ipv6.segments()[0] == 0x2001 && ipv6.segments()[1] == 0x0db8 {
-                return true;
-            }
-            false
-        }
-    }
-}
-
 /// 验证 URL 是否在黑名单域名中
 pub fn validate_domain_blacklist(url_str: &str, blacklist: &[String]) -> anyhow::Result<()> {
     let url = Url::parse(url_str)?;
@@ -307,15 +149,6 @@ mod tests {
             assert!(validate_url("http://example.com").await.is_ok());
             assert!(validate_url("https://google.com").await.is_ok());
         }
-    }
-
-    #[test]
-    fn test_is_private_ip() {
-        assert!(is_private_ip("127.0.0.1".parse().unwrap()));
-        assert!(is_private_ip("10.0.0.1".parse().unwrap()));
-        assert!(is_private_ip("192.168.1.1".parse().unwrap()));
-        assert!(is_private_ip("172.16.0.1".parse().unwrap()));
-        assert!(!is_private_ip("8.8.8.8".parse().unwrap()));
     }
 
     #[test]

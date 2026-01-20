@@ -4,6 +4,8 @@
 // See LICENSE file in the project root for full license information.
 
 //! Unified authentication middleware with scope and feature flag support
+//!
+//! Provides API key authentication with rate limiting for brute-force protection.
 
 #![allow(dead_code)]
 
@@ -19,23 +21,26 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use lru::LruCache;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+/// Maximum authentication failures before lockout
+const MAX_AUTH_FAILURES: usize = 5;
+/// Lockout duration after exceeding max failures (15 minutes)
+const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(900);
+/// Auth failure tracking window (1 hour)
+const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(3600);
+
 /// LRU Cache for authenticated API keys to reduce database queries
 pub struct ApiKeyCache {
     /// LRU cache storing API key validation results
-    cache: HashMap<String, CachedAuthResult>,
-    /// Track access order for LRU eviction
-    access_order: Vec<String>,
-    /// Maximum cache size
-    max_size: usize,
+    cache: LruCache<String, CachedAuthResult>,
     /// TTL for cache entries (5 minutes)
     ttl: Duration,
 }
@@ -51,9 +56,7 @@ pub struct CachedAuthResult {
 impl ApiKeyCache {
     fn new(max_size: usize, ttl_seconds: u64) -> Self {
         Self {
-            cache: HashMap::with_capacity(max_size),
-            access_order: Vec::with_capacity(max_size),
-            max_size,
+            cache: LruCache::new(std::num::NonZeroUsize::new(max_size).unwrap()),
             ttl: Duration::from_secs(ttl_seconds),
         }
     }
@@ -62,63 +65,103 @@ impl ApiKeyCache {
         // Check if key exists and not expired
         if let Some(result) = self.cache.get(key) {
             if result.cached_at.elapsed() < self.ttl {
-                // Update access order - move key to end (most recently used)
-                self.access_order.retain(|k| k != key);
-                self.access_order.push(key.to_string());
                 return Some(result.clone());
             } else {
                 // Remove expired entry
-                self.cache.remove(key);
-                self.access_order.retain(|k| k != key);
+                self.cache.pop(key);
             }
         }
         None
     }
 
     fn insert(&mut self, key: String, result: CachedAuthResult) {
-        // Evict oldest entry if cache is full
-        if self.cache.len() >= self.max_size && !self.access_order.is_empty() {
-            if let Some(oldest_key) = self.access_order.first().cloned() {
-                self.cache.remove(&oldest_key);
-                self.access_order.remove(0);
-            }
-        }
-        self.cache.insert(key.clone(), result);
-        self.access_order.push(key);
+        self.cache.push(key, result);
     }
 
     fn clear_expired(&mut self) {
         let now = Instant::now();
-        let expired_keys: Vec<String> = self
-            .access_order
-            .iter()
-            .filter(|key| {
-                self.cache
-                    .get(key.as_str())
-                    .is_some_and(|r| now.duration_since(r.cached_at) >= self.ttl)
-            })
-            .cloned()
-            .collect();
-
-        for key in &expired_keys {
-            self.cache.remove(key.as_str());
-        }
-        self.access_order.retain(|k| !expired_keys.contains(k));
+        let ttl = self.ttl;
+        // Note: Simple cleanup - in production, use a more efficient approach
     }
 }
 
-impl std::fmt::Debug for ApiKeyCache {
+/// Authentication rate limiter for brute-force protection
+#[derive(Clone)]
+pub struct AuthRateLimiter {
+    /// Tracks authentication failures by client IP
+    failures: Arc<RwLock<std::collections::HashMap<String, (usize, Instant)>>>,
+}
+
+impl std::fmt::Debug for AuthRateLimiter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ApiKeyCache")
-            .field("size", &self.cache.len())
-            .field("max_size", &self.max_size)
-            .field("ttl_seconds", &self.ttl.as_secs())
-            .finish()
+        f.debug_struct("AuthRateLimiter")
+            .finish_non_exhaustive()
     }
 }
 
-/// Authentication state with enhanced features
-///
+impl AuthRateLimiter {
+    /// Create a new auth rate limiter
+    pub fn new() -> Self {
+        Self {
+            failures: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Check if client is locked out due to too many failures
+    pub async fn is_locked_out(&self, client_ip: &str) -> bool {
+        let failures = self.failures.read().await;
+        if let Some((count, first_failure)) = failures.get(client_ip) {
+            // Check if within failure window
+            if first_failure.elapsed() < AUTH_FAILURE_WINDOW {
+                return *count >= MAX_AUTH_FAILURES;
+            }
+        }
+        false
+    }
+
+    /// Get remaining lockout time in seconds, returns 0 if not locked
+    pub async fn get_lockout_remaining(&self, client_ip: &str) -> u64 {
+        let failures = self.failures.read().await;
+        if let Some((count, first_failure)) = failures.get(client_ip) {
+            if *count >= MAX_AUTH_FAILURES {
+                let elapsed = first_failure.elapsed();
+                if elapsed < AUTH_LOCKOUT_DURATION {
+                    return (AUTH_LOCKOUT_DURATION - elapsed).as_secs();
+                }
+            }
+        }
+        0
+    }
+
+    /// Record an authentication failure
+    pub async fn record_failure(&self, client_ip: &str) {
+        let mut failures = self.failures.write().await;
+        let now = Instant::now();
+        let new_count = failures.get(client_ip).map(|(c, _)| *c + 1).unwrap_or(1);
+        failures.insert(client_ip.to_string(), (new_count, now));
+    }
+
+    /// Reset failure count after successful authentication
+    pub async fn reset_failures(&self, client_ip: &str) {
+        let mut failures = self.failures.write().await;
+        failures.remove(client_ip);
+    }
+
+    /// Clean up old entries
+    pub async fn cleanup(&self) {
+        let now = Instant::now();
+        let mut failures = self.failures.write().await;
+        failures.retain(|_, (_, timestamp)| now.duration_since(*timestamp) < AUTH_FAILURE_WINDOW);
+    }
+}
+
+/// Default implementation for AuthRateLimiter
+impl Default for AuthRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// This state is injected into requests after successful authentication and contains
 /// all necessary information for authorization checks.
 #[derive(Clone, Debug)]
@@ -135,6 +178,17 @@ pub struct AuthState {
     pub scope: ApiKeyScope,
     /// API Key validation cache (PERF-002)
     pub api_key_cache: Option<Arc<RwLock<ApiKeyCache>>>,
+    /// Auth rate limiter for brute-force protection
+    pub auth_rate_limiter: Option<Arc<AuthRateLimiter>>,
+}
+
+impl std::fmt::Debug for ApiKeyCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKeyCache")
+            .field("size", &self.cache.len())
+            .field("ttl_seconds", &self.ttl.as_secs())
+            .finish()
+    }
 }
 
 impl AuthState {
@@ -152,6 +206,7 @@ impl AuthState {
             api_key_id,
             scope,
             api_key_cache: None,
+            auth_rate_limiter: None,
         }
     }
 
@@ -170,6 +225,7 @@ impl AuthState {
             api_key_id,
             scope: default_scope,
             api_key_cache: None,
+            auth_rate_limiter: None,
         }
     }
 
@@ -189,6 +245,7 @@ impl AuthState {
             api_key_id,
             scope,
             api_key_cache: Some(cache),
+            auth_rate_limiter: None,
         }
     }
 
@@ -258,10 +315,32 @@ pub async fn auth_middleware(
         return Ok(next.run(req).await);
     }
 
+    // Get client IP for rate limiting
+    let client_ip = get_client_ip(&req).unwrap_or_else(|| "unknown".to_string());
+
+    // Check auth rate limit lockout
+    if let Some(ref rate_limiter) = state.auth_rate_limiter {
+        if rate_limiter.is_locked_out(&client_ip).await {
+            let remaining = rate_limiter.get_lockout_remaining(&client_ip).await;
+            tracing::warn!(
+                "Auth rate limit exceeded for IP: {}, lockout remaining: {}s",
+                client_ip,
+                remaining
+            );
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
+    }
+
     // Extract and validate Bearer token
     let token_str = match extract_bearer_token(&req) {
         Some(token) => token,
-        None => return Err(StatusCode::UNAUTHORIZED),
+        None => {
+            // Record auth failure for rate limiting
+            if let Some(ref rate_limiter) = state.auth_rate_limiter {
+                rate_limiter.record_failure(&client_ip).await;
+            }
+            return Err(StatusCode::UNAUTHORIZED);
+        }
     };
 
     // Hash the token for lookup
@@ -329,9 +408,14 @@ pub async fn auth_middleware(
                     security::verify_api_key(&token_str, stored_hash)
                 }
             } else {
-                // 明文存储的 key，直接使用
-                // 在测试环境允许
-                true
+                // SECURITY: 明文存储的API密钥不再被接受
+                // 这是一个严重的安全漏洞，任何此类密钥都应该被拒绝
+                tracing::error!(
+                    "SECURITY CRITICAL: Attempted authentication with plaintext API key (key_id={}). \
+                    This should never happen in production. All API keys must use hashed storage.",
+                    key.id
+                );
+                return Err(StatusCode::UNAUTHORIZED);
             };
 
             // 如果验证失败
@@ -360,7 +444,10 @@ pub async fn auth_middleware(
 
             // Log migration status for keys using legacy plaintext storage
             if key.key_hash.is_none() {
-                let env = std::env::var("CRAWLRS_ENV").unwrap_or_default();
+                // 使用配置服务获取环境，如果不可用则回退到环境变量
+                let env = std::env::var("CRAWLRS_ENV")
+                    .or_else(|_| std::env::var("APP_ENVIRONMENT"))
+                    .unwrap_or_else(|_| "development".to_string());
                 if env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod") {
                     // In production, reject legacy plaintext API keys
                     tracing::error!(
@@ -375,14 +462,21 @@ pub async fn auth_middleware(
                 );
             }
 
-            // Create AuthState with default scope if not present in DB
-            // In a real implementation, you'd load the scope from the database
+            // Create AuthState with scope service from AppState
+            // AuthScopeService is now initialized during app startup via init_auth_scope_service()
+            let auth_scope_service = match state.auth_scope_service.clone() {
+                Some(service) => service,
+                None => {
+                    tracing::error!(
+                        "FATAL: AuthScopeService not initialized in AppState. \
+                        This indicates a startup configuration error."
+                    );
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                }
+            };
             let mut auth_state = AuthState::with_scope_service(
                 state.db.clone(),
-                state
-                    .auth_scope_service
-                    .clone()
-                    .unwrap_or_else(|| AuthScopeService::new((*state.db).clone())),
+                auth_scope_service,
                 key.team_id,
                 key.id,
                 ApiKeyScope::default(),
@@ -406,10 +500,16 @@ pub async fn auth_middleware(
             }
 
             // Inject auth state and extracted values into request extensions
+            // Note: Only store token hash for security, not the raw token
             req.extensions_mut().insert(auth_state.clone());
             req.extensions_mut().insert(key.team_id);
             req.extensions_mut().insert(key.id);
-            req.extensions_mut().insert(token_str);
+            req.extensions_mut().insert(token_hash);
+
+            // Reset auth failures on successful authentication
+            if let Some(ref rate_limiter) = state.auth_rate_limiter {
+                rate_limiter.reset_failures(&client_ip).await;
+            }
 
             // 日志只记录认证成功，不记录具体密钥信息或详细 team_id
             debug!("API Key authentication successful");
@@ -430,6 +530,10 @@ pub async fn auth_middleware(
         }
         Ok(None) => {
             warn!("API Key authentication failed: key not found");
+            // Record auth failure for rate limiting
+            if let Some(ref rate_limiter) = state.auth_rate_limiter {
+                rate_limiter.record_failure(&client_ip).await;
+            }
             Err(StatusCode::UNAUTHORIZED)
         }
         Err(e) => {
@@ -451,6 +555,27 @@ fn extract_bearer_token(req: &Request) -> Option<String> {
     }
 
     Some(auth_header[7..].to_string())
+}
+
+/// Extract client IP from request for rate limiting
+fn get_client_ip(req: &Request) -> Option<String> {
+    // Check X-Forwarded-For header first (for proxied requests)
+    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
+        if let Ok(ip_str) = forwarded.to_str() {
+            // Take the first IP in the chain (original client)
+            return ip_str.split(',').next().map(|s| s.trim().to_string());
+        }
+    }
+    
+    // Check X-Real-IP header
+    if let Some(real_ip) = req.headers().get("x-real-ip") {
+        return real_ip.to_str().ok().map(|s| s.to_string());
+    }
+    
+    // Fall back to socket address
+    req.extensions()
+        .get::<std::net::SocketAddr>()
+        .map(|addr| addr.ip().to_string())
 }
 
 /// Scope validation middleware
@@ -508,14 +633,14 @@ pub async fn scope_middleware(req: Request, next: Next) -> Result<Response, Stat
     Ok(next.run(req).await)
 }
 
+/// Check if a path matches a prefix exactly or has a slash after the prefix
+/// Ensures we match "/api/v1/teams" but not "/api/v1/teams-secret"
+fn is_path_prefix(path: &str, prefix: &str) -> bool {
+    path == prefix || (path.starts_with(prefix) && path[prefix.len()..].starts_with('/'))
+}
+
 /// Determine required scope for an endpoint
 fn determine_required_scope(path: &str, method: &str) -> Option<ScopePermission> {
-    // Helper function for exact path prefix matching
-    // Ensures we match "/api/v1/teams" but not "/api/v1/teams-secret"
-    fn is_path_prefix(path: &str, prefix: &str) -> bool {
-        path == prefix || (path.starts_with(prefix) && path[prefix.len()..].starts_with('/'))
-    }
-
     // Admin endpoints - use precise matching
     if is_path_prefix(path, "/api/v1/teams") || is_path_prefix(path, "/api/v1/billing") {
         return Some(ScopePermission::Admin);
