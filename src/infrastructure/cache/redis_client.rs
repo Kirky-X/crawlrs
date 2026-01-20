@@ -26,7 +26,7 @@ impl RedisClient {
     ///
     /// * `Ok(RedisClient)` - Redis客户端实例
     /// * `Err(anyhow::Error)` - 创建过程中出现的错误
-    pub async fn new(redis_url: &str) -> Result<Self> {
+    pub fn new(redis_url: &str) -> Result<Self> {
         let client = redis::Client::open(redis_url)?;
         Ok(Self { client })
     }

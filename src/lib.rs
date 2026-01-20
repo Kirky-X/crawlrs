@@ -71,3 +71,8 @@ pub mod examples;
 ///
 /// 提供应用程序初始化的结构化方式
 pub mod bootstrap;
+
+/// 依赖注入模块
+///
+/// 提供基于 Shaku 的依赖注入框架
+pub mod di;

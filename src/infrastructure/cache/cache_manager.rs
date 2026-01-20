@@ -28,15 +28,31 @@ pub struct CacheManager {
 }
 
 impl CacheManager {
-    /// 创建新的缓存管理器
-    #[cfg(feature = "redis-cache")]
-    pub async fn new(config: CacheStrategyConfig, redis_url: Option<&str>) -> Result<Self> {
-        let redis_client = if let Some(url) = redis_url {
-            Some(Arc::new(RedisClient::new(url).await?))
-        } else {
-            None
-        };
+    /// 创建新的缓存管理器（非Redis版本）
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - 缓存策略配置
+    #[cfg(not(feature = "redis-cache"))]
+    pub async fn new(config: CacheStrategyConfig, _redis_client: Option<()>) -> Result<Self> {
+        let strategy = CacheStrategyFactory::create_strategy(config.clone(), None);
 
+        Ok(Self {
+            strategy: Arc::new(RwLock::new(strategy)),
+            config,
+        })
+    }
+
+    /// 创建新的缓存管理器
+    ///
+    /// 接受外部注入的Redis客户端实例，遵循依赖注入原则。
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - 缓存策略配置
+    /// * `redis_client` - 可选的Redis客户端实例，如果使用Redis缓存则需要提供
+    #[cfg(feature = "redis-cache")]
+    pub async fn new(config: CacheStrategyConfig, redis_client: Option<Arc<RedisClient>>) -> Result<Self> {
         let strategy = CacheStrategyFactory::create_strategy(config.clone(), redis_client.clone());
 
         Ok(Self {
@@ -44,6 +60,28 @@ impl CacheManager {
             config,
             redis_client,
         })
+    }
+
+    /// 从URL创建缓存管理器（便捷方法，标记为deprecated）
+    ///
+    /// # Deprecated
+    ///
+    /// 此方法为了向后兼容保留，新代码应使用 `new()` 方法并注入Redis客户端。
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - 缓存策略配置
+    /// * `redis_url` - Redis连接URL，如果为None则不使用Redis
+    #[cfg(feature = "redis-cache")]
+    #[deprecated(since = "0.1.0", note = "Use `new()` with injected RedisClient instead")]
+    pub async fn from_url(config: CacheStrategyConfig, redis_url: Option<&str>) -> Result<Self> {
+        let redis_client = if let Some(url) = redis_url {
+            Some(Arc::new(RedisClient::new(url)?))
+        } else {
+            None
+        };
+
+        Self::new(config, redis_client).await
     }
 
     /// 获取缓存值

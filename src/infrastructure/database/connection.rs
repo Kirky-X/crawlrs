@@ -5,7 +5,28 @@
 
 use crate::config::DatabaseSettings;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};
+use std::sync::Arc;
 use std::time::Duration;
+
+/// Database pool wrapper type
+#[derive(Clone)]
+pub struct DatabasePool(pub Arc<DatabaseConnection>);
+
+impl Default for DatabasePool {
+    fn default() -> Self {
+        // For testing, use a mock in-memory database
+        let settings = DatabaseSettings {
+            url: "sqlite::memory:".to_string(),
+            max_connections: Some(10),
+            min_connections: Some(1),
+            connect_timeout: Some(30),
+            idle_timeout: Some(600),
+        };
+        let pool = futures::executor::block_on(create_pool(&settings))
+            .expect("Failed to create default database pool");
+        Self(Arc::new(pool))
+    }
+}
 
 /// 创建数据库连接池
 ///
@@ -40,9 +61,11 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DatabaseConnecti
     opt.max_lifetime(Duration::from_secs(3600));
 
     // 根据环境决定是否启用SQL日志，生产环境禁用以防止敏感信息泄露
-    let is_production = std::env::var("CRAWLRS_ENV")
-        .map(|v| v.eq_ignore_ascii_case("production") || v.eq_ignore_ascii_case("prod"))
-        .unwrap_or(false);
+    // 使用配置服务获取环境，如果不可用则回退到环境变量
+    let env = std::env::var("CRAWLRS_ENV")
+        .or_else(|_| std::env::var("APP_ENVIRONMENT"))
+        .unwrap_or_else(|_| "development".to_string());
+    let is_production = env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod");
     opt.sqlx_logging(!is_production);
 
     Database::connect(opt).await

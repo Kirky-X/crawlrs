@@ -858,7 +858,7 @@ mod tests {
             CacheType::Memory => assert!(true),
             _ => panic!("Expected Memory cache type"),
         }
-        assert_eq!(config.ttl_seconds, 600);  // 已优化为 600 秒
+        assert_eq!(config.ttl_seconds, 600); // 已优化为 600 秒
         assert_eq!(config.max_entries, 10000);
         assert!(config.enable_compression);
         assert!(!config.enable_preload);
@@ -917,8 +917,8 @@ mod tests {
     #[test]
     fn test_layered_cache_config_default() {
         let config = LayeredCacheConfig::default();
-        assert_eq!(config.memory_ttl, 120);   // 已优化为 120 秒
-        assert_eq!(config.redis_ttl, 7200);   // 已优化为 7200 秒
+        assert_eq!(config.memory_ttl, 120); // 已优化为 120 秒
+        assert_eq!(config.redis_ttl, 7200); // 已优化为 7200 秒
         assert_eq!(config.memory_max_entries, 1000);
     }
 

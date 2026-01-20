@@ -369,15 +369,6 @@ impl Drop for DnsCacheManager {
     }
 }
 
-/// 提供全局DNS缓存实例
-///
-/// 使用OnceCell确保线程安全的单例模式
-pub fn global_dns_cache() -> &'static DnsCache {
-    use once_cell::sync::Lazy;
-    static DNS_CACHE: Lazy<DnsCache> = Lazy::new(|| DnsCache::default());
-    &DNS_CACHE
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
