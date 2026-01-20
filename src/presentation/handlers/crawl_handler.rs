@@ -25,7 +25,6 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::domain::services::team_service::TeamService;
-use crate::infrastructure::geolocation::GeoLocationService;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::presentation::handlers::extract_task_ids;
 use crate::presentation::handlers::response_builder::errors;
@@ -191,6 +190,7 @@ pub async fn get_crawl<CR, TR, WR, SRR, GR>(
     Extension(webhook_repo): Extension<Arc<WR>>,
     Extension(scrape_result_repo): Extension<Arc<SRR>>,
     Extension(_geo_restriction_repo): Extension<Arc<GR>>,
+    Extension(team_service): Extension<Arc<TeamService>>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse
 where
@@ -206,10 +206,7 @@ where
         webhook_repo,
         scrape_result_repo,
         _geo_restriction_repo.clone(),
-        Arc::new(TeamService::new(
-            Arc::new(GeoLocationService::new()),
-            _geo_restriction_repo.clone(),
-        )),
+        team_service,
     );
     match use_case.get_crawl(crawl_id).await {
         Ok(Some(crawl)) => (StatusCode::OK, Json(crawl)).into_response(),
@@ -222,6 +219,7 @@ where
 }
 
 /// 获取爬取任务结果
+#[allow(clippy::too_many_arguments)]
 pub async fn get_crawl_results<CR, TR, WR, SRR, GR>(
     Extension(crawl_repo): Extension<Arc<CR>>,
     Extension(task_repo): Extension<Arc<TR>>,
@@ -229,6 +227,7 @@ pub async fn get_crawl_results<CR, TR, WR, SRR, GR>(
     Extension(scrape_result_repo): Extension<Arc<SRR>>,
     Extension(_geo_restriction_repo): Extension<Arc<GR>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(team_service): Extension<Arc<TeamService>>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse
 where
@@ -245,10 +244,7 @@ where
         webhook_repo,
         scrape_result_repo,
         _geo_restriction_repo.clone(),
-        Arc::new(TeamService::new(
-            Arc::new(GeoLocationService::new()),
-            _geo_restriction_repo.clone(),
-        )),
+        team_service,
     );
 
     match use_case.get_crawl_results(crawl_id, team_id).await {
@@ -261,6 +257,7 @@ where
 }
 
 /// 取消进行中的爬取任务
+#[allow(clippy::too_many_arguments)]
 pub async fn cancel_crawl<CR, TR, WR, SRR, GR>(
     Extension(crawl_repo): Extension<Arc<CR>>,
     Extension(task_repo): Extension<Arc<TR>>,
@@ -268,6 +265,7 @@ pub async fn cancel_crawl<CR, TR, WR, SRR, GR>(
     Extension(scrape_result_repo): Extension<Arc<SRR>>,
     Extension(_geo_restriction_repo): Extension<Arc<GR>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(team_service): Extension<Arc<TeamService>>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse
 where
@@ -284,10 +282,7 @@ where
         webhook_repo,
         scrape_result_repo,
         _geo_restriction_repo.clone(),
-        Arc::new(TeamService::new(
-            Arc::new(GeoLocationService::new()),
-            _geo_restriction_repo.clone(),
-        )),
+        team_service,
     );
 
     match use_case.cancel_crawl(crawl_id, team_id).await {

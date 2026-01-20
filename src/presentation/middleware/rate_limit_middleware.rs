@@ -43,6 +43,7 @@ pub enum RateLimitError {
 impl_basic_error_conversions!(RateLimitError, InternalError);
 
 /// 速率限制器
+#[derive(Clone)]
 pub struct RateLimiter {
     /// Redis客户端
     redis_client: RedisClient,

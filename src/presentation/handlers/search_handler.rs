@@ -13,38 +13,26 @@ use std::sync::Arc;
 
 use crate::{
     application::dto::search_request::SearchRequestDto,
-    config::settings::Settings,
     domain::{
         repositories::{
-            crawl_repository::CrawlRepository, credits_repository::CreditsRepository,
             task_repository::TaskRepository,
         },
         services::rate_limiting_service::{RateLimitResult, RateLimitingService},
-        services::search_service::{SearchService, SearchServiceError},
+        services::search_service::{SearchServiceError, SearchServiceTrait},
     },
     presentation::handlers::task_handler::wait_for_tasks_completion,
     presentation::middleware::auth_middleware::AuthState,
-    search::SearchEngine,
 };
 use tracing::error;
 
 /// 处理搜索请求
-#[allow(clippy::too_many_arguments)]
-pub async fn search<CR, TR, CRR>(
-    Extension(crawl_repo): Extension<Arc<CR>>,
-    Extension(task_repo): Extension<Arc<TR>>,
-    Extension(credits_repo): Extension<Arc<CRR>>,
-    Extension(settings): Extension<Arc<Settings>>,
-    Extension(search_engine): Extension<Arc<dyn SearchEngine>>,
+pub async fn search(
+    Extension(search_service): Extension<Arc<dyn SearchServiceTrait>>,
+    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
     Json(payload): Json<SearchRequestDto>,
-) -> impl IntoResponse
-where
-    CR: CrawlRepository + 'static,
-    TR: TaskRepository + 'static,
-    CRR: CreditsRepository + 'static,
-{
+) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     let api_key = auth_state.api_key_id.to_string();
     // 1. 检查限流
@@ -85,14 +73,8 @@ where
 
     let sync_wait_ms = payload.sync_wait_ms.unwrap_or(5000);
 
-    let service = SearchService::new(
-        crawl_repo.clone(),
-        task_repo.clone(),
-        credits_repo,
-        settings,
-        search_engine,
-    );
-    match service.search(team_id, payload).await {
+    // 使用注入的SearchService
+    match search_service.search(team_id, payload).await {
         Ok(response) => {
             // 如果启用了爬取结果并且有crawl_id，则等待任务完成
             if sync_wait_ms > 0 {
@@ -147,14 +129,14 @@ impl From<SearchServiceError> for (StatusCode, String) {
             SearchServiceError::InsufficientCredits {
                 available,
                 required,
-            } => (
-                StatusCode::PAYMENT_REQUIRED,
-                format!(
+            } => {
+                let details = format!(
                     "Insufficient credits: available {}, required {}",
                     available, required
-                ),
-            ),
-            SearchServiceError::SearchEngine(e) => (StatusCode::BAD_GATEWAY, e),
+                );
+                (StatusCode::PAYMENT_REQUIRED, details)
+            }
+            SearchServiceError::SearchEngine(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
         }
     }
 }

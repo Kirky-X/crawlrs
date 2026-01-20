@@ -46,8 +46,8 @@ use validator::Validate;
 /// - 最大轮询次数：60次（防止过多数据库查询）
 /// - 根据任务完成进度调整间隔
 /// - 任务完成率越高，轮询间隔越长
-pub async fn wait_for_tasks_completion<T: TaskRepository>(
-    task_repo: &T,
+pub async fn wait_for_tasks_completion(
+    task_repo: &dyn TaskRepository,
     task_ids: &[uuid::Uuid],
     team_id: uuid::Uuid,
     sync_wait_ms: u32,
@@ -109,8 +109,8 @@ fn poll_count_exceeded(count: u32, max_count: u32) -> bool {
 }
 
 /// 查询任务状态用于轮询
-async fn query_tasks_for_poll<T: TaskRepository>(
-    task_repo: &T,
+async fn query_tasks_for_poll(
+    task_repo: &dyn TaskRepository,
     team_id: uuid::Uuid,
     task_ids: &[uuid::Uuid],
 ) -> Result<Vec<crate::domain::models::task::Task>, AppError> {

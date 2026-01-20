@@ -91,13 +91,7 @@ pub fn routes() -> Router {
         )
         .route(
             "/v1/search",
-            post(
-                search_handler::search::<
-                    CrawlRepositoryImpl,
-                    TaskRepositoryImpl,
-                    CreditsRepositoryImpl,
-                >,
-            ),
+            post(search_handler::search),
         )
         .route(
             "/v1/teams/geo-restrictions",

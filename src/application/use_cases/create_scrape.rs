@@ -25,6 +25,13 @@ use crate::engines::engine_client::{
 
 // === Section: Use Case Definition ===
 
+/// Trait for CreateScrapeUseCase - enables dependency injection
+#[async_trait::async_trait]
+pub trait CreateScrapeUseCaseTrait: Send + Sync {
+    /// Execute the scrape use case with the given request DTO
+    async fn execute(&self, request_dto: ScrapeRequestDto) -> Result<ScrapeResponse, DomainError>;
+}
+
 pub struct CreateScrapeUseCase {
     engine_client: Arc<EngineClient>,
 }
@@ -50,6 +57,13 @@ impl CreateScrapeUseCase {
     /// * `Ok(ScrapeResponse)` on success
     /// * `Err(DomainError)` on failure with specific error type
     pub async fn execute(
+        &self,
+        request_dto: ScrapeRequestDto,
+    ) -> Result<ScrapeResponse, DomainError> {
+        self._execute_impl(request_dto).await
+    }
+
+    async fn _execute_impl(
         &self,
         request_dto: ScrapeRequestDto,
     ) -> Result<ScrapeResponse, DomainError> {
@@ -154,6 +168,13 @@ impl CreateScrapeUseCase {
     }
 }
 
+#[async_trait::async_trait]
+impl CreateScrapeUseCaseTrait for CreateScrapeUseCase {
+    async fn execute(&self, request_dto: ScrapeRequestDto) -> Result<ScrapeResponse, DomainError> {
+        self._execute_impl(request_dto).await
+    }
+}
+
 // === Section: Module Organization ===
 
 // Note: In a real application, you might have more complex logic here,
@@ -178,5 +199,12 @@ fn map_engine_error(engine_error: crate::engines::engine_client::EngineError) ->
             DomainError::EngineError("No engines available".to_string())
         }
         crate::engines::engine_client::EngineError::Internal(msg) => DomainError::EngineError(msg),
+        crate::engines::engine_client::EngineError::AllEnginesFailed(msg) => {
+            DomainError::EngineError(msg)
+        }
+        crate::engines::engine_client::EngineError::Expired => {
+            DomainError::EngineError("Engine request expired".to_string())
+        }
+        crate::engines::engine_client::EngineError::Other(msg) => DomainError::EngineError(msg),
     }
 }

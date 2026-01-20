@@ -18,18 +18,19 @@ use crate::config::settings::Settings;
 use crate::domain::models::task::{Task, TaskType};
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::services::team_service::TeamService;
-use crate::infrastructure::geolocation::GeoLocationService;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 use std::sync::Arc;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn extract<GR>(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
     Extension(_settings): Extension<Arc<Settings>>,
     Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
     Extension(geo_restriction_repo): Extension<Arc<GR>>,
+    Extension(team_service): Extension<Arc<TeamService>>,
     Extension(auth_state): Extension<AuthState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<ExtractRequestDto>,
@@ -95,10 +96,6 @@ where
     }
 
     // 使用团队服务验证地理限制
-    let team_service = TeamService::new(
-        Arc::new(GeoLocationService::new()),
-        geo_restriction_repo.clone(),
-    );
     match team_service
         .validate_geographic_restriction(team_id, &client_ip, &restrictions)
         .await
