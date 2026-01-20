@@ -11,9 +11,10 @@ pub mod circuit_breaker;
 pub mod client;
 pub mod health_monitor;
 pub mod router;
-#[allow(deprecated)]
-pub mod traits;
 pub mod validators;
+
+// Shared validation utilities for SSRF protection
+pub mod shared;
 
 // New unified EngineClient API
 pub mod engine_client;
