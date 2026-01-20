@@ -333,7 +333,7 @@ impl LLMService {
             };
 
             let content = chat_res
-                .content_text_as_str()
+                .first_text()
                 .ok_or_else(|| anyhow::anyhow!("LLM returned empty content"))?
                 .to_string();
 

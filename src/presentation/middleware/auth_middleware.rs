@@ -79,8 +79,8 @@ impl ApiKeyCache {
     }
 
     fn clear_expired(&mut self) {
-        let now = Instant::now();
-        let ttl = self.ttl;
+        let _now = Instant::now();
+        let _ttl = self.ttl;
         // Note: Simple cleanup - in production, use a more efficient approach
     }
 }

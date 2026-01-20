@@ -68,7 +68,7 @@ impl SystemMonitorComponent {
         // Acquire lock with poisoning handling
         let sys = match self.system.lock() {
             Ok(guard) => guard,
-            Err(poisoned) => {
+            Err(_) => {
                 tracing::error!("System monitor mutex poisoned, cannot update metrics");
                 // On poisoning, we cannot recover the system state
                 // Skip this update cycle

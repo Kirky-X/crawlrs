@@ -26,7 +26,6 @@ use crate::infrastructure::database::connection::DatabasePool;
 use crate::infrastructure::database::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crate::infrastructure::database::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
-use crate::infrastructure::database::repositories::geo_restriction_repo_impl::InMemoryGeoRestrictionRepository;
 use crate::infrastructure::database::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::infrastructure::database::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::infrastructure::database::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;

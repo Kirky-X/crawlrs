@@ -7,8 +7,8 @@
 
 use crate::config::settings::Settings;
 use crate::di::infrastructure_module::{
-    CrawlRepositoryComponent, CreditsRepositoryComponent, GeoRestrictionRepositoryComponent,
-    ScrapeResultRepositoryComponent, TaskRepositoryComponent,
+    CrawlRepositoryComponent, GeoRestrictionRepositoryComponent, ScrapeResultRepositoryComponent,
+    TaskRepositoryComponent,
 };
 use crate::di::AppState;
 use crate::di::AppStateExt;

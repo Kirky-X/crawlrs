@@ -11,8 +11,6 @@
 use std::sync::Arc;
 
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
-use crate::di::infrastructure_module::RedisClientTrait;
-use crate::di::search_module::HttpClientTrait;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -21,7 +19,6 @@ use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::WebhookService;
-use crate::engines::router::EngineRouter;
 use crate::engines::router::EngineRouterTrait;
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::geolocation::GeoLocationServiceTrait;

@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_is_blocked_hostname() {
-        let blocked = get_blocked_hostnames();
+        let _blocked = get_blocked_hostnames();
 
         // Check blocked hostnames
         assert!(is_blocked_hostname("localhost"));

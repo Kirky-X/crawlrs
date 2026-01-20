@@ -13,7 +13,6 @@ use std::sync::Arc;
 use crate::engines::engine_client::EngineClient;
 use crate::search::aggregator::SearchAggregator;
 use crate::search::client::{SearchClient, SearchClientTrait};
-use crate::search::types::SearchEngineType;
 
 /// Trait for HttpClient component
 pub trait HttpClientTrait: Send + Sync {

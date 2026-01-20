@@ -6,7 +6,6 @@
 pub mod task;
 
 use crate::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
-use crate::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crate::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
