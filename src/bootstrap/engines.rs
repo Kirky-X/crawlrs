@@ -4,9 +4,6 @@
 // See LICENSE file in the project root for full license information.
 
 //! Scraper engines initialization and configuration.
-//! Uses deprecated traits for backwards compatibility.
-
-#![allow(deprecated)]
 
 use crate::config::engines::EngineSettings;
 #[cfg(feature = "engine-fire-cdp")]
@@ -19,8 +16,8 @@ use crate::engines::client::flare_solverr::FlareSolverrEngine;
 use crate::engines::client::playwright::PlaywrightEngine;
 use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::EngineClient;
+use crate::engines::engine_client::ScraperEngine;
 use crate::engines::router::EngineRouter;
-use crate::engines::traits::ScraperEngine;
 use std::sync::Arc;
 
 /// All engine-related components.
@@ -41,6 +38,7 @@ pub struct EngineComponents {
 ///
 /// # Arguments
 ///
+/// * `http_client` - Shared HTTP client
 /// * `proxy_url` - URL for the HTTP proxy (if enabled)
 /// * `engine_config` - Engine-specific configuration settings
 ///
@@ -50,12 +48,15 @@ pub struct EngineComponents {
 #[allow(deprecated)]
 #[allow(unused_variables)]
 pub fn init_engines(
+    http_client: Arc<reqwest::Client>,
     proxy_url: &str,
     engine_config: &EngineSettings,
 ) -> Vec<Arc<dyn ScraperEngine>> {
     #[allow(unused_mut)]
-    let mut engines: Vec<Arc<dyn ScraperEngine>> =
-        vec![Arc::new(ReqwestEngine::with_proxy(proxy_url.to_string()))];
+    let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::with_proxy(
+        http_client.clone(),
+        proxy_url.to_string(),
+    ))];
 
     #[cfg(feature = "engine-playwright")]
     engines.push(Arc::new(PlaywrightEngine));
@@ -67,6 +68,7 @@ pub fn init_engines(
             engine_config.fire_tls.url
         );
         engines.push(Arc::new(FireEngineTls::with_url_and_proxy(
+            http_client.clone(),
             &engine_config.fire_tls.url,
             Some(proxy_url),
         )));
@@ -79,6 +81,7 @@ pub fn init_engines(
             engine_config.fire_cdp.url
         );
         engines.push(Arc::new(FireEngineCdp::with_url_and_proxy(
+            http_client.clone(),
             &engine_config.fire_cdp.url,
             Some(proxy_url),
         )));
@@ -91,6 +94,7 @@ pub fn init_engines(
             engine_config.flaresolverr.url
         );
         engines.push(Arc::new(FlareSolverrEngine::with_url(
+            http_client.clone(),
             &engine_config.flaresolverr.url,
         )));
     }
@@ -105,6 +109,7 @@ pub fn init_engines(
 ///
 /// # Arguments
 ///
+/// * `http_client` - Shared HTTP client
 /// * `proxy_url` - URL for the HTTP proxy
 /// * `engine_config` - Engine-specific configuration
 ///
@@ -113,10 +118,11 @@ pub fn init_engines(
 /// Returns all engine components.
 #[allow(deprecated)]
 pub fn init_engine_components(
+    http_client: Arc<reqwest::Client>,
     proxy_url: &str,
     _engine_config: &EngineSettings,
 ) -> EngineComponents {
-    let engines = init_engines(proxy_url, _engine_config);
+    let engines = init_engines(http_client, proxy_url, _engine_config);
     let router = Arc::new(EngineRouter::new(engines.clone()));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 

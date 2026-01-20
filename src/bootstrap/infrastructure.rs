@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Infrastructure initialization: database, Redis, and repositories.
+//! Infrastructure initialization: database, Redis, HTTP client, and repositories.
 
 use crate::config::settings::Settings;
 use crate::domain::repositories::storage_repository::StorageRepository;
@@ -19,6 +19,7 @@ use crate::infrastructure::repositories::{
 use anyhow::Result;
 use migration::{Migrator, MigratorTrait};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
 
 /// Database connection pool type.
@@ -82,9 +83,54 @@ pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
 ///
 /// Returns a connected Redis client.
 pub async fn init_redis(settings: &Settings) -> Result<Arc<RedisClient>> {
-    let redis_client = Arc::new(RedisClient::new(settings.redis.url()).await?);
+    let redis_client = Arc::new(RedisClient::new(settings.redis.url())?);
     info!("Redis client initialized");
     Ok(redis_client)
+}
+
+/// Initialize HTTP client.
+///
+/// This function creates a shared HTTP client with configurable timeout
+/// and proxy settings. The client is used throughout the application for
+/// making HTTP requests.
+///
+/// # Arguments
+///
+/// * `settings` - Application settings containing timeout and proxy configuration
+///
+/// # Returns
+///
+/// Returns a configured HTTP client wrapped in Arc for sharing.
+pub fn init_http_client(settings: &Settings) -> Result<Arc<reqwest::Client>> {
+    // Default timeout: 30 seconds
+    let timeout_secs = settings.timeouts.engines.default_timeout_seconds;
+    let timeout = Duration::from_secs(timeout_secs as u64);
+
+    // Build client builder with timeout
+    let mut client_builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .connect_timeout(Duration::from_secs(15))
+        .pool_idle_timeout(Duration::from_secs(90));
+
+    // Configure proxy if enabled
+    if settings.proxy.enabled {
+        let proxy_url = settings.proxy.url();
+        match reqwest::Proxy::all(proxy_url) {
+            Ok(proxy) => {
+                client_builder = client_builder.proxy(proxy);
+                info!("HTTP client configured with proxy (credentials hidden)");
+            }
+            Err(e) => {
+                tracing::warn!("Invalid proxy URL '{}', disabling proxy: {}", proxy_url, e);
+            }
+        }
+    }
+
+    let client = client_builder.build()?;
+    let client = Arc::new(client);
+
+    info!("HTTP client initialized (timeout: {}s)", timeout_secs);
+    Ok(client)
 }
 
 /// Initialize all application repositories.
@@ -159,6 +205,8 @@ pub struct InfrastructureComponents {
     pub db: Arc<DatabasePool>,
     /// Redis client.
     pub redis_client: Arc<RedisClient>,
+    /// HTTP client.
+    pub http_client: Arc<reqwest::Client>,
     /// All application repositories.
     pub repositories: Repositories,
     /// Optional storage repository.
@@ -167,8 +215,8 @@ pub struct InfrastructureComponents {
 
 /// Initialize all infrastructure components.
 ///
-/// This is a convenience function that combines database, Redis, and
-/// repository initialization.
+/// This is a convenience function that combines database, Redis, HTTP client,
+/// and repository initialization.
 ///
 /// # Arguments
 ///
@@ -180,12 +228,14 @@ pub struct InfrastructureComponents {
 pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureComponents> {
     let db = init_database(settings).await?;
     let redis_client = init_redis(settings).await?;
+    let http_client = init_http_client(settings)?;
     let repositories = init_repositories(db.clone(), settings);
     let storage_repo = init_storage_repository(settings)?;
 
     Ok(InfrastructureComponents {
         db,
         redis_client,
+        http_client,
         repositories,
         storage_repo,
     })

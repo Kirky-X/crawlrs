@@ -12,14 +12,18 @@ use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
 use crate::bootstrap::infrastructure::InfrastructureComponents;
 use crate::bootstrap::infrastructure::Repositories;
 use crate::config::settings::Settings;
+use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::audit_service::AuditService;
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy, RateLimitingService,
 };
+use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
+use crate::domain::services::llm_service::LLMService;
 use crate::domain::services::team_service::TeamService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::infrastructure::geolocation::GeoLocationService;
 use crate::infrastructure::services::rate_limiting_service_impl::{
     RateLimitingConfig, RateLimitingServiceImpl,
 };
@@ -32,7 +36,7 @@ use crate::search::aggregator::SearchAggregator;
 use crate::search::engine_trait::SearchEngine;
 use crate::search::smart as smart_search;
 use crate::utils::robots::RobotsChecker;
-use crate::utils::http_client::HTTP_CLIENT;
+use crate::utils::regex_cache::RegexCache;
 
 /// All application services.
 #[derive(Clone)]
@@ -49,14 +53,26 @@ pub struct ServicesComponents {
     pub webhook_service: Arc<WebhookServiceImpl>,
     /// Team service.
     pub team_service: Arc<TeamService>,
+    /// Geo Location Service
+    pub geo_location_service: Arc<GeoLocationService>,
     /// Robots.txt checker.
     pub robots_checker: Arc<RobotsChecker>,
     /// Search engine service.
     pub search_engine_service: Arc<dyn SearchEngine>,
+    /// Search service.
+    pub search_service: Arc<dyn SearchServiceTrait>,
+    /// Auth scope service for API key permission management.
+    pub auth_scope_service: Option<Arc<AuthScopeService>>,
     /// Task queue.
     pub queue: Arc<dyn TaskQueue>,
     /// Audit service.
     pub audit_service: Arc<AuditService>,
+    /// HTTP Client
+    pub http_client: Arc<reqwest::Client>,
+    /// LLM service for LLM operations.
+    pub llm_service: Arc<LLMService>,
+    /// Regex cache for performance optimization.
+    pub regex_cache: Arc<RegexCache>,
 }
 
 /// Initialize rate limiter.
@@ -184,6 +200,91 @@ pub fn init_search_engine(
     }
 }
 
+/// Initialize search service.
+///
+/// This function creates the SearchService with all required dependencies,
+/// following dependency injection principles.
+///
+/// # Arguments
+///
+/// * `repositories` - Application repositories
+/// * `settings` - Application settings
+/// * `search_engine` - Search engine instance
+///
+/// # Returns
+///
+/// Returns an initialized search service as trait object.
+pub fn init_search_service(
+    repositories: &Repositories,
+    settings: &Settings,
+    search_engine: Arc<dyn SearchEngine>,
+) -> Arc<dyn SearchServiceTrait> {
+    // Create SearchService with concrete repository types
+    let service = SearchServiceConcrete::new(
+        repositories.crawl_repo.clone(),
+        repositories.task_repo.clone(),
+        repositories.credits_repo.clone(),
+        Arc::new(settings.clone()),
+        search_engine,
+    );
+    Arc::new(service)
+}
+
+/// Concrete SearchService type for DI
+type SearchServiceConcrete = SearchService<
+    crate::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl,
+    crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl,
+    crate::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl,
+>;
+
+/// Initialize auth scope service.
+///
+/// This function creates the AuthScopeService for managing API key scopes
+/// and permissions, following dependency injection principles.
+///
+/// # Arguments
+///
+/// * `db` - Database connection
+///
+/// # Returns
+///
+/// Returns an initialized auth scope service wrapped in Arc.
+pub fn init_auth_scope_service(db: &sea_orm::DbConn) -> Arc<AuthScopeService> {
+    Arc::new(AuthScopeService::new((*db).clone()))
+}
+
+/// Initialize LLM service.
+///
+/// This function creates the LLMService for LLM operations,
+/// following dependency injection principles.
+///
+/// # Arguments
+///
+/// * `settings` - Application settings
+/// * `http_client` - HTTP client for making requests
+///
+/// # Returns
+///
+/// Returns an initialized LLM service wrapped in Arc.
+pub fn init_llm_service(
+    settings: &Settings,
+    http_client: Arc<reqwest::Client>,
+) -> Arc<LLMService> {
+    Arc::new(LLMService::new(settings, http_client))
+}
+
+/// Initialize regex cache.
+///
+/// This function creates a RegexCache for performance optimization,
+/// following dependency injection principles.
+///
+/// # Returns
+///
+/// Returns an initialized regex cache wrapped in Arc.
+pub fn init_regex_cache() -> Arc<RegexCache> {
+    Arc::new(RegexCache::new())
+}
+
 /// Initialize all application services.
 ///
 /// # Arguments
@@ -200,6 +301,7 @@ pub fn init_services(
     infrastructure: &InfrastructureComponents,
     engine_router: Arc<EngineRouter>,
     engine_client: Arc<EngineClient>,
+    http_client: Arc<reqwest::Client>,
     settings: &Settings,
 ) -> ServicesComponents {
     let redis_client = infrastructure.redis_client.clone();
@@ -218,20 +320,29 @@ pub fn init_services(
     // Initialize create scrape use case
     let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(engine_client.clone()));
 
-    // Initialize webhook service (使用依赖注入的单例 HTTP_CLIENT)
+    // Initialize webhook service (使用依赖注入的 HTTP_CLIENT)
     let webhook_service = Arc::new(WebhookServiceImpl::new(
         settings.webhook.secret().to_string(),
-        HTTP_CLIENT.clone(),
+        http_client.clone(),
     ));
+
+    // Initialize GeoLocationService
+    let geo_location_service = Arc::new(
+        crate::infrastructure::geolocation::GeoLocationService::new(http_client.clone()),
+    );
 
     // Initialize team service
     let team_service = Arc::new(TeamService::new(
-        Arc::new(crate::infrastructure::geolocation::GeoLocationService::new()),
+        geo_location_service.clone(),
         repositories.geo_restriction_repo.clone(),
     ));
 
-    // Initialize robots checker
-    let robots_checker = Arc::new(RobotsChecker::new(Some(redis_client.clone())));
+    // Initialize robots checker (使用依赖注入的 HTTP_CLIENT)
+    let robots_checker = Arc::new(RobotsChecker::new(
+        http_client.clone(),
+        Some(redis_client.clone()),
+        None,
+    ));
 
     // Initialize search engine
     let search_engine_service = init_search_engine(
@@ -239,12 +350,28 @@ pub fn init_services(
         settings,
     );
 
+    // Initialize search service
+    let search_service = init_search_service(
+        repositories,
+        settings,
+        search_engine_service.clone(),
+    );
+
+    // Initialize auth scope service
+    let auth_scope_service = Some(init_auth_scope_service(&infrastructure.db));
+
     // Initialize task queue
     let queue: Arc<dyn TaskQueue> =
         Arc::new(PostgresTaskQueue::new(repositories.task_repo.clone()));
 
     // Initialize audit service
     let audit_service = Arc::new(AuditService::new(infrastructure.db.clone()));
+
+    // Initialize LLM service (使用依赖注入的 http_client)
+    let llm_service = init_llm_service(settings, http_client.clone());
+
+    // Initialize regex cache
+    let regex_cache = init_regex_cache();
 
     info!("Services initialized");
 
@@ -255,9 +382,15 @@ pub fn init_services(
         create_scrape_use_case,
         webhook_service,
         team_service,
+        geo_location_service,
         robots_checker,
         search_engine_service,
+        search_service,
+        auth_scope_service,
         queue,
         audit_service,
+        http_client,
+        llm_service,
+        regex_cache,
     }
 }

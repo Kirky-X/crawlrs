@@ -100,10 +100,11 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
     let report = monitor.generate_security_report();
 
     // 在测试环境中跳过禁止环境变量检查
-    let is_test = std::env::var("APP_ENVIRONMENT")
-        .unwrap_or_default()
-        .to_lowercase()
-        == "test"
+    // 使用配置服务获取环境，如果不可用则回退到环境变量
+    let env = std::env::var("CRAWLRS_ENV")
+        .or_else(|_| std::env::var("APP_ENVIRONMENT"))
+        .unwrap_or_else(|_| "development".to_string());
+    let is_test = env.to_lowercase() == "test"
         || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
 
     // Check for forbidden variables
