@@ -3,7 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::engines::engine_client::{EngineClient, ScrapeRequest as EngineScrapeRequest, ScrapeOptions};
+use crate::engines::engine_client::{
+    EngineClient, ScrapeOptions, ScrapeRequest as EngineScrapeRequest,
+};
 use crate::search::{
     engine_trait::SearchEngine,
     error::SearchError,
@@ -24,12 +26,6 @@ fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
 /// Sogou Search Engine implementation with EngineClient support
 pub struct SogouSearchEngine {
     engine_client: Arc<EngineClient>,
-}
-
-impl Default for SogouSearchEngine {
-    fn default() -> Self {
-        Self::new(Arc::new(EngineClient::new()))
-    }
 }
 
 impl SogouSearchEngine {
@@ -102,7 +98,7 @@ impl SogouSearchEngine {
 
             // 获取所有文本并清理
             let raw_title = title_node.unwrap().text().collect::<String>();
-            let title = raw_title.trim().to_string();
+            let title = html_escape::encode_text(raw_title.trim()).to_string();
 
             if title.is_empty() {
                 continue;
@@ -152,16 +148,17 @@ impl SearchEngine for SogouSearchEngine {
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         if std::env::var("SOGOU_TEST_RESULTS").unwrap_or_default() == "true" {
+            let escaped_query = html_escape::encode_text(&request.query);
             return Ok(Response {
                 items: vec![
                     ResponseItem {
-                        title: format!("Test Result 1 for {}", request.query),
+                        title: format!("Test Result 1 for {}", escaped_query),
                         url: "https://sogou.com/1".to_string(),
                         description: "Test description 1".to_string(),
                         engine: SearchEngineType::Sogou,
                     },
                     ResponseItem {
-                        title: format!("Test Result 2 for {}", request.query),
+                        title: format!("Test Result 2 for {}", escaped_query),
                         url: "https://sogou.com/2".to_string(),
                         description: "Test description 2".to_string(),
                         engine: SearchEngineType::Sogou,
@@ -184,8 +181,15 @@ impl SearchEngine for SogouSearchEngine {
 
         // 构建请求头
         let mut headers = HashMap::new();
-        headers.insert("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string());
-        headers.insert("Accept-Language".to_string(), "zh-CN,zh;q=0.9,en;q=0.8".to_string());
+        headers.insert(
+            "Accept".to_string(),
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                .to_string(),
+        );
+        headers.insert(
+            "Accept-Language".to_string(),
+            "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
+        );
         headers.insert("DNT".to_string(), "1".to_string());
         headers.insert("Connection".to_string(), "keep-alive".to_string());
 

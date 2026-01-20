@@ -3,7 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::engines::engine_client::{EngineClient, ScrapeRequest as EngineScrapeRequest, ScrapeOptions};
+use crate::engines::engine_client::{
+    EngineClient, ScrapeOptions, ScrapeRequest as EngineScrapeRequest,
+};
 use crate::search::{
     client::html_parser::HtmlParser,
     engine_trait::SearchEngine,
@@ -29,12 +31,6 @@ pub enum BaiduSearchCategory {
 pub struct BaiduSearchEngine {
     parser: HtmlParser,
     engine_client: Arc<EngineClient>,
-}
-
-impl Default for BaiduSearchEngine {
-    fn default() -> Self {
-        Self::new(Arc::new(EngineClient::new()))
-    }
 }
 
 impl BaiduSearchEngine {
@@ -107,9 +103,10 @@ impl BaiduSearchEngine {
 
                 if !title.is_empty() && !url.is_empty() {
                     results.push(ResponseItem {
-                        title: title.replace("&lt;", "<").replace("&gt;", ">"),
+                        // Use html-escape to safely encode HTML entities, preventing XSS attacks
+                        title: html_escape::encode_text(&title).trim().to_string(),
                         url,
-                        description: description.replace("&lt;", "<").replace("&gt;", ">"),
+                        description: html_escape::encode_text(&description).trim().to_string(),
                         engine: SearchEngineType::Baidu,
                     });
                 }
@@ -142,16 +139,17 @@ impl SearchEngine for BaiduSearchEngine {
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         if std::env::var("BAIDU_TEST_RESULTS").unwrap_or_default() == "true" {
+            let escaped_query = html_escape::encode_text(&request.query);
             return Ok(Response {
                 items: vec![
                     ResponseItem {
-                        title: format!("Baidu Test Result 1 for {}", request.query),
+                        title: format!("Baidu Test Result 1 for {}", escaped_query),
                         url: "https://baidu.com/1".to_string(),
                         description: "Test description 1".to_string(),
                         engine: SearchEngineType::Baidu,
                     },
                     ResponseItem {
-                        title: format!("Baidu Test Result 2 for {}", request.query),
+                        title: format!("Baidu Test Result 2 for {}", escaped_query),
                         url: "https://baidu.com/2".to_string(),
                         description: "Test description 2".to_string(),
                         engine: SearchEngineType::Baidu,
@@ -166,15 +164,26 @@ impl SearchEngine for BaiduSearchEngine {
 
         // 构建带查询参数的完整 URL
         let full_url = if !params.is_empty() {
-            format!("{}?{}", url, serde_urlencoded::to_string(&params).unwrap_or_default())
+            format!(
+                "{}?{}",
+                url,
+                serde_urlencoded::to_string(&params).unwrap_or_default()
+            )
         } else {
             url
         };
 
         // 构建请求头
         let mut headers = HashMap::new();
-        headers.insert("Accept".to_string(), "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8".to_string());
-        headers.insert("Accept-Language".to_string(), "zh-CN,zh;q=0.9,en;q=0.8".to_string());
+        headers.insert(
+            "Accept".to_string(),
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                .to_string(),
+        );
+        headers.insert(
+            "Accept-Language".to_string(),
+            "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
+        );
         headers.insert("DNT".to_string(), "1".to_string());
         headers.insert("Connection".to_string(), "keep-alive".to_string());
 

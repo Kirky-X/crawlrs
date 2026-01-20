@@ -13,7 +13,7 @@ use crate::domain::models::search_result::SearchResult;
 use crate::domain::services::rate_limiting_service::{
     RateLimitResult, RateLimitingError, RateLimitingService,
 };
-use crate::domain::services::relevance_scorer::RelevanceScorer;
+use crate::domain::services::relevance_scorer::{DateParserComponent, RelevanceScorer};
 use crate::engines::engine_client::{
     EngineClient, EngineError, PageAction, ScrapeOptions, ScrapeRequest, ScrollDirection,
 };
@@ -21,7 +21,7 @@ use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
 use crate::search::types::{EngineHealth, SearchEngineType};
-use crate::utils::text_processing::process_string;
+use crate::utils::text_processing::encoding::TextEncodingProcessor;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -92,14 +92,15 @@ fn parse_search_results_common(
     let url_attr = config.url_attr.unwrap_or("href");
 
     let mut results = Vec::new();
-    let scorer = RelevanceScorer::new(config.engine_name);
+    let scorer = RelevanceScorer::with_engine(config.engine_name);
 
     for element in document.select(&result_selector) {
-        let title = element
+        let raw_title = element
             .select(&title_selector)
             .next()
             .map(|el| el.text().collect::<String>().trim().to_string())
             .unwrap_or_default();
+        let title = html_escape::encode_text(&raw_title).to_string();
 
         // 使用指定的属性提取URL
         let url = element
@@ -109,12 +110,16 @@ fn parse_search_results_common(
             .map(|href| href.to_string())
             .unwrap_or_default();
 
-        let description = element
+        let raw_description = element
             .select(&snippet_selector)
             .next()
             .map(|el| el.text().collect::<String>().trim().to_string())
             .unwrap_or_default();
-        let description = process_string(&description).unwrap_or(description);
+        let description = html_escape::encode_text(
+            &TextEncodingProcessor::new()
+                .process_text(raw_description.as_bytes())
+                .unwrap_or(raw_description.clone())
+        ).to_string();
 
         if !title.is_empty() && !url.is_empty() {
             let mut result = SearchResult::new(
@@ -682,7 +687,9 @@ impl SmartSearchEngine {
             if let Ok(selector) = Selector::parse(selector_str) {
                 if let Some(el) = element.select(&selector).next() {
                     description = self.escape_html(el.text().collect::<String>().trim());
-                    description = process_string(&description).unwrap_or(description);
+                    description = TextEncodingProcessor::new()
+                        .process_text(description.as_bytes())
+                        .unwrap_or(description);
                     if !description.is_empty() {
                         break;
                     }
@@ -691,7 +698,7 @@ impl SmartSearchEngine {
         }
 
         if !title.is_empty() && !url.is_empty() {
-            let scorer = RelevanceScorer::new("google_search");
+            let scorer = RelevanceScorer::with_engine("google_search");
             let engine_name = self.get_engine_name();
             let mut result = SearchResult::new(title, url, Some(description), engine_name);
             result.score =
@@ -843,7 +850,7 @@ impl SmartSearchEngine {
 
     /// 应用相关性评分和新鲜度计算
     fn apply_scoring(&self, results: &mut Vec<SearchResult>, query: &str) {
-        let scorer = RelevanceScorer::new(query);
+        let scorer = RelevanceScorer::for_query(query);
 
         for result in &mut *results {
             // 计算相关性评分
@@ -852,7 +859,10 @@ impl SmartSearchEngine {
 
             // 从描述中提取发布日期
             if let Some(description) = &result.description {
-                if let Some(published_date) = RelevanceScorer::extract_published_date(description) {
+                let parser = DateParserComponent::with_defaults();
+                if let Some(published_date) =
+                    RelevanceScorer::extract_published_date_with_parser(description, &parser)
+                {
                     result.published_time = Some(published_date);
                 }
             }
@@ -1132,14 +1142,15 @@ pub fn create_smart_search_engine(
 mod tests {
     use super::*;
     use crate::engines::client::reqwest::ReqwestEngine;
+    use crate::engines::engine_client::ScraperEngine;
     use crate::engines::router::EngineRouter;
-    use crate::engines::traits::ScraperEngine;
+    use crate::utils::http_client::create_http_client;
 
     #[cfg(feature = "engine-playwright")]
     use crate::engines::client::playwright::PlaywrightEngine;
 
     fn create_test_client() -> Arc<EngineClient> {
-        let reqwest_engine = Arc::new(ReqwestEngine::new());
+        let reqwest_engine = Arc::new(ReqwestEngine::new(create_http_client()));
         let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
 
         #[cfg(feature = "engine-playwright")]

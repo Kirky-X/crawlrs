@@ -37,12 +37,6 @@ pub struct GoogleSearchEngine {
     engine_client: Arc<EngineClient>,
 }
 
-impl Default for GoogleSearchEngine {
-    fn default() -> Self {
-        Self::new(Arc::new(EngineClient::new()))
-    }
-}
-
 impl GoogleSearchEngine {
     pub fn new(engine_client: Arc<EngineClient>) -> Self {
         Self {
@@ -216,8 +210,10 @@ impl SearchEngine for GoogleSearchEngine {
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         // Test fallback mode - only enabled in development/test environments
         if std::env::var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS").unwrap_or_default() == "true" {
-            // Check environment to prevent accidental test mode in production
-            let env = std::env::var("CRAWLRS_ENV").unwrap_or_default();
+            // 使用配置服务获取环境，如果不可用则回退到环境变量
+            let env = std::env::var("CRAWLRS_ENV")
+                .or_else(|_| std::env::var("APP_ENVIRONMENT"))
+                .unwrap_or_else(|_| "development".to_string());
             let is_dev_env = matches!(
                 env.as_str(),
                 "development" | "dev" | "test" | "testing" | ""
@@ -230,16 +226,17 @@ impl SearchEngine for GoogleSearchEngine {
                 );
             } else {
                 tracing::info!("Using test fallback results for Google search");
+                let escaped_query = html_escape::encode_text(&request.query);
                 return Ok(Response {
                     items: vec![
                         ResponseItem {
-                            title: format!("Test Result 1 for {}", request.query),
+                            title: format!("Test Result 1 for {}", escaped_query),
                             url: "https://google.com/1".to_string(),
                             description: "Test description 1".to_string(),
                             engine: SearchEngineType::Google,
                         },
                         ResponseItem {
-                            title: format!("Test Result 2 for {}", request.query),
+                            title: format!("Test Result 2 for {}", escaped_query),
                             url: "https://google.com/2".to_string(),
                             description: "Test description 2".to_string(),
                             engine: SearchEngineType::Google,
@@ -362,7 +359,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_google_search_engine_creation() {
-        let engine_client = Arc::new(EngineClient::default());
+        use crate::engines::engine_client::EngineClient;
+        let engine_client = Arc::new(EngineClient::new());
         let engine = GoogleSearchEngine::new(engine_client);
         assert_eq!(engine.name(), "Google");
         assert_eq!(engine.engine_type(), SearchEngineType::Google);
@@ -371,7 +369,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_arc_id_refresh() {
-        let engine_client = Arc::new(EngineClient::default());
+        use crate::engines::engine_client::EngineClient;
+        let engine_client = Arc::new(EngineClient::new());
         let engine = GoogleSearchEngine::new(engine_client);
         let arc_id1 = engine.get_arc_id(0).await;
         assert!(arc_id1.contains("arc_id:srp_"));
