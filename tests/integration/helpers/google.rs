@@ -17,11 +17,11 @@ use std::sync::Arc;
 
 #[allow(dead_code)]
 #[cfg(feature = "engine-fire-cdp")]
-pub fn create_google_engine() -> GoogleSearchEngine {
+pub fn create_google_engine(http_client: Arc<reqwest::Client>) -> GoogleSearchEngine {
     let mut engines: Vec<Arc<dyn crawlrs::engines::traits::ScraperEngine>> = Vec::new();
-    let fire_engine_cdp = Arc::new(FireEngineCdp::new());
+    let fire_engine_cdp = Arc::new(FireEngineCdp::new(http_client.clone()));
     engines.push(fire_engine_cdp as Arc<dyn crawlrs::engines::traits::ScraperEngine>);
-    let fire_engine_tls = Arc::new(FireEngineTls::new());
+    let fire_engine_tls = Arc::new(FireEngineTls::new(http_client.clone()));
     engines.push(fire_engine_tls as Arc<dyn crawlrs::engines::traits::ScraperEngine>);
     let engine_client = Arc::new(EngineClient::with_engines(engines));
     GoogleSearchEngine::new(engine_client)
@@ -29,27 +29,27 @@ pub fn create_google_engine() -> GoogleSearchEngine {
 
 #[allow(dead_code)]
 #[cfg(feature = "engine-flaresolverr")]
-pub fn create_flaresolverr_google_engine(flaresolverr_url: &str) -> FlareSolverrGoogleEngine {
-    FlareSolverrGoogleEngine::new(flaresolverr_url.to_string())
+pub fn create_flaresolverr_google_engine(
+    http_client: Arc<reqwest::Client>,
+    flaresolverr_url: &str,
+) -> FlareSolverrGoogleEngine {
+    FlareSolverrGoogleEngine::new(http_client, flaresolverr_url.to_string())
 }
 
 #[allow(dead_code)]
 #[cfg(feature = "engine-flaresolverr")]
 pub struct FlareSolverrGoogleEngine {
     flaresolverr_url: String,
-    client: reqwest::Client,
+    client: Arc<reqwest::Client>,
 }
 
 #[allow(dead_code)]
 #[cfg(feature = "engine-flaresolverr")]
 impl FlareSolverrGoogleEngine {
-    pub fn new(flaresolverr_url: String) -> Self {
+    pub fn new(client: Arc<reqwest::Client>, flaresolverr_url: String) -> Self {
         Self {
             flaresolverr_url,
-            client: reqwest::Client::builder()
-                .timeout(CRAWL_TASK_TIMEOUT)
-                .build()
-                .expect("Failed to build reqwest client"),
+            client,
         }
     }
 

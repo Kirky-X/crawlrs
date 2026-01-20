@@ -36,7 +36,7 @@ async fn test_process_crawl_result_creates_tasks_integration() {
     // It uses reqwest::Client::new(), which follows standard DNS.
     // Our local server is on 127.0.0.1, which is accessible.
 
-    let service = CrawlService::new(app.task_repo.clone());
+    let service = CrawlService::new(app.task_repo.clone(), None);
 
     let link_url = format!("{}/page1", base_url);
 
@@ -112,7 +112,7 @@ async fn test_process_crawl_result_respects_domain_blacklist() {
             .expect("Failed to start server");
     });
 
-    let service = CrawlService::new(app.task_repo.clone());
+    let service = CrawlService::new(app.task_repo.clone(), None);
 
     let allowed_url = format!("{}/allowed", base_url);
     let blocked_url = "http://malicious.com/bad";

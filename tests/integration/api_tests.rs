@@ -14,9 +14,8 @@ use crawlrs::common::constants::testing::{
     API_REQUEST_TIMEOUT, CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT,
 };
 use crawlrs::engines::client::reqwest::ReqwestEngine;
-use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::engines::engine_client::ScraperEngine;
 use crawlrs::infrastructure::database::entities::task;
-use crawlrs::utils::telemetry::init_telemetry_legacy;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::json;
 use std::sync::Arc;
@@ -1211,7 +1210,6 @@ async fn test_search_basic() {
     if std::env::var("CHROMIUM_REMOTE_DEBUGGING_URL").is_err() {
         println!("CHROMIUM_REMOTE_DEBUGGING_URL not set, will use HTTP fallback.");
     }
-    init_telemetry_legacy();
     let app = create_test_app().await;
 
     let response = app

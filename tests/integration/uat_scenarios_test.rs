@@ -57,7 +57,7 @@ macro_rules! retry_assert {
 async fn test_uat007_path_filtering() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(300));
-    let crawl_service = CrawlService::new(Arc::new(repo.clone()));
+    let crawl_service = CrawlService::new(Arc::new(repo.clone()), None);
 
     // 创建父任务，配置路径过滤规则
     let parent_task = Task {
@@ -342,7 +342,7 @@ async fn test_uat006_distributed_rate_limiting() {
 async fn test_uat007_path_filtering_empty_rules() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(300));
-    let crawl_service = CrawlService::new(Arc::new(repo.clone()));
+    let crawl_service = CrawlService::new(Arc::new(repo.clone()), None);
 
     let parent_task = Task {
         id: Uuid::new_v4(),
@@ -416,7 +416,7 @@ async fn test_uat008_robots_txt_compliance() {
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(300));
 
     // 使用真实的robots检查器
-    let crawl_service = CrawlService::new(Arc::new(repo.clone()));
+    let crawl_service = CrawlService::new(Arc::new(repo.clone()), None);
 
     let parent_task = Task {
         id: Uuid::new_v4(),
@@ -490,7 +490,7 @@ async fn test_uat008_robots_txt_caching() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(300));
 
-    let crawl_service = CrawlService::new(Arc::new(repo.clone()));
+    let crawl_service = CrawlService::new(Arc::new(repo.clone()), None);
 
     let parent_task = Task {
         id: Uuid::new_v4(),
@@ -602,7 +602,7 @@ async fn test_uat009_concurrent_task_processing() {
                 i, i
             );
 
-            let crawl_service = CrawlService::new(repo_clone);
+            let crawl_service = CrawlService::new(repo_clone, None);
             crawl_service
                 .process_crawl_result(&parent_task, &html_content)
                 .await
@@ -647,7 +647,7 @@ async fn test_uat010_error_recovery_and_retry() {
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(300));
 
     // 使用真实的robots检查器，但创建会失败的任务场景
-    let crawl_service = CrawlService::new(Arc::new(repo.clone()));
+    let crawl_service = CrawlService::new(Arc::new(repo.clone()), None);
 
     // 创建任务，使用无效URL来测试错误处理
     let parent_task = Task {
@@ -750,7 +750,7 @@ async fn test_uat011_timeout_handling() {
         expires_at: None,
     };
 
-    let crawl_service = CrawlService::new(Arc::new(repo.clone()));
+    let crawl_service = CrawlService::new(Arc::new(repo.clone()), None);
 
     let html_content = r#"
         <html>
@@ -803,7 +803,7 @@ async fn test_uat011_timeout_handling() {
 async fn test_uat012_resource_exhaustion_handling() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(300));
-    let crawl_service = CrawlService::new(Arc::new(repo.clone()));
+    let crawl_service = CrawlService::new(Arc::new(repo.clone()), None);
 
     // 创建包含大量链接的HTML内容
     let mut html_links = String::new();
@@ -953,7 +953,7 @@ async fn test_uat025_degradation_strategy() {
 
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(300));
-    let crawl_service = CrawlService::new(Arc::new(repo));
+    let crawl_service = CrawlService::new(Arc::new(repo), None);
 
     let task = Task {
         id: Uuid::new_v4(),

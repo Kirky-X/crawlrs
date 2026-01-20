@@ -15,7 +15,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let settings = Settings::new().expect("Failed to load settings");
 
-    let service = ExtractionService::new(Box::new(LLMService::new(&settings)));
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+    let service = ExtractionService::new(Box::new(LLMService::new(&settings, http_client)));
 
     // 读取指定的真实 HTML 文件
     let html = std::fs::read_to_string("temp/extraction_test/raw.html")

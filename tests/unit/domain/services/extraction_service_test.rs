@@ -3,13 +3,30 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use async_trait::async_trait;
 use axum::{routing::post, Json, Router};
 use crawlrs::config::settings::Settings;
 use crawlrs::domain::services::extraction_service::{ExtractionRule, ExtractionService};
-use crawlrs::domain::services::llm_service::LLMService;
+use crawlrs::domain::services::llm_service::{LLMService, LLMServiceTrait, TokenUsage};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use tokio::net::TcpListener;
+
+/// No-op LLM Service for tests that don't use LLM extraction rules
+#[derive(Debug, Default)]
+pub struct NoOpLLMService;
+
+#[async_trait]
+impl LLMServiceTrait for NoOpLLMService {
+    async fn extract_data(
+        &self,
+        _text: &str,
+        _schema: &Value,
+        _format: &str,
+    ) -> Result<(Value, TokenUsage)> {
+        Ok((json!({}), TokenUsage::default()))
+    }
+}
 
 #[test]
 fn test_extraction_service_basic_selectors() {
@@ -62,8 +79,9 @@ fn test_extraction_service_basic_selectors() {
     );
 
     let settings = Settings::new().expect("Failed to load settings");
+    let noop_llm = Box::new(NoOpLLMService);
     let (result, _) =
-        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings, None))
+        tokio_test::block_on(ExtractionService::extract(html, &rules, noop_llm, None))
             .expect("Failed to extract data");
 
     assert_eq!(result["title"], "Hello World");
@@ -95,8 +113,9 @@ fn test_extraction_service_missing_elements() {
     );
 
     let settings = Settings::new().expect("Failed to load settings");
+    let noop_llm = Box::new(NoOpLLMService);
     let (result, _) =
-        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings, None))
+        tokio_test::block_on(ExtractionService::extract(html, &rules, noop_llm, None))
             .expect("Failed to extract data");
     assert_eq!(result["missing"], Value::Null);
 }
@@ -118,8 +137,9 @@ fn test_extraction_service_empty_array() {
     );
 
     let settings = Settings::new().expect("Failed to load settings");
+    let noop_llm = Box::new(NoOpLLMService);
     let (result, _) =
-        tokio_test::block_on(ExtractionService::extract(html, &rules, &settings, None))
+        tokio_test::block_on(ExtractionService::extract(html, &rules, noop_llm, None))
             .expect("Failed to extract data");
     let list = result["missing_list"]
         .as_array()

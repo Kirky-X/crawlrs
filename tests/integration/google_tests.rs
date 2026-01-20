@@ -148,17 +148,14 @@ async fn test_flaresolverr_google_engine(
 
 struct FlareSolverrGoogleEngine {
     flaresolverr_url: String,
-    client: reqwest::Client,
+    client: std::sync::Arc<reqwest::Client>,
 }
 
 impl FlareSolverrGoogleEngine {
-    pub fn new(flaresolverr_url: String) -> Self {
+    pub fn new(client: std::sync::Arc<reqwest::Client>, flaresolverr_url: String) -> Self {
         Self {
             flaresolverr_url,
-            client: reqwest::Client::builder()
-                .timeout(CRAWL_TASK_TIMEOUT)
-                .build()
-                .expect("Failed to build reqwest client"),
+            client,
         }
     }
 
@@ -277,7 +274,7 @@ impl FlareSolverrGoogleEngine {
 async fn test_flaresolverr_connection() {
     println!("=== 测试FlareSolverr服务 ===");
 
-    let client = reqwest::Client::new();
+    let client = crawlrs::utils::http_client::create_http_client();
     let result1 = test_flaresolverr_status(&client).await;
     let result2 = test_flaresolverr_google_request(&client, "鸿蒙星光大赏").await;
 
@@ -293,7 +290,8 @@ async fn test_flaresolverr_connection() {
 async fn test_flaresolverr_google_search() {
     println!("=== 测试FlareSolverr Google搜索 ===");
 
-    let engine = FlareSolverrGoogleEngine::new("http://localhost:8191".to_string());
+    let http_client = crawlrs::utils::http_client::create_http_client();
+    let engine = FlareSolverrGoogleEngine::new(http_client, "http://localhost:8191".to_string());
 
     let result = test_flaresolverr_google_engine(&engine, "rust programming").await;
     assert!(result, "FlareSolverr Google搜索测试失败");
@@ -311,7 +309,8 @@ async fn test_google_with_remote_chrome() {
     println!("使用远程Chrome: {}", ws_url);
     set_chrome_ws_url(&ws_url);
 
-    let google_engine = create_google_engine();
+    let http_client = crawlrs::utils::http_client::create_http_client();
+    let google_engine = create_google_engine(http_client);
 
     let result = test_google_with_google_engine(&google_engine, "鸿蒙星光大赏").await;
     assert!(result, "使用远程Chrome的Google搜索测试失败");
@@ -329,7 +328,8 @@ async fn test_google_with_timeout() {
     println!("使用远程Chrome: {}", ws_url);
     set_chrome_ws_url(&ws_url);
 
-    let google_engine = create_google_engine();
+    let http_client = crawlrs::utils::http_client::create_http_client();
+    let google_engine = create_google_engine(http_client);
 
     let test_queries = vec!["鸿蒙星光大赏", "HarmonyOS", "华为"];
 

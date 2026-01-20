@@ -90,7 +90,8 @@ async fn demo_factory_usage() {
     info!("📖 演示二：工厂方法用法");
     info!("----------------------------------------");
 
-    let factory = SearchEngineFactory::new();
+    let http_client = crawlrs::utils::http_client::create_http_client();
+    let factory = SearchEngineFactory::new(http_client);
 
     let _google_engine = factory.create_google_smart_search();
     info!("✅ 已通过工厂创建 Google 智能搜索引擎");

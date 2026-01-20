@@ -62,7 +62,8 @@ async fn verify_google_uses_fire_engine_cdp() {
     std::env::set_var("FIRE_ENGINE_URL", &base_url);
 
     // 4. Create Google Engine (which internally creates EngineClient with FireEngineCdp)
-    let engine = create_google_engine();
+    let http_client = crawlrs::utils::http_client::create_http_client();
+    let engine = create_google_engine(http_client);
 
     // 5. Perform search
     let request = SearchRequest {

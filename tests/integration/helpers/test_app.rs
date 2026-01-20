@@ -83,6 +83,7 @@ use crate::common::constants::timeouts::{API_REQUEST_TIMEOUT, CRAWL_TASK_TIMEOUT
 use crawlrs::config::settings::Settings;
 use crawlrs::domain::auth::ApiKeyScope;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
+use crawlrs::domain::services::llm_service::LLMService;
 use crawlrs::domain::services::rate_limiting_service::RateLimitConfig;
 #[cfg(feature = "engine-fire-cdp")]
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
@@ -108,6 +109,7 @@ use crawlrs::search::client::baidu::BaiduSearchEngine;
 use crawlrs::search::client::bing::BingSearchEngine;
 use crawlrs::search::client::google::GoogleSearchEngine;
 use crawlrs::search::client::sogou::SogouSearchEngine;
+use crawlrs::utils::regex_cache::RegexCache;
 use crawlrs::workers::expiration_worker::ExpirationWorker;
 use crawlrs::workers::scrape_worker::ScrapeWorker;
 use crawlrs::workers::worker::AbstractWorker;
@@ -637,6 +639,8 @@ pub async fn create_test_app_with_rate_limit_options(
             tokio::spawn(async move {
                 // Use default engine client which will eventually be replaced by the one from factory
                 let engine_client = Arc::new(EngineClient::with_router(router));
+                let llm_service = LLMService::new(&settings, http_client.clone());
+                let regex_cache = RegexCache::new();
                 let worker = ScrapeWorker::new(
                     task_repo,
                     result_repo,
@@ -650,6 +654,8 @@ pub async fn create_test_app_with_rate_limit_options(
                     robots_checker,
                     settings,
                     worker_default_concurrency_limit,
+                    llm_service,
+                    regex_cache,
                 );
                 eprintln!("DEBUG: Worker {} started", i);
                 worker.run(queue).await;
