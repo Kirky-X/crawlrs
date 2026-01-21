@@ -18,6 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
+    let http_client = std::sync::Arc::new(http_client);
     let service = ExtractionService::new(Box::new(LLMService::new(&settings, http_client)));
 
     // 读取指定的真实 HTML 文件
