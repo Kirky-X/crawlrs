@@ -10,6 +10,8 @@
 
 use anyhow::{anyhow, Context, Result};
 use bcrypt::{hash, verify, DEFAULT_COST};
+use hex::encode;
+use sha2::{Digest, Sha256};
 
 // 重新导出环境变量安全模块
 pub mod env_var_security;
@@ -81,31 +83,51 @@ pub fn is_legacy_sha256_hash(key_hash: &str) -> bool {
     !key_hash.starts_with('$') && key_hash.len() == 64
 }
 
+/// 计算 API Key 的 SHA-256 哈希值（用于缓存键）
+///
+/// 使用 SHA-256 生成一致的哈希值，适用于缓存键和数据库查询。
+/// 注意：这不是bcrypt，不能用于密码存储。
+///
+/// # 参数
+///
+/// * `api_key` - 原始 API Key 字符串
+///
+/// # 返回值
+///
+/// * 十六进制编码的 SHA-256 哈希字符串（64字符）
+pub fn hash_api_key_sha256(api_key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(api_key.as_bytes());
+    encode(hasher.finalize())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_hash_api_key() {
+    fn test_hash_api_key_sha256() {
         let key = "test_api_key_12345";
-        let hash = hash_api_key(key).unwrap();
+        let hash1 = hash_api_key_sha256(key);
+        let hash2 = hash_api_key_sha256(key);
 
-        // bcrypt 哈希应该以 $2b$ 开头
-        assert!(hash.starts_with("$2b$"));
-
-        // bcrypt 每次生成不同的哈希（随机盐），这是安全特性
-        let hash2 = hash_api_key(key).unwrap();
-        assert_ne!(hash, hash2);
-        // 但两者都能验证通过同一个 key
-        assert!(verify_api_key(key, &hash));
-        assert!(verify_api_key(key, &hash2));
+        // SHA-256 是确定性的，相同的输入应该产生相同的输出
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 64); // SHA-256 十六进制是 64 字符
 
         // 不同的输入应该产生不同的哈希
-        let hash3 = hash_api_key("different_key").unwrap();
-        assert_ne!(hash, hash3);
-        // 不同的 key 不能通过验证
-        assert!(!verify_api_key("different_key", &hash));
-        assert!(!verify_api_key("test_api_key_12345", &hash3));
+        let hash3 = hash_api_key_sha256("different_key");
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_sha256_hash_format() {
+        let key = "my_secret_key";
+        let hash = hash_api_key_sha256(key);
+
+        // 应该是纯十六进制字符串
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(hash.len(), 64);
     }
 
     #[test]

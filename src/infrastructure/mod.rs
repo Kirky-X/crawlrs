@@ -23,6 +23,7 @@ pub mod database;
 pub mod errors;
 pub mod geolocation;
 pub mod metrics;
+pub mod migrations;
 pub mod observability;
 pub mod queue;
 pub mod security;

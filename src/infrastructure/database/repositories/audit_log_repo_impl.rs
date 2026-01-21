@@ -3,30 +3,34 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use async_trait::async_trait;
 use chrono::Utc;
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
+    ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set,
 };
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::auth::{AuditDecision, AuditLogEntry};
+use crate::domain::repositories::audit_log_repository::{AuditLogRepository, AuditRepositoryError};
 use crate::infrastructure::database::entities::auth::audit_log::{
     Column as AuditColumn, Entity as AuditEntity,
 };
 
 #[derive(Clone)]
-pub struct AuditLogRepository {
+pub struct AuditLogRepositoryImpl {
     db: Arc<DatabaseConnection>,
 }
 
-impl AuditLogRepository {
+impl AuditLogRepositoryImpl {
     pub fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
+}
 
-    pub async fn create(&self, entry: AuditLogEntry) -> Result<AuditLogEntry, sea_orm::DbErr> {
+#[async_trait]
+impl AuditLogRepository for AuditLogRepositoryImpl {
+    async fn create(&self, entry: &AuditLogEntry) -> Result<AuditLogEntry, AuditRepositoryError> {
         let entry_cloned = entry.clone();
         let metadata_value = serde_json::to_value(entry_cloned.metadata).unwrap_or_default();
         let scope_used_value = entry_cloned
@@ -52,15 +56,15 @@ impl AuditLogRepository {
             };
 
         AuditEntity::insert(active_model).exec(&*self.db).await?;
-        Ok(entry)
+        Ok(entry.clone())
     }
 
-    pub async fn find_by_api_key_id(
+    async fn find_by_api_key_id(
         &self,
         api_key_id: Uuid,
         limit: u64,
         offset: u64,
-    ) -> Result<Vec<AuditLogEntry>, sea_orm::DbErr> {
+    ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         let logs = AuditEntity::find()
             .filter(AuditColumn::ApiKeyId.eq(api_key_id))
             .order_by(AuditColumn::CreatedAt, Order::Desc)
@@ -72,12 +76,12 @@ impl AuditLogRepository {
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 
-    pub async fn find_by_team_id(
+    async fn find_by_team_id(
         &self,
         team_id: Uuid,
         limit: u64,
         offset: u64,
-    ) -> Result<Vec<AuditLogEntry>, sea_orm::DbErr> {
+    ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         let logs = AuditEntity::find()
             .filter(AuditColumn::TeamId.eq(team_id))
             .order_by(AuditColumn::CreatedAt, Order::Desc)
@@ -89,24 +93,11 @@ impl AuditLogRepository {
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 
-    pub async fn find_by_trace_id(
-        &self,
-        trace_id: Uuid,
-    ) -> Result<Vec<AuditLogEntry>, sea_orm::DbErr> {
-        let logs = AuditEntity::find()
-            .filter(AuditColumn::TraceId.eq(trace_id))
-            .order_by(AuditColumn::CreatedAt, Order::Asc)
-            .all(&*self.db)
-            .await?;
-
-        Ok(logs.into_iter().map(|l| l.into()).collect())
-    }
-
-    pub async fn find_denied_for_key(
+    async fn find_denied_for_key(
         &self,
         api_key_id: Uuid,
         limit: u64,
-    ) -> Result<Vec<AuditLogEntry>, sea_orm::DbErr> {
+    ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         let logs = AuditEntity::find()
             .filter(AuditColumn::ApiKeyId.eq(api_key_id))
             .filter(AuditColumn::Decision.eq(AuditDecision::Deny.to_string()))
@@ -118,16 +109,7 @@ impl AuditLogRepository {
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 
-    pub async fn count_by_decision(&self, decision: AuditDecision) -> Result<u64, sea_orm::DbErr> {
-        let count = AuditEntity::find()
-            .filter(AuditColumn::Decision.eq(decision.to_string()))
-            .count(&*self.db)
-            .await?;
-
-        Ok(count)
-    }
-
-    pub async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, sea_orm::DbErr> {
+    async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditRepositoryError> {
         let cutoff = Utc::now() - chrono::Duration::days(retention_days);
 
         let result = AuditEntity::delete_many()
