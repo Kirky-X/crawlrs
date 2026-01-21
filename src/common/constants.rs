@@ -197,7 +197,6 @@ pub mod webhook {
 }
 
 /// 测试相关常量
-#[cfg(test)]
 pub mod testing {
     use std::time::Duration;
 
@@ -302,8 +301,7 @@ pub mod env_vars {
     pub const TEST_FIRE_ENGINE_CDP_URL: &str = "TEST_FIRE_ENGINE_CDP_URL";
 }
 
-/// 导出测试常量（仅在测试模式下）
-#[cfg(test)]
+/// 导出测试常量
 pub use testing::*;
 
 #[cfg(test)]

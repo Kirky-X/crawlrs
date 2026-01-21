@@ -48,6 +48,22 @@ pub enum AppError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// 引擎错误
+    #[error("Engine error: {0}")]
+    Engine(String),
+
+    /// 缓存错误
+    #[error("Cache error: {0}")]
+    Cache(String),
+
+    /// 任务错误
+    #[error("Task error: {0}")]
+    Task(String),
+
+    /// 速率限制错误
+    #[error("Rate limit error: {0}")]
+    RateLimit(String),
+
     /// 其他错误
     #[error("Error: {0}")]
     Other(String),

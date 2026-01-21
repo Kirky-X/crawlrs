@@ -464,6 +464,41 @@ impl AuditServiceTrait for AuditServiceComponent {
     ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
         Ok(())
     }
+
+    async fn get_logs_for_key(
+        &self,
+        _api_key_id: uuid::Uuid,
+        _limit: u64,
+        _offset: u64,
+    ) -> Result<
+        Vec<crate::domain::auth::AuditLogEntry>,
+        crate::domain::services::audit_service::AuditServiceError,
+    > {
+        Ok(Vec::new())
+    }
+
+    async fn get_logs_for_team(
+        &self,
+        _team_id: uuid::Uuid,
+        _limit: u64,
+        _offset: u64,
+    ) -> Result<
+        Vec<crate::domain::auth::AuditLogEntry>,
+        crate::domain::services::audit_service::AuditServiceError,
+    > {
+        Ok(Vec::new())
+    }
+
+    async fn get_denied_requests(
+        &self,
+        _api_key_id: uuid::Uuid,
+        _limit: u64,
+    ) -> Result<
+        Vec<crate::domain::auth::AuditLogEntry>,
+        crate::domain::services::audit_service::AuditServiceError,
+    > {
+        Ok(Vec::new())
+    }
 }
 
 impl AuditServiceTraitDI for AuditServiceComponent {

@@ -18,7 +18,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
-use crate::domain::services::audit_service::AuditService;
+use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::llm_service::LLMService;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
@@ -84,7 +84,7 @@ pub struct AppState {
     /// Regex cache for performance optimization
     pub regex_cache: Arc<RegexCache>,
     /// Audit service
-    pub audit_service: Arc<AuditService>,
+    pub audit_service: Arc<dyn AuditServiceTrait>,
 }
 
 /// Trait for extracting dependencies from AppState
@@ -139,7 +139,7 @@ pub trait AppStateExt {
     /// Get team semaphore
     fn team_semaphore(&self) -> Arc<TeamSemaphore>;
     /// Get audit service
-    fn audit_service(&self) -> Arc<AuditService>;
+    fn audit_service(&self) -> Arc<dyn AuditServiceTrait>;
 }
 
 impl AppStateExt for AppState {
@@ -235,7 +235,7 @@ impl AppStateExt for AppState {
         self.team_semaphore.clone()
     }
 
-    fn audit_service(&self) -> Arc<AuditService> {
+    fn audit_service(&self) -> Arc<dyn AuditServiceTrait> {
         self.audit_service.clone()
     }
 }

@@ -12,7 +12,7 @@ use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
 use crate::bootstrap::infrastructure::InfrastructureComponents;
 use crate::bootstrap::infrastructure::Repositories;
 use crate::config::settings::Settings;
-use crate::domain::services::audit_service::AuditService;
+use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
 use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::llm_service::LLMService;
 use crate::domain::services::rate_limiting_service::{
@@ -23,6 +23,7 @@ use crate::domain::services::team_service::TeamService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
 use crate::infrastructure::geolocation::GeoLocationService;
 use crate::infrastructure::services::rate_limiting_service_impl::{
     RateLimitingConfig, RateLimitingServiceImpl,
@@ -66,7 +67,7 @@ pub struct ServicesComponents {
     /// Task queue.
     pub queue: Arc<dyn TaskQueue>,
     /// Audit service.
-    pub audit_service: Arc<AuditService>,
+    pub audit_service: Arc<dyn AuditServiceTrait>,
     /// HTTP Client
     pub http_client: Arc<reqwest::Client>,
     /// LLM service for LLM operations.
@@ -358,7 +359,8 @@ pub fn init_services(
         Arc::new(PostgresTaskQueue::new(repositories.task_repo.clone()));
 
     // Initialize audit service
-    let audit_service = Arc::new(AuditService::new(infrastructure.db.clone()));
+    let audit_repo = Arc::new(AuditLogRepositoryImpl::new(infrastructure.db.clone()));
+    let audit_service = Arc::new(AuditService::new(audit_repo));
 
     // Initialize LLM service (使用依赖注入的 http_client)
     let llm_service = init_llm_service(settings, http_client.clone());
