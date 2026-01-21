@@ -91,7 +91,7 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     }
 
     async fn cleanup(&self) {
-        let mut guard = self.browser.lock();
+        let mut guard = self.browser.lock().unwrap();
         if let Some(browser) = guard.take() {
             tracing::info!("Closing browser instance");
             drop(browser);
@@ -99,7 +99,7 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     }
 
     fn reset(&self) {
-        let mut guard = self.browser.lock();
+        let mut guard = self.browser.lock().unwrap();
         *guard = None;
     }
 

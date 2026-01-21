@@ -8,7 +8,9 @@
 use crate::config::settings::Settings;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+#[cfg(feature = "experimental")]
 use genai::chat::{ChatMessage, ChatRequest};
+#[cfg(feature = "experimental")]
 use genai::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -128,6 +130,7 @@ pub struct LLMService {
     /// HTTP 客户端 (通过依赖注入的单例)
     http_client: Arc<reqwest::Client>,
     /// LLM 客户端
+    #[cfg(feature = "experimental")]
     client: Client,
     /// 使用的模型
     model: String,
@@ -175,6 +178,7 @@ impl LLMService {
 
         Self {
             http_client,
+            #[cfg(feature = "experimental")]
             client: Client::default(),
             model,
             provider,
@@ -206,6 +210,7 @@ impl LLMService {
 
         Self {
             http_client,
+            #[cfg(feature = "experimental")]
             client: Client::default(),
             model,
             provider: "openai".to_string(),
@@ -229,6 +234,7 @@ impl LLMService {
 
         Self {
             http_client,
+            #[cfg(feature = "experimental")]
             client: Client::default(),
             model,
             provider: "openai".to_string(),
@@ -317,35 +323,45 @@ impl LLMService {
 
             (content, usage)
         } else {
-            // 否则使用 genai 默认逻辑
-            let chat_req = ChatRequest::new(vec![ChatMessage::user(prompt)]);
+            #[cfg(feature = "experimental")]
+            {
+                // 否则使用 genai 默认逻辑
+                let chat_req = ChatRequest::new(vec![ChatMessage::user(prompt)]);
 
-            let model_id = format!("{}:{}", self.provider, self.model);
+                let model_id = format!("{}:{}", self.provider, self.model);
 
-            let chat_res = match self.client.exec_chat(&model_id, chat_req, None).await {
-                Ok(res) => res,
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "LLM call failed for model {}: {:?}",
-                        model_id,
-                        e
-                    ));
-                }
-            };
+                let chat_res = match self.client.exec_chat(&model_id, chat_req, None).await {
+                    Ok(res) => res,
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "LLM call failed for model {}: {:?}",
+                            model_id,
+                            e
+                        ));
+                    }
+                };
 
-            let content = chat_res
-                .first_text()
-                .ok_or_else(|| anyhow::anyhow!("LLM returned empty content"))?
-                .to_string();
+                let content = chat_res
+                    .first_text()
+                    .ok_or_else(|| anyhow::anyhow!("LLM returned empty content"))?
+                    .to_string();
 
-            // genai 0.5.0 的 TokenUsage 获取方式
-            let usage = TokenUsage {
-                prompt_tokens: 0, // genai 0.5.0 暂未直接暴露此结构，保持兼容
-                completion_tokens: 0,
-                total_tokens: 0,
-            };
+                // genai 0.5.0 的 TokenUsage 获取方式
+                let usage = TokenUsage {
+                    prompt_tokens: 0, // genai 0.5.0 暂未直接暴露此结构，保持兼容
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                };
 
-            (content, usage)
+                (content, usage)
+            }
+            #[cfg(not(feature = "experimental"))]
+            {
+                return Err(anyhow::anyhow!(
+                    "LLM provider requires 'experimental' feature to be enabled. \
+                     Please rebuild with --features experimental"
+                ));
+            }
         };
 
         if format == "json" {

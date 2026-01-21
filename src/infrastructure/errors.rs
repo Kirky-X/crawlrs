@@ -46,6 +46,7 @@ pub enum InfrastructureError {
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
+    #[cfg(feature = "storage-s3")]
     #[error("S3操作失败: {0}")]
     S3Operation(#[from] aws_sdk_s3::Error),
 
