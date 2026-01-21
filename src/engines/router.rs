@@ -1179,7 +1179,7 @@ mod tests {
 mod tests_impl {
     use super::*;
     use crate::engines::engine_client::{
-        EngineError, InternalScrapeRequest, InternalScrapeResponse, ScrapeResponse, ScraperEngine,
+        EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
     };
     use async_trait::async_trait;
     use std::collections::HashMap;

@@ -91,7 +91,7 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     }
 
     async fn cleanup(&self) {
-        let mut guard = self.browser.lock().unwrap();
+        let mut guard = self.browser.lock();
         if let Some(browser) = guard.take() {
             tracing::info!("Closing browser instance");
             drop(browser);
@@ -99,7 +99,7 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     }
 
     fn reset(&self) {
-        let mut guard = self.browser.lock().unwrap();
+        let mut guard = self.browser.lock();
         *guard = None;
     }
 
@@ -146,7 +146,7 @@ impl PlaywrightBrowserManagerComponent {
 
         // 尝试获取现有的浏览器实例
         let browser_to_check = {
-            let browser_guard = self.browser.lock().unwrap();
+            let browser_guard = self.browser.lock().expect("Browser mutex poisoned");
             browser_guard.as_ref().map(Arc::clone)
         };
 
@@ -200,7 +200,7 @@ impl PlaywrightBrowserManagerComponent {
 
         // 存储浏览器实例
         {
-            let mut browser_guard = self.browser.lock().unwrap();
+            let mut browser_guard = self.browser.lock().expect("Browser mutex poisoned");
             *browser_guard = Some(Arc::clone(&browser));
         }
 
@@ -267,7 +267,7 @@ impl BrowserManager {
 
         // Try to get the existing browser (clone outside lock to avoid holding across await)
         let browser_to_check = {
-            let browser_guard = self.browser.lock().unwrap();
+            let browser_guard = self.browser.lock().expect("Browser mutex poisoned");
             browser_guard.as_ref().map(Arc::clone)
         };
 
@@ -325,7 +325,7 @@ impl BrowserManager {
 
         // Store the browser in the manager
         {
-            let mut browser_guard = self.browser.lock().unwrap();
+            let mut browser_guard = self.browser.lock().expect("Browser mutex poisoned");
             *browser_guard = Some(Arc::clone(&browser));
         }
 
@@ -334,7 +334,7 @@ impl BrowserManager {
 
     /// Clean up browser instance
     pub async fn cleanup(&self) {
-        let mut guard = self.browser.lock().unwrap();
+        let mut guard = self.browser.lock().expect("Browser mutex poisoned");
         if let Some(browser) = guard.take() {
             tracing::info!("Closing browser instance");
             drop(browser);

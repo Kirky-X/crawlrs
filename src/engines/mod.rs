@@ -18,8 +18,11 @@ pub mod shared;
 
 // New unified EngineClient API
 pub mod engine_client;
+pub mod traits;
 
 pub use engine_client::{
     EngineClient, EngineError, EngineHealthStatus, PageAction, ScrapeOptions, ScrapeRequest,
     ScrapeResponse, ScreenshotConfig, ScrollDirection,
 };
+
+pub use engine_client::ScraperEngine;
