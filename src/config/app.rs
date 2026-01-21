@@ -20,6 +20,9 @@ use serde::Deserialize;
 /// * `min_connections` - 连接池中最小连接数，默认 10
 /// * `connect_timeout` - 连接超时时间（秒），默认 10 秒
 /// * `idle_timeout` - 空闲连接超时时间（秒），默认 300 秒
+/// * `max_lifetime` - 连接最大存活时间（秒），默认 1800 秒（30 分钟）
+/// * `connection_keepalive` - 连接存活检查间隔（秒），默认 30 秒
+/// * `health_check_interval` - 空闲连接健康检查间隔（秒），默认 60 秒
 ///
 /// # 安全提示
 ///
@@ -37,6 +40,12 @@ pub struct DatabaseSettings {
     pub connect_timeout: Option<u64>,
     /// 空闲连接超时时间（秒）
     pub idle_timeout: Option<u64>,
+    /// 连接最大存活时间（秒）
+    pub max_lifetime: Option<u64>,
+    /// 连接存活检查间隔（秒）
+    pub connection_keepalive: Option<u64>,
+    /// 健康检查间隔（秒）
+    pub health_check_interval: Option<u64>,
 }
 
 impl DatabaseSettings {
@@ -59,6 +68,9 @@ impl std::fmt::Debug for DatabaseSettings {
             .field("min_connections", &self.min_connections)
             .field("connect_timeout", &self.connect_timeout)
             .field("idle_timeout", &self.idle_timeout)
+            .field("max_lifetime", &self.max_lifetime)
+            .field("connection_keepalive", &self.connection_keepalive)
+            .field("health_check_interval", &self.health_check_interval)
             .finish()
     }
 }

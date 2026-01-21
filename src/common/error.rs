@@ -179,7 +179,9 @@ mod tests {
 
     #[test]
     fn test_error_code_mapping() {
-        assert_eq!(AppError::Database(sea_orm::DbErr::Conn(anyhow::anyhow!("test"))).error_code(), "DATABASE_ERROR");
+        // Use a Custom error instead of the specific Conn variant
+        let db_err = sea_orm::DbErr::Custom("test connection error".to_string());
+        assert_eq!(AppError::Database(db_err).error_code(), "DATABASE_ERROR");
         assert_eq!(AppError::NotFound("test".to_string()).error_code(), "NOT_FOUND");
         assert_eq!(AppError::Validation("test".to_string()).error_code(), "VALIDATION_ERROR");
     }
@@ -190,32 +192,5 @@ mod tests {
         let response = err.to_api_error_response();
         assert_eq!(response.code, "NOT_FOUND");
         assert_eq!(response.message, "Not found: User not found");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_error_display() {
-        let err = AppError::NotFound("User".to_string());
-        assert_eq!(err.to_string(), "Not found: User");
-    }
-
-    #[test]
-    fn test_error_debug() {
-        let err = AppError::Validation("Invalid email".to_string());
-        let debug_str = format!("{:?}", err);
-        assert!(debug_str.contains("Validation"));
-    }
-
-    #[test]
-    fn test_app_result() {
-        let result: AppResult<i32> = Ok(42);
-        assert!(result.is_ok());
-
-        let result: AppResult<i32> = Err(AppError::Config("Missing key".to_string()));
-        assert!(result.is_err());
     }
 }

@@ -119,7 +119,7 @@ impl TaskRepository for TaskRepositoryComponent {
         crate::domain::repositories::task_repository::RepositoryError,
     > {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.create(task).await
@@ -132,7 +132,7 @@ impl TaskRepository for TaskRepositoryComponent {
         crate::domain::repositories::task_repository::RepositoryError,
     > {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.find_by_id(id).await
@@ -145,7 +145,7 @@ impl TaskRepository for TaskRepositoryComponent {
         crate::domain::repositories::task_repository::RepositoryError,
     > {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.update(task).await
@@ -158,7 +158,7 @@ impl TaskRepository for TaskRepositoryComponent {
         crate::domain::repositories::task_repository::RepositoryError,
     > {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.acquire_next(worker_id).await
@@ -168,7 +168,7 @@ impl TaskRepository for TaskRepositoryComponent {
         id: uuid::Uuid,
     ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError> {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.mark_completed(id).await
@@ -178,7 +178,7 @@ impl TaskRepository for TaskRepositoryComponent {
         id: uuid::Uuid,
     ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError> {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.mark_failed(id).await
@@ -188,7 +188,7 @@ impl TaskRepository for TaskRepositoryComponent {
         id: uuid::Uuid,
     ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError> {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.mark_cancelled(id).await
@@ -198,7 +198,7 @@ impl TaskRepository for TaskRepositoryComponent {
         url: &str,
     ) -> Result<bool, crate::domain::repositories::task_repository::RepositoryError> {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.exists_by_url(url).await
@@ -211,7 +211,7 @@ impl TaskRepository for TaskRepositoryComponent {
         crate::domain::repositories::task_repository::RepositoryError,
     > {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.find_existing_urls(urls).await
@@ -221,7 +221,7 @@ impl TaskRepository for TaskRepositoryComponent {
         timeout: chrono::Duration,
     ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.reset_stuck_tasks(timeout).await
@@ -231,7 +231,7 @@ impl TaskRepository for TaskRepositoryComponent {
         crawl_id: uuid::Uuid,
     ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.cancel_tasks_by_crawl_id(crawl_id).await
@@ -240,7 +240,7 @@ impl TaskRepository for TaskRepositoryComponent {
         &self,
     ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.expire_tasks().await
@@ -253,7 +253,7 @@ impl TaskRepository for TaskRepositoryComponent {
         crate::domain::repositories::task_repository::RepositoryError,
     > {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.find_by_crawl_id(crawl_id).await
@@ -266,7 +266,7 @@ impl TaskRepository for TaskRepositoryComponent {
         crate::domain::repositories::task_repository::RepositoryError,
     > {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.query_tasks(params).await
@@ -281,7 +281,7 @@ impl TaskRepository for TaskRepositoryComponent {
         crate::domain::repositories::task_repository::RepositoryError,
     > {
         let repo = TaskRepositoryImpl::new(
-            self.pool.0.clone(),
+            self.pool.inner.clone(),
             chrono::Duration::seconds(self.task_lock_duration_seconds),
         );
         repo.batch_cancel(task_ids, team_id, force).await
@@ -306,7 +306,7 @@ impl CreditsRepository for CreditsRepositoryComponent {
         &self,
         team_id: uuid::Uuid,
     ) -> Result<i64, crate::domain::repositories::credits_repository::CreditsRepositoryError> {
-        let repo = CreditsRepositoryImpl::new(self.pool.0.clone());
+        let repo = CreditsRepositoryImpl::new(self.pool.inner.clone());
         repo.get_balance(team_id).await
     }
     async fn deduct_credits(
@@ -317,7 +317,7 @@ impl CreditsRepository for CreditsRepositoryComponent {
         description: String,
         reference_id: Option<uuid::Uuid>,
     ) -> Result<(), crate::domain::repositories::credits_repository::CreditsRepositoryError> {
-        let repo = CreditsRepositoryImpl::new(self.pool.0.clone());
+        let repo = CreditsRepositoryImpl::new(self.pool.inner.clone());
         repo.deduct_credits(team_id, amount, transaction_type, description, reference_id)
             .await
     }
@@ -329,7 +329,7 @@ impl CreditsRepository for CreditsRepositoryComponent {
         description: String,
         reference_id: Option<uuid::Uuid>,
     ) -> Result<i64, crate::domain::repositories::credits_repository::CreditsRepositoryError> {
-        let repo = CreditsRepositoryImpl::new(self.pool.0.clone());
+        let repo = CreditsRepositoryImpl::new(self.pool.inner.clone());
         repo.add_credits(team_id, amount, transaction_type, description, reference_id)
             .await
     }
@@ -341,7 +341,7 @@ impl CreditsRepository for CreditsRepositoryComponent {
         Vec<crate::domain::models::credits::CreditsTransaction>,
         crate::domain::repositories::credits_repository::CreditsRepositoryError,
     > {
-        let repo = CreditsRepositoryImpl::new(self.pool.0.clone());
+        let repo = CreditsRepositoryImpl::new(self.pool.inner.clone());
         repo.get_transaction_history(team_id, limit).await
     }
     async fn initialize_team_credits(
@@ -349,7 +349,7 @@ impl CreditsRepository for CreditsRepositoryComponent {
         team_id: uuid::Uuid,
         initial_balance: i64,
     ) -> Result<i64, crate::domain::repositories::credits_repository::CreditsRepositoryError> {
-        let repo = CreditsRepositoryImpl::new(self.pool.0.clone());
+        let repo = CreditsRepositoryImpl::new(self.pool.inner.clone());
         repo.initialize_team_credits(team_id, initial_balance).await
     }
 }
@@ -375,7 +375,7 @@ impl CrawlRepository for CrawlRepositoryComponent {
         crate::domain::models::crawl::Crawl,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = CrawlRepositoryImpl::new(self.pool.0.clone());
+        let repo = CrawlRepositoryImpl::new(self.pool.inner.clone());
         repo.create(crawl).await
     }
     async fn find_by_id(
@@ -385,7 +385,7 @@ impl CrawlRepository for CrawlRepositoryComponent {
         Option<crate::domain::models::crawl::Crawl>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = CrawlRepositoryImpl::new(self.pool.0.clone());
+        let repo = CrawlRepositoryImpl::new(self.pool.inner.clone());
         repo.find_by_id(id).await
     }
     async fn update(
@@ -395,7 +395,7 @@ impl CrawlRepository for CrawlRepositoryComponent {
         crate::domain::models::crawl::Crawl,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = CrawlRepositoryImpl::new(self.pool.0.clone());
+        let repo = CrawlRepositoryImpl::new(self.pool.inner.clone());
         repo.update(crawl).await
     }
     async fn update_status(
@@ -403,28 +403,28 @@ impl CrawlRepository for CrawlRepositoryComponent {
         id: uuid::Uuid,
         status: crate::domain::models::crawl::CrawlStatus,
     ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError> {
-        let repo = CrawlRepositoryImpl::new(self.pool.0.clone());
+        let repo = CrawlRepositoryImpl::new(self.pool.inner.clone());
         repo.update_status(id, status).await
     }
     async fn increment_completed_tasks(
         &self,
         id: uuid::Uuid,
     ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError> {
-        let repo = CrawlRepositoryImpl::new(self.pool.0.clone());
+        let repo = CrawlRepositoryImpl::new(self.pool.inner.clone());
         repo.increment_completed_tasks(id).await
     }
     async fn increment_failed_tasks(
         &self,
         id: uuid::Uuid,
     ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError> {
-        let repo = CrawlRepositoryImpl::new(self.pool.0.clone());
+        let repo = CrawlRepositoryImpl::new(self.pool.inner.clone());
         repo.increment_failed_tasks(id).await
     }
     async fn increment_total_tasks(
         &self,
         id: uuid::Uuid,
     ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError> {
-        let repo = CrawlRepositoryImpl::new(self.pool.0.clone());
+        let repo = CrawlRepositoryImpl::new(self.pool.inner.clone());
         repo.increment_total_tasks(id).await
     }
     async fn find_by_team_id_paginated(
@@ -436,14 +436,14 @@ impl CrawlRepository for CrawlRepositoryComponent {
         Vec<crate::domain::models::crawl::Crawl>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = CrawlRepositoryImpl::new(self.pool.0.clone());
+        let repo = CrawlRepositoryImpl::new(self.pool.inner.clone());
         repo.find_by_team_id_paginated(team_id, limit, offset).await
     }
     async fn count_by_team_id(
         &self,
         team_id: uuid::Uuid,
     ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
-        let repo = CrawlRepositoryImpl::new(self.pool.0.clone());
+        let repo = CrawlRepositoryImpl::new(self.pool.inner.clone());
         repo.count_by_team_id(team_id).await
     }
 }
@@ -466,21 +466,21 @@ impl ScrapeResultRepository for ScrapeResultRepositoryComponent {
         &self,
         result: crate::domain::models::scrape_result::ScrapeResult,
     ) -> anyhow::Result<()> {
-        let repo = ScrapeResultRepositoryImpl::new(self.pool.0.clone());
+        let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
         repo.save(result).await
     }
     async fn find_by_task_id(
         &self,
         task_id: uuid::Uuid,
     ) -> anyhow::Result<Option<crate::domain::models::scrape_result::ScrapeResult>> {
-        let repo = ScrapeResultRepositoryImpl::new(self.pool.0.clone());
+        let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
         repo.find_by_task_id(task_id).await
     }
     async fn find_by_task_ids(
         &self,
         task_ids: &[uuid::Uuid],
     ) -> anyhow::Result<Vec<crate::domain::models::scrape_result::ScrapeResult>> {
-        let repo = ScrapeResultRepositoryImpl::new(self.pool.0.clone());
+        let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
         repo.find_by_task_ids(task_ids).await
     }
 }
@@ -506,7 +506,7 @@ impl WebhookRepository for WebhookRepositoryComponent {
         crate::domain::models::webhook::Webhook,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = WebhookRepoImpl::new(self.pool.0.clone());
+        let repo = WebhookRepoImpl::new(self.pool.inner.clone());
         repo.create(webhook).await
     }
     async fn find_by_id(
@@ -516,7 +516,7 @@ impl WebhookRepository for WebhookRepositoryComponent {
         Option<crate::domain::models::webhook::Webhook>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = WebhookRepoImpl::new(self.pool.0.clone());
+        let repo = WebhookRepoImpl::new(self.pool.inner.clone());
         repo.find_by_id(id).await
     }
 }
@@ -542,7 +542,7 @@ impl WebhookEventRepository for WebhookEventRepositoryComponent {
         crate::domain::models::webhook::WebhookEvent,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = WebhookEventRepoImpl::new(self.pool.0.clone());
+        let repo = WebhookEventRepoImpl::new(self.pool.inner.clone());
         repo.create(event).await
     }
     async fn find_by_id(
@@ -552,7 +552,7 @@ impl WebhookEventRepository for WebhookEventRepositoryComponent {
         Option<crate::domain::models::webhook::WebhookEvent>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = WebhookEventRepoImpl::new(self.pool.0.clone());
+        let repo = WebhookEventRepoImpl::new(self.pool.inner.clone());
         repo.find_by_id(id).await
     }
     async fn find_pending(
@@ -562,7 +562,7 @@ impl WebhookEventRepository for WebhookEventRepositoryComponent {
         Vec<crate::domain::models::webhook::WebhookEvent>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = WebhookEventRepoImpl::new(self.pool.0.clone());
+        let repo = WebhookEventRepoImpl::new(self.pool.inner.clone());
         repo.find_pending(limit).await
     }
     async fn find_by_team_id_paginated(
@@ -574,14 +574,14 @@ impl WebhookEventRepository for WebhookEventRepositoryComponent {
         Vec<crate::domain::models::webhook::WebhookEvent>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = WebhookEventRepoImpl::new(self.pool.0.clone());
+        let repo = WebhookEventRepoImpl::new(self.pool.inner.clone());
         repo.find_by_team_id_paginated(team_id, limit, offset).await
     }
     async fn count_by_team_id(
         &self,
         team_id: uuid::Uuid,
     ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
-        let repo = WebhookEventRepoImpl::new(self.pool.0.clone());
+        let repo = WebhookEventRepoImpl::new(self.pool.inner.clone());
         repo.count_by_team_id(team_id).await
     }
     async fn update(
@@ -591,7 +591,7 @@ impl WebhookEventRepository for WebhookEventRepositoryComponent {
         crate::domain::models::webhook::WebhookEvent,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = WebhookEventRepoImpl::new(self.pool.0.clone());
+        let repo = WebhookEventRepoImpl::new(self.pool.inner.clone());
         repo.update(event).await
     }
 }
@@ -617,7 +617,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
         crate::domain::repositories::tasks_backlog_repository::TasksBacklog,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = TasksBacklogRepositoryImpl::new(self.pool.0.clone());
+        let repo = TasksBacklogRepositoryImpl::new(self.pool.inner.clone());
         repo.create(backlog).await
     }
     async fn find_by_id(
@@ -627,7 +627,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
         Option<crate::domain::repositories::tasks_backlog_repository::TasksBacklog>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = TasksBacklogRepositoryImpl::new(self.pool.0.clone());
+        let repo = TasksBacklogRepositoryImpl::new(self.pool.inner.clone());
         repo.find_by_id(id).await
     }
     async fn find_by_task_id(
@@ -637,7 +637,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
         Option<crate::domain::repositories::tasks_backlog_repository::TasksBacklog>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = TasksBacklogRepositoryImpl::new(self.pool.0.clone());
+        let repo = TasksBacklogRepositoryImpl::new(self.pool.inner.clone());
         repo.find_by_task_id(task_id).await
     }
     async fn update(
@@ -647,14 +647,14 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
         crate::domain::repositories::tasks_backlog_repository::TasksBacklog,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = TasksBacklogRepositoryImpl::new(self.pool.0.clone());
+        let repo = TasksBacklogRepositoryImpl::new(self.pool.inner.clone());
         repo.update(backlog).await
     }
     async fn delete(
         &self,
         id: uuid::Uuid,
     ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError> {
-        let repo = TasksBacklogRepositoryImpl::new(self.pool.0.clone());
+        let repo = TasksBacklogRepositoryImpl::new(self.pool.inner.clone());
         repo.delete(id).await
     }
     async fn get_pending_tasks(
@@ -665,7 +665,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
         Vec<crate::domain::repositories::tasks_backlog_repository::TasksBacklog>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = TasksBacklogRepositoryImpl::new(self.pool.0.clone());
+        let repo = TasksBacklogRepositoryImpl::new(self.pool.inner.clone());
         repo.get_pending_tasks(team_id, limit).await
     }
     async fn get_expired_tasks(
@@ -675,7 +675,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
         Vec<crate::domain::repositories::tasks_backlog_repository::TasksBacklog>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        let repo = TasksBacklogRepositoryImpl::new(self.pool.0.clone());
+        let repo = TasksBacklogRepositoryImpl::new(self.pool.inner.clone());
         repo.get_expired_tasks(limit).await
     }
     async fn count_by_status(
@@ -683,7 +683,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
         team_id: Option<uuid::Uuid>,
         status: crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus,
     ) -> Result<i64, crate::domain::repositories::task_repository::RepositoryError> {
-        let repo = TasksBacklogRepositoryImpl::new(self.pool.0.clone());
+        let repo = TasksBacklogRepositoryImpl::new(self.pool.inner.clone());
         repo.count_by_status(team_id, status).await
     }
     async fn update_status_batch(
@@ -691,7 +691,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
         ids: &[uuid::Uuid],
         status: crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus,
     ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
-        let repo = TasksBacklogRepositoryImpl::new(self.pool.0.clone());
+        let repo = TasksBacklogRepositoryImpl::new(self.pool.inner.clone());
         repo.update_status_batch(ids, status).await
     }
 }

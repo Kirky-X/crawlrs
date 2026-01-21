@@ -12,21 +12,13 @@ use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
     audit_handler, crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
-    team_handler, webhook_handler,
+    task_handler, team_handler, webhook_handler,
 };
-use crate::presentation::routes::task::task_routes;
-use crate::di::AppState;
-use crate::presentation::middleware::team_semaphore::TeamSemaphore;
-use crate::utils::regex_cache::RegexCache;
 use axum::{
-    extract::State,
     routing::{delete, get, post, put},
     Json, Router,
 };
 use serde_json::json;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::timeout;
 
 /// 创建应用路由
 ///
@@ -34,12 +26,10 @@ use tokio::time::timeout;
 ///
 /// 返回配置好的路由
 pub fn routes() -> Router {
-    let public_routes = Router::new()
+    Router::new()
         .route("/health", get(health_check))
         .route("/metrics", get(metrics_handler::metrics))
-        .route("/v1/version", get(version));
-
-    let protected_routes = Router::new()
+        .route("/v1/version", get(version))
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
         .route("/v1/scrape/{id}", delete(scrape_handler::cancel_scrape))
@@ -105,67 +95,24 @@ pub fn routes() -> Router {
             put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
         )
         .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
-        .route("/v1/audit/denied", get(audit_handler::get_denied_requests));
-
-    let v2_routes = task_routes();
-
-    Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .merge(v2_routes)
+        .route("/v1/audit/denied", get(audit_handler::get_denied_requests))
+        .route(
+            "/v2/tasks/query",
+            post(task_handler::query_tasks::<TaskRepositoryImpl>),
+        )
+        .route(
+            "/v2/tasks/cancel",
+            delete(task_handler::cancel_tasks::<TaskRepositoryImpl>),
+        )
 }
 
 /// 健康检查端点
 ///
 /// # 返回值
 ///
-/// 返回JSON格式的健康状态，包括数据库和Redis连接状态
-pub async fn health_check(
-    State(app_state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
-    let mut health_status = json!({
-        "status": "healthy",
-        "checks": {}
-    });
-
-    let checks = health_status.as_object_mut().unwrap().get_mut("checks").unwrap();
-
-    // 检查数据库连接
-    let db_healthy = check_database_health(&app_state).await;
-    checks["database"] = json!({
-        "status": if db_healthy { "healthy" } else { "unhealthy" }
-    });
-
-    // 检查Redis连接
-    let redis_healthy = check_redis_health(&app_state).await;
-    checks["redis"] = json!({
-        "status": if redis_healthy { "healthy" } else { "unhealthy" }
-    });
-
-    // 更新整体状态
-    if !db_healthy || !redis_healthy {
-        health_status["status"] = json!("degraded");
-    }
-
-    Json(health_status)
-}
-
-/// 检查数据库健康状态
-async fn check_database_health(app_state: &Arc<AppState>) -> bool {
-    let db = &app_state.db;
-    match timeout(Duration::from_secs(5), db.ping()).await {
-        Ok(Ok(_)) => true,
-        _ => false,
-    }
-}
-
-/// 检查Redis健康状态
-async fn check_redis_health(app_state: &Arc<AppState>) -> bool {
-    let redis = &app_state.redis_client;
-    match timeout(Duration::from_secs(5), redis.ping()).await {
-        Ok(Ok(_)) => true,
-        _ => false,
-    }
+/// 返回JSON格式的健康状态
+pub async fn health_check() -> Json<serde_json::Value> {
+    Json(json!({ "status": "healthy" }))
 }
 
 /// 版本信息端点

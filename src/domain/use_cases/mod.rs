@@ -10,7 +10,15 @@
 ///
 /// 当前的用例：
 /// - 创建Webhook（create_webhook）：处理Webhook配置的创建流程
+/// - 任务用例（task_use_cases）：任务创建、查询、取消
+/// - 爬取用例（crawl_use_cases）：异步和同步爬取操作
+/// - 搜索用例（search_use_cases）：单引擎和多引擎搜索
+/// - 抓取用例（scrape_use_cases）：异步和同步抓取操作
 ///
 /// 领域用例与应用程序用例的区别在于：领域用例包含纯粹的业务逻辑，
 /// 关注业务规则的实现，而应用程序用例可能包含更多的技术细节和协调逻辑。
 pub mod create_webhook;
+pub mod crawl_use_cases;
+pub mod scrape_use_cases;
+pub mod search_use_cases;
+pub mod task_use_cases;

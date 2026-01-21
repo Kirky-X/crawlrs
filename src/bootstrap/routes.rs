@@ -22,7 +22,8 @@ use crate::presentation::handlers::{
 };
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
-use crate::presentation::routes::{self, task::task_routes};
+use crate::presentation::routes;
+use crate::presentation::routes::task::task_routes;
 use axum::{
     routing::{delete, get, post, put},
     Extension, Router,

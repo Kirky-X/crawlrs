@@ -9,7 +9,9 @@
 /// 用于在API请求和领域模型之间传输数据
 pub mod crawl_request;
 pub mod extract_request;
+pub mod geo_restriction_request;
 pub mod scrape_request;
 pub mod scrape_response;
 pub mod search_request;
 pub mod task_query_request;
+pub mod webhook_request;

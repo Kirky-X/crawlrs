@@ -254,4 +254,16 @@ impl RedisClient {
         let exists: bool = con.exists(key).await?;
         Ok(exists)
     }
+
+    /// 检查Redis连接是否健康
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(true)` - 连接健康
+    /// * `Err(anyhow::Error)` - 连接失败
+    pub async fn ping(&self) -> Result<bool> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+        let result: String = con.ping().await?;
+        Ok(result == "PONG")
+    }
 }
