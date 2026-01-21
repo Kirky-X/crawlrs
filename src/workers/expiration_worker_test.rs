@@ -16,7 +16,9 @@ mod expiration_worker_tests {
     use uuid::Uuid;
 
     async fn setup_db() -> Arc<DatabaseConnection> {
-        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("Failed to connect to in-memory database");
         let db = Arc::new(db);
 
         // Create teams table
@@ -38,7 +40,7 @@ mod expiration_worker_tests {
             create_teams_sql.to_string(),
         ))
         .await
-        .unwrap();
+        .expect("Failed to execute SQL statement for creating teams table");
 
         // Create tasks table
         let create_tasks_sql = r#"
@@ -66,7 +68,7 @@ mod expiration_worker_tests {
             create_tasks_sql.to_string(),
         ))
         .await
-        .unwrap();
+        .expect("Failed to execute SQL statement for creating tasks table");
 
         db
     }
@@ -81,7 +83,9 @@ mod expiration_worker_tests {
             enable_geo_restrictions: Set(false),
             ..Default::default()
         };
-        team.insert(db).await.unwrap();
+        team.insert(db)
+            .await
+            .expect("Failed to insert team into database");
         team_id
     }
 
@@ -115,7 +119,9 @@ mod expiration_worker_tests {
             task.started_at = Set(Some(started_at.into()));
         }
 
-        task.insert(db).await.unwrap();
+        task.insert(db)
+            .await
+            .expect("Failed to insert task into database");
         task_id
     }
 
@@ -145,10 +151,13 @@ mod expiration_worker_tests {
 
         assert!(result.is_ok());
         // Should expire 2 tasks
-        assert_eq!(result.unwrap(), 2);
+        assert_eq!(result.expect("Cleanup result should be OK"), 2);
 
         // Verify statuses in DB
-        let tasks = task::Entity::find().all(db.as_ref()).await.unwrap();
+        let tasks = task::Entity::find()
+            .all(db.as_ref())
+            .await
+            .expect("Failed to fetch tasks from database");
         let failed_count = tasks
             .iter()
             .filter(|t| t.status == TaskStatus::Failed.to_string())
@@ -182,6 +191,6 @@ mod expiration_worker_tests {
         let result = worker.cleanup_expired_tasks().await;
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 0);
+        assert_eq!(result.expect("Cleanup result should be OK"), 0);
     }
 }
