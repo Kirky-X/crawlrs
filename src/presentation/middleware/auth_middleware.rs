@@ -10,7 +10,7 @@
 #![allow(dead_code)]
 
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
-use crate::domain::services::audit_service::AuditService;
+use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::infrastructure::database::entities::api_key;
 use crate::infrastructure::security;
@@ -373,8 +373,9 @@ pub async fn auth_middleware(
         }
     }
 
+    // Security fix: 使用 key_hash 列进行查询，避免原始密钥在数据库查询中暴露
     match api_key::Entity::find()
-        .filter(api_key::Column::Key.eq(&token_str)) // 先通过原始 key 查找
+        .filter(api_key::Column::KeyHash.eq(&token_hash)) // 使用哈希值查询
         .one(state.db.as_ref())
         .await
     {
@@ -441,24 +442,16 @@ pub async fn auth_middleware(
                 }
             }
 
-            // Log migration status for keys using legacy plaintext storage
+            // Security fix: 强制拒绝明文 API 密钥，不分环境
+            // 明文存储的 API 密钥是严重的安全漏洞，必须被拒绝
             if key.key_hash.is_none() {
-                // 使用配置服务获取环境，如果不可用则回退到环境变量
-                let env = std::env::var("CRAWLRS_ENV")
-                    .or_else(|_| std::env::var("APP_ENVIRONMENT"))
-                    .unwrap_or_else(|_| "development".to_string());
-                if env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod") {
-                    // In production, reject legacy plaintext API keys
-                    tracing::error!(
-                        "SECURITY: Legacy plaintext API Key {} rejected in production environment",
-                        key.id
-                    );
-                    return Err(StatusCode::UNAUTHORIZED);
-                }
-                tracing::warn!(
-                    "Legacy plaintext API Key {} detected, please migrate to hashed storage",
+                tracing::error!(
+                    "SECURITY CRITICAL: Attempted authentication with plaintext API key (key_id={}). \
+                    Plaintext API keys are never allowed in any environment. \
+                    Please migrate to hashed storage immediately.",
                     key.id
                 );
+                return Err(StatusCode::UNAUTHORIZED);
             }
 
             // Create AuthState with scope service from AppState
@@ -485,10 +478,11 @@ pub async fn auth_middleware(
             auth_state.load_scope_from_db().await;
 
             // PERF-002: Cache the successful authentication result
+            // Security fix: 使用哈希值作为缓存键，防止原始密钥泄露
             if let Some(ref cache) = state.api_key_cache {
                 let mut cache_guard = cache.write().await;
                 cache_guard.insert(
-                    token_str.clone(), // 使用原始 key 作为缓存键
+                    token_hash.clone(), // 使用哈希值作为缓存键
                     CachedAuthResult {
                         team_id: key.team_id,
                         api_key_id: key.id,
@@ -514,7 +508,7 @@ pub async fn auth_middleware(
             debug!("API Key authentication successful");
 
             // Log successful authentication to audit service
-            if let Some(audit_service) = req.extensions().get::<Arc<AuditService>>() {
+            if let Some(audit_service) = req.extensions().get::<Arc<dyn AuditServiceTrait>>() {
                 let _ = audit_service
                     .log_allow(
                         "api_key.authenticated".to_string(),
@@ -611,7 +605,7 @@ pub async fn scope_middleware(req: Request, next: Next) -> Result<Response, Stat
             );
 
             // Log scope denial to audit service
-            if let Some(audit_service) = req.extensions().get::<Arc<AuditService>>() {
+            if let Some(audit_service) = req.extensions().get::<Arc<dyn AuditServiceTrait>>() {
                 let api_key_scope: ApiKeyScope = required.into();
                 let reason = format!("Missing required scope: {:?}", required);
                 let _ = audit_service

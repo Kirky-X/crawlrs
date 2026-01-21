@@ -12,11 +12,11 @@ use serde_json::json;
 use std::sync::Arc;
 
 use crate::{
-    application::dto::search_request::SearchRequestDto,
+    application::dto::search_request::{SearchRequestDto, SearchResponseDto, SearchResultDto},
     domain::{
         repositories::task_repository::TaskRepository,
         services::rate_limiting_service::{RateLimitResult, RateLimitingService},
-        services::search_service::{SearchServiceError, SearchServiceTrait},
+        services::search_service::{SearchQuery, SearchServiceError, SearchServiceTrait},
     },
     presentation::handlers::task_handler::wait_for_tasks_completion,
     presentation::middleware::auth_middleware::AuthState,
@@ -71,8 +71,32 @@ pub async fn search(
 
     let sync_wait_ms = payload.sync_wait_ms.unwrap_or(5000);
 
+    // 将 DTO 转换为领域参数
+    let search_query = SearchQuery {
+        query: payload.query,
+        limit: payload.limit,
+        lang: payload.lang,
+        country: payload.country,
+        engine: payload.engine,
+        sources: payload.sources,
+        crawl_results: payload.crawl_results,
+        crawl_config: payload.crawl_config.map(|c| {
+            crate::domain::services::search_service::SearchCrawlConfig {
+                max_depth: c.max_depth,
+                include_patterns: c.include_patterns,
+                exclude_patterns: c.exclude_patterns,
+                strategy: c.strategy.unwrap_or_else(|| "bfs".to_string()),
+                crawl_delay_ms: c.crawl_delay_ms,
+                max_concurrency: c.max_concurrency.unwrap_or(10),
+                headers: c.headers,
+                proxy: c.proxy,
+                extraction_rules: c.extraction_rules,
+            }
+        }),
+    };
+
     // 使用注入的SearchService
-    match search_service.search(team_id, payload).await {
+    match search_service.search(team_id, search_query).await {
         Ok(response) => {
             // 如果启用了爬取结果并且有crawl_id，则等待任务完成
             if sync_wait_ms > 0 {
@@ -107,7 +131,24 @@ pub async fn search(
                 }
             }
 
-            (StatusCode::OK, Json(response)).into_response()
+            // 将领域响应转换为 DTO
+            let response_dto = SearchResponseDto {
+                query: response.query,
+                results: response
+                    .results
+                    .into_iter()
+                    .map(|r| SearchResultDto {
+                        title: r.title,
+                        url: r.url,
+                        description: r.description,
+                        engine: Some(r.engine),
+                    })
+                    .collect(),
+                crawl_id: response.crawl_id,
+                credits_used: response.credits_used,
+            };
+
+            (StatusCode::OK, Json(response_dto)).into_response()
         }
         Err(e) => {
             let (status, msg): (StatusCode, String) = e.into();

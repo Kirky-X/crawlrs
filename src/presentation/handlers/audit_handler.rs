@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::services::audit_service::AuditService;
+use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{
     extract::{Extension, Query},
@@ -25,7 +25,7 @@ pub struct AuditLogsQuery {
 }
 
 pub async fn get_audit_logs(
-    Extension(audit_service): Extension<Arc<AuditService>>,
+    Extension(audit_service): Extension<Arc<dyn AuditServiceTrait>>,
     Extension(auth_state): Extension<AuthState>,
     Query(query): Query<AuditLogsQuery>,
 ) -> impl IntoResponse {
@@ -81,7 +81,7 @@ pub async fn get_audit_logs(
 }
 
 pub async fn get_denied_requests(
-    Extension(audit_service): Extension<Arc<AuditService>>,
+    Extension(audit_service): Extension<Arc<dyn AuditServiceTrait>>,
     Extension(auth_state): Extension<AuthState>,
     Query(query): Query<AuditLogsQuery>,
 ) -> impl IntoResponse {
