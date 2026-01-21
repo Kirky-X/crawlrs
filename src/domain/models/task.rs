@@ -39,17 +39,17 @@ pub struct Task {
     /// 目标URL，任务要处理的具体网址
     pub url: String,
     /// 任务负载数据，包含任务执行所需的参数和配置
-    pub(crate) payload: serde_json::Value,
+    pub payload: serde_json::Value,
     /// 重试次数（累计重试次数）
-    pub(crate) retry_count: i32,
+    pub retry_count: i32,
     /// 已重试次数，记录任务已经尝试执行的次数
-    pub(crate) attempt_count: i32,
+    pub attempt_count: i32,
     /// 最大重试次数，任务失败时的最大重试限制
-    pub(crate) max_retries: i32,
+    pub max_retries: i32,
     /// 计划执行时间，可选的延迟执行时间
-    pub(crate) scheduled_at: Option<DateTime<FixedOffset>>,
+    pub scheduled_at: Option<DateTime<FixedOffset>>,
     /// 过期时间，任务超过此时间将不再执行
-    pub(crate) expires_at: Option<DateTime<FixedOffset>>,
+    pub expires_at: Option<DateTime<FixedOffset>>,
     /// 创建时间，任务创建的时间戳
     pub created_at: DateTime<FixedOffset>,
     /// 开始执行时间，任务开始处理的时间戳
@@ -61,9 +61,9 @@ pub struct Task {
     /// 更新时间，任务信息最后更新的时间戳
     pub updated_at: DateTime<FixedOffset>,
     /// 锁定令牌，用于分布式环境下的任务锁定（敏感信息）
-    pub(crate) lock_token: Option<Uuid>,
+    pub lock_token: Option<Uuid>,
     /// 锁定过期时间，锁定自动释放的时间点（敏感信息）
-    pub(crate) lock_expires_at: Option<DateTime<FixedOffset>>,
+    pub lock_expires_at: Option<DateTime<FixedOffset>>,
 }
 
 /// 任务类型枚举
@@ -278,6 +278,33 @@ impl Task {
             lock_token: None,
             lock_expires_at: None,
             expires_at: None,
+        }
+    }
+
+    /// 创建一个测试任务（简化版）
+    ///
+    /// 便于测试时快速创建任务实例
+    pub fn test_task(team_id: Uuid, url: String, status: TaskStatus) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Scrape,
+            status,
+            priority: 0,
+            team_id,
+            url,
+            payload: serde_json::json!({}),
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: Utc::now().into(),
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: Utc::now().into(),
+            lock_token: None,
+            lock_expires_at: None,
         }
     }
 

@@ -3,9 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::application::dto::search_request::{
-    SearchRequestDto, SearchResponseDto, SearchResultDto,
-};
 use crate::config::settings::Settings;
 use crate::domain::models::crawl::{Crawl, CrawlStatus};
 use crate::domain::models::credits::CreditsTransactionType;
@@ -18,6 +15,56 @@ use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
+
+/// Search query parameters (领域层参数对象)
+#[derive(Debug, Clone)]
+pub struct SearchQuery {
+    pub query: String,
+    pub limit: Option<u32>,
+    pub lang: Option<String>,
+    pub country: Option<String>,
+    pub engine: Option<String>,
+    pub sources: Option<Vec<String>>,
+    pub crawl_results: Option<bool>,
+    pub crawl_config: Option<SearchCrawlConfig>,
+}
+
+/// Search crawl configuration (领域层参数对象)
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct SearchCrawlConfig {
+    pub max_depth: u32,
+    pub include_patterns: Option<Vec<String>>,
+    pub exclude_patterns: Option<Vec<String>>,
+    pub strategy: String,
+    pub crawl_delay_ms: Option<u64>,
+    pub max_concurrency: u32,
+    pub headers: Option<serde_json::Value>,
+    pub proxy: Option<String>,
+    pub extraction_rules: Option<
+        std::collections::HashMap<
+            String,
+            crate::domain::services::extraction_service::ExtractionRule,
+        >,
+    >,
+}
+
+/// Search result item (领域层返回对象)
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub title: String,
+    pub url: String,
+    pub description: Option<String>,
+    pub engine: String,
+}
+
+/// Search response (领域层返回对象)
+#[derive(Debug, Clone)]
+pub struct SearchResponse {
+    pub query: String,
+    pub results: Vec<SearchResult>,
+    pub crawl_id: Option<Uuid>,
+    pub credits_used: u32,
+}
 
 #[derive(Error, Debug)]
 pub enum SearchServiceError {
@@ -61,8 +108,8 @@ pub trait SearchServiceTrait: Send + Sync {
     async fn search(
         &self,
         team_id: Uuid,
-        dto: SearchRequestDto,
-    ) -> Result<SearchResponseDto, SearchServiceError>;
+        query: SearchQuery,
+    ) -> Result<SearchResponse, SearchServiceError>;
 }
 
 pub struct SearchService<CR, TR, CRR> {
@@ -96,10 +143,10 @@ where
     pub async fn search(
         &self,
         team_id: Uuid,
-        dto: SearchRequestDto,
-    ) -> Result<SearchResponseDto, SearchServiceError> {
+        query: SearchQuery,
+    ) -> Result<SearchResponse, SearchServiceError> {
         // 简化验证：检查 query 是否为空
-        if dto.query.trim().is_empty() {
+        if query.query.trim().is_empty() {
             return Err(SearchServiceError::ValidationError(
                 "Query cannot be empty".to_string(),
             ));
@@ -118,7 +165,7 @@ where
 
         // 1. Perform Search using configured engine
         // Use sources if provided, otherwise use engine
-        let engine_param = if let Some(sources) = &dto.sources {
+        let engine_param = if let Some(sources) = &query.sources {
             if sources.len() == 1 {
                 Some(sources[0].as_str())
             } else {
@@ -126,15 +173,15 @@ where
                 None
             }
         } else {
-            dto.engine.as_deref()
+            query.engine.as_deref()
         };
 
         let results = self
             .perform_search(
-                &dto.query,
-                dto.limit.unwrap_or(10),
-                dto.lang.as_deref(),
-                dto.country.as_deref(),
+                &query.query,
+                query.limit.unwrap_or(10),
+                query.lang.as_deref(),
+                query.country.as_deref(),
                 engine_param,
             )
             .await?;
@@ -143,30 +190,28 @@ where
         let credits_used = search_cost;
 
         // 2. If crawl_results is true, create a crawl task
-        if dto.crawl_results.unwrap_or(false) && !results.is_empty() {
+        if query.crawl_results.unwrap_or(false) && !results.is_empty() {
             let cid = Uuid::new_v4();
             let now = Utc::now();
 
-            let config = dto.crawl_config.unwrap_or(
-                crate::application::dto::crawl_request::CrawlConfigDto {
-                    max_depth: 1,
-                    include_patterns: None,
-                    exclude_patterns: None,
-                    strategy: Some("bfs".to_string()),
-                    crawl_delay_ms: None,
-                    max_concurrency: Some(10),
-                    headers: None,
-                    proxy: None,
-                    extraction_rules: None,
-                },
-            );
+            let config = query.crawl_config.unwrap_or(SearchCrawlConfig {
+                max_depth: 1,
+                include_patterns: None,
+                exclude_patterns: None,
+                strategy: "bfs".to_string(),
+                crawl_delay_ms: None,
+                max_concurrency: 10,
+                headers: None,
+                proxy: None,
+                extraction_rules: None,
+            });
 
             let crawl = Crawl {
                 id: cid,
                 team_id,
-                name: format!("Search Crawl: {}", dto.query),
-                root_url: "search://".to_string() + &dto.query,
-                url: "search://".to_string() + &dto.query,
+                name: format!("Search Crawl: {}", query.query),
+                root_url: "search://".to_string() + &query.query,
+                url: "search://".to_string() + &query.query,
                 status: CrawlStatus::Queued,
                 config: json!(config),
                 total_tasks: results.len() as i32,
@@ -213,13 +258,13 @@ where
                 team_id,
                 search_cost,
                 CreditsTransactionType::Search,
-                format!("Search query: {}", dto.query),
+                format!("Search query: {}", query.query),
                 None,
             )
             .await?;
 
-        Ok(SearchResponseDto {
-            query: dto.query,
+        Ok(SearchResponse {
+            query: query.query,
             results,
             crawl_id,
             credits_used: credits_used as u32,
@@ -233,21 +278,21 @@ where
         lang: Option<&str>,
         country: Option<&str>,
         engine: Option<&str>,
-    ) -> Result<Vec<SearchResultDto>, SearchServiceError> {
+    ) -> Result<Vec<SearchResult>, SearchServiceError> {
         let items = self
             .search_engine
             .search_with_engine(query, limit, lang, country, engine)
             .await
             .map_err(|e| SearchServiceError::SearchEngine(e.to_string()))?;
 
-        let filtered_results: Vec<SearchResultDto> = items
+        let filtered_results: Vec<SearchResult> = items
             .into_iter()
             .take(limit as usize)
-            .map(|item| SearchResultDto {
+            .map(|item| SearchResult {
                 title: item.title,
                 url: item.url,
                 description: Some(item.description),
-                engine: Some(item.engine.name().to_string()),
+                engine: item.engine.name().to_string(),
             })
             .collect();
 
@@ -266,8 +311,8 @@ where
     async fn search(
         &self,
         team_id: Uuid,
-        dto: SearchRequestDto,
-    ) -> Result<SearchResponseDto, SearchServiceError> {
-        Self::search(self, team_id, dto).await
+        query: SearchQuery,
+    ) -> Result<SearchResponse, SearchServiceError> {
+        Self::search(self, team_id, query).await
     }
 }

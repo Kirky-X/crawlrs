@@ -5,9 +5,9 @@
 
 //! Service for audit logging
 
+use crate::common::error::AppError;
 use crate::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
-use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepository;
-use sea_orm::DatabaseConnection;
+use crate::domain::repositories::audit_log_repository::{AuditLogRepository, AuditRepositoryError};
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::debug;
@@ -17,6 +17,23 @@ use uuid::Uuid;
 pub enum AuditServiceError {
     #[error("Database error: {0}")]
     DatabaseError(#[from] sea_orm::DbErr),
+    #[error("Repository error: {0}")]
+    RepositoryError(#[from] AuditRepositoryError),
+}
+
+impl From<AuditServiceError> for AppError {
+    fn from(error: AuditServiceError) -> Self {
+        match error {
+            AuditServiceError::DatabaseError(db_err) => AppError::Database(db_err),
+            AuditServiceError::RepositoryError(repo_err) => {
+                // 尝试将 RepositoryError 转换为更具体的 AppError
+                match repo_err {
+                    AuditRepositoryError::DatabaseError(db_err) => AppError::Database(db_err),
+                    _ => AppError::Other(repo_err.to_string()),
+                }
+            }
+        }
+    }
 }
 
 /// Builder for creating audit log entries
@@ -280,20 +297,41 @@ pub trait AuditServiceTrait: Send + Sync {
         reason: String,
         scope: Option<ApiKeyScope>,
     ) -> Result<(), AuditServiceError>;
+
+    /// Get audit logs for an API Key
+    async fn get_logs_for_key(
+        &self,
+        api_key_id: Uuid,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<AuditLogEntry>, AuditServiceError>;
+
+    /// Get audit logs for a team
+    async fn get_logs_for_team(
+        &self,
+        team_id: Uuid,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<AuditLogEntry>, AuditServiceError>;
+
+    /// Get denied requests for an API Key
+    async fn get_denied_requests(
+        &self,
+        api_key_id: Uuid,
+        limit: u64,
+    ) -> Result<Vec<AuditLogEntry>, AuditServiceError>;
 }
 
 /// Service for managing audit logs
 #[derive(Clone)]
-pub struct AuditService {
-    audit_repo: AuditLogRepository,
+pub struct AuditService<R: AuditLogRepository> {
+    audit_repo: Arc<R>,
 }
 
-impl AuditService {
+impl<R: AuditLogRepository> AuditService<R> {
     /// Create a new service
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
-        Self {
-            audit_repo: AuditLogRepository::new(db),
-        }
+    pub fn new(audit_repo: Arc<R>) -> Self {
+        Self { audit_repo }
     }
 
     /// Create a new audit log entry
@@ -303,7 +341,7 @@ impl AuditService {
             entry.requested_action, entry.decision
         );
         self.audit_repo
-            .create(entry)
+            .create(&entry)
             .await
             .map(|_| ())
             .map_err(Into::into)
@@ -423,7 +461,7 @@ impl AuditService {
 }
 
 #[async_trait::async_trait]
-impl AuditServiceTrait for AuditService {
+impl<R: AuditLogRepository> AuditServiceTrait for AuditService<R> {
     async fn log(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
         self._log_impl(entry).await
     }
@@ -449,5 +487,40 @@ impl AuditServiceTrait for AuditService {
     ) -> Result<(), AuditServiceError> {
         self._log_deny_impl(action, api_key_id, team_id, reason, scope)
             .await
+    }
+
+    async fn get_logs_for_key(
+        &self,
+        api_key_id: Uuid,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
+        self.audit_repo
+            .find_by_api_key_id(api_key_id, limit, offset)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn get_logs_for_team(
+        &self,
+        team_id: Uuid,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
+        self.audit_repo
+            .find_by_team_id(team_id, limit, offset)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn get_denied_requests(
+        &self,
+        api_key_id: Uuid,
+        limit: u64,
+    ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
+        self.audit_repo
+            .find_denied_for_key(api_key_id, limit)
+            .await
+            .map_err(Into::into)
     }
 }
