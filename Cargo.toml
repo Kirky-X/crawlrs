@@ -79,6 +79,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "logg
 
 # Database (根据特性选择后端)
 sea-orm = { version = "1.1", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
+sea-orm-migration = "1.1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json", "postgres"] }
 
 # Caching and state management
