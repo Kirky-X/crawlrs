@@ -11,7 +11,7 @@ mod expiration_worker_tests {
     use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use crate::workers::expiration_worker::ExpirationWorker;
     use chrono::Utc;
-    use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
+    use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, EntityTrait, Set, Statement};
     use std::sync::Arc;
     use uuid::Uuid;
 
@@ -35,35 +35,38 @@ mod expiration_worker_tests {
                 updated_at TEXT NOT NULL
             );
         "#;
-        db.execute(sea_orm::Statement::from_string(
+        db.execute(Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             create_teams_sql.to_string(),
         ))
         .await
         .expect("Failed to execute SQL statement for creating teams table");
 
-        // Create tasks table
+        // Create tasks table with all required columns matching Task Entity
         let create_tasks_sql = r#"
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 task_type TEXT NOT NULL,
+                team_id TEXT NOT NULL,
+                crawl_id TEXT,
                 url TEXT NOT NULL,
                 status TEXT NOT NULL,
-                result_id TEXT,
-                team_id TEXT NOT NULL,
-                api_key_id TEXT NOT NULL,
                 priority INTEGER DEFAULT 0,
-                metadata TEXT,
-                error_message TEXT,
                 payload TEXT,
+                retry_count INTEGER DEFAULT 0,
+                max_retries INTEGER DEFAULT 3,
                 scheduled_at TEXT,
+                expires_at TEXT,
+                completed_at TEXT,
+                lock_token TEXT,
                 lock_expires_at TEXT,
-                crawl_id TEXT,
+                started_at TEXT,
+                attempt_count INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
         "#;
-        db.execute(sea_orm::Statement::from_string(
+        db.execute(Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             create_tasks_sql.to_string(),
         ))

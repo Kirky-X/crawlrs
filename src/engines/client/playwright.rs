@@ -3,30 +3,19 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[cfg(feature = "engine-playwright")]
 use crate::engines::engine_client::{
     EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse,
     InternalScreenshotConfig, ScraperEngine,
 };
-#[cfg(feature = "engine-playwright")]
 use crate::engines::validators;
-#[cfg(feature = "engine-playwright")]
 use crate::infrastructure::services::config_service::{BrowserConfigComponent, BrowserConfigTrait};
-#[cfg(feature = "engine-playwright")]
 use async_trait::async_trait;
-#[cfg(feature = "engine-playwright")]
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-#[cfg(feature = "engine-playwright")]
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
-#[cfg(feature = "engine-playwright")]
 use chromiumoxide::{Browser, BrowserConfig};
-#[cfg(feature = "engine-playwright")]
 use futures::StreamExt;
-#[cfg(feature = "engine-playwright")]
 use shaku::{Component, Interface};
-#[cfg(feature = "engine-playwright")]
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "engine-playwright")]
 use std::time::{Duration, Instant};
 
 /// Playwright context for browser operations
@@ -34,7 +23,6 @@ use std::time::{Duration, Instant};
 /// This struct provides a way to pass browser configuration through the call stack
 /// instead of using task-local storage or global state.
 /// For DI-based usage, prefer PlaywrightBrowserManagerComponent.
-#[cfg(feature = "engine-playwright")]
 #[derive(Clone, Debug, Default)]
 pub struct PlaywrightContext {
     /// Remote debugging URL for connecting to existing browser
@@ -45,7 +33,6 @@ pub struct PlaywrightContext {
     pub test_mode: bool,
 }
 
-#[cfg(feature = "engine-playwright")]
 impl PlaywrightContext {
     /// Create a new context with custom values
     pub fn new(
@@ -64,7 +51,6 @@ impl PlaywrightContext {
 /// 浏览器管理器 trait（支持 DI）
 ///
 /// 提供浏览器实例管理的抽象接口，便于测试时注入 mock 实现。
-#[cfg(feature = "engine-playwright")]
 #[async_trait]
 pub trait BrowserManagerTrait: Interface + Send + Sync {
     /// 获取或创建浏览器实例
@@ -78,7 +64,6 @@ pub trait BrowserManagerTrait: Interface + Send + Sync {
 }
 
 /// Playwright 浏览器管理器组件（DI 实现）
-#[cfg(feature = "engine-playwright")]
 #[derive(Component)]
 #[shaku(interface = BrowserManagerTrait)]
 pub struct PlaywrightBrowserManagerComponent {
@@ -89,7 +74,6 @@ pub struct PlaywrightBrowserManagerComponent {
     browser: Arc<Mutex<Option<Arc<Browser>>>>,
 }
 
-#[cfg(feature = "engine-playwright")]
 impl PlaywrightBrowserManagerComponent {
     /// 创建新的浏览器管理器
     pub fn new(config: Arc<dyn BrowserConfigTrait>) -> Self {
@@ -100,7 +84,6 @@ impl PlaywrightBrowserManagerComponent {
     }
 }
 
-#[cfg(feature = "engine-playwright")]
 #[async_trait]
 impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     async fn get_browser(&self) -> Result<Arc<Browser>, EngineError> {
@@ -131,7 +114,6 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     }
 }
 
-#[cfg(feature = "engine-playwright")]
 impl PlaywrightBrowserManagerComponent {
     /// 获取或创建浏览器（带自动恢复）
     async fn get_browser_with_recovery(
@@ -227,21 +209,18 @@ impl PlaywrightBrowserManagerComponent {
 }
 
 // Maximum number of recovery attempts
-#[cfg(feature = "engine-playwright")]
 const MAX_RECOVERY_ATTEMPTS: u32 = 3;
 
 /// Browser manager for handling browser instance lifecycle
 ///
 /// This struct manages browser instance without using global state.
 /// It should be created per request or per application scope.
-#[cfg(feature = "engine-playwright")]
 #[derive(Clone)]
 pub struct BrowserManager {
     /// Browser instance stored in memory
     browser: Arc<Mutex<Option<Arc<Browser>>>>,
 }
 
-#[cfg(feature = "engine-playwright")]
 impl BrowserManager {
     /// Create a new browser manager
     pub fn new() -> Self {
@@ -363,7 +342,6 @@ impl BrowserManager {
     }
 }
 
-#[cfg(feature = "engine-playwright")]
 impl Default for BrowserManager {
     fn default() -> Self {
         Self::new()
@@ -371,7 +349,6 @@ impl Default for BrowserManager {
 }
 
 /// Check if browser is still healthy and can be used
-#[cfg(feature = "engine-playwright")]
 pub async fn check_browser_health(browser: &Browser) -> bool {
     match browser.new_page("about:blank").await {
         Ok(page) => {
@@ -385,10 +362,8 @@ pub async fn check_browser_health(browser: &Browser) -> bool {
 /// Playwright引擎
 ///
 /// 基于chromiumoxide实现的浏览器自动化抓取引擎
-#[cfg(feature = "engine-playwright")]
 pub struct PlaywrightEngine; // Using chromiumoxide as Rust alternative to Playwright
 
-#[cfg(feature = "engine-playwright")]
 #[async_trait]
 impl ScraperEngine for PlaywrightEngine {
     /// 执行浏览器自动化抓取
@@ -638,7 +613,6 @@ impl ScraperEngine for PlaywrightEngine {
     }
 }
 
-#[cfg(feature = "engine-playwright")]
 #[cfg(test)]
 mod tests {
     use super::*;

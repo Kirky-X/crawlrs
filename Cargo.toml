@@ -60,7 +60,16 @@ db-sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
 
 [dependencies]
 # Async runtime and web framework
-tokio = { version = "1.49", features = ["full"] }
+tokio = { version = "1.49", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "fs",
+    "io-util",
+    "signal",
+    "sync",
+    "time",
+] }
 axum = "0.8"
 futures = "0.3"
 async-trait = "0.1"
@@ -157,7 +166,17 @@ shaku_axum = "0.6"
 # utoipa-swagger-ui = { version = "9.0", optional = true, default-features = false, features = ["axum", "vendored"] }
 
 [dev-dependencies]
-tokio = { version = "1.49", features = ["full", "test-util"] }
+tokio = { version = "1.49", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "fs",
+    "io-util",
+    "signal",
+    "sync",
+    "time",
+    "test-util",
+] }
 tokio-test = "0.4"
 wiremock = "0.6"
 reqwest = { version = "0.12", features = ["json"] }

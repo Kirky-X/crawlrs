@@ -153,7 +153,7 @@ mod tests {
         let db = Arc::new(db);
 
         // Create teams table manually
-        let create_table_sql = r#"
+        let create_teams_sql = r#"
             CREATE TABLE IF NOT EXISTS teams (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -168,7 +168,27 @@ mod tests {
         "#;
         db.execute(Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
-            create_table_sql.to_string(),
+            create_teams_sql.to_string(),
+        ))
+        .await
+        .unwrap();
+
+        // Create geo_restriction_logs table for log_geo_restriction_action test
+        let create_logs_sql = r#"
+            CREATE TABLE IF NOT EXISTS geo_restriction_logs (
+                id TEXT PRIMARY KEY,
+                team_id TEXT NOT NULL,
+                ip_address TEXT NOT NULL,
+                country_code TEXT,
+                restriction_type TEXT NOT NULL,
+                url TEXT,
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+        "#;
+        db.execute(Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            create_logs_sql.to_string(),
         ))
         .await
         .unwrap();

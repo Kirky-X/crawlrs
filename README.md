@@ -169,6 +169,53 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 
 ---
 
+## 🔧 Compilation Features <span id="compilation-features"></span>
+
+本项目支持通过 Cargo 特性灵活控制编译功能和二进制体积。
+
+### 预设配置
+
+| 配置 | 特性组合 | 二进制大小 | 适用场景 |
+|-----|---------|-----------|---------|
+| lite | `engine-reqwest, db-sqlite` | ~30MB | 简单爬取，资源受限环境 |
+| default | `engine-reqwest, redis-cache, rate-limiting, metrics, db-postgres` | ~27MB | 默认生产环境 |
+| standard | `default + engine-playwright` | ~35MB | 需要 JS 渲染 |
+| full | `standard + fire 系列 + storage-s3 + search-all` | ~52MB | 所有功能 |
+| experimental | `full + genai` | ~54MB | AI 实验功能 |
+
+### 自定义组合
+
+```bash
+# 轻量版 + S3 存储
+cargo build --release --features "lite,storage-s3"
+
+# 标准版 + AI 功能
+cargo build --release --features "standard,experimental"
+
+# 自定义组合
+cargo build --release --features "engine-reqwest,db-sqlite,storage-s3,redis-cache"
+```
+
+### 特性参考
+
+| 特性 | 描述 | 影响 |
+|------|------|------|
+| `engine-reqwest` | HTTP 客户端引擎（基础，始终可用） | 基础 |
+| `engine-playwright` | Playwright JS 渲染引擎 | +8MB |
+| `engine-fire-cdp` | Fire CDP 引擎（远程 FlareSolverr） | - |
+| `engine-fire-tls` | Fire TLS 引擎（远程 FlareSolverr） | - |
+| `engine-flaresolverr` | FlareSolverr 引擎 | - |
+| `storage-s3` | AWS S3 云存储 | +13MB |
+| `redis-cache` | Redis 缓存 | - |
+| `rate-limiting` | Redis 限流 | - |
+| `metrics` | 指标监控 | - |
+| `db-postgres` | PostgreSQL 数据库（默认） | 基础 |
+| `db-sqlite` | SQLite 数据库 | - |
+| `search-all` | 所有搜索引擎 | - |
+| `experimental` | AI 功能（genai） | +2MB |
+
+---
+
 ## 🚀 Quick Start <span id="quick-start"></span>
 
 Get up and running in under 5 minutes!
