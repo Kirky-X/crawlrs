@@ -51,8 +51,8 @@ async fn setup_test_repo() -> TaskRepositoryImpl {
         .await
         .expect("Failed to create in-memory database");
     // 运行迁移以创建表
-    use migration::{Migrator, MigratorTrait};
-    Migrator::up(&db, None)
+    use crawlrs::infrastructure::migrations::{Migrator, MigratorTrait};
+    let _ = sqlx::migrate!().run(&db).await.expect("Failed to run database migrations");
         .await
         .expect("Failed to run database migrations");
     TaskRepositoryImpl::new(Arc::new(db), chrono::Duration::seconds(30))

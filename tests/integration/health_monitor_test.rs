@@ -8,7 +8,8 @@
 use axum::{http::StatusCode, routing::get, Router};
 use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::health_monitor::{EngineHealth, EngineHealthMonitor, HealthCheckConfig};
-use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::engines::ScraperEngine;
+use reqwest::Client;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
@@ -42,7 +43,13 @@ async fn test_health_monitor_real_integration() {
     // Allow some time for the server to be ready
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let engine = Arc::new(ReqwestEngine::new());
+    let reqwest_client = Arc::new(
+        Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to create reqwest client"),
+    );
+    let engine = Arc::new(ReqwestEngine::new(reqwest_client.clone()));
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![engine];
 
     let config = HealthCheckConfig {
@@ -79,7 +86,13 @@ async fn test_health_monitor_real_integration() {
 async fn test_health_monitor_real_integration_failure() {
     let target_url = start_test_server(false).await;
 
-    let engine = Arc::new(ReqwestEngine::new());
+    let reqwest_client = Arc::new(
+        Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to create reqwest client"),
+    );
+    let engine = Arc::new(ReqwestEngine::new(reqwest_client.clone()));
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![engine];
 
     let config = HealthCheckConfig {

@@ -1278,7 +1278,6 @@ async fn test_uat019_team_concurrency_limit() {
     // 我们可以直接创建一个新的实例用于测试，使用相同的 Redis 客户端
     let redis_client =
         crawlrs::infrastructure::cache::redis_client::RedisClient::new(&app.redis_url)
-            .await
             .expect("Failed to create Redis client");
     let task_repo = app.task_repo.clone();
     let credits_repo = Arc::new(

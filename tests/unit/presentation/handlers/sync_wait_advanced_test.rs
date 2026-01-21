@@ -57,8 +57,8 @@ async fn setup_test_repo() -> TaskRepositoryImpl {
     let db = Database::connect("sqlite::memory:")
         .await
         .expect("Failed to create in-memory database");
-    use migration::{Migrator, MigratorTrait};
-    Migrator::up(&db, None)
+    use crawlrs::infrastructure::migrations::{Migrator, MigratorTrait};
+    let _ = sqlx::migrate!().run(&db).await.expect("Failed to run database migrations");
         .await
         .expect("Failed to run database migrations");
     TaskRepositoryImpl::new(Arc::new(db), chrono::Duration::seconds(30))

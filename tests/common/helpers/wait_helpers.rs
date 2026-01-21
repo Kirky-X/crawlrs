@@ -136,7 +136,7 @@ impl WaitHelpers {
     }
 
     pub async fn poll_until<T, F, Fut>(
-        mut condition: F,
+        condition: F,
         timeout_secs: u64,
         interval_ms: u64,
     ) -> Result<T, String>

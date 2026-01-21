@@ -197,7 +197,6 @@ async fn test_extract_with_rules_credit_deduction() {
 
     // 验证Redis中的token使用记录应为0
     let redis_client = RedisClient::new(&app.redis_url)
-        .await
         .expect("Failed to create Redis client");
     let token_usage_key = format!("team:{}:token_usage", app.team_id);
     let token_usage_str: Option<String> = redis_client.get(&token_usage_key).await.unwrap_or(None);
@@ -356,7 +355,6 @@ async fn test_extract_css_only_no_credit_deduction() {
 
     // 验证Redis中的token使用记录应为0
     let redis_client = RedisClient::new(&app.redis_url)
-        .await
         .expect("Failed to create Redis client");
     let token_usage_key = format!("team:{}:token_usage", app.team_id);
     let token_usage_str: Option<String> = redis_client

@@ -10,7 +10,7 @@ use crawlrs::domain::repositories::task_repository::{TaskQueryParams, TaskReposi
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crawlrs::search::client::bing::BingSearchEngine;
-use migration::MigratorTrait;
+use crawlrs::infrastructure::migrations::MigratorTrait;
 use sea_orm::Database;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -25,7 +25,8 @@ async fn test_real_task_lifecycle_with_search_integration() {
     let db_pool = Arc::new(db);
 
     // Run migrations
-    migration::Migrator::up(db_pool.as_ref(), None)
+    use crawlrs::infrastructure::migrations::Migrator;
+    let _ = sqlx::migrate!().run(db_pool.as_ref()).await;
         .await
         .expect("Failed to run database migrations");
 
@@ -207,7 +208,8 @@ async fn test_real_task_error_handling() {
     let db_pool = Arc::new(db);
 
     // Run migrations
-    migration::Migrator::up(db_pool.as_ref(), None)
+    use crawlrs::infrastructure::migrations::Migrator;
+    let _ = sqlx::migrate!().run(db_pool.as_ref()).await;
         .await
         .expect("Failed to run database migrations");
 
@@ -247,7 +249,8 @@ async fn test_real_concurrent_task_processing() {
     let db_pool = Arc::new(db);
 
     // Run migrations
-    migration::Migrator::up(db_pool.as_ref(), None)
+    use crawlrs::infrastructure::migrations::Migrator;
+    let _ = sqlx::migrate!().run(db_pool.as_ref()).await;
         .await
         .expect("Failed to run database migrations");
 

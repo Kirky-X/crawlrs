@@ -2,5 +2,3 @@
 //
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
-
-pub use super::chrome::create_scrape_request;

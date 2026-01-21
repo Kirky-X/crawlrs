@@ -233,15 +233,13 @@ async fn test_create_storage_repository_s3() {
     let _ = tracing_subscriber::fmt::try_init();
 
     let (access_key, secret_key, endpoint) = get_s3_credentials();
-    let settings = StorageSettings {
-        storage_type: "s3".to_string(),
-        local_path: None,
-        s3_region: Some("us-east-1".to_string()),
-        s3_bucket: Some("crawlrs".to_string()),
-        s3_access_key: Some(access_key),
-        s3_secret_key: Some(secret_key),
-        s3_endpoint: Some(endpoint),
-    };
+    let settings = StorageSettings::s3(
+        "us-east-1",
+        "crawlrs",
+        Some(access_key),
+        Some(secret_key),
+        Some(endpoint),
+    );
 
     let result = create_storage_repository(&settings);
     assert!(
@@ -270,30 +268,26 @@ async fn test_create_storage_repository_missing_config() {
 
     // 测试缺少 s3_region
     let (access_key, secret_key, endpoint) = get_s3_credentials();
-    let settings = StorageSettings {
-        storage_type: "s3".to_string(),
-        local_path: None,
-        s3_region: None,
-        s3_bucket: Some("crawlrs".to_string()),
-        s3_access_key: Some(access_key),
-        s3_secret_key: Some(secret_key),
-        s3_endpoint: Some(endpoint),
-    };
+    let settings = StorageSettings::s3(
+        "", // empty region
+        "crawlrs",
+        Some(access_key),
+        Some(secret_key),
+        Some(endpoint),
+    );
 
     let result = create_storage_repository(&settings);
     assert!(result.is_err(), "Should fail with missing s3_region");
 
     // 测试缺少 s3_bucket
     let (access_key, secret_key, endpoint) = get_s3_credentials();
-    let settings = StorageSettings {
-        storage_type: "s3".to_string(),
-        local_path: None,
-        s3_region: Some("us-east-1".to_string()),
-        s3_bucket: None,
-        s3_access_key: Some(access_key),
-        s3_secret_key: Some(secret_key),
-        s3_endpoint: Some(endpoint),
-    };
+    let settings = StorageSettings::s3(
+        "us-east-1",
+        "", // empty bucket
+        Some(access_key),
+        Some(secret_key),
+        Some(endpoint),
+    );
 
     let result = create_storage_repository(&settings);
     assert!(result.is_err(), "Should fail with missing s3_bucket");

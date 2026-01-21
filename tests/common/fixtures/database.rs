@@ -8,8 +8,8 @@
 /// 数据库测试固件
 ///
 /// 提供内存数据库和PostgreSQL数据库的设置和清理功能
-use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sqlx::PgPool;
 use std::sync::Arc;
 
 /// 数据库连接选项
@@ -63,10 +63,13 @@ impl DatabaseFixture {
             .expect("Failed to connect to database");
         let db_pool = Arc::new(db);
 
-        // 运行数据库迁移
-        Migrator::up(db_pool.as_ref(), None)
-            .await
-            .expect("Failed to run database migrations");
+        // 运行数据库迁移（使用 sqlx PgPool）
+        if options.url.starts_with("postgres://") {
+            let sqlx_pool = PgPool::connect(&options.url)
+                .await
+                .expect("Failed to connect to database for migration");
+            let _ = sqlx::migrate!().run(&sqlx_pool).await;
+        }
 
         let db_backend = if options.url.starts_with("postgres://") {
             DbBackend::Postgres

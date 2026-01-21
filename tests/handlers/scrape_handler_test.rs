@@ -24,7 +24,7 @@ async fn test_postgres_task_queue_real_implementation() {
     let db_pool = Arc::new(db);
 
     // 运行迁移
-    migration::Migrator::up(db_pool.as_ref(), None).await.expect("Failed to run database migrations");
+    let _ = sqlx::migrate!().run(db_pool.as_ref()).await.expect("Failed to run database migrations");
     
     // 创建任务仓库
     let task_repo = Arc::new(TaskRepositoryImpl::new(

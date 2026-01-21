@@ -93,7 +93,7 @@ use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
 #[cfg(any(feature = "engine-reqwest", feature = "engine-playwright"))]
-use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::engines::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::geolocation::{GeoLocationService, GeoLocationServiceTrait};
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
@@ -114,12 +114,10 @@ use crawlrs::workers::expiration_worker::ExpirationWorker;
 use crawlrs::workers::scrape_worker::ScrapeWorker;
 use crawlrs::workers::worker::AbstractWorker;
 use crawlrs::workers::worker::Worker;
-use migration::{Migrator, MigratorTrait};
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement,
 };
 use std::process::Command;
-use std::time::Duration;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -184,11 +182,15 @@ impl TaskQueue for InMemoryQueue {
 pub struct TestApp {
     pub server: TestServer,
     pub api_key: String,
+    #[allow(dead_code)]
     pub api_key_id: uuid::Uuid,
+    #[allow(dead_code)]
     pub team_id: uuid::Uuid,
     pub db_pool: Arc<DatabaseConnection>,
     pub task_repo: Arc<TaskRepositoryImpl>,
+    #[allow(dead_code)]
     pub redis: RedisClient,
+    #[allow(dead_code)]
     pub redis_url: String,
     pub redis_process: Option<std::process::Child>,
     pub _shutdown_tx: Option<broadcast::Sender<()>>,
@@ -213,6 +215,7 @@ impl Drop for TestApp {
 
 impl TestApp {
     /// 检测数据库后端类型
+    #[allow(dead_code)]
     fn get_db_backend(&self) -> DbBackend {
         if self.db_pool.get_database_backend() == sea_orm::DatabaseBackend::Postgres {
             DbBackend::Postgres
@@ -222,6 +225,7 @@ impl TestApp {
     }
 
     /// 执行数据库插入操作（根据数据库类型自动选择语法）
+    #[allow(dead_code)]
     async fn execute_insert(
         &self,
         sql: &str,
@@ -235,6 +239,7 @@ impl TestApp {
     }
 
     /// 插入 team 记录
+    #[allow(dead_code)]
     async fn insert_team(&self, team_id: Uuid, team_name: &str) -> Result<(), sea_orm::DbErr> {
         let db_backend = self.get_db_backend();
         let (sql, values) = if db_backend == DbBackend::Postgres {
@@ -252,6 +257,7 @@ impl TestApp {
     }
 
     /// 插入 api_key 记录
+    #[allow(dead_code)]
     async fn insert_api_key(
         &self,
         api_key_id: Uuid,
@@ -274,6 +280,7 @@ impl TestApp {
     }
 
     /// 插入 credits 记录
+    #[allow(dead_code)]
     async fn insert_credits(
         &self,
         credits_id: Uuid,
@@ -296,6 +303,7 @@ impl TestApp {
     }
 
     /// 创建测试团队
+    #[allow(dead_code)]
     pub async fn create_team(&self, team_name: &str) -> (String, uuid::Uuid) {
         let team_id = Uuid::new_v4();
         let api_key = Uuid::new_v4().to_string();
@@ -320,6 +328,7 @@ pub async fn create_test_app() -> TestApp {
     create_test_app_with_rate_limit_options(true, true).await
 }
 
+#[allow(dead_code)]
 pub async fn create_test_app_with_low_rate_limit() -> TestApp {
     let app = create_test_app_with_rate_limit_options(true, true).await;
 
@@ -362,9 +371,14 @@ pub async fn create_test_app_with_rate_limit_options(
         .expect("Failed to connect to database");
     let db_pool = Arc::new(db);
 
-    Migrator::up(db_pool.as_ref(), None)
-        .await
-        .expect("Failed to run database migrations");
+    // 运行数据库迁移（使用 sqlx PgPool）
+    if db_url.starts_with("postgres://") {
+        use sqlx::PgPool;
+        let sqlx_pool = PgPool::connect(&db_url)
+            .await
+            .expect("Failed to connect to database for migration");
+        let _ = sqlx::migrate!().run(&sqlx_pool).await;
+    }
 
     let redis_url;
     let redis_client: RedisClient;
@@ -374,15 +388,11 @@ pub async fn create_test_app_with_rate_limit_options(
         // Use external Redis instance - try different ports if default fails
         let redis_port = std::env::var("TEST_REDIS_PORT").unwrap_or_else(|_| "6380".to_string());
         redis_url = format!("redis://127.0.0.1:{}", redis_port);
-        redis_client = RedisClient::new(&redis_url)
-            .await
-            .expect("Failed to connect to Redis");
+        redis_client = RedisClient::new(&redis_url).expect("Failed to connect to Redis");
         redis_process = None;
     } else {
         redis_url = "redis://127.0.0.1:6380".to_string();
-        redis_client = RedisClient::new(&redis_url)
-            .await
-            .expect("Failed to connect to Redis");
+        redis_client = RedisClient::new(&redis_url).expect("Failed to connect to Redis");
         redis_process = None;
     }
 
@@ -481,17 +491,23 @@ pub async fn create_test_app_with_rate_limit_options(
         },
     ));
 
-    let reqwest_engine = Arc::new(ReqwestEngine::new());
+    let reqwest_client = Arc::new(
+        reqwest::Client::builder()
+            .timeout(API_REQUEST_TIMEOUT)
+            .build()
+            .expect("Failed to create reqwest client"),
+    );
+    let reqwest_engine = Arc::new(ReqwestEngine::new(reqwest_client.clone()));
 
     #[cfg(feature = "engine-playwright")]
     let playwright_engine = Arc::new(PlaywrightEngine);
     #[cfg(not(feature = "engine-playwright"))]
-    let playwright_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
+    let _playwright_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
 
     #[cfg(feature = "engine-fire-cdp")]
     let fire_engine = Arc::new(FireEngineCdp::new());
     #[cfg(not(feature = "engine-fire-cdp"))]
-    let fire_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
+    let _fire_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
 
     #[cfg(any(feature = "engine-playwright", feature = "engine-fire-cdp"))]
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine, fire_engine];
@@ -501,23 +517,25 @@ pub async fn create_test_app_with_rate_limit_options(
     let router = Arc::new(crawlrs::engines::router::EngineRouter::new(engines));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 
-    let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(Arc::new(
-        redis_client.clone(),
-    ))));
+    let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(
+        reqwest_client.clone(),
+        Some(Arc::new(redis_client.clone())),
+        None,
+    ));
 
     let search_engine_service: Arc<dyn crawlrs::search::engine_trait::SearchEngine> =
         Arc::new(crawlrs::search::aggregator::SearchAggregator::new(
             vec![
                 Arc::new(GoogleSearchEngine::new(engine_client.clone())),
-                Arc::new(BingSearchEngine::new()),
-                Arc::new(BaiduSearchEngine::new()),
-                Arc::new(SogouSearchEngine::new()),
+                Arc::new(BingSearchEngine::new(engine_client.clone())),
+                Arc::new(BaiduSearchEngine::new(engine_client.clone())),
+                Arc::new(SogouSearchEngine::new(engine_client.clone())),
             ],
             10000,
         ));
 
-    let geo_location_service =
-        Arc::new(GeoLocationService::new()) as Arc<dyn GeoLocationServiceTrait>;
+    let geo_location_service = Arc::new(GeoLocationService::new(reqwest_client.clone()))
+        as Arc<dyn GeoLocationServiceTrait>;
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
     let team_service = Arc::new(crawlrs::domain::services::team_service::TeamService::new(
         geo_location_service,
@@ -576,14 +594,10 @@ pub async fn create_test_app_with_rate_limit_options(
     let settings = Arc::new(Settings::new().expect("Failed to load settings"));
 
     // 创建 LLM 服务（用于提取功能）
-    let llm_service = Box::new(crawlrs::domain::services::llm_service::LLMService::new(
+    let _llm_service = Box::new(crawlrs::domain::services::llm_service::LLMService::new(
         &settings,
+        reqwest_client.clone(),
     ));
-    let create_scrape_use_case = Arc::new(
-        crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(
-            engine_client.clone(),
-        ),
-    );
     let create_scrape_use_case = Arc::new(
         crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(
             engine_client.clone(),
@@ -596,6 +610,7 @@ pub async fn create_test_app_with_rate_limit_options(
     let _webhook_service = Arc::new(
         crawlrs::infrastructure::services::webhook_service_impl::WebhookServiceImpl::new(
             webhook_secret,
+            reqwest_client.clone(),
         ),
     );
 
@@ -635,6 +650,14 @@ pub async fn create_test_app_with_rate_limit_options(
             let redis = worker_redis.clone();
             let robots_checker = worker_robots_checker.clone();
             let settings = worker_settings.clone();
+
+            // Create http_client for LLM service
+            let http_client = Arc::new(
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(30))
+                    .build()
+                    .expect("Failed to create http client"),
+            );
 
             tokio::spawn(async move {
                 // Use default engine client which will eventually be replaced by the one from factory
@@ -708,7 +731,7 @@ fn create_router(
     rate_limiter: Arc<crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter>,
     team_id: Uuid,
     redis_client: Arc<RedisClient>,
-    api_key: String,
+    _api_key: String,
     rate_limit_enabled: bool,
 ) -> axum::Router<()> {
     let crawl_repo = Arc::new(
@@ -738,6 +761,7 @@ fn create_router(
         api_key_id: Uuid::new_v4(),
         scope: ApiKeyScope::default(),
         api_key_cache: None,
+        auth_rate_limiter: None,
     };
 
     let public_routes = axum::Router::new()
@@ -813,11 +837,7 @@ fn create_router(
         )
         .route(
             "/v1/search",
-            post(handlers::search_handler::search::<
-                crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl,
-                crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl,
-                crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl,
-            >),
+            post(handlers::search_handler::search),
         )
         .route(
             "/v1/teams/geo-restrictions",
@@ -879,9 +899,14 @@ pub async fn create_test_app_no_worker() -> TestApp {
         .expect("Failed to connect to database");
     let db_pool = Arc::new(db);
 
-    Migrator::up(db_pool.as_ref(), None)
-        .await
-        .expect("Failed to run database migrations");
+    // 运行数据库迁移（使用 sqlx PgPool）
+    if db_url.starts_with("postgres://") {
+        use sqlx::PgPool;
+        let sqlx_pool = PgPool::connect(&db_url)
+            .await
+            .expect("Failed to connect to database for migration");
+        let _ = sqlx::migrate!().run(&sqlx_pool).await;
+    }
 
     // 清理测试相关的表数据
     let db_backend = if db_url.starts_with("postgres://") {
@@ -967,9 +992,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let redis_url = format!("redis://127.0.0.1:{}", redis_port);
     eprintln!("DEBUG: Connecting to Redis at {}", redis_url);
-    let redis_client = RedisClient::new(&redis_url)
-        .await
-        .expect("Failed to connect to Redis");
+    let redis_client = RedisClient::new(&redis_url).expect("Failed to connect to Redis");
     eprintln!("DEBUG: Redis connection established");
 
     let api_key = Uuid::new_v4().to_string();
@@ -1059,12 +1082,18 @@ pub async fn create_test_app_no_worker() -> TestApp {
         RateLimitingConfig::default(),
     ));
 
-    let reqwest_engine = Arc::new(ReqwestEngine::new());
+    let reqwest_client = Arc::new(
+        reqwest::Client::builder()
+            .timeout(API_REQUEST_TIMEOUT)
+            .build()
+            .expect("Failed to create reqwest client"),
+    );
+    let reqwest_engine = Arc::new(ReqwestEngine::new(reqwest_client.clone()));
 
     #[cfg(feature = "engine-playwright")]
     let playwright_engine = Arc::new(PlaywrightEngine);
     #[cfg(not(feature = "engine-playwright"))]
-    let playwright_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
+    let _playwright_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
 
     #[cfg(feature = "engine-playwright")]
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, playwright_engine];
@@ -1073,26 +1102,27 @@ pub async fn create_test_app_no_worker() -> TestApp {
 
     let router = Arc::new(crawlrs::engines::router::EngineRouter::new(engines));
 
-    let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(Arc::new(
-        redis_client.clone(),
-    ))));
+    let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(
+        reqwest_client.clone(),
+        Some(Arc::new(redis_client.clone())),
+        None,
+    ));
 
     // 创建搜索引擎实例
-    let _google_engine_client = Arc::new(EngineClient::default());
-    let google_engine_client = Arc::new(EngineClient::default());
+    let google_engine_client = Arc::new(EngineClient::new());
     let search_engine_service: Arc<dyn crawlrs::search::engine_trait::SearchEngine> =
         Arc::new(crawlrs::search::aggregator::SearchAggregator::new(
             vec![
-                Arc::new(GoogleSearchEngine::new(google_engine_client)),
-                Arc::new(BingSearchEngine::new()),
-                Arc::new(BaiduSearchEngine::new()),
-                Arc::new(SogouSearchEngine::new()),
+                Arc::new(GoogleSearchEngine::new(google_engine_client.clone())),
+                Arc::new(BingSearchEngine::new(google_engine_client.clone())),
+                Arc::new(BaiduSearchEngine::new(google_engine_client.clone())),
+                Arc::new(SogouSearchEngine::new(google_engine_client.clone())),
             ],
             10000,
         ));
 
-    let geo_location_service =
-        Arc::new(GeoLocationService::new()) as Arc<dyn GeoLocationServiceTrait>;
+    let geo_location_service = Arc::new(GeoLocationService::new(reqwest_client.clone()))
+        as Arc<dyn GeoLocationServiceTrait>;
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
     let team_service = Arc::new(crawlrs::domain::services::team_service::TeamService::new(
         geo_location_service,

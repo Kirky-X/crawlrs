@@ -12,7 +12,7 @@ use axum::{
     Router,
 };
 use crawlrs::presentation::middleware::auth_middleware::{auth_middleware, AuthState};
-use migration::{Migrator, MigratorTrait};
+use crawlrs::infrastructure::migrations::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +26,7 @@ async fn setup_app_with_db() -> (Router, DatabaseConnection) {
         .expect("Failed to create in-memory database");
 
     // Run migrations to create tables
-    Migrator::up(&db, None)
+    let _ = sqlx::migrate!().run(&db).await.expect("Failed to run database migrations");
         .await
         .expect("Failed to run database migrations");
 
@@ -146,7 +146,7 @@ async fn test_auth_middleware_rejects_nil_uuid() {
         .expect("Failed to create in-memory database");
 
     // Run migrations to create tables
-    Migrator::up(&db, None)
+    let _ = sqlx::migrate!().run(&db).await.expect("Failed to run database migrations");
         .await
         .expect("Failed to run database migrations");
 
@@ -297,7 +297,7 @@ async fn test_api_key_cache_reduces_db_queries() {
     // 第二次查询应该命中缓存
     let cached = cache.get(test_key);
     assert!(cached.is_some());
-    assert_eq!(cached.unwrap().team_id, team_id);
+    assert_eq!(cached.expect("Cached value should exist").team_id, team_id);
 
     // 测试 LRU 淘汰: 创建超过容量的事件
     for i in 0..150 {

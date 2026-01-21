@@ -17,6 +17,7 @@ pub mod flaresolverr {
     /// Create a mock FlareSolverr server that simulates successful responses
     ///
     /// Returns the mock server and its URI for configuration
+    #[allow(dead_code)]
     pub async fn create_mock_server() -> (MockServer, String) {
         let mock_server = MockServer::start().await;
         let mock_uri = mock_server.uri();
@@ -44,6 +45,7 @@ pub mod flaresolverr {
     }
 
     /// Create a mock FlareSolverr server that simulates rate limiting
+    #[allow(dead_code)]
     pub async fn create_rate_limited_mock_server() -> (MockServer, String) {
         let mock_server = MockServer::start().await;
         let mock_uri = mock_server.uri();
@@ -62,6 +64,7 @@ pub mod flaresolverr {
     }
 
     /// Create a mock FlareSolverr server that simulates errors
+    #[allow(dead_code)]
     pub async fn create_error_mock_server() -> (MockServer, String) {
         let mock_server = MockServer::start().await;
         let mock_uri = mock_server.uri();
@@ -83,10 +86,11 @@ pub mod flaresolverr {
 #[cfg(test)]
 pub mod search_engines {
     use serde_json::json;
-    use wiremock::matchers::{method, path, query_param};
+    use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// Create a mock Google Custom Search API server
+    #[allow(dead_code)]
     pub async fn create_mock_google_server() -> (MockServer, String) {
         let mock_server = MockServer::start().await;
         let mock_uri = mock_server.uri();

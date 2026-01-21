@@ -49,7 +49,6 @@ async fn test_lua_concurrency_control_single_worker() {
     let redis_url =
         std::env::var("TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let redis = RedisClient::new(&redis_url)
-        .await
         .expect("Failed to create Redis client");
     let team_id = Uuid::new_v4();
     let task_id = Uuid::new_v4();
@@ -118,7 +117,6 @@ async fn test_lua_concurrency_control_multiple_workers() {
     let redis_url =
         std::env::var("TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let redis = RedisClient::new(&redis_url)
-        .await
         .expect("Failed to create Redis client");
     let team_id = Uuid::new_v4();
     let limit_key = format!("team:{}:concurrency_limit", team_id);
@@ -210,7 +208,6 @@ async fn test_lua_concurrency_control_stale_cleanup() {
     let redis_url =
         std::env::var("TEST_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let redis = RedisClient::new(&redis_url)
-        .await
         .expect("Failed to create Redis client");
     let team_id = Uuid::new_v4();
     let task_id = Uuid::new_v4();

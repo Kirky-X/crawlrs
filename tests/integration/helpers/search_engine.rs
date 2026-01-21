@@ -7,19 +7,27 @@
 
 use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
-use crawlrs::engines::traits::ScraperEngine;
+#[cfg(feature = "engine-fire-cdp")]
+use crawlrs::engines::ScraperEngine;
 use crawlrs::search::client::baidu::BaiduSearchEngine;
 use crawlrs::search::client::bing::BingSearchEngine;
 use crawlrs::search::client::google::GoogleSearchEngine;
 use crawlrs::search::client::sogou::SogouSearchEngine;
 use crawlrs::search::engine_trait::SearchEngine;
+use reqwest::Client;
 use std::sync::Arc;
 
 #[cfg(feature = "engine-fire-cdp")]
 fn create_engine_client() -> Arc<EngineClient> {
     use crawlrs::engines::client::fire_cdp::FireEngineCdp;
 
-    let reqwest_engine = Arc::new(ReqwestEngine::new());
+    let reqwest_client = Arc::new(
+        Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to create reqwest client"),
+    );
+    let reqwest_engine = Arc::new(ReqwestEngine::new(reqwest_client.clone()));
     let fire_engine_cdp = Arc::new(FireEngineCdp::new());
     let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine, fire_engine_cdp];
     Arc::new(EngineClient::with_engines(engines))
@@ -27,30 +35,47 @@ fn create_engine_client() -> Arc<EngineClient> {
 
 #[cfg(not(feature = "engine-fire-cdp"))]
 fn create_engine_client() -> Arc<EngineClient> {
-    let reqwest_engine = Arc::new(ReqwestEngine::new());
+    let reqwest_client = Arc::new(
+        Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to create reqwest client"),
+    );
+    let reqwest_engine = Arc::new(ReqwestEngine::new(reqwest_client));
     Arc::new(EngineClient::with_engines(vec![reqwest_engine]))
 }
 
 #[allow(dead_code)]
 pub fn create_search_engines() -> Vec<(&'static str, Arc<dyn SearchEngine>)> {
+    let engine_client = create_engine_client();
     vec![
         (
             "Google",
-            Arc::new(GoogleSearchEngine::new(create_engine_client())),
+            Arc::new(GoogleSearchEngine::new(engine_client.clone())),
         ),
-        ("Bing", Arc::new(BingSearchEngine::new())),
-        ("Baidu", Arc::new(BaiduSearchEngine::new())),
-        ("Sogou", Arc::new(SogouSearchEngine::new())),
+        (
+            "Bing",
+            Arc::new(BingSearchEngine::new(engine_client.clone())),
+        ),
+        (
+            "Baidu",
+            Arc::new(BaiduSearchEngine::new(engine_client.clone())),
+        ),
+        (
+            "Sogou",
+            Arc::new(SogouSearchEngine::new(engine_client.clone())),
+        ),
     ]
 }
 
 #[allow(dead_code)]
 pub fn create_single_engine(engine_name: &str) -> Option<Arc<dyn SearchEngine>> {
+    let engine_client = create_engine_client();
     match engine_name {
-        "Google" => Some(Arc::new(GoogleSearchEngine::new(create_engine_client()))),
-        "Bing" => Some(Arc::new(BingSearchEngine::new())),
-        "Baidu" => Some(Arc::new(BaiduSearchEngine::new())),
-        "Sogou" => Some(Arc::new(SogouSearchEngine::new())),
+        "Google" => Some(Arc::new(GoogleSearchEngine::new(engine_client))),
+        "Bing" => Some(Arc::new(BingSearchEngine::new(engine_client))),
+        "Baidu" => Some(Arc::new(BaiduSearchEngine::new(engine_client))),
+        "Sogou" => Some(Arc::new(SogouSearchEngine::new(engine_client))),
         _ => None,
     }
 }

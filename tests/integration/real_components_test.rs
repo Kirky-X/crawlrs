@@ -13,7 +13,7 @@ use crawlrs::domain::repositories::task_repository::{TaskQueryParams, TaskReposi
 use crawlrs::domain::services::llm_service::LLMService;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::search::client::bing::BingSearchEngine;
-use migration::MigratorTrait;
+use crawlrs::infrastructure::migrations::MigratorTrait;
 use sea_orm::Database;
 use serde_json::json;
 use std::sync::Arc;
@@ -39,7 +39,8 @@ impl RealTestContext {
         let db_pool = Arc::new(db);
 
         // Run migrations
-        migration::Migrator::up(db_pool.as_ref(), None)
+        use crawlrs::infrastructure::migrations::Migrator;
+        let _ = sqlx::migrate!().run(db_pool.as_ref()).await;
             .await
             .expect("Failed to run database migrations");
 

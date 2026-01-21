@@ -12,7 +12,7 @@ use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::presentation::handlers::task_handler::wait_for_tasks_completion;
-use migration::MigratorTrait;
+use crawlrs::infrastructure::migrations::MigratorTrait;
 use sea_orm::Database;
 use std::sync::Arc;
 
@@ -52,7 +52,8 @@ async fn test_sync_wait_returns_result_immediately_with_real_repo() {
     let db_pool = Arc::new(db);
 
     // 运行迁移
-    migration::Migrator::up(db_pool.as_ref(), None)
+    use crawlrs::infrastructure::migrations::Migrator;
+    let _ = sqlx::migrate!().run(db_pool.as_ref()).await;
         .await
         .expect("Failed to run database migrations");
 
@@ -95,7 +96,8 @@ async fn test_sync_wait_timeout_with_uncompleted_tasks_real_repo() {
     let db_pool = Arc::new(db);
 
     // 运行迁移
-    migration::Migrator::up(db_pool.as_ref(), None)
+    use crawlrs::infrastructure::migrations::Migrator;
+    let _ = sqlx::migrate!().run(db_pool.as_ref()).await;
         .await
         .expect("Failed to run database migrations");
 
@@ -149,7 +151,8 @@ async fn test_sync_wait_multiple_tasks_real_repo() {
     let db_pool = Arc::new(db);
 
     // 运行迁移
-    migration::Migrator::up(db_pool.as_ref(), None)
+    use crawlrs::infrastructure::migrations::Migrator;
+    let _ = sqlx::migrate!().run(db_pool.as_ref()).await;
         .await
         .expect("Failed to run database migrations");
 
@@ -187,7 +190,8 @@ async fn test_sync_wait_empty_task_list_real_repo() {
     let db_pool = Arc::new(db);
 
     // 运行迁移
-    migration::Migrator::up(db_pool.as_ref(), None)
+    use crawlrs::infrastructure::migrations::Migrator;
+    let _ = sqlx::migrate!().run(db_pool.as_ref()).await;
         .await
         .expect("Failed to run database migrations");
 

@@ -7,25 +7,16 @@
 
 #[cfg(feature = "engine-playwright")]
 use crawlrs::engines::client::playwright::PlaywrightEngine;
-use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
-use std::time::Duration;
+use crawlrs::engines::ScrapeRequest;
 
+#[allow(dead_code)]
 pub fn create_scrape_request(url: String, needs_js: bool, timeout_secs: u64) -> ScrapeRequest {
-    ScrapeRequest {
-        url,
-        headers: std::collections::HashMap::new(),
-        timeout: Duration::from_secs(timeout_secs),
-        needs_js,
-        needs_screenshot: false,
-        screenshot_config: None,
-        mobile: false,
-        proxy: None,
-        skip_tls_verification: true,
-        needs_tls_fingerprint: false,
-        use_fire_engine: false,
-        actions: Vec::new(),
-        sync_wait_ms: 0,
-    }
+    ScrapeRequest::new(url).with_options(
+        crawlrs::engines::ScrapeOptions::builder()
+            .needs_js(needs_js)
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build(),
+    )
 }
 
 #[allow(dead_code)]

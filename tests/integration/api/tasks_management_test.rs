@@ -16,12 +16,13 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 async fn create_test_app_with_tasks() -> (TestServer, String, Uuid, Arc<TaskRepositoryImpl>) {
-    use migration::{Migrator, MigratorTrait};
+    use crawlrs::infrastructure::migrations::{Migrator, MigratorTrait};
 
     let db = Database::connect("sqlite::memory:")
         .await
         .expect("Failed to create in-memory database");
-    Migrator::up(&db, None)
+    let _ = sqlx::migrate!()
+        .run(&db)
         .await
         .expect("Failed to run database migrations");
     let db_pool = Arc::new(db);

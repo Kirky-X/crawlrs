@@ -32,7 +32,7 @@ use crawlrs::engines::client::playwright::PlaywrightEngine;
 use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::EngineClient;
 #[cfg(any(feature = "engine-reqwest", feature = "engine-playwright"))]
-use crawlrs::engines::traits::ScraperEngine;
+use crawlrs::engines::ScraperEngine;
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::geolocation::GeoLocationService;
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
@@ -209,9 +209,7 @@ impl TestAppFixture {
         } else {
             "redis://127.0.0.1:6379".to_string()
         };
-        let redis_client = RedisClient::new(&redis_url)
-            .await
-            .expect("Failed to create Redis client");
+        let redis_client = RedisClient::new(&redis_url).expect("Failed to create Redis client");
 
         let api_key = Uuid::new_v4().to_string();
         let team_id = Uuid::new_v4();
@@ -294,12 +292,18 @@ impl TestAppFixture {
             RateLimitingConfig::default(),
         ));
 
-        let reqwest_engine = Arc::new(ReqwestEngine::new());
+        let http_client = Arc::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("Failed to create reqwest client"),
+        );
+        let reqwest_engine = Arc::new(ReqwestEngine::new(http_client.clone()));
 
         #[cfg(feature = "engine-playwright")]
         let playwright_engine = Arc::new(PlaywrightEngine);
         #[cfg(not(feature = "engine-playwright"))]
-        let playwright_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
+        let _playwright_engine: Arc<dyn ScraperEngine> = reqwest_engine.clone();
 
         #[cfg(feature = "engine-playwright")]
         let engines_for_client: Vec<Arc<dyn ScraperEngine>> =
@@ -316,24 +320,26 @@ impl TestAppFixture {
 
         let router = Arc::new(crawlrs::engines::router::EngineRouter::new(engines));
 
-        let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(Some(Arc::new(
-            redis_client.clone(),
-        ))));
+        let robots_checker = Arc::new(crawlrs::utils::robots::RobotsChecker::new(
+            http_client.clone(),
+            Some(Arc::new(redis_client.clone())),
+            None,
+        ));
 
         let search_engine_service: Arc<dyn crawlrs::search::engine_trait::SearchEngine> =
             Arc::new(crawlrs::search::aggregator::SearchAggregator::new(
                 vec![
-                    Arc::new(GoogleSearchEngine::new(engine_client)),
-                    Arc::new(BingSearchEngine::new()),
-                    Arc::new(BaiduSearchEngine::new()),
-                    Arc::new(SogouSearchEngine::new()),
+                    Arc::new(GoogleSearchEngine::new(engine_client.clone())),
+                    Arc::new(BingSearchEngine::new(engine_client.clone())),
+                    Arc::new(BaiduSearchEngine::new(engine_client.clone())),
+                    Arc::new(SogouSearchEngine::new(engine_client.clone())),
                 ],
                 10000,
             ));
 
         let geo_location_service: Arc<
             dyn crawlrs::infrastructure::geolocation::GeoLocationServiceTrait,
-        > = Arc::new(GeoLocationService::new());
+        > = Arc::new(GeoLocationService::new(http_client.clone()));
         let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db_pool.clone()));
         let team_service = Arc::new(crawlrs::domain::services::team_service::TeamService::new(
             geo_location_service,
@@ -453,6 +459,7 @@ fn create_router(
         api_key_id: uuid::Uuid::nil(),
         scope: crawlrs::domain::auth::ApiKeyScope::default(),
         api_key_cache: None,
+        auth_rate_limiter: None,
     };
 
     let public_routes = axum::Router::new()
@@ -528,11 +535,7 @@ fn create_router(
         )
         .route(
             "/v1/search",
-            post(handlers::search_handler::search::<
-                crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl,
-                crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl,
-                crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl,
-            >),
+            post(handlers::search_handler::search),
         )
         .route(
             "/v1/teams/geo-restrictions",

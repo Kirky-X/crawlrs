@@ -5,14 +5,16 @@
 
 #![allow(deprecated)]
 
-use crawlrs::common::constants::testing::CRAWL_TASK_TIMEOUT;
-use crawlrs::search::client::google::GoogleSearchEngine;
-
 #[cfg(feature = "engine-fire-cdp")]
 use crawlrs::engines::client::fire_cdp::FireEngineCdp;
 #[cfg(feature = "engine-fire-tls")]
 use crawlrs::engines::client::fire_tls::FireEngineTls;
+
+#[cfg(feature = "engine-fire-cdp")]
 use crawlrs::engines::engine_client::EngineClient;
+#[cfg(feature = "engine-fire-cdp")]
+use crawlrs::search::client::google::GoogleSearchEngine;
+#[cfg(feature = "engine-fire-cdp")]
 use std::sync::Arc;
 
 #[allow(dead_code)]

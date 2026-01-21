@@ -12,6 +12,5 @@ pub mod search_engine;
 pub mod test_app;
 
 pub use test_app::{
-    create_test_app, create_test_app_no_worker, create_test_app_with_low_rate_limit,
-    create_test_app_with_rate_limit_options,
+    create_test_app, create_test_app_no_worker, create_test_app_with_rate_limit_options,
 };
