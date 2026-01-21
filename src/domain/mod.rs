@@ -7,6 +7,7 @@
 ///
 /// 该模块包含系统的核心业务逻辑，包括：
 /// - 认证模型（auth）：API Key 范围、功能标志、审计日志
+/// - 领域事件（events）：领域事件定义和事件总线
 /// - 领域模型（models）：核心业务实体和数据结构
 /// - 仓库接口（repositories）：数据持久化抽象接口
 /// - 服务（services）：领域服务和业务规则
@@ -16,6 +17,7 @@
 /// 体现了纯粹的业务逻辑和业务规则。
 pub mod auth;
 pub mod errors;
+pub mod events;
 pub mod models;
 pub mod repositories;
 pub mod search;

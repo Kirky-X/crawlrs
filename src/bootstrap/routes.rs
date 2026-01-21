@@ -22,7 +22,8 @@ use crate::presentation::handlers::{
 };
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
-use crate::presentation::routes::{self, task::task_routes};
+use crate::presentation::routes;
+use crate::presentation::routes::task::task_routes;
 use axum::{
     routing::{delete, get, post, put},
     Extension, Router,
@@ -30,11 +31,12 @@ use axum::{
 use std::sync::Arc;
 
 /// Create public API routes (no authentication required).
-pub fn create_public_routes() -> Router {
+pub fn create_public_routes(state: &AppState) -> Router {
     Router::new()
         .route("/health", get(routes::health_check))
         .route("/metrics", get(metrics_handler::metrics))
         .route("/v1/version", get(routes::version))
+        .with_state(Arc::new(state.clone()))
 }
 
 /// Create the protected API routes using AppState.
@@ -216,7 +218,7 @@ pub fn create_v2_routes_with_state(state: &AppState) -> Router {
 ///
 /// Returns the configured API router.
 pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Router {
-    let public_routes = create_public_routes();
+    let public_routes = create_public_routes(state);
     let protected_routes = create_protected_routes_with_state(state, settings.clone());
     let v2_routes = create_v2_routes_with_state(state);
 

@@ -49,6 +49,9 @@ rate-limiting = ["dep:redis"]
 # 指标监控
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
 
+# OpenAPI/Swagger 文档支持
+# openapi = ["dep:utoipa", "dep:utoipa-axum", "dep:utoipa-swagger-ui"]
+
 # --- 数据库特性 ---
 db-postgres = ["sea-orm/sqlx-postgres", "sqlx/postgres"]
 db-sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
@@ -145,6 +148,11 @@ toml = "0.9.11"
 # Dependency Injection
 shaku = "0.6"
 shaku_axum = "0.6"
+
+# API Documentation (optional - controlled by 'openapi' feature)
+# utoipa = { version = "5.4", optional = true }
+# utoipa-axum = { version = "0.2", optional = true }
+# utoipa-swagger-ui = { version = "9.0", optional = true, default-features = false, features = ["axum", "vendored"] }
 
 [dev-dependencies]
 tokio = { version = "1.49", features = ["full", "test-util"] }

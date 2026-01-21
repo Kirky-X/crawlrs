@@ -12,9 +12,8 @@ use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
     audit_handler, crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
-    team_handler, webhook_handler,
+    task_handler, team_handler, webhook_handler,
 };
-use crate::presentation::routes::task::task_routes;
 use axum::{
     routing::{delete, get, post, put},
     Json, Router,
@@ -27,12 +26,10 @@ use serde_json::json;
 ///
 /// 返回配置好的路由
 pub fn routes() -> Router {
-    let public_routes = Router::new()
+    Router::new()
         .route("/health", get(health_check))
         .route("/metrics", get(metrics_handler::metrics))
-        .route("/v1/version", get(version));
-
-    let protected_routes = Router::new()
+        .route("/v1/version", get(version))
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
         .route("/v1/scrape/{id}", delete(scrape_handler::cancel_scrape))
@@ -98,14 +95,15 @@ pub fn routes() -> Router {
             put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
         )
         .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
-        .route("/v1/audit/denied", get(audit_handler::get_denied_requests));
-
-    let v2_routes = task_routes();
-
-    Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .merge(v2_routes)
+        .route("/v1/audit/denied", get(audit_handler::get_denied_requests))
+        .route(
+            "/v2/tasks/query",
+            post(task_handler::query_tasks::<TaskRepositoryImpl>),
+        )
+        .route(
+            "/v2/tasks/cancel",
+            delete(task_handler::cancel_tasks::<TaskRepositoryImpl>),
+        )
 }
 
 /// 健康检查端点
