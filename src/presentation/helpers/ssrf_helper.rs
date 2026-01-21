@@ -53,6 +53,11 @@ pub fn is_internal_url(url_str: &str) -> bool {
         return false;
     };
 
+    // Check URL scheme - only allow http and https
+    if !matches!(url.scheme(), "http" | "https") {
+        return true; // Block non-HTTP/HTTPS URLs
+    }
+
     let Some(host) = url.host_str() else {
         return false;
     };
@@ -62,6 +67,11 @@ pub fn is_internal_url(url_str: &str) -> bool {
     } else {
         host
     };
+
+    // Check for IPv4-mapped IPv6 addresses (::ffff:192.168.1.1)
+    if host.contains("::ffff:") || host.contains("::FFFF:") {
+        return true;
+    }
 
     // IPv4 localhost
     if host == "localhost" || host == "127.0.0.1" {

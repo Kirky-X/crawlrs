@@ -60,14 +60,14 @@ pub struct Repositories {
 /// Returns a connected database pool.
 pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
     // Create SQLx connection pool for migrations
-    let sqlx_pool = PgPool::connect(&settings.database.url()).await?;
+    let sqlx_pool = PgPool::connect(settings.database.url()).await?;
     let db = connection::create_pool(&settings.database).await?;
     let db = Arc::new(db);
     info!("Database connection established");
 
     // Run migrations using SQLx
     info!("Running database migrations...");
-    sqlx::migrate!("./migrations-sqlx").run(&sqlx_pool).await?;
+    sqlx::migrate!().run(&sqlx_pool).await?;
     info!("Database migrations applied");
 
     Ok(db)

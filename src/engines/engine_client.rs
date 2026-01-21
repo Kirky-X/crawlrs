@@ -323,6 +323,7 @@ pub enum InternalPageAction {
     Click { selector: String },
     Scroll { direction: String },
     Input { selector: String, text: String },
+    Screenshot { full_page: bool },
 }
 
 /// Internal response type for engine operations
@@ -520,6 +521,14 @@ pub trait ScraperEngine: Send + Sync {
 
     /// Get the engine name
     fn name(&self) -> &'static str;
+
+    /// Check if the engine supports TLS fingerprinting
+    ///
+    /// Returns true if the engine can perform TLS fingerprinting
+    /// for anti-fingerprinting purposes.
+    fn supports_tls_fingerprint(&self) -> bool {
+        false
+    }
 }
 
 /// Health status of the engine system.

@@ -18,8 +18,56 @@ mod expiration_worker_tests {
     async fn setup_db() -> Arc<DatabaseConnection> {
         let db = Database::connect("sqlite::memory:").await.unwrap();
         let db = Arc::new(db);
-        // For SQLite in-memory tests, we skip migrations
-        // The tables will be created automatically by SeaORM on insert
+
+        // Create teams table
+        let create_teams_sql = r#"
+            CREATE TABLE IF NOT EXISTS teams (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                allowed_countries TEXT,
+                blocked_countries TEXT,
+                ip_whitelist TEXT,
+                domain_blacklist TEXT,
+                enable_geo_restrictions INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+        "#;
+        db.execute(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            create_teams_sql.to_string(),
+        ))
+        .await
+        .unwrap();
+
+        // Create tasks table
+        let create_tasks_sql = r#"
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                task_type TEXT NOT NULL,
+                url TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result_id TEXT,
+                team_id TEXT NOT NULL,
+                api_key_id TEXT NOT NULL,
+                priority INTEGER DEFAULT 0,
+                metadata TEXT,
+                error_message TEXT,
+                payload TEXT,
+                scheduled_at TEXT,
+                lock_expires_at TEXT,
+                crawl_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+        "#;
+        db.execute(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            create_tasks_sql.to_string(),
+        ))
+        .await
+        .unwrap();
+
         db
     }
 

@@ -175,37 +175,37 @@ Get up and running in under 5 minutes!
 
 ### 1️⃣ Configuration
 
-Create a configuration file `config/settings.yaml`:
+Create a configuration file `config/default.toml`:
 
-```yaml
-# config/settings.yaml
-database:
-  url: "postgresql://user:password@localhost/crawlrs"
-  max_connections: 20
+```toml
+# config/default.toml
+[database]
+url = "postgresql://user:password@localhost/crawlrs"
+max_connections = 20
 
-redis:
-  url: "redis://localhost:6379"
+[redis]
+url = "redis://localhost:6379"
 
-server:
-  host: "0.0.0.0"
-  port: 8899
+[server]
+host = "0.0.0.0"
+port = 8899
 
-rate_limiting:
-  enabled: true
-  default_rpm: 60
-  default_concurrent: 10
+[rate_limiting]
+enabled = true
+default_rpm = 60
+default_concurrent = 10
 
-cache:
-  enabled: true
-  default_ttl: 300
+[cache]
+enabled = true
+default_ttl = 300
 
-search:
-  default_engine: "baidu"
-  engines:
-    google_enabled: true
-    bing_enabled: true
-    baidu_enabled: true
-    sogou_enabled: true
+[search]
+default_engine = "baidu"
+[search.engines]
+google_enabled = true
+bing_enabled = true
+baidu_enabled = true
+sogou_enabled = true
 ```
 
 ### 2️⃣ Database Setup
@@ -278,14 +278,21 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/scrape` | POST | Create a scrape task |
-| `/api/v1/crawl` | POST | Create a crawl task |
-| `/api/v1/search` | POST | Search with specified engine |
-| `/api/v1/extract` | POST | Extract data from HTML |
-| `/api/v1/tasks` | GET | List all tasks |
-| `/api/v1/tasks/:id` | GET | Get task details |
-| `/api/v1/tasks/:id` | DELETE | Cancel task |
-| `/api/v1/metrics` | GET | Get system metrics |
+| `/v1/scrape` | POST | Create a scrape task |
+| `/v1/scrape/{id}` | GET | Get task details |
+| `/v1/scrape/{id}` | DELETE | Cancel scrape task |
+| `/v1/crawl` | POST | Create a crawl task |
+| `/v1/crawl/{id}` | GET | Get crawl status |
+| `/v1/crawl/{id}` | DELETE | Cancel crawl task |
+| `/v1/crawl/{id}/results` | GET | Get crawl results |
+| `/v1/search` | POST | Search with specified engine |
+| `/v1/extract` | POST | Extract data from HTML |
+| `/v1/webhooks` | POST | Create webhook |
+| `/v1/teams/geo-restrictions` | GET | Get team geo restrictions |
+| `/v1/teams/geo-restrictions` | PUT | Update team geo restrictions |
+| `/v1/audit/logs` | GET | Get audit logs |
+| `/v1/audit/denied` | GET | Get denied requests |
+| `/v1/metrics` | GET | Get system metrics |
 
 ---
 

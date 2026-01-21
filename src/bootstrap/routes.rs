@@ -240,6 +240,7 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
         .merge(public_routes)
         .merge(protected_routes)
         .merge(v2_routes)
+        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .layer(Extension(state.team_semaphore.clone()))
         .layer(Extension(queue))
         .layer(Extension(state.task_repo.clone()))

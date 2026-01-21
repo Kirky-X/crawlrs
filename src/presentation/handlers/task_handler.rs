@@ -277,6 +277,8 @@ async fn execute_task_query<T: TaskRepository>(
             crawl_id: request.crawl_id,
             limit,
             offset,
+            cursor: None,
+            cursor_id: None,
         })
         .await
         .map_err(|e| AppError::from(anyhow::anyhow!("Query failed: {:?}", e)))

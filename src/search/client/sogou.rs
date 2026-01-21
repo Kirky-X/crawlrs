@@ -92,12 +92,10 @@ impl SogouSearchEngine {
         for element in document.select(&result_selector) {
             // 提取标题 - 获取纯文本并清理空白
             let title_node = element.select(&title_selector).next();
-            if title_node.is_none() {
-                continue;
-            }
-
-            // 获取所有文本并清理
-            let raw_title = title_node.unwrap().text().collect::<String>();
+            let raw_title = match title_node {
+                Some(node) => node.text().collect::<String>(),
+                None => continue,
+            };
             let title = html_escape::encode_text(raw_title.trim()).to_string();
 
             if title.is_empty() {
@@ -106,16 +104,10 @@ impl SogouSearchEngine {
 
             // 提取链接
             let url_node = element.select(&link_selector).next();
-            if url_node.is_none() {
-                continue;
-            }
-
-            let raw_url = url_node
-                .unwrap()
-                .value()
-                .attr("href")
-                .unwrap_or("")
-                .to_string();
+            let raw_url = match url_node {
+                Some(node) => node.value().attr("href").unwrap_or("").to_string(),
+                None => continue,
+            };
 
             // 解析并补全URL
             let resolved_url = self.resolve_url(&raw_url);

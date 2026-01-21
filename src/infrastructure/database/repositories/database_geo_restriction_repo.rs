@@ -144,13 +144,35 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
 mod tests {
     use super::*;
     use crate::infrastructure::database::entities::team;
-    use migration::{Migrator, MigratorTrait};
-    use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, Set};
+    use sea_orm::{
+        ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, Set, Statement,
+    };
 
     async fn setup_db() -> Arc<DatabaseConnection> {
         let db = Database::connect("sqlite::memory:").await.unwrap();
         let db = Arc::new(db);
-        Migrator::up(db.as_ref(), None).await.unwrap();
+
+        // Create teams table manually
+        let create_table_sql = r#"
+            CREATE TABLE IF NOT EXISTS teams (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                allowed_countries TEXT,
+                blocked_countries TEXT,
+                ip_whitelist TEXT,
+                domain_blacklist TEXT,
+                enable_geo_restrictions INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+        "#;
+        db.execute(Statement::from_string(
+            sea_orm::DatabaseBackend::Sqlite,
+            create_table_sql.to_string(),
+        ))
+        .await
+        .unwrap();
+
         db
     }
 

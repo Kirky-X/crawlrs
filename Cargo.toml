@@ -179,3 +179,6 @@ path = "src/main.rs"
 
 [workspace]
 # members = ["examples"]  # Removed: examples is now an independent workspace
+
+[workspace.metadata.sqlx]
+migrate-path = "migrations-sqlx"

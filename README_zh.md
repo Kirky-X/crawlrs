@@ -174,37 +174,37 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 
 ### 1️⃣ 配置
 
-创建配置文件 `config/settings.yaml`：
+创建配置文件 `config/default.toml`：
 
-```yaml
-# config/settings.yaml
-database:
-  url: "postgresql://user:password@localhost/crawlrs"
-  max_connections: 20
+```toml
+# config/default.toml
+[database]
+url = "postgresql://user:password@localhost/crawlrs"
+max_connections = 20
 
-redis:
-  url: "redis://localhost:6379"
+[redis]
+url = "redis://localhost:6379"
 
-server:
-  host: "0.0.0.0"
-  port: 8899
+[server]
+host = "0.0.0.0"
+port = 8899
 
-rate_limiting:
-  enabled: true
-  default_rpm: 60
-  default_concurrent: 10
+[rate_limiting]
+enabled = true
+default_rpm = 60
+default_concurrent = 10
 
-cache:
-  enabled: true
-  default_ttl: 300
+[cache]
+enabled = true
+default_ttl = 300
 
-search:
-  default_engine: "baidu"
-  engines:
-    google_enabled: true
-    bing_enabled: true
-    baidu_enabled: true
-    sogou_enabled: true
+[search]
+default_engine = "baidu"
+[search.engines]
+google_enabled = true
+bing_enabled = true
+baidu_enabled = true
+sogou_enabled = true
 ```
 
 ### 2️⃣ 数据库设置
@@ -277,14 +277,21 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 
 | 端点 | 方法 | 描述 |
 |----------|--------|-------------|
-| `/api/v1/scrape` | POST | 创建抓取任务 |
-| `/api/v1/crawl` | POST | 创建爬取任务 |
-| `/api/v1/search` | POST | 使用指定引擎搜索 |
-| `/api/v1/extract` | POST | 从 HTML 提取数据 |
-| `/api/v1/tasks` | GET | 列出所有任务 |
-| `/api/v1/tasks/:id` | GET | 获取任务详情 |
-| `/api/v1/tasks/:id` | DELETE | 取消任务 |
-| `/api/v1/metrics` | GET | 获取系统指标 |
+| `/v1/scrape` | POST | 创建抓取任务 |
+| `/v1/scrape/{id}` | GET | 获取任务详情 |
+| `/v1/scrape/{id}` | DELETE | 取消抓取任务 |
+| `/v1/crawl` | POST | 创建爬取任务 |
+| `/v1/crawl/{id}` | GET | 获取爬取状态 |
+| `/v1/crawl/{id}` | DELETE | 取消爬取任务 |
+| `/v1/crawl/{id}/results` | GET | 获取爬取结果 |
+| `/v1/search` | POST | 使用指定引擎搜索 |
+| `/v1/extract` | POST | 从 HTML 提取数据 |
+| `/v1/webhooks` | POST | 创建 webhook |
+| `/v1/teams/geo-restrictions` | GET | 获取团队地理限制 |
+| `/v1/teams/geo-restrictions` | PUT | 更新团队地理限制 |
+| `/v1/audit/logs` | GET | 获取审计日志 |
+| `/v1/audit/denied` | GET | 获取被拒绝的请求 |
+| `/v1/metrics` | GET | 获取系统指标 |
 
 ---
 

@@ -35,6 +35,10 @@ pub struct TaskQueryParams {
     pub crawl_id: Option<Uuid>,
     pub limit: u32,
     pub offset: u32,
+    /// 游标分页：基于创建时间
+    pub cursor: Option<DateTime<FixedOffset>>,
+    /// 游标分页：基于任务ID（用于处理相同创建时间的记录）
+    pub cursor_id: Option<Uuid>,
 }
 
 /// 任务仓库特质

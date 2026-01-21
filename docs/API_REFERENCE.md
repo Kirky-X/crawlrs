@@ -7,7 +7,7 @@
 ![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green)
 ![License](https://img.shields.io/badge/license-Apache%202.0-orange)
 
-**Version:** 0.1.0 | **Base URL:** `http://localhost:8080` | **Updated:** 2025-01-15
+**Version:** 0.1.0 | **Base URL:** `http://localhost:8899` | **Updated:** 2025-01-15
 
 </div>
 
@@ -308,6 +308,55 @@ Scrape a single web page.
   "success": true,
   "data": {
     "message": "Scrape task cancelled"
+  }
+}
+```
+
+#### Cancel Crawl
+
+**Endpoint:** `DELETE /v1/crawl/{id}`
+
+**Parameters:**
+- `id` (path) - Task UUID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Crawl task cancelled"
+  }
+}
+```
+
+#### Get Crawl Results
+
+**Endpoint:** `GET /v1/crawl/{id}/results`
+
+**Parameters:**
+- `id` (path) - Task UUID
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Results per page (default: 20, max: 100)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "results": [
+      {
+        "url": "https://example.com/page1",
+        "html": "...",
+        "markdown": "..."
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 100
+    }
   }
 }
 ```
@@ -921,14 +970,14 @@ Verify the signature by computing HMAC SHA256 of the payload using your secret.
 const axios = require('axios');
 
 const client = axios.create({
-  baseURL: 'http://localhost:8080',
+  baseURL: 'http://localhost:8899',
   headers: {
     'Authorization': 'Bearer YOUR_API_KEY'
   }
 });
 
 const scrape = async (url) => {
-  const response = await client.post('/api/v1/scrape', {
+  const response = await client.post('/v1/scrape', {
     url: url,
     formats: ['markdown'],
     sync_wait_ms: 5000
@@ -948,7 +997,7 @@ client.headers.update({
 })
 
 def scrape(url):
-  response = client.post('http://localhost:8080/api/v1/scrape', json={
+  response = client.post('http://localhost:8899/v1/scrape', json={
     'url': url,
     'formats': ['markdown'],
     'sync_wait_ms': 5000
@@ -976,7 +1025,7 @@ func Scrape(url string) error {
   }
 
   jsonData, _ := json.Marshal(body)
-  req, _ := http.NewRequest("POST", "http://localhost:8080/api/v1/scrape", bytes.NewBuffer(jsonData))
+  req, _ := http.NewRequest("POST", "http://localhost:8899/v1/scrape", bytes.NewBuffer(jsonData))
   req.Header.Set("Authorization", "Bearer YOUR_API_KEY")
   req.Header.Set("Content-Type", "application/json")
 

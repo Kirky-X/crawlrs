@@ -90,7 +90,7 @@ cargo add crawlrs-client
 Here's how to scrape your first page:
 
 ```bash
-curl -X POST https://api.crawlrs.com/api/v1/scrape \
+curl -X POST https://api.crawlrs.com/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -148,7 +148,7 @@ When creating an API key, choose which features it can access:
 **Example:**
 ```bash
 # Create key with only scrape scope
-curl -X POST https://api.crawlrs.com/api/v1/keys \
+curl -X POST https://api.crawlrs.com/v1/keys \
   -H "Authorization: Bearer ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -170,7 +170,7 @@ Your API key has rate limits based on your plan:
 
 **Checking Your Limits:**
 ```bash
-curl -X GET https://api.crawlrs.com/api/v1/keys/YOUR_KEY/limits \
+curl -X GET https://api.crawlrs.com/v1/keys/YOUR_KEY/limits \
   -H "Authorization: Bearer YOUR_KEY"
 ```
 
@@ -191,9 +191,7 @@ X-RateLimit-Reset: 1705315200
 Scrape a single page and get the HTML:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/scrape',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
     url: 'https://example.com/article/123'
   },
   {
@@ -217,9 +215,7 @@ console.log(response.data);
 After creating a scrape task, retrieve the results:
 
 ```javascript
-const response = await axios.get(
-  `https://api.crawlrs.com/api/v1/scrape/${taskId}`,
-  {
+const response = await axios.get('https://api.crawlrs.com/v1/scrape/${taskId}', {
     headers: {
       'Authorization': 'Bearer YOUR_API_KEY'
     }
@@ -239,9 +235,7 @@ console.log(response.data.task.result);
 Request data in multiple formats:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/scrape',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
     url: 'https://example.com/article',
     formats: ['html', 'markdown', 'text']
   },
@@ -263,9 +257,7 @@ const response = await axios.post(
 Include or exclude specific HTML tags:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/scrape',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
     url: 'https://example.com/blog',
     include_tags: ['h1', 'h2', 'p', 'article'],
     exclude_tags: ['script', 'style', 'nav', 'footer']
@@ -283,9 +275,7 @@ const response = await axios.post(
 Extract specific data using CSS selectors:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/scrape',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
     url: 'https://example.com/product',
     extraction_rules: {
       title: {
@@ -337,9 +327,7 @@ const response = await axios.post(
 Configure how the scraper should fetch the page:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/scrape',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
     url: 'https://example.com/page',
     options: {
       headers: {
@@ -374,9 +362,7 @@ const response = await axios.post(
 Perform actions on the page before scraping:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/scrape',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
     url: 'https://example.com/lazy-load-page',
     options: {
       js_rendering: true  // Required for actions
@@ -440,9 +426,7 @@ const response = await axios.post(
 Wait for the scrape to complete and get results immediately:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/scrape',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
     url: 'https://example.com/article',
     sync_wait_ms: 10000  // Wait up to 10 seconds
   },
@@ -472,9 +456,7 @@ console.log(response.data.task.result);
 Crawl a website starting from a URL:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/crawl',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
     url: 'https://example.com/blog',
     max_depth: 2,
     max_pages: 100
@@ -508,9 +490,7 @@ Control how deep the crawler goes:
 
 **Example:**
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/crawl',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
     url: 'https://example.com',
     max_depth: 3,  // Crawl 3 levels deep
     max_pages: 500  // Stop after 500 pages
@@ -528,9 +508,7 @@ const response = await axios.post(
 Control which URLs to crawl:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/crawl',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
     url: 'https://example.com',
     follow_links: true,
     include_patterns: ['/blog/.*', '/articles/.*'],
@@ -560,9 +538,7 @@ let crawlId = '550e8400-e29b-41d4-a716-446655440000';
 
 // Poll for status
 setInterval(async () => {
-  const response = await axios.get(
-    `https://api.crawlrs.com/api/v1/crawl/${crawlId}`,
-    {
+  const response = await axios.get(`https://api.crawlrs.com/v1/crawl/${crawlId}`, {
       headers: {
         'Authorization': 'Bearer YOUR_API_KEY'
       }
@@ -589,9 +565,7 @@ Retrieve all pages crawled:
 
 ```javascript
 const getResults = async (crawlId) => {
-  const response = await axios.get(
-    `https://api.crawlrs.com/api/v1/crawl/${crawlId}/results`,
-    {
+  const response = await axios.get(`https://api.crawlrs.com/v1/crawl/${crawlId}/results`, {
       headers: {
         'Authorization': 'Bearer YOUR_API_KEY'
       },
@@ -621,9 +595,7 @@ console.log(`Pages: ${Math.ceil(pagination.total / pagination.limit)}`);
 Stop a running crawl:
 
 ```javascript
-const response = await axios.delete(
-  `https://api.crawlrs.com/api/v1/crawl/${crawlId}`,
-  {
+const response = await axios.delete(`https://api.crawlrs.com/v1/crawl/${crawlId}`, {
     headers: {
       'Authorization': 'Bearer YOUR_API_KEY'
     }
@@ -646,9 +618,7 @@ console.log(response.data);
 Search using Google:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/search',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/search', {
     engine: 'google',
     query: 'Rust web scraping tutorial'
   },
@@ -686,7 +656,7 @@ const engines = ['google', 'bing', 'baidu', 'sogou'];
 
 for (const engine of engines) {
   const response = await axios.post(
-    'https://api.crawlrs.com/api/v1/search',
+    'https://api.crawlrs.com/v1/search',
     {
       engine: engine,
       query: 'your search query'
@@ -707,9 +677,7 @@ for (const engine of engines) {
 Customize your search:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/search',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/search', {
     engine: 'google',
     query: 'Rust programming',
     num_results: 20,        // Number of results (max 100)
@@ -751,9 +719,7 @@ Retrieve search results:
 const searchId = '550e8400-e29b-41d4-a716-446655440000';
 
 // Option 1: Synchronous (wait for completion)
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/search',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/search', {
     engine: 'google',
     query: 'Rust tutorial',
     sync_wait_ms: 5000
@@ -777,9 +743,7 @@ console.log(response.data.results);
 // ]
 
 // Option 2: Asynchronous (use webhook)
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/search',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/search', {
     engine: 'google',
     query: 'Rust tutorial',
     webhook: 'https://your-server.com/callback'
@@ -804,9 +768,7 @@ console.log(response.data.id);
 Parse structured data from HTML:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/extract',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/extract', {
     html: '<html><body><h1>Title</h1><p>Content</p></body></html>',
     extraction_rules: {
       title: {
@@ -841,9 +803,7 @@ console.log(response.data);
 Extract multiple elements:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/extract',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/extract', {
     html: htmlContent,
     extraction_rules: {
       headings: {
@@ -896,9 +856,7 @@ console.log(response.data);
 Extract data from structured HTML:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/extract',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/extract', {
     html: `
       <div class="product">
         <h1 class="name">Product Name</h1>
@@ -952,9 +910,7 @@ console.log(response.data);
 Receive notifications when tasks complete:
 
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/webhooks',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/webhooks', {
     url: 'https://your-server.com/webhook',
     events: ['task.completed', 'task.failed'],
     secret: 'your-webhook-secret',
@@ -993,9 +949,7 @@ Subscribe to specific events:
 
 **Example:**
 ```javascript
-const response = await axios.post(
-  'https://api.crawlrs.com/api/v1/webhooks',
-  {
+const response = await axios.post('https://api.crawlrs.com/v1/webhooks', {
     url: 'https://your-server.com/webhook',
     events: ['task.created', 'task.started', 'task.completed', 'task.failed']
   },
@@ -1174,14 +1128,13 @@ if (!isValidUrl(userUrl)) {
 **Solution:**
 ```javascript
 // Check credits before making request
-const creditsResponse = await axios.get(
-  'https://api.crawlrs.com/api/v1/credits',
-  {
+const response = await axios.get('https://api.crawlrs.com/v1/credits', {
     headers: {
       'Authorization': `Bearer ${API_KEY}`
     }
   }
 );
+if (response.data.credits < requiredCredits) {
 
 if (creditsResponse.data.credits < requiredCredits) {
   console.error('Insufficient credits');
@@ -1281,7 +1234,7 @@ if (creditsResponse.data.credits < requiredCredits) {
 **Don't:**
 ```javascript
 // Bad: Long wait times
-const response = await axios.post('/api/v1/crawl', {
+const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
   url: 'https://example.com',
   sync_wait_ms: 30000  // Wait 30 seconds
 });
@@ -1290,7 +1243,7 @@ const response = await axios.post('/api/v1/crawl', {
 **Do:**
 ```javascript
 // Good: Use webhook for async processing
-const response = await axios.post('/api/v1/crawl', {
+const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
   url: 'https://example.com',
   webhook: 'https://your-server.com/callback'
 });
@@ -1340,7 +1293,7 @@ async function scrapeWithCache(url) {
   }
 
   // Make request
-  const response = await axios.post('/api/v1/scrape', {
+  const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
     url: url,
     formats: ['markdown']
   }, {
@@ -1358,7 +1311,7 @@ async function scrapeWithCache(url) {
 **Don't:**
 ```javascript
 // Bad: Request all formats when not needed
-const response = await axios.post('/api/v1/scrape', {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
   url: 'https://example.com',
   formats: ['html', 'markdown', 'text', 'json']  // All formats
 });
@@ -1367,7 +1320,7 @@ const response = await axios.post('/api/v1/scrape', {
 **Do:**
 ```javascript
 // Good: Request only what you need
-const response = await axios.post('/api/v1/scrape', {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
   url: 'https://example.com',
   formats: ['markdown']  // Only markdown
 });
@@ -1378,7 +1331,7 @@ const response = await axios.post('/api/v1/scrape', {
 ```javascript
 // Check usage regularly
 async function monitorUsage() {
-  const response = await axios.get('/api/v1/usage', {
+  const response = await axios.get('https://api.crawlrs.com/v1/usage', {
     headers: { 'Authorization': `Bearer ${API_KEY}` }
   });
 
@@ -1426,7 +1379,7 @@ function validateScrapeRequest(request) {
 // Use before making request
 try {
   validateScrapeRequest(scrapeRequest);
-  await axios.post('/api/v1/scrape', scrapeRequest);
+  await axios.post('/v1/scrape', scrapeRequest);
 } catch (error) {
   console.error('Validation failed:', error.message);
 }
@@ -1450,7 +1403,7 @@ const API_KEY = process.env.CRAWLRS_API_KEY;
 const WEBHOOK_SECRET = process.env.CRAWLRS_WEBHOOK_SECRET;
 
 // Use in requests
-const response = await axios.post('/api/v1/scrape', data, {
+const response = await axios.post('https://api.crawlrs.com/v1/scrape', data, {
   headers: { 'Authorization': `Bearer ${API_KEY}` }
 });
 ```

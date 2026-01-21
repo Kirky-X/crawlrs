@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 /// This struct provides a way to pass browser configuration through the call stack
 /// instead of using task-local storage or global state.
 /// For DI-based usage, prefer PlaywrightBrowserManagerComponent.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PlaywrightContext {
     /// Remote debugging URL for connecting to existing browser
     pub remote_debugging_url: Option<String>,
@@ -31,16 +31,6 @@ pub struct PlaywrightContext {
     pub proxy_url: Option<String>,
     /// Test mode flag
     pub test_mode: bool,
-}
-
-impl Default for PlaywrightContext {
-    fn default() -> Self {
-        Self {
-            remote_debugging_url: None,
-            proxy_url: None,
-            test_mode: false,
-        }
-    }
 }
 
 impl PlaywrightContext {
@@ -161,10 +151,8 @@ impl PlaywrightBrowserManagerComponent {
         };
 
         if let Some(browser) = browser_to_check {
-            if self.check_health(&browser).await {
-                if !test_mode {
-                    return Ok(browser);
-                }
+            if self.check_health(&browser).await && !test_mode {
+                return Ok(browser);
             }
         }
 

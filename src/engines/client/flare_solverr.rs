@@ -14,14 +14,13 @@
 //! - Sites with strong anti-bot measures
 
 use crate::engines::engine_client::{
-    EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+    EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 /// FlareSolverr configuration
@@ -141,7 +140,7 @@ impl FlareSolverrEngine {
 
         let response: SessionResponse = self
             .client
-            .post(&self.api_url())
+            .post(self.api_url())
             .json(&request)
             .send()
             .await
@@ -181,7 +180,7 @@ impl FlareSolverrEngine {
 
         let response: GenericResponse = self
             .client
-            .post(&self.api_url())
+            .post(self.api_url())
             .json(&request)
             .send()
             .await
@@ -326,7 +325,7 @@ impl ScraperEngine for FlareSolverrEngine {
         let start_time = std::time::Instant::now();
 
         // Build FlareSolverr request
-        let mut fs_request = FlareSolverrRequest {
+        let fs_request = FlareSolverrRequest {
             cmd: "request.get".to_string(),
             url: request.url.clone(),
             session: self.session_id.clone(),

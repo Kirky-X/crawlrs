@@ -8,6 +8,7 @@ use crate::domain::repositories::task_repository::{
     RepositoryError, TaskQueryParams, TaskRepository,
 };
 use crate::infrastructure::database::entities::task as task_entity;
+use crate::infrastructure::database::query_monitor::QueryMonitor;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, FixedOffset, Utc};
 use sea_orm::{
@@ -386,6 +387,9 @@ impl TaskRepository for TaskRepositoryImpl {
         &self,
         params: TaskQueryParams,
     ) -> Result<(Vec<Task>, u64), RepositoryError> {
+        let monitor = QueryMonitor::new();
+        let _guard = monitor.monitor("query_tasks");
+
         tracing::debug!("query_tasks params: {:?}", params);
         let mut query =
             task_entity::Entity::find().filter(task_entity::Column::TeamId.eq(params.team_id));
@@ -433,11 +437,30 @@ impl TaskRepository for TaskRepositoryImpl {
         let total = query.clone().count(self.db.as_ref()).await?;
         tracing::debug!("Total count result: {}", total);
 
+        // 应用游标分页（如果提供了游标）
+        if let Some(cursor) = params.cursor {
+            if let Some(cursor_id) = params.cursor_id {
+                // 同时使用创建时间和ID作为游标
+                query = query.filter(
+                    Condition::any()
+                        .add(task_entity::Column::CreatedAt.lt(cursor))
+                        .add(
+                            Condition::all()
+                                .add(task_entity::Column::CreatedAt.eq(cursor))
+                                .add(task_entity::Column::Id.lt(cursor_id)),
+                        ),
+                );
+            } else {
+                // 仅使用创建时间作为游标
+                query = query.filter(task_entity::Column::CreatedAt.lt(cursor));
+            }
+        }
+
         // 应用分页
         let models = query
             .order_by_desc(task_entity::Column::CreatedAt)
-            .limit(params.limit as u64)
-            .offset(params.offset as u64)
+            .order_by_desc(task_entity::Column::Id) // 确保排序一致性
+            .limit((params.limit + 1) as u64) // 多取一个用于判断是否有下一页
             .all(self.db.as_ref())
             .await?;
 
