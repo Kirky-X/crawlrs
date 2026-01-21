@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 pub mod crawl_text_integration;
+pub mod error_helpers;
 /// 工具模块
 ///
 /// 提供通用的工具函数和辅助功能
