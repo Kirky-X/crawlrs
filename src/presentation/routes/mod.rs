@@ -15,11 +15,18 @@ use crate::presentation::handlers::{
     team_handler, webhook_handler,
 };
 use crate::presentation::routes::task::task_routes;
+use crate::di::AppState;
+use crate::presentation::middleware::team_semaphore::TeamSemaphore;
+use crate::utils::regex_cache::RegexCache;
 use axum::{
+    extract::State,
     routing::{delete, get, post, put},
     Json, Router,
 };
 use serde_json::json;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::timeout;
 
 /// 创建应用路由
 ///
@@ -112,9 +119,53 @@ pub fn routes() -> Router {
 ///
 /// # 返回值
 ///
-/// 返回JSON格式的健康状态
-pub async fn health_check() -> Json<serde_json::Value> {
-    Json(json!({ "status": "healthy" }))
+/// 返回JSON格式的健康状态，包括数据库和Redis连接状态
+pub async fn health_check(
+    State(app_state): State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    let mut health_status = json!({
+        "status": "healthy",
+        "checks": {}
+    });
+
+    let checks = health_status.as_object_mut().unwrap().get_mut("checks").unwrap();
+
+    // 检查数据库连接
+    let db_healthy = check_database_health(&app_state).await;
+    checks["database"] = json!({
+        "status": if db_healthy { "healthy" } else { "unhealthy" }
+    });
+
+    // 检查Redis连接
+    let redis_healthy = check_redis_health(&app_state).await;
+    checks["redis"] = json!({
+        "status": if redis_healthy { "healthy" } else { "unhealthy" }
+    });
+
+    // 更新整体状态
+    if !db_healthy || !redis_healthy {
+        health_status["status"] = json!("degraded");
+    }
+
+    Json(health_status)
+}
+
+/// 检查数据库健康状态
+async fn check_database_health(app_state: &Arc<AppState>) -> bool {
+    let db = &app_state.db;
+    match timeout(Duration::from_secs(5), db.ping()).await {
+        Ok(Ok(_)) => true,
+        _ => false,
+    }
+}
+
+/// 检查Redis健康状态
+async fn check_redis_health(app_state: &Arc<AppState>) -> bool {
+    let redis = &app_state.redis_client;
+    match timeout(Duration::from_secs(5), redis.ping()).await {
+        Ok(Ok(_)) => true,
+        _ => false,
+    }
 }
 
 /// 版本信息端点
