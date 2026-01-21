@@ -265,4 +265,9 @@ Cargo.lock  # Uncomment if binary, keep if library
 *.seed
 *.pid.lock
 
+# -----------------------------------------------------------------------------
+# Section 15: Git Worktrees
+# -----------------------------------------------------------------------------
+.worktrees/
+
 # End of .gitignore
