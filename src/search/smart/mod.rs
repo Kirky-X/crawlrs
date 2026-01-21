@@ -1152,7 +1152,7 @@ mod tests {
 
     fn create_test_client() -> Arc<EngineClient> {
         let reqwest_engine = Arc::new(ReqwestEngine::new(create_http_client()));
-        let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+        let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
 
         #[cfg(feature = "engine-playwright")]
         {
