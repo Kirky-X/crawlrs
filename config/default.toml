@@ -63,6 +63,23 @@ auto_start = true
 timeout_seconds = 30
 max_retries = 3
 
+# Browser Configuration
+[browser]
+# Browser auto-download settings
+auto_download = true
+# Browser cache directory (relative to home or absolute path)
+cache_dir = ".cache/crawlrs/chromium"
+# Download timeout in seconds
+download_timeout_seconds = 300
+
+# Browser executable paths (auto-detected if not set)
+# [browser.linux]
+# executable = "/usr/bin/google-chrome"
+# [browser.macos]
+# executable = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+# [browser.windows]
+# executable = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+
 # Storage Configuration
 [storage]
 storage_type = "local"

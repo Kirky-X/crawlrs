@@ -7,6 +7,7 @@
 ///
 /// 提供各种网页爬取和抓取引擎的实现
 /// 包括不同的浏览器引擎、HTTP客户端和相关的支持组件
+pub mod browser_downloader;  // 新增：浏览器自动下载管理器
 pub mod circuit_breaker;
 pub mod client;
 pub mod health_monitor;
@@ -26,3 +27,8 @@ pub use engine_client::{
 };
 
 pub use engine_client::ScraperEngine;
+
+// 导出浏览器下载管理器
+pub use browser_downloader::{
+    BrowserDownloadConfig, BrowserDownloadManager, BrowserDownloadError, DownloadStatus,
+};

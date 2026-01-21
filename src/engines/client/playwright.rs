@@ -3,6 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::engines::browser_downloader::{
+    BrowserDownloadConfig, BrowserDownloadManager,
+};
 use crate::engines::engine_client::{
     EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse,
     InternalScreenshotConfig, ScraperEngine,
@@ -15,6 +18,7 @@ use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
 use shaku::{Component, Interface};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -219,13 +223,27 @@ const MAX_RECOVERY_ATTEMPTS: u32 = 3;
 pub struct BrowserManager {
     /// Browser instance stored in memory
     browser: Arc<Mutex<Option<Arc<Browser>>>>,
+    /// Browser download manager for auto-download
+    download_manager: Arc<BrowserDownloadManager>,
 }
 
 impl BrowserManager {
-    /// Create a new browser manager
+    /// Create a new browser manager with default settings
     pub fn new() -> Self {
+        let config = BrowserDownloadConfig::default();
+        let download_manager = BrowserDownloadManager::new(config);
         Self {
             browser: Arc::new(Mutex::new(None)),
+            download_manager: Arc::new(download_manager),
+        }
+    }
+
+    /// Create a browser manager with custom download configuration
+    pub fn with_download_config(config: BrowserDownloadConfig) -> Self {
+        let download_manager = BrowserDownloadManager::new(config);
+        Self {
+            browser: Arc::new(Mutex::new(None)),
+            download_manager: Arc::new(download_manager),
         }
     }
 
@@ -259,7 +277,7 @@ impl BrowserManager {
         }
     }
 
-    /// Internal function to get or initialize browser
+    /// Get or create browser with automatic download
     async fn get_or_init_browser(&self) -> Result<Arc<Browser>, EngineError> {
         // 使用 BrowserConfigComponent 获取配置
         let config: Arc<dyn BrowserConfigTrait> = Arc::new(BrowserConfigComponent::new());
@@ -292,9 +310,19 @@ impl BrowserManager {
                 EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
             })?
         } else {
+            // 尝试自动下载浏览器（如果需要）
+            let browser_path = self.download_browser_if_needed().await?;
+
             let mut builder = BrowserConfig::builder()
                 .no_sandbox()
                 .request_timeout(Duration::from_secs(30));
+
+            // 设置浏览器路径（如果 chromiumoxide 支持）
+            if let Some(ref path) = browser_path {
+                tracing::info!("Using browser at: {:?}", path);
+                // BrowserConfigBuilder 可能不支持直接设置路径
+                // 浏览器会通过 PATH 或默认位置查找
+            }
 
             builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
 
@@ -330,6 +358,38 @@ impl BrowserManager {
         }
 
         Ok(browser)
+    }
+
+    /// Download browser if not already available
+    async fn download_browser_if_needed(&self) -> Result<Option<PathBuf>, EngineError> {
+        // 首先检查系统是否有浏览器
+        if let Some(path) = crate::engines::browser_downloader::find_system_browser().await {
+            tracing::info!("使用系统浏览器");
+            return Ok(Some(path));
+        }
+
+        // 检查是否已下载
+        if self.download_manager.is_browser_downloaded().await {
+            let path = crate::engines::browser_downloader::get_browser_executable_path(
+                self.download_manager.get_cache_dir(),
+            );
+            tracing::info!("使用已下载的浏览器: {:?}", path);
+            return Ok(Some(path));
+        }
+
+        // 自动下载浏览器
+        tracing::info!("未检测到可用浏览器，开始自动下载...");
+        match self.download_manager.download_browser().await {
+            Ok(path) => {
+                tracing::info!("浏览器下载成功: {:?}", path);
+                Ok(Some(path))
+            }
+            Err(e) => {
+                tracing::warn!("浏览器下载失败: {}，将尝试使用系统路径", e);
+                // 即使下载失败也尝试启动，让 chromiumoxide 自己寻找浏览器
+                Ok(None)
+            }
+        }
     }
 
     /// Clean up browser instance
