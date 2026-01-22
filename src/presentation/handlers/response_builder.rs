@@ -33,6 +33,9 @@ pub struct ApiResponse<T> {
     /// Pagination metadata (only present for list responses)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<PaginationMeta>,
+    /// Response timestamp in RFC3339 format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
 }
 
 impl<T> ApiResponse<T> {
@@ -43,6 +46,7 @@ impl<T> ApiResponse<T> {
             data: Some(data),
             error: None,
             meta: None,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
         }
     }
 
@@ -53,6 +57,7 @@ impl<T> ApiResponse<T> {
             data: Some(data),
             error: None,
             meta: Some(meta),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
         }
     }
 
@@ -66,6 +71,7 @@ impl<T> ApiResponse<T> {
                 message: message.into(),
             }),
             meta: None,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
         }
     }
 }
@@ -330,4 +336,63 @@ pub mod error_codes {
     pub const QUOTA_EXCEEDED: &str = "QUOTA_EXCEEDED";
     /// Feature not enabled
     pub const FEATURE_DISABLED: &str = "FEATURE_DISABLED";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::DateTime as ChronoDateTime;
+
+    #[test]
+    fn test_api_response_success_has_timestamp() {
+        let response = ApiResponse::success("test data");
+        assert!(response.success);
+        assert_eq!(response.data, Some("test data"));
+        assert!(response.timestamp.is_some());
+        // Verify timestamp is RFC3339 format
+        let ts = response.timestamp.unwrap();
+        assert!(ts.contains('-'));
+        assert!(ts.contains(':'));
+    }
+
+    #[test]
+    fn test_api_response_error_has_timestamp() {
+        let response: ApiResponse<()> = ApiResponse::error("TEST_ERROR", "Test error message");
+        assert!(!response.success);
+        assert!(response.error.is_some());
+        assert_eq!(response.error.as_ref().unwrap().code, "TEST_ERROR");
+        assert!(response.timestamp.is_some());
+    }
+
+    #[test]
+    fn test_api_response_success_with_meta_has_timestamp() {
+        let meta = PaginationMeta::new(1, 10, 100);
+        let response = ApiResponse::success_with_meta("data", meta);
+        assert!(response.success);
+        assert!(response.meta.is_some());
+        assert!(response.timestamp.is_some());
+    }
+
+    #[test]
+    fn test_timestamp_format_is_valid() {
+        let response = ApiResponse::success("test");
+        let ts_str = response.timestamp.unwrap();
+        // Parse as DateTime to verify format
+        let parsed = ChronoDateTime::parse_from_rfc3339(&ts_str);
+        assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn test_timestamp_is_recent() {
+        use chrono::Utc;
+
+        let response = ApiResponse::success("test");
+        let ts_str = response.timestamp.unwrap();
+        let parsed = ChronoDateTime::parse_from_rfc3339(&ts_str).unwrap();
+        let now = Utc::now();
+
+        // Timestamp should be within 1 second of now
+        let diff = (now.timestamp() - parsed.timestamp()).abs();
+        assert!(diff < 2);
+    }
 }
