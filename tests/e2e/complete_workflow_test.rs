@@ -7,7 +7,7 @@
 ///
 /// 测试从创建抓取任务到获取结果的完整流程
 /// 验证系统的核心功能是否正常集成和工作
-use crate::integration::helpers::create_test_app;
+use crate::common::fixtures::app::TestAppFixture;
 use axum::http::StatusCode;
 use serde_json::json;
 use std::time::Duration;
@@ -15,13 +15,14 @@ use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_complete_scrape_workflow() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Step 1: Create a scrape task
     let create_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "https://example.com",
             "options": {
@@ -49,7 +50,7 @@ async fn test_complete_scrape_workflow() {
     let initial_status_response = app
         .server
         .get(&format!("/v1/scrape/{}", task_id))
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .await;
 
     assert_eq!(initial_status_response.status_code(), StatusCode::OK);
@@ -78,7 +79,7 @@ async fn test_complete_scrape_workflow() {
         let status_response = app
             .server
             .get(&format!("/v1/scrape/{}", task_id))
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .await;
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
@@ -122,7 +123,7 @@ async fn test_complete_scrape_workflow() {
     let final_response = app
         .server
         .get(&format!("/v1/scrape/{}", task_id))
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .await;
 
     assert_eq!(final_response.status_code(), StatusCode::OK);
@@ -138,7 +139,8 @@ async fn test_complete_scrape_workflow() {
 
 #[tokio::test]
 async fn test_batch_scrape_workflow() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Step 1: Create multiple scrape tasks
     let urls = vec![
@@ -153,7 +155,7 @@ async fn test_batch_scrape_workflow() {
         let create_response = app
             .server
             .post("/v1/scrape")
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .json(&json!({
                 "url": url,
                 "options": {
@@ -185,7 +187,7 @@ async fn test_batch_scrape_workflow() {
             let status_response = app
                 .server
                 .get(&format!("/v1/scrape/{}", task_id))
-                .add_header("Authorization", format!("Bearer {}", app.api_key))
+                .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
                 .await;
 
             assert_eq!(status_response.status_code(), StatusCode::OK);
@@ -218,7 +220,7 @@ async fn test_batch_scrape_workflow() {
         let final_response = app
             .server
             .get(&format!("/v1/scrape/{}", task_id))
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .await;
 
         assert_eq!(final_response.status_code(), StatusCode::OK);
@@ -234,7 +236,8 @@ async fn test_batch_scrape_workflow() {
 
 #[tokio::test]
 async fn test_crawl_with_webhook_workflow() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Step 1: Create a crawl task with webhook
     let webhook_url = "https://httpbin.org/post";
@@ -242,7 +245,7 @@ async fn test_crawl_with_webhook_workflow() {
     let create_response = app
         .server
         .post("/v1/crawl")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "urls": ["https://example.com"],
             "webhook": webhook_url,
@@ -272,7 +275,7 @@ async fn test_crawl_with_webhook_workflow() {
         let status_response = app
             .server
             .get(&format!("/v1/crawl/{}", crawl_id))
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .await;
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
@@ -292,7 +295,7 @@ async fn test_crawl_with_webhook_workflow() {
     let final_response = app
         .server
         .get(&format!("/v1/crawl/{}", crawl_id))
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .await;
 
     assert_eq!(final_response.status_code(), StatusCode::OK);
@@ -307,13 +310,14 @@ async fn test_crawl_with_webhook_workflow() {
 
 #[tokio::test]
 async fn test_error_handling_workflow() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Test 1: Invalid URL (validation error returns 422)
     let invalid_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "not-a-valid-url"
         }))
@@ -328,7 +332,7 @@ async fn test_error_handling_workflow() {
     let ssrf_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "http://localhost:8080"
         }))
@@ -340,7 +344,7 @@ async fn test_error_handling_workflow() {
     let domain_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "https://this-domain-does-not-exist-12345.com"
         }))
@@ -358,7 +362,7 @@ async fn test_error_handling_workflow() {
     let status_response = app
         .server
         .get(&format!("/v1/scrape/{}", task_id))
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .await;
 
     assert_eq!(status_response.status_code(), StatusCode::OK);

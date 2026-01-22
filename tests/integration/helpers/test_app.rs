@@ -2,7 +2,6 @@
 // This file provides just enough functionality to run the basic tests
 
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -13,6 +12,7 @@ use once_cell::sync::Lazy;
 static TEST_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Minimal TestApp struct for testing
+#[allow(dead_code)]
 pub struct TestApp {
     pub db_pool: Arc<DatabaseConnection>,
     pub team_id: Uuid,
@@ -20,13 +20,6 @@ pub struct TestApp {
     pub redis_process: Option<std::process::Child>,
     /// Lock guard to ensure test serialization
     pub _lock_guard: Option<std::sync::MutexGuard<'static, ()>>,
-}
-
-impl TestApp {
-    /// Get a reference to the database pool
-    pub fn db_pool(&self) -> &Arc<DatabaseConnection> {
-        &self.db_pool
-    }
 }
 
 impl Drop for TestApp {

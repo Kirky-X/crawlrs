@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::integration::helpers::create_test_app;
+use crate::common::fixtures::app::TestAppFixture;
 use axum::http::StatusCode;
 use crawlrs::common::constants::testing::E2E_TEST_TIMEOUT;
 use serde_json::json;
@@ -12,17 +12,18 @@ use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_new_user_onboarding_journey() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Journey: New user discovers the service and tries basic functionality
 
     // Step 1: User checks service health
-    let health_response = app.server.get("/health").await;
+    let health_response = fixture.app.server.get("/health").await;
 
     assert_eq!(health_response.status_code(), StatusCode::OK);
 
     // Step 2: User checks API version
-    let version_response = app.server.get("/v1/version").await;
+    let version_response = fixture.app.server.get("/v1/version").await;
 
     assert_eq!(version_response.status_code(), StatusCode::OK);
     let version_data: serde_json::Value = version_response.json();
@@ -46,7 +47,7 @@ async fn test_new_user_onboarding_journey() {
     let first_scrape_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "https://example.com",
             "options": {
@@ -72,7 +73,7 @@ async fn test_new_user_onboarding_journey() {
         let status_response = app
             .server
             .get(&format!("/v1/scrape/{}", task_id))
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .await;
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
@@ -92,7 +93,7 @@ async fn test_new_user_onboarding_journey() {
     let batch_response = app
         .server
         .post("/v1/crawl")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "urls": ["https://example.com", "https://httpbin.org/html"],
             "options": {
@@ -105,7 +106,7 @@ async fn test_new_user_onboarding_journey() {
     assert_eq!(batch_response.status_code(), StatusCode::ACCEPTED);
 
     // Step 8: User checks metrics to understand service usage
-    let metrics_response = app.server.get("/metrics").await;
+    let metrics_response = fixture.app.server.get("/metrics").await;
 
     assert_eq!(metrics_response.status_code(), StatusCode::OK);
     let metrics_content = metrics_response.text();
@@ -116,7 +117,8 @@ async fn test_new_user_onboarding_journey() {
 
 #[tokio::test]
 async fn test_developer_integration_journey() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Journey: Developer integrates the API into their application
 
@@ -129,7 +131,7 @@ async fn test_developer_integration_journey() {
     let auth_test_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "https://httpbin.org/status/200"
         }))
@@ -141,7 +143,7 @@ async fn test_developer_integration_journey() {
     let error_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "invalid-url"
         }))
@@ -156,7 +158,7 @@ async fn test_developer_integration_journey() {
         let response = app
             .server
             .post("/v1/scrape")
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .json(&json!({
                 "url": format!("https://httpbin.org/delay/1"),
                 "options": {
@@ -183,7 +185,7 @@ async fn test_developer_integration_journey() {
     let webhook_response = app
         .server
         .post("/v1/crawl")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "urls": ["https://httpbin.org/html"],
             "webhook": "https://httpbin.org/post",
@@ -200,7 +202,7 @@ async fn test_developer_integration_journey() {
     let cancel_test_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "https://httpbin.org/delay/10",
             "options": {
@@ -220,7 +222,7 @@ async fn test_developer_integration_journey() {
     let cancel_response = app
         .server
         .delete(&format!("/v1/scrape/{}", cancel_task_id))
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .await;
 
     // Should either succeed or return appropriate error
@@ -234,7 +236,8 @@ async fn test_developer_integration_journey() {
 
 #[tokio::test]
 async fn test_power_user_advanced_features_journey() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Journey: Power user explores advanced features
 
@@ -242,7 +245,7 @@ async fn test_power_user_advanced_features_journey() {
     let complex_extraction_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "https://httpbin.org/html",
             "options": {
@@ -276,7 +279,7 @@ async fn test_power_user_advanced_features_journey() {
         let engine_response = app
             .server
             .post("/v1/scrape")
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .json(&json!({
                 "url": "https://httpbin.org/html",
                 "options": {
@@ -297,7 +300,7 @@ async fn test_power_user_advanced_features_journey() {
         let task_response = app
             .server
             .post("/v1/scrape")
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .json(&json!({
                 "url": format!("https://httpbin.org/delay/{}", i),
                 "options": {
@@ -328,7 +331,7 @@ async fn test_power_user_advanced_features_journey() {
             let status_response = app
                 .server
                 .get(&format!("/v1/scrape/{}", task_id))
-                .add_header("Authorization", format!("Bearer {}", app.api_key))
+                .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
                 .await;
 
             let status_data: serde_json::Value = status_response.json();

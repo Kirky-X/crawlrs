@@ -328,6 +328,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_builder_with_layered_cache() {
         let layered_config = LayeredCacheConfig {
             memory_ttl: 120,

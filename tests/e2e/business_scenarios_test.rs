@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::integration::helpers::create_test_app;
+use crate::common::fixtures::app::TestAppFixture;
 use axum::http::StatusCode;
 use crawlrs::common::constants::testing::CRAWL_TASK_TIMEOUT;
 use serde_json::json;
@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 async fn wait_for_tasks_completion(
-    app: &crate::integration::helpers::test_app::TestApp,
+    app: &crate::common::fixtures::app::TestApp,
     task_ids: &[String],
     max_retries: u32,
 ) {
@@ -61,7 +61,8 @@ async fn wait_for_tasks_completion(
 
 #[tokio::test]
 async fn test_ecommerce_product_monitoring_scenario() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
     let product_urls = ["https://httpbin.org/html", "https://httpbin.org/json"];
     let mut task_ids = Vec::new();
 
@@ -69,7 +70,7 @@ async fn test_ecommerce_product_monitoring_scenario() {
         let create_response = app
             .server
             .post("/v1/scrape")
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .json(&json!({
                 "url": url,
                 "options": {
@@ -106,7 +107,7 @@ async fn test_ecommerce_product_monitoring_scenario() {
         let final_response = app
             .server
             .get(&format!("/v1/scrape/{}", task_id))
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .await;
 
         assert_eq!(final_response.status_code(), StatusCode::OK);
@@ -128,7 +129,8 @@ async fn test_ecommerce_product_monitoring_scenario() {
 
 #[tokio::test]
 async fn test_content_aggregation_scenario() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
     let news_sources = vec![
         "https://httpbin.org/html",
         "https://httpbin.org/json",
@@ -138,7 +140,7 @@ async fn test_content_aggregation_scenario() {
     let crawl_response = app
         .server
         .post("/v1/crawl")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "urls": news_sources,
             "options": {
@@ -175,7 +177,7 @@ async fn test_content_aggregation_scenario() {
         let status_response = app
             .server
             .get(&format!("/v1/crawl/{}", crawl_id))
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .await;
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
@@ -195,7 +197,7 @@ async fn test_content_aggregation_scenario() {
     let final_response = app
         .server
         .get(&format!("/v1/crawl/{}", crawl_id))
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .await;
 
     assert_eq!(final_response.status_code(), StatusCode::OK);
@@ -237,7 +239,8 @@ async fn test_content_aggregation_scenario() {
 
 #[tokio::test]
 async fn test_competitive_analysis_scenario() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
     let competitor_sites = ["https://httpbin.org/html", "https://httpbin.org/json"];
     let mut analysis_tasks = Vec::new();
 
@@ -245,7 +248,7 @@ async fn test_competitive_analysis_scenario() {
         let create_response = app
             .server
             .post("/v1/scrape")
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .json(&json!({
                 "url": site,
                 "options": {
@@ -290,7 +293,7 @@ async fn test_competitive_analysis_scenario() {
             let status_response = app
                 .server
                 .get(&format!("/v1/scrape/{}", task_id))
-                .add_header("Authorization", format!("Bearer {}", app.api_key))
+                .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
                 .await;
 
             if status_response.status_code() != StatusCode::OK {
@@ -325,7 +328,7 @@ async fn test_competitive_analysis_scenario() {
         let result_response = app
             .server
             .get(&format!("/v1/scrape/{}", task_id))
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .await;
 
         assert_eq!(result_response.status_code(), StatusCode::OK);

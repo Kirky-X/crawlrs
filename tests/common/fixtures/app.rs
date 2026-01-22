@@ -495,43 +495,19 @@ fn create_router(
         )
         .route(
             "/v1/crawl",
-            post(handlers::crawl_handler::create_crawl::<
-                crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl,
-                crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl,
-                crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl,
-                crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl,
-                crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository,
-            >),
+            post(handlers::crawl_handler::create_crawl),
         )
         .route(
             "/v1/crawl/{id}",
-            get(handlers::crawl_handler::get_crawl::<
-                crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl,
-                crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl,
-                crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl,
-                crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl,
-                crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository,
-            >),
+            get(handlers::crawl_handler::get_crawl),
         )
         .route(
             "/v1/crawl/{id}/results",
-            get(handlers::crawl_handler::get_crawl_results::<
-                crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl,
-                crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl,
-                crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl,
-                crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl,
-                crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository,
-            >),
+            get(handlers::crawl_handler::get_crawl_results),
         )
         .route(
             "/v1/crawl/{id}",
-            delete(handlers::crawl_handler::cancel_crawl::<
-                crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl,
-                crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl,
-                crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl,
-                crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl,
-                crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository,
-            >),
+            delete(handlers::crawl_handler::cancel_crawl),
         )
         .route(
             "/v1/search",

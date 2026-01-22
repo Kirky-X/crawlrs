@@ -6,7 +6,7 @@
 use crate::common::constants::timeouts::{
     CRAWL_TASK_TIMEOUT, E2E_TEST_TIMEOUT, LONG_RUNNING_TEST_TIMEOUT, QUICK_TEST_TIMEOUT,
 };
-use crate::integration::helpers::create_test_app;
+use crate::common::fixtures::app::TestAppFixture;
 use axum::http::StatusCode;
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -14,7 +14,8 @@ use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_performance_single_url_benchmark() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Benchmark: Single URL scraping performance
     let test_urls = vec![
@@ -33,7 +34,7 @@ async fn test_performance_single_url_benchmark() {
         let create_response = app
             .server
             .post("/v1/scrape")
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .json(&json!({
                 "url": url,
                 "options": {
@@ -61,7 +62,7 @@ async fn test_performance_single_url_benchmark() {
             let status_response = app
                 .server
                 .get(&format!("/v1/scrape/{}", task_id))
-                .add_header("Authorization", format!("Bearer {}", app.api_key))
+                .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
                 .await;
 
             let status_data: serde_json::Value = status_response.json();
@@ -84,7 +85,7 @@ async fn test_performance_single_url_benchmark() {
         let final_response = app
             .server
             .get(&format!("/v1/scrape/{}", task_id))
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .await;
 
         let final_data: serde_json::Value = final_response.json();
@@ -113,7 +114,8 @@ async fn test_performance_single_url_benchmark() {
 
 #[tokio::test]
 async fn test_performance_concurrent_scraping() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Benchmark: Concurrent scraping performance
     let concurrent_tasks = 10;
@@ -126,7 +128,7 @@ async fn test_performance_concurrent_scraping() {
         let create_response = app
             .server
             .post("/v1/scrape")
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .json(&json!({
                 "url": format!("https://httpbin.org/delay/{}", i % 3),
                 "options": {
@@ -158,7 +160,7 @@ async fn test_performance_concurrent_scraping() {
             let status_response = app
                 .server
                 .get(&format!("/v1/scrape/{}", task_id))
-                .add_header("Authorization", format!("Bearer {}", app.api_key))
+                .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
                 .await;
 
             let status_data: serde_json::Value = status_response.json();
@@ -201,7 +203,8 @@ async fn test_performance_concurrent_scraping() {
 
 #[tokio::test]
 async fn test_performance_batch_crawl() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Benchmark: Batch crawl performance
     let urls = vec![
@@ -218,7 +221,7 @@ async fn test_performance_batch_crawl() {
     let crawl_response = app
         .server
         .post("/v1/crawl")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "urls": urls,
             "options": {
@@ -248,7 +251,7 @@ async fn test_performance_batch_crawl() {
         let status_response = app
             .server
             .get(&format!("/v1/crawl/{}", crawl_id))
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .await;
 
         assert_eq!(status_response.status_code(), StatusCode::OK);
@@ -268,7 +271,7 @@ async fn test_performance_batch_crawl() {
     let final_response = app
         .server
         .get(&format!("/v1/crawl/{}", crawl_id))
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .await;
 
     let final_data: serde_json::Value = final_response.json();
@@ -300,7 +303,8 @@ async fn test_performance_batch_crawl() {
 
 #[tokio::test]
 async fn test_performance_extract_endpoint() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Benchmark: Extract endpoint performance
     let test_content = r#"
@@ -337,7 +341,7 @@ async fn test_performance_extract_endpoint() {
         let extract_response = app
             .server
             .post("/v1/extract")
-            .add_header("Authorization", format!("Bearer {}", app.api_key))
+            .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
             .json(&json!({
                 "content": test_content,
                 "rules": extract_rules
@@ -364,7 +368,8 @@ async fn test_performance_extract_endpoint() {
 
 #[tokio::test]
 async fn test_performance_error_recovery() {
-    let app = create_test_app().await;
+    let fixture = TestAppFixture::new().await;
+    let app = &fixture.app;
 
     // Benchmark: Error handling and recovery performance
     let start_time = Instant::now();
@@ -373,7 +378,7 @@ async fn test_performance_error_recovery() {
     let invalid_url_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "not-a-valid-url"
         }))
@@ -390,7 +395,7 @@ async fn test_performance_error_recovery() {
     let ssrf_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "http://localhost:8080"
         }))
@@ -404,7 +409,7 @@ async fn test_performance_error_recovery() {
     let timeout_response = app
         .server
         .post("/v1/scrape")
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .json(&json!({
             "url": "https://httpbin.org/delay/10",
             "options": {
@@ -426,7 +431,7 @@ async fn test_performance_error_recovery() {
     let timeout_status_response = app
         .server
         .get(&format!("/v1/scrape/{}", timeout_task_id))
-        .add_header("Authorization", format!("Bearer {}", app.api_key))
+        .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .await;
 
     let timeout_status_data: serde_json::Value = timeout_status_response.json();
