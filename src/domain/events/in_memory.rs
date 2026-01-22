@@ -62,8 +62,8 @@ impl EventBus for InMemoryEventBus {
         let event_types = handler.subscribe_to().to_vec();
         let mut handlers = self.handlers.write().await;
 
-        // 对于每个订阅的事件类型，注册同一个处理器
-        for event_type in &event_types {
+        // 只处理第一个事件类型（因为 Box<dyn EventHandler> 不能 Clone）
+        if let Some(event_type) = event_types.first() {
             debug!(
                 "Registering handler {} for event type {}",
                 handler_name, event_type
@@ -78,8 +78,6 @@ impl EventBus for InMemoryEventBus {
                     .or_insert_with(Vec::new);
                 handlers_vec.push(handler);
             }
-            // 注意：由于Box不能Clone，我们只处理第一个事件类型
-            break;
         }
 
         Ok(())
