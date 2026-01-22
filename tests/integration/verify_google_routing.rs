@@ -3,11 +3,10 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[cfg(feature = "engine-fire-cdp")]
-use super::helpers::google::create_google_engine;
-use super::helpers::mock_server::flaresolverr;
+use crawlrs::search::client::google::GoogleSearchEngine;
 use crawlrs::search::engine_trait::SearchEngine;
 use crawlrs::search::SearchRequest;
+use crawlrs::utils::http_client::create_http_client;
 use testcontainers::core::{ContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::GenericImage;
@@ -25,45 +24,32 @@ async fn verify_google_uses_fire_engine_cdp() {
         .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 
-    // 2. Determine Fire Engine URL (use existing, container, or mock)
-    let (base_url, _guard) = if let Ok(url) = std::env::var("TEST_FIRE_ENGINE_CDP_URL") {
+    // 2. Determine Fire Engine URL (use existing or start container)
+    let base_url = if let Ok(url) = std::env::var("TEST_FIRE_ENGINE_CDP_URL") {
         info!("Using provided Fire Engine URL: {}", url);
-        (url, None)
+        url
     } else {
         info!("Starting FlareSolverr container for verification...");
-        let container_result = GenericImage::new("ghcr.io/flaresolverr/flaresolverr", "latest")
+        let container = GenericImage::new("ghcr.io/flaresolverr/flaresolverr", "latest")
             .with_exposed_port(ContainerPort::Tcp(8191))
             .with_wait_for(WaitFor::message_on_stdout("FlareSolverr User Agent"))
             .start()
-            .await;
+            .await
+            .expect("Failed to start FlareSolverr container");
 
-        match container_result {
-            Ok(c) => {
-                let port = c.get_host_port_ipv4(8191).await.expect("port");
-                let url = format!("http://127.0.0.1:{}/v1", port);
-                info!("FlareSolverr started at {}", url);
-                (url, None)
-            }
-            Err(e) => {
-                info!(
-                    "Failed to start FlareSolverr (Docker missing): {}, using wiremock",
-                    e
-                );
-                // Use wiremock for testing
-                let (mock_server, mock_uri) = flaresolverr::create_mock_server().await;
-                info!("Wiremock started at {}", mock_uri);
-                (mock_uri, Some(mock_server))
-            }
-        }
+        let port = container.get_host_port_ipv4(8191).await.expect("port");
+        let url = format!("http://127.0.0.1:{}/v1", port);
+        info!("FlareSolverr started at {}", url);
+        url
     };
 
     // 3. Configure environment
     std::env::set_var("FIRE_ENGINE_CDP_URL", &base_url);
     std::env::set_var("FIRE_ENGINE_URL", &base_url);
 
-    // 4. Create Google Engine (which internally creates EngineClient with FireEngineCdp)
-    let http_client = crawlrs::utils::http_client::create_http_client();
-    let engine = create_google_engine(http_client);
+    // 4. Create Google Engine with FireEngineCdp
+    let http_client = create_http_client();
+    let engine = GoogleSearchEngine::new(http_client);
 
     // 5. Perform search
     let request = SearchRequest {
@@ -88,7 +74,7 @@ async fn verify_google_uses_fire_engine_cdp() {
             info!("Search successful: {} results", response.items.len());
         }
         Err(e) => {
-            info!("Search failed (expected if no real service): {}", e);
+            info!("Search failed: {}", e);
         }
     }
 }
