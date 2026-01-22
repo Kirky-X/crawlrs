@@ -93,9 +93,10 @@ pub trait EventMetadataProvider: Send + Sync {
 }
 
 /// 事件处理结果
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum EventProcessingResult {
     /// 处理成功
+    #[default]
     Success,
     /// 处理失败，但已重试
     Retried,
@@ -103,10 +104,4 @@ pub enum EventProcessingResult {
     Skipped,
     /// 处理失败，已移入死信队列
     DeadLettered,
-}
-
-impl Default for EventProcessingResult {
-    fn default() -> Self {
-        EventProcessingResult::Success
-    }
 }

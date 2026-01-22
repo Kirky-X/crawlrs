@@ -71,8 +71,8 @@ fn get_default_browser_path() -> PathBuf {
 }
 
 /// 获取浏览器可执行文件路径
-pub fn get_browser_executable_path(cache_dir: &PathBuf) -> PathBuf {
-    let mut path = cache_dir.clone();
+pub fn get_browser_executable_path(cache_dir: &Path) -> PathBuf {
+    let mut path = cache_dir.to_path_buf();
     // 根据平台选择可执行文件名
     #[cfg(target_os = "windows")]
     {

@@ -275,7 +275,7 @@ fn calculate_estimated_pages(max_depth: u32) -> u32 {
     let mut pages = 1;
     let mut current_level_pages = 1;
     for _ in 1..=max_depth {
-        current_level_pages = current_level_pages * 10;
+        current_level_pages *= 10;
         pages += current_level_pages;
         if pages > 10000 {
             return 10000; // 限制最大预估页面数
