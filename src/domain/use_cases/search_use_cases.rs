@@ -38,6 +38,7 @@ pub struct SearchEngineResult {
 }
 
 /// 搜索用例
+#[allow(dead_code)]
 pub struct SearchUseCase<R: CreditsRepository> {
     credits_service: Arc<CreditsService<R>>,
 }
@@ -105,6 +106,7 @@ pub struct MultiEngineSearchResponse {
 }
 
 /// 多引擎搜索用例
+#[allow(dead_code)]
 pub struct MultiEngineSearchUseCase<R: CreditsRepository> {
     credits_service: Arc<CreditsService<R>>,
 }

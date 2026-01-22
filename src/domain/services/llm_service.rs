@@ -126,6 +126,7 @@ pub trait LLMServiceTrait: Send + Sync {
 
 /// LLM服务 - 处理与LLM提供商的交互
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct LLMService {
     /// HTTP 客户端 (通过依赖注入的单例)
     http_client: Arc<reqwest::Client>,

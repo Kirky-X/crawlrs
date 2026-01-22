@@ -59,6 +59,7 @@ pub struct GetScrapeResultResponse {
 }
 
 /// 异步抓取用例
+#[allow(dead_code)]
 pub struct AsyncScrapeUseCase<T: TaskRepository, R: ScrapeResultRepository, Cr: CreditsRepository> {
     task_repo: Arc<T>,
     result_repo: Arc<R>,
@@ -100,6 +101,7 @@ impl<T: TaskRepository, R: ScrapeResultRepository, Cr: CreditsRepository>
 }
 
 /// 同步抓取用例
+#[allow(dead_code)]
 pub struct SyncScrapeUseCase<R: ScrapeResultRepository, Cr: CreditsRepository> {
     result_repo: Arc<R>,
     credits_service: Arc<CreditsService<Cr>>,

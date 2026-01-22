@@ -31,6 +31,7 @@ impl super::traits::EventMetadataProvider for DefaultEventMetadataProvider {
 }
 
 /// 内存事件总线
+#[allow(dead_code)]
 pub struct InMemoryEventBus {
     /// 事件处理器映射
     handlers: Arc<RwLock<HashMap<String, Vec<Box<dyn EventHandler + Send + Sync>>>>>,

@@ -64,6 +64,7 @@ pub struct GetCrawlStatusResponse {
 }
 
 /// 异步爬取用例
+#[allow(dead_code)]
 pub struct AsyncCrawlUseCase<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> {
     crawl_repo: Arc<C>,
     task_repo: Arc<T>,
@@ -134,6 +135,7 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> AsyncCrawlUseC
 }
 
 /// 同步爬取用例
+#[allow(dead_code)]
 pub struct SyncCrawlUseCase<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> {
     crawl_repo: Arc<C>,
     task_repo: Arc<T>,

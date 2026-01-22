@@ -53,6 +53,7 @@ pub enum CrawlUseCaseError {
 /// 爬取用例
 ///
 /// 处理爬取任务的核心业务逻辑，包括创建、查询、取消等操作
+#[allow(dead_code)]
 pub struct CrawlUseCase {
     /// 爬取任务仓库
     crawl_repo: Arc<dyn CrawlRepository>,

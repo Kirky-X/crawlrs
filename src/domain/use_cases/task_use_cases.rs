@@ -66,6 +66,7 @@ pub struct CancelTasksResponse {
 }
 
 /// 创建任务用例
+#[allow(dead_code)]
 pub struct CreateTaskUseCase<T: TaskRepository, R: CreditsRepository> {
     task_repo: Arc<T>,
     credits_service: Arc<CreditsService<R>>,
@@ -134,6 +135,7 @@ impl<T: TaskRepository> QueryTasksUseCase<T> {
 }
 
 /// 取消任务用例
+#[allow(dead_code)]
 pub struct CancelTasksUseCase<T: TaskRepository, R: CreditsRepository> {
     task_repo: Arc<T>,
     credits_service: Arc<CreditsService<R>>,
