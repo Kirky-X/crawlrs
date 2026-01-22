@@ -24,7 +24,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
         app.db_pool.clone(),
         chrono::Duration::seconds(30),
     ));
-    let team_id = Uuid::new_v4();
+    let team_id = app.team_id;
     let worker1_id = Uuid::new_v4();
     let worker2_id = Uuid::new_v4();
 
@@ -148,7 +148,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
 async fn test_repository_crud_operations() {
     let app = create_test_app().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(30));
-    let team_id = Uuid::new_v4();
+    let team_id = app.team_id;
 
     let new_task = Task {
         id: Uuid::new_v4(),
@@ -207,7 +207,7 @@ async fn test_repository_crud_operations() {
 async fn test_repository_acquire_next_task() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
-    let team_id = Uuid::new_v4();
+    let team_id = app.team_id;
     let worker_id = Uuid::new_v4();
 
     // Clean up any existing tasks
@@ -301,7 +301,7 @@ async fn test_repository_acquire_next_task() {
 async fn test_task_status_transitions() {
     let app = create_test_app().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
-    let team_id = Uuid::new_v4();
+    let team_id = app.team_id;
 
     // Create a task
     let task = Task {
@@ -388,7 +388,7 @@ async fn test_task_status_transitions() {
 async fn test_exists_by_url() {
     let app = create_test_app().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
-    let team_id = Uuid::new_v4();
+    let team_id = app.team_id;
     let test_url = "https://example.com/exists-test";
 
     // Initially, URL should not exist
@@ -444,7 +444,7 @@ async fn test_exists_by_url() {
 async fn test_reset_stuck_tasks() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
-    let team_id = Uuid::new_v4();
+    let team_id = app.team_id;
 
     // Clean up any existing tasks
     use crawlrs::infrastructure::database::entities::task as task_entity;
@@ -545,7 +545,7 @@ async fn test_reset_stuck_tasks() {
 async fn test_cancel_tasks_by_crawl_id() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
-    let team_id = Uuid::new_v4();
+    let team_id = app.team_id;
     let crawl_id = Uuid::new_v4();
 
     // Create tasks with the same crawl_id
@@ -636,7 +636,7 @@ async fn test_cancel_tasks_by_crawl_id() {
 async fn test_expire_tasks() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
-    let team_id = Uuid::new_v4();
+    let team_id = app.team_id;
 
     // Use a fixed reference time to avoid timing issues between multiple Utc::now() calls
     let now = Utc::now();
@@ -793,7 +793,7 @@ async fn test_expire_tasks() {
 async fn test_find_by_crawl_id() {
     let app = create_test_app().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
-    let team_id = Uuid::new_v4();
+    let team_id = app.team_id;
     let crawl_id = Uuid::new_v4();
 
     // Create tasks with the same crawl_id
