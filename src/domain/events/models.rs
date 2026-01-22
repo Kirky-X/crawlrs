@@ -53,11 +53,7 @@ pub struct EventMetadata {
 
 impl EventMetadata {
     /// 创建新的事件元数据
-    pub fn new(
-        event_type: &'static str,
-        aggregate_id: Uuid,
-        aggregate_type: &'static str,
-    ) -> Self {
+    pub fn new(event_type: &'static str, aggregate_id: Uuid, aggregate_type: &'static str) -> Self {
         Self {
             event_id: Uuid::new_v4(),
             event_type: event_type.to_string(),

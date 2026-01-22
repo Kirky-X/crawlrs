@@ -39,22 +39,13 @@ pub fn routes() -> Router {
             "/v1/webhooks",
             post(webhook_handler::create_webhook::<WebhookRepoImpl>),
         )
-        .route(
-            "/v1/crawl",
-            post(crawl_handler::create_crawl),
-        )
-        .route(
-            "/v1/crawl/{id}",
-            get(crawl_handler::get_crawl),
-        )
+        .route("/v1/crawl", post(crawl_handler::create_crawl))
+        .route("/v1/crawl/{id}", get(crawl_handler::get_crawl))
         .route(
             "/v1/crawl/{id}/results",
             get(crawl_handler::get_crawl_results),
         )
-        .route(
-            "/v1/crawl/{id}",
-            delete(crawl_handler::cancel_crawl),
-        )
+        .route("/v1/crawl/{id}", delete(crawl_handler::cancel_crawl))
         .route("/v1/search", post(search_handler::search))
         .route(
             "/v1/teams/geo-restrictions",

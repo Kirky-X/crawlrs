@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+pub mod crawl_use_cases;
 /// 领域用例模块
 ///
 /// 该模块包含具体的业务用例实现，每个用例代表一个完整的业务流程。
@@ -18,7 +19,6 @@
 /// 领域用例与应用程序用例的区别在于：领域用例包含纯粹的业务逻辑，
 /// 关注业务规则的实现，而应用程序用例可能包含更多的技术细节和协调逻辑。
 pub mod create_webhook;
-pub mod crawl_use_cases;
 pub mod scrape_use_cases;
 pub mod search_use_cases;
 pub mod task_use_cases;

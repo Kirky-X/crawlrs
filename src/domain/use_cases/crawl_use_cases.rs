@@ -8,8 +8,8 @@
 use crate::application::dto::crawl_request::CrawlRequestDto;
 use crate::domain::models::crawl::{Crawl, CrawlStatus};
 use crate::domain::models::task::{Task, TaskStatus, TaskType};
-use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
+use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::credits_service::CreditsService;
 use std::sync::Arc;
@@ -71,7 +71,11 @@ pub struct AsyncCrawlUseCase<C: CrawlRepository, T: TaskRepository, R: CreditsRe
 }
 
 impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> AsyncCrawlUseCase<C, T, R> {
-    pub fn new(crawl_repo: Arc<C>, task_repo: Arc<T>, credits_service: Arc<CreditsService<R>>) -> Self {
+    pub fn new(
+        crawl_repo: Arc<C>,
+        task_repo: Arc<T>,
+        credits_service: Arc<CreditsService<R>>,
+    ) -> Self {
         Self {
             crawl_repo,
             task_repo,
@@ -79,7 +83,10 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> AsyncCrawlUseC
         }
     }
 
-    pub async fn execute(&self, request: AsyncCrawlRequest) -> Result<AsyncCrawlResponse, anyhow::Error> {
+    pub async fn execute(
+        &self,
+        request: AsyncCrawlRequest,
+    ) -> Result<AsyncCrawlResponse, anyhow::Error> {
         // 创建爬取任务
         let crawl = Crawl {
             id: Uuid::new_v4(),
@@ -113,7 +120,9 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> AsyncCrawlUseC
 
         // 计算预估页面数
         let config = &request.request.config;
-        let max_depth = config.max_depth.min(crate::application::dto::crawl_request::MAX_CRAWL_DEPTH);
+        let max_depth = config
+            .max_depth
+            .min(crate::application::dto::crawl_request::MAX_CRAWL_DEPTH);
         let estimated_pages = calculate_estimated_pages(max_depth);
 
         Ok(AsyncCrawlResponse {
@@ -132,7 +141,11 @@ pub struct SyncCrawlUseCase<C: CrawlRepository, T: TaskRepository, R: CreditsRep
 }
 
 impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> SyncCrawlUseCase<C, T, R> {
-    pub fn new(crawl_repo: Arc<C>, task_repo: Arc<T>, credits_service: Arc<CreditsService<R>>) -> Self {
+    pub fn new(
+        crawl_repo: Arc<C>,
+        task_repo: Arc<T>,
+        credits_service: Arc<CreditsService<R>>,
+    ) -> Self {
         Self {
             crawl_repo,
             task_repo,
@@ -140,7 +153,10 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> SyncCrawlUseCa
         }
     }
 
-    pub async fn execute(&self, request: SyncCrawlRequest) -> Result<SyncCrawlResponse, anyhow::Error> {
+    pub async fn execute(
+        &self,
+        request: SyncCrawlRequest,
+    ) -> Result<SyncCrawlResponse, anyhow::Error> {
         let start_time = std::time::Instant::now();
 
         // 创建爬取任务
@@ -200,7 +216,10 @@ impl<C: CrawlRepository, T: TaskRepository> GetCrawlStatusUseCase<C, T> {
         }
     }
 
-    pub async fn execute(&self, request: GetCrawlStatusRequest) -> Result<GetCrawlStatusResponse, anyhow::Error> {
+    pub async fn execute(
+        &self,
+        request: GetCrawlStatusRequest,
+    ) -> Result<GetCrawlStatusResponse, anyhow::Error> {
         match self.crawl_repo.find_by_id(request.crawl_id).await? {
             Some(crawl) => {
                 if crawl.team_id != request.team_id {

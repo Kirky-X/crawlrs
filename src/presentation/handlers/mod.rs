@@ -18,10 +18,6 @@ pub mod task_handler;
 pub mod team_handler;
 pub mod webhook_handler;
 
-/// OpenAPI documentation module
-#[cfg(feature = "openapi")]
-pub mod openapi_handler;
-
 use crate::domain::models::task::Task;
 use std::collections::HashMap;
 use uuid::Uuid;

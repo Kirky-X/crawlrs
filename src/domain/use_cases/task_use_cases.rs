@@ -79,15 +79,13 @@ impl<T: TaskRepository, R: CreditsRepository> CreateTaskUseCase<T, R> {
         }
     }
 
-    pub async fn execute(&self, request: CreateTaskRequest) -> Result<CreateTaskResponse, anyhow::Error> {
+    pub async fn execute(
+        &self,
+        request: CreateTaskRequest,
+    ) -> Result<CreateTaskResponse, anyhow::Error> {
         // 创建任务
         let payload = request.config.unwrap_or_else(|| serde_json::json!({}));
-        let task = Task::new(
-            request.task_type,
-            request.team_id,
-            request.url,
-            payload,
-        );
+        let task = Task::new(request.task_type, request.team_id, request.url, payload);
 
         self.task_repo.create(&task).await?;
 
@@ -105,7 +103,10 @@ impl<T: TaskRepository> QueryTasksUseCase<T> {
         Self { task_repo }
     }
 
-    pub async fn execute(&self, request: QueryTasksRequest) -> Result<QueryTasksResponse, anyhow::Error> {
+    pub async fn execute(
+        &self,
+        request: QueryTasksRequest,
+    ) -> Result<QueryTasksResponse, anyhow::Error> {
         let params = crate::domain::repositories::task_repository::TaskQueryParams {
             team_id: request.team_id,
             task_ids: request.task_ids,
@@ -124,7 +125,11 @@ impl<T: TaskRepository> QueryTasksUseCase<T> {
 
         let has_more = (u64::from(request.offset.unwrap_or(0)) + tasks.len() as u64) < total;
 
-        Ok(QueryTasksResponse { tasks, total, has_more })
+        Ok(QueryTasksResponse {
+            tasks,
+            total,
+            has_more,
+        })
     }
 }
 
@@ -142,7 +147,10 @@ impl<T: TaskRepository, R: CreditsRepository> CancelTasksUseCase<T, R> {
         }
     }
 
-    pub async fn execute(&self, request: CancelTasksRequest) -> Result<CancelTasksResponse, anyhow::Error> {
+    pub async fn execute(
+        &self,
+        request: CancelTasksRequest,
+    ) -> Result<CancelTasksResponse, anyhow::Error> {
         let mut cancelled = Vec::new();
         let mut failed = Vec::new();
 
@@ -155,13 +163,19 @@ impl<T: TaskRepository, R: CreditsRepository> CancelTasksUseCase<T, R> {
                     }
 
                     if task.status == TaskStatus::Completed || task.status == TaskStatus::Failed {
-                        failed.push((*task_id, format!("Cannot cancel task in status: {}", task.status)));
+                        failed.push((
+                            *task_id,
+                            format!("Cannot cancel task in status: {}", task.status),
+                        ));
                         continue;
                     }
 
                     // 如果不是强制取消且任务正在执行中，则不允许取消
                     if !request.force.unwrap_or(false) && task.status == TaskStatus::Active {
-                        failed.push((*task_id, "Task is running, use force=true to cancel".to_string()));
+                        failed.push((
+                            *task_id,
+                            "Task is running, use force=true to cancel".to_string(),
+                        ));
                         continue;
                     }
 

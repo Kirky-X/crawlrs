@@ -11,7 +11,10 @@ mod expiration_worker_tests {
     use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use crate::workers::expiration_worker::ExpirationWorker;
     use chrono::Utc;
-    use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, EntityTrait, Set, Statement};
+    use sea_orm::{
+        ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, EntityTrait, Set,
+        Statement,
+    };
     use std::sync::Arc;
     use uuid::Uuid;
 

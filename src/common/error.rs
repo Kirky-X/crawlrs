@@ -148,9 +148,7 @@ impl From<AppError> for ApiErrorResponse {
 impl From<crate::engines::engine_client::EngineError> for AppError {
     fn from(err: crate::engines::engine_client::EngineError) -> Self {
         match err {
-            crate::engines::engine_client::EngineError::RequestFailed(msg) => {
-                AppError::Engine(msg)
-            }
+            crate::engines::engine_client::EngineError::RequestFailed(msg) => AppError::Engine(msg),
             crate::engines::engine_client::EngineError::Timeout(duration) => {
                 AppError::Timeout(format!("Request timed out after {:?}", duration))
             }
@@ -172,12 +170,8 @@ impl From<crate::engines::engine_client::EngineError> for AppError {
             crate::engines::engine_client::EngineError::AllEnginesFailed(msg) => {
                 AppError::Engine(format!("All engines failed: {}", msg))
             }
-            crate::engines::engine_client::EngineError::Other(msg) => {
-                AppError::Engine(msg)
-            }
-            crate::engines::engine_client::EngineError::Internal(msg) => {
-                AppError::Engine(msg)
-            }
+            crate::engines::engine_client::EngineError::Other(msg) => AppError::Engine(msg),
+            crate::engines::engine_client::EngineError::Internal(msg) => AppError::Engine(msg),
         }
     }
 }
@@ -211,10 +205,22 @@ mod tests {
 
     #[test]
     fn test_status_code_mapping() {
-        assert_eq!(AppError::NotFound("test".to_string()).status_code(), StatusCode::NOT_FOUND);
-        assert_eq!(AppError::Validation("test".to_string()).status_code(), StatusCode::BAD_REQUEST);
-        assert_eq!(AppError::PermissionDenied("test".to_string()).status_code(), StatusCode::FORBIDDEN);
-        assert_eq!(AppError::RateLimit("test".to_string()).status_code(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            AppError::NotFound("test".to_string()).status_code(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            AppError::Validation("test".to_string()).status_code(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            AppError::PermissionDenied("test".to_string()).status_code(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            AppError::RateLimit("test".to_string()).status_code(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 
     #[test]
@@ -222,8 +228,14 @@ mod tests {
         // Use a Custom error instead of the specific Conn variant
         let db_err = sea_orm::DbErr::Custom("test connection error".to_string());
         assert_eq!(AppError::Database(db_err).error_code(), "DATABASE_ERROR");
-        assert_eq!(AppError::NotFound("test".to_string()).error_code(), "NOT_FOUND");
-        assert_eq!(AppError::Validation("test".to_string()).error_code(), "VALIDATION_ERROR");
+        assert_eq!(
+            AppError::NotFound("test".to_string()).error_code(),
+            "NOT_FOUND"
+        );
+        assert_eq!(
+            AppError::Validation("test".to_string()).error_code(),
+            "VALIDATION_ERROR"
+        );
     }
 
     #[test]

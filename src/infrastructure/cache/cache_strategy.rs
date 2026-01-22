@@ -397,18 +397,16 @@ impl CacheStrategy for RedisCacheStrategy {
 
         for value in values {
             match value {
-                Some(json_str) => {
-                    match serde_json::from_str::<Vec<SearchResult>>(&json_str) {
-                        Ok(results_vec) => {
-                            self.stats_collector.record_hit();
-                            results.push(Some(results_vec));
-                        }
-                        Err(_) => {
-                            self.stats_collector.record_miss();
-                            results.push(None);
-                        }
+                Some(json_str) => match serde_json::from_str::<Vec<SearchResult>>(&json_str) {
+                    Ok(results_vec) => {
+                        self.stats_collector.record_hit();
+                        results.push(Some(results_vec));
                     }
-                }
+                    Err(_) => {
+                        self.stats_collector.record_miss();
+                        results.push(None);
+                    }
+                },
                 None => {
                     self.stats_collector.record_miss();
                     results.push(None);

@@ -32,10 +32,10 @@ pub use encoding::{
     TextEncodingProcessor, TextProcessorStats,
 };
 pub use processor::{
-    process_crawled_batch_with_processor, process_crawled_content_with_processor,
-    process_web_content_with_processor, ContentQuality, CrawlProcessingError, CrawlProcessorConfig,
-    CrawlTextProcessor, ProcessedCrawlContent, ProcessedWebContent, WebContentError,
-    WebContentProcessor, detect_html_structure, init_encoding_patterns,
+    detect_html_structure, init_encoding_patterns, process_crawled_batch_with_processor,
+    process_crawled_content_with_processor, process_web_content_with_processor, ContentQuality,
+    CrawlProcessingError, CrawlProcessorConfig, CrawlTextProcessor, ProcessedCrawlContent,
+    ProcessedWebContent, WebContentError, WebContentProcessor,
 };
 
 /// 初始化文本处理模块（可选，用于预热默认实例）

@@ -65,8 +65,14 @@ pub struct AsyncScrapeUseCase<T: TaskRepository, R: ScrapeResultRepository, Cr: 
     credits_service: Arc<CreditsService<Cr>>,
 }
 
-impl<T: TaskRepository, R: ScrapeResultRepository, Cr: CreditsRepository> AsyncScrapeUseCase<T, R, Cr> {
-    pub fn new(task_repo: Arc<T>, result_repo: Arc<R>, credits_service: Arc<CreditsService<Cr>>) -> Self {
+impl<T: TaskRepository, R: ScrapeResultRepository, Cr: CreditsRepository>
+    AsyncScrapeUseCase<T, R, Cr>
+{
+    pub fn new(
+        task_repo: Arc<T>,
+        result_repo: Arc<R>,
+        credits_service: Arc<CreditsService<Cr>>,
+    ) -> Self {
         Self {
             task_repo,
             result_repo,
@@ -74,7 +80,10 @@ impl<T: TaskRepository, R: ScrapeResultRepository, Cr: CreditsRepository> AsyncS
         }
     }
 
-    pub async fn execute(&self, request: AsyncScrapeRequest) -> Result<AsyncScrapeResponse, anyhow::Error> {
+    pub async fn execute(
+        &self,
+        request: AsyncScrapeRequest,
+    ) -> Result<AsyncScrapeResponse, anyhow::Error> {
         // 创建抓取任务
         let payload = serde_json::to_value(&request.request).unwrap_or_default();
         let task = Task::new(
@@ -105,14 +114,13 @@ impl<R: ScrapeResultRepository, Cr: CreditsRepository> SyncScrapeUseCase<R, Cr> 
     }
 
     /// 创建任务并返回基本信息供后续处理
-    pub async fn prepare(&self, team_id: Uuid, request: &ScrapeRequestDto) -> Result<Task, anyhow::Error> {
+    pub async fn prepare(
+        &self,
+        team_id: Uuid,
+        request: &ScrapeRequestDto,
+    ) -> Result<Task, anyhow::Error> {
         let payload = serde_json::to_value(request).unwrap_or_default();
-        let task = Task::new(
-            TaskType::Scrape,
-            team_id,
-            request.url.clone(),
-            payload,
-        );
+        let task = Task::new(TaskType::Scrape, team_id, request.url.clone(), payload);
 
         Ok(task)
     }
@@ -128,7 +136,10 @@ impl<R: ScrapeResultRepository> GetScrapeResultUseCase<R> {
         Self { result_repo }
     }
 
-    pub async fn execute(&self, request: GetScrapeResultRequest) -> Result<GetScrapeResultResponse, anyhow::Error> {
+    pub async fn execute(
+        &self,
+        request: GetScrapeResultRequest,
+    ) -> Result<GetScrapeResultResponse, anyhow::Error> {
         match self.result_repo.find_by_task_id(request.task_id).await? {
             Some(result) => {
                 let response = Some(ScrapeResponseDto {

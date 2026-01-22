@@ -106,9 +106,8 @@ pub async fn create_pool_with_retry(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        DbErr::ConnectionAcquire(sea_orm::error::ConnAcquireErr::Timeout)
-    }))
+    Err(last_error
+        .unwrap_or_else(|| DbErr::ConnectionAcquire(sea_orm::error::ConnAcquireErr::Timeout)))
 }
 
 /// 创建数据库连接池（简化版本）

@@ -122,8 +122,8 @@ impl<R: CreditsRepository> MultiEngineSearchUseCase<R> {
         let start_time = std::time::Instant::now();
 
         // 构建搜索请求
-        let search_request = SearchRequest::new(&request.query)
-            .with_limit(request.limit.unwrap_or(10));
+        let search_request =
+            SearchRequest::new(&request.query).with_limit(request.limit.unwrap_or(10));
 
         // 执行搜索
         let engine_response = engine

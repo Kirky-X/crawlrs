@@ -63,8 +63,7 @@ impl Default for BrowserDownloadConfig {
 
 /// 获取默认浏览器路径
 fn get_default_browser_path() -> PathBuf {
-    let mut path = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."));
+    let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     path.push(".cache");
     path.push("crawlrs");
     path.push("chromium");

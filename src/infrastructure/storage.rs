@@ -244,12 +244,16 @@ pub fn create_storage_repository(
                 let region = settings
                     .s3_region
                     .as_ref()
-                    .ok_or_else(|| StorageError::Other("Missing s3_region configuration".to_string()))?
+                    .ok_or_else(|| {
+                        StorageError::Other("Missing s3_region configuration".to_string())
+                    })?
                     .clone();
                 let bucket = settings
                     .s3_bucket
                     .as_ref()
-                    .ok_or_else(|| StorageError::Other("Missing s3_bucket configuration".to_string()))?
+                    .ok_or_else(|| {
+                        StorageError::Other("Missing s3_bucket configuration".to_string())
+                    })?
                     .clone();
                 let access_key = settings
                     .s3_access_key

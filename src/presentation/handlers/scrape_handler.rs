@@ -18,8 +18,7 @@ use crate::{
     config::settings::Settings,
     domain::models::task::{Task, TaskType},
     domain::repositories::{
-        scrape_result_repository::ScrapeResultRepository,
-        task_repository::TaskRepository,
+        scrape_result_repository::ScrapeResultRepository, task_repository::TaskRepository,
     },
     domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService},
     infrastructure::cache::redis_client::RedisClient,

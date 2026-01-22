@@ -64,13 +64,18 @@ impl EventBus for InMemoryEventBus {
 
         // 对于每个订阅的事件类型，注册同一个处理器
         for event_type in &event_types {
-            debug!("Registering handler {} for event type {}", handler_name, event_type);
+            debug!(
+                "Registering handler {} for event type {}",
+                handler_name, event_type
+            );
             if *event_type == "*" {
                 // 通配符订阅者 - 注册到特殊键
                 let handlers_vec = handlers.entry("*".to_string()).or_insert_with(Vec::new);
                 handlers_vec.push(handler);
             } else {
-                let handlers_vec = handlers.entry(event_type.to_string()).or_insert_with(Vec::new);
+                let handlers_vec = handlers
+                    .entry(event_type.to_string())
+                    .or_insert_with(Vec::new);
                 handlers_vec.push(handler);
             }
             // 注意：由于Box不能Clone，我们只处理第一个事件类型
@@ -93,7 +98,12 @@ impl EventBus for InMemoryEventBus {
                         debug!("Handler {} processed event {}", handler.name(), event_type);
                     }
                     Err(e) => {
-                        error!("Handler {} failed to process event {}: {:?}", handler.name(), event_type, e);
+                        error!(
+                            "Handler {} failed to process event {}: {:?}",
+                            handler.name(),
+                            event_type,
+                            e
+                        );
                     }
                 }
             }
@@ -212,7 +222,10 @@ impl EventHandler for SimpleEventListener {
         let event_type = event.event_type();
         let mut count = self.event_count.write().await;
         *count += 1;
-        debug!("SimpleEventListener received event: {} (total: {})", event_type, count);
+        debug!(
+            "SimpleEventListener received event: {} (total: {})",
+            event_type, count
+        );
         Ok(())
     }
 
