@@ -9,7 +9,7 @@
 //!
 //! 注意：当前版本使用系统浏览器检测，chromiumoxide_fetcher 的完整支持将在后续版本中添加。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
