@@ -245,6 +245,23 @@ pub mod errors {
         error_response(StatusCode::TOO_MANY_REQUESTS, message)
     }
 
+    /// Too many requests error response with retry_after
+    #[inline]
+    pub fn too_many_requests_with_retry(
+        message: impl Into<String>,
+        retry_after_seconds: u64,
+    ) -> Response {
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({
+                "success": false,
+                "error": message.into(),
+                "retry_after_seconds": retry_after_seconds
+            })),
+        )
+            .into_response()
+    }
+
     /// Unprocessable entity error response
     #[inline]
     pub fn unprocessable_entity(message: impl Into<String>) -> Response {

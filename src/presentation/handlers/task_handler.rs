@@ -12,6 +12,8 @@ use crate::application::dto::task_query_request::{
     TaskCancelResponseDto, TaskInfoDto, TaskQueryDataDto, TaskQueryRequestDto,
     TaskQueryResponseDto,
 };
+use crate::common::constants::crawl_task;
+use crate::common::constants::server_config;
 use crate::domain::models::task::TaskStatus;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
@@ -43,7 +45,7 @@ use validator::Validate;
 /// # 智能轮询逻辑
 /// - 初始轮询间隔：base_poll_interval_ms
 /// - 动态调整范围：500ms - 2000ms
-/// - 最大轮询次数：60次（防止过多数据库查询）
+/// - 最大轮询次数：由 crawl_task::MAX_POLL_COUNT 控制（防止过多数据库查询）
 /// - 根据任务完成进度调整间隔
 /// - 任务完成率越高，轮询间隔越长
 pub async fn wait_for_tasks_completion(
@@ -57,7 +59,6 @@ pub async fn wait_for_tasks_completion(
     let timeout_duration = Duration::from_millis(sync_wait_ms as u64);
     let min_interval = 500u64;
     let max_interval = 2000u64;
-    let max_poll_count = 60u32;
 
     let mut current_interval = base_poll_interval_ms.clamp(min_interval, max_interval);
     let mut last_completion_rate = 0.0f64;
@@ -65,7 +66,7 @@ pub async fn wait_for_tasks_completion(
 
     while start_time.elapsed() < timeout_duration {
         poll_count += 1;
-        if poll_count_exceeded(poll_count, max_poll_count) {
+        if poll_count_exceeded(poll_count, crawl_task::MAX_POLL_COUNT) {
             return Ok(());
         }
 
@@ -251,10 +252,15 @@ fn validate_request(request: &TaskQueryRequestDto) -> Result<(), AppError> {
 /// 应用请求默认值并提取参数
 fn apply_defaults(request: &TaskQueryRequestDto) -> (u32, u32, bool, u32) {
     (
-        request.limit.unwrap_or(100).min(1000),
+        request
+            .limit
+            .unwrap_or(server_config::DEFAULT_PAGE_LIMIT)
+            .min(server_config::MAX_PAGE_LIMIT),
         request.offset.unwrap_or(0),
         request.include_results.unwrap_or(false),
-        request.sync_wait_ms.unwrap_or(5000),
+        request
+            .sync_wait_ms
+            .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32),
     )
 }
 
@@ -294,9 +300,80 @@ async fn handle_sync_wait<T: TaskRepository>(
     let task_ids = extract_task_ids(tasks);
     let wait_start = Instant::now();
 
-    wait_for_tasks_completion(task_repo, &task_ids, team_id, sync_wait_ms, 1000).await?;
+    wait_for_tasks_completion(
+        task_repo,
+        &task_ids,
+        team_id,
+        sync_wait_ms,
+        crawl_task::BASE_POLL_INTERVAL_MS,
+    )
+    .await?;
 
     Ok(wait_start.elapsed().as_millis() as u64)
+}
+
+/// 同步等待结果
+pub struct SyncWaitResult {
+    /// 实际等待时间（毫秒）
+    pub waited_time_ms: u64,
+    /// 是否超时
+    pub is_timeout: bool,
+}
+
+/// 处理同步等待并返回状态码
+///
+/// 此函数封装了同步等待的通用逻辑，消除 crawl_handler 和 scrape_handler 中的重复代码
+///
+/// # 参数
+/// * `task_repo` - 任务仓库
+/// * `task_ids` - 要等待的任务ID列表
+/// * `team_id` - 团队ID
+/// * `sync_wait_ms` - 同步等待时间（毫秒）
+///
+/// # 返回值
+/// * `Ok(SyncWaitResult)` - 同步等待结果
+/// * `Err(AppError)` - 等待失败
+pub async fn handle_sync_wait_and_get_status(
+    task_repo: &dyn TaskRepository,
+    task_ids: &[uuid::Uuid],
+    team_id: uuid::Uuid,
+    sync_wait_ms: u32,
+) -> Result<SyncWaitResult, AppError> {
+    if sync_wait_ms == 0 || task_ids.is_empty() {
+        return Ok(SyncWaitResult {
+            waited_time_ms: 0,
+            is_timeout: false,
+        });
+    }
+
+    let wait_start = Instant::now();
+
+    match wait_for_tasks_completion(
+        task_repo,
+        task_ids,
+        team_id,
+        sync_wait_ms,
+        crawl_task::BASE_POLL_INTERVAL_MS,
+    )
+    .await
+    {
+        Ok(_) => {
+            let waited_time_ms = wait_start.elapsed().as_millis() as u64;
+            Ok(SyncWaitResult {
+                waited_time_ms,
+                is_timeout: waited_time_ms >= sync_wait_ms as u64,
+            })
+        }
+        Err(e) => {
+            tracing::error!("Failed to wait for task completion: {:?}", e);
+            // 即使等待失败，也返回已创建的任务信息
+            let waited_time_ms = wait_start.elapsed().as_millis() as u64;
+            Ok(SyncWaitResult {
+                waited_time_ms,
+                is_timeout: waited_time_ms >= sync_wait_ms as u64,
+            })
+        }
+    }
 }
 
 /// 获取抓取结果

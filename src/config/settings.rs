@@ -8,8 +8,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use super::app::{
-    ConcurrencySettings, DatabaseSettings, ProxySettings, RateLimitingSettings, RedisSettings,
-    ServerSettings, TimeoutSettings, WorkerSettings,
+    ConcurrencySettings, CorsSettings, DatabaseSettings, ProxySettings, RateLimitingSettings,
+    RedisSettings, ServerSettings, TimeoutSettings, WorkerSettings,
 };
 use super::engines::EngineSettings;
 use super::llm::LLMSettings;
@@ -84,6 +84,8 @@ pub struct Settings {
     pub redis: RedisSettings,
     /// 服务器配置
     pub server: ServerSettings,
+    /// CORS 配置
+    pub cors: CorsSettings,
     /// 速率限制配置
     pub rate_limiting: RateLimitingSettings,
     /// 并发控制配置
@@ -164,6 +166,8 @@ impl Settings {
             .set_default("server.host", "0.0.0.0")? // 默认监听所有网络接口
             .set_default("server.port", 8899)? // 默认端口 8899
             .set_default("server.enable_port_detection", true)? // 默认启用端口嗅探
+            // CORS 默认配置
+            .set_default("cors.allowed_origins", "*")? // 默认允许所有来源（开发环境）
             // 2. 设置数据库连接池默认配置
             .set_default("database.max_connections", 150)? // 增加到 150 以提高并发性能
             .set_default("database.min_connections", 20)? // 增加到 20 以减少连接建立开销

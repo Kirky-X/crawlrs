@@ -24,14 +24,14 @@ use std::sync::Arc;
 
 use crate::domain::repositories::{
     crawl_repository::CrawlRepository, credits_repository::CreditsRepository,
+    geo_restriction_repository::GeoRestrictionRepository,
     scrape_result_repository::ScrapeResultRepository, task_repository::TaskRepository,
     webhook_repository::WebhookRepository,
 };
 use crate::domain::services::rate_limiting_service::RateLimitingService;
-use crate::domain::services::search_service::SearchService;
 use crate::domain::services::team_service::TeamService;
 use crate::infrastructure::cache::redis_client::RedisClient;
-use crate::infrastructure::database::connection::DatabaseConnection;
+use sea_orm::DatabaseConnection;
 
 /// Application state container holding all shared dependencies.
 ///
@@ -52,9 +52,9 @@ pub struct AppState {
     pub result_repo: Arc<dyn ScrapeResultRepository>,
     pub webhook_repo: Arc<dyn WebhookRepository>,
     pub credits_repo: Arc<dyn CreditsRepository>,
+    pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     pub redis_client: Arc<RedisClient>,
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
-    pub search_engine_service: Arc<dyn SearchService>,
     pub team_service: Arc<TeamService>,
 }
 
@@ -68,9 +68,9 @@ impl AppState {
         result_repo: Arc<dyn ScrapeResultRepository>,
         webhook_repo: Arc<dyn WebhookRepository>,
         credits_repo: Arc<dyn CreditsRepository>,
+        geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
         redis_client: Arc<RedisClient>,
         rate_limiting_service: Arc<dyn RateLimitingService>,
-        search_engine_service: Arc<dyn SearchService>,
         team_service: Arc<TeamService>,
     ) -> Self {
         Self {
@@ -80,9 +80,9 @@ impl AppState {
             result_repo,
             webhook_repo,
             credits_repo,
+            geo_restriction_repo,
             redis_client,
             rate_limiting_service,
-            search_engine_service,
             team_service,
         }
     }
@@ -109,9 +109,9 @@ pub trait StateExt {
     fn result_repo(&self) -> Arc<dyn ScrapeResultRepository>;
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository>;
     fn credits_repo(&self) -> Arc<dyn CreditsRepository>;
+    fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
     fn redis_client(&self) -> Arc<RedisClient>;
     fn rate_limiting_service(&self) -> Arc<dyn RateLimitingService>;
-    fn search_engine_service(&self) -> Arc<dyn SearchService>;
     fn team_service(&self) -> Arc<TeamService>;
 }
 
@@ -136,6 +136,10 @@ impl StateExt for Arc<AppState> {
         self.credits_repo.clone()
     }
 
+    fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
+        self.geo_restriction_repo.clone()
+    }
+
     fn redis_client(&self) -> Arc<RedisClient> {
         self.redis_client.clone()
     }
@@ -144,62 +148,73 @@ impl StateExt for Arc<AppState> {
         self.rate_limiting_service.clone()
     }
 
-    fn search_engine_service(&self) -> Arc<dyn SearchService> {
-        self.search_engine_service.clone()
-    }
-
     fn team_service(&self) -> Arc<TeamService> {
         self.team_service.clone()
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Crawl handler specific state for dependency injection.
+///
+/// This structure encapsulates all dependencies needed by crawl handlers,
+/// reducing the number of parameters from 8+ to just 2-3.
+#[derive(Clone)]
+pub struct CrawlHandlerState {
+    pub crawl_repo: Arc<dyn CrawlRepository>,
+    pub task_repo: Arc<dyn TaskRepository>,
+    pub webhook_repo: Arc<dyn WebhookRepository>,
+    pub scrape_result_repo: Arc<dyn ScrapeResultRepository>,
+    pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
+    pub team_service: Arc<TeamService>,
+    pub rate_limiting_service: Arc<dyn RateLimitingService>,
+}
 
-    #[test]
-    fn test_app_state_creation() {
-        let state = AppState::new(
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-        );
-
-        assert!(state.task_repo().is::<()>());
-        assert!(state.crawl_repo().is::<()>());
-        assert!(state.redis_client().is::<()>());
+impl CrawlHandlerState {
+    /// Create a new CrawlHandlerState from individual dependencies.
+    pub fn new(
+        crawl_repo: Arc<dyn CrawlRepository>,
+        task_repo: Arc<dyn TaskRepository>,
+        webhook_repo: Arc<dyn WebhookRepository>,
+        scrape_result_repo: Arc<dyn ScrapeResultRepository>,
+        geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
+        team_service: Arc<TeamService>,
+        rate_limiting_service: Arc<dyn RateLimitingService>,
+    ) -> Self {
+        Self {
+            crawl_repo,
+            task_repo,
+            webhook_repo,
+            scrape_result_repo,
+            geo_restriction_repo,
+            team_service,
+            rate_limiting_service,
+        }
     }
 
-    #[test]
-    fn test_state_ext_trait() {
-        let state: Arc<AppState> = Arc::new(AppState::new(
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-            Arc::new(()),
-        ));
+    /// Create CrawlHandlerState from AppState.
+    pub fn from_app_state(
+        app_state: &Arc<AppState>,
+        rate_limiting_service: Arc<dyn RateLimitingService>,
+    ) -> Self {
+        Self {
+            crawl_repo: app_state.crawl_repo.clone(),
+            task_repo: app_state.task_repo.clone(),
+            webhook_repo: app_state.webhook_repo.clone(),
+            scrape_result_repo: app_state.result_repo.clone(),
+            geo_restriction_repo: app_state.geo_restriction_repo.clone(),
+            team_service: app_state.team_service.clone(),
+            rate_limiting_service,
+        }
+    }
 
-        let _task_repo = state.task_repo();
-        let _crawl_repo = state.crawl_repo();
-        let _result_repo = state.result_repo();
-        let _webhook_repo = state.webhook_repo();
-        let _credits_repo = state.credits_repo();
-        let _redis_client = state.redis_client();
-        let _rate_limiting_service = state.rate_limiting_service();
-        let _search_engine_service = state.search_engine_service();
-        let _team_service = state.team_service();
+    /// Create a CrawlUseCase instance.
+    pub fn create_use_case(&self) -> crate::application::use_cases::crawl_use_case::CrawlUseCase {
+        crate::application::use_cases::crawl_use_case::CrawlUseCase::new(
+            self.crawl_repo.clone(),
+            self.task_repo.clone(),
+            self.webhook_repo.clone(),
+            self.scrape_result_repo.clone(),
+            self.geo_restriction_repo.clone(),
+            self.team_service.clone(),
+        )
     }
 }

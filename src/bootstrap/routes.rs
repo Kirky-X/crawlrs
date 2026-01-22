@@ -26,6 +26,67 @@ use axum::{
     Extension, Router,
 };
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
+
+// 导入常量
+use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
+
+/// 创建 CORS 中间件层
+///
+/// 基于配置创建适合开发/生产环境的 CORS 配置
+fn create_cors_layer(settings: &Settings) -> CorsLayer {
+    let allowed_origins: Vec<String> = settings
+        .cors
+        .allowed_origins
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let cors_layer = if allowed_origins.is_empty() || allowed_origins.iter().any(|o| o == "*") {
+        // 生产环境不应使用通配符，这里仅作为开发回退
+        tracing::warn!("CORS 使用通配符 '*'，建议在生产环境中配置具体的来源");
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        let origins: Vec<axum::http::HeaderValue> = allowed_origins
+            .iter()
+            .filter_map(|origin| origin.parse().ok())
+            .collect();
+
+        if origins.is_empty() {
+            tracing::warn!("CORS 配置无效，允许所有来源作为回退");
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        } else {
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::PUT,
+                    axum::http::Method::DELETE,
+                    axum::http::Method::PATCH,
+                    axum::http::Method::HEAD,
+                    axum::http::Method::OPTIONS,
+                ])
+                .allow_headers([
+                    axum::http::HeaderName::from_static("authorization"),
+                    axum::http::HeaderName::from_static("content-type"),
+                    axum::http::HeaderName::from_static("x-api-key"),
+                    axum::http::HeaderName::from_static("x-request-id"),
+                ])
+                .expose_headers([axum::http::HeaderName::from_static("x-request-id")])
+                .max_age(std::time::Duration::from_secs(CORS_MAX_AGE_SECS))
+        }
+    };
+
+    cors_layer
+}
 
 /// Create public API routes (no authentication required).
 pub fn create_public_routes(state: &AppState) -> Router {
@@ -198,10 +259,14 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
     let webhook_event_repo = state.webhook_event_repo();
     let webhook_repo = state.webhook_repo();
 
+    // 创建 CORS 层
+    let cors_layer = create_cors_layer(&settings);
+
     Router::new()
         .merge(public_routes)
         .merge(protected_routes)
         .merge(v2_routes)
+        .layer(cors_layer)
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .layer(Extension(state.team_semaphore.clone()))
         .layer(Extension(queue))

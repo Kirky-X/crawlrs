@@ -9,47 +9,37 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::error;
 use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlRequestDto;
-use crate::application::use_cases::crawl_use_case::{CrawlUseCase, CrawlUseCaseError};
+use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
 use crate::common::constants::crawl_task::CRAWL_TASK_CREDITS_COST;
-use crate::domain::repositories::crawl_repository::CrawlRepository;
-use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
-use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
-use crate::domain::repositories::task_repository::TaskRepository;
-use crate::domain::repositories::webhook_repository::WebhookRepository;
-use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
-use crate::domain::services::team_service::TeamService;
+use crate::common::constants::crawl_task::DEFAULT_TIMEOUT_MS;
+use crate::domain::services::rate_limiting_service::RateLimitResult;
 use crate::presentation::handlers::extract_task_ids;
 use crate::presentation::handlers::response_builder::errors;
-use crate::presentation::handlers::response_builder::success_response;
-use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
+use crate::presentation::handlers::response_builder::{error_response, success_response};
+use crate::presentation::handlers::task_handler::handle_sync_wait_and_get_status;
+use crate::presentation::handlers::task_handler::SyncWaitResult;
 use crate::presentation::helpers::ssrf_helper::is_internal_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
+use crate::presentation::state::CrawlHandlerState;
 
 /// 创建新的爬取任务
-#[allow(clippy::too_many_arguments)]
 pub async fn create_crawl(
-    Extension(crawl_repo): Extension<Arc<dyn CrawlRepository>>,
-    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
-    Extension(webhook_repo): Extension<Arc<dyn WebhookRepository>>,
-    Extension(scrape_result_repo): Extension<Arc<dyn ScrapeResultRepository>>,
-    Extension(geo_restriction_repo): Extension<Arc<dyn GeoRestrictionRepository>>,
-    Extension(team_service): Extension<Arc<TeamService>>,
-    Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
+    Extension(handler_state): Extension<Arc<CrawlHandlerState>>,
     Extension(auth_state): Extension<AuthState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<CrawlRequestDto>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     let api_key = auth_state.api_key_id.to_string();
+    let sync_wait_ms = payload.sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
 
-    // 验证 config 字段 (简化验证)
+    // 验证 config 字段
     if payload.config.max_depth > 5 {
         return errors::unprocessable_entity("max_depth must be between 0 and 5");
     }
@@ -59,7 +49,8 @@ pub async fn create_crawl(
     }
 
     // 1. 检查限流
-    match rate_limiting_service
+    match handler_state
+        .rate_limiting_service
         .check_rate_limit(&api_key, "/v1/crawl")
         .await
     {
@@ -69,200 +60,142 @@ pub async fn create_crawl(
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
         }) => {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(json!({
-                    "success": false,
-                    "error": "Rate limit exceeded, please retry later",
-                    "retry_after_seconds": retry_after_seconds
-                })),
-            )
-                .into_response();
+            return errors::too_many_requests_with_retry(
+                "Rate limit exceeded, please retry later",
+                retry_after_seconds,
+            );
         }
         Err(e) => {
             error!("Rate limiting service error: {}", e);
-            // 降级：如果限流服务出错，允许继续
         }
         _ => {}
     }
 
     // 2. 检查配额
-    if let Err(e) = rate_limiting_service
+    if let Err(e) = handler_state
+        .rate_limiting_service
         .check_and_deduct_quota(
             team_id,
-            CRAWL_TASK_CREDITS_COST, // 爬取任务通常比抓取消耗更多，假设消耗 10 Credits
+            CRAWL_TASK_CREDITS_COST,
             crate::domain::models::credits::CreditsTransactionType::Crawl,
             format!("Crawl URL: {}", payload.url),
-            None, // 初始扣费，尚未创建具体任务ID
+            None,
         )
         .await
     {
         return errors::payment_required(e.to_string());
     }
 
-    // 克隆 task_repo 供后续使用（因为 use_case 会获取所有权）
-    let task_repo_for_wait = Arc::clone(&task_repo);
-
-    let use_case = CrawlUseCase::new(
-        crawl_repo,
-        task_repo,
-        webhook_repo,
-        scrape_result_repo,
-        geo_restriction_repo,
-        team_service,
-    );
+    let use_case = handler_state.create_use_case();
 
     let client_ip = addr.ip().to_string();
-    match use_case
-        .create_crawl(team_id, payload.clone(), &client_ip)
-        .await
-    {
+    match use_case.create_crawl(team_id, payload, &client_ip).await {
         Ok(crawl) => {
-            // 处理同步等待逻辑
-            let sync_wait_ms = payload.sync_wait_ms.unwrap_or(5000);
-            let mut waited_time_ms = 0u64;
-
-            if sync_wait_ms > 0 {
-                let wait_start = std::time::Instant::now();
-
-                // 获取爬取任务的初始任务ID
-                // 注意：这里我们需要获取与爬取任务关联的任务ID
-                // 由于create_crawl返回的是Crawl对象，我们需要查询相关的任务
-                match task_repo_for_wait.find_by_crawl_id(crawl.id).await {
+            // 处理同步等待
+            let wait_result = if sync_wait_ms > 0 {
+                match handler_state.task_repo.find_by_crawl_id(crawl.id).await {
                     Ok(tasks) => {
                         if !tasks.is_empty() {
-                            // 使用辅助方法提取任务ID
                             let task_ids = extract_task_ids(&tasks);
-
-                            // 调用智能轮询等待函数
-                            match wait_for_tasks_completion(
-                                task_repo_for_wait.as_ref(),
+                            handle_sync_wait_and_get_status(
+                                handler_state.task_repo.as_ref(),
                                 &task_ids,
                                 team_id,
                                 sync_wait_ms,
-                                1000, // 基础轮询间隔1秒
                             )
                             .await
-                            {
-                                Ok(_) => {
-                                    waited_time_ms = wait_start.elapsed().as_millis() as u64;
-                                }
-                                Err(e) => {
-                                    error!("Failed to wait for task completion: {:?}", e);
-                                    // 即使等待失败，也返回已创建的爬取任务信息
-                                }
+                            .unwrap_or(SyncWaitResult {
+                                waited_time_ms: sync_wait_ms as u64,
+                                is_timeout: true,
+                            })
+                        } else {
+                            SyncWaitResult {
+                                waited_time_ms: 0,
+                                is_timeout: false,
                             }
                         }
                     }
                     Err(e) => {
                         error!("Failed to find tasks for crawl {}: {:?}", crawl.id, e);
-                        // 即使查询失败，也返回已创建的爬取任务信息
+                        SyncWaitResult {
+                            waited_time_ms: 0,
+                            is_timeout: false,
+                        }
                     }
                 }
-            }
-
-            // 根据同步等待结果设置响应状态
-            let status_code = if sync_wait_ms > 0 && waited_time_ms >= sync_wait_ms as u64 {
-                StatusCode::ACCEPTED // 同步等待超时，任务已接受但可能未完成
             } else {
-                StatusCode::CREATED // 任务已创建（可能已完成）
+                SyncWaitResult {
+                    waited_time_ms: 0,
+                    is_timeout: false,
+                }
+            };
+
+            let status_code = if sync_wait_ms > 0 && wait_result.is_timeout {
+                StatusCode::ACCEPTED
+            } else {
+                StatusCode::CREATED
             };
 
             success_response(status_code, crawl)
         }
         Err(e) => {
             let (status, msg): (StatusCode, String) = e.into();
-            (status, Json(json!({ "error": msg }))).into_response()
+            error_response(status, msg)
         }
     }
 }
 
 /// 获取爬取任务详情
 pub async fn get_crawl(
-    Extension(crawl_repo): Extension<Arc<dyn CrawlRepository>>,
-    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
-    Extension(webhook_repo): Extension<Arc<dyn WebhookRepository>>,
-    Extension(scrape_result_repo): Extension<Arc<dyn ScrapeResultRepository>>,
-    Extension(geo_restriction_repo): Extension<Arc<dyn GeoRestrictionRepository>>,
-    Extension(team_service): Extension<Arc<TeamService>>,
+    Extension(handler_state): Extension<Arc<CrawlHandlerState>>,
+    Extension(auth_state): Extension<AuthState>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse {
-    let use_case = CrawlUseCase::new(
-        crawl_repo,
-        task_repo,
-        webhook_repo,
-        scrape_result_repo,
-        geo_restriction_repo,
-        team_service,
-    );
-    match use_case.get_crawl(crawl_id).await {
-        Ok(Some(crawl)) => (StatusCode::OK, Json(crawl)).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+    let team_id = auth_state.team_id;
+    let use_case = handler_state.create_use_case();
+
+    match use_case.get_crawl(crawl_id, team_id).await {
+        Ok(Some(crawl)) => success_response(StatusCode::OK, crawl),
+        Ok(None) => errors::not_found("Crawl not found"),
         Err(e) => {
             let (status, msg): (StatusCode, String) = e.into();
-            (status, Json(json!({ "error": msg }))).into_response()
+            error_response(status, msg)
         }
     }
 }
 
 /// 获取爬取任务结果
-#[allow(clippy::too_many_arguments)]
 pub async fn get_crawl_results(
-    Extension(crawl_repo): Extension<Arc<dyn CrawlRepository>>,
-    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
-    Extension(webhook_repo): Extension<Arc<dyn WebhookRepository>>,
-    Extension(scrape_result_repo): Extension<Arc<dyn ScrapeResultRepository>>,
-    Extension(geo_restriction_repo): Extension<Arc<dyn GeoRestrictionRepository>>,
+    Extension(handler_state): Extension<Arc<CrawlHandlerState>>,
     Extension(auth_state): Extension<AuthState>,
-    Extension(team_service): Extension<Arc<TeamService>>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
-    let use_case = CrawlUseCase::new(
-        crawl_repo,
-        task_repo,
-        webhook_repo,
-        scrape_result_repo,
-        geo_restriction_repo,
-        team_service,
-    );
+    let use_case = handler_state.create_use_case();
 
     match use_case.get_crawl_results(crawl_id, team_id).await {
-        Ok(results) => (StatusCode::OK, Json(results)).into_response(),
+        Ok(results) => success_response(StatusCode::OK, results),
         Err(e) => {
             let (status, msg): (StatusCode, String) = e.into();
-            (status, Json(json!({ "error": msg }))).into_response()
+            error_response(status, msg)
         }
     }
 }
 
 /// 取消进行中的爬取任务
-#[allow(clippy::too_many_arguments)]
 pub async fn cancel_crawl(
-    Extension(crawl_repo): Extension<Arc<dyn CrawlRepository>>,
-    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
-    Extension(webhook_repo): Extension<Arc<dyn WebhookRepository>>,
-    Extension(scrape_result_repo): Extension<Arc<dyn ScrapeResultRepository>>,
-    Extension(geo_restriction_repo): Extension<Arc<dyn GeoRestrictionRepository>>,
+    Extension(handler_state): Extension<Arc<CrawlHandlerState>>,
     Extension(auth_state): Extension<AuthState>,
-    Extension(team_service): Extension<Arc<TeamService>>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
-    let use_case = CrawlUseCase::new(
-        crawl_repo,
-        task_repo,
-        webhook_repo,
-        scrape_result_repo,
-        geo_restriction_repo,
-        team_service,
-    );
+    let use_case = handler_state.create_use_case();
 
     match use_case.cancel_crawl(crawl_id, team_id).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             let (status, msg): (StatusCode, String) = e.into();
-            (status, Json(json!({ "error": msg }))).into_response()
+            error_response(status, msg)
         }
     }
 }

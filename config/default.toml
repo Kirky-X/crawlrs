@@ -33,6 +33,14 @@ host = "0.0.0.0"
 port = 8899
 enable_port_detection = true
 
+# CORS Configuration
+# IMPORTANT: Configure specific origins in production for security
+[cors]
+# Comma-separated list of allowed origins
+# Use "*" for development only (allows all origins)
+# Example: "http://localhost:3000,https://example.com"
+allowed_origins = "*"
+
 # Rate Limiting Configuration
 # IMPORTANT: Rate limiting SHOULD be enabled in production to prevent abuse
 [rate_limiting]

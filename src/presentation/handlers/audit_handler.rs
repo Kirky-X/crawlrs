@@ -3,13 +3,14 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::common::constants::server_config;
 use crate::domain::services::audit_service::AuditServiceTrait;
+use crate::presentation::handlers::response_builder::{error_response, success_response};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{
     extract::{Extension, Query},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -29,7 +30,10 @@ pub async fn get_audit_logs(
     Extension(auth_state): Extension<AuthState>,
     Query(query): Query<AuditLogsQuery>,
 ) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(100).min(1000);
+    let limit = query
+        .limit
+        .unwrap_or(server_config::DEFAULT_PAGE_LIMIT as u64)
+        .min(server_config::MAX_PAGE_LIMIT as u64);
     let offset = query.offset.unwrap_or(0);
 
     match query {
@@ -42,11 +46,8 @@ pub async fn get_audit_logs(
                 .get_logs_for_key(api_key_id, limit, offset)
                 .await
             {
-                Ok(logs) => (StatusCode::OK, Json(json!({ "logs": logs }))),
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e.to_string() })),
-                ),
+                Ok(logs) => success_response(StatusCode::OK, json!({ "logs": logs })),
+                Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             }
         }
         AuditLogsQuery {
@@ -58,11 +59,8 @@ pub async fn get_audit_logs(
                 .get_logs_for_team(team_id, limit, offset)
                 .await
             {
-                Ok(logs) => (StatusCode::OK, Json(json!({ "logs": logs }))),
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e.to_string() })),
-                ),
+                Ok(logs) => success_response(StatusCode::OK, json!({ "logs": logs })),
+                Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             }
         }
         _ => {
@@ -70,11 +68,8 @@ pub async fn get_audit_logs(
                 .get_logs_for_key(auth_state.api_key_id, limit, offset)
                 .await
             {
-                Ok(logs) => (StatusCode::OK, Json(json!({ "logs": logs }))),
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e.to_string() })),
-                ),
+                Ok(logs) => success_response(StatusCode::OK, json!({ "logs": logs })),
+                Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             }
         }
     }
@@ -85,16 +80,16 @@ pub async fn get_denied_requests(
     Extension(auth_state): Extension<AuthState>,
     Query(query): Query<AuditLogsQuery>,
 ) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(100).min(1000);
+    let limit = query
+        .limit
+        .unwrap_or(server_config::DEFAULT_PAGE_LIMIT as u64)
+        .min(server_config::MAX_PAGE_LIMIT as u64);
 
     match audit_service
         .get_denied_requests(auth_state.api_key_id, limit)
         .await
     {
-        Ok(logs) => (StatusCode::OK, Json(json!({ "denied_requests": logs }))),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": e.to_string() })),
-        ),
+        Ok(logs) => success_response(StatusCode::OK, json!({ "denied_requests": logs })),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }

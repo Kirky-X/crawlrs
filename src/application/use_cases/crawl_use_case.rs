@@ -109,7 +109,7 @@ impl CrawlUseCase {
     /// # 参数
     ///
     /// * `crawl_id` - 爬取任务 ID
-    /// * `_team_id` - 团队 ID（当前未使用，用于权限验证）
+    /// * `team_id` - 团队 ID，用于权限验证
     ///
     /// # 返回值
     ///
@@ -120,14 +120,26 @@ impl CrawlUseCase {
     ///
     /// 可能在以下情况下返回错误：
     /// - 爬取任务不存在（NotFound）
+    /// - 爬取任务不属于指定团队（NotFound）
     /// - 数据库查询失败（RepositoryError）
+    ///
+    /// # 安全性
+    ///
+    /// 此方法验证爬取任务是否属于请求的团队，防止未授权访问
     pub async fn get_crawl_results(
         &self,
         crawl_id: Uuid,
-        _team_id: Uuid,
+        team_id: Uuid,
     ) -> Result<Vec<ScrapeResult>, CrawlUseCaseError> {
-        if self.crawl_repo.find_by_id(crawl_id).await?.is_none() {
-            return Err(CrawlUseCaseError::NotFound);
+        // 首先验证爬取任务是否存在且属于该团队
+        match self.crawl_repo.find_by_id(crawl_id).await? {
+            Some(crawl) => {
+                // 验证资源所有权
+                if crawl.team_id != team_id {
+                    return Err(CrawlUseCaseError::NotFound);
+                }
+            }
+            None => return Err(CrawlUseCaseError::NotFound),
         }
 
         let tasks = self.task_repo.find_by_crawl_id(crawl_id).await?;
@@ -299,22 +311,37 @@ impl CrawlUseCase {
         Ok(crawl)
     }
 
-    /// 根据 ID 获取爬取任务
+    /// 获取爬取任务详情
     ///
     /// # 参数
     ///
     /// * `crawl_id` - 爬取任务 ID
+    /// * `team_id` - 团队 ID，用于权限验证
     ///
     /// # 返回值
     ///
-    /// * `Ok(Some(Crawl))` - 找到爬取任务
+    /// * `Ok(Some(Crawl))` - 找到爬取任务且属于该团队
     /// * `Ok(None)` - 未找到爬取任务
     /// * `Err(CrawlUseCaseError)` - 数据库查询失败
-    pub async fn get_crawl(&self, crawl_id: Uuid) -> Result<Option<Crawl>, CrawlUseCaseError> {
-        self.crawl_repo
-            .find_by_id(crawl_id)
-            .await
-            .map_err(Into::into)
+    ///
+    /// # 安全性
+    ///
+    /// 此方法验证爬取任务是否属于请求的团队，防止未授权访问
+    pub async fn get_crawl(
+        &self,
+        crawl_id: Uuid,
+        team_id: Uuid,
+    ) -> Result<Option<Crawl>, CrawlUseCaseError> {
+        match self.crawl_repo.find_by_id(crawl_id).await? {
+            Some(crawl) => {
+                // 验证资源所有权
+                if crawl.team_id != team_id {
+                    return Ok(None); // 返回 None 而非错误，避免信息泄露
+                }
+                Ok(Some(crawl))
+            }
+            None => Ok(None),
+        }
     }
 
     /// 取消爬取任务

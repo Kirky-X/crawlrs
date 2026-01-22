@@ -80,6 +80,14 @@ pub mod server_config {
     pub const DEFAULT_RATE_LIMIT_RPM: u32 = 100;
     pub const DEFAULT_TEAM_LIMIT: u32 = 10;
     pub const DEFAULT_TASK_LOCK_DURATION_SECS: u64 = 300;
+
+    /// 默认分页限制
+    pub const DEFAULT_PAGE_LIMIT: u32 = 100;
+    /// 最大分页限制
+    pub const MAX_PAGE_LIMIT: u32 = 1000;
+
+    /// CORS 缓存时间（秒）
+    pub const CORS_MAX_AGE_SECS: u64 = 86400; // 24小时
 }
 
 /// 爬虫任务常量 - 避免handler中的硬编码值
@@ -92,6 +100,9 @@ pub mod crawl_task {
     pub const BASE_POLL_INTERVAL_MS: u64 = 1000;
     pub const DEFAULT_TIMEOUT_MS: u64 = 5000;
     pub const MAX_SYNC_WAIT_MS: u32 = 30000;
+
+    /// 最大轮询次数（防止过多数据库查询）
+    pub const MAX_POLL_COUNT: u32 = 60;
 }
 
 /// 数据库相关常量

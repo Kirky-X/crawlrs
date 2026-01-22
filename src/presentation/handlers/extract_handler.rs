@@ -14,11 +14,13 @@ use std::net::SocketAddr;
 use tracing::error;
 
 use crate::application::dto::extract_request::ExtractRequestDto;
+use crate::common::constants::crawl_task;
 use crate::config::settings::Settings;
 use crate::domain::models::task::{Task, TaskType};
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::team_service::TeamService;
+use crate::presentation::handlers::response_builder::error_response;
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
@@ -41,25 +43,14 @@ where
     let team_id = auth_state.team_id;
     // Validate the request
     if payload.urls.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": "At least one URL is required"
-            })),
-        )
-            .into_response();
+        return error_response(StatusCode::BAD_REQUEST, "At least one URL is required");
     }
 
     if payload.prompt.is_none() && payload.schema.is_none() && payload.rules.is_none() {
-        return (
+        return error_response(
             StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": "Either prompt, schema, or rules is required"
-            })),
-        )
-            .into_response();
+            "Either prompt, schema, or rules is required",
+        );
     }
 
     // 检查地理限制
@@ -70,28 +61,20 @@ where
         Ok(restrictions) => restrictions,
         Err(e) => {
             error!("Failed to get team restrictions: {:?}", e);
-            return (
+            return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "success": false,
-                    "error": "Failed to validate geographic access"
-                })),
-            )
-                .into_response();
+                "Failed to validate geographic access",
+            );
         }
     };
 
     // Validate sync_wait_ms if present
     if let Some(ms) = payload.sync_wait_ms {
-        if ms > 30000 {
-            return (
+        if ms > crawl_task::MAX_SYNC_WAIT_MS {
+            return error_response(
                 StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "success": false,
-                    "error": "sync_wait_ms must be <= 30000"
-                })),
-            )
-                .into_response();
+                format!("sync_wait_ms must be <= {}", crawl_task::MAX_SYNC_WAIT_MS),
+            );
         }
     }
 
@@ -130,25 +113,17 @@ where
                 error!("Failed to log geographic restriction action: {}", e);
             }
 
-            return (
+            return error_response(
                 StatusCode::FORBIDDEN,
-                Json(json!({
-                    "success": false,
-                    "error": format!("Access denied due to geographic restrictions: {}", reason)
-                })),
-            )
-                .into_response();
+                format!("Access denied due to geographic restrictions: {}", reason),
+            );
         }
         Err(e) => {
             error!("Failed to validate geographic restrictions: {:?}", e);
-            return (
+            return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "success": false,
-                    "error": "Failed to validate geographic access"
-                })),
-            )
-                .into_response();
+                "Failed to validate geographic access",
+            );
         }
     }
 
@@ -167,7 +142,9 @@ where
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
             // 处理同步等待逻辑
-            let sync_wait_ms = payload.sync_wait_ms.unwrap_or(5000);
+            let sync_wait_ms = payload
+                .sync_wait_ms
+                .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32);
             let mut waited_time_ms = 0u64;
 
             if sync_wait_ms > 0 {
@@ -179,7 +156,7 @@ where
                     &[task.id],
                     team_id,
                     sync_wait_ms,
-                    1000, // 基础轮询间隔1秒
+                    crawl_task::BASE_POLL_INTERVAL_MS,
                 )
                 .await
                 {
@@ -208,13 +185,6 @@ where
 
             (status_code, Json(response)).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "success": false,
-                "error": e.to_string()
-            })),
-        )
-            .into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }

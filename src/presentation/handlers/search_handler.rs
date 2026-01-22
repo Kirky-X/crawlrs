@@ -13,11 +13,13 @@ use std::sync::Arc;
 
 use crate::{
     application::dto::search_request::{SearchRequestDto, SearchResponseDto, SearchResultDto},
+    common::constants::crawl_task,
     domain::{
         repositories::task_repository::TaskRepository,
         services::rate_limiting_service::{RateLimitResult, RateLimitingService},
         services::search_service::{SearchQuery, SearchServiceError, SearchServiceTrait},
     },
+    presentation::handlers::response_builder::{error_response, success_response},
     presentation::handlers::task_handler::wait_for_tasks_completion,
     presentation::middleware::auth_middleware::AuthState,
 };
@@ -39,14 +41,10 @@ pub async fn search(
         .await
     {
         Ok(RateLimitResult::Denied { reason }) => {
-            return (
+            return error_response(
                 StatusCode::TOO_MANY_REQUESTS,
-                Json(json!({
-                    "success": false,
-                    "error": format!("Rate limit exceeded: {}", reason)
-                })),
-            )
-                .into_response();
+                format!("Rate limit exceeded: {}", reason),
+            );
         }
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
@@ -69,7 +67,9 @@ pub async fn search(
 
     // 2. 检查配额 (SearchService 内部已经处理了配额检查)
 
-    let sync_wait_ms = payload.sync_wait_ms.unwrap_or(5000);
+    let sync_wait_ms = payload
+        .sync_wait_ms
+        .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32);
 
     // 将 DTO 转换为领域参数
     let search_query = SearchQuery {
@@ -111,7 +111,7 @@ pub async fn search(
                                     &task_ids,
                                     team_id,
                                     sync_wait_ms,
-                                    1000,
+                                    crawl_task::BASE_POLL_INTERVAL_MS,
                                 )
                                 .await
                                 {
@@ -148,11 +148,11 @@ pub async fn search(
                 credits_used: response.credits_used,
             };
 
-            (StatusCode::OK, Json(response_dto)).into_response()
+            success_response(StatusCode::OK, response_dto)
         }
         Err(e) => {
             let (status, msg): (StatusCode, String) = e.into();
-            (status, Json(json!({ "error": msg }))).into_response()
+            error_response(status, msg)
         }
     }
 }

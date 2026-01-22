@@ -23,8 +23,8 @@ use crate::{
     domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService},
     infrastructure::cache::redis_client::RedisClient,
     presentation::handlers::response_builder::errors,
-    presentation::handlers::response_builder::{access_denied, success_response},
-    presentation::handlers::task_handler::wait_for_tasks_completion,
+    presentation::handlers::response_builder::success_response,
+    presentation::handlers::task_handler::handle_sync_wait_and_get_status,
     presentation::helpers::ssrf_helper::is_internal_url,
     presentation::middleware::auth_middleware::AuthState,
     queue::task_queue::TaskQueue,
@@ -46,7 +46,10 @@ pub async fn create_scrape(
     // 验证 sync_wait_ms 范围
     if let Some(ms) = payload.sync_wait_ms {
         if ms > MAX_SYNC_WAIT_MS {
-            return errors::unprocessable_entity("sync_wait_ms must be <= 30000");
+            return errors::unprocessable_entity(format!(
+                "sync_wait_ms must be <= {}",
+                MAX_SYNC_WAIT_MS
+            ));
         }
     }
 
@@ -66,15 +69,10 @@ pub async fn create_scrape(
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
         }) => {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": "Rate limit exceeded, please retry later",
-                    "retry_after_seconds": retry_after_seconds
-                })),
-            )
-                .into_response();
+            return errors::too_many_requests_with_retry(
+                "Rate limit exceeded, please retry later",
+                retry_after_seconds,
+            );
         }
         Err(e) => {
             error!("Rate limiting service error: {}", e);
@@ -109,31 +107,20 @@ pub async fn create_scrape(
 
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
-            // 处理同步等待逻辑
-            let mut waited_time_ms = 0u64;
-
-            if sync_wait_ms > 0 {
-                let wait_start = std::time::Instant::now();
-
-                // 调用智能轮询等待函数
-                match wait_for_tasks_completion(
-                    task_repository.as_ref(),
-                    &[task.id],
-                    team_id,
-                    sync_wait_ms,
-                    1000, // 基础轮询间隔1秒
-                )
-                .await
-                {
-                    Ok(_) => {
-                        waited_time_ms = wait_start.elapsed().as_millis() as u64;
-                    }
-                    Err(e) => {
-                        error!("Failed to wait for task completion: {:?}", e);
-                        // 即使等待失败，也返回已创建的任务信息
-                    }
+            // 使用公共函数处理同步等待
+            let wait_result = handle_sync_wait_and_get_status(
+                task_repository.as_ref(),
+                &[task.id],
+                team_id,
+                sync_wait_ms,
+            )
+            .await
+            .unwrap_or({
+                crate::presentation::handlers::task_handler::SyncWaitResult {
+                    waited_time_ms: 0,
+                    is_timeout: false,
                 }
-            }
+            });
 
             let response = ScrapeResponseDto {
                 success: true,
@@ -144,7 +131,7 @@ pub async fn create_scrape(
 
             // 根据同步等待结果设置响应状态
             let status_code = if sync_wait_ms > 0 {
-                if waited_time_ms >= sync_wait_ms as u64 {
+                if wait_result.is_timeout {
                     StatusCode::ACCEPTED // 同步等待超时
                 } else {
                     StatusCode::CREATED // 同步等待完成
@@ -174,7 +161,7 @@ pub async fn cancel_scrape(
     match repository.find_by_id(id).await {
         Ok(Some(task)) => {
             if task.team_id != team_id {
-                return access_denied();
+                return errors::forbidden("Access denied");
             }
 
             // Update task status to cancelled
@@ -210,7 +197,7 @@ pub async fn get_scrape_status(
     match task_repository.find_by_id(id).await {
         Ok(Some(task)) => {
             if task.team_id != team_id {
-                return access_denied();
+                return errors::forbidden("Access denied");
             }
 
             // Fetch scrape result if task is completed

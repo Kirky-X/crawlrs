@@ -243,11 +243,10 @@ impl axum::response::IntoResponse for AppError {
             }
         };
 
+        // 统一使用 { "success": false, "error": "message" } 格式
         let body = serde_json::json!({
-            "error": {
-                "code": status.as_u16(),
-                "message": message,
-            }
+            "success": false,
+            "error": message,
         });
 
         (status, axum::Json(body)).into_response()

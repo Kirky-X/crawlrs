@@ -404,3 +404,23 @@ fn default_memory_ttl() -> u64 {
 fn default_redis_ttl() -> u64 {
     7200 // 增加到 2 小时
 }
+
+/// CORS 配置设置
+///
+/// 配置跨域资源共享（CORS）策略
+///
+/// # 字段说明
+///
+/// * `allowed_origins` - 允许的来源列表，逗号分隔
+///   - 使用 "*" 允许所有来源（仅限开发环境）
+///   - 使用具体域名列表限制来源（生产环境推荐）
+///   - 默认为 "*"
+///
+/// # 安全提示
+///
+/// 生产环境应配置具体的域名列表，避免使用通配符 "*"
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct CorsSettings {
+    /// 允许的跨域来源列表（逗号分隔）
+    pub allowed_origins: String,
+}
