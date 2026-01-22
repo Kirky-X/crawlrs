@@ -53,37 +53,22 @@ pub enum CrawlUseCaseError {
 /// 爬取用例
 ///
 /// 处理爬取任务的核心业务逻辑，包括创建、查询、取消等操作
-///
-/// # 类型参数
-///
-/// * `CR` - 爬取仓库类型，必须实现 `CrawlRepository`
-/// * `TR` - 任务仓库类型，必须实现 `TaskRepository`
-/// * `WR` - Webhook 仓库类型，必须实现 `WebhookRepository`
-/// * `SRR` - 抓取结果仓库类型，必须实现 `ScrapeResultRepository`
-/// * `GR` - 地理限制仓库类型，必须实现 `GeoRestrictionRepository`
-pub struct CrawlUseCase<CR, TR, WR, SRR, GR> {
+pub struct CrawlUseCase {
     /// 爬取任务仓库
-    crawl_repo: Arc<CR>,
+    crawl_repo: Arc<dyn CrawlRepository>,
     /// 任务仓库
-    task_repo: Arc<TR>,
+    task_repo: Arc<dyn TaskRepository>,
     /// Webhook 仓库
-    webhook_repo: Arc<WR>,
+    webhook_repo: Arc<dyn WebhookRepository>,
     /// 抓取结果仓库
-    scrape_result_repo: Arc<SRR>,
+    scrape_result_repo: Arc<dyn ScrapeResultRepository>,
     /// 地理限制仓库
-    geo_restriction_repo: Arc<GR>,
+    geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     /// 团队服务
     team_service: Arc<TeamService>,
 }
 
-impl<CR, TR, WR, SRR, GR> CrawlUseCase<CR, TR, WR, SRR, GR>
-where
-    CR: CrawlRepository + 'static,
-    TR: TaskRepository + 'static,
-    WR: WebhookRepository + 'static,
-    SRR: ScrapeResultRepository + 'static,
-    GR: GeoRestrictionRepository + 'static,
-{
+impl CrawlUseCase {
     /// 创建新的爬取用例实例
     ///
     /// # 参数
@@ -99,11 +84,11 @@ where
     ///
     /// 返回新的 `CrawlUseCase` 实例
     pub fn new(
-        crawl_repo: Arc<CR>,
-        task_repo: Arc<TR>,
-        webhook_repo: Arc<WR>,
-        scrape_result_repo: Arc<SRR>,
-        geo_restriction_repo: Arc<GR>,
+        crawl_repo: Arc<dyn CrawlRepository>,
+        task_repo: Arc<dyn TaskRepository>,
+        webhook_repo: Arc<dyn WebhookRepository>,
+        scrape_result_repo: Arc<dyn ScrapeResultRepository>,
+        geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
         team_service: Arc<TeamService>,
     ) -> Self {
         Self {
@@ -114,14 +99,6 @@ where
             geo_restriction_repo,
             team_service,
         }
-    }
-
-    /// 获取 Webhook 仓库引用
-    ///
-    /// 允许未使用的 webhook_repo 直到完全集成
-    #[allow(dead_code)]
-    pub fn webhook_repo(&self) -> &Arc<WR> {
-        &self.webhook_repo
     }
 
     /// 获取爬取任务的结果

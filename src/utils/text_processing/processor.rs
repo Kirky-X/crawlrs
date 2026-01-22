@@ -28,6 +28,43 @@ const ENCODING_PATTERN_HTML_META: &str = "html_meta";
 const ENCODING_PATTERN_XML_DECLARATION: &str = "xml_declaration";
 const ENCODING_PATTERN_HTTP_CONTENT_TYPE: &str = "http_content_type";
 
+/// 初始化编码检测正则表达式模式（公共函数，消除重复代码）
+///
+/// 此函数被 WebContentProcessorComponent 和 WebContentProcessor 共用
+pub fn init_encoding_patterns() -> Result<HashMap<&'static str, Regex>, TextProcessingError> {
+    let mut patterns = HashMap::with_capacity(4);
+
+    patterns.insert(
+        ENCODING_PATTERN_HTML_META,
+        Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#)
+            .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
+    );
+    patterns.insert(
+        ENCODING_PATTERN_XML_DECLARATION,
+        Regex::new(r#"(?i)<\?xml[^>]*encoding\s*=\s*["']?([^"'>\s]+)["']?[^>]*\?>"#)
+            .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
+    );
+    patterns.insert(
+        ENCODING_PATTERN_HTTP_CONTENT_TYPE,
+        Regex::new(r#"(?i)charset\s*=\s*([^;\s]+)"#)
+            .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
+    );
+    Ok(patterns)
+}
+
+/// 检测文本内容是否为 HTML 结构
+///
+/// 用于判断内容是否包含 HTML 标签
+pub fn detect_html_structure(content: &str) -> bool {
+    content.contains("<html")
+        || content.contains("<!DOCTYPE")
+        || content.contains("<head")
+        || content.contains("<body")
+        || content.contains("<div")
+        || content.contains("<p>")
+        || content.contains("<a ")
+}
+
 /// 文本编码处理器 trait（支持 DI）
 #[async_trait]
 pub trait TextEncodingProcessorTrait: Interface + Send + Sync {
@@ -102,30 +139,10 @@ impl WebContentProcessorComponent {
     pub fn new(text_processor: Arc<dyn TextEncodingProcessorTrait>) -> Self {
         Self {
             text_processor,
-            encoding_patterns: Self::init_encoding_patterns()
+            encoding_patterns: init_encoding_patterns()
                 .expect("Failed to initialize encoding patterns"),
             html_cleaner: HtmlCleaner::new(),
         }
-    }
-    fn init_encoding_patterns() -> Result<HashMap<&'static str, Regex>, TextProcessingError> {
-        let mut patterns = HashMap::with_capacity(4);
-
-        patterns.insert(
-            ENCODING_PATTERN_HTML_META,
-            Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#)
-                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
-        );
-        patterns.insert(
-            ENCODING_PATTERN_XML_DECLARATION,
-            Regex::new(r#"(?i)<\?xml[^>]*encoding\s*=\s*["']?([^"'>\s]+)["']?[^>]*\?>"#)
-                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
-        );
-        patterns.insert(
-            ENCODING_PATTERN_HTTP_CONTENT_TYPE,
-            Regex::new(r#"(?i)charset\s*=\s*([^;\s]+)"#)
-                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
-        );
-        Ok(patterns)
     }
 }
 
@@ -283,7 +300,7 @@ impl WebContentProcessor {
         Self {
             text_processor: Arc::new(text_processor),
             html_cleaner: HtmlCleaner::new(),
-            encoding_patterns: Self::init_encoding_patterns()
+            encoding_patterns: init_encoding_patterns()
                 .expect("Failed to initialize encoding patterns"),
         }
     }
@@ -293,30 +310,9 @@ impl WebContentProcessor {
         Self {
             text_processor,
             html_cleaner: HtmlCleaner::new(),
-            encoding_patterns: Self::init_encoding_patterns()
+            encoding_patterns: init_encoding_patterns()
                 .expect("Failed to initialize encoding patterns"),
         }
-    }
-
-    fn init_encoding_patterns() -> Result<HashMap<&'static str, Regex>, TextProcessingError> {
-        let mut patterns = HashMap::with_capacity(4);
-
-        patterns.insert(
-            ENCODING_PATTERN_HTML_META,
-            Regex::new(r#"(?i)<meta[^>]*charset\s*=\s*["']?([^"'>\s]+)["']?[^>]*>"#)
-                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
-        );
-        patterns.insert(
-            ENCODING_PATTERN_XML_DECLARATION,
-            Regex::new(r#"(?i)<\?xml[^>]*encoding\s*=\s*["']?([^"'>\s]+)["']?[^>]*\?>"#)
-                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
-        );
-        patterns.insert(
-            ENCODING_PATTERN_HTTP_CONTENT_TYPE,
-            Regex::new(r#"(?i)charset\s*=\s*([^;\s]+)"#)
-                .map_err(|e| TextProcessingError::RegexCompilationError(e.to_string()))?,
-        );
-        Ok(patterns)
     }
 
     pub fn process_web_content(

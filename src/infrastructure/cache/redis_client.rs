@@ -47,6 +47,32 @@ impl RedisClient {
         Ok(value)
     }
 
+    /// 批量获取多个键的值 (MGET)
+    ///
+    /// 性能优化：使用 Redis MGET 命令在单次网络往返中获取多个键
+    ///
+    /// # 参数
+    ///
+    /// * `keys` - 键列表
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(Vec<Option<String>>)` - 每个键对应的值，不存在的键返回 None
+    /// * `Err(anyhow::Error)` - 获取过程中出现的错误
+    pub async fn mget(&self, keys: &[String]) -> Result<Vec<Option<String>>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut con = self.client.get_multiplexed_async_connection().await?;
+
+        // 使用 MGET 命令批量获取
+        let mut cmd = redis::cmd("MGET");
+        cmd.arg(keys);
+        let values: Vec<Option<String>> = cmd.query_async(&mut con).await?;
+        Ok(values)
+    }
+
     /// 设置键值对并指定过期时间
     ///
     /// # 参数

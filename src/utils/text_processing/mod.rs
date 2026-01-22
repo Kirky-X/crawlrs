@@ -35,7 +35,7 @@ pub use processor::{
     process_crawled_batch_with_processor, process_crawled_content_with_processor,
     process_web_content_with_processor, ContentQuality, CrawlProcessingError, CrawlProcessorConfig,
     CrawlTextProcessor, ProcessedCrawlContent, ProcessedWebContent, WebContentError,
-    WebContentProcessor,
+    WebContentProcessor, detect_html_structure, init_encoding_patterns,
 };
 
 /// 初始化文本处理模块（可选，用于预热默认实例）

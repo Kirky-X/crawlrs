@@ -385,12 +385,34 @@ impl CacheStrategy for RedisCacheStrategy {
     }
 
     async fn get_batch(&self, keys: &[String]) -> Result<Vec<Option<Vec<SearchResult>>>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 性能优化：使用 MGET 命令在单次网络往返中获取多个键
+        let cache_keys: Vec<String> = keys.iter().map(|k| self.generate_cache_key(k)).collect();
+        let values = self.redis_client.mget(&cache_keys).await?;
+
         let mut results = Vec::with_capacity(keys.len());
 
-        for key in keys {
-            match self.get(key).await {
-                Ok(result) => results.push(result),
-                Err(_) => results.push(None),
+        for value in values {
+            match value {
+                Some(json_str) => {
+                    match serde_json::from_str::<Vec<SearchResult>>(&json_str) {
+                        Ok(results_vec) => {
+                            self.stats_collector.record_hit();
+                            results.push(Some(results_vec));
+                        }
+                        Err(_) => {
+                            self.stats_collector.record_miss();
+                            results.push(None);
+                        }
+                    }
+                }
+                None => {
+                    self.stats_collector.record_miss();
+                    results.push(None);
+                }
             }
         }
 

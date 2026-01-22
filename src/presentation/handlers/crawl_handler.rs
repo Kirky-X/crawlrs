@@ -25,7 +25,6 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::domain::services::team_service::TeamService;
-use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::presentation::handlers::extract_task_ids;
 use crate::presentation::handlers::response_builder::errors;
 use crate::presentation::handlers::response_builder::success_response;
@@ -35,26 +34,18 @@ use crate::presentation::middleware::auth_middleware::AuthState;
 
 /// 创建新的爬取任务
 #[allow(clippy::too_many_arguments)]
-pub async fn create_crawl<CR, TR, WR, SRR, GR>(
-    Extension(crawl_repo): Extension<Arc<CR>>,
-    Extension(task_repo): Extension<Arc<TR>>,
-    Extension(webhook_repo): Extension<Arc<WR>>,
-    Extension(scrape_result_repo): Extension<Arc<SRR>>,
-    Extension(geo_restriction_repo): Extension<Arc<GR>>,
+pub async fn create_crawl(
+    Extension(crawl_repo): Extension<Arc<dyn CrawlRepository>>,
+    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
+    Extension(webhook_repo): Extension<Arc<dyn WebhookRepository>>,
+    Extension(scrape_result_repo): Extension<Arc<dyn ScrapeResultRepository>>,
+    Extension(geo_restriction_repo): Extension<Arc<dyn GeoRestrictionRepository>>,
     Extension(team_service): Extension<Arc<TeamService>>,
-    Extension(task_repository_impl): Extension<Arc<TaskRepositoryImpl>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<CrawlRequestDto>,
-) -> impl IntoResponse
-where
-    CR: CrawlRepository + 'static,
-    TR: TaskRepository + 'static,
-    WR: WebhookRepository + 'static,
-    SRR: ScrapeResultRepository + 'static,
-    GR: GeoRestrictionRepository + 'static,
-{
+) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     let api_key = auth_state.api_key_id.to_string();
 
@@ -109,6 +100,9 @@ where
         return errors::payment_required(e.to_string());
     }
 
+    // 克隆 task_repo 供后续使用（因为 use_case 会获取所有权）
+    let task_repo_for_wait = Arc::clone(&task_repo);
+
     let use_case = CrawlUseCase::new(
         crawl_repo,
         task_repo,
@@ -134,7 +128,7 @@ where
                 // 获取爬取任务的初始任务ID
                 // 注意：这里我们需要获取与爬取任务关联的任务ID
                 // 由于create_crawl返回的是Crawl对象，我们需要查询相关的任务
-                match task_repository_impl.find_by_crawl_id(crawl.id).await {
+                match task_repo_for_wait.find_by_crawl_id(crawl.id).await {
                     Ok(tasks) => {
                         if !tasks.is_empty() {
                             // 使用辅助方法提取任务ID
@@ -142,7 +136,7 @@ where
 
                             // 调用智能轮询等待函数
                             match wait_for_tasks_completion(
-                                task_repository_impl.as_ref(),
+                                task_repo_for_wait.as_ref(),
                                 &task_ids,
                                 team_id,
                                 sync_wait_ms,
@@ -184,28 +178,21 @@ where
 }
 
 /// 获取爬取任务详情
-pub async fn get_crawl<CR, TR, WR, SRR, GR>(
-    Extension(crawl_repo): Extension<Arc<CR>>,
-    Extension(task_repo): Extension<Arc<TR>>,
-    Extension(webhook_repo): Extension<Arc<WR>>,
-    Extension(scrape_result_repo): Extension<Arc<SRR>>,
-    Extension(_geo_restriction_repo): Extension<Arc<GR>>,
+pub async fn get_crawl(
+    Extension(crawl_repo): Extension<Arc<dyn CrawlRepository>>,
+    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
+    Extension(webhook_repo): Extension<Arc<dyn WebhookRepository>>,
+    Extension(scrape_result_repo): Extension<Arc<dyn ScrapeResultRepository>>,
+    Extension(geo_restriction_repo): Extension<Arc<dyn GeoRestrictionRepository>>,
     Extension(team_service): Extension<Arc<TeamService>>,
     Path(crawl_id): Path<Uuid>,
-) -> impl IntoResponse
-where
-    CR: CrawlRepository + 'static,
-    TR: TaskRepository + 'static,
-    WR: WebhookRepository + 'static,
-    SRR: ScrapeResultRepository + 'static,
-    GR: GeoRestrictionRepository + 'static,
-{
+) -> impl IntoResponse {
     let use_case = CrawlUseCase::new(
         crawl_repo,
         task_repo,
         webhook_repo,
         scrape_result_repo,
-        _geo_restriction_repo.clone(),
+        geo_restriction_repo,
         team_service,
     );
     match use_case.get_crawl(crawl_id).await {
@@ -220,30 +207,23 @@ where
 
 /// 获取爬取任务结果
 #[allow(clippy::too_many_arguments)]
-pub async fn get_crawl_results<CR, TR, WR, SRR, GR>(
-    Extension(crawl_repo): Extension<Arc<CR>>,
-    Extension(task_repo): Extension<Arc<TR>>,
-    Extension(webhook_repo): Extension<Arc<WR>>,
-    Extension(scrape_result_repo): Extension<Arc<SRR>>,
-    Extension(_geo_restriction_repo): Extension<Arc<GR>>,
+pub async fn get_crawl_results(
+    Extension(crawl_repo): Extension<Arc<dyn CrawlRepository>>,
+    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
+    Extension(webhook_repo): Extension<Arc<dyn WebhookRepository>>,
+    Extension(scrape_result_repo): Extension<Arc<dyn ScrapeResultRepository>>,
+    Extension(geo_restriction_repo): Extension<Arc<dyn GeoRestrictionRepository>>,
     Extension(auth_state): Extension<AuthState>,
     Extension(team_service): Extension<Arc<TeamService>>,
     Path(crawl_id): Path<Uuid>,
-) -> impl IntoResponse
-where
-    CR: CrawlRepository + 'static,
-    TR: TaskRepository + 'static,
-    WR: WebhookRepository + 'static,
-    SRR: ScrapeResultRepository + 'static,
-    GR: GeoRestrictionRepository + 'static,
-{
+) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     let use_case = CrawlUseCase::new(
         crawl_repo,
         task_repo,
         webhook_repo,
         scrape_result_repo,
-        _geo_restriction_repo.clone(),
+        geo_restriction_repo,
         team_service,
     );
 
@@ -258,30 +238,23 @@ where
 
 /// 取消进行中的爬取任务
 #[allow(clippy::too_many_arguments)]
-pub async fn cancel_crawl<CR, TR, WR, SRR, GR>(
-    Extension(crawl_repo): Extension<Arc<CR>>,
-    Extension(task_repo): Extension<Arc<TR>>,
-    Extension(webhook_repo): Extension<Arc<WR>>,
-    Extension(scrape_result_repo): Extension<Arc<SRR>>,
-    Extension(_geo_restriction_repo): Extension<Arc<GR>>,
+pub async fn cancel_crawl(
+    Extension(crawl_repo): Extension<Arc<dyn CrawlRepository>>,
+    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
+    Extension(webhook_repo): Extension<Arc<dyn WebhookRepository>>,
+    Extension(scrape_result_repo): Extension<Arc<dyn ScrapeResultRepository>>,
+    Extension(geo_restriction_repo): Extension<Arc<dyn GeoRestrictionRepository>>,
     Extension(auth_state): Extension<AuthState>,
     Extension(team_service): Extension<Arc<TeamService>>,
     Path(crawl_id): Path<Uuid>,
-) -> impl IntoResponse
-where
-    CR: CrawlRepository + 'static,
-    TR: TaskRepository + 'static,
-    WR: WebhookRepository + 'static,
-    SRR: ScrapeResultRepository + 'static,
-    GR: GeoRestrictionRepository + 'static,
-{
+) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     let use_case = CrawlUseCase::new(
         crawl_repo,
         task_repo,
         webhook_repo,
         scrape_result_repo,
-        _geo_restriction_repo.clone(),
+        geo_restriction_repo,
         team_service,
     );
 

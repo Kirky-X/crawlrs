@@ -209,6 +209,40 @@ path = "src/main.rs"
 # name = "crawlrs-shaku"
 # path = "src/main_shaku.rs"
 
+# =============================================================================
+# Build Optimization Profiles
+# =============================================================================
+# Optimized release builds for production deployment
+
+[profile.release]
+# Link-Time Optimization: improves runtime performance by enabling
+# cross-crate optimizations (10-20% performance improvement)
+lto = "thin"
+
+# Reduce code generation units to 1 for maximum optimization
+# Trade-off: longer compile time, but better optimization
+codegen-units = 1
+
+# Maximum optimization level
+opt-level = 3
+
+# Strip debug symbols to reduce binary size (~10-20% size reduction)
+strip = "symbols"
+
+# Enable additional optimizations for release builds
+panic = "abort"
+overflow-checks = true
+
+[profile.bench]
+# Use release profile settings for benchmarks
+inherits = "release"
+debug = true
+
+[profile.dev]
+# Faster incremental builds for development
+opt-level = 0
+debug = true
+
 [workspace]
 # members = ["examples"]  # Removed: examples is now an independent workspace
 

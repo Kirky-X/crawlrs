@@ -5,9 +5,7 @@
 
 pub mod task;
 
-use crate::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crate::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
-use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
@@ -43,47 +41,19 @@ pub fn routes() -> Router {
         )
         .route(
             "/v1/crawl",
-            post(
-                crawl_handler::create_crawl::<
-                    CrawlRepositoryImpl,
-                    TaskRepositoryImpl,
-                    WebhookRepoImpl,
-                    ScrapeResultRepositoryImpl,
-                    DatabaseGeoRestrictionRepository,
-                >,
-            ),
+            post(crawl_handler::create_crawl),
         )
         .route(
             "/v1/crawl/{id}",
-            get(crawl_handler::get_crawl::<
-                CrawlRepositoryImpl,
-                TaskRepositoryImpl,
-                WebhookRepoImpl,
-                ScrapeResultRepositoryImpl,
-                DatabaseGeoRestrictionRepository,
-            >),
+            get(crawl_handler::get_crawl),
         )
         .route(
             "/v1/crawl/{id}/results",
-            get(crawl_handler::get_crawl_results::<
-                CrawlRepositoryImpl,
-                TaskRepositoryImpl,
-                WebhookRepoImpl,
-                ScrapeResultRepositoryImpl,
-                DatabaseGeoRestrictionRepository,
-            >),
+            get(crawl_handler::get_crawl_results),
         )
         .route(
             "/v1/crawl/{id}",
-            delete(
-                crawl_handler::cancel_crawl::<
-                    CrawlRepositoryImpl,
-                    TaskRepositoryImpl,
-                    WebhookRepoImpl,
-                    ScrapeResultRepositoryImpl,
-                    DatabaseGeoRestrictionRepository,
-                >,
-            ),
+            delete(crawl_handler::cancel_crawl),
         )
         .route("/v1/search", post(search_handler::search))
         .route(

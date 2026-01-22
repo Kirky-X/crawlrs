@@ -142,6 +142,46 @@ impl From<AppError> for ApiErrorResponse {
     }
 }
 
+/// 从 EngineError 转换为 AppError
+///
+/// 统一引擎层的错误到应用层错误处理
+impl From<crate::engines::engine_client::EngineError> for AppError {
+    fn from(err: crate::engines::engine_client::EngineError) -> Self {
+        match err {
+            crate::engines::engine_client::EngineError::RequestFailed(msg) => {
+                AppError::Engine(msg)
+            }
+            crate::engines::engine_client::EngineError::Timeout(duration) => {
+                AppError::Timeout(format!("Request timed out after {:?}", duration))
+            }
+            crate::engines::engine_client::EngineError::NoEnginesAvailable => {
+                AppError::Engine("No scraping engines available".to_string())
+            }
+            crate::engines::engine_client::EngineError::InvalidUrl(msg) => {
+                AppError::Validation(msg)
+            }
+            crate::engines::engine_client::EngineError::SsrfProtection(msg) => {
+                AppError::PermissionDenied(format!("SSRF protection triggered: {}", msg))
+            }
+            crate::engines::engine_client::EngineError::BrowserError(msg) => {
+                AppError::Engine(format!("Browser error: {}", msg))
+            }
+            crate::engines::engine_client::EngineError::Expired => {
+                AppError::Timeout("Request expired".to_string())
+            }
+            crate::engines::engine_client::EngineError::AllEnginesFailed(msg) => {
+                AppError::Engine(format!("All engines failed: {}", msg))
+            }
+            crate::engines::engine_client::EngineError::Other(msg) => {
+                AppError::Engine(msg)
+            }
+            crate::engines::engine_client::EngineError::Internal(msg) => {
+                AppError::Engine(msg)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

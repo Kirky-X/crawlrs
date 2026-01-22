@@ -13,10 +13,9 @@
 //! This module provides a `RegexCacheTrait` interface for dependency injection.
 //! Use `RegexCacheComponent` to register it in your DI container.
 
-use parking_lot::Mutex;
+use dashmap::DashMap;
 use regex::Regex;
 use shaku::{Component, Interface};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// 正则缓存 trait（支持 DI）
@@ -35,7 +34,10 @@ pub trait RegexCacheTrait: Interface + Send + Sync {
     fn is_empty(&self) -> bool;
 }
 
-/// Thread-safe regex cache with lazy initialization.
+/// Thread-safe regex cache with lazy initialization using DashMap.
+///
+/// Uses `DashMap` for lock-free concurrent access, providing better
+/// performance under high concurrency compared to mutex-based solutions.
 ///
 /// # Example
 ///
@@ -47,7 +49,7 @@ pub trait RegexCacheTrait: Interface + Send + Sync {
 /// ```
 #[derive(Clone)]
 pub struct RegexCache {
-    cache: Arc<Mutex<HashMap<String, Regex>>>,
+    cache: Arc<DashMap<String, Regex>>,
 }
 
 impl RegexCache {
@@ -55,7 +57,7 @@ impl RegexCache {
     #[inline]
     pub fn new() -> Self {
         Self {
-            cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
+            cache: Arc::new(DashMap::with_capacity_and_shard_amount(256, 32)),
         }
     }
 
@@ -66,14 +68,12 @@ impl RegexCache {
     /// Returns an error if regex compilation fails.
     #[inline]
     pub fn get_or_insert(&self, pattern: &str) -> Result<Regex, String> {
-        let mut cache = self.cache.lock();
-
-        if let Some(regex) = cache.get(pattern) {
+        if let Some(regex) = self.cache.get(pattern) {
             return Ok(regex.clone());
         }
 
         let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
-        cache.insert(pattern.to_string(), regex.clone());
+        self.cache.insert(pattern.to_string(), regex.clone());
         Ok(regex)
     }
 
@@ -94,22 +94,19 @@ impl RegexCache {
     /// Clears all cached regex patterns.
     #[inline]
     pub fn clear(&self) {
-        let mut cache = self.cache.lock();
-        cache.clear();
+        self.cache.clear();
     }
 
     /// Returns the current number of cached regex patterns.
     #[inline]
     pub fn len(&self) -> usize {
-        let cache = self.cache.lock();
-        cache.len()
+        self.cache.len()
     }
 
     /// Returns true if the cache is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        let cache = self.cache.lock();
-        cache.is_empty()
+        self.cache.is_empty()
     }
 }
 
@@ -119,14 +116,14 @@ impl RegexCache {
 #[derive(Component)]
 #[shaku(interface = RegexCacheTrait)]
 pub struct RegexCacheComponent {
-    cache: Arc<Mutex<HashMap<String, Regex>>>,
+    cache: Arc<DashMap<String, Regex>>,
 }
 
 impl RegexCacheComponent {
     /// 创建新的正则缓存组件
     pub fn new() -> Self {
         Self {
-            cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
+            cache: Arc::new(DashMap::with_capacity_and_shard_amount(256, 32)),
         }
     }
 }
@@ -139,14 +136,12 @@ impl Default for RegexCacheComponent {
 
 impl RegexCacheTrait for RegexCacheComponent {
     fn get_or_insert(&self, pattern: &str) -> Result<Regex, String> {
-        let mut cache = self.cache.lock();
-
-        if let Some(regex) = cache.get(pattern) {
+        if let Some(regex) = self.cache.get(pattern) {
             return Ok(regex.clone());
         }
 
         let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
-        cache.insert(pattern.to_string(), regex.clone());
+        self.cache.insert(pattern.to_string(), regex.clone());
         Ok(regex)
     }
 
@@ -156,18 +151,15 @@ impl RegexCacheTrait for RegexCacheComponent {
     }
 
     fn clear(&self) {
-        let mut cache = self.cache.lock();
-        cache.clear();
+        self.cache.clear();
     }
 
     fn len(&self) -> usize {
-        let cache = self.cache.lock();
-        cache.len()
+        self.cache.len()
     }
 
     fn is_empty(&self) -> bool {
-        let cache = self.cache.lock();
-        cache.is_empty()
+        self.cache.is_empty()
     }
 }
 

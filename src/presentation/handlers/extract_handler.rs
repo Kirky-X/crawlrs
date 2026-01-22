@@ -17,8 +17,8 @@ use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::config::settings::Settings;
 use crate::domain::models::task::{Task, TaskType};
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
+use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::team_service::TeamService;
-use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
@@ -28,7 +28,7 @@ use std::sync::Arc;
 pub async fn extract<GR>(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
     Extension(_settings): Extension<Arc<Settings>>,
-    Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
+    Extension(task_repository): Extension<Arc<dyn TaskRepository>>,
     Extension(geo_restriction_repo): Extension<Arc<GR>>,
     Extension(team_service): Extension<Arc<TeamService>>,
     Extension(auth_state): Extension<AuthState>,

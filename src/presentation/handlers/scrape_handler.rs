@@ -18,15 +18,11 @@ use crate::{
     config::settings::Settings,
     domain::models::task::{Task, TaskType},
     domain::repositories::{
-        scrape_result_repository::ScrapeResultRepository, task_repository::TaskRepository,
+        scrape_result_repository::ScrapeResultRepository,
+        task_repository::TaskRepository,
     },
     domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService},
-    infrastructure::{
-        cache::redis_client::RedisClient,
-        repositories::{
-            scrape_result_repo_impl::ScrapeResultRepositoryImpl, task_repo_impl::TaskRepositoryImpl,
-        },
-    },
+    infrastructure::cache::redis_client::RedisClient,
     presentation::handlers::response_builder::errors,
     presentation::handlers::response_builder::{access_denied, success_response},
     presentation::handlers::task_handler::wait_for_tasks_completion,
@@ -40,7 +36,7 @@ pub async fn create_scrape(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
     Extension(_redis_client): Extension<Arc<RedisClient>>,
     Extension(_settings): Extension<Arc<Settings>>,
-    Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
+    Extension(task_repository): Extension<Arc<dyn TaskRepository>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
     Json(payload): Json<ScrapeRequestDto>,
@@ -172,7 +168,7 @@ pub async fn create_scrape(
 
 pub async fn cancel_scrape(
     Path(id): Path<Uuid>,
-    Extension(repository): Extension<Arc<TaskRepositoryImpl>>,
+    Extension(repository): Extension<Arc<dyn TaskRepository>>,
     Extension(auth_state): Extension<AuthState>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
@@ -207,8 +203,8 @@ pub async fn cancel_scrape(
 
 pub async fn get_scrape_status(
     Path(id): Path<Uuid>,
-    Extension(task_repository): Extension<Arc<TaskRepositoryImpl>>,
-    Extension(result_repository): Extension<Arc<ScrapeResultRepositoryImpl>>,
+    Extension(task_repository): Extension<Arc<dyn TaskRepository>>,
+    Extension(result_repository): Extension<Arc<dyn ScrapeResultRepository>>,
     Extension(auth_state): Extension<AuthState>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;

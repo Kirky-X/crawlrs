@@ -7,8 +7,7 @@
 
 use crate::config::settings::Settings;
 use crate::di::infrastructure_module::{
-    CrawlRepositoryComponent, GeoRestrictionRepositoryComponent, ScrapeResultRepositoryComponent,
-    TaskRepositoryComponent,
+    GeoRestrictionRepositoryComponent,
 };
 use crate::di::AppState;
 use crate::di::AppStateExt;
@@ -91,47 +90,19 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
         )
         .route(
             "/v1/crawl",
-            post(
-                crawl_handler::create_crawl::<
-                    CrawlRepositoryComponent,
-                    TaskRepositoryComponent,
-                    WebhookRepoImpl,
-                    ScrapeResultRepositoryComponent,
-                    GeoRestrictionRepositoryComponent,
-                >,
-            ),
+            post(crawl_handler::create_crawl),
         )
         .route(
             "/v1/crawl/{id}",
-            get(crawl_handler::get_crawl::<
-                CrawlRepositoryComponent,
-                TaskRepositoryComponent,
-                WebhookRepoImpl,
-                ScrapeResultRepositoryComponent,
-                GeoRestrictionRepositoryComponent,
-            >),
+            get(crawl_handler::get_crawl),
         )
         .route(
             "/v1/crawl/{id}/results",
-            get(crawl_handler::get_crawl_results::<
-                CrawlRepositoryComponent,
-                TaskRepositoryComponent,
-                WebhookRepoImpl,
-                ScrapeResultRepositoryComponent,
-                GeoRestrictionRepositoryComponent,
-            >),
+            get(crawl_handler::get_crawl_results),
         )
         .route(
             "/v1/crawl/{id}",
-            delete(
-                crawl_handler::cancel_crawl::<
-                    CrawlRepositoryComponent,
-                    TaskRepositoryComponent,
-                    WebhookRepoImpl,
-                    ScrapeResultRepositoryComponent,
-                    GeoRestrictionRepositoryComponent,
-                >,
-            ),
+            delete(crawl_handler::cancel_crawl),
         )
         .route("/v1/search", post(search_handler::search))
         .route(
