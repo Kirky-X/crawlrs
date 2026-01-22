@@ -7,7 +7,9 @@ use super::super::helpers::{create_test_app, create_test_app_no_worker};
 use chrono::Utc;
 use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::TaskRepository;
+use crawlrs::infrastructure::database::entities::task as task_entity;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -29,8 +31,6 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     let worker2_id = Uuid::new_v4();
 
     // Clean up any existing tasks
-    use crawlrs::infrastructure::database::entities::task as task_entity;
-    use sea_orm::EntityTrait;
     task_entity::Entity::delete_many()
         .exec(app.db_pool.as_ref())
         .await
@@ -211,8 +211,6 @@ async fn test_repository_acquire_next_task() {
     let worker_id = Uuid::new_v4();
 
     // Clean up any existing tasks
-    use crawlrs::infrastructure::database::entities::task as task_entity;
-    use sea_orm::EntityTrait;
     task_entity::Entity::delete_many()
         .exec(app.db_pool.as_ref())
         .await
@@ -290,6 +288,13 @@ async fn test_repository_acquire_next_task() {
         .await
         .expect("Failed to acquire task");
     assert!(no_more_tasks.is_none());
+
+    // 清理测试创建的任务
+    task_entity::Entity::delete_many()
+        .filter(task_entity::Column::TeamId.eq(team_id))
+        .exec(app.db_pool.as_ref())
+        .await
+        .ok();
 }
 
 /// 测试标记任务状态变更
@@ -447,8 +452,6 @@ async fn test_reset_stuck_tasks() {
     let team_id = app.team_id;
 
     // Clean up any existing tasks
-    use crawlrs::infrastructure::database::entities::task as task_entity;
-    use sea_orm::EntityTrait;
     task_entity::Entity::delete_many()
         .exec(app.db_pool.as_ref())
         .await

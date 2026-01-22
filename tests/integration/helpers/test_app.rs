@@ -6,6 +6,11 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+
+/// Global mutex to ensure test serialization
+static TEST_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Minimal TestApp struct for testing
 pub struct TestApp {
@@ -13,6 +18,8 @@ pub struct TestApp {
     pub team_id: Uuid,
     pub redis_port: u16,
     pub redis_process: Option<std::process::Child>,
+    /// Lock guard to ensure test serialization
+    pub _lock_guard: Option<std::sync::MutexGuard<'static, ()>>,
 }
 
 impl TestApp {
@@ -32,6 +39,9 @@ impl Drop for TestApp {
 
 /// Create a minimal test app without starting workers
 pub async fn create_test_app_no_worker() -> TestApp {
+    // Acquire lock to serialize test execution
+    let _guard = TEST_MUTEX.lock().unwrap();
+
     let db_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
         let db_password =
             std::env::var("TEST_DATABASE_PASSWORD").unwrap_or_else(|_| "password".to_string());
@@ -60,10 +70,11 @@ pub async fn create_test_app_no_worker() -> TestApp {
     // 使用 sqlx 直接清理（更可靠）
     if db_url.starts_with("postgres://") {
         let sqlx_pool = sqlx::PgPool::connect(&db_url).await.expect("Failed to connect to sqlx pool");
-        sqlx::query("DELETE FROM tasks")
+        let result = sqlx::query("DELETE FROM tasks")
             .execute(&sqlx_pool)
             .await
             .expect("Failed to delete tasks");
+        eprintln!("DEBUG: Cleaned up {} tasks at start", result.rows_affected());
     }
 
     let start_port = 8000;
@@ -92,6 +103,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
         team_id,
         redis_port,
         redis_process,
+        _lock_guard: Some(_guard),
     }
 }
 
