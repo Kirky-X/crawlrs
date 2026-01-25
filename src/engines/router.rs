@@ -25,7 +25,7 @@ use tracing::{info, warn};
 
 /// Trait for EngineRouter - enables dependency injection
 #[async_trait::async_trait]
-pub trait EngineRouterTrait: Send + Sync {
+pub trait EngineRouterTrait: shaku::Interface + Send + Sync {
     /// Route a request to the optimal engine
     async fn route(
         &self,
@@ -695,6 +695,7 @@ impl EngineRouter {
 
             let attempt_request = InternalScrapeRequest {
                 url: request.url.clone(),
+                method: request.method,
                 headers: request.headers.clone(),
                 timeout: remaining,
                 needs_js: request.needs_js,
@@ -706,6 +707,7 @@ impl EngineRouter {
                 needs_tls_fingerprint: request.needs_tls_fingerprint,
                 use_fire_engine: request.use_fire_engine,
                 actions: request.actions.clone(),
+                body: request.body.clone(),
                 sync_wait_ms: request.sync_wait_ms,
             };
 
@@ -817,6 +819,7 @@ impl EngineRouter {
             let remaining_clone = remaining;
             let request_clone = InternalScrapeRequest {
                 url: request.url.clone(),
+                method: request.method,
                 headers: request.headers.clone(),
                 timeout: remaining_clone,
                 needs_js: request.needs_js,
@@ -828,6 +831,7 @@ impl EngineRouter {
                 needs_tls_fingerprint: request.needs_tls_fingerprint,
                 use_fire_engine: request.use_fire_engine,
                 actions: request.actions.clone(),
+                body: request.body.clone(),
                 sync_wait_ms: request.sync_wait_ms,
             };
 
@@ -1137,6 +1141,7 @@ mod tests {
 
         let request = InternalScrapeRequest {
             url: "http://1.1.1.1".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
             headers: HashMap::new(),
             timeout: Duration::from_secs(30),
             needs_js: false,
@@ -1148,6 +1153,7 @@ mod tests {
             needs_tls_fingerprint: false,
             use_fire_engine: false,
             actions: Vec::new(),
+            body: None,
             sync_wait_ms: 0,
         };
         let result = router.route(&request).await;
@@ -1305,6 +1311,7 @@ mod tests_impl {
 
         let request = InternalScrapeRequest {
             url: "http://example.com".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
             headers: HashMap::new(),
             timeout: Duration::from_secs(30),
             needs_js: false,
@@ -1316,6 +1323,7 @@ mod tests_impl {
             needs_tls_fingerprint: false,
             use_fire_engine: false,
             actions: Vec::new(),
+            body: None,
             sync_wait_ms: 0,
         };
         let result = router.aggregate(&request).await;
@@ -1354,6 +1362,7 @@ mod tests_impl {
 
         let request = InternalScrapeRequest {
             url: "http://example.com".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
             headers: HashMap::new(),
             timeout: Duration::from_secs(30),
             needs_js: false,
@@ -1365,6 +1374,7 @@ mod tests_impl {
             needs_tls_fingerprint: false,
             use_fire_engine: false,
             actions: Vec::new(),
+            body: None,
             sync_wait_ms: 0,
         };
         let result = router.aggregate(&request).await;

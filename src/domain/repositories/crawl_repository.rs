@@ -6,6 +6,7 @@
 use super::task_repository::RepositoryError;
 use crate::domain::models::crawl::Crawl;
 use async_trait::async_trait;
+use shaku::Interface;
 use uuid::Uuid;
 
 /// 爬取任务仓库特质
@@ -13,7 +14,7 @@ use uuid::Uuid;
 /// 定义爬取任务数据访问接口，提供对爬取任务的CRUD操作和状态管理功能。
 /// 该特质遵循依赖倒置原则，确保领域层不依赖于具体的数据存储实现。
 #[async_trait]
-pub trait CrawlRepository: Send + Sync {
+pub trait CrawlRepository: Interface + Send + Sync {
     /// 创建爬取任务
     ///
     /// # 参数

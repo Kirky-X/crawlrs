@@ -27,6 +27,6 @@ pub use crate::utils::text_processing::{
     TextEncodingError, WebContentError, WebContentProcessor,
 };
 
-pub use crate::utils::url::{is_safe_ip, resolve_url, validate_url, SafeUrl, ValidationError};
+pub use crate::utils::url::{resolve_url, SafeUrl, UrlError};
 
 pub use crate::utils::secret::{Clearable, SecretString};

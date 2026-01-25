@@ -34,7 +34,8 @@ pub async fn search(
     Json(payload): Json<SearchRequestDto>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
-    let api_key = auth_state.api_key_id.to_string();
+    let api_key_id = auth_state.api_key_id;
+    let api_key = api_key_id.to_string();
     // 1. 检查限流
     match rate_limiting_service
         .check_rate_limit(&api_key, "/v1/search")
@@ -96,7 +97,10 @@ pub async fn search(
     };
 
     // 使用注入的SearchService
-    match search_service.search(team_id, search_query).await {
+    match search_service
+        .search(team_id, api_key_id, search_query)
+        .await
+    {
         Ok(response) => {
             // 如果启用了爬取结果并且有crawl_id，则等待任务完成
             if sync_wait_ms > 0 {

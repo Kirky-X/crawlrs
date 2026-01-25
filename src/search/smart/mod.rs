@@ -15,7 +15,8 @@ use crate::domain::services::rate_limiting_service::{
 };
 use crate::domain::services::relevance_scorer::{DateParserComponent, RelevanceScorer};
 use crate::engines::engine_client::{
-    EngineClient, EngineError, PageAction, ScrapeOptions, ScrapeRequest, ScrollDirection,
+    EngineClient, EngineError, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest,
+    ScrollDirection,
 };
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
@@ -549,6 +550,8 @@ impl SmartSearchEngine {
             url: url.to_string(),
             options: ScrapeOptions {
                 headers,
+                method: HttpMethod::Get,
+                body: None,
                 timeout: Duration::from_secs(self.config.timeout_seconds),
                 needs_js,
                 needs_screenshot: false,

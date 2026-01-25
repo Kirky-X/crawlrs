@@ -30,11 +30,11 @@
 
 pub mod app_module;
 pub mod axum_state;
+pub mod engines_module;
 pub mod infrastructure_module;
 pub mod search_module;
 pub mod service_module;
 pub mod state_manager;
 
-pub use app_module::AppModule;
 pub use axum_state::{AppState, AppStateExt};
 pub use state_manager::DependencyStateManager;

@@ -18,24 +18,24 @@ use uuid::Uuid;
 use crate::application::dto::crawl_request::CrawlConfigDto;
 use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
-use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
+use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::config::settings::Settings;
 use crate::domain::models::crawl::CrawlStatus;
 use crate::domain::models::scrape_result::ScrapeResult;
 use crate::domain::models::task::{Task, TaskStatus, TaskType};
-use crate::domain::models::webhook::{WebhookEvent, WebhookEventType, WebhookStatus};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
-use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
-use crate::domain::services::llm_service::LLMService;
+use crate::domain::services::extraction_service::ExtractionServiceTrait;
+use crate::domain::services::retry_handler::RetryHandler;
+use crate::domain::services::webhook_service::WebhookService;
 use crate::utils::regex_cache::RegexCache;
 
 use crate::engines::engine_client::{
-    EngineClient, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse, ScreenshotConfig,
-    ScrollDirection,
+    EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
+    ScreenshotConfig, ScrollDirection,
 };
 #[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
@@ -45,7 +45,6 @@ use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
 use crate::workers::errors::ScrapeWorkerError;
-use crate::workers::task_state_machine::{TaskStateEvent, TaskStateMachine};
 
 /// 从缓存获取正则表达式
 fn get_cached_regex(pattern: &str, cache: &RegexCache) -> Result<regex::Regex, ScrapeWorkerError> {
@@ -60,18 +59,18 @@ pub struct ScrapeWorker {
     result_repository: Arc<dyn ScrapeResultRepository>,
     crawl_repository: Arc<dyn CrawlRepository>,
     storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
-    webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
+    webhook_service: Arc<dyn WebhookService>,
     credits_repository: Arc<dyn CreditsRepository>,
     engine_client: Arc<EngineClient>,
-    _create_scrape_use_case: Arc<CreateScrapeUseCase>,
+    _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     #[cfg(feature = "redis-cache")]
     redis: RedisClient,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
     worker_id: Uuid,
     default_concurrency_limit: usize,
-    retry_policy: RetryPolicy,
-    llm_service: LLMService,
+    retry_handler: RetryHandler,
+    extraction_service: Arc<dyn ExtractionServiceTrait>,
     regex_cache: RegexCache,
 }
 
@@ -84,26 +83,27 @@ impl ScrapeWorker {
         result_repository: Arc<dyn ScrapeResultRepository>,
         crawl_repository: Arc<dyn CrawlRepository>,
         storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
-        webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
+        webhook_service: Arc<dyn WebhookService>,
         credits_repository: Arc<dyn CreditsRepository>,
         engine_client: Arc<EngineClient>,
-        _create_scrape_use_case: Arc<CreateScrapeUseCase>,
+        _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
         redis: RedisClient,
         robots_checker: Arc<dyn RobotsCheckerTrait>,
         settings: Arc<Settings>,
         default_concurrency_limit: usize,
-        llm_service: LLMService,
+        extraction_service: Arc<dyn ExtractionServiceTrait>,
         regex_cache: RegexCache,
     ) -> Self {
         // 根据任务类型选择合适的重试策略
         let retry_policy = RetryPolicy::slow(); // 网络请求适合慢速重试策略
+        let retry_handler = RetryHandler::new(repository.clone(), retry_policy.clone());
 
         Self {
             repository,
             result_repository,
             crawl_repository,
             storage_repository,
-            webhook_event_repository,
+            webhook_service,
             credits_repository,
             engine_client,
             _create_scrape_use_case,
@@ -112,8 +112,8 @@ impl ScrapeWorker {
             settings,
             worker_id: Uuid::new_v4(),
             default_concurrency_limit,
-            retry_policy,
-            llm_service,
+            retry_handler,
+            extraction_service,
             regex_cache,
         }
     }
@@ -206,12 +206,7 @@ impl ScrapeWorker {
                 warn!("Task {} expired at {}", task.id, expires_at);
                 self.repository.mark_failed(task.id).await?;
                 // Trigger failure webhook if needed
-                let event_type = match task.task_type {
-                    TaskType::Scrape => WebhookEventType::ScrapeFailed,
-                    TaskType::Crawl => WebhookEventType::CrawlFailed,
-                    _ => WebhookEventType::Custom("task.failed".to_string()),
-                };
-                self.trigger_webhook(&task, event_type, Some("Task expired".to_string()))
+                self.trigger_webhook(&task, Some("Task expired".to_string()))
                     .await;
                 return Ok(());
             }
@@ -348,8 +343,7 @@ impl ScrapeWorker {
                 }
 
                 // 触发失败 Webhook
-                self.trigger_webhook(&task, WebhookEventType::ScrapeFailed, Some(e.to_string()))
-                    .await;
+                self.trigger_webhook(&task, Some(e.to_string())).await;
                 Ok(())
             }
         }
@@ -429,6 +423,8 @@ impl ScrapeWorker {
         }
 
         let request = ScrapeRequest::new(task.url.clone()).with_options(ScrapeOptions {
+            method: HttpMethod::Get,
+            body: None,
             headers,
             timeout: Duration::from_secs(self.settings.timeouts.engines.default_timeout_seconds),
             needs_js: false, // 爬虫默认不需要 JS，除非配置指定
@@ -483,13 +479,10 @@ impl ScrapeWorker {
                 // 3. 执行数据提取（如果配置了提取规则）
                 let mut extracted_data = None;
                 if let Some(rules) = &config.extraction_rules {
-                    match crate::domain::services::extraction_service::ExtractionService::extract(
-                        &processed_response.content,
-                        rules,
-                        Box::new(self.llm_service.clone()),
-                        Some(&task.url),
-                    )
-                    .await
+                    match self
+                        .extraction_service
+                        .extract(&processed_response.content, rules, Some(&task.url))
+                        .await
                     {
                         Ok((data, usage)) => {
                             extracted_data = Some(data);
@@ -621,8 +614,7 @@ impl ScrapeWorker {
                 }
 
                 // 触发失败 Webhook
-                self.trigger_webhook(&task, WebhookEventType::CrawlFailed, Some(e.to_string()))
-                    .await;
+                self.trigger_webhook(&task, Some(e.to_string())).await;
                 Ok(())
             }
         }
@@ -641,6 +633,8 @@ impl ScrapeWorker {
     /// 构建 Extract 任务的 ScrapeRequest
     fn build_extract_request(&self, url: &str) -> ScrapeRequest {
         ScrapeRequest::new(url.to_string()).with_options(ScrapeOptions {
+            method: HttpMethod::Get,
+            body: None,
             headers: HashMap::new(),
             timeout: Duration::from_secs(self.settings.timeouts.engines.default_timeout_seconds),
             needs_js: false,
@@ -691,18 +685,10 @@ impl ScrapeWorker {
         if let Some(rules) = payload.rules {
             debug!(?rules);
             // Use provided extraction rules with potential LLM usage
-            let (extracted_data, usage) =
-                crate::domain::services::extraction_service::ExtractionService::extract(
-                    &processed_scrape_resp.content,
-                    &rules,
-                    Box::new(self.llm_service.clone()),
-                    Some(&url),
-                )
+            let (extracted_data, usage) = self
+                .extraction_service
+                .extract(&processed_scrape_resp.content, &rules, Some(&url))
                 .await?;
-
-            debug!(?usage);
-            debug!(?extracted_data);
-
             // Record usage and deduct credits for LLM usage
             self.deduct_token_credits(
                 task.team_id,
@@ -730,12 +716,7 @@ impl ScrapeWorker {
             task.status = TaskStatus::Completed;
             self.repository.update(&task).await?;
 
-            self.trigger_webhook(
-                &task,
-                WebhookEventType::Custom("extract.completed".to_string()),
-                None,
-            )
-            .await;
+            self.trigger_webhook(&task, None).await;
 
             return Ok(());
         }
@@ -756,13 +737,9 @@ impl ScrapeWorker {
             );
 
             // Use extraction rules for prompt-based extraction
-            let (extracted_data, usage) =
-                crate::domain::services::extraction_service::ExtractionService::extract(
-                    &processed_scrape_resp.content,
-                    &rules,
-                    Box::new(self.llm_service.clone()),
-                    Some(&url),
-                )
+            let (extracted_data, usage) = self
+                .extraction_service
+                .extract(&processed_scrape_resp.content, &rules, Some(&url))
                 .await?;
 
             // Record usage and deduct credits
@@ -787,23 +764,15 @@ impl ScrapeWorker {
             task.status = TaskStatus::Completed;
             self.repository.update(&task).await?;
 
-            self.trigger_webhook(
-                &task,
-                WebhookEventType::Custom("extract.completed".to_string()),
-                None,
-            )
-            .await;
+            self.trigger_webhook(&task, None).await;
 
             return Ok(());
         } else if let Some(_schema) = payload.schema {
             // 使用新实现的 extract_with_schema 优化提取流程
-            let (extracted_data, usage) =
-                crate::domain::services::extraction_service::ExtractionService::extract_with_schema(
-                    &processed_scrape_resp.content,
-                    &_schema,
-                    Box::new(self.llm_service.clone()),
-                )
-                    .await?;
+            let (extracted_data, usage) = self
+                .extraction_service
+                .extract_with_schema(&processed_scrape_resp.content, &_schema)
+                .await?;
 
             // Record usage and deduct credits
             self.deduct_token_credits(
@@ -832,12 +801,7 @@ impl ScrapeWorker {
             task.status = TaskStatus::Completed;
             self.repository.update(&task).await?;
 
-            self.trigger_webhook(
-                &task,
-                WebhookEventType::Custom("extract.completed".to_string()),
-                None,
-            )
-            .await;
+            self.trigger_webhook(&task, None).await;
 
             return Ok(());
         }
@@ -859,12 +823,7 @@ impl ScrapeWorker {
         task.status = TaskStatus::Completed;
         self.repository.update(&task).await?;
 
-        self.trigger_webhook(
-            &task,
-            WebhookEventType::Custom("extract.completed".to_string()),
-            None,
-        )
-        .await;
+        self.trigger_webhook(&task, None).await;
 
         Ok(())
     }
@@ -947,6 +906,7 @@ impl ScrapeWorker {
                 status: TaskStatus::Queued,
                 priority,
                 team_id: task.team_id,
+                api_key_id: task.api_key_id,
                 url: link.to_string(),
                 payload: json!({
                     "crawl_id": crawl_id.to_string(),
@@ -1040,13 +1000,10 @@ impl ScrapeWorker {
         let mut extracted_data = None;
         if let Ok(req) = serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
             if let Some(rules) = &req.extraction_rules {
-                match crate::domain::services::extraction_service::ExtractionService::extract(
-                    &processed_response.content,
-                    rules,
-                    Box::new(self.llm_service.clone()),
-                    Some(&task.url),
-                )
-                .await
+                match self
+                    .extraction_service
+                    .extract(&processed_response.content, rules, Some(&task.url))
+                    .await
                 {
                     Ok((data, usage)) => {
                         extracted_data = Some(data);
@@ -1095,8 +1052,7 @@ impl ScrapeWorker {
         self.repository.mark_completed(task.id).await?;
         debug!(task_id = %task.id, "Successfully marked task as completed");
 
-        self.trigger_webhook(task, WebhookEventType::ScrapeCompleted, None)
-            .await;
+        self.trigger_webhook(task, None).await;
         Ok(())
     }
 
@@ -1210,100 +1166,23 @@ impl ScrapeWorker {
         Ok(())
     }
 
-    async fn trigger_webhook(
-        &self,
-        task: &Task,
-        event_type: WebhookEventType,
-        error_msg: Option<String>,
-    ) {
-        // 尝试从 payload 中解析 ScrapeRequestDto 来获取 webhook url
-        // 注意：Crawl 任务的 payload 结构不同，这里主要针对 Scrape 任务
-        // 对于 Crawl 任务，通常 webhook 是在 Crawl 级别配置的，这里简化处理
+    async fn trigger_webhook(&self, task: &Task, error_msg: Option<String>) {
+        let result = match error_msg {
+            Some(msg) => self.webhook_service.trigger_failure(task, msg).await,
+            None => self.webhook_service.trigger_completion(task).await,
+        };
 
-        let webhook_url =
-            if let Ok(req) = serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
-                req.webhook
-            } else {
-                // 尝试直接从 payload 获取 webhook 字段 (针对 Crawl 任务的潜在扩展)
-                task.payload
-                    .get("webhook")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            };
-
-        if let Some(url) = webhook_url {
-            info!("Triggering webhook {:?} for task {}", event_type, task.id);
-
-            let mut payload = json!({
-                "task_id": task.id,
-                "status": if error_msg.is_some() { "failed" } else { "completed" },
-                "url": task.url,
-                "timestamp": Utc::now().timestamp()
-            });
-
-            if let Some(msg) = error_msg {
-                payload["error"] = json!(msg);
-            }
-
-            let event = WebhookEvent {
-                id: Uuid::new_v4(),
-                team_id: task.team_id,
-                webhook_id: Uuid::nil(), // Direct webhook URL without associated webhook record
-                event_type,
-                payload,
-                webhook_url: url,
-                status: WebhookStatus::Pending,
-                attempt_count: 0,
-                max_retries: 5,
-                response_status: None,
-                response_body: None,
-                error_message: None,
-                next_retry_at: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                delivered_at: None,
-            };
-
-            if let Err(e) = self.webhook_event_repository.create(&event).await {
-                error!("Failed to create webhook event: {}", e);
-            }
+        if let Err(e) = result {
+            error!("Failed to trigger webhook for task {}: {}", task.id, e);
         }
     }
 
     async fn handle_failure(&self, task: &mut Task) -> Result<()> {
-        let mut state_machine = TaskStateMachine::new(task.clone());
-        let new_attempt_count = state_machine.task().attempt_count + 1;
-
-        if !self.retry_policy.should_retry(new_attempt_count as u32) {
-            warn!(
-                "Task failed after {} retries",
-                state_machine.task().max_retries
-            );
-            state_machine.handle_event(TaskStateEvent::Fail)?;
-            self.repository.update(state_machine.task()).await?;
-        } else {
-            let backoff_duration = self
-                .retry_policy
-                .calculate_backoff(new_attempt_count as u32);
-            let next_retry =
-                Utc::now() + chrono::Duration::milliseconds(backoff_duration.as_millis() as i64);
-
-            state_machine.task_mut().attempt_count = new_attempt_count;
-            state_machine.task_mut().scheduled_at = Some(next_retry.into());
-            state_machine.handle_event(TaskStateEvent::Retry)?;
-
-            self.repository.update(state_machine.task()).await?;
-            info!(
-                "Scheduled retry {}/{} for task {} in {:?} (backoff: {:?})",
-                new_attempt_count,
-                state_machine.task().max_retries,
-                state_machine.task().id,
-                backoff_duration,
-                next_retry
-            );
+        match self.retry_handler.handle_failure(task).await {
+            crate::domain::services::retry_handler::HandleFailureResult::Retried { .. } => Ok(()),
+            crate::domain::services::retry_handler::HandleFailureResult::Failed => Ok(()),
+            crate::domain::services::retry_handler::HandleFailureResult::Error(e) => Err(e),
         }
-
-        Ok(())
     }
 
     async fn deduct_feature_credits(
@@ -1423,6 +1302,8 @@ impl ScrapeWorker {
         Ok(ScrapeRequest {
             url: scrape_request.url.clone(),
             options: ScrapeOptions {
+                method: HttpMethod::Get,
+                body: None,
                 headers,
                 timeout: Duration::from_secs(options.and_then(|o| o.timeout).unwrap_or(30)),
                 needs_js,
@@ -1487,16 +1368,16 @@ pub struct ScrapeWorkerBuilder {
     result_repository: Option<Arc<dyn ScrapeResultRepository>>,
     crawl_repository: Option<Arc<dyn CrawlRepository>>,
     storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
-    webhook_event_repository: Option<Arc<dyn WebhookEventRepository + Send + Sync>>,
+    webhook_service: Option<Arc<dyn WebhookService>>,
     credits_repository: Option<Arc<dyn CreditsRepository>>,
     engine_client: Option<Arc<EngineClient>>,
-    create_scrape_use_case: Option<Arc<CreateScrapeUseCase>>,
+    create_scrape_use_case: Option<Arc<dyn CreateScrapeUseCaseTrait>>,
     #[cfg(feature = "redis-cache")]
     redis: Option<RedisClient>,
     robots_checker: Option<Arc<dyn RobotsCheckerTrait>>,
     settings: Option<Arc<Settings>>,
     default_concurrency_limit: usize,
-    llm_service: Option<LLMService>,
+    extraction_service: Option<Arc<dyn ExtractionServiceTrait>>,
     regex_cache: Option<RegexCache>,
 }
 
@@ -1507,7 +1388,7 @@ impl Default for ScrapeWorkerBuilder {
             result_repository: None,
             crawl_repository: None,
             storage_repository: None,
-            webhook_event_repository: None,
+            webhook_service: None,
             credits_repository: None,
             engine_client: None,
             create_scrape_use_case: None,
@@ -1516,7 +1397,7 @@ impl Default for ScrapeWorkerBuilder {
             robots_checker: None,
             settings: None,
             default_concurrency_limit: 10,
-            llm_service: None,
+            extraction_service: None,
             regex_cache: None,
         }
     }
@@ -1559,12 +1440,9 @@ impl ScrapeWorkerBuilder {
         self
     }
 
-    /// 设置 Webhook 事件仓储 (必需)
-    pub fn with_webhook_event_repository(
-        mut self,
-        webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
-    ) -> Self {
-        self.webhook_event_repository = Some(webhook_event_repository);
+    /// 设置 Webhook 服务 (必需)
+    pub fn with_webhook_service(mut self, webhook_service: Arc<dyn WebhookService>) -> Self {
+        self.webhook_service = Some(webhook_service);
         self
     }
 
@@ -1586,7 +1464,7 @@ impl ScrapeWorkerBuilder {
     /// 设置创建抓取用例 (必需)
     pub fn with_create_scrape_use_case(
         mut self,
-        create_scrape_use_case: Arc<CreateScrapeUseCase>,
+        create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     ) -> Self {
         self.create_scrape_use_case = Some(create_scrape_use_case);
         self
@@ -1617,9 +1495,12 @@ impl ScrapeWorkerBuilder {
         self
     }
 
-    /// 设置 LLM 服务 (必需)
-    pub fn with_llm_service(mut self, llm_service: LLMService) -> Self {
-        self.llm_service = Some(llm_service);
+    /// 设置提取服务 (必需)
+    pub fn with_extraction_service(
+        mut self,
+        extraction_service: Arc<dyn ExtractionServiceTrait>,
+    ) -> Self {
+        self.extraction_service = Some(extraction_service);
         self
     }
 
@@ -1640,9 +1521,7 @@ impl ScrapeWorkerBuilder {
         let crawl_repository = self
             .crawl_repository
             .ok_or("crawl_repository is required")?;
-        let webhook_event_repository = self
-            .webhook_event_repository
-            .ok_or("webhook_event_repository is required")?;
+        let webhook_service = self.webhook_service.ok_or("webhook_service is required")?;
         let credits_repository = self
             .credits_repository
             .ok_or("credits_repository is required")?;
@@ -1653,7 +1532,9 @@ impl ScrapeWorkerBuilder {
         let redis = self.redis.ok_or("redis is required")?;
         let robots_checker = self.robots_checker.ok_or("robots_checker is required")?;
         let settings = self.settings.ok_or("settings is required")?;
-        let llm_service = self.llm_service.ok_or("llm_service is required")?;
+        let extraction_service = self
+            .extraction_service
+            .ok_or("extraction_service is required")?;
         let regex_cache = self.regex_cache.ok_or("regex_cache is required")?;
 
         Ok(ScrapeWorker::new(
@@ -1661,7 +1542,7 @@ impl ScrapeWorkerBuilder {
             result_repository,
             crawl_repository,
             self.storage_repository,
-            webhook_event_repository,
+            webhook_service,
             credits_repository,
             engine_client,
             create_scrape_use_case,
@@ -1669,7 +1550,7 @@ impl ScrapeWorkerBuilder {
             robots_checker,
             settings,
             self.default_concurrency_limit,
-            llm_service,
+            extraction_service,
             regex_cache,
         ))
     }

@@ -8,11 +8,15 @@
 /// 提供基础设施层的服务实现
 /// 包括限流服务等核心功能
 pub mod config_service;
+pub mod concurrency_controller_impl;
 pub mod rate_limiting_service_impl;
-pub mod webhook_service_impl;
+pub mod webhook_sender_impl;
 
 /// Webhook 服务公共接口
 /// 导出验证函数供接收方使用
 pub mod webhook_service {
-    pub use super::webhook_service_impl::verify_webhook_signature;
+    pub use crate::domain::services::webhook_service::WebhookServiceImpl;
+
+    /// 验证 webhook 签名
+    pub use crate::domain::services::webhook_service::verify_webhook_signature;
 }

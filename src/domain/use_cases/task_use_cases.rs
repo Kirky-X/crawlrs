@@ -16,6 +16,7 @@ use uuid::Uuid;
 /// 创建任务请求
 pub struct CreateTaskRequest {
     pub team_id: Uuid,
+    pub api_key_id: Uuid,
     pub task_type: TaskType,
     pub url: String,
     pub name: Option<String>,
@@ -86,7 +87,13 @@ impl<T: TaskRepository, R: CreditsRepository> CreateTaskUseCase<T, R> {
     ) -> Result<CreateTaskResponse, anyhow::Error> {
         // 创建任务
         let payload = request.config.unwrap_or_else(|| serde_json::json!({}));
-        let task = Task::new(request.task_type, request.team_id, request.url, payload);
+        let task = Task::new(
+            request.task_type,
+            request.team_id,
+            request.api_key_id,
+            request.url,
+            payload,
+        );
 
         self.task_repo.create(&task).await?;
 

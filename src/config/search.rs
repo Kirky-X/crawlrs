@@ -7,7 +7,8 @@
 //!
 //! 包含 Bing Search 和搜索功能配置
 
-use serde::Deserialize;
+use confers::Config;
+use serde::{Deserialize, Serialize};
 
 /// Bing Search API 配置设置
 ///
@@ -15,7 +16,8 @@ use serde::Deserialize;
 ///
 /// `api_key` 字段包含 Bing Search API 密钥，泄露可能导致未经授权的访问。
 /// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__BING_SEARCH__")]
 pub struct BingSearchSettings {
     /// Bing Search API 密钥 (敏感信息)
     pub(crate) api_key: Option<String>,
@@ -36,46 +38,34 @@ impl BingSearchSettings {
 /// 搜索配置设置
 ///
 /// 配置搜索相关功能参数
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__")]
 pub struct SearchSettings {
     /// 是否启用 A/B 测试
+    #[config(default = false)]
     pub ab_test_enabled: bool,
+
     /// Variant B 的流量权重 (0.0 到 1.0)
+    #[config(default = 0.1)]
     pub variant_b_weight: f64,
+
     /// 搜索超时时间（秒）
-    #[serde(default = "default_timeout_seconds")]
+    #[config(default = 30)]
     pub timeout_seconds: u64,
+
     /// 是否启用速率限制
-    #[serde(default = "default_rate_limiting_enabled")]
+    #[config(default = true)]
     pub rate_limiting_enabled: bool,
+
     /// 是否启用测试数据
-    #[serde(default = "default_test_data_enabled")]
+    #[config(default = false)]
     pub test_data_enabled: bool,
+
     /// 最大重试次数
-    #[serde(default = "default_max_retries")]
+    #[config(default = 3)]
     pub max_retries: u32,
+
     /// 重试延迟（毫秒）
-    #[serde(default = "default_retry_delay_ms")]
+    #[config(default = 1000)]
     pub retry_delay_ms: u64,
-}
-
-// 默认值函数
-fn default_timeout_seconds() -> u64 {
-    30
-}
-
-fn default_rate_limiting_enabled() -> bool {
-    true
-}
-
-fn default_test_data_enabled() -> bool {
-    false
-}
-
-fn default_max_retries() -> u32 {
-    3
-}
-
-fn default_retry_delay_ms() -> u64 {
-    1000
 }

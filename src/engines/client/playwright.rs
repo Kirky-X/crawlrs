@@ -9,7 +9,7 @@ use crate::engines::engine_client::{
     InternalScreenshotConfig, ScraperEngine,
 };
 use crate::engines::validators;
-use crate::infrastructure::services::config_service::{BrowserConfigComponent, BrowserConfigTrait};
+use crate::infrastructure::services::config_service::BrowserConfigTrait;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
@@ -74,14 +74,25 @@ pub struct PlaywrightBrowserManagerComponent {
     config: Arc<dyn BrowserConfigTrait>,
     /// 浏览器实例
     browser: Arc<Mutex<Option<Arc<Browser>>>>,
+    /// 浏览器下载管理器
+    download_manager: Arc<BrowserDownloadManager>,
 }
 
 impl PlaywrightBrowserManagerComponent {
     /// 创建新的浏览器管理器
     pub fn new(config: Arc<dyn BrowserConfigTrait>) -> Self {
+        Self::with_download_config(config, BrowserDownloadConfig::default())
+    }
+
+    /// 创建带有下载配置的浏览器管理器
+    pub fn with_download_config(
+        config: Arc<dyn BrowserConfigTrait>,
+        download_config: BrowserDownloadConfig,
+    ) -> Self {
         Self {
             config,
             browser: Arc::new(Mutex::new(None)),
+            download_manager: Arc::new(BrowserDownloadManager::new(download_config)),
         }
     }
 }
@@ -169,9 +180,17 @@ impl PlaywrightBrowserManagerComponent {
                 EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
             })?
         } else {
+            // 尝试自动下载浏览器（如果需要）
+            let browser_path = self.download_browser_if_needed().await?;
+
             let mut builder = BrowserConfig::builder()
                 .no_sandbox()
                 .request_timeout(Duration::from_secs(30));
+
+            // 设置浏览器路径（如果 chromiumoxide 支持）
+            if let Some(ref path) = browser_path {
+                tracing::info!("Using browser at: {:?}", path);
+            }
 
             builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
 
@@ -208,157 +227,8 @@ impl PlaywrightBrowserManagerComponent {
 
         Ok(browser)
     }
-}
 
-// Maximum number of recovery attempts
-const MAX_RECOVERY_ATTEMPTS: u32 = 3;
-
-/// Browser manager for handling browser instance lifecycle
-///
-/// This struct manages browser instance without using global state.
-/// It should be created per request or per application scope.
-#[derive(Clone)]
-pub struct BrowserManager {
-    /// Browser instance stored in memory
-    browser: Arc<Mutex<Option<Arc<Browser>>>>,
-    /// Browser download manager for auto-download
-    download_manager: Arc<BrowserDownloadManager>,
-}
-
-impl BrowserManager {
-    /// Create a new browser manager with default settings
-    pub fn new() -> Self {
-        let config = BrowserDownloadConfig::default();
-        let download_manager = BrowserDownloadManager::new(config);
-        Self {
-            browser: Arc::new(Mutex::new(None)),
-            download_manager: Arc::new(download_manager),
-        }
-    }
-
-    /// Create a browser manager with custom download configuration
-    pub fn with_download_config(config: BrowserDownloadConfig) -> Self {
-        let download_manager = BrowserDownloadManager::new(config);
-        Self {
-            browser: Arc::new(Mutex::new(None)),
-            download_manager: Arc::new(download_manager),
-        }
-    }
-
-    /// Get or create browser using context
-    pub async fn get_browser(&self) -> Result<Arc<Browser>, EngineError> {
-        self.get_browser_with_recovery(MAX_RECOVERY_ATTEMPTS).await
-    }
-
-    /// Get or create browser with automatic recovery
-    async fn get_browser_with_recovery(
-        &self,
-        max_attempts: u32,
-    ) -> Result<Arc<Browser>, EngineError> {
-        let mut attempts = 0;
-        loop {
-            attempts += 1;
-
-            match self.get_or_init_browser().await {
-                Ok(browser) => return Ok(browser),
-                Err(e) if attempts < max_attempts => {
-                    tracing::warn!(
-                        "Browser initialization attempt {} failed: {}, retrying...",
-                        attempts,
-                        e
-                    );
-                    self.cleanup().await;
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
-    /// Get or create browser with automatic download
-    async fn get_or_init_browser(&self) -> Result<Arc<Browser>, EngineError> {
-        // 使用 BrowserConfigComponent 获取配置
-        let config: Arc<dyn BrowserConfigTrait> = Arc::new(BrowserConfigComponent::new());
-        let test_mode = config.is_test_mode();
-
-        // Try to get the existing browser (clone outside lock to avoid holding across await)
-        let browser_to_check = {
-            let browser_guard = self.browser.lock().expect("Browser mutex poisoned");
-            browser_guard.as_ref().map(Arc::clone)
-        };
-
-        if let Some(browser) = browser_to_check {
-            // Check if browser is still healthy (now outside the lock)
-            if check_browser_health(&browser).await {
-                // In test mode, don't reuse browser to avoid conflicts
-                if !test_mode {
-                    return Ok(browser);
-                }
-            }
-            // Browser is not healthy or in test mode, drop it
-        }
-
-        // Need to create a new browser
-        let remote_debugging_url = config.get_remote_debugging_url();
-        let proxy_url = config.get_proxy_url();
-
-        let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
-            tracing::info!("Connecting to remote Chrome instance at: {}", url);
-            Browser::connect(url).await.map_err(|e| {
-                EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
-            })?
-        } else {
-            // 尝试自动下载浏览器（如果需要）
-            let browser_path = self.download_browser_if_needed().await?;
-
-            let mut builder = BrowserConfig::builder()
-                .no_sandbox()
-                .request_timeout(Duration::from_secs(30));
-
-            // 设置浏览器路径（如果 chromiumoxide 支持）
-            if let Some(ref path) = browser_path {
-                tracing::info!("Using browser at: {:?}", path);
-                // BrowserConfigBuilder 可能不支持直接设置路径
-                // 浏览器会通过 PATH 或默认位置查找
-            }
-
-            builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
-
-            if let Some(ref proxy) = proxy_url {
-                tracing::info!("Using proxy for Playwright: {}", proxy);
-                builder = builder.arg(format!("--proxy-server={}", proxy));
-            }
-
-            Browser::launch(
-                builder
-                    .build()
-                    .map_err(|e| EngineError::Other(e.to_string()))?,
-            )
-            .await
-            .map_err(|e| EngineError::Other(e.to_string()))?
-        };
-
-        // Spawn a handler to process browser events
-        tokio::spawn(async move {
-            while let Some(h) = handler.next().await {
-                if let Err(e) = h {
-                    tracing::debug!("Browser handler event error (continuing): {:?}", e);
-                }
-            }
-        });
-
-        let browser = Arc::new(browser);
-
-        // Store the browser in the manager
-        {
-            let mut browser_guard = self.browser.lock().expect("Browser mutex poisoned");
-            *browser_guard = Some(Arc::clone(&browser));
-        }
-
-        Ok(browser)
-    }
-
-    /// Download browser if not already available
+    /// 下载浏览器（如果需要）
     async fn download_browser_if_needed(&self) -> Result<Option<PathBuf>, EngineError> {
         // 首先检查系统是否有浏览器
         if let Some(path) = crate::engines::browser_downloader::find_system_browser().await {
@@ -384,27 +254,14 @@ impl BrowserManager {
             }
             Err(e) => {
                 tracing::warn!("浏览器下载失败: {}，将尝试使用系统路径", e);
-                // 即使下载失败也尝试启动，让 chromiumoxide 自己寻找浏览器
                 Ok(None)
             }
         }
     }
-
-    /// Clean up browser instance
-    pub async fn cleanup(&self) {
-        let mut guard = self.browser.lock().expect("Browser mutex poisoned");
-        if let Some(browser) = guard.take() {
-            tracing::info!("Closing browser instance");
-            drop(browser);
-        }
-    }
 }
 
-impl Default for BrowserManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Maximum number of recovery attempts
+const MAX_RECOVERY_ATTEMPTS: u32 = 3;
 
 /// Check if browser is still healthy and can be used
 pub async fn check_browser_health(browser: &Browser) -> bool {
@@ -438,6 +295,9 @@ impl ScraperEngine for PlaywrightEngine {
         &self,
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
+        if request.method != crate::engines::engine_client::HttpMethod::Get {
+            return Err(EngineError::Other("Unsupported HTTP method".to_string()));
+        }
         // SSRF protection
         validators::validate_url(&request.url)
             .await
@@ -453,13 +313,20 @@ impl ScraperEngine for PlaywrightEngine {
         let start = Instant::now();
         let timeout_duration = request.timeout;
 
+        let browser_config = Arc::new(
+            crate::infrastructure::services::config_service::BrowserConfigComponent::default(),
+        );
+        let browser_manager: Arc<dyn BrowserManagerTrait> =
+            Arc::new(PlaywrightBrowserManagerComponent::new(browser_config));
+
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
-            let browser_manager = BrowserManager::new();
             let browser = browser_manager.get_browser().await?;
 
             // Create new page and navigate
-            let page = browser.new_page("about:blank").await
+            let page: chromiumoxide::page::Page = browser
+                .new_page("about:blank")
+                .await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
             // Note: Page is intentionally not closed here to allow for reuse.
@@ -490,7 +357,9 @@ impl ScraperEngine for PlaywrightEngine {
             tokio::time::sleep(Duration::from_secs(5)).await;
 
             // Try to detect if we got a bot detection page
-            let content = page.content().await
+            let content: String = page
+                .content()
+                .await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
             if content.contains("如果您在几秒钟内没有被重定向") || 
@@ -507,9 +376,16 @@ impl ScraperEngine for PlaywrightEngine {
                         tokio::time::sleep(Duration::from_millis(*milliseconds)).await;
                     }
                     InternalPageAction::Click { selector } => {
-                        page.find_element(selector)
+                        let element: chromiumoxide::element::Element = page
+                            .find_element(selector)
                             .await
-                            .map_err(|e| EngineError::BrowserError(format!("Click failed, element not found: {}", e)))?
+                            .map_err(|e| {
+                                EngineError::BrowserError(format!(
+                                    "Click failed, element not found: {}",
+                                    e
+                                ))
+                            })?;
+                        element
                             .click()
                             .await
                             .map_err(|e| EngineError::BrowserError(format!("Click failed: {}", e)))?;
@@ -522,7 +398,8 @@ impl ScraperEngine for PlaywrightEngine {
                             "top" => "window.scrollTo(0, 0);",
                             _ => "window.scrollBy(0, window.innerHeight);",
                         };
-                        page.evaluate(script)
+                        let _: chromiumoxide::js::EvaluationResult = page
+                            .evaluate(script)
                             .await
                             .map_err(|e| EngineError::BrowserError(format!("Scroll failed: {}", e)))?;
                     }
@@ -531,9 +408,16 @@ impl ScraperEngine for PlaywrightEngine {
                         // 如果需要保存，可能需要额外的逻辑处理
                     }
                     InternalPageAction::Input { selector, text } => {
-                        page.find_element(selector)
+                        let element: chromiumoxide::element::Element = page
+                            .find_element(selector)
                             .await
-                            .map_err(|e| EngineError::BrowserError(format!("Input failed, element not found: {}", e)))?
+                            .map_err(|e| {
+                                EngineError::BrowserError(format!(
+                                    "Input failed, element not found: {}",
+                                    e
+                                ))
+                            })?;
+                        element
                             .type_str(text)
                             .await
                             .map_err(|e| EngineError::BrowserError(format!("Input failed: {}", e)))?;
@@ -547,15 +431,21 @@ impl ScraperEngine for PlaywrightEngine {
             }
 
             // Get final URL after navigation (handles redirects)
-            let _final_url = page.url().await
+            let _final_url: String = page
+                .url()
+                .await
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| request.url.clone());
 
             // Try to get content-type from document properties
-            let content_type = page.evaluate(r#"
+            let content_type = page
+                .evaluate(
+                    r#"
                 () => document.contentType || document.querySelector('meta[http-equiv="content-type"]')?.getAttribute('content') || 'text/html'
-            "#).await
+            "#,
+                )
+                .await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?
                 .into_value::<String>()
                 .unwrap_or_else(|_| "text/html".to_string())
@@ -569,7 +459,9 @@ impl ScraperEngine for PlaywrightEngine {
             // For most scraping use cases, 200 is the expected success status
             let status_code = 200;
 
-            let content = page.content().await
+            let content: String = page
+                .content()
+                .await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
             // Build headers from available document information
@@ -603,7 +495,9 @@ impl ScraperEngine for PlaywrightEngine {
 
                 let screenshot_bytes = if let Some(selector) = &config.selector {
                     // Find element and screenshot
-                    let element = page.find_element(selector).await
+                    let element: chromiumoxide::element::Element = page
+                        .find_element(selector)
+                        .await
                         .map_err(|e| EngineError::BrowserError(format!("Element not found: {}", e)))?;
 
                     // Create new format instance for element screenshot since original was moved
@@ -649,6 +543,9 @@ impl ScraperEngine for PlaywrightEngine {
     ///
     /// 支持分数（0-100），需要JS或截图的请求返回100分
     fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
+        if request.method != crate::engines::engine_client::HttpMethod::Get {
+            return 0;
+        }
         if request.needs_js || request.needs_screenshot {
             return 100;
         }
@@ -685,6 +582,7 @@ mod tests {
         // Test with JS requirement
         let request_js = InternalScrapeRequest {
             url: "http://example.com".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
             headers: HashMap::new(),
             timeout: Duration::from_secs(30),
             needs_js: true,
@@ -696,6 +594,7 @@ mod tests {
             needs_tls_fingerprint: false,
             use_fire_engine: false,
             actions: vec![],
+            body: None,
             sync_wait_ms: 0,
         };
         assert_eq!(engine.support_score(&request_js), 100);
@@ -703,6 +602,7 @@ mod tests {
         // Test with Screenshot requirement
         let request_screenshot = InternalScrapeRequest {
             url: "http://example.com".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
             headers: HashMap::new(),
             timeout: Duration::from_secs(30),
             needs_js: false,
@@ -714,6 +614,7 @@ mod tests {
             needs_tls_fingerprint: false,
             use_fire_engine: false,
             actions: vec![],
+            body: None,
             sync_wait_ms: 0,
         };
         assert_eq!(engine.support_score(&request_screenshot), 100);
@@ -721,6 +622,7 @@ mod tests {
         // Test with neither (basic request)
         let request_basic = InternalScrapeRequest {
             url: "http://example.com".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
             headers: HashMap::new(),
             timeout: Duration::from_secs(30),
             needs_js: false,
@@ -732,6 +634,7 @@ mod tests {
             needs_tls_fingerprint: false,
             use_fire_engine: false,
             actions: vec![],
+            body: None,
             sync_wait_ms: 0,
         };
         assert_eq!(engine.support_score(&request_basic), 10);

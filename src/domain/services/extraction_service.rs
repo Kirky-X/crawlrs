@@ -9,7 +9,9 @@ use anyhow::Result;
 use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use shaku::{Component, Interface};
 use std::collections::HashMap;
+use std::sync::Arc;
 use url::Url;
 
 /// 提取规则
@@ -41,22 +43,85 @@ impl ExtractableRule for ExtractionRule {
     }
 }
 
+/// 提取服务接口
+#[async_trait::async_trait]
+pub trait ExtractionServiceTrait: Interface + Send + Sync {
+    /// 提取数据（完整版本，需要Settings用于LLM）
+    async fn extract(
+        &self,
+        html_content: &str,
+        rules: &HashMap<String, ExtractionRule>,
+        base_url: Option<&str>,
+    ) -> Result<(Value, TokenUsage)>;
+
+    /// 使用全局 Schema 直接通过 LLM 提取数据
+    async fn extract_with_schema(
+        &self,
+        html_content: &str,
+        schema: &Value,
+    ) -> Result<(Value, TokenUsage)>;
+
+    /// 使用CSS选择器提取数据（无需Settings）
+    fn extract_with_selectors(
+        &self,
+        html_content: &str,
+        rules: &HashMap<String, ExtractionRule>,
+        base_url: Option<&str>,
+    ) -> Result<Value>;
+}
+
 /// 提取服务
 ///
 /// 负责从 HTML 内容中提取结构化数据
+#[derive(Component)]
+#[shaku(interface = ExtractionServiceTrait)]
 pub struct ExtractionService {
-    llm_service: Box<dyn LLMServiceTrait>,
+    #[shaku(inject)]
+    llm_service: Arc<dyn LLMServiceTrait>,
+}
+
+#[async_trait::async_trait]
+impl ExtractionServiceTrait for ExtractionService {
+    async fn extract(
+        &self,
+        html_content: &str,
+        rules: &HashMap<String, ExtractionRule>,
+        base_url: Option<&str>,
+    ) -> Result<(Value, TokenUsage)> {
+        self.extract_data(html_content, rules, base_url).await
+    }
+
+    async fn extract_with_schema(
+        &self,
+        html_content: &str,
+        schema: &Value,
+    ) -> Result<(Value, TokenUsage)> {
+        // 1. Noise removal
+        let clean_text = Self::get_clean_text(html_content);
+
+        // 2. LLM Interaction
+        self.llm_service
+            .extract_data(&clean_text, schema, "json")
+            .await
+    }
+
+    fn extract_with_selectors(
+        &self,
+        html_content: &str,
+        rules: &HashMap<String, ExtractionRule>,
+        base_url: Option<&str>,
+    ) -> Result<Value> {
+        Self::extract_with_selectors_internal(html_content, rules, base_url)
+    }
 }
 
 impl ExtractionService {
-    pub fn new(llm_service: Box<dyn LLMServiceTrait>) -> Self {
+    pub fn new(llm_service: Arc<dyn LLMServiceTrait>) -> Self {
         Self { llm_service }
     }
 
-    /// 使用CSS选择器提取数据（无需Settings）
-    ///
-    /// 仅使用CSS选择器进行提取，不需要数据库、Redis或LLM配置
-    pub fn extract_with_selectors(
+    /// 使用CSS选择器提取数据（内部静态实现）
+    fn extract_with_selectors_internal(
         html_content: &str,
         rules: &HashMap<String, ExtractionRule>,
         base_url: Option<&str>,
@@ -138,44 +203,8 @@ impl ExtractionService {
         )
     }
 
-    /// 提取数据（完整版本，需要Settings用于LLM）- 通过依赖注入
-    ///
-    /// # Arguments
-    ///
-    /// * `html_content` - HTML 内容
-    /// * `rules` - 提取规则
-    /// * `llm_service` - LLM 服务（通过依赖注入）
-    /// * `base_url` - 基础 URL
-    pub async fn extract(
-        html_content: &str,
-        rules: &HashMap<String, ExtractionRule>,
-        llm_service: Box<dyn LLMServiceTrait>,
-        base_url: Option<&str>,
-    ) -> Result<(Value, TokenUsage)> {
-        let service = Self::new(llm_service);
-        service.extract_data(html_content, rules, base_url).await
-    }
-
-    /// 使用全局 Schema 直接通过 LLM 提取数据 - 通过依赖注入
-    ///
-    /// # Arguments
-    ///
-    /// * `html_content` - HTML 内容
-    /// * `schema` - 数据 schema
-    /// * `llm_service` - LLM 服务（通过依赖注入）
-    pub async fn extract_with_schema(
-        html_content: &str,
-        schema: &Value,
-        llm_service: Box<dyn LLMServiceTrait>,
-    ) -> Result<(Value, TokenUsage)> {
-        // 1. Noise removal
-        let clean_text = Self::get_clean_text(html_content);
-
-        // 2. LLM Interaction
-        llm_service.extract_data(&clean_text, schema, "json").await
-    }
-
-    pub async fn extract_data(
+    /// 提取数据（内部实现）
+    async fn extract_data(
         &self,
         html_content: &str,
         rules: &HashMap<String, ExtractionRule>,

@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
@@ -20,7 +21,8 @@ use crate::domain::repositories::webhook_event_repository::WebhookEventRepositor
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::auth_scope_service::AuthScopeService;
-use crate::domain::services::llm_service::LLMService;
+use crate::domain::services::extraction_service::ExtractionServiceTrait;
+use crate::domain::services::llm_service::LLMServiceTrait;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::search_service::SearchServiceTrait;
 use crate::domain::services::team_service::TeamService;
@@ -73,6 +75,8 @@ pub struct AppState {
     pub engine_router: Arc<EngineRouter>,
     /// Engine client
     pub engine_client: Arc<EngineClient>,
+    /// Create scrape use case
+    pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     /// Search client
     pub search_client: Arc<SearchClient>,
     /// Search service (trait object for DI)
@@ -80,11 +84,21 @@ pub struct AppState {
     /// Auth scope service for API key permission management
     pub auth_scope_service: Option<Arc<AuthScopeService>>,
     /// LLM service for LLM operations
-    pub llm_service: Arc<LLMService>,
+    pub llm_service: Arc<dyn LLMServiceTrait>,
+    /// Extraction service for data extraction
+    pub extraction_service: Arc<dyn ExtractionServiceTrait>,
     /// Regex cache for performance optimization
     pub regex_cache: Arc<RegexCache>,
     /// Audit service
     pub audit_service: Arc<dyn AuditServiceTrait>,
+    /// Webhook worker
+    pub webhook_worker: Arc<crate::workers::webhook_worker::WebhookWorker>,
+    /// Backlog worker
+    pub backlog_worker: Arc<crate::workers::backlog_worker::BacklogWorker>,
+    /// Expiration worker
+    pub expiration_worker: Arc<crate::workers::expiration_worker::ExpirationWorker>,
+    /// Geo location service
+    pub geo_location_service: Arc<crate::infrastructure::geolocation::GeoLocationService>,
 }
 
 /// Trait for extracting dependencies from AppState
@@ -114,6 +128,8 @@ pub trait AppStateExt {
     fn engine_router(&self) -> Arc<EngineRouter>;
     /// Get engine client
     fn engine_client(&self) -> Arc<EngineClient>;
+    /// Get create scrape use case
+    fn create_scrape_use_case(&self) -> Arc<dyn CreateScrapeUseCaseTrait>;
     /// Get search client
     fn search_client(&self) -> Arc<SearchClient>;
     /// Get search service
@@ -121,7 +137,7 @@ pub trait AppStateExt {
     /// Get auth scope service
     fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>>;
     /// Get LLM service
-    fn llm_service(&self) -> Arc<LLMService>;
+    fn llm_service(&self) -> Arc<dyn LLMServiceTrait>;
     /// Get regex cache
     fn regex_cache(&self) -> Arc<RegexCache>;
     /// Get Redis client
@@ -140,6 +156,16 @@ pub trait AppStateExt {
     fn team_semaphore(&self) -> Arc<TeamSemaphore>;
     /// Get audit service
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait>;
+    /// Get extraction service
+    fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait>;
+    /// Get webhook worker
+    fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker>;
+    /// Get backlog worker
+    fn backlog_worker(&self) -> Arc<crate::workers::backlog_worker::BacklogWorker>;
+    /// Get expiration worker
+    fn expiration_worker(&self) -> Arc<crate::workers::expiration_worker::ExpirationWorker>;
+    /// Get geo location service
+    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationService>;
 }
 
 impl AppStateExt for AppState {
@@ -187,6 +213,10 @@ impl AppStateExt for AppState {
         self.engine_client.clone()
     }
 
+    fn create_scrape_use_case(&self) -> Arc<dyn CreateScrapeUseCaseTrait> {
+        self.create_scrape_use_case.clone()
+    }
+
     fn search_client(&self) -> Arc<SearchClient> {
         self.search_client.clone()
     }
@@ -199,7 +229,7 @@ impl AppStateExt for AppState {
         self.auth_scope_service.clone()
     }
 
-    fn llm_service(&self) -> Arc<LLMService> {
+    fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {
         self.llm_service.clone()
     }
 
@@ -237,5 +267,25 @@ impl AppStateExt for AppState {
 
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait> {
         self.audit_service.clone()
+    }
+
+    fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait> {
+        self.extraction_service.clone()
+    }
+
+    fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker> {
+        self.webhook_worker.clone()
+    }
+
+    fn backlog_worker(&self) -> Arc<crate::workers::backlog_worker::BacklogWorker> {
+        self.backlog_worker.clone()
+    }
+
+    fn expiration_worker(&self) -> Arc<crate::workers::expiration_worker::ExpirationWorker> {
+        self.expiration_worker.clone()
+    }
+
+    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationService> {
+        self.geo_location_service.clone()
     }
 }

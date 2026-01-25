@@ -19,8 +19,8 @@ use crate::application::dto::scrape_request::{
 };
 use crate::domain::models::task::DomainError;
 use crate::engines::engine_client::{
-    EngineClient, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse, ScreenshotConfig,
-    ScrollDirection,
+    EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
+    ScreenshotConfig, ScrollDirection,
 };
 
 // === Section: Use Case Definition ===
@@ -99,10 +99,12 @@ impl CreateScrapeUseCase {
         });
 
         let scrape_options = ScrapeOptions {
+            method: HttpMethod::Get,
             needs_js: options.js_rendering.unwrap_or(false),
             needs_screenshot: options.screenshot.unwrap_or(false),
             mobile: options.mobile.unwrap_or(false),
             timeout: Duration::from_secs(options.timeout.unwrap_or(30)),
+            body: None,
             sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
             actions: self.parse_actions(dto.actions),
             screenshot_config,

@@ -18,6 +18,7 @@ use uuid::Uuid;
 /// 异步抓取请求
 pub struct AsyncScrapeRequest {
     pub team_id: Uuid,
+    pub api_key_id: Uuid,
     pub request: ScrapeRequestDto,
     pub engine: Option<String>,
     pub priority: Option<i32>,
@@ -90,6 +91,7 @@ impl<T: TaskRepository, R: ScrapeResultRepository, Cr: CreditsRepository>
         let task = Task::new(
             TaskType::Scrape,
             request.team_id,
+            request.api_key_id,
             request.request.url.clone(),
             payload,
         );
@@ -119,10 +121,17 @@ impl<R: ScrapeResultRepository, Cr: CreditsRepository> SyncScrapeUseCase<R, Cr> 
     pub async fn prepare(
         &self,
         team_id: Uuid,
+        api_key_id: Uuid,
         request: &ScrapeRequestDto,
     ) -> Result<Task, anyhow::Error> {
         let payload = serde_json::to_value(request).unwrap_or_default();
-        let task = Task::new(TaskType::Scrape, team_id, request.url.clone(), payload);
+        let task = Task::new(
+            TaskType::Scrape,
+            team_id,
+            api_key_id,
+            request.url.clone(),
+            payload,
+        );
 
         Ok(task)
     }

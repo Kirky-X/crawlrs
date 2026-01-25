@@ -6,13 +6,100 @@
 use crate::application::dto::geo_restriction_request::{
     TeamGeoRestrictionsResponse, UpdateTeamGeoRestrictionsRequest,
 };
+use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
+use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
+use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::team_service::TeamGeoRestrictions;
+use crate::presentation::handlers::response_builder::ApiResponse;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
 use serde_json::json;
 use std::sync::Arc;
 use tracing::error;
+use uuid::Uuid;
+
+/// 团队信息响应
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TeamInfoResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub credits_balance: i64,
+    pub total_tasks: i64,
+    pub completed_tasks: i64,
+    pub failed_tasks: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// 获取团队信息
+pub async fn get_team_info(
+    Extension(credits_repo): Extension<Arc<dyn CreditsRepository>>,
+    Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
+    Extension(auth_state): Extension<AuthState>,
+) -> impl IntoResponse {
+    let team_id = auth_state.team_id;
+
+    // 获取积分余额
+    let credits_balance = credits_repo.get_balance(team_id).await.unwrap_or(0);
+
+    // 获取任务统计
+    let total_tasks = task_repo
+        .find_by_crawl_id(team_id)
+        .await
+        .unwrap_or_default()
+        .len() as i64;
+
+    let response = TeamInfoResponse {
+        id: team_id,
+        name: "Team".to_string(),
+        credits_balance,
+        total_tasks,
+        completed_tasks: 0,
+        failed_tasks: 0,
+        created_at: chrono::Utc::now(),
+    };
+
+    Json(ApiResponse::success(response)).into_response()
+}
+
+/// 团队使用统计响应
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TeamUsageResponse {
+    pub team_id: Uuid,
+    pub period: String,
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
+    pub credits_used: i64,
+    pub avg_response_time_ms: f64,
+}
+
+/// 获取团队使用统计
+pub async fn get_team_usage(
+    Extension(credits_repo): Extension<Arc<dyn CreditsRepository>>,
+    Extension(scrape_result_repo): Extension<Arc<dyn ScrapeResultRepository>>,
+    Extension(auth_state): Extension<AuthState>,
+) -> impl IntoResponse {
+    let team_id = auth_state.team_id;
+
+    // 获取积分余额
+    let credits_balance = credits_repo.get_balance(team_id).await.unwrap_or(0);
+
+    // 获取团队平均响应时间
+    let avg_response_time_ms: f64 = scrape_result_repo.get_team_avg_response_time(team_id).await.unwrap_or(0.0);
+
+    let response = TeamUsageResponse { 
+        team_id, 
+        period: "30d".to_string(), 
+        total_requests: 0, 
+        successful_requests: 0, 
+        failed_requests: 0, 
+        credits_used: credits_balance.abs(), // 已使用的积分（负数表示已消耗）
+        avg_response_time_ms, 
+    };
+
+    Json(ApiResponse::success(response)).into_response()
+}
 
 /// 获取团队地理限制配置
 pub async fn get_team_geo_restrictions<GR>(

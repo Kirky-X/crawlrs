@@ -9,6 +9,7 @@
 //! for cases where storage is not configured.
 
 use async_trait::async_trait;
+use shaku::Interface;
 use thiserror::Error;
 
 /// 存储错误类型
@@ -29,7 +30,7 @@ pub enum StorageError {
 ///
 /// 定义存储数据访问接口
 #[async_trait]
-pub trait StorageRepository: Send + Sync {
+pub trait StorageRepository: Interface + Send + Sync {
     /// 使用指定键保存数据到存储中
     async fn save(&self, key: &str, data: &[u8]) -> Result<(), StorageError>;
 

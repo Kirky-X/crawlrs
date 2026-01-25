@@ -6,8 +6,10 @@
 //! Service for managing API Key scopes and permissions
 
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
-use crate::infrastructure::database::repositories::auth_scope_repo_impl::AuthScopeRepository;
-use sea_orm::DatabaseConnection;
+use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
+use async_trait::async_trait;
+use shaku::Interface;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::debug;
 use uuid::Uuid;
@@ -17,7 +19,7 @@ pub enum AuthScopeServiceError {
     #[error("API Key not found")]
     ApiKeyNotFound,
     #[error("Database error: {0}")]
-    DatabaseError(#[from] sea_orm::DbErr),
+    DatabaseError(#[from] crate::domain::repositories::auth_scope_repository::RepositoryError),
     #[error("Permission denied: required {required} but have {has}")]
     PermissionDenied {
         required: ScopePermission,
@@ -27,10 +29,28 @@ pub enum AuthScopeServiceError {
     QuotaExceeded(String),
 }
 
+/// Service trait for managing API Key scopes
+#[async_trait]
+pub trait AuthScopeServiceTrait: Interface + Send + Sync {
+    async fn get_scope_for_key(
+        &self,
+        api_key_id: Uuid,
+        team_default_scope: Option<ApiKeyScope>,
+    ) -> Result<ApiKeyScope, AuthScopeServiceError>;
+
+    async fn set_scope(
+        &self,
+        api_key_id: Uuid,
+        scope: ApiKeyScope,
+    ) -> Result<ApiKeyScope, AuthScopeServiceError>;
+
+    async fn delete_scope(&self, api_key_id: Uuid) -> Result<bool, AuthScopeServiceError>;
+}
+
 /// Service for managing API Key scopes
 #[derive(Clone)]
 pub struct AuthScopeService {
-    scope_repo: AuthScopeRepository,
+    scope_repo: Arc<dyn AuthScopeRepository>,
 }
 
 impl std::fmt::Debug for AuthScopeService {
@@ -43,43 +63,8 @@ impl std::fmt::Debug for AuthScopeService {
 
 impl AuthScopeService {
     /// Create a new service
-    pub fn new(db: DatabaseConnection) -> Self {
-        Self {
-            scope_repo: AuthScopeRepository::new(db),
-        }
-    }
-
-    /// Get scope for an API Key, with inheritance from team defaults
-    pub async fn get_scope_for_key(
-        &self,
-        api_key_id: Uuid,
-        team_default_scope: Option<ApiKeyScope>,
-    ) -> Result<ApiKeyScope, AuthScopeServiceError> {
-        debug!("Getting scope for API Key: {}", api_key_id);
-
-        // Try to find custom scope
-        let custom_scope = self.scope_repo.find_by_api_key_id(api_key_id).await?;
-
-        match custom_scope {
-            Some(scope) => {
-                debug!("Found custom scope for API Key: {}", api_key_id);
-                Ok(scope)
-            }
-            None => {
-                // Use team default scope if available
-                match team_default_scope {
-                    Some(team_scope) => {
-                        debug!("Using team default scope for API Key: {}", api_key_id);
-                        Ok(team_scope)
-                    }
-                    None => {
-                        // Return default scope
-                        debug!("Using default scope for API Key: {}", api_key_id);
-                        Ok(ApiKeyScope::default())
-                    }
-                }
-            }
-        }
+    pub fn new(scope_repo: Arc<dyn AuthScopeRepository>) -> Self {
+        Self { scope_repo }
     }
 
     /// Validate that a scope has required permission
@@ -127,28 +112,6 @@ impl AuthScopeService {
         }
     }
 
-    /// Set scope for an API Key
-    pub async fn set_scope(
-        &self,
-        api_key_id: Uuid,
-        scope: ApiKeyScope,
-    ) -> Result<ApiKeyScope, AuthScopeServiceError> {
-        debug!("Setting scope for API Key: {:?}", scope);
-        self.scope_repo
-            .upsert(api_key_id, scope)
-            .await
-            .map_err(Into::into)
-    }
-
-    /// Delete custom scope for an API Key (revert to defaults)
-    pub async fn delete_scope(&self, api_key_id: Uuid) -> Result<bool, AuthScopeServiceError> {
-        debug!("Deleting custom scope for API Key: {}", api_key_id);
-        self.scope_repo
-            .delete_by_api_key_id(api_key_id)
-            .await
-            .map_err(Into::into)
-    }
-
     /// Merge scopes: custom scope overrides team default
     pub fn merge_scopes(
         team_scope: Option<&ApiKeyScope>,
@@ -163,6 +126,64 @@ impl AuthScopeService {
             (None, Some(custom)) => custom.clone(),
             (None, None) => ApiKeyScope::default(),
         }
+    }
+}
+
+#[async_trait]
+impl AuthScopeServiceTrait for AuthScopeService {
+    /// Get scope for an API Key, with inheritance from team defaults
+    async fn get_scope_for_key(
+        &self,
+        api_key_id: Uuid,
+        team_default_scope: Option<ApiKeyScope>,
+    ) -> Result<ApiKeyScope, AuthScopeServiceError> {
+        debug!("Getting scope for API Key: {}", api_key_id);
+
+        // Try to find custom scope
+        let custom_scope = self.scope_repo.find_by_api_key_id(api_key_id).await?;
+
+        match custom_scope {
+            Some(scope) => {
+                debug!("Found custom scope for API Key: {}", api_key_id);
+                Ok(scope)
+            }
+            None => {
+                // Use team default scope if available
+                match team_default_scope {
+                    Some(team_scope) => {
+                        debug!("Using team default scope for API Key: {}", api_key_id);
+                        Ok(team_scope)
+                    }
+                    None => {
+                        // Return default scope
+                        debug!("Using default scope for API Key: {}", api_key_id);
+                        Ok(ApiKeyScope::default())
+                    }
+                }
+            }
+        }
+    }
+
+    /// Set scope for an API Key
+    async fn set_scope(
+        &self,
+        api_key_id: Uuid,
+        scope: ApiKeyScope,
+    ) -> Result<ApiKeyScope, AuthScopeServiceError> {
+        debug!("Setting scope for API Key: {:?}", scope);
+        self.scope_repo
+            .upsert(api_key_id, scope)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Delete custom scope for an API Key (revert to defaults)
+    async fn delete_scope(&self, api_key_id: Uuid) -> Result<bool, AuthScopeServiceError> {
+        debug!("Deleting custom scope for API Key: {}", api_key_id);
+        self.scope_repo
+            .delete_by_api_key_id(api_key_id)
+            .await
+            .map_err(Into::into)
     }
 }
 

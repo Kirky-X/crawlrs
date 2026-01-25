@@ -5,52 +5,16 @@
 
 //! URL处理工具模块
 //!
-//! 提供URL验证、解析和安全检查功能
+//! 提供URL解析、强类型封装和路径解析功能
 
-use std::net::IpAddr;
 use thiserror::Error;
 use url::{ParseError, Url};
 
-/// 验证错误类型
+/// URL解析错误类型
 #[derive(Error, Debug)]
-pub enum ValidationError {
-    #[error("Invalid URL")]
-    InvalidUrl,
-    #[error("SSRF detected")]
-    SsrfDetected,
-}
-
-/// 检查IP地址是否安全
-pub fn is_safe_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ipv4) => {
-            !ipv4.is_loopback()
-                && !ipv4.is_private()
-                && !ipv4.is_link_local()
-                && !ipv4.is_broadcast()
-                && !ipv4.is_documentation()
-        }
-        IpAddr::V6(ipv6) => !ipv6.is_loopback() && !ipv6.is_unspecified(),
-    }
-}
-
-/// 验证URL
-pub async fn validate_url(url: &str) -> Result<(), ValidationError> {
-    let parsed = Url::parse(url).map_err(|_| ValidationError::InvalidUrl)?;
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(ValidationError::InvalidUrl);
-    }
-    let host = parsed.host_str().ok_or(ValidationError::InvalidUrl)?;
-    let addrs = tokio::net::lookup_host((host, 0))
-        .await
-        .map_err(|_| ValidationError::InvalidUrl)?
-        .collect::<Vec<_>>();
-    for addr in addrs {
-        if !is_safe_ip(addr.ip()) {
-            return Err(ValidationError::SsrfDetected);
-        }
-    }
-    Ok(())
+pub enum UrlError {
+    #[error("Invalid URL: {0}")]
+    InvalidUrl(String),
 }
 
 /// 将可能为相对路径的URL转换为绝对路径URL

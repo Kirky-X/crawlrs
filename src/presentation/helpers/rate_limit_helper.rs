@@ -91,7 +91,7 @@ mod tests {
             &self,
             _team_id: Uuid,
         ) -> Result<RateLimitConfig, RateLimitingError> {
-            unimplemented!()
+            Ok(RateLimitConfig::default())
         }
 
         async fn update_team_rate_limit_config(
@@ -99,7 +99,7 @@ mod tests {
             _team_id: Uuid,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
-            unimplemented!()
+            Ok(())
         }
 
         async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
@@ -136,7 +136,7 @@ mod tests {
             &self,
             _team_id: Uuid,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
-            unimplemented!()
+            Ok(ConcurrencyConfig::default())
         }
 
         async fn update_team_concurrency_config(
@@ -144,7 +144,7 @@ mod tests {
             _team_id: Uuid,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
-            unimplemented!()
+            Ok(())
         }
     }
 

@@ -36,6 +36,8 @@ pub struct Task {
     pub priority: i32,
     /// 所属团队ID，用于权限隔离和资源分配
     pub team_id: Uuid,
+    /// API密钥ID，用于审计和追踪
+    pub api_key_id: Uuid,
     /// 目标URL，任务要处理的具体网址
     pub url: String,
     /// 任务负载数据，包含任务执行所需的参数和配置
@@ -246,6 +248,7 @@ impl Task {
     ///
     /// * `task_type` - 任务类型
     /// * `team_id` - 所属团队ID
+    /// * `api_key_id` - API密钥ID
     /// * `url` - 目标URL
     /// * `payload` - 任务负载数据
     ///
@@ -255,6 +258,7 @@ impl Task {
     pub fn new(
         task_type: TaskType,
         team_id: Uuid,
+        api_key_id: Uuid,
         url: String,
         payload: serde_json::Value,
     ) -> Self {
@@ -264,6 +268,7 @@ impl Task {
             status: TaskStatus::Queued,
             priority: 0,
             team_id,
+            api_key_id,
             url,
             payload,
             retry_count: 0,
@@ -284,13 +289,14 @@ impl Task {
     /// 创建一个测试任务（简化版）
     ///
     /// 便于测试时快速创建任务实例
-    pub fn test_task(team_id: Uuid, url: String, status: TaskStatus) -> Self {
+    pub fn test_task(team_id: Uuid, api_key_id: Uuid, url: String, status: TaskStatus) -> Self {
         Self {
             id: Uuid::new_v4(),
             task_type: TaskType::Scrape,
             status,
             priority: 0,
             team_id,
+            api_key_id,
             url,
             payload: serde_json::json!({}),
             retry_count: 0,

@@ -221,6 +221,7 @@ async fn test_enqueue_single_task() {
         "https://example.com",
         serde_json::json!({"depth": 1}),
         team_id,
+        Uuid::new_v4(),
     );
 
     let result = client.enqueue(request).await;
@@ -238,6 +239,7 @@ async fn test_enqueue_with_priority() {
         "https://example.com",
         serde_json::json!({}),
         team_id,
+        Uuid::new_v4(),
     )
     .with_priority(9);
 
@@ -256,6 +258,7 @@ async fn test_enqueue_with_delay() {
         "https://example.com",
         serde_json::json!({}),
         team_id,
+        Uuid::new_v4(),
     )
     .with_delay(120);
 
@@ -274,6 +277,7 @@ async fn test_enqueue_with_expiration() {
         "https://example.com",
         serde_json::json!({"selector": ".content"}),
         team_id,
+        Uuid::new_v4(),
     )
     .with_expire(7200);
 
@@ -293,18 +297,21 @@ async fn test_enqueue_batch() {
             "https://example1.com",
             serde_json::json!({}),
             team_id,
+            Uuid::new_v4(),
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example2.com",
             serde_json::json!({}),
             team_id,
+            Uuid::new_v4(),
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example3.com",
             serde_json::json!({}),
             team_id,
+            Uuid::new_v4(),
         ),
     ];
 
@@ -329,24 +336,28 @@ async fn test_enqueue_batch_exceeds_max() {
             "https://example1.com",
             serde_json::json!({}),
             team_id,
+            Uuid::new_v4(),
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example2.com",
             serde_json::json!({}),
             team_id,
+            Uuid::new_v4(),
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example3.com",
             serde_json::json!({}),
             team_id,
+            Uuid::new_v4(),
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://example4.com",
             serde_json::json!({}),
             team_id,
+            Uuid::new_v4(),
         ),
     ];
 
@@ -361,6 +372,7 @@ async fn test_dequeue_single() {
     let queue = InMemoryTestQueue::new();
     queue.add_task(Task::new(
         TaskType::Scrape,
+        Uuid::new_v4(),
         Uuid::new_v4(),
         "https://example.com".to_string(),
         serde_json::json!({}),
@@ -392,6 +404,7 @@ async fn test_dequeue_batch() {
         queue.add_task(Task::new(
             TaskType::Scrape,
             Uuid::new_v4(),
+            Uuid::new_v4(),
             format!("https://example{}.com", i),
             serde_json::json!({}),
         ));
@@ -418,6 +431,7 @@ async fn test_update_status_complete() {
     let task = Task::new(
         TaskType::Scrape,
         Uuid::new_v4(),
+        Uuid::new_v4(),
         "https://example.com".to_string(),
         serde_json::json!({}),
     );
@@ -439,6 +453,7 @@ async fn test_update_status_fail() {
     let task = Task::new(
         TaskType::Crawl,
         Uuid::new_v4(),
+        Uuid::new_v4(),
         "https://example.com".to_string(),
         serde_json::json!({}),
     );
@@ -459,6 +474,7 @@ async fn test_update_status_cancel() {
     let queue_ref = queue.clone();
     let task = Task::new(
         TaskType::Extract,
+        Uuid::new_v4(),
         Uuid::new_v4(),
         "https://example.com".to_string(),
         serde_json::json!({}),
@@ -494,6 +510,7 @@ async fn test_priority_clamping() {
         "https://a.com",
         serde_json::json!({}),
         team_id,
+        Uuid::new_v4(),
     )
     .with_priority(15);
     assert!(client.enqueue(req1).await.is_ok());
@@ -503,6 +520,7 @@ async fn test_priority_clamping() {
         "https://b.com",
         serde_json::json!({}),
         team_id,
+        Uuid::new_v4(),
     )
     .with_priority(-5);
     assert!(client.enqueue(req2).await.is_ok());
@@ -526,18 +544,21 @@ async fn test_full_workflow() {
             "https://site1.com",
             serde_json::json!({"page": 1}),
             team_id,
+            Uuid::new_v4(),
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://site2.com",
             serde_json::json!({"page": 2}),
             team_id,
+            Uuid::new_v4(),
         ),
         crawlrs::queue::EnqueueRequest::new(
             "crawl",
             "https://site3.com",
             serde_json::json!({"depth": 2}),
             team_id,
+            Uuid::new_v4(),
         ),
     ];
 
@@ -646,6 +667,7 @@ async fn test_multiple_cycles() {
         "https://a.com",
         serde_json::json!({}),
         team_id,
+        Uuid::new_v4(),
     )];
     client
         .enqueue_batch(&requests1)
@@ -663,12 +685,14 @@ async fn test_multiple_cycles() {
             "https://b.com",
             serde_json::json!({}),
             team_id,
+            Uuid::new_v4(),
         ),
         crawlrs::queue::EnqueueRequest::new(
             "scrape",
             "https://c.com",
             serde_json::json!({}),
             team_id,
+            Uuid::new_v4(),
         ),
     ];
     client
@@ -690,31 +714,31 @@ async fn test_task_types() {
     let client = QueueClientBuilder::new().build(queue);
 
     let team_id = Uuid::new_v4();
-    assert!(client
-        .enqueue(crawlrs::queue::EnqueueRequest::new(
-            "scrape",
-            "https://a.com",
-            serde_json::json!({}),
-            team_id
-        ))
-        .await
-        .is_ok());
-    assert!(client
-        .enqueue(crawlrs::queue::EnqueueRequest::new(
-            "crawl",
-            "https://b.com",
-            serde_json::json!({}),
-            team_id
-        ))
-        .await
-        .is_ok());
-    assert!(client
-        .enqueue(crawlrs::queue::EnqueueRequest::new(
-            "extract",
-            "https://c.com",
-            serde_json::json!({}),
-            team_id
-        ))
-        .await
-        .is_ok());
+    let api_key_id = Uuid::new_v4();
+    let scrape_request = crawlrs::queue::EnqueueRequest::new(
+        "scrape",
+        "https://a.com",
+        serde_json::json!({}),
+        team_id,
+        api_key_id,
+    );
+    assert!(client.enqueue(scrape_request).await.is_ok());
+
+    let crawl_request = crawlrs::queue::EnqueueRequest::new(
+        "crawl",
+        "https://b.com",
+        serde_json::json!({}),
+        team_id,
+        api_key_id,
+    );
+    assert!(client.enqueue(crawl_request).await.is_ok());
+
+    let extract_request = crawlrs::queue::EnqueueRequest::new(
+        "extract",
+        "https://c.com",
+        serde_json::json!({}),
+        team_id,
+        api_key_id,
+    );
+    assert!(client.enqueue(extract_request).await.is_ok());
 }

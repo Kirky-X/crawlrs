@@ -1,9 +1,12 @@
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// See LICENSE file in project root for full license information.
 
 use crawlrs::search::aggregator::enhanced::EnhancedSearchAggregatorBuilder;
+use crawlrs::domain::search::engine::SearchEngine;
+use crawlrs::infrastructure::cache::CacheStrategyConfig;
+use crawlrs::infrastructure::cache::CacheType;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 /// 缓存性能基准测试
@@ -14,22 +17,28 @@ fn benchmark_cache_hit_rate(c: &mut Criterion) {
 
     for ttl in [300, 600, 1800, 3600].iter() {
         group.bench_with_input(BenchmarkId::new("cache_ttl", ttl), ttl, |b, &ttl| {
-            b.to_async(tokio::runtime::Runtime::new().unwrap())
-                .iter(|| async {
-                    let aggregator = EnhancedSearchAggregatorBuilder::new()
-                        .cache_ttl_seconds(*ttl)
-                        .build()
-                        .await
-                        .unwrap();
+            let cache_config = CacheStrategyConfig {
+                cache_type: CacheType::Memory,
+                ttl_seconds: ttl,
+                max_entries: 10000,
+                ..Default::default()
+            };
 
-                    // 第一次查询（缓存未命中）
-                    let _ = aggregator.search("rust programming", 10, None, None).await;
+            b.iter(|| async {
+                let aggregator = EnhancedSearchAggregatorBuilder::new()
+                    .cache_config(cache_config.clone())
+                    .build()
+                    .await
+                    .unwrap();
 
-                    // 后续查询（应该命中缓存）
-                    for _ in 0..10 {
-                        black_box(aggregator.search("rust programming", 10, None, None).await);
-                    }
-                });
+                // 第一次查询（缓存未命中）
+                let _ = SearchEngine::search(&aggregator, "rust programming", 10, None, None).await;
+
+                // 后续查询（应该命中缓存）
+                for _ in 0..10 {
+                    black_box(SearchEngine::search(&aggregator, "rust programming", 10, None, None).await);
+                }
+            });
         });
     }
 
@@ -45,26 +54,32 @@ fn benchmark_cache_capacity(c: &mut Criterion) {
             BenchmarkId::new("max_entries", capacity),
             capacity,
             |b, &capacity| {
-                b.to_async(tokio::runtime::Runtime::new().unwrap())
-                    .iter(|| async {
-                        let aggregator = EnhancedSearchAggregatorBuilder::new()
-                            .cache_max_entries(*capacity)
-                            .build()
-                            .await
-                            .unwrap();
+                let cache_config = CacheStrategyConfig {
+                    cache_type: CacheType::Memory,
+                    ttl_seconds: 3600,
+                    max_entries: capacity,
+                    ..Default::default()
+                };
 
-                        // 模拟大量不同查询
-                        for i in 0..100 {
-                            let query = format!("test query {}", i);
-                            black_box(aggregator.search(&query, 5, None, None).await);
-                        }
+                b.iter(|| async {
+                    let aggregator = EnhancedSearchAggregatorBuilder::new()
+                        .cache_config(cache_config.clone())
+                        .build()
+                        .await
+                        .unwrap();
 
-                        // 重复查询之前的部分以测试缓存命中
-                        for i in 0..10 {
-                            let query = format!("test query {}", i);
-                            black_box(aggregator.search(&query, 5, None, None).await);
-                        }
-                    });
+                    // 模拟大量不同查询
+                    for i in 0..100 {
+                        let query = format!("test query {}", i);
+                        black_box(SearchEngine::search(&aggregator, &query, 5, None, None).await);
+                    }
+
+                    // 重复查询之前的部分以测试缓存命中
+                    for i in 0..10 {
+                        let query = format!("test query {}", i);
+                        black_box(SearchEngine::search(&aggregator, &query, 5, None, None).await);
+                    }
+                });
             },
         );
     }

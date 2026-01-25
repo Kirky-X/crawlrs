@@ -280,6 +280,7 @@ mod tests {
             status,
             priority: 0,
             team_id: uuid::Uuid::new_v4(),
+            api_key_id: uuid::Uuid::new_v4(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,

@@ -1,8 +1,10 @@
-// Utils unit tests placeholder
-// This module is reserved for utility function tests
-// TODO: Add real unit tests for utils module
+// Utils unit tests
+// Unit tests for utility functions in src/utils/
 
 #[cfg(test)]
 mod tests {
-    // Placeholder - utils tests to be added
+    #[test]
+    fn test_placeholder() {
+        // Placeholder test - replace with real unit tests
+    }
 }

@@ -14,150 +14,62 @@ const MEDIUM_LOAD_DEPTH_FACTOR: f64 = 0.75;
 
 use crate::domain::models::task::{DomainError, Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
-use crate::utils::robots::{RobotsChecker, RobotsCheckerTrait};
+use crate::utils::robots::RobotsCheckerTrait;
 use anyhow::Result;
 use chrono::Utc;
 use regex::Regex;
 use scraper::{Html, Selector};
+use shaku::{Component, Interface};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::debug;
 use url::Url;
 use uuid::Uuid;
 
-/// 系统监控 Trait - 用于抽象系统资源监控功能
-/// 遵循依赖倒置原则，领域层通过 Trait 依赖抽象而非具体实现
-#[cfg(feature = "metrics")]
+/// 爬取服务接口
 #[async_trait::async_trait]
-pub trait SystemMonitor: Send + Sync {
-    /// 获取 CPU 使用率
-    fn get_cpu_usage(&self) -> f64;
-    /// 获取内存使用率
-    fn get_memory_usage(&self) -> f64;
-}
-
-/// 默认系统监控实现（使用基础设施层功能）
-#[cfg(feature = "metrics")]
-pub struct DefaultSystemMonitor {
-    monitor: crate::infrastructure::observability::metrics::SystemMonitorComponent,
-}
-
-#[cfg(feature = "metrics")]
-impl DefaultSystemMonitor {
-    /// 创建新的系统监控器，接受 SystemMonitorComponent 作为参数
-    pub fn new(
-        monitor: crate::infrastructure::observability::metrics::SystemMonitorComponent,
-    ) -> Self {
-        Self { monitor }
-    }
-}
-
-#[cfg(feature = "metrics")]
-#[async_trait::async_trait]
-impl SystemMonitor for DefaultSystemMonitor {
-    fn get_cpu_usage(&self) -> f64 {
-        crate::infrastructure::observability::metrics::get_cpu_usage_with_monitor(&self.monitor)
-    }
-
-    fn get_memory_usage(&self) -> f64 {
-        crate::infrastructure::observability::metrics::get_memory_usage_with_monitor(&self.monitor)
-    }
+pub trait CrawlServiceTrait: Interface + Send + Sync {
+    /// 处理爬取结果
+    async fn process_crawl_result(
+        &self,
+        parent_task: &Task,
+        html_content: &str,
+    ) -> Result<Vec<Task>, DomainError>;
 }
 
 /// 爬取服务
 ///
 /// 处理网站爬取任务的核心业务逻辑
-pub struct CrawlService<R: TaskRepository, C: RobotsCheckerTrait = RobotsChecker> {
+#[derive(Component)]
+#[shaku(interface = CrawlServiceTrait)]
+pub struct CrawlService {
     /// 任务仓库
-    repo: Arc<R>,
+    #[shaku(inject)]
+    repo: Arc<dyn TaskRepository>,
     /// Robots.txt检查器
-    robots_checker: C,
+    #[shaku(inject)]
+    robots_checker: Arc<dyn RobotsCheckerTrait>,
     /// 系统监控器（用于负载降级）
     #[cfg(feature = "metrics")]
-    system_monitor: Option<Box<dyn SystemMonitor>>,
+    #[shaku(inject)]
+    system_monitor: Arc<dyn crate::infrastructure::observability::metrics::SystemMonitorTrait>,
 }
 
-impl<R: TaskRepository> CrawlService<R, RobotsChecker> {
-    /// 创建新的爬取服务实例
-    ///
-    /// # 参数
-    ///
-    /// * `repo` - 任务仓库实例
-    /// * `robots_checker` - Robots.txt检查器
-    /// * `system_monitor` - 系统监控器（可选）
-    ///
-    /// # 返回值
-    ///
-    /// 返回新的爬取服务实例
-    #[cfg(feature = "metrics")]
-    pub fn new(
-        repo: Arc<R>,
-        robots_checker: RobotsChecker,
-        system_monitor: Option<Box<dyn SystemMonitor>>,
-    ) -> Self {
-        Self {
-            repo,
-            robots_checker,
-            system_monitor,
-        }
-    }
-
-    /// 创建新的爬取服务实例（无 metrics 功能）
-    #[cfg(not(feature = "metrics"))]
-    pub fn new(
-        repo: Arc<R>,
-        robots_checker: RobotsChecker,
-        _system_monitor: Option<Box<dyn SystemMonitor>>,
-    ) -> Self {
-        Self {
-            repo,
-            robots_checker,
-        }
+#[async_trait::async_trait]
+impl CrawlServiceTrait for CrawlService {
+    async fn process_crawl_result(
+        &self,
+        parent_task: &Task,
+        html_content: &str,
+    ) -> Result<Vec<Task>, DomainError> {
+        self.process_crawl_result_internal(parent_task, html_content)
+            .await
     }
 }
 
-impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
-    /// 使用自定义Robots检查器创建新的爬取服务实例
-    #[cfg(feature = "metrics")]
-    pub fn new_with_checker(
-        repo: Arc<R>,
-        checker: C,
-        system_monitor: Option<Box<dyn SystemMonitor>>,
-    ) -> Self {
-        Self {
-            repo,
-            robots_checker: checker,
-            system_monitor,
-        }
-    }
-
-    /// 使用自定义Robots检查器创建新的爬取服务实例（无 metrics 功能）
-    #[cfg(not(feature = "metrics"))]
-    pub fn new_with_checker(
-        repo: Arc<R>,
-        checker: C,
-        _system_monitor: Option<Box<dyn SystemMonitor>>,
-    ) -> Self {
-        Self {
-            repo,
-            robots_checker: checker,
-        }
-    }
-
-    /// 处理爬取结果
-    ///
-    /// 解析HTML内容，提取链接并创建新的爬取任务
-    ///
-    /// # 参数
-    ///
-    /// * `parent_task` - 父任务
-    /// * `html_content` - HTML内容
-    ///
-    /// # 返回值
-    ///
-    /// * `Ok(Vec<Task>)` - 新创建的任务列表
-    /// * `Err(DomainError)` - 处理过程中出现的错误
-    pub async fn process_crawl_result(
+impl CrawlService {
+    /// 处理爬取结果 (Internal implementation)
+    pub async fn process_crawl_result_internal(
         &self,
         parent_task: &Task,
         html_content: &str,
@@ -244,12 +156,8 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
 
     #[cfg(feature = "metrics")]
     fn apply_load_degradation(&self, depth: u64, max_depth: u64) -> u64 {
-        let Some(ref monitor) = self.system_monitor else {
-            return max_depth;
-        };
-
-        let cpu_usage = monitor.get_cpu_usage();
-        let mem_usage = monitor.get_memory_usage();
+        let cpu_usage = self.system_monitor.cpu_usage();
+        let mem_usage = self.system_monitor.memory_usage();
 
         if cpu_usage > HIGH_LOAD_THRESHOLD || mem_usage > HIGH_LOAD_THRESHOLD {
             tracing::warn!(
@@ -409,6 +317,7 @@ impl<R: TaskRepository, C: RobotsCheckerTrait> CrawlService<R, C> {
             status: TaskStatus::Queued,
             priority,
             team_id: parent_task.team_id,
+            api_key_id: parent_task.api_key_id,
             url: link.to_string(),
             payload,
             retry_count: 0,

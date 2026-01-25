@@ -32,14 +32,14 @@ pub enum HandleFailureResult {
 ///
 /// This handler consolidates the retry pattern that was repeated across
 /// multiple workers (scrape_worker, webhook_worker).
-pub struct RetryHandler<R: TaskRepository> {
-    repository: Arc<R>,
+pub struct RetryHandler {
+    repository: Arc<dyn TaskRepository>,
     retry_policy: RetryPolicy,
 }
 
-impl<R: TaskRepository> RetryHandler<R> {
+impl RetryHandler {
     /// Create a new RetryHandler
-    pub fn new(repository: Arc<R>, retry_policy: RetryPolicy) -> Self {
+    pub fn new(repository: Arc<dyn TaskRepository>, retry_policy: RetryPolicy) -> Self {
         Self {
             repository,
             retry_policy,
@@ -47,7 +47,7 @@ impl<R: TaskRepository> RetryHandler<R> {
     }
 
     /// Create a RetryHandler with default policy
-    pub fn with_default_policy(repository: Arc<R>) -> Self {
+    pub fn with_default_policy(repository: Arc<dyn TaskRepository>) -> Self {
         Self::new(repository, RetryPolicy::default())
     }
 
@@ -69,7 +69,12 @@ impl<R: TaskRepository> RetryHandler<R> {
                 task.id, task.max_retries
             );
 
-            if let Err(e) = self.repository.mark_failed(task.id).await {
+            task.attempt_count = new_attempt_count as i32;
+            task.retry_count += 1;
+            task.status = TaskStatus::Failed;
+            task.completed_at = Some(Utc::now().into());
+
+            if let Err(e) = self.repository.update(task).await {
                 return HandleFailureResult::Error(e.into());
             }
 
@@ -81,8 +86,11 @@ impl<R: TaskRepository> RetryHandler<R> {
         let next_retry = Utc::now() + Duration::milliseconds(backoff.as_millis() as i64);
 
         task.attempt_count = new_attempt_count as i32;
+        task.retry_count += 1;
         task.scheduled_at = Some(next_retry.into());
         task.status = TaskStatus::Queued;
+        task.started_at = None;
+        task.completed_at = None;
 
         if let Err(e) = self.repository.update(task).await {
             return HandleFailureResult::Error(e.into());

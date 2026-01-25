@@ -1,26 +1,79 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+use shaku::module;
 
-//! Application module for Shaku dependency injection.
-//!
-//! This is the root module that combines all sub-modules (infrastructure, engine, search)
-//! and provides the main entry point for dependency resolution in the crawlrs application.
+#[cfg(feature = "metrics")]
+module! {
+    pub AppModule {
+        components = [
+            crate::di::infrastructure_module::SettingsComponent,
+            crate::di::infrastructure_module::HttpClientComponent,
+            crate::di::infrastructure_module::DatabasePoolComponent,
+            crate::di::infrastructure_module::RedisClientComponent,
+            crate::di::infrastructure_module::TaskRepositoryComponent,
+            crate::di::infrastructure_module::TasksBacklogRepositoryComponent,
+            crate::di::infrastructure_module::WebhookEventRepositoryComponent,
+            crate::di::infrastructure_module::CreditsRepositoryComponent,
+            crate::di::infrastructure_module::CrawlRepositoryComponent,
+            crate::di::infrastructure_module::ScrapeResultRepositoryComponent,
+            crate::di::infrastructure_module::WebhookRepositoryComponent,
+            crate::di::infrastructure_module::GeoRestrictionRepositoryComponent,
+            crate::di::infrastructure_module::StorageRepositoryComponent,
+            crate::utils::robots::RobotsChecker,
+            crate::di::engines_module::EngineRouterComponent,
+            crate::di::engines_module::EngineClientComponent,
+            crate::di::service_module::TemplateLoaderComponent,
+            crate::domain::services::llm_service::LLMService,
+            crate::domain::services::crawl_service::CrawlService,
+            crate::di::service_module::RateLimitingServiceComponent,
+            crate::di::service_module::TeamServiceComponent,
+            crate::di::service_module::GeoLocationServiceComponent,
+            crate::domain::services::extraction_service::ExtractionService,
+            crate::di::service_module::AuditServiceComponent,
+            crate::di::service_module::RegexCacheComponent,
+            crate::di::infrastructure_module::AuthScopeRepositoryComponent,
+            crate::di::service_module::AuthScopeServiceComponent,
+            crate::di::service_module::SearchServiceComponent,
+            crate::di::search_module::SearchClientComponent,
+            crate::infrastructure::observability::metrics::SystemMonitorComponent,
+        ],
+        providers = [],
+    }
+}
 
-use std::sync::Arc;
-
-use crate::config::settings::Settings;
-
-/// Application module - the root module for Shaku DI
-///
-/// This module combines all sub-modules and provides the main entry point
-/// for dependency resolution in the crawlrs application.
-pub struct AppModule;
-
-impl AppModule {
-    /// Create an AppModule with default settings
-    pub fn create(_settings: Arc<Settings>) -> Self {
-        Self
+#[cfg(not(feature = "metrics"))]
+module! {
+    pub AppModule {
+        components = [
+            crate::di::infrastructure_module::SettingsComponent,
+            crate::di::infrastructure_module::HttpClientComponent,
+            crate::di::infrastructure_module::DatabasePoolComponent,
+            crate::di::infrastructure_module::RedisClientComponent,
+            crate::di::infrastructure_module::TaskRepositoryComponent,
+            crate::di::infrastructure_module::TasksBacklogRepositoryComponent,
+            crate::di::infrastructure_module::WebhookEventRepositoryComponent,
+            crate::di::infrastructure_module::CreditsRepositoryComponent,
+            crate::di::infrastructure_module::CrawlRepositoryComponent,
+            crate::di::infrastructure_module::ScrapeResultRepositoryComponent,
+            crate::di::infrastructure_module::WebhookRepositoryComponent,
+            crate::di::infrastructure_module::GeoRestrictionRepositoryComponent,
+            crate::di::infrastructure_module::StorageRepositoryComponent,
+            crate::utils::robots::RobotsChecker,
+            crate::di::engines_module::EngineRouterComponent,
+            crate::di::engines_module::EngineClientComponent,
+            crate::di::service_module::TemplateLoaderComponent,
+            crate::domain::services::llm_service::LLMService,
+            crate::domain::services::crawl_service::CrawlService,
+            crate::di::service_module::RateLimitingServiceComponent,
+            crate::di::service_module::TeamServiceComponent,
+            crate::di::service_module::GeoLocationServiceComponent,
+            crate::domain::services::extraction_service::ExtractionService,
+            crate::di::service_module::AuditServiceComponent,
+            crate::di::service_module::RegexCacheComponent,
+            crate::di::infrastructure_module::AuthScopeRepositoryComponent,
+            crate::di::service_module::AuthScopeServiceComponent,
+            crate::di::service_module::SearchServiceComponent,
+            crate::di::search_module::SearchClientComponent,
+            crate::infrastructure::observability::metrics::SystemMonitorComponent,
+        ],
+        providers = [],
     }
 }

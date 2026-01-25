@@ -3,9 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 并发控制模块
+//! Redis 并发控制器实现
 //!
-//! 提供任务并发控制功能，包括信号量管理和并发限制
+//! 使用 Redis ZSET 实现分布式信号量，提供高性能的并发控制
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -14,22 +14,37 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::services::concurrency_controller::{
-    ConcurrencyController as ConcurrencyControllerTrait, ConcurrencyResult,
+    ConcurrencyController, ConcurrencyResult,
 };
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
 
-/// 并发控制器
+/// 基于 Redis 的并发控制器实现
 ///
-/// 负责管理团队级别的任务并发控制
+/// 使用 Redis Sorted Set (ZSET) 实现分布式信号量：
+/// - 使用 ZADD 添加任务到活跃任务集合
+/// - 使用 ZCARD 统计当前并发数
+/// - 使用 ZREMRANGEBYSCORE 清理过期任务
+/// - 使用 Lua 脚本确保原子性操作
+///
+/// # 特点
+///
+/// - 高性能：Lua 脚本将多个 Redis 调用合并为一个原子操作
+/// - 心跳机制：支持任务心跳更新，防止误判为过期
+/// - 动态限制：支持从 Redis 读取或使用默认限制
 #[derive(Clone)]
-pub struct ConcurrencyController {
+pub struct RedisConcurrencyController {
     redis: Arc<RedisClient>,
     default_concurrency_limit: usize,
 }
 
-impl ConcurrencyController {
-    /// 创建新的并发控制器
+impl RedisConcurrencyController {
+    /// 创建新的 Redis 并发控制器
+    ///
+    /// # Arguments
+    ///
+    /// * `redis` - Redis 客户端
+    /// * `default_concurrency_limit` - 默认并发限制
     pub fn new(redis: RedisClient, default_concurrency_limit: usize) -> Self {
         Self {
             redis: Arc::new(redis),
@@ -51,92 +66,53 @@ impl ConcurrencyController {
     }
 
     /// 获取有效的并发限制
-    pub fn get_effective_limit(&self, task: &crate::domain::models::task::Task) -> usize {
+    pub fn get_effective_limit(
+        &self,
+        task: &crate::domain::models::task::Task,
+    ) -> usize {
         Self::extract_payload_limit(task).unwrap_or(self.default_concurrency_limit)
     }
 
-    /// 获取信号量许可
+    /// 生成任务标识键
     ///
-    /// # Arguments
-    ///
-    /// * `task` - 任务
-    ///
-    /// # Returns
-    ///
-    /// 如果获取成功返回 Ok(true)，如果达到限制返回 Ok(false)，错误返回 Err
-    pub async fn acquire_permit(&self, task: &crate::domain::models::task::Task) -> Result<bool> {
-        let team_id = task.team_id;
-        // Pre-allocate String with capacity to avoid reallocations
-        let mut task_id_str = String::with_capacity(64);
-        task_id_str.push_str(&team_id.to_string());
-        task_id_str.push(':');
-        task_id_str.push_str(&task.id.to_string());
-
-        let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
-        let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
-        let now = Utc::now().timestamp() as f64;
-        let stale_threshold = now - 3600.0; // 1 hour stale
-
-        let default_limit = self.get_effective_limit(task);
-
-        // Execute atomic Lua script - reduces 4 Redis calls to 1
-        let result = self
-            .redis
-            .eval(
-                CONCURRENCY_CONTROL_LUA,
-                &[&team_active_tasks_key, &team_concurrency_limit_key],
-                &[
-                    &task_id_str,
-                    &now.to_string(),
-                    &stale_threshold.to_string(),
-                    &default_limit.to_string(),
-                ],
-            )
-            .await?;
-
-        let granted = result == "1";
-        Ok(granted)
+    /// 格式: `team_id:task_id`
+    fn generate_task_key(&self, team_id: Uuid, task_id: Uuid) -> String {
+        let mut key = String::with_capacity(64);
+        key.push_str(&team_id.to_string());
+        key.push(':');
+        key.push_str(&task_id.to_string());
+        key
     }
 
-    /// 释放信号量许可
-    pub async fn release_permit(&self, team_id: Uuid, task_id: Uuid) -> Result<()> {
-        let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
-        // Pre-allocate String for task_id
-        let task_id_str = task_id.to_string();
-        self.redis
-            .zrem(&team_active_tasks_key, &task_id_str)
-            .await?;
-        Ok(())
+    /// 生成 Redis 键
+    fn team_active_tasks_key(&self, team_id: Uuid) -> String {
+        format!("team:{}:active_tasks", team_id)
     }
-}
 
-/// 生成任务标识键
-fn generate_task_key(team_id: Uuid, task_id: Uuid) -> String {
-    let mut key = String::with_capacity(64);
-    key.push_str(&team_id.to_string());
-    key.push(':');
-    key.push_str(&task_id.to_string());
-    key
+    fn team_concurrency_limit_key(&self, team_id: Uuid) -> String {
+        format!("team:{}:concurrency_limit", team_id)
+    }
 }
 
 #[async_trait]
-impl ConcurrencyControllerTrait for ConcurrencyController {
+impl ConcurrencyController for RedisConcurrencyController {
     async fn check_team_concurrency(
         &self,
         team_id: Uuid,
         task_id: Uuid,
     ) -> Result<ConcurrencyResult> {
-        let task_key = generate_task_key(team_id, task_id);
-        let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
-        let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
+        let task_key = self.generate_task_key(team_id, task_id);
+        let active_key = self.team_active_tasks_key(team_id);
+        let limit_key = self.team_concurrency_limit_key(team_id);
         let now = Utc::now().timestamp() as f64;
         let stale_threshold = now - 3600.0; // 1 hour stale
 
+        // 执行 Lua 脚本进行检查
         let result = self
             .redis
             .eval(
                 CONCURRENCY_CONTROL_LUA,
-                &[&team_active_tasks_key, &team_concurrency_limit_key],
+                &[&active_key, &limit_key],
                 &[
                     &task_key,
                     &now.to_string(),
@@ -157,17 +133,18 @@ impl ConcurrencyControllerTrait for ConcurrencyController {
     }
 
     async fn acquire_semaphore(&self, team_id: Uuid, task_id: Uuid) -> Result<bool> {
-        let task_key = generate_task_key(team_id, task_id);
-        let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
-        let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
+        let task_key = self.generate_task_key(team_id, task_id);
+        let active_key = self.team_active_tasks_key(team_id);
+        let limit_key = self.team_concurrency_limit_key(team_id);
         let now = Utc::now().timestamp() as f64;
         let stale_threshold = now - 3600.0; // 1 hour stale
 
+        // 执行原子 Lua 脚本
         let result = self
             .redis
             .eval(
                 CONCURRENCY_CONTROL_LUA,
-                &[&team_active_tasks_key, &team_concurrency_limit_key],
+                &[&active_key, &limit_key],
                 &[
                     &task_key,
                     &now.to_string(),
@@ -182,19 +159,21 @@ impl ConcurrencyControllerTrait for ConcurrencyController {
     }
 
     async fn release_semaphore(&self, team_id: Uuid, task_id: Uuid) -> Result<()> {
-        self.release_permit(team_id, task_id).await
+        let active_key = self.team_active_tasks_key(team_id);
+        let task_id_str = task_id.to_string();
+
+        self.redis.zrem(&active_key, &task_id_str).await?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::models::task::{Task, TaskType};
 
     #[test]
     fn test_extract_payload_limit_scrape_task() {
-        use crate::domain::models::task::{Task, TaskType};
-        use uuid::Uuid;
-
         let task = Task {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -209,15 +188,12 @@ mod tests {
         };
 
         // Scrape tasks don't check payload limit
-        let limit = ConcurrencyController::extract_payload_limit(&task);
+        let limit = RedisConcurrencyController::extract_payload_limit(&task);
         assert_eq!(limit, None);
     }
 
     #[test]
     fn test_extract_payload_limit_crawl_task() {
-        use crate::domain::models::task::{Task, TaskType};
-        use uuid::Uuid;
-
         let task = Task {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -231,15 +207,12 @@ mod tests {
             ..Task::default()
         };
 
-        let limit = ConcurrencyController::extract_payload_limit(&task);
+        let limit = RedisConcurrencyController::extract_payload_limit(&task);
         assert_eq!(limit, Some(10));
     }
 
     #[test]
     fn test_extract_payload_limit_no_config() {
-        use crate::domain::models::task::{Task, TaskType};
-        use uuid::Uuid;
-
         let task = Task {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -249,15 +222,12 @@ mod tests {
             ..Task::default()
         };
 
-        let limit = ConcurrencyController::extract_payload_limit(&task);
+        let limit = RedisConcurrencyController::extract_payload_limit(&task);
         assert_eq!(limit, None);
     }
 
     #[test]
     fn test_extract_payload_limit_non_crawl_task() {
-        use crate::domain::models::task::{Task, TaskType};
-        use uuid::Uuid;
-
         let task = Task {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -272,7 +242,7 @@ mod tests {
         };
 
         // Non-Crawl tasks don't check payload limit
-        let limit = ConcurrencyController::extract_payload_limit(&task);
+        let limit = RedisConcurrencyController::extract_payload_limit(&task);
         assert_eq!(limit, None);
     }
 }

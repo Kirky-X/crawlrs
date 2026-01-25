@@ -19,7 +19,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     let http_client = std::sync::Arc::new(http_client);
-    let service = ExtractionService::new(Box::new(LLMService::new(&settings, http_client)));
+    let llm_service = std::sync::Arc::new(LLMService::new(&settings, http_client))
+        as std::sync::Arc<dyn crawlrs::domain::services::llm_service::LLMServiceTrait>;
+    let service = std::sync::Arc::new(
+        crawlrs::domain::services::extraction_service::ExtractionService::new(llm_service),
+    ) as std::sync::Arc<dyn crawlrs::domain::services::extraction_service::ExtractionServiceTrait>;
 
     // 读取指定的真实 HTML 文件
     let html = std::fs::read_to_string("temp/extraction_test/raw.html")
@@ -44,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let (markdown_result, markdown_usage) = service
-        .extract_data(&html, &markdown_rules, Some("https://news.cctv.com/"))
+        .extract(&html, &markdown_rules, Some("https://news.cctv.com/"))
         .await?;
 
     println!("Markdown Result:\n{:#?}", markdown_result["content_md"]);
@@ -66,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let (json_result, json_usage) = service
-        .extract_data(&html, &json_rules, Some("https://news.cctv.com/"))
+        .extract(&html, &json_rules, Some("https://news.cctv.com/"))
         .await?;
 
     println!("JSON Result:\n{:#?}", json_result["summary_json"]);

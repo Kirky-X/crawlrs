@@ -35,6 +35,9 @@ pub use storage::WebhookSettings;
 
 pub use llm::LLMSettings;
 
+pub use runtime::RuntimeConfig;
+pub use settings::{TimeoutSettings, WorkerCount, WorkerSettings};
+
 // 主配置结构体
 pub mod settings;
 pub use settings::Settings;

@@ -5,10 +5,7 @@
 
 use crawlrs::bootstrap::routes::build_api_app_with_state;
 use crawlrs::di::{AppState, AppStateExt};
-use crawlrs::utils::retry_policy::RetryPolicy;
-use crawlrs::workers::backlog_worker::BacklogWorker;
 use crawlrs::workers::manager::{WorkerManager, WorkerManagerConfig};
-use crawlrs::workers::webhook_worker::WebhookWorker;
 use crawlrs::workers::{AbstractWorker, Worker};
 use std::sync::Arc;
 use std::{env, process};
@@ -49,29 +46,30 @@ async fn start_api_service(
     tracing::info!("Starting API service...");
 
     // Start webhook worker
-    let webhook_processor = Arc::new(WebhookWorker::new(
-        app_state.webhook_event_repo(),
-        app_state.webhook_service(),
-        RetryPolicy::default(),
-    ));
-    let webhook_worker = AbstractWorker::new(webhook_processor, std::time::Duration::from_secs(5));
+    let webhook_worker = AbstractWorker::new(
+        app_state.webhook_worker(),
+        std::time::Duration::from_secs(5),
+    );
     tokio::spawn(async move {
         webhook_worker.run().await;
     });
 
     // Start backlog worker
-    let backlog_processor = Arc::new(BacklogWorker::new(
-        app_state.tasks_backlog_repo(),
-        app_state.task_repo(),
-        app_state.rate_limiting_service(),
-        settings.concurrency.default_team_limit as usize,
-    ));
     let backlog_worker = AbstractWorker::new(
-        backlog_processor,
+        app_state.backlog_worker(),
         std::time::Duration::from_secs(settings.timeouts.workers.backlog_interval_seconds),
     );
     tokio::spawn(async move {
         backlog_worker.run().await;
+    });
+
+    // Start expiration worker
+    let expiration_worker = AbstractWorker::new(
+        app_state.expiration_worker(),
+        std::time::Duration::from_secs(3600), // Run every hour
+    );
+    tokio::spawn(async move {
+        expiration_worker.run().await;
     });
 
     // Build API app with dependencies
@@ -100,12 +98,10 @@ async fn start_worker_service(
     tracing::info!("Starting Worker service...");
 
     // Start webhook worker
-    let webhook_processor = Arc::new(WebhookWorker::new(
-        app_state.webhook_event_repo(),
-        app_state.webhook_service(),
-        RetryPolicy::default(),
-    ));
-    let webhook_worker = AbstractWorker::new(webhook_processor, std::time::Duration::from_secs(5));
+    let webhook_worker = AbstractWorker::new(
+        app_state.webhook_worker(),
+        std::time::Duration::from_secs(5),
+    );
     tokio::spawn(async move {
         webhook_worker.run().await;
     });
@@ -117,18 +113,14 @@ async fn start_worker_service(
         result_repository: app_state.result_repo(),
         crawl_repository: app_state.crawl_repo(),
         storage_repository: Some(app_state.storage_repo()),
-        webhook_event_repository: app_state.webhook_event_repo(),
+        webhook_service: app_state.webhook_service(),
         credits_repository: app_state.credits_repo(),
         engine_client: app_state.engine_client(),
-        create_scrape_use_case: Arc::new(
-            crawlrs::application::use_cases::create_scrape::CreateScrapeUseCase::new(
-                app_state.engine_client.clone(),
-            ),
-        ),
+        create_scrape_use_case: app_state.create_scrape_use_case(),
         redis: (*app_state.redis_client).clone(),
         robots_checker: app_state.robots_checker.clone(),
         http_client,
-        llm_service: (*app_state.llm_service()).clone(),
+        extraction_service: app_state.extraction_service(),
         regex_cache: (*app_state.regex_cache()).clone(),
     };
 
@@ -145,22 +137,26 @@ async fn start_worker_service(
     worker_manager.start_workers(worker_count).await;
 
     // Start backlog worker
-    let backlog_processor = Arc::new(BacklogWorker::new(
-        app_state.tasks_backlog_repo(),
-        app_state.task_repo(),
-        app_state.rate_limiting_service(),
-        settings.concurrency.default_team_limit as usize,
-    ));
     let backlog_worker = AbstractWorker::new(
-        backlog_processor,
+        app_state.backlog_worker(),
         std::time::Duration::from_secs(settings.timeouts.workers.backlog_interval_seconds),
     );
     tokio::spawn(async move {
         backlog_worker.run().await;
     });
 
-    // Wait for shutdown signal
-    worker_manager.wait_for_shutdown().await;
+    // Start expiration worker
+    let expiration_worker = AbstractWorker::new(
+        app_state.expiration_worker(),
+        std::time::Duration::from_secs(3600), // Run every hour
+    );
+    tokio::spawn(async move {
+        expiration_worker.run().await;
+    });
+
+    // Keep the main thread alive
+    tokio::signal::ctrl_c().await?;
+    tracing::info!("Shutting down worker service...");
 
     Ok(())
 }
@@ -235,12 +231,18 @@ async fn main() -> anyhow::Result<()> {
         team_semaphore: services.team_semaphore,
         engine_router: engines.router,
         engine_client: engines.engine_client,
+        create_scrape_use_case: services.create_scrape_use_case,
         search_client,
         search_service: services.search_service,
         auth_scope_service: services.auth_scope_service,
         audit_service: services.audit_service,
         llm_service: services.llm_service,
+        extraction_service: services.extraction_service,
         regex_cache: services.regex_cache,
+        webhook_worker: services.webhook_worker,
+        backlog_worker: services.backlog_worker,
+        expiration_worker: services.expiration_worker,
+        geo_location_service: services.geo_location_service,
     };
 
     tracing::info!("Application dependencies initialized successfully");

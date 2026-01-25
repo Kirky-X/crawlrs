@@ -12,7 +12,7 @@
 #![allow(deprecated)]
 
 use crate::engines::health_monitor::{AggregateHealthStatus, EngineHealthMonitor};
-use crate::engines::router::EngineRouter;
+use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::engines::validators::validate_url;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -74,6 +74,8 @@ impl ScrapeRequest {
 /// Optional configuration for scrape operations.
 #[derive(Debug, Clone)]
 pub struct ScrapeOptions {
+    /// HTTP method for the request
+    pub method: HttpMethod,
     /// Whether JavaScript rendering is required (default: false)
     pub needs_js: bool,
     /// Whether screenshot capture is required (default: false)
@@ -82,6 +84,8 @@ pub struct ScrapeOptions {
     pub mobile: bool,
     /// Request timeout duration (default: 30 seconds)
     pub timeout: Duration,
+    /// Optional request body
+    pub body: Option<String>,
     /// Sync wait duration in milliseconds after page load (default: 0)
     pub sync_wait_ms: u32,
     /// Page actions to perform (clicks, scrolls, etc.)
@@ -103,10 +107,12 @@ pub struct ScrapeOptions {
 impl Default for ScrapeOptions {
     fn default() -> Self {
         Self {
+            method: HttpMethod::Get,
             needs_js: false,
             needs_screenshot: false,
             mobile: false,
             timeout: Duration::from_secs(30),
+            body: None,
             sync_wait_ms: 0,
             actions: Vec::new(),
             screenshot_config: None,
@@ -131,6 +137,11 @@ impl ScrapeOptions {
 pub struct ScrapeOptionsBuilder(ScrapeOptions);
 
 impl ScrapeOptionsBuilder {
+    pub fn method(mut self, method: HttpMethod) -> Self {
+        self.0.method = method;
+        self
+    }
+
     pub fn needs_js(mut self, enabled: bool) -> Self {
         self.0.needs_js = enabled;
         self
@@ -148,6 +159,11 @@ impl ScrapeOptionsBuilder {
 
     pub fn timeout(mut self, duration: Duration) -> Self {
         self.0.timeout = duration;
+        self
+    }
+
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.0.body = Some(body.into());
         self
     }
 
@@ -291,6 +307,7 @@ impl ScrapeResponse {
 #[allow(dead_code)]
 pub struct InternalScrapeRequest {
     pub url: String,
+    pub method: HttpMethod,
     pub headers: HashMap<String, String>,
     pub timeout: Duration,
     pub needs_js: bool,
@@ -302,6 +319,7 @@ pub struct InternalScrapeRequest {
     pub needs_tls_fingerprint: bool,
     pub use_fire_engine: bool,
     pub actions: Vec<InternalPageAction>,
+    pub body: Option<String>,
     pub sync_wait_ms: u32,
 }
 
@@ -385,6 +403,7 @@ impl ScrapeRequest {
 
         InternalScrapeRequest {
             url: self.url.clone(),
+            method: options.method,
             headers: options.headers.clone(),
             timeout: options.timeout,
             needs_js: options.needs_js,
@@ -396,9 +415,17 @@ impl ScrapeRequest {
             needs_tls_fingerprint: options.needs_tls_fingerprint,
             use_fire_engine: options.use_fire_engine,
             actions,
+            body: options.body.clone(),
             sync_wait_ms: options.sync_wait_ms,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HttpMethod {
+    #[default]
+    Get,
+    Post,
 }
 
 /// Convert from internal ScrapeResponse to public format
@@ -551,6 +578,22 @@ pub enum EngineHealthStatus {
     },
 }
 
+/// Trait for EngineClient - enables dependency injection
+#[async_trait]
+pub trait EngineClientTrait: shaku::Interface + Send + Sync {
+    /// Perform a scraping request
+    async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError>;
+
+    /// Perform health check on all registered engines
+    async fn health_check(&self) -> EngineHealthStatus;
+
+    /// Get the number of registered engines
+    fn engine_count(&self) -> usize;
+
+    /// Get list of registered engine names
+    fn registered_engines(&self) -> Vec<String>;
+}
+
 /// Engine client - the single entry point for all scraping operations.
 ///
 /// This struct encapsulates all internal implementation details:
@@ -565,7 +608,7 @@ pub enum EngineHealthStatus {
 #[derive(Clone)]
 pub struct EngineClient {
     /// Internal router for engine selection and request routing
-    router: Arc<EngineRouter>,
+    router: Arc<dyn EngineRouterTrait>,
     /// Internal health monitor for tracking engine health
     health_monitor: Arc<EngineHealthMonitor>,
 }
@@ -573,11 +616,12 @@ pub struct EngineClient {
 impl EngineClient {
     /// Create a new EngineClient with default configuration.
     pub fn new() -> Self {
-        Self::with_router(Arc::new(EngineRouter::new(Vec::new())))
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouter::new(Vec::new()));
+        Self::with_router(router)
     }
 
     /// Create an EngineClient with a custom router.
-    pub fn with_router(router: Arc<EngineRouter>) -> Self {
+    pub fn with_router(router: Arc<dyn EngineRouterTrait>) -> Self {
         Self {
             router,
             health_monitor: Arc::new(EngineHealthMonitor::new(Vec::new())),
@@ -586,8 +630,8 @@ impl EngineClient {
 
     /// Create an EngineClient with engines pre-registered.
     pub fn with_engines(engines: Vec<Arc<dyn ScraperEngine>>) -> Self {
-        let router = Arc::new(EngineRouter::new(engines));
-        let engines_for_health = router.get_engines().clone();
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouter::new(engines));
+        let engines_for_health = Vec::new(); // Will need to get engines from router
         let health_monitor = Arc::new(EngineHealthMonitor::new(engines_for_health));
         Self {
             router,
@@ -669,6 +713,25 @@ impl EngineClient {
 impl Default for EngineClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[async_trait]
+impl EngineClientTrait for EngineClient {
+    async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
+        self.scrape(request).await
+    }
+
+    async fn health_check(&self) -> EngineHealthStatus {
+        self.health_check().await
+    }
+
+    fn engine_count(&self) -> usize {
+        self.engine_count()
+    }
+
+    fn registered_engines(&self) -> Vec<String> {
+        self.registered_engines()
     }
 }
 

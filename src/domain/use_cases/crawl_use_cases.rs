@@ -18,6 +18,7 @@ use uuid::Uuid;
 /// 异步爬取请求
 pub struct AsyncCrawlRequest {
     pub team_id: Uuid,
+    pub api_key_id: Uuid,
     pub request: CrawlRequestDto,
     pub priority: Option<i32>,
     pub max_retries: Option<i32>,
@@ -34,6 +35,7 @@ pub struct AsyncCrawlResponse {
 /// 同步爬取请求
 pub struct SyncCrawlRequest {
     pub team_id: Uuid,
+    pub api_key_id: Uuid,
     pub request: CrawlRequestDto,
     pub timeout_ms: Option<u32>,
 }
@@ -114,6 +116,7 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> AsyncCrawlUseC
         let root_task = Task::new(
             TaskType::Crawl,
             request.team_id,
+            request.api_key_id,
             request.request.url.clone(),
             payload,
         );
@@ -187,6 +190,7 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> SyncCrawlUseCa
         let root_task = Task::new(
             TaskType::Crawl,
             request.team_id,
+            request.api_key_id,
             request.request.url.clone(),
             payload,
         );

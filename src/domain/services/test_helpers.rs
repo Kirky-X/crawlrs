@@ -18,13 +18,15 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use uuid::Uuid;
 
+type DeductedCredits = Arc<Mutex<Vec<(Uuid, i64)>>>;
+
 /// Mock repository for testing credits service
 ///
 /// Tracks all credit deductions for verification in tests.
 #[derive(Debug)]
 pub struct MockCreditsRepository {
     /// Tracks all deducted credits (team_id, amount)
-    pub deducted: Arc<Mutex<Vec<(Uuid, i64)>>>,
+    pub deducted: DeductedCredits,
 }
 
 #[async_trait]
@@ -81,10 +83,7 @@ impl CreditsRepository for MockCreditsRepository {
 /// Contains:
 /// - The service instance
 /// - A reference to the deducted credits tracking vector
-pub type TestCreditsServiceSetup = (
-    CreditsService<MockCreditsRepository>,
-    Arc<Mutex<Vec<(Uuid, i64)>>>,
-);
+pub type TestCreditsServiceSetup = (CreditsService<MockCreditsRepository>, DeductedCredits);
 
 /// Creates a test setup for credits service tests
 ///
@@ -113,7 +112,7 @@ pub type TestCreditsServiceSetup = (
 /// }
 /// ```
 pub fn create_test_credits_service() -> TestCreditsServiceSetup {
-    let deducted: Arc<Mutex<Vec<(Uuid, i64)>>> = Arc::new(Mutex::new(Vec::new()));
+    let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
     let repo = MockCreditsRepository {
         deducted: deducted.clone(),
     };
@@ -134,11 +133,8 @@ pub fn create_test_credits_service_with_config(
     screenshot_cost: i64,
     proxy_cost: i64,
     tokens_per_credit: i64,
-) -> (
-    CreditsService<MockCreditsRepository>,
-    Arc<Mutex<Vec<(Uuid, i64)>>>,
-) {
-    let deducted: Arc<Mutex<Vec<(Uuid, i64)>>> = Arc::new(Mutex::new(Vec::new()));
+) -> TestCreditsServiceSetup {
+    let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
     let repo = MockCreditsRepository {
         deducted: deducted.clone(),
     };

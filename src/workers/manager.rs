@@ -3,14 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
+use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
-use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
-use crate::domain::services::llm_service::LLMService;
+use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 #[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
@@ -34,16 +33,17 @@ pub struct WorkerManager {
     result_repository: Arc<dyn ScrapeResultRepository>,
     crawl_repository: Arc<dyn CrawlRepository>,
     storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
-    webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
+    webhook_service: Arc<dyn WebhookService>,
     credits_repository: Arc<dyn CreditsRepository>,
     engine_client: Arc<EngineClient>,
-    create_scrape_use_case: Arc<CreateScrapeUseCase>,
+    create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     redis: RedisClient,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
     default_concurrency_limit: usize,
     handles: Vec<JoinHandle<()>>,
-    llm_service: LLMService,
+    extraction_service:
+        Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
     regex_cache: RegexCache,
 }
 
@@ -54,14 +54,15 @@ pub struct WorkerManagerDeps {
     pub result_repository: Arc<dyn ScrapeResultRepository>,
     pub crawl_repository: Arc<dyn CrawlRepository>,
     pub storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
-    pub webhook_event_repository: Arc<dyn WebhookEventRepository + Send + Sync>,
+    pub webhook_service: Arc<dyn WebhookService>,
     pub credits_repository: Arc<dyn CreditsRepository>,
     pub engine_client: Arc<EngineClient>,
-    pub create_scrape_use_case: Arc<CreateScrapeUseCase>,
+    pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     pub redis: RedisClient,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     pub http_client: Arc<reqwest::Client>,
-    pub llm_service: LLMService,
+    pub extraction_service:
+        Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
     pub regex_cache: RegexCache,
 }
 
@@ -79,7 +80,7 @@ impl WorkerManager {
             result_repository: deps.result_repository,
             crawl_repository: deps.crawl_repository,
             storage_repository: deps.storage_repository,
-            webhook_event_repository: deps.webhook_event_repository,
+            webhook_service: deps.webhook_service,
             credits_repository: deps.credits_repository,
             engine_client: deps.engine_client,
             create_scrape_use_case: deps.create_scrape_use_case,
@@ -88,7 +89,7 @@ impl WorkerManager {
             settings: config.settings,
             default_concurrency_limit: config.default_concurrency_limit,
             handles: Vec::new(),
-            llm_service: deps.llm_service,
+            extraction_service: deps.extraction_service,
             regex_cache: deps.regex_cache,
         }
     }
@@ -115,7 +116,7 @@ impl WorkerManager {
                 self.result_repository.clone(),
                 self.crawl_repository.clone(),
                 self.storage_repository.clone(),
-                self.webhook_event_repository.clone(),
+                self.webhook_service.clone(),
                 self.credits_repository.clone(),
                 self.engine_client.clone(),
                 self.create_scrape_use_case.clone(),
@@ -123,7 +124,7 @@ impl WorkerManager {
                 self.robots_checker.clone(),
                 self.settings.clone(),
                 self.default_concurrency_limit,
-                self.llm_service.clone(),
+                self.extraction_service.clone(),
                 self.regex_cache.clone(),
             );
 

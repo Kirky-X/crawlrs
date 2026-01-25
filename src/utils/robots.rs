@@ -3,13 +3,14 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::engines::client::reqwest::ReqwestEngine;
+use crate::engines::engine_client::{EngineClient, HttpMethod, ScrapeOptions, ScrapeRequest};
+use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::impl_basic_error_conversions;
 #[cfg(feature = "redis-cache")]
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::utils::retry_policy::RetryPolicy;
 use anyhow::Result;
-use reqwest;
-use reqwest::Client;
 use robotstxt::DefaultMatcher;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -65,9 +66,11 @@ impl CacheStats {
     }
 }
 
+use shaku::Interface;
+
 /// Robots.txt检查器接口
 #[async_trait]
-pub trait RobotsCheckerTrait: Send + Sync {
+pub trait RobotsCheckerTrait: Interface + Send + Sync {
     /// 检查URL是否被允许访问
     async fn is_allowed(&self, url_str: &str, user_agent: &str) -> Result<bool>;
     /// 获取爬取延迟
@@ -88,7 +91,7 @@ struct CachedRobots {
 #[derive(Clone)]
 pub struct RobotsChecker {
     /// HTTP客户端 (Arc 包装，支持依赖注入)
-    client: Arc<Client>,
+    engine_client: Arc<EngineClient>,
 
     /// 内存缓存
     memory_cache: Arc<Mutex<HashMap<String, CachedRobots>>>,
@@ -137,8 +140,9 @@ impl RobotsChecker {
         redis_client: Option<Arc<RedisClient>>,
         cache_stats: Option<Arc<CacheStats>>,
     ) -> Self {
+        let engine_client = Self::create_engine_client(http_client);
         Self {
-            client: http_client,
+            engine_client,
             memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             redis_client,
             retry_policy: RetryPolicy {
@@ -206,29 +210,32 @@ impl RobotsChecker {
 
         while attempt < self.retry_policy.max_retries {
             attempt += 1;
-            let response = self
-                .client
-                .get(&robots_url)
-                .header("User-Agent", "crawlrs-bot/1.0")
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await;
+            let mut headers = HashMap::new();
+            headers.insert("User-Agent".to_string(), "crawlrs-bot/1.0".to_string());
+
+            let request = ScrapeRequest::new(&robots_url).with_options(
+                ScrapeOptions::builder()
+                    .method(HttpMethod::Get)
+                    .headers(headers)
+                    .timeout(Duration::from_secs(5))
+                    .build(),
+            );
+
+            let response = self.engine_client.scrape(&request).await;
 
             match response {
                 Ok(resp) => {
-                    if resp.status().is_success() {
-                        content = resp.text().await.unwrap_or_default();
+                    if resp.is_success() {
+                        content = resp.content;
                         last_error = None;
                         break;
-                    } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
-                        // 404 is a valid response, meaning no robots.txt
+                    } else if resp.status_code == 404 {
                         content = "".to_string();
                         last_error = None;
                         break;
-                    } else if resp.status().is_server_error() {
-                        last_error = Some(anyhow::anyhow!("Server error: {}", resp.status()));
+                    } else if resp.status_code >= 500 {
+                        last_error = Some(anyhow::anyhow!("Server error: {}", resp.status_code));
                     } else {
-                        // Other errors (403, etc.) might be permanent, but we'll treat them as "allow all" for safety or stop
                         content = "".to_string();
                         last_error = None;
                         break;
@@ -320,5 +327,14 @@ impl RobotsChecker {
     /// 获取缓存统计信息
     pub fn get_cache_stats(&self) -> (u64, u64) {
         (self.cache_stats.hits(), self.cache_stats.misses())
+    }
+}
+
+impl RobotsChecker {
+    fn create_engine_client(http_client: Arc<reqwest::Client>) -> Arc<EngineClient> {
+        let reqwest_engine = ReqwestEngine::new(http_client);
+        let router: Arc<dyn EngineRouterTrait> =
+            Arc::new(EngineRouter::new(vec![Arc::new(reqwest_engine)]));
+        Arc::new(EngineClient::with_router(router))
     }
 }

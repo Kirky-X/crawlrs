@@ -11,8 +11,10 @@
 use std::sync::Arc;
 
 use crate::engines::engine_client::EngineClient;
+use crate::engines::router::EngineRouterTrait;
 use crate::search::aggregator::SearchAggregator;
 use crate::search::client::{SearchClient, SearchClientTrait};
+use shaku::{Component, HasComponent, Module, ModuleBuildContext};
 
 /// Trait for HttpClient component
 pub trait HttpClientTrait: Send + Sync {
@@ -99,6 +101,17 @@ impl SearchClientComponent {
         Self {
             client: Arc::new(SearchClient::new(engine_client)),
         }
+    }
+}
+
+impl<M: Module + HasComponent<dyn EngineRouterTrait>> Component<M> for SearchClientComponent {
+    type Interface = dyn SearchClientTrait;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let router: Arc<dyn EngineRouterTrait> = M::build_component(context);
+        let engine_client = Arc::new(EngineClient::with_router(router));
+        Box::new(Self::new(engine_client))
     }
 }
 

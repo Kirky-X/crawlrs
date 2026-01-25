@@ -3,8 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::engines::client::reqwest::ReqwestEngine;
+use crate::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
+use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use anyhow::Result;
+use std::sync::Arc;
 
 #[derive(Debug, Default, Clone)]
 pub struct TestResult {
@@ -35,6 +39,8 @@ pub async fn run_engine_test_with_output<E: SearchEngine>(
 
     let elapsed = start_time.elapsed();
 
+    let engine_client = build_test_engine_client();
+
     match result {
         Ok(Ok(response)) => {
             let total = response.items.len();
@@ -43,7 +49,10 @@ pub async fn run_engine_test_with_output<E: SearchEngine>(
 
             for entry in response.items {
                 let url = &entry.url;
-                let is_accessible = check_url_accessible(url).await;
+                let is_accessible = match engine_client.as_ref() {
+                    Some(client) => check_url_accessible(client, url).await,
+                    None => false,
+                };
                 if is_accessible {
                     accessible += 1;
                 } else {
@@ -75,15 +84,25 @@ pub async fn run_engine_test_with_output<E: SearchEngine>(
     }
 }
 
-async fn check_url_accessible(url: &str) -> bool {
-    use reqwest::Client;
-    use std::time::Duration;
+fn build_test_engine_client() -> Option<Arc<EngineClient>> {
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let reqwest_engine = ReqwestEngine::new(Arc::new(http_client));
+    let router: Arc<dyn EngineRouterTrait> =
+        Arc::new(EngineRouter::new(vec![Arc::new(reqwest_engine)]));
+    Some(Arc::new(EngineClient::with_router(router)))
+}
 
-    let client = match Client::builder().timeout(Duration::from_secs(5)).build() {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-
-    let response = client.head(url).send().await;
-    response.map(|r| r.status().is_success()).unwrap_or(false)
+async fn check_url_accessible(engine_client: &EngineClient, url: &str) -> bool {
+    let options = ScrapeOptions::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build();
+    let request = ScrapeRequest::new(url).with_options(options);
+    engine_client
+        .scrape(&request)
+        .await
+        .map(|response| response.is_success())
+        .unwrap_or(false)
 }

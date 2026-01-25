@@ -6,6 +6,9 @@
 //! LLMService - LLM provider interaction handling
 
 use crate::config::settings::Settings;
+use crate::engines::client::reqwest::ReqwestEngine;
+use crate::engines::engine_client::{EngineClient, HttpMethod, ScrapeOptions, ScrapeRequest};
+use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 #[cfg(feature = "experimental")]
@@ -26,7 +29,7 @@ pub struct TokenUsage {
 }
 
 /// Trait for template loading - enables DI and testing
-pub trait TemplateLoaderTrait: Send + Sync {
+pub trait TemplateLoaderTrait: shaku::Interface + Send + Sync {
     /// Load all templates
     fn load_templates(&self) -> Result<HashMap<String, String>>;
 }
@@ -36,31 +39,27 @@ pub type TemplateLoader = Arc<dyn TemplateLoaderTrait>;
 
 /// File-based template loader (production implementation)
 pub struct FileTemplateLoader {
-    file_path: String,
+    templates: HashMap<String, String>,
 }
 
 impl FileTemplateLoader {
     pub fn new(file_path: impl Into<String>) -> Self {
-        Self {
-            file_path: file_path.into(),
-        }
+        let path = file_path.into();
+        let templates = Self::read_templates(&path).unwrap_or_else(|e| {
+            tracing::error!("Failed to load templates from {}: {}", path, e);
+            HashMap::new()
+        });
+
+        Self { templates }
     }
 
     /// Create with default path
     pub fn default_path() -> Self {
         Self::new("config/prompts.toml")
     }
-}
 
-impl Default for FileTemplateLoader {
-    fn default() -> Self {
-        Self::default_path()
-    }
-}
-
-impl TemplateLoaderTrait for FileTemplateLoader {
-    fn load_templates(&self) -> Result<HashMap<String, String>> {
-        let content = std::fs::read_to_string(&self.file_path)?;
+    fn read_templates(file_path: &str) -> Result<HashMap<String, String>> {
+        let content = std::fs::read_to_string(file_path)?;
         let v: Value = toml::from_str(&content)?;
 
         let mut templates = HashMap::new();
@@ -73,6 +72,18 @@ impl TemplateLoaderTrait for FileTemplateLoader {
             }
         }
         Ok(templates)
+    }
+}
+
+impl Default for FileTemplateLoader {
+    fn default() -> Self {
+        Self::default_path()
+    }
+}
+
+impl TemplateLoaderTrait for FileTemplateLoader {
+    fn load_templates(&self) -> Result<HashMap<String, String>> {
+        Ok(self.templates.clone())
     }
 }
 
@@ -115,7 +126,7 @@ impl TemplateLoaderTrait for InMemoryTemplateLoader {
 }
 
 #[async_trait]
-pub trait LLMServiceTrait: Send + Sync {
+pub trait LLMServiceTrait: shaku::Interface + Send + Sync {
     async fn extract_data(
         &self,
         text: &str,
@@ -128,8 +139,7 @@ pub trait LLMServiceTrait: Send + Sync {
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct LLMService {
-    /// HTTP 客户端 (通过依赖注入的单例)
-    http_client: Arc<reqwest::Client>,
+    engine_client: Arc<EngineClient>,
     /// LLM 客户端
     #[cfg(feature = "experimental")]
     client: Client,
@@ -149,6 +159,13 @@ pub struct LLMService {
 }
 
 impl LLMService {
+    fn create_engine_client(http_client: Arc<reqwest::Client>) -> Arc<EngineClient> {
+        let reqwest_engine = ReqwestEngine::new(http_client);
+        let router: Arc<dyn EngineRouterTrait> =
+            Arc::new(EngineRouter::new(vec![Arc::new(reqwest_engine)]));
+        Arc::new(EngineClient::with_router(router))
+    }
+
     /// Create LLMService with settings and custom template loader
     pub fn new_with_template_loader(
         settings: &Settings,
@@ -156,6 +173,7 @@ impl LLMService {
         template_loader: TemplateLoader,
     ) -> Self {
         let templates = template_loader.load_templates().unwrap_or_default();
+        let engine_client = Self::create_engine_client(http_client);
         let mut provider = settings
             .llm
             .provider
@@ -178,7 +196,7 @@ impl LLMService {
         }
 
         Self {
-            http_client,
+            engine_client,
             #[cfg(feature = "experimental")]
             client: Client::default(),
             model,
@@ -208,9 +226,10 @@ impl LLMService {
         template_loader: TemplateLoader,
     ) -> Self {
         let templates = template_loader.load_templates().unwrap_or_default();
+        let engine_client = Self::create_engine_client(http_client);
 
         Self {
-            http_client,
+            engine_client,
             #[cfg(feature = "experimental")]
             client: Client::default(),
             model,
@@ -232,9 +251,10 @@ impl LLMService {
         let template_loader: TemplateLoader =
             Arc::new(InMemoryTemplateLoader::new().with_default_templates());
         let templates = template_loader.load_templates().unwrap_or_default();
+        let engine_client = Self::create_engine_client(http_client);
 
         Self {
-            http_client,
+            engine_client,
             #[cfg(feature = "experimental")]
             client: Client::default(),
             model,
@@ -292,23 +312,33 @@ impl LLMService {
                 "temperature": 0.0
             });
 
-            let mut request = self.http_client.post(&url).json(&body);
+            let mut headers = HashMap::new();
+            headers.insert("Content-Type".to_string(), "application/json".to_string());
             if let Some(key) = &self.api_key {
-                request = request.bearer_auth(key);
+                headers.insert("Authorization".to_string(), format!("Bearer {}", key));
             } else {
-                request = request.bearer_auth("ollama");
+                headers.insert("Authorization".to_string(), "Bearer ollama".to_string());
             }
 
-            let res = request.send().await.context("Direct LLM call failed")?;
-            if !res.status().is_success() {
-                let err = res.text().await.unwrap_or_default();
-                return Err(anyhow::anyhow!("LLM returned error: {}", err));
-            }
+            let request = ScrapeRequest::new(&url).with_options(
+                ScrapeOptions::builder()
+                    .method(HttpMethod::Post)
+                    .headers(headers)
+                    .body(body.to_string())
+                    .build(),
+            );
 
-            let res_json: Value = res
-                .json()
+            let res = self
+                .engine_client
+                .scrape(&request)
                 .await
-                .context("Failed to parse LLM JSON response")?;
+                .map_err(|e| anyhow::anyhow!("Direct LLM call failed: {}", e))?;
+            if !res.is_success() {
+                return Err(anyhow::anyhow!("LLM returned error: {}", res.content));
+            }
+
+            let res_json: Value =
+                serde_json::from_str(&res.content).context("Failed to parse LLM JSON response")?;
 
             let content = res_json["choices"][0]["message"]["content"]
                 .as_str()

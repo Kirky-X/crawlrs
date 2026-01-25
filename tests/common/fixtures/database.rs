@@ -9,7 +9,6 @@
 ///
 /// 提供内存数据库和PostgreSQL数据库的设置和清理功能
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sqlx::PgPool;
 use std::sync::Arc;
 
 /// 数据库连接选项
@@ -30,12 +29,12 @@ impl Default for DatabaseOptions {
                 let db_password = std::env::var("TEST_DATABASE_PASSWORD")
                     .unwrap_or_else(|_| "password".to_string());
                 format!(
-                    "postgres://crawlrs:{}@localhost:5433/crawlrs_test",
+                    "postgres://crawlrs:{}@localhost:5443/crawlrs_test",
                     db_password
                 )
             }),
             use_redis: true,
-            redis_port: 6381,
+            redis_port: 6380,
         }
     }
 }
@@ -58,14 +57,27 @@ impl DatabaseFixture {
 
     /// 使用指定选项创建数据库固件
     pub async fn with_options(options: DatabaseOptions) -> Self {
-        let db = Database::connect(&options.url)
+        use sea_orm::ConnectOptions;
+
+        let mut opt = ConnectOptions::new(&options.url);
+        opt.max_connections(20)
+           .min_connections(5)
+           .connect_timeout(std::time::Duration::from_secs(60))
+           .idle_timeout(std::time::Duration::from_secs(600))
+           .max_lifetime(std::time::Duration::from_secs(1800))
+           .sqlx_logging(false);
+
+        let db = Database::connect(opt)
             .await
             .expect("Failed to connect to database");
         let db_pool = Arc::new(db);
 
         // 运行数据库迁移（使用 sqlx PgPool）
         if options.url.starts_with("postgres://") {
-            let sqlx_pool = PgPool::connect(&options.url)
+            let sqlx_pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(20)
+                .acquire_timeout(std::time::Duration::from_secs(60))
+                .connect(&options.url)
                 .await
                 .expect("Failed to connect to database for migration");
             let _ = sqlx::migrate!().run(&sqlx_pool).await;

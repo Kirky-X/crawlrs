@@ -3,23 +3,16 @@
 
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use std::sync::Arc;
-use std::time::Duration;
 use uuid::Uuid;
-use std::sync::Mutex;
-use once_cell::sync::Lazy;
-
-/// Global mutex to ensure test serialization
-static TEST_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Minimal TestApp struct for testing
 #[allow(dead_code)]
 pub struct TestApp {
     pub db_pool: Arc<DatabaseConnection>,
     pub team_id: Uuid,
+    pub api_key_id: Uuid,
     pub redis_port: u16,
     pub redis_process: Option<std::process::Child>,
-    /// Lock guard to ensure test serialization
-    pub _lock_guard: Option<std::sync::MutexGuard<'static, ()>>,
 }
 
 impl Drop for TestApp {
@@ -32,9 +25,6 @@ impl Drop for TestApp {
 
 /// Create a minimal test app without starting workers
 pub async fn create_test_app_no_worker() -> TestApp {
-    // Acquire lock to serialize test execution
-    let _guard = TEST_MUTEX.lock().unwrap();
-
     let db_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
         let db_password =
             std::env::var("TEST_DATABASE_PASSWORD").unwrap_or_else(|_| "password".to_string());
@@ -49,34 +39,55 @@ pub async fn create_test_app_no_worker() -> TestApp {
         .expect("Failed to connect to database");
     let db_pool = Arc::new(db);
 
-    // 生成唯一的 team_id
+    // 生成唯一的 team_id 和 api_key_id
     let team_id = Uuid::new_v4();
+    let api_key_id = Uuid::new_v4();
 
     // 先在 teams 表中创建团队（因为 tasks 表有 foreign key 约束）
-    let _ = db_pool.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO teams (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
-        vec![team_id.into(), format!("Test Team {}", team_id).into()],
-    )).await;
+    let _ = db_pool
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO teams (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
+            vec![team_id.into(), format!("Test Team {}", team_id).into()],
+        ))
+        .await;
 
-    // 清理测试数据 - 在开始时就清理，确保干净的测试环境
-    // 使用 sqlx 直接清理（更可靠）
-    if db_url.starts_with("postgres://") {
-        let sqlx_pool = sqlx::PgPool::connect(&db_url).await.expect("Failed to connect to sqlx pool");
-        let result = sqlx::query("DELETE FROM tasks")
-            .execute(&sqlx_pool)
-            .await
-            .expect("Failed to delete tasks");
-        eprintln!("DEBUG: Cleaned up {} tasks at start", result.rows_affected());
-    }
+    // 创建 API key（因为 tasks 表有外键约束）
+    let _ = db_pool
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO api_keys (id, key, key_hash, team_id) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
+            vec![
+                api_key_id.into(),
+                format!("test-api-key-{}", api_key_id).into(),
+                format!("hash-{}", api_key_id).into(),
+                team_id.into(),
+            ],
+        ))
+        .await;
 
-    let start_port = 8000;
-    let result =
-        crawlrs::utils::port_sniffer::PortSniffer::find_available_port(start_port, true, 100)
-            .expect("Failed to find available port");
-    let redis_port = result.port;
+    // 清理测试数据 - 只清理 tasks，保留 api_keys 和 teams
+    let _ = db_pool
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM tasks",
+            vec![],
+        ))
+        .await;
+    let _ = db_pool
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM tasks_backlog",
+            vec![],
+        ))
+        .await;
 
-    // Start Redis
+    let redis_port = std::env::var("TEST_REDIS_PORT")
+        .unwrap_or_else(|_| "6380".to_string())
+        .parse::<u16>()
+        .expect("Invalid redis port");
+
+    // 启动 Redis 进程（如果需要）
     let redis_process = Some(
         std::process::Command::new("redis-server")
             .arg("--port")
@@ -87,16 +98,16 @@ pub async fn create_test_app_no_worker() -> TestApp {
             .expect("Failed to start redis-server"),
     );
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let redis_url = format!("redis://127.0.0.1:{}", redis_port);
     let _ = crawlrs::infrastructure::cache::redis_client::RedisClient::new(&redis_url);
 
     TestApp {
         db_pool,
         team_id,
+        api_key_id,
         redis_port,
         redis_process,
-        _lock_guard: Some(_guard),
     }
 }
 

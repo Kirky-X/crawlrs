@@ -29,7 +29,7 @@ pub use sogou::SogouSearchEngine;
 
 /// Trait for SearchClient - enables dependency injection
 #[async_trait::async_trait]
-pub trait SearchClientTrait: Send + Sync {
+pub trait SearchClientTrait: shaku::Interface + Send + Sync {
     /// Search with default engine
     async fn search(&self, query: &str) -> SearchCommand;
 

@@ -77,6 +77,7 @@ async fn create_test_task(
         status,
         priority: 0,
         team_id,
+        api_key_id: Uuid::new_v4(),
         url: url.to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,

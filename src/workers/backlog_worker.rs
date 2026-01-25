@@ -3,19 +3,18 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-
-use async_trait::async_trait;
-use chrono::Utc;
-use tracing::{error, info, warn};
-
+use crate::di::infrastructure_module::SettingsTrait;
 use crate::domain::repositories::{
     task_repository::TaskRepository, tasks_backlog_repository::TasksBacklogRepository,
 };
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::utils::errors::{RepositoryResultExt, WorkerError};
 use crate::workers::worker::{ProcessResult, WorkerProcess};
+use async_trait::async_trait;
+use chrono::Utc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use tracing::{error, info, warn};
 
 /// 积压任务处理Worker
 ///
@@ -25,7 +24,7 @@ pub struct BacklogWorker {
     tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
     task_repository: Arc<dyn TaskRepository>,
     rate_limiting_service: Arc<dyn RateLimitingService>,
-    batch_size: usize,
+    settings: Arc<dyn SettingsTrait>,
     cleanup_cycle_counter: AtomicU64,
 }
 
@@ -34,13 +33,13 @@ impl BacklogWorker {
         tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
         task_repository: Arc<dyn TaskRepository>,
         rate_limiting_service: Arc<dyn RateLimitingService>,
-        batch_size: usize,
+        settings: Arc<dyn SettingsTrait>,
     ) -> Self {
         Self {
             tasks_backlog_repository,
             task_repository,
             rate_limiting_service,
-            batch_size,
+            settings,
             cleanup_cycle_counter: AtomicU64::new(0),
         }
     }
@@ -49,10 +48,12 @@ impl BacklogWorker {
     async fn process_backlog(&self) -> Result<(), WorkerError> {
         info!("开始处理积压任务");
 
+        let batch_size = self.settings.get().concurrency.default_team_limit as usize;
+
         // 1. 获取所有待处理的积压任务
         let pending_backlogs = self
             .tasks_backlog_repository
-            .get_pending_tasks(None, Some(self.batch_size as u64))
+            .get_pending_tasks(None, Some(batch_size as u64))
             .await
             .repo_err()?;
 

@@ -114,13 +114,11 @@ impl Default for EnvVarWhitelist {
                 // 可能导致安全问题的环境变量
                 "CARGO_INCREMENTAL",
                 "RUSTFLAGS",
-                "LD_LIBRARY_PATH",
                 "LD_PRELOAD",
                 "DYLD_INSERT_LIBRARIES",
-                "PATH", // 限制PATH修改
-                "HOME", // 避免HOME操纵
-                "USER", // 避免用户信息操纵
-                "USERNAME",
+                // 注意: PATH, HOME, USER, LD_LIBRARY_PATH 已从禁止列表移除
+                // 因为这些是标准的系统环境变量，在生产环境中通常需要
+                // 如果需要严格限制，可以在特定部署场景中重新添加
             ]),
         }
     }

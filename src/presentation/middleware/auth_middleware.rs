@@ -11,7 +11,7 @@
 
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use crate::domain::services::audit_service::AuditServiceTrait;
-use crate::domain::services::auth_scope_service::AuthScopeService;
+use crate::domain::services::auth_scope_service::{AuthScopeService, AuthScopeServiceTrait};
 use crate::infrastructure::database::entities::api_key;
 use crate::infrastructure::security;
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
@@ -342,14 +342,10 @@ pub async fn auth_middleware(
         }
     };
 
-    // Hash the token for lookup
-    let token_hash = match security::hash_api_key(&token_str) {
-        Ok(hash) => hash,
-        Err(_e) => {
-            tracing::error!("Failed to hash API key: hash operation failed");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
+    // Hash the token for lookup using SHA-256 (consistent hash for lookup)
+    // Note: We use SHA-256 for lookup because bcrypt generates different hashes each time
+    // The actual verification uses bcrypt (line 398) or SHA-256 (line 405) depending on stored format
+    let token_hash = format!("sha256:{:x}", Sha256::digest(token_str.as_bytes()));
 
     // PERF-002: Check cache first before database query
     if let Some(ref cache) = state.api_key_cache {
@@ -403,6 +399,12 @@ pub async fn auth_middleware(
                     // 计算输入的 SHA256
                     let input_sha256 = format!("{:x}", Sha256::digest(token_str.as_bytes()));
                     stored_sha256 == input_sha256
+                } else if stored_hash.len() == 64
+                    && stored_hash.chars().all(|c| c.is_ascii_hexdigit())
+                {
+                    // 纯 SHA-256 哈希（64字符十六进制）
+                    let input_sha256 = format!("{:x}", Sha256::digest(token_str.as_bytes()));
+                    *stored_hash == input_sha256
                 } else {
                     // 其他格式，使用 bcrypt 验证（可能失败）
                     security::verify_api_key(&token_str, stored_hash)

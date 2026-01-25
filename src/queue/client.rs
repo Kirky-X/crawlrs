@@ -215,6 +215,8 @@ pub struct EnqueueRequest {
     priority: Option<i32>,
     /// 所属团队ID
     team_id: Uuid,
+    /// API密钥ID
+    api_key_id: Uuid,
     /// 延迟执行时间（秒）
     delay_seconds: Option<u64>,
     /// 过期时间（秒）
@@ -225,13 +227,20 @@ pub struct EnqueueRequest {
 
 impl EnqueueRequest {
     /// 创建新的入队请求
-    pub fn new(task_type: &str, url: &str, payload: serde_json::Value, team_id: Uuid) -> Self {
+    pub fn new(
+        task_type: &str,
+        url: &str,
+        payload: serde_json::Value,
+        team_id: Uuid,
+        api_key_id: Uuid,
+    ) -> Self {
         Self {
             task_type: task_type.to_string(),
             url: url.to_string(),
             payload,
             priority: None,
             team_id,
+            api_key_id,
             delay_seconds: None,
             expire_seconds: None,
             max_retries: None,
@@ -462,7 +471,13 @@ impl<T: TaskQueue> QueueClient<T> {
             .parse()
             .map_err(|_| QueueClientError::InvalidTaskType(request.task_type.clone()))?;
 
-        let mut task = Task::new(task_type, request.team_id, request.url, request.payload);
+        let mut task = Task::new(
+            task_type,
+            request.team_id,
+            request.api_key_id,
+            request.url,
+            request.payload,
+        );
 
         task.priority = priority;
         task.max_retries = request
@@ -513,6 +528,7 @@ impl<T: TaskQueue> QueueClient<T> {
             let mut task = Task::new(
                 task_type,
                 request.team_id,
+                request.api_key_id,
                 request.url.clone(),
                 request.payload.clone(),
             );
@@ -788,11 +804,13 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_request_builder() {
         let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
         let request = EnqueueRequest::new(
             "scrape",
             "https://example.com",
             serde_json::json!({}),
             team_id,
+            api_key_id,
         )
         .with_priority(7)
         .with_delay(60)
@@ -810,11 +828,13 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_request_priority_clamping() {
         let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
         let request = EnqueueRequest::new(
             "scrape",
             "https://example.com",
             serde_json::json!({}),
             team_id,
+            api_key_id,
         )
         .with_priority(15); // Should clamp to 10
 

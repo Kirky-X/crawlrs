@@ -3,8 +3,8 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::presentation::middleware::auth_middleware::AuthState;
-use crate::presentation::middleware::rate_limit_middleware::RateLimiter;
 use crate::presentation::middleware::RATE_LIMIT_EXCLUDED_ENDPOINTS;
 use axum::{
     extract::{Request, State},
@@ -21,7 +21,7 @@ use tracing::{debug, error, warn};
 ///
 /// # 参数
 ///
-/// * `rate_limiter` - 速率限制器状态
+/// * `rate_limiting_service` - 速率限制服务状态
 /// * `request` - HTTP请求
 /// * `next` - 下一个中间件
 ///
@@ -30,7 +30,7 @@ use tracing::{debug, error, warn};
 /// * `Ok(impl IntoResponse)` - 处理成功的响应
 /// * `Err(StatusCode)` - 处理失败的状态码
 pub async fn distributed_rate_limit_middleware(
-    State(rate_limiter): State<Arc<RateLimiter>>,
+    State(rate_limiting_service): State<Arc<dyn RateLimitingService>>,
     request: Request,
     next: Next,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -78,22 +78,41 @@ pub async fn distributed_rate_limit_middleware(
         api_key_prefix
     );
 
-    debug!("DistributedRateLimitMiddleware: Calling rate_limiter.check()");
-    match rate_limiter.check(&api_key).await {
-        Ok(()) => {
+    debug!("DistributedRateLimitMiddleware: Calling rate_limiting_service.check_rate_limit()");
+    match rate_limiting_service.check_rate_limit(&api_key, path).await {
+        Ok(RateLimitResult::Allowed) => {
             debug!("DistributedRateLimitMiddleware: Rate limit check passed");
             Ok(next.run(request).await)
+        }
+        Ok(RateLimitResult::Denied { reason }) => {
+            warn!(
+                "Rate limit exceeded for API Key starting with {}: {}",
+                api_key_prefix, reason
+            );
+            Ok((
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded: {}", reason),
+            )
+                .into_response())
+        }
+        Ok(RateLimitResult::RetryAfter { retry_after_seconds }) => {
+            warn!(
+                "Rate limit exceeded for API Key starting with {}: retry after {} seconds",
+                api_key_prefix, retry_after_seconds
+            );
+            Ok((
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded, retry after {} seconds", retry_after_seconds),
+            )
+                .into_response())
         }
         Err(e) => {
             warn!(
                 "Rate limit check failed for API Key starting with {}: {}",
                 api_key_prefix, e
             );
-            Ok((
-                StatusCode::TOO_MANY_REQUESTS,
-                format!("Rate limit check failed: {}", e),
-            )
-                .into_response())
+            // Fail open - allow request if rate limiting service fails
+            Ok(next.run(request).await)
         }
     }
 }

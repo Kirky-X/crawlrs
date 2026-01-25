@@ -99,6 +99,7 @@ pub async fn create_scrape(
     let task = Task::new(
         TaskType::Scrape,
         team_id,
+        auth_state.api_key_id,
         payload.url.clone(),
         serde_json::to_value(&payload).unwrap_or_default(),
     );

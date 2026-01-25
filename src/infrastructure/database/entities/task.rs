@@ -16,6 +16,7 @@ pub struct Model {
     pub id: Uuid,
     pub task_type: String,
     pub team_id: Uuid,
+    pub api_key_id: Uuid,
     pub crawl_id: Option<Uuid>,
     pub url: String,
     pub status: String,

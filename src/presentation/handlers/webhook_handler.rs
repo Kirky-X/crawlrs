@@ -3,13 +3,16 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::application::dto::webhook_request::CreateWebhookRequest;
+use crate::application::dto::webhook_request::{
+    CreateWebhookRequest, WebhookListResponse, WebhookResponse,
+};
 use crate::domain::models::webhook::Webhook;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::domain::use_cases::create_webhook::CreateWebhookUseCase;
 use crate::engines::validators::validate_url;
 use crate::presentation::errors::AppError;
+use crate::presentation::handlers::response_builder::ApiResponse;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{http::StatusCode, Extension, Json};
 use std::sync::Arc;
@@ -63,4 +66,29 @@ pub async fn create_webhook<R: WebhookRepository>(
     let use_case = CreateWebhookUseCase::new(repo);
     let webhook = use_case.execute(team_id, payload.url).await?;
     Ok((StatusCode::CREATED, Json(webhook)))
+}
+
+/// 列出团队的 Webhooks
+pub async fn list_webhooks<R: WebhookRepository>(
+    Extension(repo): Extension<Arc<R>>,
+    Extension(auth_state): Extension<AuthState>,
+) -> Result<Json<ApiResponse<WebhookListResponse>>, AppError> {
+    let team_id = auth_state.team_id;
+    let webhooks = repo.find_by_team_id(team_id).await?;
+    let webhook_responses: Vec<WebhookResponse> = webhooks
+        .into_iter()
+        .map(|w| WebhookResponse {
+            id: w.id,
+            team_id: w.team_id,
+            url: w.url,
+            created_at: w.created_at,
+            is_active: true,
+            secret: None,
+        })
+        .collect();
+    let total = webhook_responses.len();
+    Ok(Json(ApiResponse::success(WebhookListResponse {
+        webhooks: webhook_responses,
+        total,
+    })))
 }

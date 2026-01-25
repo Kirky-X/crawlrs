@@ -6,13 +6,14 @@
 use super::task_repository::RepositoryError;
 use crate::domain::models::webhook::WebhookEvent;
 use async_trait::async_trait;
+use shaku::Interface;
 use uuid::Uuid;
 
 /// Webhook仓库特质
 ///
 /// 定义Webhook事件数据访问接口
 #[async_trait]
-pub trait WebhookEventRepository: Send + Sync {
+pub trait WebhookEventRepository: Interface + Send + Sync {
     /// 创建Webhook事件
     async fn create(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError>;
     /// 根据ID查找Webhook事件

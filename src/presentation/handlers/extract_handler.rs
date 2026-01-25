@@ -135,6 +135,7 @@ where
     let task = Task::new(
         TaskType::Extract,
         team_id,
+        auth_state.api_key_id,
         primary_url.clone(),
         serde_json::to_value(&payload).unwrap_or_default(),
     );

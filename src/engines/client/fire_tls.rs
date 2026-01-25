@@ -61,6 +61,9 @@ impl ScraperEngine for FireEngineTls {
         &self,
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
+        if request.method != crate::engines::engine_client::HttpMethod::Get {
+            return Err(EngineError::Other("Unsupported HTTP method".to_string()));
+        }
         // TLS Engine explicitly rejects screenshot requests
         if request.needs_screenshot {
             return Err(EngineError::Other(
@@ -132,6 +135,9 @@ impl ScraperEngine for FireEngineTls {
     }
 
     fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
+        if request.method != crate::engines::engine_client::HttpMethod::Get {
+            return 0;
+        }
         // 如果明确请求使用 Fire Engine (TLS 模式)
         if request.use_fire_engine {
             return 95;

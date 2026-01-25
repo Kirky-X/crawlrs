@@ -7,8 +7,7 @@
 
 use crate::config::settings::Settings;
 use crate::di::infrastructure_module::GeoRestrictionRepositoryComponent;
-use crate::di::AppState;
-use crate::di::AppStateExt;
+use crate::di::{AppState, AppStateExt};
 use crate::domain::auth::ApiKeyScope;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
@@ -18,9 +17,11 @@ use crate::presentation::handlers::{
     team_handler, webhook_handler,
 };
 use crate::presentation::middleware::auth_middleware::AuthState;
+use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crate::presentation::routes;
 use crate::presentation::routes::task::task_routes;
+use crate::presentation::state::CrawlHandlerState;
 use axum::{
     routing::{delete, get, post, put},
     Extension, Router,
@@ -108,27 +109,44 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
     let queue = state.task_queue.clone();
     let task_repo = state.task_repo.clone();
     let result_repo = state.result_repo.clone();
-    let redis_client = state.redis_client.clone();
-    let rate_limiter = crate::presentation::middleware::rate_limit_middleware::RateLimiter::new(
-        (*redis_client).clone(),
-        settings.rate_limiting.default_rpm,
-    );
     let rate_limiting_service = state.rate_limiting_service.clone();
+    let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
     let crawl_repo = state.crawl_repo.clone();
     let webhook_repo = state.webhook_repo.clone();
     let tasks_backlog_repo = state.webhook_event_repo(); // Use webhook_event_repo for now
     let search_engine_service = state.search_client();
     let team_service = state.team_service.clone();
-    let geo_location_service = state.redis_client(); // Placeholder
+    let geo_location_service = state.geo_location_service();
+    let credits_repo = state.credits_repo();
 
     // Create geo restriction repository for extension (使用 DI 组件)
     let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
         Arc::new(GeoRestrictionRepositoryComponent::new(state.db.clone()));
 
+    // Create concrete DatabaseGeoRestrictionRepository for handlers that need the concrete type
+    let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
+        Arc::new(DatabaseGeoRestrictionRepository::new(state.db.clone()));
+
+    // Create concrete WebhookRepoImpl for handlers that need the concrete type
+    let webhook_repo_impl: Arc<WebhookRepoImpl> = Arc::new(WebhookRepoImpl::new(state.db.clone()));
+
+    // Create CrawlHandlerState directly from DI state fields
+    let crawl_handler_state = Arc::new(CrawlHandlerState::new(
+        crawl_repo.clone(),
+        task_repo.clone(),
+        webhook_repo.clone(),
+        result_repo.clone(),
+        geo_restriction_repo.clone(),
+        team_service.clone(),
+        rate_limiting_service.clone(),
+    ));
+
     // Auth state for middleware
+    // Convert from Arc<AuthScopeService> to AuthScopeService (unwrap the Arc)
+    let auth_scope_service = state.auth_scope_service.as_ref().map(|arc| (**arc).clone());
     let auth_state = AuthState {
         db: state.db.clone(),
-        auth_scope_service: None,
+        auth_scope_service,
         team_id: uuid::Uuid::nil(),
         api_key_id: uuid::Uuid::nil(),
         scope: ApiKeyScope::default(),
@@ -147,6 +165,10 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
             "/v1/webhooks",
             post(webhook_handler::create_webhook::<WebhookRepoImpl>),
         )
+        .route(
+            "/v1/webhooks",
+            get(webhook_handler::list_webhooks::<WebhookRepoImpl>),
+        )
         .route("/v1/crawl", post(crawl_handler::create_crawl))
         .route("/v1/crawl/{id}", get(crawl_handler::get_crawl))
         .route(
@@ -155,6 +177,8 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
         )
         .route("/v1/crawl/{id}", delete(crawl_handler::cancel_crawl))
         .route("/v1/search", post(search_handler::search))
+        .route("/v1/teams/me", get(team_handler::get_team_info))
+        .route("/v1/teams/me/usage", get(team_handler::get_team_usage))
         .route(
             "/v1/teams/geo-restrictions",
             get(team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
@@ -174,8 +198,8 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
         .layer(Extension(queue))
         .layer(Extension(task_repo))
         .layer(Extension(result_repo))
-        .layer(Extension(redis_client))
-        .layer(Extension(rate_limiter))
+        .layer(Extension(geo_location_service.clone()))
+        .layer(Extension(rate_limit_middleware))
         .layer(Extension(settings))
         .layer(Extension(rate_limiting_service))
         .layer(Extension(crawl_repo))
@@ -185,6 +209,10 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
         .layer(Extension(state.search_service.clone()))
         .layer(Extension(team_service))
         .layer(Extension(geo_location_service))
+        .layer(Extension(crawl_handler_state))
+        .layer(Extension(credits_repo))
+        .layer(Extension(webhook_repo_impl))
+        .layer(Extension(geo_restriction_repo_impl))
 }
 
 /// Create v2 task routes using AppState.
@@ -243,12 +271,8 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
     let protected_routes = create_protected_routes_with_state(state, settings.clone());
     let v2_routes = create_v2_routes_with_state(state);
 
-    let redis_client = state.redis_client.clone();
-    let rate_limiter = crate::presentation::middleware::rate_limit_middleware::RateLimiter::new(
-        (*redis_client).clone(),
-        settings.rate_limiting.default_rpm,
-    );
     let rate_limiting_service = state.rate_limiting_service.clone();
+    let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
     let search_engine_service = state.search_client();
     let tasks_backlog_repo = state.webhook_event_repo();
     let queue = state.task_queue.clone();
@@ -275,8 +299,8 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
         .layer(Extension(crawl_repo))
         .layer(Extension(webhook_event_repo))
         .layer(Extension(webhook_repo.clone()))
-        .layer(Extension(redis_client))
-        .layer(Extension(rate_limiter))
+        .layer(Extension(state.redis_client()))
+        .layer(Extension(rate_limit_middleware))
         .layer(Extension(state.crawl_repo.clone()))
         .layer(Extension(credits_repo))
         .layer(Extension(geo_restriction_repo))

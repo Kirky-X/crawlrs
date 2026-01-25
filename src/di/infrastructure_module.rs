@@ -10,8 +10,12 @@
 
 use std::sync::Arc;
 
+use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
+
 use sea_orm::DatabaseConnection;
 
+use crate::config::Settings;
+use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
@@ -21,8 +25,11 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
+use crate::domain::services::webhook_sender::WebhookSender;
 use crate::infrastructure::cache::redis_client::RedisClient;
+use anyhow::Result;
 use crate::infrastructure::database::connection::DatabasePool;
+use crate::infrastructure::database::repositories::auth_scope_repo_impl::AuthScopeRepositoryImpl;
 use crate::infrastructure::database::repositories::crawl_repo_impl::CrawlRepositoryImpl;
 use crate::infrastructure::database::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
@@ -34,8 +41,63 @@ use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRep
 use crate::infrastructure::storage::LocalStorage;
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 
+// --- Core Infrastructure Components ---
+
+pub trait SettingsTrait: Interface + Send + Sync {
+    fn get(&self) -> Arc<Settings>;
+}
+
+pub struct SettingsComponent {
+    settings: Arc<Settings>,
+}
+
+impl<M: Module> Component<M> for SettingsComponent {
+    type Interface = dyn SettingsTrait;
+    type Parameters = Arc<Settings>;
+
+    fn build(_: &mut ModuleBuildContext<M>, settings: Self::Parameters) -> Box<Self::Interface> {
+        Box::new(Self { settings })
+    }
+}
+
+impl SettingsComponent {
+    /// Create a new SettingsComponent with explicit dependencies
+    pub fn new(settings: Arc<Settings>) -> Self {
+        Self { settings }
+    }
+}
+
+impl SettingsTrait for SettingsComponent {
+    fn get(&self) -> Arc<Settings> {
+        self.settings.clone()
+    }
+}
+
+pub trait HttpClientTrait: Interface + Send + Sync {
+    fn get(&self) -> Arc<reqwest::Client>;
+}
+
+pub struct HttpClientComponent {
+    client: Arc<reqwest::Client>,
+}
+
+impl<M: Module> Component<M> for HttpClientComponent {
+    type Interface = dyn HttpClientTrait;
+    type Parameters = Arc<reqwest::Client>;
+
+    fn build(_: &mut ModuleBuildContext<M>, client: Self::Parameters) -> Box<Self::Interface> {
+        Box::new(Self { client })
+    }
+}
+
+impl HttpClientTrait for HttpClientComponent {
+    fn get(&self) -> Arc<reqwest::Client> {
+        self.client.clone()
+    }
+}
+
 /// Trait for Database component
-pub trait DatabasePoolTrait: Send + Sync {
+pub trait DatabasePoolTrait: Interface + Send + Sync {
     fn get_pool(&self) -> Arc<DatabasePool>;
 }
 
@@ -43,6 +105,15 @@ pub trait DatabasePoolTrait: Send + Sync {
 pub struct DatabasePoolComponent {
     /// The actual database pool
     pool: Arc<DatabasePool>,
+}
+
+impl<M: Module> Component<M> for DatabasePoolComponent {
+    type Interface = dyn DatabasePoolTrait;
+    type Parameters = Arc<DatabasePool>;
+
+    fn build(_: &mut ModuleBuildContext<M>, pool: Self::Parameters) -> Box<Self::Interface> {
+        Box::new(Self { pool })
+    }
 }
 
 impl From<Arc<DatabasePool>> for DatabasePoolComponent {
@@ -57,8 +128,7 @@ impl DatabasePoolTrait for DatabasePoolComponent {
     }
 }
 
-/// Trait for RedisClient component
-pub trait RedisClientTrait: Send + Sync {
+pub trait RedisClientTrait: Interface + Send + Sync {
     fn get_client(&self) -> Arc<RedisClient>;
 }
 
@@ -69,6 +139,19 @@ pub struct RedisClientComponent {
     redis_url: String,
     /// Redis client
     client: Arc<RedisClient>,
+}
+
+impl<M: Module + HasComponent<dyn SettingsTrait>> Component<M> for RedisClientComponent {
+    type Interface = dyn RedisClientTrait;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let settings_component = M::build_component(context);
+        let settings = settings_component.get();
+        let redis_url = settings.redis.url().to_string();
+        let client = Arc::new(RedisClient::new(&redis_url).expect("Failed to create Redis client"));
+        Box::new(Self::new(redis_url, client))
+    }
 }
 
 impl RedisClientComponent {
@@ -89,6 +172,15 @@ pub struct TaskRepositoryComponent {
     pool: Arc<DatabasePool>,
     /// Task lock duration in seconds
     task_lock_duration_seconds: i64,
+}
+
+impl<M: Module> Component<M> for TaskRepositoryComponent {
+    type Interface = dyn TaskRepository;
+    type Parameters = (Arc<DatabasePool>, i64);
+
+    fn build(_: &mut ModuleBuildContext<M>, params: Self::Parameters) -> Box<Self::Interface> {
+        Box::new(Self::new(params.0, params.1))
+    }
 }
 
 impl TaskRepositoryComponent {
@@ -293,6 +385,16 @@ pub struct CreditsRepositoryComponent {
     pool: Arc<DatabasePool>,
 }
 
+impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M> for CreditsRepositoryComponent {
+    type Interface = dyn CreditsRepository;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
+        Box::new(Self::new(pool_component.get_pool()))
+    }
+}
+
 impl CreditsRepositoryComponent {
     /// Create a new CreditsRepositoryComponent with explicit dependencies
     pub fn new(pool: Arc<DatabasePool>) -> Self {
@@ -357,6 +459,16 @@ impl CreditsRepository for CreditsRepositoryComponent {
 /// CrawlRepository component
 pub struct CrawlRepositoryComponent {
     pool: Arc<DatabasePool>,
+}
+
+impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M> for CrawlRepositoryComponent {
+    type Interface = dyn CrawlRepository;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
+        Box::new(Self::new(pool_component.get_pool()))
+    }
 }
 
 impl CrawlRepositoryComponent {
@@ -453,6 +565,18 @@ pub struct ScrapeResultRepositoryComponent {
     pool: Arc<DatabasePool>,
 }
 
+impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M>
+    for ScrapeResultRepositoryComponent
+{
+    type Interface = dyn ScrapeResultRepository;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
+        Box::new(Self::new(pool_component.get_pool()))
+    }
+}
+
 impl ScrapeResultRepositoryComponent {
     /// Create a new ScrapeResultRepositoryComponent with explicit dependencies
     pub fn new(pool: Arc<DatabasePool>) -> Self {
@@ -460,34 +584,51 @@ impl ScrapeResultRepositoryComponent {
     }
 }
 
-#[async_trait::async_trait]
+    #[async_trait::async_trait]
 impl ScrapeResultRepository for ScrapeResultRepositoryComponent {
-    async fn save(
-        &self,
-        result: crate::domain::models::scrape_result::ScrapeResult,
-    ) -> anyhow::Result<()> {
-        let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
-        repo.save(result).await
+        async fn save(
+            &self,
+            result: crate::domain::models::scrape_result::ScrapeResult,
+        ) -> anyhow::Result<()> {
+            let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
+            repo.save(result).await
+        }
+        async fn find_by_task_id(
+            &self,
+            task_id: uuid::Uuid,
+        ) -> anyhow::Result<Option<crate::domain::models::scrape_result::ScrapeResult>> {
+            let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
+            repo.find_by_task_id(task_id).await
+        }
+        async fn find_by_task_ids(
+            &self,
+            task_ids: &[uuid::Uuid],
+        ) -> anyhow::Result<Vec<crate::domain::models::scrape_result::ScrapeResult>> {
+            let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
+            repo.find_by_task_ids(task_ids).await
+        }
+        async fn get_team_avg_response_time(
+            &self,
+            team_id: uuid::Uuid,
+        ) -> anyhow::Result<f64> {
+            let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
+            repo.get_team_avg_response_time(team_id).await
+        }
     }
-    async fn find_by_task_id(
-        &self,
-        task_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<crate::domain::models::scrape_result::ScrapeResult>> {
-        let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
-        repo.find_by_task_id(task_id).await
-    }
-    async fn find_by_task_ids(
-        &self,
-        task_ids: &[uuid::Uuid],
-    ) -> anyhow::Result<Vec<crate::domain::models::scrape_result::ScrapeResult>> {
-        let repo = ScrapeResultRepositoryImpl::new(self.pool.inner.clone());
-        repo.find_by_task_ids(task_ids).await
-    }
-}
 
 /// WebhookRepository component
 pub struct WebhookRepositoryComponent {
     pool: Arc<DatabasePool>,
+}
+
+impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M> for WebhookRepositoryComponent {
+    type Interface = dyn WebhookRepository;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
+        Box::new(Self::new(pool_component.get_pool()))
+    }
 }
 
 impl WebhookRepositoryComponent {
@@ -519,11 +660,33 @@ impl WebhookRepository for WebhookRepositoryComponent {
         let repo = WebhookRepoImpl::new(self.pool.inner.clone());
         repo.find_by_id(id).await
     }
+    async fn find_by_team_id(
+        &self,
+        team_id: uuid::Uuid,
+    ) -> Result<
+        Vec<crate::domain::models::webhook::Webhook>,
+        crate::domain::repositories::task_repository::RepositoryError,
+    > {
+        let repo = WebhookRepoImpl::new(self.pool.inner.clone());
+        repo.find_by_team_id(team_id).await
+    }
 }
 
 /// WebhookEventRepository component
 pub struct WebhookEventRepositoryComponent {
     pool: Arc<DatabasePool>,
+}
+
+impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M>
+    for WebhookEventRepositoryComponent
+{
+    type Interface = dyn WebhookEventRepository;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
+        Box::new(Self::new(pool_component.get_pool()))
+    }
 }
 
 impl WebhookEventRepositoryComponent {
@@ -599,6 +762,18 @@ impl WebhookEventRepository for WebhookEventRepositoryComponent {
 /// TasksBacklogRepository component
 pub struct TasksBacklogRepositoryComponent {
     pool: Arc<DatabasePool>,
+}
+
+impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M>
+    for TasksBacklogRepositoryComponent
+{
+    type Interface = dyn TasksBacklogRepository;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
+        Box::new(Self::new(pool_component.get_pool()))
+    }
 }
 
 impl TasksBacklogRepositoryComponent {
@@ -696,8 +871,76 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
     }
 }
 
+/// AuthScopeRepository component
+pub struct AuthScopeRepositoryComponent {
+    pool: Arc<DatabasePool>,
+}
+
+impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M>
+    for AuthScopeRepositoryComponent
+{
+    type Interface = dyn AuthScopeRepository;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
+        Box::new(Self::new(pool_component.get_pool()))
+    }
+}
+
+impl AuthScopeRepositoryComponent {
+    /// Create a new AuthScopeRepositoryComponent with explicit dependencies
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait::async_trait]
+impl AuthScopeRepository for AuthScopeRepositoryComponent {
+    async fn find_by_api_key_id(
+        &self,
+        api_key_id: uuid::Uuid,
+    ) -> Result<
+        Option<crate::domain::auth::ApiKeyScope>,
+        crate::domain::repositories::auth_scope_repository::RepositoryError,
+    > {
+        let repo = AuthScopeRepositoryImpl::new((*self.pool.inner).clone());
+        repo.find_by_api_key_id(api_key_id).await
+    }
+    async fn find_by_api_key(
+        &self,
+        key: &str,
+    ) -> Result<
+        Option<crate::domain::auth::ApiKeyScope>,
+        crate::domain::repositories::auth_scope_repository::RepositoryError,
+    > {
+        let repo = AuthScopeRepositoryImpl::new((*self.pool.inner).clone());
+        repo.find_by_api_key(key).await
+    }
+    async fn upsert(
+        &self,
+        api_key_id: uuid::Uuid,
+        scope: crate::domain::auth::ApiKeyScope,
+    ) -> Result<
+        crate::domain::auth::ApiKeyScope,
+        crate::domain::repositories::auth_scope_repository::RepositoryError,
+    > {
+        let repo = AuthScopeRepositoryImpl::new((*self.pool.inner).clone());
+        repo.upsert(api_key_id, scope).await
+    }
+    async fn delete_by_api_key_id(
+        &self,
+        api_key_id: uuid::Uuid,
+    ) -> Result<bool, crate::domain::repositories::auth_scope_repository::RepositoryError> {
+        let repo = AuthScopeRepositoryImpl::new((*self.pool.inner).clone());
+        repo.delete_by_api_key_id(api_key_id).await
+    }
+}
+
 /// GeoRestrictionRepository component
 #[allow(dead_code)]
+#[derive(Component)]
+#[shaku(interface = GeoRestrictionRepository)]
 pub struct GeoRestrictionRepositoryComponent {
     db: Arc<DatabaseConnection>,
 }
@@ -753,6 +996,15 @@ impl GeoRestrictionRepository for GeoRestrictionRepositoryComponent {
 pub struct StorageRepositoryComponent {
     /// Storage path
     storage_path: String,
+}
+
+impl<M: Module> Component<M> for StorageRepositoryComponent {
+    type Interface = dyn StorageRepository;
+    type Parameters = ();
+
+    fn build(_: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        Box::new(Self::with_default_path())
+    }
 }
 
 impl StorageRepositoryComponent {
@@ -852,28 +1104,29 @@ impl TaskQueue for TaskQueueComponent {
     }
 }
 
+// --- Webhook Sender Component ---
+
+use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
+
+/// Trait for WebhookSender component
+pub trait WebhookSenderTrait: Interface + Send + Sync {
+    fn get(&self) -> Arc<dyn WebhookSender>;
+}
+
+/// WebhookSender component for Shaku DI
+///
+/// This component provides WebhookSender through WebhookSenderImpl
+#[derive(Component)]
+#[shaku(interface = WebhookSenderTrait)]
+pub struct WebhookSenderComponent {
+    #[shaku(default = WebhookSenderImpl::with_default_config())]
+    sender: WebhookSenderImpl,
+}
+
+impl WebhookSenderTrait for WebhookSenderComponent {
+    fn get(&self) -> Arc<dyn WebhookSender> {
+        Arc::new(self.sender.clone())
+    }
+}
+
 // Infrastructure module components - for Shaku DI
-
-/// Trait for HttpClient component
-pub trait HttpClientTrait: Send + Sync {
-    fn get_client(&self) -> Arc<reqwest::Client>;
-}
-
-/// HttpClient component for unified HTTP client management
-pub struct HttpClientComponent {
-    /// The HTTP client
-    client: Arc<reqwest::Client>,
-}
-
-impl HttpClientComponent {
-    /// Create a new HttpClientComponent with explicit dependencies
-    pub fn new(client: Arc<reqwest::Client>) -> Self {
-        Self { client }
-    }
-}
-
-impl HttpClientTrait for HttpClientComponent {
-    fn get_client(&self) -> Arc<reqwest::Client> {
-        self.client.clone()
-    }
-}

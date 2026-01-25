@@ -27,6 +27,25 @@ pub enum GeoRestrictionResult {
     Denied(String),
 }
 
+/// Trait for TeamService - enables dependency injection
+#[async_trait::async_trait]
+pub trait TeamServiceTrait: shaku::Interface + Send + Sync {
+    async fn validate_geographic_restriction(
+        &self,
+        team_id: Uuid,
+        ip_address: &str,
+        restrictions: &TeamGeoRestrictions,
+    ) -> Result<GeoRestrictionResult>;
+
+    fn validate_domain_blacklist(
+        &self,
+        domain: &str,
+        restrictions: &TeamGeoRestrictions,
+    ) -> Result<GeoRestrictionResult>;
+
+    async fn get_team_geo_restrictions(&self, team_id: Uuid) -> TeamGeoRestrictions;
+}
+
 pub struct TeamService {
     geolocation_service: Arc<dyn GeoLocationServiceTrait>,
     geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
@@ -194,6 +213,31 @@ impl TeamService {
                 TeamGeoRestrictions::default()
             }
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl TeamServiceTrait for TeamService {
+    async fn validate_geographic_restriction(
+        &self,
+        team_id: Uuid,
+        ip_address: &str,
+        restrictions: &TeamGeoRestrictions,
+    ) -> Result<GeoRestrictionResult> {
+        self.validate_geographic_restriction(team_id, ip_address, restrictions)
+            .await
+    }
+
+    fn validate_domain_blacklist(
+        &self,
+        domain: &str,
+        restrictions: &TeamGeoRestrictions,
+    ) -> Result<GeoRestrictionResult> {
+        self.validate_domain_blacklist(domain, restrictions)
+    }
+
+    async fn get_team_geo_restrictions(&self, team_id: Uuid) -> TeamGeoRestrictions {
+        self.get_team_geo_restrictions(team_id).await
     }
 }
 

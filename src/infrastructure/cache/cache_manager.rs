@@ -75,21 +75,6 @@ impl CacheManager {
     ///
     /// * `config` - 缓存策略配置
     /// * `redis_url` - Redis连接URL，如果为None则不使用Redis
-    #[cfg(feature = "redis-cache")]
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use `new()` with injected RedisClient instead"
-    )]
-    pub async fn from_url(config: CacheStrategyConfig, redis_url: Option<&str>) -> Result<Self> {
-        let redis_client = if let Some(url) = redis_url {
-            Some(Arc::new(RedisClient::new(url)?))
-        } else {
-            None
-        };
-
-        Self::new(config, redis_client).await
-    }
-
     /// 获取缓存值
     pub async fn get(&self, key: &str) -> Result<Option<Vec<SearchResult>>> {
         let strategy = self.strategy.read().await;

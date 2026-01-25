@@ -322,6 +322,9 @@ impl ScraperEngine for FlareSolverrEngine {
         &self,
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
+        if request.method != crate::engines::engine_client::HttpMethod::Get {
+            return Err(EngineError::Other("Unsupported HTTP method".to_string()));
+        }
         let start_time = std::time::Instant::now();
 
         // Build FlareSolverr request
@@ -466,6 +469,9 @@ impl ScraperEngine for FlareSolverrEngine {
     /// - Cloudflare/protected sites (returns 100)
     /// - Static content (returns 80, slightly lower than Reqwest for performance)
     fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
+        if request.method != crate::engines::engine_client::HttpMethod::Get {
+            return 0;
+        }
         // FlareSolverr is excellent for JS rendering and anti-bot protection
         if request.needs_js {
             return 100;

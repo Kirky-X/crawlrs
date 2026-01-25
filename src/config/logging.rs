@@ -3,61 +3,52 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use serde::Deserialize;
+//! 日志配置
+
+use confers::Config;
+use serde::{Deserialize, Serialize};
 
 /// 日志配置
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__LOGGING__")]
 pub struct LoggingSettings {
     /// 控制台输出配置
+    #[config(default)]
     pub console: ConsoleLoggingSettings,
+
     /// 文件输出配置
+    #[config(default)]
     pub file: FileLoggingSettings,
 }
 
 /// 控制台日志配置
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__LOGGING__CONSOLE__")]
 pub struct ConsoleLoggingSettings {
     /// 是否启用控制台输出
-    #[serde(default = "default_console_enabled")]
+    #[config(default = true)]
     pub enabled: bool,
 }
 
 /// 文件日志配置
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__LOGGING__FILE__")]
 pub struct FileLoggingSettings {
     /// 是否启用文件输出
-    #[serde(default = "default_file_enabled")]
+    #[config(default = false)]
     pub enabled: bool,
+
     /// 日志文件路径
-    #[serde(default = "default_log_path")]
+    #[config(default = "logs/crawlrs.log")]
     pub path: String,
+
     /// 单个日志文件最大大小（MB）
-    #[serde(default = "default_max_file_size")]
+    #[config(default = 100)]
     pub max_file_size_mb: u64,
+
     /// 保留的日志文件数量
-    #[serde(default = "default_file_count")]
+    #[config(default = 10)]
     pub file_count: usize,
-}
-
-// 默认值函数
-fn default_console_enabled() -> bool {
-    true
-}
-
-fn default_file_enabled() -> bool {
-    false
-}
-
-fn default_log_path() -> String {
-    "logs/crawlrs.log".to_string()
-}
-
-fn default_max_file_size() -> u64 {
-    crate::common::constants::logging::MAX_LOG_FILE_SIZE_MB
-}
-
-fn default_file_count() -> usize {
-    crate::common::constants::logging::LOG_FILE_COUNT
 }
 
 #[cfg(test)]
@@ -66,26 +57,31 @@ mod tests {
 
     #[test]
     fn test_default_console_enabled() {
-        assert_eq!(default_console_enabled(), true);
+        let settings = ConsoleLoggingSettings::default();
+        assert!(settings.enabled);
     }
 
     #[test]
     fn test_default_file_enabled() {
-        assert_eq!(default_file_enabled(), false);
+        let settings = FileLoggingSettings::default();
+        assert!(!settings.enabled);
     }
 
     #[test]
     fn test_default_log_path() {
-        assert_eq!(default_log_path(), "logs/crawlrs.log");
+        let settings = FileLoggingSettings::default();
+        assert_eq!(settings.path, "logs/crawlrs.log");
     }
 
     #[test]
     fn test_default_max_file_size() {
-        assert_eq!(default_max_file_size(), 100);
+        let settings = FileLoggingSettings::default();
+        assert_eq!(settings.max_file_size_mb, 100);
     }
 
     #[test]
     fn test_default_file_count() {
-        assert_eq!(default_file_count(), 10);
+        let settings = FileLoggingSettings::default();
+        assert_eq!(settings.file_count, 10);
     }
 }

@@ -271,6 +271,7 @@ async fn test_real_concurrent_task_processing() {
             status: TaskStatus::Queued,
             priority: i as i32,
             team_id,
+            api_key_id: Uuid::new_v4(),
             url: format!("https://example.com/page{}", i),
             payload: serde_json::json!({
                 "page_number": i,

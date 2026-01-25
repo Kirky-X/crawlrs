@@ -10,9 +10,10 @@ use uuid::Uuid;
 #[test]
 fn test_task_lifecycle_happy_path() {
     let team_id = Uuid::new_v4();
+    let api_key_id = Uuid::new_v4();
     let url = "http://example.com".to_string();
     let payload = json!({});
-    let mut task = Task::new(TaskType::Scrape, team_id, url, payload);
+    let mut task = Task::new(TaskType::Scrape, team_id, api_key_id, url, payload);
     assert_eq!(task.status, TaskStatus::Queued);
 
     task.status = TaskStatus::Active;
@@ -25,9 +26,10 @@ fn test_task_lifecycle_happy_path() {
 #[test]
 fn test_task_retry_logic() {
     let team_id = Uuid::new_v4();
+    let api_key_id = Uuid::new_v4();
     let url = "http://example.com".to_string();
     let payload = json!({});
-    let mut task = Task::new(TaskType::Scrape, team_id, url, payload);
+    let mut task = Task::new(TaskType::Scrape, team_id, api_key_id, url, payload);
 
     task.status = TaskStatus::Failed;
     task.attempt_count = 2;

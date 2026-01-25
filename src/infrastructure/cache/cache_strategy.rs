@@ -874,10 +874,7 @@ mod tests {
     #[test]
     fn test_cache_strategy_config_default() {
         let config = CacheStrategyConfig::default();
-        match config.cache_type {
-            CacheType::Memory => assert!(true),
-            _ => panic!("Expected Memory cache type"),
-        }
+        assert!(matches!(config.cache_type, CacheType::Memory));
         assert_eq!(config.ttl_seconds, 600); // 已优化为 600 秒
         assert_eq!(config.max_entries, 10000);
         assert!(config.enable_compression);
@@ -910,10 +907,7 @@ mod tests {
             layered_config: Some(layered_config),
         };
 
-        match config.cache_type {
-            CacheType::Layered => assert!(true),
-            _ => panic!("Expected Layered cache type"),
-        }
+        assert!(matches!(config.cache_type, CacheType::Layered));
         assert_eq!(config.ttl_seconds, 600);
         assert!(!config.enable_compression);
         assert!(config.enable_preload);

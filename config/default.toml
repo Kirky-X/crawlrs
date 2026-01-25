@@ -46,6 +46,8 @@ allowed_origins = "*"
 [rate_limiting]
 enabled = true
 default_rpm = 60
+default_limit = 60
+burst_size = 20
 
 # Concurrency Configuration
 [concurrency]
@@ -54,6 +56,13 @@ task_lock_duration_seconds = 300
 
 # Search Configuration
 [search]
+ab_test_enabled = false
+variant_b_weight = 0.1
+timeout_seconds = 30
+rate_limiting_enabled = true
+test_data_enabled = false
+max_retries = 3
+retry_delay_ms = 1000
 default_engine = "baidu"
 
 # Search Engine Enable/Disable Configuration
@@ -109,6 +118,7 @@ user_agent = "Crawlrs-Webhook/1.0"
 # IMPORTANT: Set webhook secret via CRAWLRS__WEBHOOK__SECRET environment variable
 # Do NOT use weak default values like "your-webhook-secret"
 secret = ""
+batch_size = 1000
 
 # LLM Configuration
 [llm]

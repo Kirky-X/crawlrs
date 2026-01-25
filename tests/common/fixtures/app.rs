@@ -18,6 +18,8 @@ use axum::routing::{delete, get, post, put};
 use axum_test::TestServer;
 use futures::future::BoxFuture;
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::format;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -26,6 +28,7 @@ use tower::Service;
 use uuid::Uuid;
 
 use crawlrs::config::settings::Settings;
+use figment::{Figment, providers::{Env, Format, Toml}};
 #[cfg(feature = "engine-playwright")]
 use crawlrs::engines::client::playwright::PlaywrightEngine;
 #[cfg(feature = "engine-reqwest")]
@@ -178,7 +181,7 @@ impl Default for TestAppOptions {
         Self {
             rate_limit_enabled: true,
             use_redis: true,
-            redis_port: 6381,
+            redis_port: 6380,
             database_options: DatabaseOptions::default(),
         }
     }
@@ -214,6 +217,11 @@ impl TestAppFixture {
         let api_key = Uuid::new_v4().to_string();
         let team_id = Uuid::new_v4();
 
+        // 使用 sha256 哈希格式存储 API 密钥（与认证中间件兼容）
+        use sha2::Sha256;
+        use std::format;
+        let api_key_hash = format!("sha256:{:x}", Sha256::digest(api_key.as_bytes()));
+
         // 插入测试数据
         match db_backend {
             DbBackend::Postgres => {
@@ -229,8 +237,8 @@ impl TestAppFixture {
                 db_pool
                     .execute(Statement::from_sql_and_values(
                         DbBackend::Postgres,
-                        "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())",
-                        vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+                        "INSERT INTO api_keys (id, key, key_hash, team_id, created_at, updated_at) VALUES ($1, $2, $3, $4, NOW(), NOW())",
+                        vec![Uuid::new_v4().into(), api_key.clone().into(), api_key_hash.into(), team_id.into()],
                     ))
                     .await
                     .expect("Failed to insert API key");
@@ -257,8 +265,8 @@ impl TestAppFixture {
                 db_pool
                     .execute(Statement::from_sql_and_values(
                         DbBackend::Sqlite,
-                        "INSERT INTO api_keys (id, key, team_id, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-                        vec![Uuid::new_v4().into(), api_key.clone().into(), team_id.into()],
+                        "INSERT INTO api_keys (id, key, key_hash, team_id, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
+                        vec![Uuid::new_v4().into(), api_key.clone().into(), api_key_hash.into(), team_id.into()],
                     ))
                     .await
                     .expect("Failed to insert API key");
@@ -348,7 +356,7 @@ impl TestAppFixture {
 
         let rate_limiter = Arc::new(
             crawlrs::presentation::middleware::rate_limit_middleware::RateLimiter::new(
-                redis_client.clone(),
+                Arc::new(redis_client.clone()),
                 1000,
             ),
         );
@@ -394,7 +402,7 @@ impl TestAppFixture {
         let fixture = Self::with_options(TestAppOptions {
             rate_limit_enabled: true,
             use_redis: true,
-            redis_port: 6381,
+            redis_port: 6380,
             database_options: DatabaseOptions::default(),
         })
         .await;
@@ -448,7 +456,17 @@ fn create_router(
             db_pool.clone(),
         ),
     );
-    let settings = Arc::new(Settings::new().expect("Failed to load settings"));
+    // 在测试环境中创建 Settings
+    let settings = {
+        // 直接使用项目的测试配置文件
+        let figment = Figment::new()
+            .merge(Toml::file("config/test.toml"))
+            .merge(Toml::file("config/default.toml"))
+            .merge(Env::prefixed("CRAWLRS_").split("_"));
+
+        let settings: Settings = figment.extract().expect("Failed to build test settings");
+        Arc::new(settings)
+    };
     let queue: Arc<dyn crawlrs::queue::task_queue::TaskQueue> = Arc::new(
         crawlrs::queue::task_queue::PostgresTaskQueue::new(task_repo.clone()),
     );
@@ -473,10 +491,7 @@ fn create_router(
     let team_semaphore = Arc::new(tokio::sync::Semaphore::new(100));
 
     let mut protected_routes = axum::Router::new()
-        .route(
-            "/v1/scrape",
-            post(handlers::scrape_handler::create_scrape),
-        )
+        .route("/v1/scrape", post(handlers::scrape_handler::create_scrape))
         .route(
             "/v1/scrape/{id}",
             get(handlers::scrape_handler::get_scrape_status),
@@ -491,16 +506,14 @@ fn create_router(
         )
         .route(
             "/v1/webhooks",
-            post(handlers::webhook_handler::create_webhook::<crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl>),
+            post(
+                handlers::webhook_handler::create_webhook::<
+                    crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl,
+                >,
+            ),
         )
-        .route(
-            "/v1/crawl",
-            post(handlers::crawl_handler::create_crawl),
-        )
-        .route(
-            "/v1/crawl/{id}",
-            get(handlers::crawl_handler::get_crawl),
-        )
+        .route("/v1/crawl", post(handlers::crawl_handler::create_crawl))
+        .route("/v1/crawl/{id}", get(handlers::crawl_handler::get_crawl))
         .route(
             "/v1/crawl/{id}/results",
             get(handlers::crawl_handler::get_crawl_results),
@@ -509,17 +522,18 @@ fn create_router(
             "/v1/crawl/{id}",
             delete(handlers::crawl_handler::cancel_crawl),
         )
+        .route("/v1/search", post(handlers::search_handler::search))
         .route(
-            "/v1/search",
-            post(handlers::search_handler::search),
+            "/v1/teams/geo-restrictions",
+            get(handlers::team_handler::get_team_geo_restrictions::<
+                DatabaseGeoRestrictionRepository,
+            >),
         )
         .route(
             "/v1/teams/geo-restrictions",
-            get(handlers::team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
-        )
-        .route(
-            "/v1/teams/geo-restrictions",
-            put(handlers::team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
+            put(handlers::team_handler::update_team_geo_restrictions::<
+                DatabaseGeoRestrictionRepository,
+            >),
         )
         .layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
@@ -528,7 +542,7 @@ fn create_router(
 
     if rate_limit_enabled {
         protected_routes = protected_routes.layer(axum::middleware::from_fn_with_state(
-            rate_limiter.clone(),
+            rate_limiting_service.clone(),
             crawlrs::presentation::middleware::distributed_rate_limit_middleware::distributed_rate_limit_middleware,
         ));
     }

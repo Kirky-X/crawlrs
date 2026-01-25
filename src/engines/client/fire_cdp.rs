@@ -63,6 +63,9 @@ impl ScraperEngine for FireEngineCdp {
         &self,
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
+        if request.method != crate::engines::engine_client::HttpMethod::Get {
+            return Err(EngineError::Other("Unsupported HTTP method".to_string()));
+        }
         let start = Instant::now();
 
         // Determine proxy to use: request-level override or engine-level default
@@ -128,6 +131,9 @@ impl ScraperEngine for FireEngineCdp {
     }
 
     fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
+        if request.method != crate::engines::engine_client::HttpMethod::Get {
+            return 0;
+        }
         // 如果需要 TLS 指纹且需要截图，这是最佳选择
         if request.needs_tls_fingerprint && request.needs_screenshot {
             return 100;

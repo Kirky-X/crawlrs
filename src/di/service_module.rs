@@ -10,23 +10,34 @@
 
 use std::sync::Arc;
 
+use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
+
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
+use crate::di::infrastructure_module::{HttpClientTrait, RedisClientTrait, SettingsTrait};
+use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
+use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
+use crate::domain::services::auth_scope_service::{AuthScopeService, AuthScopeServiceTrait};
+use crate::domain::services::llm_service::{
+    FileTemplateLoader, LLMService, LLMServiceTrait, TemplateLoaderTrait,
+};
 use crate::domain::services::rate_limiting_service::RateLimitingService;
+use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
 use crate::domain::services::team_service::TeamService;
+use crate::domain::services::team_service::{GeoRestrictionResult, TeamGeoRestrictions};
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::router::EngineRouterTrait;
 use crate::infrastructure::cache::redis_client::RedisClient;
-use crate::infrastructure::geolocation::GeoLocationServiceTrait;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
+use crate::search::client::SearchClientTrait;
 use crate::utils::robots::RobotsCheckerTrait;
 
 /// Trait for RateLimitingService component
-pub trait RateLimitingServiceTrait: Send + Sync {
+pub trait RateLimitingServiceTrait: Interface + Send + Sync {
     fn get_service(&self) -> &dyn RateLimitingService;
 }
 
@@ -47,6 +58,45 @@ pub struct RateLimitingServiceComponent {
     default_rate_limit: u32,
     /// Burst size
     burst_size: u32,
+}
+
+impl<M: Module> Component<M> for RateLimitingServiceComponent
+where
+    M: HasComponent<dyn RedisClientTrait>
+        + HasComponent<dyn CreditsRepository>
+        + HasComponent<dyn TaskRepository>
+        + HasComponent<dyn TasksBacklogRepository>
+        + HasComponent<dyn SettingsTrait>,
+{
+    type Interface = dyn RateLimitingServiceTrait;
+    type Parameters = ();
+
+    fn build(
+        context: &mut ModuleBuildContext<M>,
+        _params: Self::Parameters,
+    ) -> Box<dyn RateLimitingServiceTrait> {
+        let redis_client_component: Arc<dyn RedisClientTrait> = M::build_component(context);
+        let redis_client = redis_client_component.get_client();
+        let credits_repo: Arc<dyn CreditsRepository> = M::build_component(context);
+        let task_repo: Arc<dyn TaskRepository> = M::build_component(context);
+        let tasks_backlog_repo: Arc<dyn TasksBacklogRepository> = M::build_component(context);
+        let settings_component: Arc<dyn SettingsTrait> = M::build_component(context);
+        let settings = settings_component.get();
+
+        let enabled = settings.rate_limiting.enabled;
+        let default_rate_limit = settings.rate_limiting.default_limit;
+        let burst_size = settings.rate_limiting.burst_size;
+
+        Box::new(Self::new(
+            redis_client,
+            Arc::from(credits_repo),
+            Arc::from(task_repo),
+            Arc::from(tasks_backlog_repo),
+            enabled,
+            default_rate_limit,
+            burst_size,
+        ))
+    }
 }
 
 impl RateLimitingServiceComponent {
@@ -223,24 +273,22 @@ impl crate::domain::services::rate_limiting_service::QuotaService for RateLimiti
 // RateLimitingService is automatically implemented when all sub-traits are implemented
 impl RateLimitingService for RateLimitingServiceComponent {}
 
-/// Trait for TeamService component
-pub trait TeamServiceTrait: Send + Sync {
-    fn get_service(&self) -> &TeamService;
-}
-
 /// TeamService component
-#[allow(dead_code)]
+#[derive(Component)]
+#[shaku(interface = crate::domain::services::team_service::TeamServiceTrait)]
 pub struct TeamServiceComponent {
     /// Geolocation service
-    geolocation_service: Arc<dyn GeoLocationServiceTrait>,
-    /// Geo restriction repo
+    #[shaku(inject)]
+    geolocation_service: Arc<dyn crate::infrastructure::geolocation::GeoLocationServiceTrait>,
+    /// Geo restriction repository
+    #[shaku(inject)]
     geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 
 impl TeamServiceComponent {
     /// Create a new TeamServiceComponent with explicit dependencies
     pub fn new(
-        geolocation_service: Arc<dyn GeoLocationServiceTrait>,
+        geolocation_service: Arc<dyn crate::infrastructure::geolocation::GeoLocationServiceTrait>,
         geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     ) -> Self {
         Self {
@@ -250,37 +298,61 @@ impl TeamServiceComponent {
     }
 }
 
-impl TeamServiceTrait for TeamServiceComponent {
-    fn get_service(&self) -> &TeamService {
-        // Return a reference to self as TeamService
-        // Note: This is a workaround for the struct-based service
-        unimplemented!("TeamService is a struct, not a trait")
+#[async_trait::async_trait]
+impl crate::domain::services::team_service::TeamServiceTrait for TeamServiceComponent {
+    async fn validate_geographic_restriction(
+        &self,
+        team_id: uuid::Uuid,
+        ip_address: &str,
+        restrictions: &TeamGeoRestrictions,
+    ) -> anyhow::Result<GeoRestrictionResult> {
+        let service = TeamService::new(
+            self.geolocation_service.clone(),
+            self.geo_restriction_repo.clone(),
+        );
+        service
+            .validate_geographic_restriction(team_id, ip_address, restrictions)
+            .await
+    }
+
+    fn validate_domain_blacklist(
+        &self,
+        domain: &str,
+        restrictions: &TeamGeoRestrictions,
+    ) -> anyhow::Result<GeoRestrictionResult> {
+        let service = TeamService::new(
+            self.geolocation_service.clone(),
+            self.geo_restriction_repo.clone(),
+        );
+        service.validate_domain_blacklist(domain, restrictions)
+    }
+
+    async fn get_team_geo_restrictions(&self, team_id: uuid::Uuid) -> TeamGeoRestrictions {
+        let service = TeamService::new(
+            self.geolocation_service.clone(),
+            self.geo_restriction_repo.clone(),
+        );
+        service.get_team_geo_restrictions(team_id).await
     }
 }
 
-/// Trait for WebhookService component
+/// Trait for WebhookService component (delegate to WebhookServiceImpl)
 pub trait WebhookServiceTrait: Send + Sync {
     fn get_service(&self) -> &dyn WebhookService;
 }
 
-/// WebhookService component
-#[allow(dead_code)]
+/// WebhookService component - delegates to WebhookServiceImpl via Shaku
+#[derive(Component)]
+#[shaku(interface = WebhookService)]
 pub struct WebhookServiceComponent {
-    /// Webhook secret
-    secret: String,
+    #[shaku(inject)]
+    inner: Arc<dyn WebhookService>,
 }
 
 impl WebhookServiceComponent {
-    /// Create a new WebhookServiceComponent with explicit secret
-    pub fn new(secret: String) -> Self {
-        Self { secret }
-    }
-
-    /// Create from environment variable (convenience method)
-    pub fn from_env() -> Self {
-        let secret = std::env::var("WEBHOOK_SECRET")
-            .unwrap_or_else(|_| "default-webhook-secret".to_string());
-        Self { secret }
+    /// Create with explicit inner service
+    pub fn new(inner: Arc<dyn WebhookService>) -> Self {
+        Self { inner }
     }
 }
 
@@ -288,9 +360,24 @@ impl WebhookServiceComponent {
 impl WebhookService for WebhookServiceComponent {
     async fn send_webhook(
         &self,
-        _event: &crate::domain::models::webhook::WebhookEvent,
+        event: &crate::domain::models::webhook::WebhookEvent,
     ) -> Result<(), anyhow::Error> {
-        Ok(())
+        self.inner.send_webhook(event).await
+    }
+
+    async fn trigger_completion(
+        &self,
+        task: &crate::domain::models::task::Task,
+    ) -> Result<(), anyhow::Error> {
+        self.inner.trigger_completion(task).await
+    }
+
+    async fn trigger_failure(
+        &self,
+        task: &crate::domain::models::task::Task,
+        error_msg: String,
+    ) -> Result<(), anyhow::Error> {
+        self.inner.trigger_failure(task, error_msg).await
     }
 }
 
@@ -432,7 +519,8 @@ pub trait AuditServiceTraitDI: Send + Sync {
 }
 
 /// AuditService component
-#[derive(Default)]
+#[derive(Component, Default)]
+#[shaku(interface = AuditServiceTrait)]
 pub struct AuditServiceComponent {}
 
 #[async_trait::async_trait]
@@ -507,4 +595,217 @@ impl AuditServiceTraitDI for AuditServiceComponent {
     }
 }
 
+use crate::utils::robots::RobotsChecker;
+
 // Service module components - for Shaku DI
+
+/// TemplateLoader component
+#[allow(dead_code)]
+pub struct TemplateLoaderComponent {
+    inner: FileTemplateLoader,
+}
+
+impl<M: Module> Component<M> for TemplateLoaderComponent {
+    type Interface = dyn TemplateLoaderTrait;
+    type Parameters = ();
+
+    fn build(_: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        Box::new(Self {
+            inner: FileTemplateLoader::default(),
+        })
+    }
+}
+
+impl TemplateLoaderTrait for TemplateLoaderComponent {
+    fn load_templates(&self) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        self.inner.load_templates()
+    }
+}
+
+/// RobotsChecker component
+impl<M: Module + HasComponent<dyn HttpClientTrait> + HasComponent<dyn RedisClientTrait>>
+    Component<M> for RobotsChecker
+{
+    type Interface = dyn RobotsCheckerTrait;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let http_client_comp: Arc<dyn HttpClientTrait> = M::build_component(context);
+        let redis_client_comp: Arc<dyn RedisClientTrait> = M::build_component(context);
+
+        let http_client = http_client_comp.get();
+        let redis_client = redis_client_comp.get_client();
+
+        let checker = RobotsChecker::new(http_client, Some(redis_client), None);
+        Box::new(checker)
+    }
+}
+
+/// LLMService component
+impl<
+        M: Module
+            + HasComponent<dyn SettingsTrait>
+            + HasComponent<dyn HttpClientTrait>
+            + HasComponent<dyn TemplateLoaderTrait>,
+    > Component<M> for LLMService
+{
+    type Interface = dyn LLMServiceTrait;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let settings_component: Arc<dyn SettingsTrait> = M::build_component(context);
+        let http_client_comp: Arc<dyn HttpClientTrait> = M::build_component(context);
+        let template_loader: Arc<dyn TemplateLoaderTrait> = M::build_component(context);
+
+        let settings = settings_component.get();
+        let http_client = http_client_comp.get();
+
+        Box::new(LLMService::new_with_template_loader(
+            &settings,
+            http_client,
+            template_loader,
+        ))
+    }
+}
+
+/// AuthScopeService component
+#[derive(Component)]
+#[shaku(interface = AuthScopeServiceTrait)]
+pub struct AuthScopeServiceComponent {
+    #[shaku(inject)]
+    scope_repo: Arc<dyn AuthScopeRepository>,
+}
+
+impl AuthScopeServiceComponent {
+    pub fn new(scope_repo: Arc<dyn AuthScopeRepository>) -> Self {
+        Self { scope_repo }
+    }
+}
+
+#[async_trait::async_trait]
+impl AuthScopeServiceTrait for AuthScopeServiceComponent {
+    async fn get_scope_for_key(
+        &self,
+        api_key_id: uuid::Uuid,
+        team_default_scope: Option<crate::domain::auth::ApiKeyScope>,
+    ) -> Result<
+        crate::domain::auth::ApiKeyScope,
+        crate::domain::services::auth_scope_service::AuthScopeServiceError,
+    > {
+        let service = AuthScopeService::new(self.scope_repo.clone());
+        service
+            .get_scope_for_key(api_key_id, team_default_scope)
+            .await
+    }
+
+    async fn set_scope(
+        &self,
+        api_key_id: uuid::Uuid,
+        scope: crate::domain::auth::ApiKeyScope,
+    ) -> Result<
+        crate::domain::auth::ApiKeyScope,
+        crate::domain::services::auth_scope_service::AuthScopeServiceError,
+    > {
+        let service = AuthScopeService::new(self.scope_repo.clone());
+        service.set_scope(api_key_id, scope).await
+    }
+
+    async fn delete_scope(
+        &self,
+        api_key_id: uuid::Uuid,
+    ) -> Result<bool, crate::domain::services::auth_scope_service::AuthScopeServiceError> {
+        let service = AuthScopeService::new(self.scope_repo.clone());
+        service.delete_scope(api_key_id).await
+    }
+}
+
+/// SearchService component
+pub struct SearchServiceComponent {
+    crawl_repo: Arc<dyn CrawlRepository>,
+    task_repo: Arc<dyn TaskRepository>,
+    credits_repo: Arc<dyn CreditsRepository>,
+    search_client: Arc<dyn SearchClientTrait>,
+    settings: Arc<crate::config::Settings>,
+}
+
+impl<M: Module> Component<M> for SearchServiceComponent
+where
+    M: HasComponent<dyn CrawlRepository>
+        + HasComponent<dyn TaskRepository>
+        + HasComponent<dyn CreditsRepository>
+        + HasComponent<dyn SearchClientTrait>
+        + HasComponent<dyn SettingsTrait>,
+{
+    type Interface = dyn SearchServiceTrait;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let crawl_repo: Arc<dyn CrawlRepository> = M::build_component(context);
+        let task_repo: Arc<dyn TaskRepository> = M::build_component(context);
+        let credits_repo: Arc<dyn CreditsRepository> = M::build_component(context);
+        let search_client: Arc<dyn SearchClientTrait> = M::build_component(context);
+        let settings_component: Arc<dyn SettingsTrait> = M::build_component(context);
+        let settings = settings_component.get();
+
+        Box::new(Self {
+            crawl_repo,
+            task_repo,
+            credits_repo,
+            search_client,
+            settings,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl SearchServiceTrait for SearchServiceComponent {
+    async fn search(
+        &self,
+        team_id: uuid::Uuid,
+        api_key_id: uuid::Uuid,
+        query: crate::domain::services::search_service::SearchQuery,
+    ) -> Result<
+        crate::domain::services::search_service::SearchResponse,
+        crate::domain::services::search_service::SearchServiceError,
+    > {
+        let service = SearchService::new(
+            self.crawl_repo.clone(),
+            self.task_repo.clone(),
+            self.credits_repo.clone(),
+            self.settings.clone(),
+            self.search_client.clone(),
+        );
+        service.search(team_id, api_key_id, query).await
+    }
+}
+
+/// GeoLocationService component
+#[derive(Component)]
+#[shaku(interface = crate::infrastructure::geolocation::GeoLocationServiceTrait)]
+pub struct GeoLocationServiceComponent {
+    /// HTTP client
+    #[shaku(inject)]
+    http_client: Arc<dyn crate::di::infrastructure_module::HttpClientTrait>,
+}
+
+impl GeoLocationServiceComponent {
+    /// Create a new GeoLocationServiceComponent with explicit dependencies
+    pub fn new(http_client: Arc<dyn crate::di::infrastructure_module::HttpClientTrait>) -> Self {
+        Self { http_client }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::infrastructure::geolocation::GeoLocationServiceTrait for GeoLocationServiceComponent {
+    async fn get_location(
+        &self,
+        ip: &std::net::IpAddr,
+    ) -> anyhow::Result<crate::infrastructure::geolocation::GeoLocation> {
+        let service =
+            crate::infrastructure::geolocation::GeoLocationService::new(self.http_client.get().clone());
+        service.get_location(ip).await
+    }
+}
+
+/// RegexCache component - re-export from utils module
+pub type RegexCacheComponent = crate::utils::regex_cache::RegexCacheComponent;

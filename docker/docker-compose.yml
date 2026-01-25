@@ -130,7 +130,7 @@ services:
 
   # PostgreSQL 数据库
   db:
-    image: postgres:15-alpine
+    image: postgres:latest
     container_name: crawlrs-db
     environment:
       - POSTGRES_USER=${DB_USER:-crawlrs}
@@ -139,7 +139,7 @@ services:
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - db_data:/var/lib/postgresql
       - ./init-scripts:/docker-entrypoint-initdb.d
     restart: unless-stopped
     healthcheck:
@@ -156,7 +156,7 @@ services:
 
   # Redis 缓存
   redis:
-    image: redis:7-alpine
+    image: redis:latest
     container_name: crawlrs-redis
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
@@ -181,7 +181,7 @@ services:
 
   # FlareSolverr (反爬虫解决方案，用于Google搜索)
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: flaresolverr/flaresolverr:latest
     container_name: crawlrs-flaresolverr
     environment:
       - LOG_LEVEL=${FLARESOLVERR_LOG_LEVEL:-info}
@@ -242,7 +242,7 @@ services:
 
   # Prometheus 监控
   prometheus:
-    image: prom/prometheus:v2.45.0
+    image: ubuntu/prometheus:3-24.04_stable
     container_name: crawlrs-prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -272,7 +272,7 @@ services:
 
   # Grafana 可视化 (可选)
   grafana:
-    image: grafana/grafana:10.0.0
+    image: grafana/grafana:latest
     container_name: crawlrs-grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin
@@ -389,10 +389,6 @@ networks:
 volumes:
   db_data:
     driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${DATA_VOLUME_PATH:-./data}/postgres
 
   redis_data:
     driver: local

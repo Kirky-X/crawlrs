@@ -26,6 +26,8 @@ pub trait RegexCacheTrait: Interface + Send + Sync {
     fn get_or_insert(&self, pattern: &str) -> Result<Regex, String>;
     /// 获取或插入带转义的正则表达式
     fn get_or_insert_escaped(&self, literal: &str) -> Result<Regex, String>;
+    /// 获取或编译正则表达式（别名方法）
+    fn get_or_compile(&self, pattern: &str) -> Result<Arc<Regex>, String>;
     /// 清空缓存
     fn clear(&self);
     /// 获取缓存大小
@@ -91,6 +93,17 @@ impl RegexCache {
         self.get_or_insert(&pattern)
     }
 
+    /// Gets or compiles a regex pattern, returning it as Arc<Regex>.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if regex compilation fails.
+    #[inline]
+    pub fn get_or_compile(&self, pattern: &str) -> Result<Arc<Regex>, String> {
+        let regex = self.get_or_insert(pattern)?;
+        Ok(Arc::new(regex))
+    }
+
     /// Clears all cached regex patterns.
     #[inline]
     pub fn clear(&self) {
@@ -148,6 +161,11 @@ impl RegexCacheTrait for RegexCacheComponent {
     fn get_or_insert_escaped(&self, literal: &str) -> Result<Regex, String> {
         let pattern = format!(r"\b{}\b", regex::escape(literal));
         self.get_or_insert(&pattern)
+    }
+
+    fn get_or_compile(&self, pattern: &str) -> Result<Arc<Regex>, String> {
+        let regex = self.get_or_insert(pattern)?;
+        Ok(Arc::new(regex))
     }
 
     fn clear(&self) {

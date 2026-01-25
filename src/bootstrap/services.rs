@@ -8,50 +8,57 @@
 use std::sync::Arc;
 use tracing::info;
 
-use crate::application::use_cases::create_scrape::CreateScrapeUseCase;
+use crate::application::use_cases::create_scrape::{CreateScrapeUseCase, CreateScrapeUseCaseTrait};
 use crate::bootstrap::infrastructure::InfrastructureComponents;
 use crate::bootstrap::infrastructure::Repositories;
 use crate::config::settings::Settings;
 use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
 use crate::domain::services::auth_scope_service::AuthScopeService;
-use crate::domain::services::llm_service::LLMService;
+use crate::domain::services::extraction_service::{ExtractionService, ExtractionServiceTrait};
+use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy, RateLimitingService,
 };
+use crate::infrastructure::services::rate_limiting_service_impl::{
+    RateLimitingConfig, RateLimitingServiceImpl,
+};
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
+use crate::search::client::SearchClientTrait;
 use crate::domain::services::team_service::TeamService;
+use crate::domain::services::webhook_service::{WebhookService, WebhookServiceImpl};
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
+use crate::infrastructure::database::repositories::auth_scope_repo_impl::AuthScopeRepositoryImpl;
 use crate::infrastructure::geolocation::GeoLocationService;
-use crate::infrastructure::services::rate_limiting_service_impl::{
-    RateLimitingConfig, RateLimitingServiceImpl,
-};
-use crate::infrastructure::services::webhook_service_impl::WebhookServiceImpl;
-use crate::presentation::middleware::rate_limit_middleware::RateLimiter;
+use crate::presentation::middleware::auth_middleware::AuthRateLimiter;
+use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use crate::search::ab_test::SearchABTestEngine;
 use crate::search::aggregator::SearchAggregator;
 use crate::search::engine_trait::SearchEngine;
 use crate::search::smart as smart_search;
+use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsChecker;
 
 /// All application services.
 #[derive(Clone)]
 pub struct ServicesComponents {
-    /// Rate limiter for API requests.
-    pub rate_limiter: Arc<RateLimiter>,
+    /// Rate limit middleware for API requests.
+    pub rate_limit_middleware: RateLimitMiddleware,
     /// Team semaphore for concurrency control.
     pub team_semaphore: Arc<TeamSemaphore>,
     /// Rate limiting service for distributed rate limiting.
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
+    /// Rate limiter (Redis-based)
+    pub rate_limiter: Option<Arc<AuthRateLimiter>>,
     /// Create scrape use case.
-    pub create_scrape_use_case: Arc<CreateScrapeUseCase>,
+    pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     /// Webhook service.
-    pub webhook_service: Arc<WebhookServiceImpl>,
+    pub webhook_service: Arc<dyn WebhookService>,
     /// Team service.
     pub team_service: Arc<TeamService>,
     /// Geo Location Service
@@ -71,23 +78,30 @@ pub struct ServicesComponents {
     /// HTTP Client
     pub http_client: Arc<reqwest::Client>,
     /// LLM service for LLM operations.
-    pub llm_service: Arc<LLMService>,
+    pub llm_service: Arc<dyn LLMServiceTrait>,
+    /// Extraction service.
+    pub extraction_service: Arc<dyn ExtractionServiceTrait>,
     /// Regex cache for performance optimization.
     pub regex_cache: Arc<RegexCache>,
+    /// Webhook worker
+    pub webhook_worker: Arc<crate::workers::webhook_worker::WebhookWorker>,
+    /// Backlog worker
+    pub backlog_worker: Arc<crate::workers::backlog_worker::BacklogWorker>,
+    /// Expiration worker
+    pub expiration_worker: Arc<crate::workers::expiration_worker::ExpirationWorker>,
 }
 
-/// Initialize rate limiter.
+/// Initialize rate limit middleware.
 ///
 /// # Arguments
 ///
-/// * `redis_client` - Redis client for distributed rate limiting
-/// * `default_rpm` - Default requests per minute limit
+/// * `rate_limiting_service` - Rate limiting service for distributed rate limiting
 ///
 /// # Returns
 ///
-/// Returns an initialized rate limiter.
-pub fn init_rate_limiter(redis_client: Arc<RedisClient>, default_rpm: u32) -> Arc<RateLimiter> {
-    Arc::new(RateLimiter::new((*redis_client).clone(), default_rpm))
+/// Returns an initialized rate limit middleware.
+pub fn init_rate_limit_middleware(rate_limiting_service: Arc<dyn RateLimitingService>) -> RateLimitMiddleware {
+    RateLimitMiddleware::new(rate_limiting_service)
 }
 
 /// Initialize team semaphore for concurrency control.
@@ -210,7 +224,7 @@ pub fn init_search_engine(
 ///
 /// * `repositories` - Application repositories
 /// * `settings` - Application settings
-/// * `search_engine` - Search engine instance
+/// * `search_client` - Search client instance implementing SearchClientTrait
 ///
 /// # Returns
 ///
@@ -218,25 +232,18 @@ pub fn init_search_engine(
 pub fn init_search_service(
     repositories: &Repositories,
     settings: &Settings,
-    search_engine: Arc<dyn SearchEngine>,
+    search_client: Arc<dyn SearchClientTrait>,
 ) -> Arc<dyn SearchServiceTrait> {
     // Create SearchService with concrete repository types
-    let service = SearchServiceConcrete::new(
+    let service = SearchService::new(
         repositories.crawl_repo.clone(),
         repositories.task_repo.clone(),
         repositories.credits_repo.clone(),
         Arc::new(settings.clone()),
-        search_engine,
+        search_client,
     );
     Arc::new(service)
 }
-
-/// Concrete SearchService type for DI
-type SearchServiceConcrete = SearchService<
-    crate::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl,
-    crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl,
-    crate::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl,
->;
 
 /// Initialize auth scope service.
 ///
@@ -251,7 +258,8 @@ type SearchServiceConcrete = SearchService<
 ///
 /// Returns an initialized auth scope service wrapped in Arc.
 pub fn init_auth_scope_service(db: &sea_orm::DbConn) -> Arc<AuthScopeService> {
-    Arc::new(AuthScopeService::new((*db).clone()))
+    let repo = Arc::new(AuthScopeRepositoryImpl::new((*db).clone()));
+    Arc::new(AuthScopeService::new(repo))
 }
 
 /// Initialize LLM service.
@@ -267,7 +275,10 @@ pub fn init_auth_scope_service(db: &sea_orm::DbConn) -> Arc<AuthScopeService> {
 /// # Returns
 ///
 /// Returns an initialized LLM service wrapped in Arc.
-pub fn init_llm_service(settings: &Settings, http_client: Arc<reqwest::Client>) -> Arc<LLMService> {
+pub fn init_llm_service(
+    settings: &Settings,
+    http_client: Arc<reqwest::Client>,
+) -> Arc<dyn LLMServiceTrait> {
     Arc::new(LLMService::new(settings, http_client))
 }
 
@@ -305,8 +316,8 @@ pub fn init_services(
     let redis_client = infrastructure.redis_client.clone();
     let repositories = &infrastructure.repositories;
 
-    // Initialize rate limiter
-    let rate_limiter = init_rate_limiter(redis_client.clone(), settings.rate_limiting.default_rpm);
+    // Initialize rate limiter (for auth rate limiting)
+    let rate_limiter = Some(Arc::new(AuthRateLimiter::new()));
 
     // Initialize team semaphore
     let team_semaphore = init_team_semaphore(settings.concurrency.default_team_limit as u64);
@@ -315,13 +326,22 @@ pub fn init_services(
     let rate_limiting_service =
         init_rate_limiting_service(redis_client.clone(), repositories, settings);
 
-    // Initialize create scrape use case
-    let create_scrape_use_case = Arc::new(CreateScrapeUseCase::new(engine_client.clone()));
+    // Initialize rate limit middleware
+    let rate_limit_middleware = init_rate_limit_middleware(rate_limiting_service.clone());
 
-    // Initialize webhook service (使用依赖注入的 HTTP_CLIENT)
-    let webhook_service = Arc::new(WebhookServiceImpl::new(
-        settings.webhook.secret().to_string(),
+    // Initialize create scrape use case
+    let create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait> =
+        Arc::new(CreateScrapeUseCase::new(engine_client.clone()));
+
+    // Initialize webhook service (使用 WebhookSenderImpl)
+    let webhook_sender: Arc<WebhookSenderImpl> = Arc::new(WebhookSenderImpl::new(
         http_client.clone(),
+        std::time::Duration::from_secs(10),
+    ));
+    let webhook_service: Arc<WebhookServiceImpl> = Arc::new(WebhookServiceImpl::new(
+        webhook_sender.clone(),
+        settings.webhook.secret().to_string(),
+        repositories.webhook_event_repo.clone(),
     ));
 
     // Initialize GeoLocationService
@@ -342,14 +362,19 @@ pub fn init_services(
         None,
     ));
 
-    // Initialize search engine
-    let search_engine_service = init_search_engine(
+    // Initialize search engine (for backward compatibility)
+    let search_engine_service: Arc<dyn SearchEngine> = init_search_engine(
         Arc::new(EngineClient::with_router(engine_router.clone())),
         settings,
     );
 
+    // Initialize search client (wraps search engines)
+    let search_client: Arc<dyn SearchClientTrait> = Arc::new(crate::search::client::SearchClient::new(
+        Arc::new(EngineClient::with_router(engine_router.clone()))
+    ));
+
     // Initialize search service
-    let search_service = init_search_service(repositories, settings, search_engine_service.clone());
+    let search_service = init_search_service(repositories, settings, search_client.clone());
 
     // Initialize auth scope service
     let auth_scope_service = Some(init_auth_scope_service(&infrastructure.db));
@@ -365,12 +390,53 @@ pub fn init_services(
     // Initialize LLM service (使用依赖注入的 http_client)
     let llm_service = init_llm_service(settings, http_client.clone());
 
+    // Initialize extraction service
+    let extraction_service = Arc::new(ExtractionService::new(llm_service.clone()));
+
     // Initialize regex cache
     let regex_cache = init_regex_cache();
+
+    // Use Shaku module to resolve workers
+    // This assumes we have an AppModule that we can use or build here.
+    // However, since we are initializing services manually here for now,
+    // we should update this function to use Shaku module if we want full DI.
+    // For now, we will manually construct the workers using the components' new methods
+    // or by resolving from a module if we had one built.
+
+    // But wait, the goal is to use Shaku.
+    // Let's create the components and use them.
+
+    // Initialize WebhookWorker
+    let webhook_worker = Arc::new(crate::workers::webhook_worker::WebhookWorker::new(
+        repositories.webhook_event_repo.clone(),
+        webhook_service.clone(),
+        crate::utils::retry_policy::RetryPolicy::default(),
+    ));
+
+    // Initialize BacklogWorker
+    // Note: BacklogWorker now expects SettingsTrait, but we have Settings struct.
+    // We need to wrap Settings in SettingsComponent or similar if we use manual new.
+    // But BacklogWorker::new takes Arc<dyn SettingsTrait>.
+    let settings_component = Arc::new(crate::di::infrastructure_module::SettingsComponent::new(
+        Arc::new(settings.clone()),
+    ));
+
+    let backlog_worker = Arc::new(crate::workers::backlog_worker::BacklogWorker::new(
+        repositories.tasks_backlog_repo.clone(),
+        repositories.task_repo.clone(),
+        rate_limiting_service.clone(),
+        settings_component,
+    ));
+
+    // Initialize ExpirationWorker
+    let expiration_worker = Arc::new(crate::workers::expiration_worker::ExpirationWorker::new(
+        repositories.task_repo.clone(),
+    ));
 
     info!("Services initialized");
 
     ServicesComponents {
+        rate_limit_middleware,
         rate_limiter,
         team_semaphore,
         rate_limiting_service,
@@ -386,6 +452,10 @@ pub fn init_services(
         audit_service,
         http_client,
         llm_service,
+        extraction_service,
         regex_cache,
+        webhook_worker,
+        backlog_worker,
+        expiration_worker,
     }
 }

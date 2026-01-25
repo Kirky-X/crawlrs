@@ -99,50 +99,48 @@ impl From<anyhow::Error> for SearchServiceError {
     }
 }
 
-use crate::search::engine_trait::SearchEngine;
+use crate::search::client::SearchClientTrait;
+use shaku::Interface;
 
 /// Search service trait for trait object support.
 #[async_trait::async_trait]
-pub trait SearchServiceTrait: Send + Sync {
+pub trait SearchServiceTrait: Interface + Send + Sync {
     /// Perform search operation.
     async fn search(
         &self,
         team_id: Uuid,
+        api_key_id: Uuid,
         query: SearchQuery,
     ) -> Result<SearchResponse, SearchServiceError>;
 }
 
-pub struct SearchService<CR, TR, CRR> {
-    crawl_repo: Arc<CR>,
-    task_repo: Arc<TR>,
-    credits_repo: Arc<CRR>,
-    search_engine: Arc<dyn SearchEngine>,
+pub struct SearchService {
+    crawl_repo: Arc<dyn CrawlRepository>,
+    task_repo: Arc<dyn TaskRepository>,
+    credits_repo: Arc<dyn CreditsRepository>,
+    search_client: Arc<dyn SearchClientTrait>,
 }
 
-impl<CR, TR, CRR> SearchService<CR, TR, CRR>
-where
-    CR: CrawlRepository + 'static,
-    TR: TaskRepository + 'static,
-    CRR: CreditsRepository + 'static,
-{
+impl SearchService {
     pub fn new(
-        crawl_repo: Arc<CR>,
-        task_repo: Arc<TR>,
-        credits_repo: Arc<CRR>,
+        crawl_repo: Arc<dyn CrawlRepository>,
+        task_repo: Arc<dyn TaskRepository>,
+        credits_repo: Arc<dyn CreditsRepository>,
         _settings: Arc<Settings>,
-        search_engine: Arc<dyn SearchEngine>,
+        search_client: Arc<dyn SearchClientTrait>,
     ) -> Self {
         Self {
             crawl_repo,
             task_repo,
             credits_repo,
-            search_engine,
+            search_client,
         }
     }
 
     pub async fn search(
         &self,
         team_id: Uuid,
+        api_key_id: Uuid,
         query: SearchQuery,
     ) -> Result<SearchResponse, SearchServiceError> {
         // 简化验证：检查 query 是否为空
@@ -231,6 +229,7 @@ where
                     status: TaskStatus::Queued,
                     priority: 100,
                     team_id,
+                    api_key_id,
                     url: result.url.clone(),
                     payload: json!({ "crawl_id": cid, "depth": 0, "config": config }),
                     retry_count: 0,
@@ -275,17 +274,25 @@ where
         &self,
         query: &str,
         limit: u32,
-        lang: Option<&str>,
-        country: Option<&str>,
+        _lang: Option<&str>,
+        _country: Option<&str>,
         engine: Option<&str>,
     ) -> Result<Vec<SearchResult>, SearchServiceError> {
-        let items = self
-            .search_engine
-            .search_with_engine(query, limit, lang, country, engine)
+        let mut command = self.search_client.search(query).await;
+
+        command = command.limit(limit);
+
+        if let Some(engine_name) = engine {
+            command = command.with_engine(engine_name);
+        }
+
+        let response = command
+            .execute()
             .await
             .map_err(|e| SearchServiceError::SearchEngine(e.to_string()))?;
 
-        let filtered_results: Vec<SearchResult> = items
+        let filtered_results: Vec<SearchResult> = response
+            .items
             .into_iter()
             .take(limit as usize)
             .map(|item| SearchResult {
@@ -300,19 +307,15 @@ where
     }
 }
 
-/// Implement SearchServiceTrait for SearchService when CR, TR, CRR implement the trait bounds.
+/// Implement SearchServiceTrait for SearchService
 #[async_trait::async_trait]
-impl<CR, TR, CRR> SearchServiceTrait for SearchService<CR, TR, CRR>
-where
-    CR: CrawlRepository + 'static,
-    TR: TaskRepository + 'static,
-    CRR: CreditsRepository + 'static,
-{
+impl SearchServiceTrait for SearchService {
     async fn search(
         &self,
         team_id: Uuid,
+        api_key_id: Uuid,
         query: SearchQuery,
     ) -> Result<SearchResponse, SearchServiceError> {
-        Self::search(self, team_id, query).await
+        Self::search(self, team_id, api_key_id, query).await
     }
 }

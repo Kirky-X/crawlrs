@@ -46,6 +46,15 @@ impl WebhookRepository for WebhookRepoImpl {
 
         Ok(model.map(Into::into))
     }
+
+    async fn find_by_team_id(&self, team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+        let models = webhook::Entity::find()
+            .filter(webhook::Column::TeamId.eq(team_id))
+            .all(self.db.as_ref())
+            .await?;
+
+        Ok(models.into_iter().map(Into::into).collect())
+    }
 }
 
 impl From<webhook::Model> for Webhook {

@@ -89,7 +89,10 @@ pub async fn create_crawl(
     let use_case = handler_state.create_use_case();
 
     let client_ip = addr.ip().to_string();
-    match use_case.create_crawl(team_id, payload, &client_ip).await {
+    match use_case
+        .create_crawl(team_id, auth_state.api_key_id, payload, &client_ip)
+        .await
+    {
         Ok(crawl) => {
             // 处理同步等待
             let wait_result = if sync_wait_ms > 0 {

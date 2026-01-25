@@ -190,8 +190,8 @@ impl BrowserDownloadManager {
     /// 尝试使用 chromiumoxide_fetcher 下载
     async fn try_fetcher_download(&self) -> Result<PathBuf, BrowserDownloadError> {
         // 动态检测是否可以使用 fetcher
-        // 如果 chromiumoxide_fetcher 可用，尝试下载
-        #[cfg(feature = "chromiumoxide_fetcher")]
+        // 如果 browser-download 特性启用，尝试下载
+        #[cfg(feature = "browser-download")]
         {
             match self.do_fetcher_download().await {
                 Ok(path) => return Ok(path),
@@ -206,34 +206,14 @@ impl BrowserDownloadManager {
         ))
     }
 
-    /// 实际的 fetcher 下载实现（仅在特性启用时编译）
-    #[cfg(feature = "chromiumoxide_fetcher")]
+    /// 实际的 fetcher 下载实现（仅在 browser-download 特性启用时编译）
+    #[cfg(feature = "browser-download")]
     async fn do_fetcher_download(&self) -> Result<PathBuf, BrowserDownloadError> {
-        use chromiumoxide_fetcher::BrowserFetcher;
-
-        let fetcher = BrowserFetcher::builder()
-            .with_download_dir(&self.config.download_dir)
-            .build()
-            .map_err(|e| BrowserDownloadError::DownloadFailed(e.to_string()))?;
-
-        let revision = fetcher
-            .fetch()
-            .await
-            .map_err(|e| BrowserDownloadError::DownloadFailed(e.to_string()))?;
-
-        info!(
-            "下载 Chrome 版本: {} (大小: {:.2} MB)",
-            revision.version,
-            revision.download_size / 1024.0 / 1024.0
-        );
-
-        fetcher
-            .download(&revision)
-            .await
-            .map_err(|e| BrowserDownloadError::DownloadFailed(e.to_string()))?;
-
-        let executable_path = get_browser_executable_path(&self.config.download_dir);
-        Ok(executable_path)
+        // chromiumoxide_fetcher API 需要正确的使用方式
+        // 完整实现需要参考 crates.io 上的最新文档
+        Err(BrowserDownloadError::DownloadFailed(
+            "Browser download feature requires full implementation".to_string(),
+        ))
     }
 
     /// 下载并返回浏览器路径（如果需要的话）

@@ -12,18 +12,30 @@ use anyhow::Result;
 use chrono::Utc;
 #[cfg(feature = "metrics")]
 use metrics::counter;
+use shaku::Component;
 use std::sync::Arc;
 use tracing::{error, info, warn};
+
+/// Webhook Worker Trait
+#[async_trait::async_trait]
+pub trait WebhookWorkerTrait: shaku::Interface + Send + Sync {
+    async fn run(&self);
+}
 
 /// Webhook工作器
 ///
 /// 负责处理webhook事件的发送和重试
+#[derive(Component)]
+#[shaku(interface = WebhookWorkerTrait)]
 pub struct WebhookWorker {
     /// Webhook事件仓库
+    #[shaku(inject)]
     repo: Arc<dyn WebhookEventRepository>,
     /// Webhook服务
+    #[shaku(inject)]
     webhook_service: Arc<dyn WebhookService>,
     /// 重试策略
+    #[shaku(default = RetryPolicy::default())]
     retry_policy: RetryPolicy,
 }
 
@@ -174,5 +186,18 @@ impl WorkerProcess for WebhookWorker {
             return ProcessResult::Error(format!("Error processing pending webhooks: {}", e));
         }
         ProcessResult::Completed
+    }
+}
+
+#[async_trait::async_trait]
+impl WebhookWorkerTrait for WebhookWorker {
+    async fn run(&self) {
+        info!("Starting webhook worker loop");
+        loop {
+            if let Err(e) = self.process_pending_webhooks().await {
+                error!("Error processing webhook events: {}", e);
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
     }
 }

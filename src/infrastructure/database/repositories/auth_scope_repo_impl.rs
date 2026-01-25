@@ -7,6 +7,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use uuid::Uuid;
 
 use crate::domain::auth::ApiKeyScope;
+use crate::domain::repositories::auth_scope_repository::{AuthScopeRepository, RepositoryError};
 use crate::infrastructure::database::entities::api_key::{
     Column as ApiKeyColumn, Entity as ApiKeyEntity,
 };
@@ -15,23 +16,27 @@ use crate::infrastructure::database::entities::auth::scope::{
 };
 
 #[derive(Clone)]
-pub struct AuthScopeRepository {
+pub struct AuthScopeRepositoryImpl {
     db: DatabaseConnection,
 }
 
-impl AuthScopeRepository {
+impl AuthScopeRepositoryImpl {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }
+}
 
-    pub async fn find_by_api_key_id(
+#[async_trait::async_trait]
+impl AuthScopeRepository for AuthScopeRepositoryImpl {
+    async fn find_by_api_key_id(
         &self,
         api_key_id: Uuid,
-    ) -> Result<Option<ApiKeyScope>, sea_orm::DbErr> {
+    ) -> Result<Option<ApiKeyScope>, RepositoryError> {
         let scope = ScopeEntity::find()
             .filter(ScopeColumn::ApiKeyId.eq(api_key_id))
             .one(&self.db)
-            .await?;
+            .await
+            .map_err(RepositoryError::Database)?;
 
         Ok(scope.map(|s| ApiKeyScope {
             read: s.read,
@@ -42,11 +47,12 @@ impl AuthScopeRepository {
         }))
     }
 
-    pub async fn find_by_api_key(&self, key: &str) -> Result<Option<ApiKeyScope>, sea_orm::DbErr> {
+    async fn find_by_api_key(&self, key: &str) -> Result<Option<ApiKeyScope>, RepositoryError> {
         let api_key = ApiKeyEntity::find()
             .filter(ApiKeyColumn::Key.eq(key))
             .one(&self.db)
-            .await?;
+            .await
+            .map_err(RepositoryError::Database)?;
 
         match api_key {
             Some(key) => self.find_by_api_key_id(key.id).await,
@@ -54,11 +60,11 @@ impl AuthScopeRepository {
         }
     }
 
-    pub async fn upsert(
+    async fn upsert(
         &self,
         api_key_id: Uuid,
         scope: ApiKeyScope,
-    ) -> Result<ApiKeyScope, sea_orm::DbErr> {
+    ) -> Result<ApiKeyScope, RepositoryError> {
         let existing = self.find_by_api_key_id(api_key_id).await?;
 
         match existing {
@@ -77,7 +83,8 @@ impl AuthScopeRepository {
                 ScopeEntity::update(scope_active_model)
                     .filter(ScopeColumn::ApiKeyId.eq(api_key_id))
                     .exec(&self.db)
-                    .await?;
+                    .await
+                    .map_err(RepositoryError::Database)?;
 
                 Ok(scope)
             }
@@ -96,17 +103,19 @@ impl AuthScopeRepository {
 
                 ScopeEntity::insert(scope_active_model)
                     .exec(&self.db)
-                    .await?;
+                    .await
+                    .map_err(RepositoryError::Database)?;
                 Ok(scope)
             }
         }
     }
 
-    pub async fn delete_by_api_key_id(&self, api_key_id: Uuid) -> Result<bool, sea_orm::DbErr> {
+    async fn delete_by_api_key_id(&self, api_key_id: Uuid) -> Result<bool, RepositoryError> {
         let result = ScopeEntity::delete_many()
             .filter(ScopeColumn::ApiKeyId.eq(api_key_id))
             .exec(&self.db)
-            .await?;
+            .await
+            .map_err(RepositoryError::Database)?;
 
         Ok(result.rows_affected > 0)
     }

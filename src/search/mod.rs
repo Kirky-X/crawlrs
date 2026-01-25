@@ -36,6 +36,8 @@ pub use ab_test::SearchABTestEngine;
 pub use adapter::{GenericSearchEngineAdapter, SearchEngineAdapter};
 pub use aggregator::deduplicator::ResultDeduplicator as Deduplicator;
 pub use aggregator::SearchAggregator;
+#[cfg(feature = "search-all")]
+pub use aggregator::enhanced::EnhancedSearchAggregator;
 pub use engine_trait::{SearchEngine, SearchRequest};
 pub use error::SearchError;
 pub use response::{Response, ResponseItem};

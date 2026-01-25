@@ -7,61 +7,59 @@
 //!
 //! 提供应用运行时配置，包括worker数量、时间间隔等可调参数
 
-use serde::Deserialize;
+use confers::Config;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// 运行时配置
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__RUNTIME__")]
 pub struct RuntimeConfig {
     /// Worker相关配置
+    #[config(default)]
     pub worker: WorkerConfig,
+
     /// 后台任务配置
+    #[config(default)]
     pub background_tasks: BackgroundTaskConfig,
 }
 
 /// Worker配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__RUNTIME__WORKER__")]
 pub struct WorkerConfig {
     /// 初始worker数量
+    #[config(default = 5)]
     pub initial_count: usize,
+
     /// 最大worker数量
+    #[config(default = 20)]
     pub max_count: usize,
+
     /// 每个worker的队列大小
+    #[config(default = 100)]
     pub queue_size: usize,
 }
 
-impl Default for WorkerConfig {
-    fn default() -> Self {
-        Self {
-            initial_count: 5,
-            max_count: 20,
-            queue_size: 100,
-        }
-    }
-}
-
 /// 后台任务配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__RUNTIME__BACKGROUND_TASKS__")]
 pub struct BackgroundTaskConfig {
     /// Webhook处理间隔（秒）
+    #[config(default = 5)]
     pub webhook_interval_secs: u64,
-    /// 积压任务处理间隔（秒）
-    pub backlog_interval_secs: u64,
-    /// 缓存清理间隔（秒）
-    pub cache_cleanup_interval_secs: u64,
-    /// DNS缓存TTL（秒）
-    pub dns_cache_ttl_secs: u64,
-}
 
-impl Default for BackgroundTaskConfig {
-    fn default() -> Self {
-        Self {
-            webhook_interval_secs: 5,
-            backlog_interval_secs: 30,
-            cache_cleanup_interval_secs: 60,
-            dns_cache_ttl_secs: 300,
-        }
-    }
+    /// 积压任务处理间隔（秒）
+    #[config(default = 30)]
+    pub backlog_interval_secs: u64,
+
+    /// 缓存清理间隔（秒）
+    #[config(default = 60)]
+    pub cache_cleanup_interval_secs: u64,
+
+    /// DNS缓存TTL（秒）
+    #[config(default = 300)]
+    pub dns_cache_ttl_secs: u64,
 }
 
 impl BackgroundTaskConfig {

@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 pub mod audit_log_repository;
+pub mod auth_scope_repository;
 pub mod crawl_repository;
 /// 仓库接口模块
 ///

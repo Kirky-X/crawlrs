@@ -3,6 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::engines::client::reqwest::ReqwestEngine;
+use crate::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
+use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -34,7 +37,7 @@ pub struct GeoLocation {
 
 /// IP地理定位服务Trait
 #[async_trait::async_trait]
-pub trait GeoLocationServiceTrait: Send + Sync {
+pub trait GeoLocationServiceTrait: shaku::Interface + Send + Sync {
     async fn get_location(&self, ip: &IpAddr) -> Result<GeoLocation>;
 }
 
@@ -42,24 +45,33 @@ pub trait GeoLocationServiceTrait: Send + Sync {
 pub struct GeoLocationService {
     /// API端点 (默认为 ipapi.co)
     api_endpoint: String,
-    client: Arc<reqwest::Client>,
+    engine_client: Arc<EngineClient>,
 }
 
 impl GeoLocationService {
     /// 创建新的地理定位服务实例
     pub fn new(client: Arc<reqwest::Client>) -> Self {
+        let engine_client = Self::create_engine_client(client);
         Self {
             api_endpoint: "https://ipapi.co".to_string(),
-            client,
+            engine_client,
         }
     }
 
     /// 使用自定义API端点创建服务实例
     pub fn with_endpoint(api_endpoint: String, client: Arc<reqwest::Client>) -> Self {
+        let engine_client = Self::create_engine_client(client);
         Self {
             api_endpoint,
-            client,
+            engine_client,
         }
+    }
+
+    fn create_engine_client(http_client: Arc<reqwest::Client>) -> Arc<EngineClient> {
+        let reqwest_engine = ReqwestEngine::new(http_client);
+        let router: Arc<dyn EngineRouterTrait> =
+            Arc::new(EngineRouter::new(vec![Arc::new(reqwest_engine)]));
+        Arc::new(EngineClient::with_router(router))
     }
 }
 
@@ -73,32 +85,29 @@ impl GeoLocationServiceTrait for GeoLocationService {
         let url = format!("{}/{}/json/", self.api_endpoint, ip_str);
 
         // 发送请求
-        let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", "crawlrs/0.1.0")
-            .send()
-            .await
-            .map_err(|e| {
-                error!("Failed to fetch geolocation for IP {}: {}", ip_str, e);
-                anyhow::anyhow!("Failed to fetch geolocation: {}", e)
-            })?;
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("User-Agent".to_string(), "crawlrs/0.1.0".to_string());
 
-        // 检查响应状态
-        if !response.status().is_success() {
+        let request = ScrapeRequest::new(&url)
+            .with_options(ScrapeOptions::builder().headers(headers).build());
+
+        let response = self.engine_client.scrape(&request).await.map_err(|e| {
+            error!("Failed to fetch geolocation for IP {}: {}", ip_str, e);
+            anyhow::anyhow!("Failed to fetch geolocation: {}", e)
+        })?;
+
+        if !response.is_success() {
             error!(
                 "Geolocation API returned error status: {} for IP {}",
-                response.status(),
-                ip_str
+                response.status_code, ip_str
             );
             return Err(anyhow::anyhow!(
                 "Geolocation API error: {}",
-                response.status()
+                response.status_code
             ));
         }
 
-        // 解析响应
-        let api_response: IpApiResponse = response.json().await.map_err(|e| {
+        let api_response: IpApiResponse = serde_json::from_str(&response.content).map_err(|e| {
             error!(
                 "Failed to parse geolocation response for IP {}: {}",
                 ip_str, e

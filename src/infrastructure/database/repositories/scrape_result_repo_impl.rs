@@ -109,4 +109,9 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
 
         Ok(results)
     }
+
+    async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+        tracing::warn!("Team average response time tracking not yet implemented - returning 0.0");
+        Ok(0.0)
+    }
 }

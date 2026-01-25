@@ -167,6 +167,7 @@ impl EngineHealthMonitor {
         // 创建测试请求
         let test_request = InternalScrapeRequest {
             url: self.config.target_url.clone(),
+            method: crate::engines::engine_client::HttpMethod::Get,
             headers: std::collections::HashMap::new(),
             timeout: self.config.timeout,
             needs_js: false,
@@ -178,6 +179,7 @@ impl EngineHealthMonitor {
             needs_tls_fingerprint: false,
             use_fire_engine: false,
             actions: Vec::new(),
+            body: None,
             sync_wait_ms: 0,
         };
 

@@ -107,19 +107,39 @@ impl ScraperEngine for ReqwestEngine {
         let client = self.get_client(&request.proxy);
 
         // Create request builder
-        let mut request_builder = if request.mobile {
-            client
-                .get(&request.url)
-                .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
-        } else {
-            client.get(&request.url).header(
-                "User-Agent",
-                "Mozilla/5.0 (compatible; crawlrs/1.0; +http://crawlrs.dev)",
-            )
+        let mut request_builder = match request.method {
+            crate::engines::engine_client::HttpMethod::Get => {
+                if request.mobile {
+                    client
+                        .get(&request.url)
+                        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
+                } else {
+                    client.get(&request.url).header(
+                        "User-Agent",
+                        "Mozilla/5.0 (compatible; crawlrs/1.0; +http://crawlrs.dev)",
+                    )
+                }
+            }
+            crate::engines::engine_client::HttpMethod::Post => {
+                if request.mobile {
+                    client
+                        .post(&request.url)
+                        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
+                } else {
+                    client.post(&request.url).header(
+                        "User-Agent",
+                        "Mozilla/5.0 (compatible; crawlrs/1.0; +http://crawlrs.dev)",
+                    )
+                }
+            }
         };
 
         // Add custom headers
         request_builder = request_builder.headers(headers);
+
+        if let Some(body) = &request.body {
+            request_builder = request_builder.body(body.clone());
+        }
 
         // Set timeout
         request_builder = request_builder.timeout(request.timeout);

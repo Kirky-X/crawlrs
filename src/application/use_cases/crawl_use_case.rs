@@ -175,6 +175,7 @@ impl CrawlUseCase {
     pub async fn create_crawl(
         &self,
         team_id: Uuid,
+        api_key_id: Uuid,
         dto: CrawlRequestDto,
         client_ip: &str,
     ) -> Result<Crawl, CrawlUseCaseError> {
@@ -279,6 +280,7 @@ impl CrawlUseCase {
             status: TaskStatus::Queued, // 任务状态为排队中
             priority: 100,              // 默认优先级 100
             team_id,
+            api_key_id,   // API密钥ID
             url: dto.url, // 爬取目标 URL
             payload: json!({
                             "crawl_id": crawl_id,
