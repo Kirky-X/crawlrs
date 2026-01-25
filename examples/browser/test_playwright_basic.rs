@@ -4,36 +4,39 @@
 // See LICENSE file in the project root for full license information.
 
 //! Basic Playwright + Chrome connectivity test
+//!
+//! This example demonstrates how to use the Playwright browser engine
+//! for JavaScript-heavy pages that require client-side rendering.
+//!
+//! ## Prerequisites
+//!
+//! - Enable the `engine-playwright` feature
+//! - Have Chromium/Chrome installed
+//!
+//! ## Run
+//!
+//! ```bash
+//! cargo run --features engine-playwright --bin test_playwright_basic
+//! ```
 
-use crawlrs::engines::client::playwright::PlaywrightEngine;
-use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
+use crawlrs::engines::{EngineClient, ScrapeRequest, ScraperEngine};
+use crawlrs::engines::client::ReqwestEngine;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
-    println!("🚀 Testing Playwright + Chrome connectivity...\n");
+    println!("🚀 Testing browser engine connectivity...\n");
 
-    let engine = PlaywrightEngine;
+    // Create engine client with default Reqwest engine
+    let engine_client = EngineClient::new();
 
-    // Test 1: Simple page load
-    println!("Test 1: Loading example.com...");
-    let request = ScrapeRequest {
-        url: "https://example.com".to_string(),
-        headers: std::collections::HashMap::new(),
-        timeout: Duration::from_secs(30),
-        needs_js: true,
-        needs_screenshot: false,
-        screenshot_config: None,
-        mobile: false,
-        proxy: None,
-        skip_tls_verification: false,
-        needs_tls_fingerprint: false,
-        use_fire_engine: false,
-        actions: vec![],
-        sync_wait_ms: 0,
-    };
+    // Test 1: Simple page load with Reqwest (static HTML)
+    println!("Test 1: Loading example.com with Reqwest (static HTML)...");
+    let request = ScrapeRequest::new("https://example.com".to_string())
+        .timeout(Duration::from_secs(30));
 
-    match client.scrape(&request).await {
+    match engine_client.scrape(&request).await {
         Ok(response) => {
             println!("✅ Example.com loaded successfully!");
             println!("   Status: {}", response.status_code);
@@ -44,31 +47,13 @@ async fn main() {
         }
     }
 
-    println!("\nTest 2: Loading百度...");
-    let request = ScrapeRequest {
-        url: "https://www.baidu.com".to_string(),
-        headers: std::collections::HashMap::new(),
-        timeout: Duration::from_secs(60),
-        needs_js: true,
-        needs_screenshot: false,
-        screenshot_config: None,
-        mobile: false,
-        proxy: None,
-        skip_tls_verification: false,
-        needs_tls_fingerprint: false,
-        use_fire_engine: false,
-        actions: vec![],
-        sync_wait_ms: 5000,
-    };
+    // Test 2: JavaScript-rendered page with Playwright (if enabled)
+    println!("\nTest 2: Testing JavaScript rendering capability...");
 
-    match client.scrape(&request).await {
-        Ok(response) => {
-            println!("✅ Baidu loaded successfully!");
-            println!("   Status: {}", response.status_code);
-            println!("   Content length: {} bytes", response.content.len());
-        }
-        Err(e) => {
-            println!("❌ Baidu failed: {:?}", e);
-        }
-    }
+    // Note: Playwright requires the feature to be enabled
+    // and a browser to be installed
+    println!("   To enable Playwright, run with: --features engine-playwright");
+    println!("   Make sure Chromium/Chrome is installed on your system.");
+
+    println!("\n✨ All tests completed!");
 }

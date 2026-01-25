@@ -40,6 +40,10 @@ engine-fire-tls = []
 # FlareSolverr 引擎
 engine-flaresolverr = []
 
+# --- 浏览器下载特性 (实验性) ---
+# 自动下载浏览器功能，需要 chromiumoxide_fetcher
+browser-download = ["dep:chromiumoxide_fetcher"]
+
 # --- 存储特性 ---
 storage-s3 = ["dep:aws-sdk-s3", "dep:aws-config"]
 
@@ -80,7 +84,8 @@ tower-http = { version = "0.6", features = ["trace", "cors"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-config = "0.15.19"
+confers = "0.2.1"
+figment = { version = "0.10", features = ["toml"] }
 
 # Error handling
 thiserror = "2.0.17"
@@ -247,3 +252,11 @@ debug = true
 
 [workspace.metadata.sqlx]
 migrate-path = "migrations"
+
+# =============================================================================
+# Lint Configuration
+# =============================================================================
+# Suppress external dependency cfg warnings from confers_macros crate
+
+[lints.rust]
+unexpected_cfgs = "allow"

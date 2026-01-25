@@ -3,249 +3,414 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use config::{Config, ConfigError, Environment, File};
-use serde::Deserialize;
+//! 配置模块
+//!
+//! 使用 confers 库进行配置管理，支持：
+//! - TOML 配置文件
+//! - 环境变量覆盖 (CRAWLRS__ 前缀)
+//! - 类型安全的配置解析
+//! - 内置验证
+
+use confers::{Config, ConfigBuilder, Environment, File};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::app::{
-    ConcurrencySettings, CorsSettings, DatabaseSettings, ProxySettings, RateLimitingSettings,
-    RedisSettings, ServerSettings, TimeoutSettings, WorkerSettings,
+// 重新导出子模块中的类型
+pub use super::app::{
+    ConcurrencySettings, DatabaseSettings, RateLimitingSettings, RedisSettings, ServerSettings,
 };
-use super::engines::EngineSettings;
-use super::llm::LLMSettings;
-use super::logging::LoggingSettings;
-use super::search::{BingSearchSettings, SearchSettings};
-use super::storage::{StorageSettings, WebhookSettings};
+pub use super::engines::{EngineSettings, FireCdpSettings, FireTlsSettings, FlareSolverrSettings};
+pub use super::llm::LLMSettings;
+pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
+pub use super::search::{BingSearchSettings, SearchSettings};
+pub use super::storage::{StorageSettings, WebhookSettings};
 
-/// 配置安全错误
-#[derive(Error, Debug)]
-pub enum ConfigSecurityError {
+// =============================================================================
+// 错误类型
+// =============================================================================
+
+/// 配置错误类型
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("File error: {0}")]
+    File(String),
+
+    #[error("Parse error: {0}")]
+    Parse(String),
+
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("CRITICAL: Webhook secret cannot be empty in production")]
     EmptyWebhookSecret,
 
-    #[error("CRITICAL: Webhook secret uses weak default value '{0}'. Must be changed to a strong random secret!")]
-    WeakWebhookSecret(String),
+    #[error("CRITICAL: Webhook secret uses weak default value. Must be changed!")]
+    WeakWebhookSecret,
 
     #[error("CRITICAL: Webhook secret is too short ({0} bytes). Minimum 32 bytes required.")]
     ShortWebhookSecret(usize),
 
-    #[error("CRITICAL: Database URL uses weak/default password. Use strong authentication in production!")]
+    #[error("CRITICAL: Database URL uses weak/default password")]
     WeakDatabasePassword,
-
-    #[error("CRITICAL: Database password cannot be empty in production")]
-    EmptyDatabasePassword,
 
     #[error("CRITICAL: Database password is too short ({0} bytes). Minimum 16 bytes required in production!")]
     ShortDatabasePassword(usize),
 
+    #[error("S3 bucket must be configured when storage_type is 's3'")]
+    MissingS3Bucket,
+
     #[error("SECURITY WARNING: S3 access key is not configured but storage type is 's3'")]
     MissingS3AccessKey,
 
-    #[error(
-        "WARNING: S3 secret key appears to be short (< 32 characters). Use a strong secret key."
-    )]
+    #[error("SECURITY WARNING: S3 secret key appears to be short (< 32 characters)")]
     ShortS3SecretKey,
 
-    #[error("WARNING: Rate limiting is disabled. This may expose the service to abuse.")]
+    #[error("Invalid port number: port must be between 1 and 65535")]
+    InvalidPort,
+
+    #[error("Invalid variant_b_weight: must be between 0.0 and 1.0")]
+    InvalidVariantWeight,
+
+    #[error("Invalid storage_type: must be 'local' or 's3'")]
+    InvalidStorageType,
+
+    #[error("Rate limiting is disabled. This may expose the service to abuse.")]
     RateLimitingDisabled,
 }
+
+impl From<confers::ConfigError> for ConfigError {
+    fn from(e: confers::ConfigError) -> Self {
+        ConfigError::Parse(e.to_string())
+    }
+}
+
+// =============================================================================
+// 主配置结构
+// =============================================================================
 
 /// 应用程序配置设置
 ///
 /// 包含数据库、Redis、服务器、速率限制和并发控制等所有配置项
 ///
-/// # 字段说明
-///
-/// * `database` - 数据库连接和连接池配置
-/// * `redis` - Redis 连接配置，用于缓存和速率限制
-/// * `server` - HTTP 服务器监听地址和端口配置
-/// * `rate_limiting` - API 速率限制配置
-/// * `concurrency` - 并发控制和资源限制配置
-/// * `storage` - 数据存储配置（本地文件系统或 S3）
-/// * `webhook` - Webhook 功能配置
-/// * `engines` - 抓取引擎配置（FlareSolverr、Fire Engine 等）
-///
-/// # 示例
+/// # 使用示例
 ///
 /// ```rust
 /// use crawlrs::config::Settings;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let settings = Settings::new()?;
+///     let settings = Settings::load()?;
 ///     println!("Server will run on {}:{}", settings.server.host, settings.server.port);
 ///     Ok(())
 /// }
 /// ```
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__", validate)]
 pub struct Settings {
-    /// 数据库配置
-    pub database: DatabaseSettings,
-    /// Redis配置
-    pub redis: RedisSettings,
     /// 服务器配置
+    #[config(default)]
     pub server: ServerSettings,
+
+    /// 数据库配置
+    #[config(default)]
+    pub database: DatabaseSettings,
+
+    /// Redis 配置
+    #[config(default)]
+    pub redis: RedisSettings,
+
     /// CORS 配置
+    #[config(default)]
     pub cors: CorsSettings,
+
     /// 速率限制配置
+    #[config(default)]
     pub rate_limiting: RateLimitingSettings,
+
     /// 并发控制配置
+    #[config(default)]
     pub concurrency: ConcurrencySettings,
+
     /// 存储配置
+    #[config(default)]
     pub storage: StorageSettings,
+
     /// Webhook 配置
+    #[config(default)]
     pub webhook: WebhookSettings,
+
     /// Bing Search API 配置
+    #[config(default)]
     pub bing_search: BingSearchSettings,
+
     /// 搜索配置 (包含 A/B 测试)
+    #[config(default)]
     pub search: SearchSettings,
+
     /// LLM 配置
+    #[config(default)]
     pub llm: LLMSettings,
+
     /// HTTP 代理配置
+    #[config(default)]
     pub proxy: ProxySettings,
+
     /// 引擎配置
+    #[config(default)]
     pub engines: EngineSettings,
+
     /// 日志配置
+    #[config(default)]
     pub logging: LoggingSettings,
-    /// Worker配置
+
+    /// Worker 配置
+    #[config(default)]
     pub workers: WorkerSettings,
+
     /// 超时配置
+    #[config(default)]
     pub timeouts: TimeoutSettings,
 }
 
+// =============================================================================
+// CORS 配置
+// =============================================================================
+
+/// CORS 配置设置
+///
+/// 配置跨域资源共享（CORS）策略
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__CORS__")]
+pub struct CorsSettings {
+    /// 允许的跨域来源列表（逗号分隔）
+    #[config(default = "*")]
+    pub allowed_origins: String,
+}
+
+// =============================================================================
+// 代理配置
+// =============================================================================
+
+/// HTTP代理配置设置
+///
+/// 配置HTTP代理参数，用于转发爬虫请求
+#[derive(Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__PROXY__")]
+pub struct ProxySettings {
+    /// 代理服务器URL (可能包含认证信息)
+    #[config(default = "http://localhost:10808")]
+    pub(crate) url: String,
+
+    /// 是否启用代理
+    #[config(default = false)]
+    pub enabled: bool,
+}
+
+impl ProxySettings {
+    /// 获取代理服务器URL
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+}
+
+impl std::fmt::Debug for ProxySettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxySettings")
+            .field("url", &"[REDACTED]")
+            .field("enabled", &self.enabled)
+            .finish()
+    }
+}
+
+// =============================================================================
+// Worker 配置
+// =============================================================================
+
+/// Worker配置设置
+///
+/// 配置后台Worker进程的数量和类型
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__WORKERS__")]
+pub struct WorkerSettings {
+    /// Worker数量配置
+    #[config(default)]
+    pub count: WorkerCount,
+}
+
+/// Worker数量配置
+///
+/// 支持固定数量或自动检测CPU核心数
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum WorkerCount {
+    Auto(String),
+    Fixed(usize),
+}
+
+impl Default for WorkerCount {
+    fn default() -> Self {
+        WorkerCount::Auto("auto".to_string())
+    }
+}
+
+impl WorkerCount {
+    /// 解析为实际的worker数量
+    pub fn resolve(&self) -> usize {
+        match self {
+            WorkerCount::Auto(s) if s.eq_ignore_ascii_case("auto") => {
+                let logical_cores = std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4);
+                logical_cores * 2
+            }
+            WorkerCount::Fixed(n) => *n,
+            _ => 5,
+        }
+    }
+}
+
+// =============================================================================
+// 超时配置
+// =============================================================================
+
+/// 超时配置设置
+///
+/// 配置各种操作的超时时间
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__TIMEOUTS__")]
+pub struct TimeoutSettings {
+    /// Worker相关超时
+    #[config(default)]
+    pub workers: WorkerTimeoutSettings,
+
+    /// 引擎相关超时
+    #[config(default)]
+    pub engines: EngineTimeoutSettings,
+
+    /// 重试策略超时
+    #[config(default)]
+    pub retry: RetryTimeoutSettings,
+
+    /// 缓存TTL设置
+    #[config(default)]
+    pub cache: CacheTimeoutSettings,
+}
+
+/// Worker超时设置
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__TIMEOUTS__WORKERS__")]
+pub struct WorkerTimeoutSettings {
+    /// Webhook worker处理间隔（秒）
+    #[config(default = 5)]
+    pub webhook_interval_seconds: u64,
+
+    /// Backlog worker处理间隔（秒）
+    #[config(default = 30)]
+    pub backlog_interval_seconds: u64,
+}
+
+/// 引擎超时设置
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__TIMEOUTS__ENGINES__")]
+pub struct EngineTimeoutSettings {
+    /// 默认请求超时（秒）
+    #[config(default = 30)]
+    pub default_timeout_seconds: u64,
+
+    /// Playwright引擎超时（秒）
+    #[config(default = 30)]
+    pub playwright_timeout_seconds: u64,
+
+    /// FlareSolverr超时（秒）
+    #[config(default = 30)]
+    pub flaresolverr_timeout_seconds: u64,
+}
+
+/// 重试超时设置
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__TIMEOUTS__RETRY__")]
+pub struct RetryTimeoutSettings {
+    /// 初始退避时间（秒）
+    #[config(default = 1)]
+    pub initial_backoff_seconds: u64,
+
+    /// 最大退避时间（秒）
+    #[config(default = 60)]
+    pub max_backoff_seconds: u64,
+}
+
+/// 缓存超时设置
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__TIMEOUTS__CACHE__")]
+pub struct CacheTimeoutSettings {
+    /// 默认TTL（秒）
+    #[config(default = 600)]
+    pub default_ttl_seconds: u64,
+
+    /// 内存缓存TTL（秒）
+    #[config(default = 600)]
+    pub memory_ttl_seconds: u64,
+
+    /// Redis缓存TTL（秒）
+    #[config(default = 7200)]
+    pub redis_ttl_seconds: u64,
+}
+
+// =============================================================================
+// 配置加载 API
+// =============================================================================
+
 impl Settings {
-    /// 创建新的配置实例
+    /// 创建新的配置实例（同步）
     ///
-    /// 从环境变量加载配置，支持默认值。配置加载顺序：
-    /// 1. 设置默认值
-    /// 2. 加载 `config/default` 文件（可选）
-    /// 3. 加载 `config/{APP_ENVIRONMENT}` 文件（可选）
-    /// 4. 加载以 `CRAWLRS__` 为前缀的环境变量
-    ///
-    /// # 参数
-    ///
-    /// 无
+    /// 从配置文件加载配置，并应用环境变量覆盖。
+    /// 支持的配置加载顺序：
+    /// 1. 配置文件 (config/default.toml)
+    /// 2. 环境变量 (CRAWLRS__ 前缀)
+    /// 3. 默认值
     ///
     /// # 返回值
     ///
     /// * `Ok(Settings)` - 成功加载的配置
-    /// * `Err(ConfigError)` - 配置加载失败
+    /// * `Err(ConfigError)` - 配置加载或验证失败
     ///
     /// # 示例
     ///
-    /// ```rust
-    /// use crawlrs::config::Settings;
-    ///
-    /// fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     let settings = Settings::new()?;
-    ///     println!("Database URL: {}", settings.database.url);
-    ///     Ok(())
-    /// }
+    /// ```rust,ignore
+    /// let settings = Settings::new()?;
     /// ```
-    ///
-    /// # 错误
-    ///
-    /// 可能在以下情况下返回错误：
-    /// - 配置文件格式错误
-    /// - 环境变量解析失败
-    /// - 必需的配置项缺失
-    ///
-    /// # Panics
-    ///
-    /// 此函数不会 panic
     pub fn new() -> Result<Self, ConfigError> {
-        /// 常量定义 - 应用程序环境
-        const APP_ENVIRONMENT_DEFAULT: &str = "default";
+        // 使用 ConfigBuilder 加载配置
+        let settings: Settings = ConfigBuilder::new()
+            .add_source(File::with_name("config/default.toml").required(false))
+            .add_source(Environment::with_prefix("CRAWLRS").separator("__"))
+            .build()?;
 
-        // 获取应用环境变量，默认为 "default"
-        let env = std::env::var("APP_ENVIRONMENT")
-            .unwrap_or_else(|_| APP_ENVIRONMENT_DEFAULT.to_string());
-
-        // 构建配置构建器，按优先级顺序加载配置
-        let builder = Config::builder()
-            // 1. 设置服务器默认配置
-            .set_default("server.host", "0.0.0.0")? // 默认监听所有网络接口
-            .set_default("server.port", 8899)? // 默认端口 8899
-            .set_default("server.enable_port_detection", true)? // 默认启用端口嗅探
-            // CORS 默认配置
-            .set_default("cors.allowed_origins", "*")? // 默认允许所有来源（开发环境）
-            // 2. 设置数据库连接池默认配置
-            .set_default("database.max_connections", 150)? // 增加到 150 以提高并发性能
-            .set_default("database.min_connections", 20)? // 增加到 20 以减少连接建立开销
-            .set_default("database.connect_timeout", 15)? // 增加到 15 秒以适应 Docker 环境
-            .set_default("database.idle_timeout", 300)? // 空闲超时 300 秒（5 分钟）
-            // 3. 设置存储默认配置
-            .set_default("storage.storage_type", "local")? // 默认使用本地存储
-            .set_default("storage.local_path", "./storage")? // 本地存储路径
-            // 4. 设置速率限制默认配置
-            .set_default("rate_limiting.enabled", true)? // 默认启用速率限制
-            .set_default("rate_limiting.default_rpm", 100)? // 默认每分钟 100 请求
-            // 5. 设置并发控制默认配置
-            .set_default("concurrency.default_team_limit", 10)? // 默认团队并发限制 10
-            .set_default("concurrency.task_lock_duration_seconds", 300)? // 任务锁持续 300 秒（5 分钟）
-            // 7. 设置搜索 A/B 测试默认配置
-            .set_default("search.ab_test_enabled", false)? // 默认关闭 A/B 测试
-            .set_default("search.variant_b_weight", 0.1)? // 默认分配 10% 流量到 B 变体
-            // 8. 设置 Bing Search API 默认配置
-            .set_default("bing_search.api_key", "")?
-            // 9. 设置 LLM 默认配置
-            .set_default("llm.api_key", "")? // LLM API 密钥
-            .set_default("llm.model", "gpt-3.5-turbo")? // 默认模型
-            .set_default("llm.api_base_url", "https://api.openai.com/v1")? // 默认 API 基础 URL
-            // 10. 设置代理默认配置
-            .set_default("proxy.url", "http://localhost:10808")? // 默认代理地址
-            .set_default("proxy.enabled", false)? // 默认禁用代理
-            // 11. 设置引擎默认配置
-            .set_default("engines.flaresolverr.enabled", false)? // 默认禁用 FlareSolverr
-            .set_default("engines.flaresolverr.url", "http://localhost:8191/v1")? // FlareSolverr 默认地址
-            .set_default("engines.flaresolverr.timeout_seconds", 30)? // 默认超时 30 秒
-            .set_default("engines.flaresolverr.max_retries", 3)? // 默认重试 3 次
-            .set_default("engines.fire_cdp.enabled", false)? // 默认禁用 Fire CDP
-            .set_default("engines.fire_cdp.url", "http://localhost:8191/v1")? // Fire CDP 默认地址
-            .set_default("engines.fire_tls.enabled", false)? // 默认禁用 Fire TLS
-            .set_default("engines.fire_tls.url", "http://localhost:8191/v1")? // Fire TLS 默认地址
-            // 12. 设置Worker默认配置
-            .set_default("workers.count", "auto")? // 默认自动检测CPU核心数
-            // 13. 设置超时默认配置
-            .set_default("timeouts.workers.webhook_interval_seconds", 5)?
-            .set_default("timeouts.workers.backlog_interval_seconds", 30)?
-            .set_default("timeouts.engines.default_timeout_seconds", 30)?
-            .set_default("timeouts.engines.playwright_timeout_seconds", 30)?
-            .set_default("timeouts.engines.flaresolverr_timeout_seconds", 30)?
-            .set_default("timeouts.retry.initial_backoff_seconds", 1)?
-            .set_default("timeouts.retry.max_backoff_seconds", 60)?
-            .set_default("timeouts.cache.default_ttl_seconds", 600)? // 增加到 10 分钟
-            .set_default("timeouts.cache.memory_ttl_seconds", 600)? // 增加到 10 分钟
-            .set_default("timeouts.cache.redis_ttl_seconds", 7200)? // 增加到 2 小时
-            // 14. 设置日志默认配置
-            .set_default("logging.console.enabled", true)? // 默认启用控制台输出
-            .set_default("logging.file.enabled", false)? // 默认禁用文件输出
-            .set_default("logging.file.path", "logs/crawlrs.log")? // 默认日志文件路径
-            .set_default("logging.file.max_file_size_mb", 100)? // 默认单个文件最大 100MB
-            .set_default("logging.file.file_count", 10)? // 默认保留 10 个日志文件
-            // 14. 加载配置文件（可选）
-            .add_source(File::with_name("config/default").required(false)) // 加载默认配置
-            .add_source(File::with_name(&format!("config/{}", env)).required(false)) // 加载环境特定配置
-            // 10. 加载环境变量（最高优先级）
-            .add_source(Environment::with_prefix("CRAWLRS").separator("__")); // 加载 CRAWLRS__ 前缀的环境变量
-
-        // 构建并反序列化配置
-        let settings: Settings = builder.build()?.try_deserialize()?;
-
-        // 验证配置值
+        // 运行自定义验证
+        settings.validate_security()?;
         settings.validate()?;
 
         Ok(settings)
     }
 
-    /// 验证配置安全性
+    /// 从指定路径加载配置
     ///
-    /// 检查是否存在弱默认配置，并返回错误（会阻止启动）
+    /// # 参数
     ///
-    /// # 返回值
-    ///
-    /// * `Ok(())` - 配置安全
-    /// * `Err(ConfigSecurityError)` - 发现安全风险
-    pub fn validate_security(&self) -> Result<(), ConfigSecurityError> {
+    /// * `path` - 配置文件路径
+    pub fn load_with_path(path: &str) -> Result<Self, ConfigError> {
+        let settings: Settings = ConfigBuilder::new()
+            .add_source(File::with_name(path).required(false))
+            .add_source(Environment::with_prefix("CRAWLRS").separator("__"))
+            .build()?;
+
+        settings.validate_security()?;
+        settings.validate()?;
+
+        Ok(settings)
+    }
+
+    /// 验证配置安全性（公共方法）
+    pub fn validate_security(&self) -> Result<(), ConfigError> {
         // 检查 webhook secret 是否使用默认值
         let weak_secrets = [
             "your-webhook-secret",
@@ -257,143 +422,76 @@ impl Settings {
         ];
 
         if self.webhook.secret().is_empty() {
-            return Err(ConfigSecurityError::EmptyWebhookSecret);
+            return Err(ConfigError::EmptyWebhookSecret);
         } else if weak_secrets.contains(&self.webhook.secret()) {
-            return Err(ConfigSecurityError::WeakWebhookSecret(
-                self.webhook.secret().to_string(),
-            ));
+            return Err(ConfigError::WeakWebhookSecret);
         } else if self.webhook.secret().len() < 32 {
-            return Err(ConfigSecurityError::ShortWebhookSecret(
-                self.webhook.secret().len(),
-            ));
+            return Err(ConfigError::ShortWebhookSecret(self.webhook.secret().len()));
         }
 
         // 检查 S3 凭据安全性
         if self.storage.storage_type == "s3" {
-            if self
-                .storage
-                .s3_access_key()
-                .map(|s| s.is_empty())
-                .unwrap_or(true)
+            if self.storage.s3_access_key().is_none()
+                || self.storage.s3_access_key().is_some_and(|s| s.is_empty())
             {
-                return Err(ConfigSecurityError::MissingS3AccessKey);
+                return Err(ConfigError::MissingS3AccessKey);
             }
 
-            if self
-                .storage
-                .s3_secret_key()
-                .map(|s| s.len() < 32)
-                .unwrap_or(false)
-            {
-                return Err(ConfigSecurityError::ShortS3SecretKey);
+            if self.storage.s3_secret_key().is_some_and(|s| s.len() < 32) {
+                return Err(ConfigError::ShortS3SecretKey);
             }
         }
 
         // 检查速率限制是否禁用
         if !self.rate_limiting.enabled {
-            return Err(ConfigSecurityError::RateLimitingDisabled);
+            return Err(ConfigError::RateLimitingDisabled);
         }
 
-        if self.database.url().contains("password=password")
-            || self.database.url().contains("password=postgres")
-            || self.database.url().contains("password=admin")
+        // 检查数据库密码
+        let weak_patterns = ["password=password", "password=postgres", "password=admin"];
+        if weak_patterns
+            .iter()
+            .any(|p| self.database.url().contains(p))
         {
-            return Err(ConfigSecurityError::WeakDatabasePassword);
+            return Err(ConfigError::WeakDatabasePassword);
         }
 
-        // Additional production password validation
-        // 使用配置服务获取环境，如果不可用则回退到环境变量
-        let env = std::env::var("CRAWLRS_ENV")
-            .or_else(|_| std::env::var("APP_ENVIRONMENT"))
+        // 生产环境密码长度验证
+        let env = std::env::var("APP_ENVIRONMENT")
+            .or_else(|_| std::env::var("CRAWLRS_ENV"))
             .unwrap_or_else(|_| "development".to_string());
         let is_production =
             env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod");
 
         if is_production {
-            // Extract password from URL for validation
-            // URL format: postgres://user:password@host/db
-            let password_length = if let Some(at_pos) = self.database.url().find('@') {
-                if let Some(colon_pos) = self.database.url()[..at_pos].find(':') {
-                    // Password is between colon and @
-                    at_pos - colon_pos - 1
-                } else {
-                    0 // No password found
-                }
-            } else {
-                0 // No @ sign, no password
-            };
-
-            // Check minimum password length in production
+            let password_length = Self::extract_password_length(self.database.url());
             if password_length > 0 && password_length < 16 {
-                return Err(ConfigSecurityError::ShortDatabasePassword(password_length));
+                return Err(ConfigError::ShortDatabasePassword(password_length));
             }
         }
 
         Ok(())
     }
 
-    /// 验证配置值有效性
-    ///
-    /// 检查配置值是否在合理范围内
-    ///
-    /// # 返回值
-    ///
-    /// * `Ok(())` - 配置有效
-    /// * `Err(ConfigError)` - 配置无效
+    /// 验证配置值有效性（公共方法）
     pub fn validate(&self) -> Result<(), ConfigError> {
         // 验证端口范围
         if self.server.port == 0 {
-            return Err(ConfigError::Message(ERROR_INVALID_PORT.to_string()));
+            return Err(ConfigError::InvalidPort);
         }
 
         // 验证 A/B 测试权重范围
         if self.search.variant_b_weight < 0.0 || self.search.variant_b_weight > 1.0 {
-            return Err(ConfigError::Message(
-                ERROR_INVALID_VARIANT_WEIGHT.to_string(),
-            ));
+            return Err(ConfigError::InvalidVariantWeight);
         }
-
-        // 验证数据库连接池配置
-        if let Some(max_conn) = self.database.max_connections {
-            if max_conn == 0 {
-                return Err(ConfigError::Message(
-                    ERROR_INVALID_MAX_CONNECTIONS.to_string(),
-                ));
-            }
-        }
-
-        if let Some(min_conn) = self.database.min_connections {
-            if min_conn == 0 {
-                return Err(ConfigError::Message(
-                    ERROR_INVALID_MIN_CONNECTIONS.to_string(),
-                ));
-            }
-        }
-
-        /// 常量定义 - 配置验证消息
-        const ERROR_INVALID_PORT: &str = "Invalid port number: port must be between 1 and 65535";
-        const ERROR_INVALID_VARIANT_WEIGHT: &str =
-            "Invalid variant_b_weight: must be between 0.0 and 1.0";
-        const ERROR_INVALID_MAX_CONNECTIONS: &str =
-            "Invalid max_connections: must be greater than 0";
-        const ERROR_INVALID_MIN_CONNECTIONS: &str =
-            "Invalid min_connections: must be greater than 0";
-        const ERROR_INVALID_STORAGE_TYPE: &str = "Invalid storage_type: must be 'local' or 's3'";
-        const ERROR_MISSING_S3_BUCKET: &str =
-            "S3 bucket must be configured when storage_type is 's3'";
 
         // 验证存储类型
-        const STORAGE_TYPE_LOCAL: &str = "local";
-        const STORAGE_TYPE_S3: &str = "s3";
-
-        if self.storage.storage_type != STORAGE_TYPE_LOCAL
-            && self.storage.storage_type != STORAGE_TYPE_S3
-        {
-            return Err(ConfigError::Message(ERROR_INVALID_STORAGE_TYPE.to_string()));
+        if self.storage.storage_type != "local" && self.storage.storage_type != "s3" {
+            return Err(ConfigError::InvalidStorageType);
         }
 
         // 验证 S3 配置完整性
-        if self.storage.storage_type == STORAGE_TYPE_S3
+        if self.storage.storage_type == "s3"
             && (self.storage.s3_bucket.is_none()
                 || self
                     .storage
@@ -401,9 +499,18 @@ impl Settings {
                     .as_ref()
                     .is_some_and(|b| b.is_empty()))
         {
-            return Err(ConfigError::Message(ERROR_MISSING_S3_BUCKET.to_string()));
+            return Err(ConfigError::MissingS3Bucket);
         }
 
         Ok(())
+    }
+
+    fn extract_password_length(url: &str) -> usize {
+        if let Some(at_pos) = url.find('@') {
+            if let Some(colon_pos) = url[..at_pos].find(':') {
+                return at_pos - colon_pos - 1;
+            }
+        }
+        0
     }
 }
