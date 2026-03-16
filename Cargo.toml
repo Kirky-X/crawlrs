@@ -13,12 +13,12 @@ exclude = []
 
 [features]
 # 默认核心功能（不包含 S3、genai）
-default = ["engine-reqwest", "redis-cache", "rate-limiting", "metrics", "db-postgres"]
+default = ["engine-reqwest", "redis-cache", "rate-limiting", "metrics", "dbnexus-postgres"]
 
 # 预设配置
-lite = ["engine-reqwest", "db-sqlite"]
+lite = ["engine-reqwest", "dbnexus-sqlite"]
 standard = ["default", "engine-playwright"]
-full = ["standard", "engine-fire-cdp", "engine-fire-tls", "engine-flaresolverr", "db-sqlite", "storage-s3", "search-all"]
+full = ["standard", "engine-fire-cdp", "engine-fire-tls", "engine-flaresolverr", "dbnexus-sqlite", "storage-s3", "search-all"]
 
 # 实验性功能（需要显式启用）
 experimental = ["dep:genai"]
@@ -58,9 +58,15 @@ redis-cache = []
 rate-limiting = ["dep:redis"]
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
 
-# --- 数据库特性 ---
-db-postgres = ["sea-orm/sqlx-postgres", "sqlx/postgres"]
-db-sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
+# --- 数据库特性 (使用 dbnexus) ---
+# dbnexus 负责所有数据库访问，包括连接池、权限控制、迁移等
+# 注意：sea_orm 内部使用下划线命名
+dbnexus-postgres = ["dep:dbnexus", "dep:sea_orm"]
+dbnexus-sqlite = ["dep:dbnexus", "dep:sea_orm"]
+
+# --- 已移除的旧数据库特性 (不再使用) ---
+# db-postgres = ["sea-orm/sqlx-postgres", "sqlx/postgres"]
+# db-sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
 
 [dependencies]
 # Async runtime and web framework
@@ -84,8 +90,8 @@ tower-http = { version = "0.6", features = ["trace", "cors"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-confers = "0.2.1"
-figment = { version = "0.10", features = ["toml"] }
+confers = { path = "/home/dev/projects/confers", default-features = false, features = ["toml", "json", "yaml", "env", "validation", "watch", "dynamic"] }
+figment = { version = "0.10", features = ["toml", "json", "yaml", "env"] }
 
 # Error handling
 thiserror = "2.0.17"
@@ -96,9 +102,31 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 url = "2.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
-# Database (根据特性选择后端)
-sea-orm = { version = "1.1", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json", "postgres"] }
+# Database - 使用 dbnexus (完全负责数据库底层)
+# dbnexus 提供：连接池管理、权限控制、迁移框架、指标监控、审计日志
+# 注意：需要同时添加 sea-orm 以支持实体宏
+dbnexus = { path = "/home/dev/projects/dbnexus", optional = true, default-features = false, features = [
+    "postgres",           # 仅 PostgreSQL，不再支持 SQLite
+    "runtime-tokio-rustls",
+    "permission",         # 声明式权限控制
+    "cache",              # 缓存支持 (PermissionContext 需要)
+    "macros",             # 过程宏 (db_crud, db_permission, db_entity)
+    "migration",          # 数据库迁移框架
+    "sql-parser",         # SQL 解析器 (包含 regex)
+    "metrics",            # Prometheus 指标监控
+    "config-yaml",        # YAML 权限配置支持
+    "config-env",         # 环境变量配置支持
+] }
+
+# Sea-ORM - 需要用于实体宏定义 (dbnexus 构建在 Sea-ORM 之上)
+# 注意：版本必须与 dbnexus 保持一致 (2.0.0-rc.27)
+# 只有启用 dbnexus 特性时才需要 sea-orm
+# 使用 sea_orm 内部名 (Cargo 要求) 通过 package 属性引用实际包
+sea_orm = { version = "2.0.0-rc.27", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"], optional = true, package = "sea-orm" }
+
+# --- 已移除的旧数据库依赖 (不再使用) ---
+# sea-orm = { version = "1.1", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
+# sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json", "postgres"] }
 
 # Caching and state management
 redis = { version = "1.0", features = ["tokio-comp"], optional = true }
@@ -144,6 +172,9 @@ hex = "0.4"
 bcrypt = "0.18"
 zeroize = "1.8"
 
+# Network utilities
+ipnetwork = "0.21"
+
 # Rate limiting and circuit breaking
 governor = "0.10"
 
@@ -165,6 +196,7 @@ toml = "0.9.11"
 # Dependency Injection
 shaku = "0.6"
 shaku_axum = "0.6"
+oxcache = { version = "0.2.0", path = "/home/dev/projects/oxcache", default-features = false, features = ["moka", "redis", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "wal-recovery", "rate-limiting", "tracing", "futures"] }
 
 # API Documentation (optional - controlled by 'openapi' feature)
 # utoipa = { version = "5.4", optional = true }
@@ -192,7 +224,8 @@ axum-test = "18.6.0"
 futures = "0.3"
 tempfile = "3.24"
 uuid = { version = "1.19", features = ["v4"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
+# sqlx 已在主依赖中移除，不再用于测试
+# sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [[test]]
@@ -250,8 +283,11 @@ debug = true
 [workspace]
 # members = ["examples"]  # Removed: examples is now an independent workspace
 
-[workspace.metadata.sqlx]
-migrate-path = "migrations"
+# =============================================================================
+# Database Configuration (使用 dbnexus 管理迁移)
+# =============================================================================
+# dbnexus 使用 Rust 代码定义表结构，不再需要 SQL 迁移文件
+# workspace.metadata.dbnexus = {}
 
 # =============================================================================
 # Lint Configuration

@@ -7,8 +7,8 @@
 //!
 //! Provides reusable test fixtures and mock utilities for service unit tests.
 
-use crate::domain::models::credits::CreditsTransaction;
-use crate::domain::models::credits::CreditsTransactionType;
+use crate::domain::models::CreditsTransaction;
+use crate::domain::models::CreditsTransactionType;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::credits_repository::CreditsRepositoryError;
 use crate::domain::services::credits_service::CreditsService;

@@ -15,6 +15,7 @@ pub mod crawl_repository;
 /// - 审计日志仓库（audit_log_repository）：管理审计日志的记录和查询
 /// - 积分仓库（credits_repository）：管理团队的积分余额和交易记录
 /// - 爬取任务仓库（crawl_repository）：管理爬取任务的持久化
+/// - 功能标志仓库（feature_flag_repository）：管理功能标志的持久化
 /// - 爬取结果仓库（scrape_result_repository）：管理爬取结果的存储
 /// - 地理限制仓库（geo_restriction_repository）：管理团队的地理限制配置
 /// - 存储仓库（storage_repository）：管理文件和对象的存储
@@ -25,6 +26,7 @@ pub mod crawl_repository;
 /// 这些接口确保了领域层不依赖于具体的数据存储技术，
 /// 提高了系统的可测试性和可维护性.
 pub mod credits_repository;
+pub mod feature_flag_repository;
 pub mod geo_restriction_repository;
 pub mod scrape_result_repository;
 pub mod storage_repository;

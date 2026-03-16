@@ -5,154 +5,99 @@
 
 //! Enhanced URL validator with DNS caching and SSRF protection
 //!
-//! Provides URL validation, DNS cache support, and SSRF protection.
-//! Uses shared validation functions from [`crate::engines::shared`] for consistency.
-
-use crate::engines::shared::{is_blocked_hostname, is_private_ip};
-use std::net::IpAddr;
-use std::sync::Arc;
-use tokio::net::lookup_host;
-use url::Url;
+//! This module provides an enhanced validator that uses DNS caching
+//! for improved performance while maintaining full SSRF protection.
+//!
+//! ## Architecture
+//!
+//! This module wraps the unified SSRF protection module with DNS caching
+//! capabilities for scenarios where repeated validation of the same
+//! hostnames is expected.
 
 use crate::infrastructure::dns::dns_cache::DnsCache;
+use crate::presentation::helpers::ssrf::{
+    is_internal_url, validate_domain_blacklist, SsrfConfig, SsrfError, SsrfValidator, ValidatedUrl,
+};
+use std::sync::Arc;
 
-/// Validation error types
-#[derive(Debug, thiserror::Error)]
-pub enum ValidationError {
-    #[error("URL exceeds maximum length of {} characters", MAX_URL_LENGTH)]
-    UrlTooLong,
-
-    #[error("SSRF protection: Only http and https protocols are allowed, got: {}", .0)]
-    InvalidProtocol(String),
-
-    #[error("SSRF protection: Hostname '{}' is not allowed", .0)]
-    BlockedHostname(String),
-
-    #[error("SSRF protection: No IP addresses resolved for host")]
-    NoIpResolved,
-
-    #[error("SSRF protection: Mixed private and public IP addresses detected (possible DNS rebinding attack)")]
-    MixedIpAddresses,
-
-    #[error("SSRF protection: Private IP access is not allowed: {}", .0)]
-    PrivateIpAccess(String),
-
-    #[error("SSRF protection: DNS rebinding detected - inconsistent IP addresses")]
-    DnsRebinding,
-}
-
-const MAX_URL_LENGTH: usize = 2048;
-
-/// Enhanced URL validator with DNS caching
+/// Enhanced URL validator with DNS caching support.
+///
+/// This validator provides the same SSRF protection as `SsrfValidator`
+/// but with DNS caching for improved performance.
 #[derive(Clone)]
 pub struct ValidatedUrlValidator {
-    dns_cache: Arc<DnsCache>,
+    inner: SsrfValidator,
 }
 
 impl ValidatedUrlValidator {
-    /// Create a new validator
+    /// Create a new validator with DNS caching.
     pub fn new(dns_cache: Arc<DnsCache>) -> Self {
-        Self { dns_cache }
+        Self {
+            inner: SsrfValidator::with_dns_cache(dns_cache),
+        }
     }
 
-    /// Validate URL for SSRF protection using DNS cache
+    /// Create a validator with DNS cache and custom configuration.
+    pub fn with_config(dns_cache: Arc<DnsCache>, config: SsrfConfig) -> Self {
+        Self {
+            inner: SsrfValidator::with_dns_cache_and_config(dns_cache, config),
+        }
+    }
+
+    /// Validate URL for SSRF protection using DNS cache.
     ///
-    /// Uses DNS cache to reduce duplicate queries and prevent leaking access patterns
-    pub async fn validate_url(&self, url_str: &str) -> Result<(), ValidationError> {
-        // URL length limit for SSRF and resource exhaustion prevention
-        if url_str.len() > MAX_URL_LENGTH {
-            return Err(ValidationError::UrlTooLong);
-        }
-
-        let url = Url::parse(url_str)
-            .map_err(|_| ValidationError::InvalidProtocol(url_str.to_string()))?;
-
-        // Protocol check: only http and https allowed
-        match url.scheme() {
-            "http" | "https" => {}
-            scheme => {
-                return Err(ValidationError::InvalidProtocol(scheme.to_string()));
-            }
-        }
-
-        let host = url
-            .host_str()
-            .ok_or_else(|| ValidationError::BlockedHostname("missing".to_string()))?;
-
-        // Pre-check hostname before DNS resolution
-        if is_blocked_hostname(host) {
-            return Err(ValidationError::BlockedHostname(host.to_string()));
-        }
-
-        // Use DNS cache for resolution
-        let port = url.port_or_known_default().unwrap_or(80);
-        let addrs: Vec<IpAddr> = self
-            .dns_cache
-            .lookup_host(host, port)
-            .await
-            .map_err(|_| ValidationError::NoIpResolved)?;
-
-        // DNS Rebinding protection: check all resolved IPs
-        if addrs.is_empty() {
-            return Err(ValidationError::NoIpResolved);
-        }
-
-        // Check for mixed private/public IPs (DNS rebinding signature)
-        let has_private = addrs.iter().any(|addr| is_private_ip(addr.ip()));
-        let has_public = addrs.iter().any(|addr| !is_private_ip(addr.ip()));
-
-        if has_private && has_public {
-            return Err(ValidationError::MixedIpAddresses);
-        }
-
-        // Check all resolved IPs are not private
-        for addr in &addrs {
-            if is_private_ip(addr.ip()) {
-                return Err(ValidationError::PrivateIpAccess(addr.ip().to_string()));
-            }
-        }
-
-        // DNS Rebinding protection: log multiple IPs
-        if addrs.len() > 1 {
-            tracing::warn!(
-                "DNS warning: Host {} resolved to {} IP addresses",
-                host,
-                addrs.len()
-            );
-        }
-
-        Ok(())
-    }
-}
-
-/// Validate URL against domain blacklist
-pub fn validate_domain_blacklist(
-    url_str: &str,
-    blacklist: &[String],
-) -> Result<(), ValidationError> {
-    let url =
-        Url::parse(url_str).map_err(|_| ValidationError::InvalidProtocol(url_str.to_string()))?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| ValidationError::BlockedHostname("missing".to_string()))?;
-
-    for domain in blacklist {
-        if host == domain || host.ends_with(&format!(".{}", domain)) {
-            return Err(ValidationError::BlockedHostname(host.to_string()));
-        }
+    /// This method performs:
+    /// 1. Static URL validation (scheme, hostname patterns)
+    /// 2. DNS resolution with caching
+    /// 3. IP address validation
+    /// 4. DNS rebinding detection
+    ///
+    /// # Arguments
+    ///
+    /// * `url_str` - The URL string to validate
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(ValidatedUrl)` - The validated URL with resolved IPs
+    /// * `Err(SsrfError)` - Validation failed
+    pub async fn validate_url(&self, url_str: &str) -> Result<ValidatedUrl, SsrfError> {
+        self.inner.validate(url_str).await
     }
 
-    Ok(())
+    /// Quick synchronous check if URL is internal.
+    pub fn is_internal_url(&self, url_str: &str) -> bool {
+        is_internal_url(url_str)
+    }
+
+    /// Validate domain against blacklist.
+    pub fn validate_domain_blacklist(
+        &self,
+        url_str: &str,
+        blacklist: &[String],
+    ) -> Result<(), SsrfError> {
+        validate_domain_blacklist(url_str, blacklist)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::dns::dns_cache::DnsCache;
+    use crate::infrastructure::oxcache;
+    use std::time::Duration;
+
+    async fn create_test_dns_cache() -> Arc<DnsCache> {
+        let cache = oxcache::Cache::builder()
+            .capacity(100)
+            .ttl(Duration::from_secs(300))
+            .build()
+            .await
+            .unwrap();
+        Arc::new(DnsCache::new(cache, 300))
+    }
 
     #[tokio::test]
     async fn test_validated_url_validator() {
-        let cache = Arc::new(DnsCache::new(Default::default()));
+        let cache = create_test_dns_cache().await;
         let validator = ValidatedUrlValidator::new(cache);
 
         // Localhost variants should be blocked
@@ -170,10 +115,27 @@ mod tests {
             .is_err());
     }
 
-    #[test]
-    fn test_is_blocked_hostname() {
-        assert!(is_blocked_hostname("localhost"));
-        assert!(is_blocked_hostname("169.254.169.254"));
-        assert!(!is_blocked_hostname("example.com"));
+    #[tokio::test]
+    async fn test_is_internal_url() {
+        let cache = create_test_dns_cache().await;
+        let validator = ValidatedUrlValidator::new(cache);
+
+        assert!(validator.is_internal_url("http://localhost"));
+        assert!(validator.is_internal_url("http://192.168.1.1"));
+        assert!(!validator.is_internal_url("http://google.com"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_domain_blacklist() {
+        let cache = create_test_dns_cache().await;
+        let validator = ValidatedUrlValidator::new(cache);
+
+        let blacklist = vec!["example.com".to_string()];
+        assert!(validator
+            .validate_domain_blacklist("http://example.com", &blacklist)
+            .is_err());
+        assert!(validator
+            .validate_domain_blacklist("http://google.com", &blacklist)
+            .is_ok());
     }
 }

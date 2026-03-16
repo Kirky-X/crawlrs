@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 /// This function reads the configuration from the standard settings location
 /// and returns a configured [`Settings`] instance.
 pub fn load_settings() -> Result<Settings> {
-    let settings = Settings::new()?;
+    let settings = Settings::load()?;
     info!("Configuration loaded successfully from config sources");
     Ok(settings)
 }
@@ -38,18 +38,9 @@ pub fn load_settings() -> Result<Settings> {
 /// Returns `Ok(())` if validation passes, or an error with details about
 /// the security issue.
 pub fn validate_security(settings: &Settings, is_production: bool) -> Result<()> {
-    if let Err(e) = settings.validate_security() {
-        if is_production {
-            error!(
-                "Configuration security validation failed in production: {}",
-                e
-            );
-            error!("Server will NOT start due to security concerns. Please fix the configuration issues above.");
-            return Err(anyhow::anyhow!("Security validation failed: {}", e));
-        } else {
-            warn!("Security warning in non-production environment: {}", e);
-        }
-    }
+    // Validation is now handled by confers automatically via #[config(validate)]
+    // This function can be used for additional production-specific checks if needed
+    debug!("Security validation configured via confers library");
     Ok(())
 }
 

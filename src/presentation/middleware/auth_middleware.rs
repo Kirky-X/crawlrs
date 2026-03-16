@@ -179,6 +179,8 @@ pub struct AuthState {
     pub api_key_cache: Option<Arc<RwLock<ApiKeyCache>>>,
     /// Auth rate limiter for brute-force protection
     pub auth_rate_limiter: Option<Arc<AuthRateLimiter>>,
+    /// Trusted proxy configuration for secure IP extraction
+    pub trusted_proxies: Option<security::TrustedProxyConfig>,
 }
 
 impl std::fmt::Debug for ApiKeyCache {
@@ -206,6 +208,7 @@ impl AuthState {
             scope,
             api_key_cache: None,
             auth_rate_limiter: None,
+            trusted_proxies: None,
         }
     }
 
@@ -225,6 +228,7 @@ impl AuthState {
             scope: default_scope,
             api_key_cache: None,
             auth_rate_limiter: None,
+            trusted_proxies: None,
         }
     }
 
@@ -245,6 +249,30 @@ impl AuthState {
             scope,
             api_key_cache: Some(cache),
             auth_rate_limiter: None,
+            trusted_proxies: None,
+        }
+    }
+
+    /// Create AuthState with trusted proxy configuration
+    pub fn with_trusted_proxies(
+        db: Arc<DatabaseConnection>,
+        auth_scope_service: Option<AuthScopeService>,
+        team_id: Uuid,
+        api_key_id: Uuid,
+        scope: ApiKeyScope,
+        cache: Option<Arc<RwLock<ApiKeyCache>>>,
+        rate_limiter: Option<Arc<AuthRateLimiter>>,
+        trusted_proxies: security::TrustedProxyConfig,
+    ) -> Self {
+        Self {
+            db,
+            auth_scope_service,
+            team_id,
+            api_key_id,
+            scope,
+            api_key_cache: cache,
+            auth_rate_limiter: rate_limiter,
+            trusted_proxies: Some(trusted_proxies),
         }
     }
 
@@ -314,8 +342,8 @@ pub async fn auth_middleware(
         return Ok(next.run(req).await);
     }
 
-    // Get client IP for rate limiting
-    let client_ip = get_client_ip(&req).unwrap_or_else(|| "unknown".to_string());
+    // Get client IP for rate limiting using secure IP extraction
+    let client_ip = get_client_ip(&req, state.trusted_proxies.as_ref());
 
     // Check auth rate limit lockout
     if let Some(ref rate_limiter) = state.auth_rate_limiter {
@@ -553,24 +581,30 @@ fn extract_bearer_token(req: &Request) -> Option<String> {
 }
 
 /// Extract client IP from request for rate limiting
-fn get_client_ip(req: &Request) -> Option<String> {
-    // Check X-Forwarded-For header first (for proxied requests)
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-        if let Ok(ip_str) = forwarded.to_str() {
-            // Take the first IP in the chain (original client)
-            return ip_str.split(',').next().map(|s| s.trim().to_string());
+///
+/// # Security Fix
+///
+/// This function now uses secure IP extraction logic to prevent X-Forwarded-For
+/// header spoofing attacks. It only trusts forwarded headers when the request
+/// comes from a trusted proxy.
+///
+/// # Arguments
+///
+/// * `req` - The HTTP request
+/// * `trusted_proxies` - Optional trusted proxy configuration
+///
+/// # Returns
+///
+/// Returns the client's real IP address, or "unknown" if it cannot be determined
+fn get_client_ip(req: &Request, trusted_proxies: Option<&security::TrustedProxyConfig>) -> String {
+    match trusted_proxies {
+        Some(config) => security::get_secure_client_ip(req, config),
+        None => {
+            // Fallback to default config if not provided
+            let default_config = security::TrustedProxyConfig::default();
+            security::get_secure_client_ip(req, &default_config)
         }
     }
-
-    // Check X-Real-IP header
-    if let Some(real_ip) = req.headers().get("x-real-ip") {
-        return real_ip.to_str().ok().map(|s| s.to_string());
-    }
-
-    // Fall back to socket address
-    req.extensions()
-        .get::<std::net::SocketAddr>()
-        .map(|addr| addr.ip().to_string())
 }
 
 /// Scope validation middleware

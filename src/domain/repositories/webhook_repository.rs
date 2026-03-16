@@ -4,7 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use super::task_repository::RepositoryError;
-use crate::domain::models::webhook::Webhook;
+use crate::domain::models::Webhook;
 use async_trait::async_trait;
 use shaku::Interface;
 use uuid::Uuid;

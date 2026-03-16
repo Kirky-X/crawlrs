@@ -4,8 +4,8 @@
 // See LICENSE file in the project root for full license information.
 
 /// 编译时特性检查：确保至少启用一个数据库后端
-#[cfg(not(any(feature = "db-postgres", feature = "db-sqlite")))]
-compile_error!("Must enable at least one database feature: db-postgres or db-sqlite");
+#[cfg(not(any(feature = "dbnexus-postgres", feature = "dbnexus-sqlite")))]
+compile_error!("Must enable at least one database feature: dbnexus-postgres or dbnexus-sqlite");
 
 /// 通用模块
 ///

@@ -97,18 +97,80 @@ impl Default for EnvVarWhitelist {
                 "SOGOU_SEARCH_API_KEY",
             ]),
             sensitive_vars: HashSet::from([
+                // 数据库敏感变量
                 "DB_PASSWORD",
                 "DATABASE_URL",
+                "DATABASE_PASSWORD",
+                // Redis敏感变量
                 "REDIS_URL",
+                "REDIS_PASSWORD",
+                // LLM API密钥
                 "LLM_API_KEY",
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                // 搜索引擎API密钥
                 "GOOGLE_SEARCH_API_KEY",
+                "GOOGLE_SEARCH_CX",
                 "BING_SEARCH_API_KEY",
                 "BAIDU_SEARCH_API_KEY",
                 "SOGOU_SEARCH_API_KEY",
+                // 监控工具密码
                 "GRAFANA_PASSWORD",
                 "PGADMIN_PASSWORD",
+                // AWS相关敏感变量
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_SESSION_TOKEN",
+                "AWS_SECURITY_TOKEN",
+                "AWS_SECRET_KEY",
+                // S3存储敏感变量
                 "S3_ACCESS_KEY_ID",
                 "S3_SECRET_ACCESS_KEY",
+                "S3_SECRET_KEY",
+                // SMTP邮件敏感变量
+                "SMTP_PASSWORD",
+                "SMTP_USERNAME",
+                "MAIL_PASSWORD",
+                "MAIL_USERNAME",
+                "SENDGRID_API_KEY",
+                "MAILGUN_API_KEY",
+                // JWT认证敏感变量
+                "JWT_SECRET",
+                "JWT_SIGNING_KEY",
+                "JWT_PRIVATE_KEY",
+                "JWT_PUBLIC_KEY",
+                // 加密密钥
+                "ENCRYPTION_KEY",
+                "SECRET_KEY",
+                "MASTER_KEY",
+                "PRIVATE_KEY",
+                // API密钥和秘密
+                "API_SECRET",
+                "API_KEY",
+                "SECRET_TOKEN",
+                "ACCESS_TOKEN",
+                "REFRESH_TOKEN",
+                // 会话相关
+                "SESSION_SECRET",
+                "SESSION_KEY",
+                "COOKIE_SECRET",
+                // OAuth相关
+                "OAUTH_CLIENT_SECRET",
+                "OAUTH_ACCESS_TOKEN",
+                "GITHUB_TOKEN",
+                "GITLAB_TOKEN",
+                // 第三方服务密钥
+                "STRIPE_SECRET_KEY",
+                "STRIPE_API_KEY",
+                "TWILIO_AUTH_TOKEN",
+                "TWILIO_ACCOUNT_SID",
+                // 代理认证
+                "PROXY_PASSWORD",
+                "PROXY_USERNAME",
+                // 其他敏感配置
+                "ADMIN_PASSWORD",
+                "ROOT_PASSWORD",
+                "SUPERUSER_PASSWORD",
             ]),
             forbidden_vars: HashSet::from([
                 // 可能导致安全问题的环境变量
@@ -315,6 +377,202 @@ impl EnvVarSecurityMonitor {
             value.to_string()
         }
     }
+
+    /// 验证敏感变量是否安全配置
+    ///
+    /// 检查以下安全规则：
+    /// 1. 敏感变量不应有弱默认值
+    /// 2. 敏感变量不应为空（在生产环境）
+    /// 3. 敏感变量不应包含明显的测试值
+    pub fn validate_sensitive_values(&self, environment: &str) -> Vec<SensitiveVarWarning> {
+        let mut warnings = Vec::new();
+
+        // 弱默认值列表
+        let weak_defaults = [
+            "password", "secret", "changeme", "default", "test", "demo", "example", "123456",
+            "admin", "root", "qwerty", "letmein", "welcome", "monkey", "dragon",
+        ];
+
+        // 测试值模式
+        let test_patterns = [
+            "test_", "demo_", "example_", "sample_", "fake_", "mock_", "xxx", "yyy", "zzz",
+        ];
+
+        for var_name in &self.whitelist.sensitive_vars {
+            if let Ok(value) = std::env::var(var_name) {
+                let lower_value = value.to_lowercase();
+
+                // 检查空值（生产环境严格要求）
+                if value.is_empty() && environment == "production" {
+                    warnings.push(SensitiveVarWarning {
+                        var_name: var_name.to_string(),
+                        warning_type: SensitiveVarWarningType::EmptyValue,
+                        message: format!(
+                            "敏感环境变量 {} 在生产环境中为空，这可能是一个安全风险",
+                            var_name
+                        ),
+                        severity: WarningSeverity::Critical,
+                    });
+                    continue;
+                }
+
+                // 检查弱默认值
+                for weak in &weak_defaults {
+                    if lower_value.contains(weak) {
+                        warnings.push(SensitiveVarWarning {
+                            var_name: var_name.to_string(),
+                            warning_type: SensitiveVarWarningType::WeakDefaultValue,
+                            message: format!(
+                                "敏感环境变量 {} 包含弱默认值模式: '{}'",
+                                var_name, weak
+                            ),
+                            severity: WarningSeverity::High,
+                        });
+                        break;
+                    }
+                }
+
+                // 检查测试值模式
+                for pattern in &test_patterns {
+                    if lower_value.contains(pattern) {
+                        warnings.push(SensitiveVarWarning {
+                            var_name: var_name.to_string(),
+                            warning_type: SensitiveVarWarningType::TestValue,
+                            message: format!(
+                                "敏感环境变量 {} 包含测试值模式: '{}'",
+                                var_name, pattern
+                            ),
+                            severity: if environment == "production" {
+                                WarningSeverity::Critical
+                            } else {
+                                WarningSeverity::Medium
+                            },
+                        });
+                        break;
+                    }
+                }
+
+                // 检查过短的密钥值（小于16字符）
+                if value.len() < 16 && !value.is_empty() {
+                    warnings.push(SensitiveVarWarning {
+                        var_name: var_name.to_string(),
+                        warning_type: SensitiveVarWarningType::ShortValue,
+                        message: format!(
+                            "敏感环境变量 {} 的值过短（{} 字符），建议至少使用 32 字符的强密钥",
+                            var_name,
+                            value.len()
+                        ),
+                        severity: WarningSeverity::Medium,
+                    });
+                }
+
+                // 检查是否为常见的不安全模式
+                if lower_value == var_name.to_lowercase() {
+                    warnings.push(SensitiveVarWarning {
+                        var_name: var_name.to_string(),
+                        warning_type: SensitiveVarWarningType::InsecurePattern,
+                        message: format!(
+                            "敏感环境变量 {} 的值与变量名相同，这是一个严重的安全问题",
+                            var_name
+                        ),
+                        severity: WarningSeverity::Critical,
+                    });
+                }
+            }
+        }
+
+        warnings
+    }
+
+    /// 验证日志配置安全性
+    ///
+    /// 确保敏感变量不会被意外输出到日志
+    pub fn validate_logging_security(&self) -> Vec<LoggingSecurityWarning> {
+        let mut warnings = Vec::new();
+
+        // 检查日志级别配置
+        if let Ok(log_level) = std::env::var("RUST_LOG") {
+            // 在生产环境中，DEBUG 或 TRACE 级别可能会泄露敏感信息
+            let lower_level = log_level.to_lowercase();
+            if lower_level.contains("debug") || lower_level.contains("trace") {
+                warnings.push(LoggingSecurityWarning {
+                    warning_type: LoggingWarningType::VerboseLogLevel,
+                    message: format!("日志级别设置为 '{}'，可能会在日志中泄露敏感信息", log_level),
+                    recommendation: "建议在生产环境使用 INFO 或 WARN 级别".to_string(),
+                });
+            }
+        }
+
+        // 检查是否有日志输出到文件的配置
+        if let Ok(log_file) = std::env::var("LOG_FILE") {
+            // 检查日志文件路径是否安全
+            if log_file.starts_with("/tmp") || log_file.starts_with("/var/tmp") {
+                warnings.push(LoggingSecurityWarning {
+                    warning_type: LoggingWarningType::InsecureLogPath,
+                    message: format!("日志文件路径 '{}' 位于临时目录，可能存在权限问题", log_file),
+                    recommendation: "建议将日志文件存储在安全的目录中".to_string(),
+                });
+            }
+        }
+
+        // 检查是否有敏感变量可能被意外记录
+        for var_name in &self.whitelist.sensitive_vars {
+            // 检查是否有以 _LOG 或 _DEBUG 结尾的变量可能泄露敏感信息
+            let debug_var = format!("{}_DEBUG", var_name);
+            let log_var = format!("{}_LOG", var_name);
+
+            if std::env::var(&debug_var).is_ok() {
+                warnings.push(LoggingSecurityWarning {
+                    warning_type: LoggingWarningType::SensitiveVarDebug,
+                    message: format!(
+                        "发现调试变量 '{}'，可能会泄露敏感变量 '{}' 的值",
+                        debug_var, var_name
+                    ),
+                    recommendation: "建议删除此调试变量".to_string(),
+                });
+            }
+
+            if std::env::var(&log_var).is_ok() {
+                warnings.push(LoggingSecurityWarning {
+                    warning_type: LoggingWarningType::SensitiveVarLogging,
+                    message: format!(
+                        "发现日志变量 '{}'，可能会记录敏感变量 '{}' 的值",
+                        log_var, var_name
+                    ),
+                    recommendation: "建议删除此日志变量".to_string(),
+                });
+            }
+        }
+
+        warnings
+    }
+
+    /// 执行完整的安全验证
+    ///
+    /// 包括敏感变量值验证和日志安全验证
+    pub fn perform_full_security_validation(&self, environment: &str) -> SecurityValidationResult {
+        let sensitive_warnings = self.validate_sensitive_values(environment);
+        let logging_warnings = self.validate_logging_security();
+
+        let critical_count = sensitive_warnings
+            .iter()
+            .filter(|w| w.severity == WarningSeverity::Critical)
+            .count();
+        let high_count = sensitive_warnings
+            .iter()
+            .filter(|w| w.severity == WarningSeverity::High)
+            .count();
+
+        let is_secure = critical_count == 0 && high_count == 0;
+
+        SecurityValidationResult {
+            is_secure,
+            sensitive_var_warnings: sensitive_warnings,
+            logging_warnings,
+            critical_issues_count: critical_count,
+            high_issues_count: high_count,
+        }
+    }
 }
 
 /// 环境变量检查结果
@@ -328,6 +586,86 @@ pub enum EnvVarCheckResult {
     Unknown(String),
     /// 禁止的环境变量
     Forbidden { name: String, reason: String },
+}
+
+/// 警告严重程度
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarningSeverity {
+    /// 低危
+    Low,
+    /// 中危
+    Medium,
+    /// 高危
+    High,
+    /// 严重
+    Critical,
+}
+
+/// 敏感变量警告类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SensitiveVarWarningType {
+    /// 空值
+    EmptyValue,
+    /// 弱默认值
+    WeakDefaultValue,
+    /// 测试值
+    TestValue,
+    /// 值过短
+    ShortValue,
+    /// 不安全模式
+    InsecurePattern,
+}
+
+/// 敏感变量警告
+#[derive(Debug, Clone)]
+pub struct SensitiveVarWarning {
+    /// 变量名
+    pub var_name: String,
+    /// 警告类型
+    pub warning_type: SensitiveVarWarningType,
+    /// 警告消息
+    pub message: String,
+    /// 严重程度
+    pub severity: WarningSeverity,
+}
+
+/// 日志安全警告类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoggingWarningType {
+    /// 详细日志级别
+    VerboseLogLevel,
+    /// 不安全的日志路径
+    InsecureLogPath,
+    /// 敏感变量调试模式
+    SensitiveVarDebug,
+    /// 敏感变量日志记录
+    SensitiveVarLogging,
+}
+
+/// 日志安全警告
+#[derive(Debug, Clone)]
+pub struct LoggingSecurityWarning {
+    /// 警告类型
+    pub warning_type: LoggingWarningType,
+    /// 警告消息
+    pub message: String,
+    /// 修复建议
+    pub recommendation: String,
+}
+
+/// 安全验证结果
+#[derive(Debug, Clone)]
+pub struct SecurityValidationResult {
+    /// 是否安全
+    pub is_secure: bool,
+    /// 敏感变量警告列表
+    pub sensitive_var_warnings: Vec<SensitiveVarWarning>,
+    /// 日志安全警告列表
+    pub logging_warnings: Vec<LoggingSecurityWarning>,
+    /// 严重问题数量
+    pub critical_issues_count: usize,
+    /// 高危问题数量
+    pub high_issues_count: usize,
 }
 
 /// 环境变量配置验证器
@@ -451,5 +789,216 @@ mod tests {
         assert!(masked.starts_with("my"));
         assert!(masked.ends_with("23"));
         assert!(masked.contains('*'));
+    }
+
+    #[test]
+    fn test_sensitive_var_warning_types() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 测试弱默认值检测
+        std::env::set_var("TEST_JWT_SECRET", "password123");
+        let warnings = monitor.validate_sensitive_values("production");
+        let weak_warning = warnings.iter().find(|w| {
+            w.var_name == "TEST_JWT_SECRET"
+                && w.warning_type == SensitiveVarWarningType::WeakDefaultValue
+        });
+        assert!(weak_warning.is_some(), "应该检测到弱默认值");
+        std::env::remove_var("TEST_JWT_SECRET");
+
+        // 测试测试值模式检测
+        std::env::set_var("TEST_API_KEY", "test_secret_key");
+        let warnings = monitor.validate_sensitive_values("production");
+        let test_warning = warnings.iter().find(|w| {
+            w.var_name == "TEST_API_KEY" && w.warning_type == SensitiveVarWarningType::TestValue
+        });
+        assert!(test_warning.is_some(), "应该检测到测试值模式");
+        std::env::remove_var("TEST_API_KEY");
+    }
+
+    #[test]
+    fn test_short_value_detection() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 设置一个过短的密钥
+        std::env::set_var("TEST_ENCRYPTION_KEY", "short");
+        let warnings = monitor.validate_sensitive_values("production");
+        let short_warning = warnings.iter().find(|w| {
+            w.var_name == "TEST_ENCRYPTION_KEY"
+                && w.warning_type == SensitiveVarWarningType::ShortValue
+        });
+        assert!(short_warning.is_some(), "应该检测到过短的密钥值");
+        std::env::remove_var("TEST_ENCRYPTION_KEY");
+    }
+
+    #[test]
+    fn test_insecure_pattern_detection() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 设置一个与变量名相同的值
+        std::env::set_var("TEST_SECRET_KEY", "test_secret_key");
+        let warnings = monitor.validate_sensitive_values("production");
+        let insecure_warning = warnings.iter().find(|w| {
+            w.var_name == "TEST_SECRET_KEY"
+                && w.warning_type == SensitiveVarWarningType::InsecurePattern
+        });
+        assert!(insecure_warning.is_some(), "应该检测到不安全模式");
+        std::env::remove_var("TEST_SECRET_KEY");
+    }
+
+    #[test]
+    fn test_logging_security_validation() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 测试详细日志级别
+        std::env::set_var("RUST_LOG", "debug");
+        let warnings = monitor.validate_logging_security();
+        let verbose_warning = warnings
+            .iter()
+            .find(|w| w.warning_type == LoggingWarningType::VerboseLogLevel);
+        assert!(verbose_warning.is_some(), "应该检测到详细日志级别");
+        std::env::remove_var("RUST_LOG");
+
+        // 测试不安全的日志路径
+        std::env::set_var("LOG_FILE", "/tmp/app.log");
+        let warnings = monitor.validate_logging_security();
+        let path_warning = warnings
+            .iter()
+            .find(|w| w.warning_type == LoggingWarningType::InsecureLogPath);
+        assert!(path_warning.is_some(), "应该检测到不安全的日志路径");
+        std::env::remove_var("LOG_FILE");
+    }
+
+    #[test]
+    fn test_full_security_validation() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 设置一些测试变量
+        std::env::set_var("TEST_JWT_SECRET", "strong_and_secure_key_12345");
+
+        let result = monitor.perform_full_security_validation("development");
+
+        // 验证结果结构
+        assert!(
+            !result.sensitive_var_warnings.is_empty()
+                || !result.logging_warnings.is_empty()
+                || result.is_secure
+        );
+
+        std::env::remove_var("TEST_JWT_SECRET");
+    }
+
+    #[test]
+    fn test_aws_credentials_detection() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 测试 AWS 凭证被识别为敏感变量
+        if let EnvVarCheckResult::Sensitive { name, .. } =
+            monitor.check_variable("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
+        {
+            assert_eq!(name, "AWS_ACCESS_KEY_ID");
+        } else {
+            panic!("AWS_ACCESS_KEY_ID 应该被识别为敏感变量");
+        }
+
+        if let EnvVarCheckResult::Sensitive { name, .. } = monitor.check_variable(
+            "AWS_SECRET_ACCESS_KEY",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        ) {
+            assert_eq!(name, "AWS_SECRET_ACCESS_KEY");
+        } else {
+            panic!("AWS_SECRET_ACCESS_KEY 应该被识别为敏感变量");
+        }
+    }
+
+    #[test]
+    fn test_smtp_credentials_detection() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 测试 SMTP 凭证被识别为敏感变量
+        if let EnvVarCheckResult::Sensitive { name, .. } =
+            monitor.check_variable("SMTP_PASSWORD", "smtp_password_123")
+        {
+            assert_eq!(name, "SMTP_PASSWORD");
+        } else {
+            panic!("SMTP_PASSWORD 应该被识别为敏感变量");
+        }
+    }
+
+    #[test]
+    fn test_jwt_credentials_detection() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 测试 JWT 密钥被识别为敏感变量
+        if let EnvVarCheckResult::Sensitive { name, .. } =
+            monitor.check_variable("JWT_SECRET", "jwt_super_secret_key")
+        {
+            assert_eq!(name, "JWT_SECRET");
+        } else {
+            panic!("JWT_SECRET 应该被识别为敏感变量");
+        }
+    }
+
+    #[test]
+    fn test_encryption_key_detection() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 测试加密密钥被识别为敏感变量
+        if let EnvVarCheckResult::Sensitive { name, .. } =
+            monitor.check_variable("ENCRYPTION_KEY", "encryption_key_123")
+        {
+            assert_eq!(name, "ENCRYPTION_KEY");
+        } else {
+            panic!("ENCRYPTION_KEY 应该被识别为敏感变量");
+        }
+    }
+
+    #[test]
+    fn test_session_secret_detection() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 测试会话密钥被识别为敏感变量
+        if let EnvVarCheckResult::Sensitive { name, .. } =
+            monitor.check_variable("SESSION_SECRET", "session_secret_key")
+        {
+            assert_eq!(name, "SESSION_SECRET");
+        } else {
+            panic!("SESSION_SECRET 应该被识别为敏感变量");
+        }
+    }
+
+    #[test]
+    fn test_oauth_credentials_detection() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 测试 OAuth 凭证被识别为敏感变量
+        if let EnvVarCheckResult::Sensitive { name, .. } =
+            monitor.check_variable("OAUTH_CLIENT_SECRET", "oauth_client_secret")
+        {
+            assert_eq!(name, "OAUTH_CLIENT_SECRET");
+        } else {
+            panic!("OAUTH_CLIENT_SECRET 应该被识别为敏感变量");
+        }
+    }
+
+    #[test]
+    fn test_third_party_api_keys_detection() {
+        let monitor = EnvVarSecurityMonitor::default();
+
+        // 测试第三方 API 密钥被识别为敏感变量
+        if let EnvVarCheckResult::Sensitive { name, .. } =
+            monitor.check_variable("STRIPE_SECRET_KEY", "sk_test_123456")
+        {
+            assert_eq!(name, "STRIPE_SECRET_KEY");
+        } else {
+            panic!("STRIPE_SECRET_KEY 应该被识别为敏感变量");
+        }
+
+        if let EnvVarCheckResult::Sensitive { name, .. } =
+            monitor.check_variable("TWILIO_AUTH_TOKEN", "twilio_auth_token")
+        {
+            assert_eq!(name, "TWILIO_AUTH_TOKEN");
+        } else {
+            panic!("TWILIO_AUTH_TOKEN 应该被识别为敏感变量");
+        }
     }
 }

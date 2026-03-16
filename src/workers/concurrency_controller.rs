@@ -38,8 +38,8 @@ impl ConcurrencyController {
     }
 
     /// 从任务负载中提取并发限制
-    pub fn extract_payload_limit(task: &crate::domain::models::task::Task) -> Option<usize> {
-        if task.task_type == crate::domain::models::task::TaskType::Crawl {
+    pub fn extract_payload_limit(task: &crate::domain::models::Task) -> Option<usize> {
+        if task.task_type == crate::domain::models::TaskType::Crawl {
             task.payload
                 .get("config")
                 .and_then(|c| c.get("max_concurrency"))
@@ -51,7 +51,7 @@ impl ConcurrencyController {
     }
 
     /// 获取有效的并发限制
-    pub fn get_effective_limit(&self, task: &crate::domain::models::task::Task) -> usize {
+    pub fn get_effective_limit(&self, task: &crate::domain::models::Task) -> usize {
         Self::extract_payload_limit(task).unwrap_or(self.default_concurrency_limit)
     }
 
@@ -64,7 +64,7 @@ impl ConcurrencyController {
     /// # Returns
     ///
     /// 如果获取成功返回 Ok(true)，如果达到限制返回 Ok(false)，错误返回 Err
-    pub async fn acquire_permit(&self, task: &crate::domain::models::task::Task) -> Result<bool> {
+    pub async fn acquire_permit(&self, task: &crate::domain::models::Task) -> Result<bool> {
         let team_id = task.team_id;
         // Pre-allocate String with capacity to avoid reallocations
         let mut task_id_str = String::with_capacity(64);
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_extract_payload_limit_scrape_task() {
-        use crate::domain::models::task::{Task, TaskType};
+        use crate::domain::models::{Task, TaskType};
         use uuid::Uuid;
 
         let task = Task {
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_extract_payload_limit_crawl_task() {
-        use crate::domain::models::task::{Task, TaskType};
+        use crate::domain::models::{Task, TaskType};
         use uuid::Uuid;
 
         let task = Task {
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_extract_payload_limit_no_config() {
-        use crate::domain::models::task::{Task, TaskType};
+        use crate::domain::models::{Task, TaskType};
         use uuid::Uuid;
 
         let task = Task {
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_extract_payload_limit_non_crawl_task() {
-        use crate::domain::models::task::{Task, TaskType};
+        use crate::domain::models::{Task, TaskType};
         use uuid::Uuid;
 
         let task = Task {

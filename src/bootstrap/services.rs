@@ -31,7 +31,7 @@ use crate::engines::router::EngineRouter;
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
 use crate::infrastructure::database::repositories::auth_scope_repo_impl::AuthScopeRepositoryImpl;
-use crate::infrastructure::geolocation::GeoLocationService;
+use crate::infrastructure::geolocation::GeoLocationServiceImpl;
 use crate::presentation::middleware::auth_middleware::AuthRateLimiter;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
@@ -346,7 +346,7 @@ pub fn init_services(
 
     // Initialize GeoLocationService
     let geo_location_service = Arc::new(
-        crate::infrastructure::geolocation::GeoLocationService::new(http_client.clone()),
+        GeoLocationServiceImpl::new(http_client.clone()),
     );
 
     // Initialize team service

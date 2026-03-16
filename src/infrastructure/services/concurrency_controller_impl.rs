@@ -53,8 +53,8 @@ impl RedisConcurrencyController {
     }
 
     /// 从任务负载中提取并发限制
-    pub fn extract_payload_limit(task: &crate::domain::models::task::Task) -> Option<usize> {
-        if task.task_type == crate::domain::models::task::TaskType::Crawl {
+    pub fn extract_payload_limit(task: &crate::domain::models::Task) -> Option<usize> {
+        if task.task_type == crate::domain::models::TaskType::Crawl {
             task.payload
                 .get("config")
                 .and_then(|c| c.get("max_concurrency"))
@@ -68,7 +68,7 @@ impl RedisConcurrencyController {
     /// 获取有效的并发限制
     pub fn get_effective_limit(
         &self,
-        task: &crate::domain::models::task::Task,
+        task: &crate::domain::models::Task,
     ) -> usize {
         Self::extract_payload_limit(task).unwrap_or(self.default_concurrency_limit)
     }
@@ -170,7 +170,7 @@ impl ConcurrencyController for RedisConcurrencyController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::task::{Task, TaskType};
+    use crate::domain::models::{Task, TaskType};
 
     #[test]
     fn test_extract_payload_limit_scrape_task() {

@@ -3,162 +3,153 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::crawl::{Crawl, CrawlStatus};
+//! Crawl repository implementation using Sea-ORM with Mapper
+
+use crate::domain::models::{Crawl, CrawlStatus};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::task_repository::RepositoryError;
-use crate::infrastructure::database::entities::crawl as crawl_entity;
+use crate::infrastructure::database::entities::crawl;
+use crate::infrastructure::persistence::mappers::CrawlMapper;
 use async_trait::async_trait;
-use sea_orm::{sea_query::Expr, *};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// 爬取仓库实现
+/// Crawl repository implementation using Sea-ORM
 pub struct CrawlRepositoryImpl {
-    /// 数据库连接
+    /// Database connection
     db: Arc<DatabaseConnection>,
 }
 
 impl CrawlRepositoryImpl {
-    /// 创建新的爬取仓库实例
-    ///
-    /// # 参数
-    ///
-    /// * `db` - 数据库连接
-    ///
-    /// # 返回值
-    ///
-    /// 返回新的爬取仓库实例
+    /// Create new crawl repository instance
     pub fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
+    }
+
+    /// Get database connection reference
+    pub fn db(&self) -> &Arc<DatabaseConnection> {
+        &self.db
     }
 }
 
 #[async_trait]
 impl CrawlRepository for CrawlRepositoryImpl {
     async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
-        let model = crawl_entity::ActiveModel {
-            id: Set(crawl.id),
-            team_id: Set(crawl.team_id),
-            name: Set(crawl.name.clone()),
-            root_url: Set(crawl.root_url.clone()),
-            url: Set(crawl.url.clone()),
-            status: Set(crawl.status.to_string()),
-            config: Set(crawl.config.clone()),
-            total_tasks: Set(crawl.total_tasks),
-            completed_tasks: Set(crawl.completed_tasks),
-            failed_tasks: Set(crawl.failed_tasks),
-            created_at: Set(crawl.created_at.into()),
-            updated_at: Set(crawl.updated_at.into()),
-            completed_at: Set(crawl.completed_at.map(Into::into)),
-        };
+        let entity = CrawlMapper::to_entity(crawl);
+        let active_model = crawl::ActiveModel::from(entity);
 
-        model.insert(self.db.as_ref()).await?;
+        active_model
+            .insert(self.db.as_ref())
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         Ok(crawl.clone())
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
-        let model = crawl_entity::Entity::find_by_id(id)
+        let entity = crawl::Entity::find_by_id(id)
             .one(self.db.as_ref())
-            .await?;
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        match model {
-            Some(m) => {
-                let status = match m.status.as_str() {
-                    "queued" => CrawlStatus::Queued,
-                    "processing" => CrawlStatus::Processing,
-                    "completed" => CrawlStatus::Completed,
-                    "failed" => CrawlStatus::Failed,
-                    "cancelled" => CrawlStatus::Cancelled,
-                    _ => {
-                        return Err(RepositoryError::Database(DbErr::Custom(
-                            "Invalid crawl status".to_string(),
-                        )))
-                    }
-                };
-
-                Ok(Some(Crawl {
-                    id: m.id,
-                    team_id: m.team_id,
-                    name: m.name,
-                    root_url: m.root_url,
-                    url: m.url,
-                    status,
-                    config: m.config,
-                    total_tasks: m.total_tasks,
-                    completed_tasks: m.completed_tasks,
-                    failed_tasks: m.failed_tasks,
-                    created_at: m.created_at.into(),
-                    updated_at: m.updated_at.into(),
-                    completed_at: m.completed_at.map(Into::into),
-                }))
-            }
-            None => Ok(None),
-        }
+        Ok(entity.map(CrawlMapper::to_domain))
     }
 
     async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
-        let mut model: crawl_entity::ActiveModel = crawl_entity::Entity::find_by_id(crawl.id)
-            .one(self.db.as_ref())
-            .await?
-            .ok_or(RepositoryError::NotFound)?
-            .into();
+        let entity = CrawlMapper::to_entity(crawl);
+        let active_model = crawl::ActiveModel::from(entity);
 
-        model.status = Set(crawl.status.to_string());
-        model.total_tasks = Set(crawl.total_tasks);
-        model.completed_tasks = Set(crawl.completed_tasks);
-        model.failed_tasks = Set(crawl.failed_tasks);
-        model.updated_at = Set(crawl.updated_at.into());
-        model.completed_at = Set(crawl.completed_at.map(Into::into));
+        active_model
+            .update(self.db.as_ref())
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        model.update(self.db.as_ref()).await?;
         Ok(crawl.clone())
     }
 
-    async fn update_status(&self, id: Uuid, status: CrawlStatus) -> Result<(), RepositoryError> {
-        let model = crawl_entity::ActiveModel {
-            id: Set(id),
-            status: Set(status.to_string()),
-            updated_at: Set(chrono::Utc::now().into()),
-            ..Default::default()
-        };
-
-        model.update(self.db.as_ref()).await?;
-        Ok(())
-    }
-
-    async fn increment_total_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
-        crawl_entity::Entity::update_many()
-            .col_expr(
-                crawl_entity::Column::TotalTasks,
-                Expr::col(crawl_entity::Column::TotalTasks).add(1),
-            )
-            .filter(crawl_entity::Column::Id.eq(id))
-            .exec(self.db.as_ref())
-            .await?;
-        Ok(())
-    }
-
     async fn increment_completed_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
-        crawl_entity::Entity::update_many()
-            .col_expr(
-                crawl_entity::Column::CompletedTasks,
-                Expr::col(crawl_entity::Column::CompletedTasks).add(1),
-            )
-            .filter(crawl_entity::Column::Id.eq(id))
-            .exec(self.db.as_ref())
-            .await?;
+        if let Some(entity) = crawl::Entity::find_by_id(id)
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?
+        {
+            let mut domain = CrawlMapper::to_domain(entity);
+            domain.increment_completed_tasks();
+
+            let updated_entity = CrawlMapper::to_entity(&domain);
+            let active_model = crawl::ActiveModel::from(updated_entity);
+
+            active_model
+                .update(self.db.as_ref())
+                .await
+                .map_err(|e| RepositoryError::Database(e.into()))?;
+        }
+
         Ok(())
     }
 
     async fn increment_failed_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
-        crawl_entity::Entity::update_many()
-            .col_expr(
-                crawl_entity::Column::FailedTasks,
-                Expr::col(crawl_entity::Column::FailedTasks).add(1),
-            )
-            .filter(crawl_entity::Column::Id.eq(id))
-            .exec(self.db.as_ref())
-            .await?;
+        if let Some(entity) = crawl::Entity::find_by_id(id)
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?
+        {
+            let mut domain = CrawlMapper::to_domain(entity);
+            domain.increment_failed_tasks();
+
+            let updated_entity = CrawlMapper::to_entity(&domain);
+            let active_model = crawl::ActiveModel::from(updated_entity);
+
+            active_model
+                .update(self.db.as_ref())
+                .await
+                .map_err(|e| RepositoryError::Database(e.into()))?;
+        }
+
+        Ok(())
+    }
+
+    async fn update_status(&self, id: Uuid, status: CrawlStatus) -> Result<(), RepositoryError> {
+        if let Some(entity) = crawl::Entity::find_by_id(id)
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?
+        {
+            let mut domain = CrawlMapper::to_domain(entity);
+            domain.status = status;
+            domain.updated_at = chrono::Utc::now();
+
+            let updated_entity = CrawlMapper::to_entity(&domain);
+            let active_model = crawl::ActiveModel::from(updated_entity);
+
+            active_model
+                .update(self.db.as_ref())
+                .await
+                .map_err(|e| RepositoryError::Database(e.into()))?;
+        }
+
+        Ok(())
+    }
+
+    async fn increment_total_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
+        if let Some(entity) = crawl::Entity::find_by_id(id)
+            .one(self.db.as_ref())
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?
+        {
+            let mut domain = CrawlMapper::to_domain(entity);
+            domain.increment_total_tasks();
+
+            let updated_entity = CrawlMapper::to_entity(&domain);
+            let active_model = crawl::ActiveModel::from(updated_entity);
+
+            active_model
+                .update(self.db.as_ref())
+                .await
+                .map_err(|e| RepositoryError::Database(e.into()))?;
+        }
+
         Ok(())
     }
 
@@ -168,54 +159,25 @@ impl CrawlRepository for CrawlRepositoryImpl {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<Crawl>, RepositoryError> {
-        let models = crawl_entity::Entity::find()
-            .filter(crawl_entity::Column::TeamId.eq(team_id))
-            .order_by_desc(crawl_entity::Column::CreatedAt)
+        let entities = crawl::Entity::find()
+            .filter(crawl::Column::TeamId.eq(team_id))
+            .order_by_desc(crawl::Column::CreatedAt)
             .limit(limit as u64)
             .offset(offset as u64)
             .all(self.db.as_ref())
-            .await?;
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let mut crawls = Vec::new();
-        for m in models {
-            let status = match m.status.as_str() {
-                "queued" => CrawlStatus::Queued,
-                "processing" => CrawlStatus::Processing,
-                "completed" => CrawlStatus::Completed,
-                "failed" => CrawlStatus::Failed,
-                "cancelled" => CrawlStatus::Cancelled,
-                _ => {
-                    return Err(RepositoryError::Database(DbErr::Custom(
-                        "Invalid crawl status".to_string(),
-                    )))
-                }
-            };
-
-            crawls.push(Crawl {
-                id: m.id,
-                team_id: m.team_id,
-                name: m.name,
-                root_url: m.root_url,
-                url: m.url,
-                status,
-                config: m.config,
-                total_tasks: m.total_tasks,
-                completed_tasks: m.completed_tasks,
-                failed_tasks: m.failed_tasks,
-                created_at: m.created_at.into(),
-                updated_at: m.updated_at.into(),
-                completed_at: m.completed_at.map(Into::into),
-            });
-        }
-
-        Ok(crawls)
+        Ok(CrawlMapper::to_domain_list(entities))
     }
 
     async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError> {
-        let count = crawl_entity::Entity::find()
-            .filter(crawl_entity::Column::TeamId.eq(team_id))
+        let count = crawl::Entity::find()
+            .filter(crawl::Column::TeamId.eq(team_id))
             .count(self.db.as_ref())
-            .await?;
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         Ok(count)
     }
 }

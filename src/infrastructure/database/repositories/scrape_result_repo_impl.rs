@@ -3,81 +3,59 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! ScrapeResult repository implementation using dbnexus
+
 use crate::domain::models::scrape_result::ScrapeResult;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
-use crate::infrastructure::database::entities::scrape_result as scrape_result_entity;
+use crate::domain::repositories::task_repository::RepositoryError;
 use async_trait::async_trait;
-use sea_orm::*;
+use chrono::Utc;
+use dbnexus::DbPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// 抓取结果仓库实现
+/// ScrapeResult repository implementation using dbnexus
 pub struct ScrapeResultRepositoryImpl {
-    /// 数据库连接
-    db: Arc<DatabaseConnection>,
+    /// Database pool
+    pool: Arc<DbPool>,
 }
 
 impl ScrapeResultRepositoryImpl {
-    /// 创建新的抓取结果仓库实例
-    ///
-    /// # 参数
-    ///
-    /// * `db` - 数据库连接
-    ///
-    /// # 返回值
-    ///
-    /// 返回新的抓取结果仓库实例
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
-        Self { db }
+    /// Create new ScrapeResult repository instance
+    pub fn new(pool: Arc<DbPool>) -> Self {
+        Self { pool }
+    }
+
+    /// Get database pool reference
+    pub fn pool(&self) -> &Arc<DbPool> {
+        &self.pool
     }
 }
 
 #[async_trait]
 impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
     async fn save(&self, result: ScrapeResult) -> anyhow::Result<()> {
-        let active_model = scrape_result_entity::ActiveModel {
-            id: Set(result.id),
-            task_id: Set(result.task_id),
-            url: Set(result.url),
-            status_code: Set(result.status_code as i32),
-            content: Set(result.content),
-            content_type: Set(result.content_type),
-            response_time_ms: Set(result.response_time_ms as i64),
-            created_at: Set(result.created_at.into()),
-            headers: Set(Some(result.headers)),
-            meta_data: Set(Some(result.meta_data)),
-            screenshot: Set(result.screenshot),
-        };
-
-        scrape_result_entity::Entity::insert(active_model)
-            .exec(self.db.as_ref())
-            .await?;
-
+        let session = self.pool.get_session("scraper").await
+            .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
+        
+        ScrapeResult::insert(&session, result).await
+            .map_err(|e| anyhow::anyhow!("Failed to insert: {}", e))?;
+        
         Ok(())
     }
 
     async fn find_by_task_id(&self, task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
-        let model = scrape_result_entity::Entity::find()
-            .filter(scrape_result_entity::Column::TaskId.eq(task_id))
-            .one(self.db.as_ref())
-            .await?;
-
-        match model {
-            Some(m) => Ok(Some(ScrapeResult {
-                id: m.id,
-                task_id: m.task_id,
-                url: m.url,
-                status_code: m.status_code as u16,
-                content: m.content,
-                content_type: m.content_type,
-                response_time_ms: m.response_time_ms as u64,
-                created_at: m.created_at.into(),
-                headers: m.headers.unwrap_or_default(),
-                meta_data: m.meta_data.unwrap_or_default(),
-                screenshot: m.screenshot,
-            })),
-            None => Ok(None),
-        }
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
+        
+        let results = ScrapeResult::find()
+            .filter("task_id", task_id)
+            .limit(1)
+            .execute(&session)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to find: {}", e))?;
+        
+        Ok(results.first().cloned())
     }
 
     async fn find_by_task_ids(&self, task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
@@ -85,28 +63,21 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
             return Ok(Vec::new());
         }
 
-        let models = scrape_result_entity::Entity::find()
-            .filter(scrape_result_entity::Column::TaskId.is_in(task_ids.to_vec()))
-            .all(self.db.as_ref())
-            .await?;
-
-        let results = models
-            .into_iter()
-            .map(|m| ScrapeResult {
-                id: m.id,
-                task_id: m.task_id,
-                url: m.url,
-                status_code: m.status_code as u16,
-                content: m.content,
-                content_type: m.content_type,
-                response_time_ms: m.response_time_ms as u64,
-                created_at: m.created_at.into(),
-                headers: m.headers.unwrap_or_default(),
-                meta_data: m.meta_data.unwrap_or_default(),
-                screenshot: m.screenshot,
-            })
-            .collect();
-
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
+        
+        let mut results = Vec::new();
+        
+        for task_id in task_ids {
+            let task_results = ScrapeResult::find()
+                .filter("task_id", task_id)
+                .execute(&session)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to find: {}", e))?;
+            
+            results.extend(task_results);
+        }
+        
         Ok(results)
     }
 

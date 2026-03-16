@@ -284,8 +284,8 @@ impl From<crate::domain::repositories::task_repository::RepositoryError> for App
 }
 
 /// From implementations for security-related errors
-impl From<crate::config::settings::ConfigError> for AppError {
-    fn from(err: crate::config::settings::ConfigError) -> Self {
+impl From<confers::ConfigError> for AppError {
+    fn from(err: confers::ConfigError) -> Self {
         AppError::Validation(err.to_string())
     }
 }

@@ -3,21 +3,24 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::task::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskStatus, TaskType, Crawl};
 use async_trait::async_trait;
-use chrono::{DateTime, FixedOffset};
 use sea_orm::DbErr;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::pin::Pin;
+use uuid::Uuid;
+use chrono::{DateTime, Utc};
 use shaku::Interface;
 use std::collections::HashSet;
 use thiserror::Error;
-use uuid::Uuid;
 
 /// 仓库错误类型
 #[derive(Error, Debug)]
 pub enum RepositoryError {
     /// 数据库错误
     #[error("Database error: {0}")]
-    Database(#[from] DbErr),
+    Database(anyhow::Error),
     /// 记录未找到
     #[error("Record not found")]
     NotFound,
@@ -30,13 +33,13 @@ pub struct TaskQueryParams {
     pub task_ids: Option<Vec<Uuid>>,
     pub task_types: Option<Vec<TaskType>>,
     pub statuses: Option<Vec<TaskStatus>>,
-    pub created_after: Option<DateTime<FixedOffset>>,
-    pub created_before: Option<DateTime<FixedOffset>>,
+    pub created_after: Option<DateTime<Utc>>,
+    pub created_before: Option<DateTime<Utc>>,
     pub crawl_id: Option<Uuid>,
     pub limit: u32,
     pub offset: u32,
     /// 游标分页：基于创建时间
-    pub cursor: Option<DateTime<FixedOffset>>,
+    pub cursor: Option<DateTime<Utc>>,
     /// 游标分页：基于任务ID（用于处理相同创建时间的记录）
     pub cursor_id: Option<Uuid>,
 }

@@ -28,7 +28,7 @@
   - [Search API](#search-api)
   - [Extract API](#extract-api)
   - [Task API](#task-api)
-  - [Task API v2](#task-api-v2)
+  - [Task API v1](#task-api-v1)
   - [Team API](#team-api)
   - [Webhook API](#webhook-api)
   - [Audit API](#audit-api)
@@ -83,15 +83,78 @@ API keys can have different scopes that control access to specific features:
 
 ## Common Response Format
 
-All API responses follow this structure:
+All API responses follow this unified structure:
+
+### Success Response
 
 ```json
 {
-  "success": true|false,
-  "data": {},
-  "error": "error message (if success is false)"
+  "success": true,
+  "data": {
+    // Response data here
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+### Success Response with Pagination
+
+```json
+{
+  "success": true,
+  "data": {
+    // Response data here
+  },
+  "meta": {
+    "page": 1,
+    "per_page": 20,
+    "total_items": 100,
+    "total_pages": 5,
+    "has_next": true,
+    "has_previous": false
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Detailed error message"
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
+}
+```
+
+### Rate Limit Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Rate limit exceeded"
+  },
+  "retry_after_seconds": 60,
+  "timestamp": "2025-01-15T12:00:00+00:00"
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | boolean | Whether the request was successful |
+| `data` | object | Response data (only present on success) |
+| `error` | object | Error details (only present on failure) |
+| `error.code` | string | Error code for programmatic handling |
+| `error.message` | string | Human-readable error message |
+| `meta` | object | Pagination metadata (only for list responses) |
+| `timestamp` | string | Response timestamp in RFC3339 format |
 
 ---
 
@@ -115,19 +178,34 @@ All API responses follow this structure:
 ```json
 {
   "success": false,
-  "error": "Detailed error message"
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Detailed error message"
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
 
-### Common Errors
+### Common Error Codes
 
-| Error Code | Description |
-|------------|-------------|
-| `RATE_LIMIT_EXCEEDED` | Request rate limit exceeded |
-| `CONCURRENCY_LIMIT_EXCEEDED` | Too many concurrent requests |
-| `INVALID_URL` | URL format is invalid |
-| `SSRF_BLOCKED` | Internal URL blocked by SSRF protection |
-| `CREDITS_INSUFFICIENT` | Not enough credits for this operation |
+| Error Code | HTTP Status | Description |
+|------------|-------------|-------------|
+| `VALIDATION_ERROR` | 400 | Invalid request parameters |
+| `NOT_FOUND` | 404 | Resource not found |
+| `UNAUTHORIZED` | 401 | Missing or invalid API key |
+| `FORBIDDEN` | 403 | Insufficient permissions |
+| `RATE_LIMITED` | 429 | Rate limit exceeded |
+| `CONFLICT` | 409 | Resource conflict |
+| `PRECONDITION_FAILED` | 412 | Precondition failed |
+| `UNPROCESSABLE_ENTITY` | 422 | Validation error |
+| `INTERNAL_ERROR` | 500 | Internal server error |
+| `SERVICE_UNAVAILABLE` | 503 | Service unavailable |
+| `DATABASE_ERROR` | 500 | Database error |
+| `CACHE_ERROR` | 500 | Cache error |
+| `EXTERNAL_SERVICE_ERROR` | 502 | External service error |
+| `TIMEOUT` | 504 | Request timeout |
+| `QUOTA_EXCEEDED` | 402 | Quota exceeded |
+| `FEATURE_DISABLED` | 403 | Feature not enabled |
 
 ---
 
@@ -265,7 +343,8 @@ Scrape a single web page.
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "url": "https://example.com",
     "credits_used": 10
-  }
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
 
@@ -297,7 +376,7 @@ Scrape a single web page.
 
 #### Cancel Scrape
 
-**Endpoint:** `DELETE /v1/scrape/{id}`
+**Endpoint:** `POST /v1/scrape/{id}/_cancel`
 
 **Parameters:**
 - `id` (path) - Task UUID
@@ -314,7 +393,7 @@ Scrape a single web page.
 
 #### Cancel Crawl
 
-**Endpoint:** `DELETE /v1/crawl/{id}`
+**Endpoint:** `POST /v1/crawl/{id}/_cancel`
 
 **Parameters:**
 - `id` (path) - Task UUID
@@ -608,7 +687,7 @@ Extract structured data from HTML.
 
 #### Query Tasks
 
-**Endpoint:** `POST /v2/tasks/query`
+**Endpoint:** `POST /v1/tasks/_query`
 
 **Request Body:**
 ```json
@@ -647,7 +726,7 @@ Extract structured data from HTML.
 
 #### Cancel Tasks
 
-**Endpoint:** `DELETE /v2/tasks/cancel`
+**Endpoint:** `POST /v1/tasks/_cancel`
 
 **Request Body:**
 ```json
@@ -765,11 +844,15 @@ Extract structured data from HTML.
 
 ---
 
-### Task API v2
+### Task API v1
+
+> **Note:** Task API 已从 v2 迁移到 v1，并遵循 RESTful 规范：
+> - 查询操作使用 `POST /v1/tasks/_query`（复杂查询使用 `_query` 后缀）
+> - 取消操作使用 `POST /v1/tasks/_cancel`（动作操作使用 `_cancel` 后缀）
 
 #### Query Tasks
 
-**Endpoint:** `POST /v2/tasks/query`
+**Endpoint:** `POST /v1/tasks/_query`
 
 **Request Body:**
 ```json
@@ -808,7 +891,7 @@ Extract structured data from HTML.
 
 #### Cancel Tasks
 
-**Endpoint:** `DELETE /v2/tasks/cancel`
+**Endpoint:** `POST /v1/tasks/_cancel`
 
 **Request Body:**
 ```json

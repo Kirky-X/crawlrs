@@ -5,7 +5,7 @@
 
 //! Task-related use cases
 
-use crate::domain::models::task::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::credits_service::CreditsService;
@@ -87,13 +87,29 @@ impl<T: TaskRepository, R: CreditsRepository> CreateTaskUseCase<T, R> {
     ) -> Result<CreateTaskResponse, anyhow::Error> {
         // 创建任务
         let payload = request.config.unwrap_or_else(|| serde_json::json!({}));
-        let task = Task::new(
-            request.task_type,
-            request.team_id,
-            request.api_key_id,
-            request.url,
+        let now = chrono::Utc::now().naive_utc();
+        let task = Task {
+            id: Uuid::new_v4(),
+            task_type: request.task_type.to_string(),
+            status: TaskStatus::Queued.to_string(),
+            priority: request.priority.unwrap_or(0),
+            team_id: request.team_id,
+            api_key_id: request.api_key_id,
+            url: request.url,
             payload,
-        );
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: request.max_retries.unwrap_or(3),
+            scheduled_at: None,
+            expires_at: None,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: now,
+            lock_token: None,
+            lock_expires_at: None,
+        };
 
         self.task_repo.create(&task).await?;
 
@@ -171,7 +187,7 @@ impl<T: TaskRepository, R: CreditsRepository> CancelTasksUseCase<T, R> {
                         continue;
                     }
 
-                    if task.status == TaskStatus::Completed || task.status == TaskStatus::Failed {
+                    if task.status == "completed" || task.status == "failed" {
                         failed.push((
                             *task_id,
                             format!("Cannot cancel task in status: {}", task.status),
@@ -180,7 +196,7 @@ impl<T: TaskRepository, R: CreditsRepository> CancelTasksUseCase<T, R> {
                     }
 
                     // 如果不是强制取消且任务正在执行中，则不允许取消
-                    if !request.force.unwrap_or(false) && task.status == TaskStatus::Active {
+                    if !request.force.unwrap_or(false) && task.status == "active" {
                         failed.push((
                             *task_id,
                             "Task is running, use force=true to cancel".to_string(),

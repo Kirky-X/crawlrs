@@ -25,7 +25,7 @@
 //! # Usage Example
 //!
 //! ```rust
-//! use crate::domain::models::task::{Task, TaskStatus, TaskType};
+//! use crate::domain::models::{Task, TaskStatus, TaskType};
 //! use crate::workers::task_state_machine::{TaskStateMachine, TaskStateEvent, TaskStateError};
 //!
 //! let task = Task::default();
@@ -37,7 +37,7 @@
 //! assert_eq!(state_machine.current_status(), TaskStatus::Active);
 //! ```
 
-use crate::domain::models::task::{Task, TaskStatus};
+use crate::domain::models::{Task, TaskStatus};
 use chrono::Utc;
 
 /// 任务状态机事件
@@ -271,12 +271,12 @@ impl TaskStateValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::task::Task;
+    use crate::domain::models::Task;
 
     fn create_test_task(status: TaskStatus) -> Task {
         Task {
             id: uuid::Uuid::new_v4(),
-            task_type: crate::domain::models::task::TaskType::Scrape,
+            task_type: crate::domain::models::TaskType::Scrape,
             status,
             priority: 0,
             team_id: uuid::Uuid::new_v4(),

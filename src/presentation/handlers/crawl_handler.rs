@@ -11,26 +11,27 @@ use axum::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::error;
 use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlRequestDto;
 use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
 use crate::common::constants::crawl_task::CRAWL_TASK_CREDITS_COST;
 use crate::common::constants::crawl_task::DEFAULT_TIMEOUT_MS;
-use crate::domain::services::rate_limiting_service::RateLimitResult;
+use crate::di::{AppState, AppStateExt};
 use crate::presentation::handlers::extract_task_ids;
 use crate::presentation::handlers::response_builder::errors;
 use crate::presentation::handlers::response_builder::{error_response, success_response};
 use crate::presentation::handlers::task_handler::handle_sync_wait_and_get_status;
 use crate::presentation::handlers::task_handler::SyncWaitResult;
-use crate::presentation::helpers::ssrf_helper::is_internal_url;
+use crate::presentation::helpers::rate_limit_helper::check_rate_limit;
+use crate::presentation::helpers::ssrf::is_internal_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::state::CrawlHandlerState;
+use tracing::error;
 
 /// 创建新的爬取任务
 pub async fn create_crawl(
-    Extension(handler_state): Extension<Arc<CrawlHandlerState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth_state): Extension<AuthState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<CrawlRequestDto>,
@@ -49,35 +50,23 @@ pub async fn create_crawl(
     }
 
     // 1. 检查限流
-    match handler_state
-        .rate_limiting_service
-        .check_rate_limit(&api_key, "/v1/crawl")
-        .await
+    if let Err(response) = check_rate_limit(
+        app_state.rate_limiting_service().as_ref(),
+        &api_key,
+        "/v1/crawl",
+    )
+    .await
     {
-        Ok(RateLimitResult::Denied { reason }) => {
-            return errors::too_many_requests(format!("Rate limit exceeded: {}", reason));
-        }
-        Ok(RateLimitResult::RetryAfter {
-            retry_after_seconds,
-        }) => {
-            return errors::too_many_requests_with_retry(
-                "Rate limit exceeded, please retry later",
-                retry_after_seconds,
-            );
-        }
-        Err(e) => {
-            error!("Rate limiting service error: {}", e);
-        }
-        _ => {}
+        return response;
     }
 
     // 2. 检查配额
-    if let Err(e) = handler_state
-        .rate_limiting_service
+    if let Err(e) = app_state
+        .rate_limiting_service()
         .check_and_deduct_quota(
             team_id,
             CRAWL_TASK_CREDITS_COST,
-            crate::domain::models::credits::CreditsTransactionType::Crawl,
+            crate::domain::models::CreditsTransactionType::Crawl,
             format!("Crawl URL: {}", payload.url),
             None,
         )
@@ -86,6 +75,8 @@ pub async fn create_crawl(
         return errors::payment_required(e.to_string());
     }
 
+    // Create CrawlHandlerState from unified AppState
+    let handler_state = CrawlHandlerState::from_app_state(&app_state);
     let use_case = handler_state.create_use_case();
 
     let client_ip = addr.ip().to_string();
@@ -96,12 +87,12 @@ pub async fn create_crawl(
         Ok(crawl) => {
             // 处理同步等待
             let wait_result = if sync_wait_ms > 0 {
-                match handler_state.task_repo.find_by_crawl_id(crawl.id).await {
+                match app_state.task_repo().find_by_crawl_id(crawl.id).await {
                     Ok(tasks) => {
                         if !tasks.is_empty() {
                             let task_ids = extract_task_ids(&tasks);
                             handle_sync_wait_and_get_status(
-                                handler_state.task_repo.as_ref(),
+                                app_state.task_repo().as_ref(),
                                 &task_ids,
                                 team_id,
                                 sync_wait_ms,
@@ -150,11 +141,12 @@ pub async fn create_crawl(
 
 /// 获取爬取任务详情
 pub async fn get_crawl(
-    Extension(handler_state): Extension<Arc<CrawlHandlerState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth_state): Extension<AuthState>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
+    let handler_state = CrawlHandlerState::from_app_state(&app_state);
     let use_case = handler_state.create_use_case();
 
     match use_case.get_crawl(crawl_id, team_id).await {
@@ -169,11 +161,12 @@ pub async fn get_crawl(
 
 /// 获取爬取任务结果
 pub async fn get_crawl_results(
-    Extension(handler_state): Extension<Arc<CrawlHandlerState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth_state): Extension<AuthState>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
+    let handler_state = CrawlHandlerState::from_app_state(&app_state);
     let use_case = handler_state.create_use_case();
 
     match use_case.get_crawl_results(crawl_id, team_id).await {
@@ -187,11 +180,12 @@ pub async fn get_crawl_results(
 
 /// 取消进行中的爬取任务
 pub async fn cancel_crawl(
-    Extension(handler_state): Extension<Arc<CrawlHandlerState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Extension(auth_state): Extension<AuthState>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
+    let handler_state = CrawlHandlerState::from_app_state(&app_state);
     let use_case = handler_state.create_use_case();
 
     match use_case.cancel_crawl(crawl_id, team_id).await {

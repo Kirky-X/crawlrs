@@ -8,7 +8,7 @@ use shaku::Interface;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::domain::models::credits::{CreditsTransaction, CreditsTransactionType};
+use crate::domain::models::{Credits, CreditsTransaction, CreditsTransactionType};
 
 #[derive(Error, Debug)]
 pub enum CreditsRepositoryError {

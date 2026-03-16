@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::webhook::{WebhookEvent, WebhookStatus};
+use crate::domain::models::{WebhookEvent, WebhookStatus};
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::utils::retry_policy::RetryPolicy;

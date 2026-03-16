@@ -221,7 +221,7 @@ async fn test_developer_integration_journey() {
     // Immediately try to cancel (may or may not succeed depending on timing)
     let cancel_response = app
         .server
-        .delete(&format!("/v1/scrape/{}", cancel_task_id))
+        .post(&format!("/v1/scrape/{}/_cancel", cancel_task_id))
         .add_header("Authorization", format!("Bearer {}", fixture.app.api_key))
         .await;
 

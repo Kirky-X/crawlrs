@@ -6,114 +6,43 @@
 //! SSRF protection and URL validation utilities
 //!
 //! This module provides security-focused validation for URLs to prevent
-//! Server-Side Request Forgery (SSRF) attacks. Uses shared validation
-//! functions from [`crate::engines::shared`] for consistent security checks.
+//! Server-Side Request Forgery (SSRF) attacks.
+//!
+//! ## Architecture
+//!
+//! This module now delegates to the unified SSRF protection module at
+//! `crate::presentation::helpers::ssrf` which provides:
+//! - Static URL validation (fast pre-check)
+//! - DNS resolution validation (DNS rebinding protection)
+//! - Redirect validation
+//! - TOCTOU protection
+//!
+//! ## Usage
+//!
+//! For quick synchronous checks:
+//! ```ignore
+//! use crate::engines::validators::is_internal_url;
+//!
+//! if is_internal_url(&url) {
+//!     return Err("Internal URLs not allowed");
+//! }
+//! ```
+//!
+//! For full async validation with DNS resolution:
+//! ```ignore
+//! use crate::engines::validators::validate_url;
+//!
+//! validate_url(&url).await?;
+//! ```
 
-use crate::engines::shared::{is_blocked_hostname, is_private_ip};
-use tokio::net::lookup_host;
-use url::Url;
+// Re-export from unified SSRF module
+pub use crate::presentation::helpers::ssrf::{
+    is_internal_url, validate_domain_blacklist, validate_url, RedirectPolicy, RedirectValidator,
+    SsrfConfig, SsrfError, SsrfValidationResult, SsrfValidator, ValidatedUrl,
+};
 
-/// 验证 URL 是否安全 (防止 SSRF)
-///
-/// 检查解析后的 IP 是否为私有地址或环回地址
-/// 包含 DNS Rebinding 攻击防护
-pub async fn validate_url(url_str: &str) -> anyhow::Result<()> {
-    // URL 长度限制：防止 SSRF 和资源耗尽攻击
-    const MAX_URL_LENGTH: usize = 2048;
-    if url_str.len() > MAX_URL_LENGTH {
-        return Err(anyhow::anyhow!(
-            "URL exceeds maximum length of {} characters",
-            MAX_URL_LENGTH
-        ));
-    }
-
-    let url = Url::parse(url_str)?;
-
-    // 检查协议：只允许 http 和 https
-    match url.scheme() {
-        "http" | "https" => {}
-        scheme => {
-            return Err(anyhow::anyhow!(
-                "SSRF protection: Only http and https protocols are allowed, got: {}",
-                scheme
-            ));
-        }
-    }
-
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("Missing host"))?;
-
-    // 基于域名的预检查（在 DNS 解析之前）
-    if is_blocked_hostname(host) {
-        return Err(anyhow::anyhow!(
-            "SSRF protection: Hostname '{}' is not allowed",
-            host
-        ));
-    }
-
-    // 解析 DNS
-    let port = url.port_or_known_default().unwrap_or(80);
-    let addr_str = format!("{}:{}", host, port);
-
-    let addrs: Vec<_> = lookup_host(&addr_str).await?.collect();
-
-    // DNS Rebinding 防护：检查所有解析出的 IP
-    if addrs.is_empty() {
-        return Err(anyhow::anyhow!(
-            "SSRF protection: No IP addresses resolved for host"
-        ));
-    }
-
-    // 检查是否存在混合的公网/私网 IP（DNS rebinding 特征）
-    let has_private = addrs.iter().any(|addr| is_private_ip(addr.ip()));
-    let has_public = addrs.iter().any(|addr| !is_private_ip(addr.ip()));
-
-    if has_private && has_public {
-        return Err(anyhow::anyhow!(
-            "SSRF protection: Mixed private and public IP addresses detected (possible DNS rebinding attack)"
-        ));
-    }
-
-    // 检查所有解析出的 IP 是否为私有地址
-    for addr in &addrs {
-        if is_private_ip(addr.ip()) {
-            return Err(anyhow::anyhow!(
-                "SSRF protection: Private IP access is not allowed: {}",
-                addr.ip()
-            ));
-        }
-    }
-
-    // DNS Rebinding 防护：验证所有 IP 是否一致
-    // 如果有多个 IP，确保它们都属于同一类别（公网）
-    if addrs.len() > 1 {
-        // 记录警告：多个 IP 解析可能表示 DNS 不稳定
-        tracing::warn!(
-            "DNS warning: Host {} resolved to {} IP addresses",
-            host,
-            addrs.len()
-        );
-    }
-
-    Ok(())
-}
-
-/// 验证 URL 是否在黑名单域名中
-pub fn validate_domain_blacklist(url_str: &str, blacklist: &[String]) -> anyhow::Result<()> {
-    let url = Url::parse(url_str)?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("Missing host"))?;
-
-    for domain in blacklist {
-        if host == domain || host.ends_with(&format!(".{}", domain)) {
-            return Err(anyhow::anyhow!("Domain {} is in blacklist", host));
-        }
-    }
-
-    Ok(())
-}
+// Re-export shared utilities for backward compatibility
+pub use crate::engines::shared::{is_blocked_hostname, is_private_ip};
 
 #[cfg(test)]
 mod tests {
@@ -121,34 +50,57 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_url_ssrf() {
-        // Localhost 变体应该被阻止
+        // Localhost variants should be blocked
         assert!(validate_url("http://localhost").await.is_err());
         assert!(validate_url("http://localhost.localdomain").await.is_err());
         assert!(validate_url("http://127.0.0.1").await.is_err());
         assert!(validate_url("http://0.0.0.0").await.is_err());
 
-        // 私有 IP 应该被阻止
+        // Private IPs should be blocked
         assert!(validate_url("http://10.0.0.1").await.is_err());
         assert!(validate_url("http://192.168.1.1").await.is_err());
         assert!(validate_url("http://172.16.0.1").await.is_err());
 
-        // 云元数据端点应该被阻止
+        // Cloud metadata endpoints should be blocked
         assert!(validate_url("http://169.254.169.254").await.is_err());
         assert!(validate_url("http://metadata.google.internal")
             .await
             .is_err());
 
-        // 不允许的协议
+        // Invalid schemes should be blocked
         assert!(validate_url("file:///etc/passwd").await.is_err());
         assert!(validate_url("ftp://example.com").await.is_err());
         assert!(validate_url("gopher://localhost").await.is_err());
 
-        // 有效的公共 URL - 只在显式启用网络测试时运行
-        // 使用 CRAWLRS_ENABLE_NETWORK_TESTS 环境变量控制，而不是依赖 CI
+        // Valid public URLs - only run with network tests enabled
         if std::env::var("CRAWLRS_ENABLE_NETWORK_TESTS").is_ok() {
             assert!(validate_url("http://example.com").await.is_ok());
             assert!(validate_url("https://google.com").await.is_ok());
         }
+    }
+
+    #[test]
+    fn test_is_internal_url() {
+        // Localhost
+        assert!(is_internal_url("http://localhost"));
+        assert!(is_internal_url("http://127.0.0.1"));
+
+        // Private IPs
+        assert!(is_internal_url("http://10.0.0.1"));
+        assert!(is_internal_url("http://192.168.1.1"));
+        assert!(is_internal_url("http://172.16.0.1"));
+
+        // Link-local
+        assert!(is_internal_url("http://169.254.0.1"));
+
+        // IPv6
+        assert!(is_internal_url("http://[::1]"));
+        assert!(is_internal_url("http://[fe80::1]"));
+        assert!(is_internal_url("http://[fc00::1]"));
+
+        // External
+        assert!(!is_internal_url("http://8.8.8.8"));
+        assert!(!is_internal_url("http://google.com"));
     }
 
     #[test]
@@ -167,8 +119,47 @@ mod tests {
         assert!(validate_domain_blacklist("http://google.com", &blacklist).is_ok());
         assert!(validate_domain_blacklist("http://example.org", &blacklist).is_ok());
 
-        // Partial match should not block (e.g. example.com.cn should not be blocked by example.com)
-        // Current implementation: host.ends_with(".example.com")
+        // Partial match should not block
         assert!(validate_domain_blacklist("http://myexample.com", &blacklist).is_ok());
+    }
+
+    #[test]
+    fn test_is_private_ip() {
+        // IPv4 private
+        assert!(is_private_ip("10.0.0.1".parse().unwrap()));
+        assert!(is_private_ip("172.16.0.1".parse().unwrap()));
+        assert!(is_private_ip("192.168.1.1".parse().unwrap()));
+
+        // IPv4 loopback
+        assert!(is_private_ip("127.0.0.1".parse().unwrap()));
+
+        // IPv4 link-local
+        assert!(is_private_ip("169.254.0.1".parse().unwrap()));
+
+        // IPv6
+        assert!(is_private_ip("::1".parse().unwrap()));
+        assert!(is_private_ip("fe80::1".parse().unwrap()));
+        assert!(is_private_ip("fc00::1".parse().unwrap()));
+
+        // Public IPs
+        assert!(!is_private_ip("8.8.8.8".parse().unwrap()));
+        assert!(!is_private_ip("1.1.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_blocked_hostname() {
+        assert!(is_blocked_hostname("localhost"));
+        assert!(is_blocked_hostname("127.0.0.1"));
+        assert!(is_blocked_hostname("169.254.169.254"));
+        assert!(is_blocked_hostname("metadata.google.internal"));
+
+        // Case insensitive
+        assert!(is_blocked_hostname("LOCALHOST"));
+        assert!(is_blocked_hostname("LocalHost"));
+
+        // Not blocked
+        assert!(!is_blocked_hostname("google.com"));
+        assert!(!is_blocked_hostname("example.com"));
+        assert!(!is_blocked_hostname("8.8.8.8"));
     }
 }

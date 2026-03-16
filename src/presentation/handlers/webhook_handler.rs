@@ -6,17 +6,17 @@
 use crate::application::dto::webhook_request::{
     CreateWebhookRequest, WebhookListResponse, WebhookResponse,
 };
-use crate::domain::models::webhook::Webhook;
+use crate::domain::models::Webhook;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
-use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
+use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::use_cases::create_webhook::CreateWebhookUseCase;
 use crate::engines::validators::validate_url;
 use crate::presentation::errors::AppError;
 use crate::presentation::handlers::response_builder::ApiResponse;
+use crate::presentation::helpers::rate_limit_helper::check_rate_limit_as_app_error;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{http::StatusCode, Extension, Json};
 use std::sync::Arc;
-use tracing::error;
 
 pub async fn create_webhook<R: WebhookRepository>(
     Extension(repo): Extension<Arc<R>>,
@@ -39,29 +39,7 @@ pub async fn create_webhook<R: WebhookRepository>(
     }
 
     // 1. 检查限流
-    match rate_limiting_service
-        .check_rate_limit(&api_key, "/v1/webhooks")
-        .await
-    {
-        Ok(RateLimitResult::Denied { reason }) => {
-            return Err(AppError::from(anyhow::anyhow!(
-                "Rate limit exceeded: {}",
-                reason
-            )));
-        }
-        Ok(RateLimitResult::RetryAfter {
-            retry_after_seconds,
-        }) => {
-            return Err(AppError::from(anyhow::anyhow!(
-                "Rate limit exceeded, please retry after {} seconds",
-                retry_after_seconds
-            )));
-        }
-        Err(e) => {
-            error!("Rate limiting service error: {}", e);
-        }
-        _ => {}
-    }
+    check_rate_limit_as_app_error(rate_limiting_service.as_ref(), &api_key, "/v1/webhooks").await?;
 
     let use_case = CreateWebhookUseCase::new(repo);
     let webhook = use_case.execute(team_id, payload.url).await?;

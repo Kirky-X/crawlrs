@@ -3,21 +3,21 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Credits repository implementation using Sea-ORM with Mapper
+
 use async_trait::async_trait;
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set, Statement,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set, Statement,
 };
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::domain::{
-    models::credits::{CreditsTransaction, CreditsTransactionType},
-    repositories::credits_repository::{CreditsRepository, CreditsRepositoryError},
-};
-
+use crate::domain::models::{CreditsTransaction, CreditsTransactionType};
+use crate::domain::repositories::credits_repository::{CreditsRepository, CreditsRepositoryError};
 use crate::infrastructure::database::entities::{credits, credits_transactions};
+use crate::infrastructure::persistence::mappers::{CreditsMapper, CreditsTransactionMapper};
 
 pub struct CreditsRepositoryImpl {
     db: Arc<DatabaseConnection>,
@@ -134,27 +134,7 @@ impl CreditsRepository for CreditsRepositoryImpl {
             .await
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
 
-        Ok(transactions
-            .into_iter()
-            .map(|t| CreditsTransaction {
-                id: t.id,
-                team_id: t.team_id,
-                amount: t.amount,
-                transaction_type: match t.transaction_type.as_str() {
-                    "search" => CreditsTransactionType::Search,
-                    "scrape" => CreditsTransactionType::Scrape,
-                    "extract" => CreditsTransactionType::Extract,
-                    "crawl" => CreditsTransactionType::Crawl,
-                    "manual_adjustment" => CreditsTransactionType::ManualAdjustment,
-                    "subscription" => CreditsTransactionType::Subscription,
-                    "refund" => CreditsTransactionType::Refund,
-                    _ => CreditsTransactionType::ManualAdjustment,
-                },
-                description: t.description,
-                reference_id: t.reference_id,
-                created_at: t.created_at.into(),
-            })
-            .collect())
+        Ok(CreditsTransactionMapper::to_domain_list(transactions))
     }
 
     async fn initialize_team_credits(
@@ -178,8 +158,8 @@ impl CreditsRepository for CreditsRepositoryImpl {
             id: Set(Uuid::new_v4()),
             team_id: Set(team_id),
             balance: Set(initial_balance),
-            created_at: Set(Utc::now().fixed_offset()),
-            updated_at: Set(Utc::now().fixed_offset()),
+            created_at: Set(Utc::now().with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
+            updated_at: Set(Utc::now().with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
         };
 
         credits

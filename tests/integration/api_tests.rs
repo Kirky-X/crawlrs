@@ -651,7 +651,7 @@ async fn test_js_rendering_spa() {
                 completed = true;
                 // 验证内容是否包含渲染后的特征
                 // 在 /v1/scrape/:id 返回的任务详情中，结果可能在 body["result"] 中
-                // 或者我们需要通过 /v2/tasks/query 来获取包含结果的内容
+                // 或者我们需要通过 /v1/tasks/_query 来获取包含结果的内容
                 break;
             } else if body["status"] == "failed" {
                 panic!("Task failed: {}", body["error"]);
@@ -1452,7 +1452,7 @@ async fn test_cancel_task() {
     // 取消任务
     let cancel_response = app
         .server
-        .delete(&format!("/v1/scrape/{}", task_id))
+        .post(&format!("/v1/scrape/{}/_cancel", task_id))
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .await;
 
@@ -1493,7 +1493,7 @@ async fn test_cancel_crawl() {
     // 取消爬取
     let cancel_response = app
         .server
-        .delete(&format!("/v1/crawl/{}", crawl_id))
+        .post(&format!("/v1/crawl/{}/_cancel", crawl_id))
         .add_header("Authorization", format!("Bearer {}", app.api_key))
         .await;
 

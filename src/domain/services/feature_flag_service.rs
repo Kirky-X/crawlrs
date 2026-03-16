@@ -5,33 +5,37 @@
 
 //! Service for feature flag evaluation
 
-use crate::domain::auth::FeatureFlag;
-use crate::infrastructure::database::repositories::feature_flag_repo_impl::FeatureFlagRepository;
-use sea_orm::DatabaseConnection;
+use std::sync::Arc;
+
 use thiserror::Error;
 use tracing::debug;
 use uuid::Uuid;
 
+use crate::domain::auth::FeatureFlag;
+use crate::domain::repositories::feature_flag_repository::{
+    FeatureFlagRepository, FeatureFlagRepositoryError,
+};
+
+/// Feature flag service error types
 #[derive(Debug, Error)]
 pub enum FeatureFlagServiceError {
+    /// Feature flag not found
     #[error("Feature flag not found: {name}")]
     NotFound { name: String },
-    #[error("Database error: {0}")]
-    DatabaseError(#[from] sea_orm::DbErr),
+    /// Repository error
+    #[error("Repository error: {0}")]
+    RepositoryError(#[from] FeatureFlagRepositoryError),
 }
 
 /// Service for managing and evaluating feature flags
-#[derive(Clone)]
 pub struct FeatureFlagService {
-    flag_repo: FeatureFlagRepository,
+    flag_repo: Arc<dyn FeatureFlagRepository>,
 }
 
 impl FeatureFlagService {
     /// Create a new service
-    pub fn new(db: DatabaseConnection) -> Self {
-        Self {
-            flag_repo: FeatureFlagRepository::new(db),
-        }
+    pub fn new(flag_repo: Arc<dyn FeatureFlagRepository>) -> Self {
+        Self { flag_repo }
     }
 
     /// Check if a feature is enabled for a specific API Key

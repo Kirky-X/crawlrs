@@ -141,7 +141,7 @@ All errors follow the [Problem Details for HTTP APIs](https://datatracker.ietf.o
             // Error types
             crate::common::error::AppError,
             // Domain models
-            crate::domain::models::task::TaskStatus,
+            crate::domain::models::TaskStatus,
             // Common
             crate::common::constants::crawl_task::TaskType,
         )

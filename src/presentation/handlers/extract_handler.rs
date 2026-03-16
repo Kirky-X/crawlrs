@@ -9,22 +9,31 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde_json::json;
 use std::net::SocketAddr;
 use tracing::error;
 
 use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::common::constants::crawl_task;
 use crate::config::settings::Settings;
-use crate::domain::models::task::{Task, TaskType};
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::team_service::TeamService;
-use crate::presentation::handlers::response_builder::error_response;
+use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 use std::sync::Arc;
+use uuid::Uuid;
+
+/// 提取任务响应数据传输对象
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExtractResponseDto {
+    /// 任务ID
+    pub id: Uuid,
+    /// 任务状态
+    pub status: String,
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn extract<GR>(
@@ -132,13 +141,29 @@ where
         .urls
         .first()
         .expect("URLs already validated as non-empty");
-    let task = Task::new(
-        TaskType::Extract,
+    let now = chrono::Utc::now().naive_utc();
+    let task = Task {
+        id: Uuid::new_v4(),
+        task_type: TaskType::Extract.to_string(),
+        status: TaskStatus::Queued.to_string(),
+        priority: 0,
         team_id,
-        auth_state.api_key_id,
-        primary_url.clone(),
-        serde_json::to_value(&payload).unwrap_or_default(),
-    );
+        api_key_id: auth_state.api_key_id,
+        url: primary_url.clone(),
+        payload: serde_json::to_value(&payload).unwrap_or_default(),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: now,
+        started_at: None,
+        completed_at: None,
+        crawl_id: None,
+        updated_at: now,
+        lock_token: None,
+        lock_expires_at: None,
+    };
 
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
@@ -171,11 +196,10 @@ where
                 }
             }
 
-            let response = json!({
-                "success": true,
-                "id": task.id,
-                "status": "pending"
-            });
+            let response = ExtractResponseDto {
+                id: task.id,
+                status: "pending".to_string(),
+            };
 
             // 根据同步等待结果设置响应状态
             let status_code = if sync_wait_ms > 0 && waited_time_ms >= sync_wait_ms as u64 {
@@ -184,7 +208,7 @@ where
                 StatusCode::CREATED // 任务已创建（可能已完成）
             };
 
-            (status_code, Json(response)).into_response()
+            (status_code, Json(ApiResponse::success(response))).into_response()
         }
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }

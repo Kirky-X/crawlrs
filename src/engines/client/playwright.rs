@@ -4,6 +4,9 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::engines::browser_downloader::{BrowserDownloadConfig, BrowserDownloadManager};
+use crate::engines::client::playwright_pool::{
+    get_global_pool, init_global_pool, BrowserInstance, BrowserPool, BrowserPoolConfig,
+};
 use crate::engines::engine_client::{
     EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse,
     InternalScreenshotConfig, ScraperEngine,
@@ -277,7 +280,47 @@ pub async fn check_browser_health(browser: &Browser) -> bool {
 /// Playwright引擎
 ///
 /// 基于chromiumoxide实现的浏览器自动化抓取引擎
-pub struct PlaywrightEngine; // Using chromiumoxide as Rust alternative to Playwright
+pub struct PlaywrightEngine {
+    /// 浏览器池（可选，用于实例复用）
+    pool: Option<BrowserPool>,
+}
+
+impl PlaywrightEngine {
+    /// 创建新的 Playwright 引擎（使用全局浏览器池）
+    pub fn new() -> Self {
+        Self { pool: None }
+    }
+
+    /// 创建带有自定义浏览器池的 Playwright 引擎
+    pub fn with_pool(pool: BrowserPool) -> Self {
+        Self { pool: Some(pool) }
+    }
+
+    /// 获取或创建浏览器池
+    fn get_or_init_pool(&self) -> BrowserPool {
+        if let Some(pool) = &self.pool {
+            return pool.clone();
+        }
+
+        // 尝试使用全局池
+        if let Some(pool) = get_global_pool() {
+            return pool.clone();
+        }
+
+        // 创建临时池（不推荐，应该使用全局池）
+        let config = BrowserPoolConfig::default();
+        let browser_config = Arc::new(
+            crate::infrastructure::services::config_service::BrowserConfigComponent::default(),
+        );
+        BrowserPool::new(config, browser_config)
+    }
+}
+
+impl Default for PlaywrightEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl ScraperEngine for PlaywrightEngine {
@@ -313,15 +356,14 @@ impl ScraperEngine for PlaywrightEngine {
         let start = Instant::now();
         let timeout_duration = request.timeout;
 
-        let browser_config = Arc::new(
-            crate::infrastructure::services::config_service::BrowserConfigComponent::default(),
-        );
-        let browser_manager: Arc<dyn BrowserManagerTrait> =
-            Arc::new(PlaywrightBrowserManagerComponent::new(browser_config));
+        // 获取浏览器池
+        let pool = self.get_or_init_pool();
 
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
-            let browser = browser_manager.get_browser().await?;
+            // 从池中获取浏览器实例
+            let browser_instance = pool.acquire().await?;
+            let browser = browser_instance.browser();
 
             // Create new page and navigate
             let page: chromiumoxide::page::Page = browser
@@ -517,8 +559,11 @@ impl ScraperEngine for PlaywrightEngine {
                 screenshot = Some(BASE64.encode(screenshot_bytes));
             }
 
-            // Note: The browser is no longer closed here to allow for reuse.
-            // It will be closed when the application shuts down.
+            // 关闭页面（但保留浏览器实例供复用）
+            let _ = page.close().await;
+
+            // 浏览器实例会在 browser_instance drop 时自动归还到池中
+            // 如果需要手动归还，可以调用 browser_instance.release().await
 
             Ok(InternalScrapeResponse {
                 status_code,

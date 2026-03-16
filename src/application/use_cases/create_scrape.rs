@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::application::dto::scrape_request::{
     ScrapeActionDto, ScrapeOptionsDto, ScrapeRequestDto,
 };
-use crate::domain::models::task::DomainError;
+use crate::domain::models::DomainError;
 use crate::engines::engine_client::{
     EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
     ScreenshotConfig, ScrollDirection,

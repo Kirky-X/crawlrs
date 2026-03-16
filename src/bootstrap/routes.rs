@@ -21,7 +21,6 @@ use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crate::presentation::routes;
 use crate::presentation::routes::task::task_routes;
-use crate::presentation::state::CrawlHandlerState;
 use axum::{
     routing::{delete, get, post, put},
     Extension, Router,
@@ -130,16 +129,8 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
     // Create concrete WebhookRepoImpl for handlers that need the concrete type
     let webhook_repo_impl: Arc<WebhookRepoImpl> = Arc::new(WebhookRepoImpl::new(state.db.clone()));
 
-    // Create CrawlHandlerState directly from DI state fields
-    let crawl_handler_state = Arc::new(CrawlHandlerState::new(
-        crawl_repo.clone(),
-        task_repo.clone(),
-        webhook_repo.clone(),
-        result_repo.clone(),
-        geo_restriction_repo.clone(),
-        team_service.clone(),
-        rate_limiting_service.clone(),
-    ));
+    // Create Arc<AppState> for crawl handlers that use unified state
+    let app_state_arc = Arc::new(state.clone());
 
     // Auth state for middleware
     // Convert from Arc<AuthScopeService> to AuthScopeService (unwrap the Arc)
@@ -209,7 +200,7 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
         .layer(Extension(state.search_service.clone()))
         .layer(Extension(team_service))
         .layer(Extension(geo_location_service))
-        .layer(Extension(crawl_handler_state))
+        .layer(Extension(app_state_arc)) // Unified AppState for crawl handlers
         .layer(Extension(credits_repo))
         .layer(Extension(webhook_repo_impl))
         .layer(Extension(geo_restriction_repo_impl))
@@ -291,6 +282,10 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
         .merge(protected_routes)
         .merge(v2_routes)
         .layer(cors_layer)
+        // Security headers middleware - should be applied early in the middleware chain
+        .layer(axum::middleware::from_fn(
+            crate::presentation::middleware::security_headers_middleware::security_headers_middleware,
+        ))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .layer(Extension(state.team_semaphore.clone()))
         .layer(Extension(queue))

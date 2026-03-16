@@ -8,7 +8,7 @@
 //! Provides unified task failure handling with retry logic.
 //! Consolidates retry patterns from scrape_worker, webhook_worker, and rate_limiting_service.
 
-use crate::domain::models::task::{Task, TaskStatus};
+use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::utils::retry_policy::RetryPolicy;
 use chrono::{Duration, Utc};
@@ -71,8 +71,8 @@ impl RetryHandler {
 
             task.attempt_count = new_attempt_count as i32;
             task.retry_count += 1;
-            task.status = TaskStatus::Failed;
-            task.completed_at = Some(Utc::now().into());
+            task.status = "failed".to_string();
+            task.completed_at = Some(Utc::now().naive_utc());
 
             if let Err(e) = self.repository.update(task).await {
                 return HandleFailureResult::Error(e.into());
@@ -87,8 +87,8 @@ impl RetryHandler {
 
         task.attempt_count = new_attempt_count as i32;
         task.retry_count += 1;
-        task.scheduled_at = Some(next_retry.into());
-        task.status = TaskStatus::Queued;
+        task.scheduled_at = Some(next_retry.naive_utc());
+        task.status = "queued".to_string();
         task.started_at = None;
         task.completed_at = None;
 

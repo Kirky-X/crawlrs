@@ -11,6 +11,7 @@ pub mod auth_middleware;
 pub mod distributed_rate_limit_middleware;
 #[cfg(feature = "rate-limiting")]
 pub mod rate_limit_middleware;
+pub mod security_headers_middleware;
 pub mod team_semaphore;
 pub mod team_semaphore_middleware;
 

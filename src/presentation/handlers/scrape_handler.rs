@@ -13,19 +13,21 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::{
-    application::dto::{scrape_request::ScrapeRequestDto, scrape_response::ScrapeResponseDto},
+    application::dto::scrape_request::ScrapeRequestDto,
+    application::dto::scrape_response::{
+        CancelScrapeResponseDto, ScrapeResponseDto, ScrapeResultDto, ScrapeStatusResponseDto,
+    },
     common::constants::crawl_task::MAX_SYNC_WAIT_MS,
     config::settings::Settings,
-    domain::models::task::{Task, TaskType},
+    domain::models::{Task, TaskStatus, TaskType},
     domain::repositories::{
         scrape_result_repository::ScrapeResultRepository, task_repository::TaskRepository,
     },
     domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService},
     infrastructure::cache::redis_client::RedisClient,
-    presentation::handlers::response_builder::errors,
-    presentation::handlers::response_builder::success_response,
+    presentation::handlers::response_builder::{errors, success_response, ApiResponse},
     presentation::handlers::task_handler::handle_sync_wait_and_get_status,
-    presentation::helpers::ssrf_helper::is_internal_url,
+    presentation::helpers::ssrf::is_internal_url,
     presentation::middleware::auth_middleware::AuthState,
     queue::task_queue::TaskQueue,
 };
@@ -59,26 +61,10 @@ pub async fn create_scrape(
     }
 
     // 1. 检查限流
-    match rate_limiting_service
-        .check_rate_limit(&api_key, "/v1/scrape")
-        .await
+    if let Err(response) =
+        check_rate_limit(rate_limiting_service.as_ref(), &api_key, "/v1/scrape").await
     {
-        Ok(RateLimitResult::Denied { reason }) => {
-            return errors::too_many_requests(format!("Rate limit exceeded: {}", reason));
-        }
-        Ok(RateLimitResult::RetryAfter {
-            retry_after_seconds,
-        }) => {
-            return errors::too_many_requests_with_retry(
-                "Rate limit exceeded, please retry later",
-                retry_after_seconds,
-            );
-        }
-        Err(e) => {
-            error!("Rate limiting service error: {}", e);
-            // 降级：如果限流服务出错，允许继续（或根据策略拒绝）
-        }
-        _ => {}
+        return response;
     }
 
     // 2. 检查配额
@@ -86,7 +72,7 @@ pub async fn create_scrape(
         .check_and_deduct_quota(
             team_id,
             1,
-            crate::domain::models::credits::CreditsTransactionType::Scrape,
+            crate::domain::models::CreditsTransactionType::Scrape,
             format!("Scrape URL: {}", payload.url),
             None,
         )
@@ -96,13 +82,29 @@ pub async fn create_scrape(
         return errors::payment_required(e.to_string());
     }
 
-    let task = Task::new(
-        TaskType::Scrape,
+    let now = chrono::Utc::now().naive_utc();
+    let task = Task {
+        id: Uuid::new_v4(),
+        task_type: TaskType::Scrape.to_string(),
+        status: TaskStatus::Queued.to_string(),
+        priority: 0,
         team_id,
-        auth_state.api_key_id,
-        payload.url.clone(),
-        serde_json::to_value(&payload).unwrap_or_default(),
-    );
+        api_key_id: auth_state.api_key_id,
+        url: payload.url.clone(),
+        payload: serde_json::to_value(&payload).unwrap_or_default(),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: now,
+        started_at: None,
+        completed_at: None,
+        crawl_id: None,
+        updated_at: now,
+        lock_token: None,
+        lock_expires_at: None,
+    };
 
     let sync_wait_ms = payload.sync_wait_ms.unwrap_or(0);
 
@@ -124,7 +126,6 @@ pub async fn create_scrape(
             });
 
             let response = ScrapeResponseDto {
-                success: true,
                 id: task.id,
                 url: task.url,
                 credits_used: 1,
@@ -167,13 +168,12 @@ pub async fn cancel_scrape(
 
             // Update task status to cancelled
             match repository.mark_cancelled(id).await {
-                Ok(_) => (
-                    StatusCode::NO_CONTENT,
-                    Json(serde_json::json!({
-                        "success": true
-                    })),
-                )
-                    .into_response(),
+                Ok(_) => {
+                    let response = CancelScrapeResponseDto {
+                        message: "Scrape task cancelled".to_string(),
+                    };
+                    (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
+                }
                 Err(e) => {
                     error!("Failed to cancel task {}: {}", id, e);
                     errors::internal_server_error("Internal server error")
@@ -202,49 +202,51 @@ pub async fn get_scrape_status(
             }
 
             // Fetch scrape result if task is completed
-            let mut result_data = None;
-            if task.status == crate::domain::models::task::TaskStatus::Completed {
+            let result_data = if task.status == TaskStatus::Completed {
                 match result_repository.find_by_task_id(task.id).await {
-                    Ok(Some(result)) => {
-                        result_data = Some(serde_json::json!({
-                            "content": result.content,
-                            "status_code": result.status_code,
-                            "content_type": result.content_type,
-                            "response_time_ms": result.response_time_ms,
-                            "headers": result.headers,
-                            "meta_data": result.meta_data,
-                            "screenshot": result.screenshot,
-                            "created_at": result.created_at
-                        }));
-                    }
+                    Ok(Some(result)) => Some(ScrapeResultDto {
+                        content: result.content,
+                        status_code: result.status_code,
+                        content_type: result.content_type,
+                        response_time_ms: result.response_time_ms,
+                        headers: result.headers,
+                        meta_data: result.meta_data,
+                        screenshot: result.screenshot,
+                        created_at: result.created_at,
+                    }),
                     Ok(None) => {
                         error!("No scrape result found for completed task {}", task.id);
+                        None
                     }
                     Err(e) => {
                         error!("Failed to fetch scrape result for task {}: {}", task.id, e);
-                    }
-                }
-            }
-
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "success": true,
-                    "id": task.id,
-                    "status": task.status,
-                    "url": task.url,
-                    "created_at": task.created_at,
-                    "completed_at": task.completed_at,
-                    "result": result_data,
-                    "metadata": task.payload.get("metadata"), // Include metadata from task payload
-                    "error": if task.status == crate::domain::models::task::TaskStatus::Failed {
-                        task.payload.get("error").and_then(|e| e.as_str()).or(Some("Task failed"))
-                    } else {
                         None
                     }
-                })),
-            )
-                .into_response()
+                }
+            } else {
+                None
+            };
+
+            let response = ScrapeStatusResponseDto {
+                id: task.id,
+                status: task.status,
+                url: task.url,
+                created_at: task.created_at,
+                completed_at: task.completed_at,
+                result: result_data,
+                metadata: task.payload.get("metadata").cloned(),
+                error: if task.status == TaskStatus::Failed {
+                    task.payload
+                        .get("error")
+                        .and_then(|e| e.as_str())
+                        .map(|s| s.to_string())
+                        .or(Some("Task failed".to_string()))
+                } else {
+                    None
+                },
+            };
+
+            (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
         }
         Ok(None) => errors::not_found("Task not found"),
         Err(e) => {

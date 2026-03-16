@@ -5,7 +5,7 @@
 
 use crate::common::constants::server_config;
 use crate::domain::services::audit_service::AuditServiceTrait;
-use crate::presentation::handlers::response_builder::{error_response, success_response};
+use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{
     extract::{Extension, Query},
@@ -13,7 +13,6 @@ use axum::{
     response::IntoResponse,
 };
 use serde::Deserialize;
-use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -23,6 +22,20 @@ pub struct AuditLogsQuery {
     pub offset: Option<u64>,
     pub api_key_id: Option<Uuid>,
     pub team_id: Option<Uuid>,
+}
+
+/// 审计日志响应数据传输对象
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AuditLogsResponseDto<T> {
+    /// 日志列表
+    pub logs: Vec<T>,
+}
+
+/// 拒绝请求响应数据传输对象
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeniedRequestsResponseDto<T> {
+    /// 拒绝请求列表
+    pub denied_requests: Vec<T>,
 }
 
 pub async fn get_audit_logs(
@@ -46,7 +59,10 @@ pub async fn get_audit_logs(
                 .get_logs_for_key(api_key_id, limit, offset)
                 .await
             {
-                Ok(logs) => success_response(StatusCode::OK, json!({ "logs": logs })),
+                Ok(logs) => {
+                    let response = AuditLogsResponseDto { logs };
+                    (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
+                }
                 Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             }
         }
@@ -59,7 +75,10 @@ pub async fn get_audit_logs(
                 .get_logs_for_team(team_id, limit, offset)
                 .await
             {
-                Ok(logs) => success_response(StatusCode::OK, json!({ "logs": logs })),
+                Ok(logs) => {
+                    let response = AuditLogsResponseDto { logs };
+                    (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
+                }
                 Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             }
         }
@@ -68,7 +87,10 @@ pub async fn get_audit_logs(
                 .get_logs_for_key(auth_state.api_key_id, limit, offset)
                 .await
             {
-                Ok(logs) => success_response(StatusCode::OK, json!({ "logs": logs })),
+                Ok(logs) => {
+                    let response = AuditLogsResponseDto { logs };
+                    (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
+                }
                 Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             }
         }
@@ -89,7 +111,12 @@ pub async fn get_denied_requests(
         .get_denied_requests(auth_state.api_key_id, limit)
         .await
     {
-        Ok(logs) => success_response(StatusCode::OK, json!({ "denied_requests": logs })),
+        Ok(logs) => {
+            let response = DeniedRequestsResponseDto {
+                denied_requests: logs,
+            };
+            (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
+        }
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }

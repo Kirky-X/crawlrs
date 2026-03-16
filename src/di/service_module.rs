@@ -13,7 +13,8 @@ use std::sync::Arc;
 use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
 
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
-use crate::di::infrastructure_module::{HttpClientTrait, RedisClientTrait, SettingsTrait};
+use crate::di::database_module::{HttpClientTrait, SettingsTrait};
+use crate::di::cache_module::RedisClientTrait;
 use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
@@ -255,7 +256,7 @@ impl crate::domain::services::rate_limiting_service::QuotaService for RateLimiti
         &self,
         _team_id: uuid::Uuid,
         _amount: i64,
-        _transaction_type: crate::domain::models::credits::CreditsTransactionType,
+        _transaction_type: crate::domain::models::CreditsTransactionType,
         _description: String,
         _reference_id: Option<uuid::Uuid>,
     ) -> Result<(), crate::domain::services::rate_limiting_service::RateLimitingError> {
@@ -279,7 +280,7 @@ impl RateLimitingService for RateLimitingServiceComponent {}
 pub struct TeamServiceComponent {
     /// Geolocation service
     #[shaku(inject)]
-    geolocation_service: Arc<dyn crate::infrastructure::geolocation::GeoLocationServiceTrait>,
+    geolocation_service: Arc<dyn crate::domain::services::geo_location::GeoLocationService>,
     /// Geo restriction repository
     #[shaku(inject)]
     geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
@@ -288,7 +289,7 @@ pub struct TeamServiceComponent {
 impl TeamServiceComponent {
     /// Create a new TeamServiceComponent with explicit dependencies
     pub fn new(
-        geolocation_service: Arc<dyn crate::infrastructure::geolocation::GeoLocationServiceTrait>,
+        geolocation_service: Arc<dyn crate::domain::services::geo_location::GeoLocationService>,
         geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     ) -> Self {
         Self {
@@ -337,7 +338,7 @@ impl crate::domain::services::team_service::TeamServiceTrait for TeamServiceComp
 }
 
 /// Trait for WebhookService component (delegate to WebhookServiceImpl)
-pub trait WebhookServiceTrait: Send + Sync {
+pub trait WebhookServiceTrait: Interface + Send + Sync {
     fn get_service(&self) -> &dyn WebhookService;
 }
 
@@ -360,21 +361,21 @@ impl WebhookServiceComponent {
 impl WebhookService for WebhookServiceComponent {
     async fn send_webhook(
         &self,
-        event: &crate::domain::models::webhook::WebhookEvent,
+        event: &crate::domain::models::WebhookEvent,
     ) -> Result<(), anyhow::Error> {
         self.inner.send_webhook(event).await
     }
 
     async fn trigger_completion(
         &self,
-        task: &crate::domain::models::task::Task,
+        task: &crate::domain::models::Task,
     ) -> Result<(), anyhow::Error> {
         self.inner.trigger_completion(task).await
     }
 
     async fn trigger_failure(
         &self,
-        task: &crate::domain::models::task::Task,
+        task: &crate::domain::models::Task,
         error_msg: String,
     ) -> Result<(), anyhow::Error> {
         self.inner.trigger_failure(task, error_msg).await
@@ -388,7 +389,7 @@ impl WebhookServiceTrait for WebhookServiceComponent {
 }
 
 /// Trait for CreateScrapeUseCase component
-pub trait CreateScrapeUseCaseTraitDI: Send + Sync {
+pub trait CreateScrapeUseCaseTraitDI: Interface + Send + Sync {
     fn get_use_case(&self) -> &dyn CreateScrapeUseCaseTrait;
 }
 
@@ -413,10 +414,10 @@ impl CreateScrapeUseCaseTrait for CreateScrapeUseCaseComponent {
         _request_dto: crate::application::dto::scrape_request::ScrapeRequestDto,
     ) -> Result<
         crate::engines::engine_client::ScrapeResponse,
-        crate::domain::models::task::DomainError,
+        crate::domain::models::DomainError,
     > {
         // Placeholder implementation
-        Err(crate::domain::models::task::DomainError::EngineError(
+        Err(crate::domain::models::DomainError::EngineError(
             "CreateScrapeUseCase not fully implemented".to_string(),
         ))
     }
@@ -429,16 +430,20 @@ impl CreateScrapeUseCaseTraitDI for CreateScrapeUseCaseComponent {
 }
 
 /// Trait for RobotsChecker component
-pub trait RobotsCheckerTraitDI: Send + Sync {
+pub trait RobotsCheckerTraitDI: Interface + Send + Sync {
     fn get_checker(&self) -> &dyn RobotsCheckerTrait;
 }
 
 /// RobotsChecker component
 #[allow(dead_code)]
+#[derive(Component, Default)]
+#[shaku(interface = RobotsCheckerTraitDI)]
 pub struct RobotsCheckerComponent {
     /// HTTP client
+    #[shaku(default)]
     http_client: Arc<reqwest::Client>,
     /// Redis client
+    #[shaku(default)]
     redis_client: Arc<RedisClient>,
 }
 
@@ -474,34 +479,34 @@ impl RobotsCheckerTraitDI for RobotsCheckerComponent {
 
 /// TeamSemaphore component
 #[allow(dead_code)]
+#[derive(Component, Default)]
+#[shaku(interface = TeamSemaphoreTrait)]
 pub struct TeamSemaphoreComponent {
-    /// The actual team semaphore
-    semaphore: Arc<TeamSemaphore>,
     /// Default permits per team
+    #[shaku(default = 100)]
     default_permits: usize,
+    /// The actual team semaphore (optional, created on demand)
+    semaphore: Option<Arc<TeamSemaphore>>,
 }
 
 impl TeamSemaphoreComponent {
     /// Create a new TeamSemaphoreComponent with explicit dependencies
     pub fn new(semaphore: Arc<TeamSemaphore>, default_permits: usize) -> Self {
         Self {
-            semaphore,
+            semaphore: Some(semaphore),
             default_permits,
         }
     }
 
     /// Create with default permits (100)
     pub fn with_defaults() -> Self {
-        Self {
-            semaphore: Arc::new(TeamSemaphore::new(100)),
-            default_permits: 100,
-        }
+        Self::default()
     }
 }
 
 /// Trait for TeamSemaphore component
 #[async_trait::async_trait]
-pub trait TeamSemaphoreTrait: Send + Sync {
+pub trait TeamSemaphoreTrait: Interface + Send + Sync {
     /// Get the semaphore
     fn get_semaphore(&self) -> Arc<TeamSemaphore>;
 }
@@ -509,7 +514,7 @@ pub trait TeamSemaphoreTrait: Send + Sync {
 #[async_trait::async_trait]
 impl TeamSemaphoreTrait for TeamSemaphoreComponent {
     fn get_semaphore(&self) -> Arc<TeamSemaphore> {
-        self.semaphore.clone()
+        self.semaphore.clone().unwrap_or_else(|| Arc::new(TeamSemaphore::new(self.default_permits)))
     }
 }
 
@@ -781,28 +786,28 @@ impl SearchServiceTrait for SearchServiceComponent {
 
 /// GeoLocationService component
 #[derive(Component)]
-#[shaku(interface = crate::infrastructure::geolocation::GeoLocationServiceTrait)]
+#[shaku(interface = crate::domain::services::geo_location::GeoLocationService)]
 pub struct GeoLocationServiceComponent {
     /// HTTP client
     #[shaku(inject)]
-    http_client: Arc<dyn crate::di::infrastructure_module::HttpClientTrait>,
+    http_client: Arc<dyn crate::di::database_module::HttpClientTrait>,
 }
 
 impl GeoLocationServiceComponent {
     /// Create a new GeoLocationServiceComponent with explicit dependencies
-    pub fn new(http_client: Arc<dyn crate::di::infrastructure_module::HttpClientTrait>) -> Self {
+    pub fn new(http_client: Arc<dyn crate::di::database_module::HttpClientTrait>) -> Self {
         Self { http_client }
     }
 }
 
 #[async_trait::async_trait]
-impl crate::infrastructure::geolocation::GeoLocationServiceTrait for GeoLocationServiceComponent {
+impl crate::domain::services::geo_location::GeoLocationService for GeoLocationServiceComponent {
     async fn get_location(
         &self,
         ip: &std::net::IpAddr,
-    ) -> anyhow::Result<crate::infrastructure::geolocation::GeoLocation> {
+    ) -> anyhow::Result<crate::domain::services::geo_location::GeoLocation> {
         let service =
-            crate::infrastructure::geolocation::GeoLocationService::new(self.http_client.get().clone());
+            crate::infrastructure::geolocation::GeoLocationServiceImpl::new(self.http_client.get().clone());
         service.get_location(ip).await
     }
 }

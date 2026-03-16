@@ -20,9 +20,9 @@ use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::config::settings::Settings;
-use crate::domain::models::crawl::CrawlStatus;
+use crate::domain::models::CrawlStatus;
 use crate::domain::models::scrape_result::ScrapeResult;
-use crate::domain::models::task::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
@@ -156,7 +156,7 @@ impl ScrapeWorker {
         let stale_threshold = now - 3600.0; // 1 hour stale
 
         // Get limit - Priority: 1. Task Payload 2. Redis Key 3. Default
-        let payload_limit = if task.task_type == TaskType::Crawl {
+        let payload_limit = if task.task_type == "crawl" {
             task.payload
                 .get("config")
                 .and_then(|c| c.get("max_concurrency"))
@@ -202,7 +202,7 @@ impl ScrapeWorker {
 
         // Check Task Expiration
         if let Some(expires_at) = task.expires_at {
-            if Utc::now() > expires_at {
+            if Utc::now().naive_utc() > expires_at {
                 warn!("Task {} expired at {}", task.id, expires_at);
                 self.repository.mark_failed(task.id).await?;
                 // Trigger failure webhook if needed
@@ -220,8 +220,8 @@ impl ScrapeWorker {
             );
             // Reschedule logic (Backlog)
             // Delay by 30 seconds
-            task.scheduled_at = Some((Utc::now() + chrono::Duration::seconds(30)).into());
-            task.status = TaskStatus::Queued;
+            task.scheduled_at = Some((Utc::now() + chrono::Duration::seconds(30)).naive_utc());
+            task.status = "queued".to_string();
             // Reset attempt count to avoid failing task due to concurrency limits?
             // Or keep it? If we keep it, it might eventually fail.
             // PRD says "Enter backlog". It doesn't imply failure count increment.
@@ -241,10 +241,11 @@ impl ScrapeWorker {
 
         // Take task by value only for the specific branch that needs it
         // This avoids 3 unnecessary clones in the match
-        let result = match task_type {
-            TaskType::Scrape => self.process_scrape_task(task).await,
-            TaskType::Crawl => self.process_crawl_task(task).await,
-            TaskType::Extract => self.process_extract_task(task).await,
+        let result = match task_type.as_str() {
+            "scrape" => self.process_scrape_task(task).await,
+            "crawl" => self.process_crawl_task(task).await,
+            "extract" => self.process_extract_task(task).await,
+            _ => return Err(anyhow::anyhow!("Unknown task type: {}", task_type)),
         };
 
         // Always release permit
@@ -295,7 +296,7 @@ impl ScrapeWorker {
                     meta_data: Value::Null,
                     screenshot: response.screenshot.clone(),
                     response_time_ms: response.response_time_ms,
-                    created_at: Utc::now(),
+                    created_at: Utc::now().naive_utc(),
                 };
 
                 if let Err(e) = self.handle_scrape_success(&task, &response).await {
@@ -328,8 +329,8 @@ impl ScrapeWorker {
                     debug!("Timeout or AllEnginesFailed detected, marking task as failed");
                     // Fetch task to ensure we have latest state
                     if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
-                        t.status = TaskStatus::Failed;
-                        t.completed_at = Some(Utc::now().into());
+                        t.status = "failed".to_string();
+                        t.completed_at = Some(Utc::now().naive_utc());
                         // Add error to payload for tracking
                         let mut payload = t.payload.clone();
                         if let Some(obj) = payload.as_object_mut() {
@@ -761,7 +762,7 @@ impl ScrapeWorker {
 
             self.result_repository.save(scrape_result).await?;
 
-            task.status = TaskStatus::Completed;
+            task.status = "completed".to_string();
             self.repository.update(&task).await?;
 
             self.trigger_webhook(&task, None).await;
@@ -784,21 +785,27 @@ impl ScrapeWorker {
             .await;
 
             // Save results
-            let mut scrape_result = ScrapeResult::new(
-                task.id,
-                url,
-                processed_scrape_resp.status_code,
-                processed_scrape_resp.content,
-                "text/html".to_string(),
-                0,
-            );
+            let now = Utc::now().naive_utc();
+            let mut scrape_result = ScrapeResult {
+                id: Uuid::new_v4(),
+                task_id: task.id,
+                url: url.clone(),
+                status_code: processed_scrape_resp.status_code,
+                content: processed_scrape_resp.content.clone(),
+                content_type: "text/html".to_string(),
+                headers: json!({}),
+                meta_data: json!({}),
+                screenshot: None,
+                response_time_ms: 0,
+                created_at: now,
+            };
             scrape_result.meta_data = json!({
                 "extracted_data": extracted_data
             });
 
             self.result_repository.save(scrape_result).await?;
 
-            task.status = TaskStatus::Completed;
+            task.status = "completed".to_string();
             self.repository.update(&task).await?;
 
             self.trigger_webhook(&task, None).await;
@@ -810,18 +817,24 @@ impl ScrapeWorker {
         // If we reach here, it means we didn't do the direct LLM call above.
         // We could default to empty extraction or error.
 
-        let scrape_result = ScrapeResult::new(
-            task.id,
+        let now = Utc::now().naive_utc();
+        let scrape_result = ScrapeResult {
+            id: Uuid::new_v4(),
+            task_id: task.id,
             url,
-            processed_scrape_resp.status_code,
-            processed_scrape_resp.content,
-            "text/html".to_string(),
-            0,
-        );
-        self.result_repository.save(scrape_result).await?;
+            status_code: processed_scrape_resp.status_code,
+            content: processed_scrape_resp.content,
+            content_type: "text/html".to_string(),
+            headers: json!({}),
+            meta_data: json!({}),
+            screenshot: None,
+            response_time_ms: 0,
+            created_at: now,
+        };
+            self.result_repository.save(scrape_result).await?;
 
-        task.status = TaskStatus::Completed;
-        self.repository.update(&task).await?;
+            task.status = "completed".to_string();
+            self.repository.update(&task).await?;
 
         self.trigger_webhook(&task, None).await;
 
@@ -917,11 +930,11 @@ impl ScrapeWorker {
                 attempt_count: 0,
                 max_retries: 3,
                 scheduled_at: None,
-                created_at: Utc::now().into(),
+                created_at: Utc::now().naive_utc(),
                 started_at: None,
                 completed_at: None,
                 crawl_id: Some(crawl_id),
-                updated_at: Utc::now().into(),
+                updated_at: Utc::now().naive_utc(),
                 lock_token: None,
                 lock_expires_at: None,
                 expires_at: None,
@@ -1025,7 +1038,7 @@ impl ScrapeWorker {
                                 if let Err(e) = self.credits_repository.deduct_credits(
                                     task.team_id,
                                     credits_to_deduct,
-                                    crate::domain::models::credits::CreditsTransactionType::Extract,
+                                    crate::domain::models::CreditsTransactionType::Extract,
                                     format!("Tokens used for extraction ({} tokens)", usage.total_tokens),
                                     Some(task.id),
                                 ).await {
@@ -1210,7 +1223,7 @@ impl ScrapeWorker {
                 .deduct_credits(
                     team_id,
                     extra_credits,
-                    crate::domain::models::credits::CreditsTransactionType::Scrape,
+                    crate::domain::models::CreditsTransactionType::Scrape,
                     format!(
                         "Extra credits for scrape (screenshot/proxy) for task {}",
                         task_id
@@ -1247,7 +1260,7 @@ impl ScrapeWorker {
                     .deduct_credits(
                         team_id,
                         credits_to_deduct,
-                        crate::domain::models::credits::CreditsTransactionType::Extract,
+                        crate::domain::models::CreditsTransactionType::Extract,
                         format!("{} ({} tokens)", description, usage.total_tokens),
                         Some(task_id),
                     )

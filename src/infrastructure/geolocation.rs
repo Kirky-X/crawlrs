@@ -3,6 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! GeoLocation infrastructure implementation
+//!
+//! This module provides the concrete implementation of the GeoLocationService trait
+//! defined in the domain layer. It uses external IP geolocation APIs to resolve
+//! IP addresses to geographic locations.
+
+use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
 use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
@@ -12,43 +19,14 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use tracing::{debug, error, warn};
 
-/// IP地理位置信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeoLocation {
-    /// IP地址
-    pub ip: String,
-    /// 国家代码 (ISO 3166-1 alpha-2)
-    pub country_code: String,
-    /// 国家名称
-    pub country_name: String,
-    /// 地区/州
-    pub region: Option<String>,
-    /// 城市
-    pub city: Option<String>,
-    /// 纬度
-    pub latitude: Option<f64>,
-    /// 经度
-    pub longitude: Option<f64>,
-    /// ISP
-    pub isp: Option<String>,
-    /// 组织
-    pub org: Option<String>,
-}
-
-/// IP地理定位服务Trait
-#[async_trait::async_trait]
-pub trait GeoLocationServiceTrait: shaku::Interface + Send + Sync {
-    async fn get_location(&self, ip: &IpAddr) -> Result<GeoLocation>;
-}
-
-/// IP地理定位服务
-pub struct GeoLocationService {
+/// IP地理定位服务实现
+pub struct GeoLocationServiceImpl {
     /// API端点 (默认为 ipapi.co)
     api_endpoint: String,
     engine_client: Arc<EngineClient>,
 }
 
-impl GeoLocationService {
+impl GeoLocationServiceImpl {
     /// 创建新的地理定位服务实例
     pub fn new(client: Arc<reqwest::Client>) -> Self {
         let engine_client = Self::create_engine_client(client);
@@ -76,7 +54,7 @@ impl GeoLocationService {
 }
 
 #[async_trait::async_trait]
-impl GeoLocationServiceTrait for GeoLocationService {
+impl GeoLocationService for GeoLocationServiceImpl {
     async fn get_location(&self, ip: &IpAddr) -> Result<GeoLocation> {
         let ip_str = ip.to_string();
         debug!("Getting geolocation for IP: {}", ip_str);
@@ -139,7 +117,7 @@ impl GeoLocationServiceTrait for GeoLocationService {
     }
 }
 
-impl GeoLocationService {
+impl GeoLocationServiceImpl {
     /// 批量获取IP地址的地理位置信息
     ///
     /// # 参数
@@ -161,14 +139,7 @@ impl GeoLocationService {
                     // 对于失败的IP，返回一个默认的未知位置
                     results.push(GeoLocation {
                         ip: ip.to_string(),
-                        country_code: "UNKNOWN".to_string(),
-                        country_name: "Unknown".to_string(),
-                        region: None,
-                        city: None,
-                        latitude: None,
-                        longitude: None,
-                        isp: None,
-                        org: None,
+                        ..Default::default()
                     });
                 }
             }

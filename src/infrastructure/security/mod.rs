@@ -16,6 +16,12 @@ use sha2::{Digest, Sha256};
 // 重新导出环境变量安全模块
 pub mod env_var_security;
 
+// 安全 IP 提取模块
+pub mod secure_ip;
+
+// 重新导出常用类型
+pub use secure_ip::{get_secure_client_ip, SecureIpExtractor, TrustedProxyConfig};
+
 /// 安全模块错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum SecurityError {

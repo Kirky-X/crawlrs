@@ -7,7 +7,7 @@
 
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::application::dto::scrape_response::ScrapeResponseDto;
-use crate::domain::models::task::{Task, TaskType};
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -88,13 +88,29 @@ impl<T: TaskRepository, R: ScrapeResultRepository, Cr: CreditsRepository>
     ) -> Result<AsyncScrapeResponse, anyhow::Error> {
         // 创建抓取任务
         let payload = serde_json::to_value(&request.request).unwrap_or_default();
-        let task = Task::new(
-            TaskType::Scrape,
-            request.team_id,
-            request.api_key_id,
-            request.request.url.clone(),
+        let now = chrono::Utc::now().naive_utc();
+        let task = Task {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Scrape.to_string(),
+            status: TaskStatus::Queued.to_string(),
+            priority: 0,
+            team_id: request.team_id,
+            api_key_id: request.api_key_id,
+            url: request.request.url.clone(),
             payload,
-        );
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: now,
+            lock_token: None,
+            lock_expires_at: None,
+        };
 
         self.task_repo.create(&task).await?;
 
@@ -125,13 +141,29 @@ impl<R: ScrapeResultRepository, Cr: CreditsRepository> SyncScrapeUseCase<R, Cr> 
         request: &ScrapeRequestDto,
     ) -> Result<Task, anyhow::Error> {
         let payload = serde_json::to_value(request).unwrap_or_default();
-        let task = Task::new(
-            TaskType::Scrape,
+        let now = chrono::Utc::now().naive_utc();
+        let task = Task {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Scrape.to_string(),
+            status: TaskStatus::Queued.to_string(),
+            priority: 0,
             team_id,
             api_key_id,
-            request.url.clone(),
+            url: request.url.clone(),
             payload,
-        );
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: now,
+            lock_token: None,
+            lock_expires_at: None,
+        };
 
         Ok(task)
     }

@@ -8,7 +8,7 @@
 //! Provides unified credit deduction and management for scraping operations.
 //! Consolidates credits logic from scrape_worker.
 
-use crate::domain::models::credits::CreditsTransactionType;
+use crate::domain::models::CreditsTransactionType;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use std::sync::Arc;
 use tracing::info;

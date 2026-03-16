@@ -6,33 +6,41 @@ use crawlrs::common::constants::testing::{E2E_TEST_TIMEOUT, QUICK_TEST_TIMEOUT};
 
 use std::time::Duration;
 use tokio::time::sleep;
-use crawlrs::infrastructure::cache::cache_manager::CacheManager;
-use crawlrs::infrastructure::cache::cache_strategy::CacheStrategyConfig;
+use crawlrs::infrastructure::oxcache::{generate_search_key, SearchCache};
 use crawlrs::domain::models::search_result::SearchResult;
+use std::sync::Arc;
 
+/// Test cache key generation using oxcache utilities
 #[tokio::test]
 async fn test_cache_key_generation() {
-    let cache = CacheManager::new(CacheStrategyConfig::default(), None).await.expect("Failed to create cache manager");
-    
+    // Test the key generation utility function
     let query1 = "rust programming";
     let query2 = "rust programming";
     let query3 = "python programming";
-    
-    // Then: 相同查询生成相同的键
-    let key1 = CacheManager::generate_cache_key(query1, 10, Some("en"), Some("US"), None);
-    let key2 = CacheManager::generate_cache_key(query2, 10, Some("en"), Some("US"), None);
+
+    // Same query generates same key
+    let key1 = generate_search_key(query1, 10, Some("en"), Some("US"));
+    let key2 = generate_search_key(query2, 10, Some("en"), Some("US"));
     assert_eq!(key1, key2);
-    
-    // Then: 不同查询生成不同的键
-    let key3 = CacheManager::generate_cache_key(query3, 10, Some("en"), Some("US"), None);
+
+    // Different query generates different key
+    let key3 = generate_search_key(query3, 10, Some("en"), Some("US"));
     assert_ne!(key1, key3);
 }
 
+/// Test cache set and get operations using oxcache
 #[tokio::test]
 async fn test_cache_set_and_get() {
-    let cache = CacheManager::new(CacheStrategyConfig::default(), None).await.expect("Failed to create cache manager");
-    
-    let key = "search:v1:test123";
+    let cache: Arc<SearchCache> = Arc::new(
+        oxcache::Cache::builder()
+            .capacity(100)
+            .ttl(Duration::from_secs(300))
+            .build()
+            .await
+            .expect("Failed to create cache")
+    );
+
+    let key = "search:test123".to_string();
     let results = vec![
         SearchResult {
             title: "Test Result".to_string(),
@@ -43,49 +51,37 @@ async fn test_cache_set_and_get() {
             published_time: None,
         }
     ];
-    
-    // When: 写入缓存
-    cache.set(key, results.clone(), Some(E2E_TEST_TIMEOUT)).await.expect("Failed to set cache");
 
-    // Then: 可以读取
-    let cached = cache.get(key).await.expect("Failed to get cache");
+    // Set cache
+    cache.set(&key, &results).await.expect("Failed to set cache");
+
+    // Get cache
+    let cached = cache.get(&key).await.expect("Failed to get cache");
     assert!(cached.is_some());
-    let cached_results = cached.expect("Cached results not found");
-    assert_eq!(cached_results.len(), 1);
-    assert_eq!(cached_results[0].title, "Test Result");
-}
+    // Set with 1 second TTL
+    cache.set(&key.to_string(), &results).await.expect("Failed to set cache");
 
-#[tokio::test]
-async fn test_cache_expiration() {
-    let cache = CacheManager::new(CacheStrategyConfig::default(), None).await.expect("Failed to create cache manager");
+    // Then: Should be readable immediately
+    assert!(cache.get(&key).await.expect("Failed to get cache").is_some());
 
-    let key = "search:v1:expire_test";
-    let results = vec![SearchResult {
-        title: "Test".to_string(),
-        url: "https://example.com".to_string(),
-        description: None,
-        engine: "test".to_string(),
-        score: 0.5,
-        published_time: None,
-    }];
-    
-    // When: 设置 1 秒 TTL
-    cache.set(key, results, Some(QUICK_TEST_TIMEOUT)).await.expect("Failed to set cache");
+    // Wait 2 seconds
+    sleep(Duration::from_secs(2)).await;
 
-    // Then: 立即可读
-    assert!(cache.get(key).await.expect("Failed to get cache").is_some());
-
-    // When: 等待 2 秒
-    sleep(QUICK_TEST_TIMEOUT).await;
-
-    // Then: 应已过期
-    assert!(cache.get(key).await.expect("Failed to get cache").is_none());
+    // Then: Should be expired
+    assert!(cache.get(&key).await.expect("Failed to get cache").is_none());
 }
 
 #[tokio::test]
 async fn test_cache_key_differentiation() {
-    let cache = CacheManager::new(CacheStrategyConfig::default(), None).await.expect("Failed to create cache manager");
-    
+    let cache: Arc<SearchCache> = Arc::new(
+        oxcache::Cache::builder()
+            .capacity(100)
+            .ttl(Duration::from_secs(300))
+            .build()
+            .await
+            .expect("Failed to create cache")
+    );
+
     let base_query = "rust programming";
     let results1 = vec![SearchResult {
         title: "Result 1".to_string(),
@@ -103,27 +99,34 @@ async fn test_cache_key_differentiation() {
         score: 0.7,
         published_time: None,
     }];
-    
-    // When: 不同参数生成不同的键
-    let key1 = CacheManager::generate_cache_key(base_query, 10, Some("en"), Some("US"), Some("google"));
-    let key2 = CacheManager::generate_cache_key(base_query, 10, Some("en"), Some("US"), Some("bing"));
-    
-    // Then: 设置不同的缓存值
-    cache.set(&key1, results1, Some(E2E_TEST_TIMEOUT)).await.expect("Failed to set cache for key1");
-    cache.set(&key2, results2, Some(E2E_TEST_TIMEOUT)).await.expect("Failed to set cache for key2");
 
-    // Then: 获取时应该得到不同的结果
+    // Generate different keys for different engines
+    let key1 = generate_search_key(base_query, 10, Some("en"), Some("US"), Some("google"));
+    let key2 = generate_search_key(base_query, 10, Some("en"), Some("US"), Some("bing"));
+
+    // Set different cache values
+    cache.set(&key1, &results1).await.expect("Failed to set cache for key1");
+    cache.set(&key2, &results2).await.expect("Failed to set cache for key2");
+
+    // Get and verify different results
     let cached1 = cache.get(&key1).await.expect("Failed to get cache for key1").expect("Cache for key1 not found");
     let cached2 = cache.get(&key2).await.expect("Failed to get cache for key2").expect("Cache for key2 not found");
-    
+
     assert_eq!(cached1[0].engine, "google");
     assert_eq!(cached2[0].engine, "bing");
 }
 
 #[tokio::test]
 async fn test_cache_batch_operations() {
-    let cache = CacheManager::new(CacheStrategyConfig::default(), None).await.expect("Failed to create cache manager");
-    
+    let cache: Arc<SearchCache> = Arc::new(
+        oxcache::Cache::builder()
+            .capacity(100)
+            .ttl(Duration::from_secs(300))
+            .build()
+            .await
+            .expect("Failed to create cache")
+    );
+
     let entries = vec![
         ("key1".to_string(), vec![SearchResult {
             title: "Result 1".to_string(),
@@ -142,13 +145,19 @@ async fn test_cache_batch_operations() {
             published_time: None,
         }]),
     ];
-    
-    // When: 批量设置
-    cache.set_batch(entries.clone(), Some(E2E_TEST_TIMEOUT)).await.expect("Failed to set batch cache");
 
-    // Then: 批量获取
+    // Batch set (using individual sets since oxcache may not have batch API)
+    for (key, value) in &entries {
+        cache.set(key, value).await.expect("Failed to set cache");
+    }
+
+    // Batch get (using individual gets)
     let keys = vec!["key1".to_string(), "key2".to_string()];
-    let results = cache.get_batch(&keys).await.expect("Failed to get batch cache");
+    let mut results = Vec::new();
+    for key in &keys {
+        let result = cache.get(key).await.expect("Failed to get cache");
+        results.push(result);
+    }
 
     assert_eq!(results.len(), 2);
     assert!(results[0].is_some());

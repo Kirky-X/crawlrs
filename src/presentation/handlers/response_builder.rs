@@ -14,7 +14,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 /// Unified API response wrapper
 ///
@@ -132,6 +131,35 @@ pub struct ApiError {
     pub message: String,
 }
 
+/// Rate limit error response with retry information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitErrorResponse {
+    /// Whether the request was successful
+    pub success: bool,
+    /// Error details
+    pub error: ApiError,
+    /// Seconds to wait before retrying
+    pub retry_after_seconds: u64,
+    /// Response timestamp in RFC3339 format
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+}
+
+impl RateLimitErrorResponse {
+    /// Create a new rate limit error response
+    pub fn new(message: impl Into<String>, retry_after_seconds: u64) -> Self {
+        Self {
+            success: false,
+            error: ApiError {
+                code: error_codes::RATE_LIMITED.to_string(),
+                message: message.into(),
+            },
+            retry_after_seconds,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        }
+    }
+}
+
 impl<T: Serialize> IntoResponse for ApiResponse<T> {
     fn into_response(self) -> Response {
         let status = if self.success {
@@ -154,61 +182,52 @@ impl<T: Serialize> IntoResponse for ApiResponse<T> {
     }
 }
 
-/// Standard API error response
+/// Standard API error response using ApiResponse
 #[inline]
 pub fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
-    (
-        status,
-        Json(json!({
-            "success": false,
-            "error": message.into()
-        })),
-    )
-        .into_response()
+    // Infer error code from status code
+    let code = match status {
+        StatusCode::BAD_REQUEST => error_codes::VALIDATION_ERROR,
+        StatusCode::NOT_FOUND => error_codes::NOT_FOUND,
+        StatusCode::UNAUTHORIZED => error_codes::UNAUTHORIZED,
+        StatusCode::FORBIDDEN => error_codes::FORBIDDEN,
+        StatusCode::TOO_MANY_REQUESTS => error_codes::RATE_LIMITED,
+        StatusCode::CONFLICT => error_codes::CONFLICT,
+        StatusCode::PRECONDITION_FAILED => error_codes::PRECONDITION_FAILED,
+        StatusCode::UNPROCESSABLE_ENTITY => error_codes::UNPROCESSABLE_ENTITY,
+        StatusCode::SERVICE_UNAVAILABLE => error_codes::SERVICE_UNAVAILABLE,
+        StatusCode::PAYMENT_REQUIRED => error_codes::QUOTA_EXCEEDED,
+        _ => error_codes::INTERNAL_ERROR,
+    };
+    let response: ApiResponse<()> = ApiResponse::error(code, message);
+    (status, Json(response)).into_response()
 }
 
-/// API error response with error code
+/// API error response with error code using ApiResponse
 #[inline]
 pub fn error_response_with_code(
     status: StatusCode,
     code: impl Into<String>,
     message: impl Into<String>,
 ) -> Response {
-    (
-        status,
-        Json(json!({
-            "success": false,
-            "error": {
-                "code": code.into(),
-                "message": message.into()
-            }
-        })),
-    )
-        .into_response()
+    let response: ApiResponse<()> = ApiResponse::error(code, message);
+    (status, Json(response)).into_response()
 }
 
-/// Standard success response with data
+/// Standard success response with data using ApiResponse
 #[inline]
 pub fn success_response<T: serde::Serialize>(status: StatusCode, data: T) -> Response {
-    (status, Json(json!({ "success": true, "data": data }))).into_response()
+    (status, Json(ApiResponse::success(data))).into_response()
 }
 
-/// Success response with metadata
+/// Success response with metadata using ApiResponse
 #[inline]
-pub fn success_response_with_meta<T: serde::Serialize, M: serde::Serialize>(
+pub fn success_response_with_meta<T: serde::Serialize>(
     status: StatusCode,
     data: T,
-    meta: M,
+    meta: PaginationMeta,
 ) -> Response {
-    (
-        status,
-        Json(json!({
-            "success": true,
-            "data": data,
-            "meta": meta
-        })),
-    )
-        .into_response()
+    (status, Json(ApiResponse::success_with_meta(data, meta))).into_response()
 }
 
 /// Common error responses for quick access
@@ -251,7 +270,7 @@ pub mod errors {
         error_response(StatusCode::TOO_MANY_REQUESTS, message)
     }
 
-    /// Too many requests error response with retry_after
+    /// Too many requests error response with retry_after using RateLimitErrorResponse
     #[inline]
     pub fn too_many_requests_with_retry(
         message: impl Into<String>,
@@ -259,11 +278,7 @@ pub mod errors {
     ) -> Response {
         (
             StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "success": false,
-                "error": message.into(),
-                "retry_after_seconds": retry_after_seconds
-            })),
+            Json(RateLimitErrorResponse::new(message, retry_after_seconds)),
         )
             .into_response()
     }

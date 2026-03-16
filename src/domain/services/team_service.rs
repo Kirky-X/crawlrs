@@ -4,7 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
-use crate::infrastructure::geolocation::{is_ip_in_cidr, GeoLocationServiceTrait};
+use crate::domain::services::geo_location::{is_ip_in_cidr, GeoLocationService};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -47,13 +47,13 @@ pub trait TeamServiceTrait: shaku::Interface + Send + Sync {
 }
 
 pub struct TeamService {
-    geolocation_service: Arc<dyn GeoLocationServiceTrait>,
+    geolocation_service: Arc<dyn GeoLocationService>,
     geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 
 impl TeamService {
     pub fn new(
-        geolocation_service: Arc<dyn GeoLocationServiceTrait>,
+        geolocation_service: Arc<dyn GeoLocationService>,
         geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     ) -> Self {
         Self {

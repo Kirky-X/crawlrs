@@ -3,23 +3,26 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::webhook::Webhook;
+//! Webhook repository implementation using Sea-ORM with Mapper
+
+use crate::domain::models::Webhook;
 use crate::domain::repositories::task_repository::RepositoryError;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::infrastructure::database::entities::webhook;
+use crate::infrastructure::persistence::mappers::WebhookMapper;
 use async_trait::async_trait;
-use sea_orm::*;
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Webhook仓库实现
+/// Webhook repository implementation
 #[derive(Clone)]
 pub struct WebhookRepoImpl {
     db: Arc<DatabaseConnection>,
 }
 
 impl WebhookRepoImpl {
-    /// 创建新的Webhook仓库实现
+    /// Create new webhook repository instance
     pub fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
     }
@@ -28,42 +31,33 @@ impl WebhookRepoImpl {
 #[async_trait]
 impl WebhookRepository for WebhookRepoImpl {
     async fn create(&self, webhook: &Webhook) -> Result<Webhook, RepositoryError> {
-        let model = webhook::ActiveModel {
-            id: Set(webhook.id),
-            team_id: Set(webhook.team_id),
-            url: Set(webhook.url.clone()),
-            created_at: Set(webhook.created_at.into()),
-        };
+        let entity = WebhookMapper::to_entity(webhook);
+        let active_model = webhook::ActiveModel::from(entity);
 
-        model.insert(self.db.as_ref()).await?;
+        active_model
+            .insert(self.db.as_ref())
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         Ok(webhook.clone())
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
-        let model = webhook::Entity::find_by_id(id)
+        let entity = webhook::Entity::find_by_id(id)
             .one(self.db.as_ref())
-            .await?;
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        Ok(model.map(Into::into))
+        Ok(entity.map(WebhookMapper::to_domain))
     }
 
     async fn find_by_team_id(&self, team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
-        let models = webhook::Entity::find()
+        let entities = webhook::Entity::find()
             .filter(webhook::Column::TeamId.eq(team_id))
             .all(self.db.as_ref())
-            .await?;
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        Ok(models.into_iter().map(Into::into).collect())
-    }
-}
-
-impl From<webhook::Model> for Webhook {
-    fn from(model: webhook::Model) -> Self {
-        Self {
-            id: model.id,
-            team_id: model.team_id,
-            url: model.url,
-            created_at: model.created_at.into(),
-        }
+        Ok(WebhookMapper::to_domain_list(entities))
     }
 }

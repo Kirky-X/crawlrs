@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::webhook::Webhook;
+use crate::domain::models::Webhook;
 use crate::domain::repositories::task_repository::RepositoryError;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use std::sync::Arc;
@@ -19,7 +19,13 @@ impl<R: WebhookRepository> CreateWebhookUseCase<R> {
     }
 
     pub async fn execute(&self, team_id: Uuid, url: String) -> Result<Webhook, RepositoryError> {
-        let webhook = Webhook::new(team_id, url);
+        let now = chrono::Utc::now().naive_utc();
+        let webhook = Webhook {
+            id: Uuid::new_v4(),
+            team_id,
+            url,
+            created_at: now,
+        };
         self.repo.create(&webhook).await?;
         Ok(webhook)
     }

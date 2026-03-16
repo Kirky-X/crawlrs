@@ -12,7 +12,7 @@ const HIGH_LOAD_THRESHOLD: f64 = 0.8;
 const MEDIUM_LOAD_THRESHOLD: f64 = 0.6;
 const MEDIUM_LOAD_DEPTH_FACTOR: f64 = 0.75;
 
-use crate::domain::models::task::{DomainError, Task, TaskStatus};
+use crate::domain::models::{DomainError, Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::utils::robots::RobotsCheckerTrait;
 use anyhow::Result;
@@ -306,7 +306,7 @@ impl CrawlService {
         };
 
         let scheduled_at = if delay_ms > 0 {
-            Some((Utc::now() + chrono::Duration::milliseconds(delay_ms as i64)).into())
+            Some((Utc::now() + chrono::Duration::milliseconds(delay_ms as i64)).naive_utc())
         } else {
             None
         };
@@ -324,11 +324,11 @@ impl CrawlService {
             attempt_count: 0,
             max_retries: parent_task.max_retries,
             scheduled_at,
-            created_at: Utc::now().into(),
+            created_at: Utc::now().naive_utc(),
             started_at: None,
             completed_at: None,
             crawl_id: parent_task.crawl_id,
-            updated_at: Utc::now().into(),
+            updated_at: Utc::now().naive_utc(),
             lock_token: None,
             lock_expires_at: None,
             expires_at: parent_task.expires_at,

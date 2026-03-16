@@ -1,0 +1,157 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0
+// See LICENSE file in the project root for full license information.
+
+//! Webhook Mapper - converts between Webhook domain model and database entity
+
+use crate::domain::models::{Webhook, WebhookEvent, WebhookEventType, WebhookStatus};
+use crate::infrastructure::database::entities::{webhook, webhook_event};
+
+/// Mapper for converting between Webhook domain model and database entity
+pub struct WebhookMapper;
+
+impl WebhookMapper {
+    /// Convert database entity to domain model
+    pub fn to_domain(entity: webhook::Model) -> Webhook {
+        Webhook {
+            id: entity.id,
+            team_id: entity.team_id,
+            url: entity.url,
+            created_at: entity.created_at.with_timezone(&chrono::Utc),
+        }
+    }
+
+    /// Convert domain model to database entity
+    pub fn to_entity(domain: &Webhook) -> webhook::Model {
+        webhook::Model {
+            id: domain.id,
+            team_id: domain.team_id,
+            url: domain.url.clone(),
+            created_at: domain.created_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
+        }
+    }
+
+    /// Convert multiple entities to domain models
+    pub fn to_domain_list(entities: Vec<webhook::Model>) -> Vec<Webhook> {
+        entities.into_iter().map(Self::to_domain).collect()
+    }
+}
+
+/// Mapper for converting between WebhookEvent domain model and database entity
+pub struct WebhookEventMapper;
+
+impl WebhookEventMapper {
+    /// Convert database entity to domain model
+    pub fn to_domain(entity: webhook_event::Model) -> WebhookEvent {
+        WebhookEvent::with_all_fields(
+            entity.id,
+            entity.team_id,
+            entity.webhook_id,
+            Self::parse_event_type(&entity.event_type),
+            entity.payload,
+            entity.webhook_url,
+            Self::parse_status(&entity.status),
+            entity.attempt_count,
+            entity.max_retries,
+            entity.response_status,
+            entity.response_body,
+            entity.error_message,
+            entity.next_retry_at.map(|dt| dt.with_timezone(&chrono::Utc)),
+            entity.created_at.with_timezone(&chrono::Utc),
+            entity.updated_at.with_timezone(&chrono::Utc),
+            entity.delivered_at.map(|dt| dt.with_timezone(&chrono::Utc)),
+        )
+    }
+
+    /// Convert domain model to database entity
+    pub fn to_entity(domain: &WebhookEvent) -> webhook_event::Model {
+        webhook_event::Model {
+            id: domain.id,
+            team_id: domain.team_id,
+            webhook_id: domain.webhook_id,
+            event_type: domain.event_type.to_string(),
+            payload: domain.payload.clone(),
+            webhook_url: domain.webhook_url.clone(),
+            status: domain.status.to_string(),
+            attempt_count: domain.attempt_count,
+            max_retries: domain.max_retries,
+            response_status: domain.response_status,
+            response_body: domain.response_body.clone(),
+            error_message: domain.error_message.clone(),
+            next_retry_at: domain.next_retry_at.map(|dt| dt.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
+            created_at: domain.created_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
+            updated_at: domain.updated_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
+            delivered_at: domain.delivered_at.map(|dt| dt.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
+        }
+    }
+
+    /// Convert multiple entities to domain models
+    pub fn to_domain_list(entities: Vec<webhook_event::Model>) -> Vec<WebhookEvent> {
+        entities.into_iter().map(Self::to_domain).collect()
+    }
+
+    /// Parse event type from string
+    fn parse_event_type(s: &str) -> WebhookEventType {
+        s.parse().unwrap_or(WebhookEventType::Custom(s.to_string()))
+    }
+
+    /// Parse status from string
+    fn parse_status(s: &str) -> WebhookStatus {
+        s.parse().unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_webhook_mapper_roundtrip() {
+        let now = Utc::now();
+        let domain = Webhook {
+            id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            url: "https://example.com/webhook".to_string(),
+            created_at: now,
+        };
+
+        let entity = WebhookMapper::to_entity(&domain);
+        let back_to_domain = WebhookMapper::to_domain(entity);
+
+        assert_eq!(domain.id, back_to_domain.id);
+        assert_eq!(domain.url, back_to_domain.url);
+    }
+
+    #[test]
+    fn test_webhook_event_mapper_roundtrip() {
+        let now = Utc::now();
+        let domain = WebhookEvent::with_all_fields(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            WebhookEventType::CrawlCompleted,
+            serde_json::json!({"test": "data"}),
+            "https://example.com/webhook".to_string(),
+            WebhookStatus::Pending,
+            0,
+            5,
+            None,
+            None,
+            None,
+            None,
+            now,
+            now,
+            None,
+        );
+
+        let entity = WebhookEventMapper::to_entity(&domain);
+        let back_to_domain = WebhookEventMapper::to_domain(entity);
+
+        assert_eq!(domain.id, back_to_domain.id);
+        assert_eq!(domain.event_type, back_to_domain.event_type);
+        assert_eq!(domain.status, back_to_domain.status);
+    }
+}

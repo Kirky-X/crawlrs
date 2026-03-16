@@ -3,14 +3,18 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use dbnexus::{db_crud, db_permission};
 use sea_orm::entity::prelude::*;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// 爬取任务数据库实体模型
 ///
 /// 对应数据库中的 crawls 表，存储爬取任务的基本信息和状态
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "crawls")]
+#[db_crud(table_name = "crawls")]
+#[db_permission(roles = ["admin", "scraper"], operations = ["SELECT", "INSERT", "UPDATE", "DELETE"])]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
@@ -23,9 +27,9 @@ pub struct Model {
     pub total_tasks: i32,
     pub completed_tasks: i32,
     pub failed_tasks: i32,
-    pub created_at: ChronoDateTimeWithTimeZone,
-    pub updated_at: ChronoDateTimeWithTimeZone,
-    pub completed_at: Option<ChronoDateTimeWithTimeZone>,
+    pub created_at: ChronoDateTime,
+    pub updated_at: ChronoDateTime,
+    pub completed_at: Option<ChronoDateTime>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

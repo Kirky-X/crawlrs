@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 #[config(env_prefix = "CRAWLRS__DATABASE__")]
 pub struct DatabaseSettings {
     /// 数据库连接URL (敏感信息)
+    #[config(sensitive)]
     pub(crate) url: String,
 
     /// 最大连接数
@@ -76,21 +77,6 @@ impl DatabaseSettings {
     }
 }
 
-impl std::fmt::Debug for DatabaseSettings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DatabaseSettings")
-            .field("url", &"[REDACTED]")
-            .field("max_connections", &self.max_connections)
-            .field("min_connections", &self.min_connections)
-            .field("connect_timeout", &self.connect_timeout)
-            .field("idle_timeout", &self.idle_timeout)
-            .field("max_lifetime", &self.max_lifetime)
-            .field("connection_keepalive", &self.connection_keepalive)
-            .field("health_check_interval", &self.health_check_interval)
-            .finish()
-    }
-}
-
 /// Redis配置设置
 ///
 /// 配置 Redis 连接参数
@@ -107,6 +93,7 @@ impl std::fmt::Debug for DatabaseSettings {
 #[config(env_prefix = "CRAWLRS__REDIS__")]
 pub struct RedisSettings {
     /// Redis连接URL (敏感信息)
+    #[config(sensitive)]
     pub(crate) url: String,
 }
 
@@ -119,14 +106,6 @@ impl RedisSettings {
     /// 不要记录到日志或暴露给用户。
     pub fn url(&self) -> &str {
         &self.url
-    }
-}
-
-impl std::fmt::Debug for RedisSettings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RedisSettings")
-            .field("url", &"[REDACTED]")
-            .finish()
     }
 }
 
@@ -218,7 +197,11 @@ mod tests {
         let count = WorkerCount::Auto("auto".to_string());
         let resolved = count.resolve();
         // Auto 模式应该返回大于 0 的值（基于 CPU 核心数）
-        assert!(resolved > 0, "Auto mode should return positive value, got {}", resolved);
+        assert!(
+            resolved > 0,
+            "Auto mode should return positive value, got {}",
+            resolved
+        );
     }
 
     #[test]
@@ -226,7 +209,7 @@ mod tests {
         let count = WorkerCount::default();
         // 默认应该是 Auto 模式
         match count {
-            WorkerCount::Auto(_) => {}, // 正确
+            WorkerCount::Auto(_) => {} // 正确
             WorkerCount::Fixed(n) => panic!("Expected Auto, got Fixed({})", n),
         }
     }

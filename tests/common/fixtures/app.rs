@@ -28,7 +28,7 @@ use tower::Service;
 use uuid::Uuid;
 
 use crawlrs::config::settings::Settings;
-use figment::{Figment, providers::{Env, Format, Toml}};
+use confers::{Config, File, Environment};
 #[cfg(feature = "engine-playwright")]
 use crawlrs::engines::client::playwright::PlaywrightEngine;
 #[cfg(feature = "engine-reqwest")]
@@ -459,12 +459,7 @@ fn create_router(
     // 在测试环境中创建 Settings
     let settings = {
         // 直接使用项目的测试配置文件
-        let figment = Figment::new()
-            .merge(Toml::file("config/test.toml"))
-            .merge(Toml::file("config/default.toml"))
-            .merge(Env::prefixed("CRAWLRS_").split("_"));
-
-        let settings: Settings = figment.extract().expect("Failed to build test settings");
+        let settings: Settings = Settings::load().expect("Failed to build test settings");
         Arc::new(settings)
     };
     let queue: Arc<dyn crawlrs::queue::task_queue::TaskQueue> = Arc::new(
@@ -497,8 +492,8 @@ fn create_router(
             get(handlers::scrape_handler::get_scrape_status),
         )
         .route(
-            "/v1/scrape/{id}",
-            delete(handlers::scrape_handler::cancel_scrape),
+            "/v1/scrape/{id}/_cancel",
+            post(handlers::scrape_handler::cancel_scrape),
         )
         .route(
             "/v1/extract",
@@ -519,8 +514,8 @@ fn create_router(
             get(handlers::crawl_handler::get_crawl_results),
         )
         .route(
-            "/v1/crawl/{id}",
-            delete(handlers::crawl_handler::cancel_crawl),
+            "/v1/crawl/{id}/_cancel",
+            post(handlers::crawl_handler::cancel_crawl),
         )
         .route("/v1/search", post(handlers::search_handler::search))
         .route(

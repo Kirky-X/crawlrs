@@ -948,3 +948,187 @@ async fn test_find_by_crawl_id() {
         .expect("Failed to find tasks by crawl ID");
     assert!(no_tasks.is_empty());
 }
+
+/// 测试批量 URL 存在性检查 (N+1 查询优化验证)
+///
+/// 验证 find_existing_urls 方法使用单个 IN 查询批量检查 URL 是否存在，
+/// 而不是循环执行多次查询。
+///
+/// 对应文档章节：3.3.10
+#[tokio::test]
+async fn test_find_existing_urls_batch() {
+    let app = create_test_app().await;
+    let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
+    let team_id = app.team_id;
+
+    // 使用唯一前缀避免数据冲突
+    let unique_prefix = Uuid::new_v4().to_string();
+
+    // 创建 10 个任务
+    let mut created_urls = Vec::new();
+    for i in 0..10 {
+        let url = format!("https://{}.example.com/batch/{}", unique_prefix, i);
+        let task = Task {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Scrape,
+            status: TaskStatus::Queued,
+            priority: 0,
+            team_id,
+            api_key_id: app.api_key_id,
+            url: url.clone(),
+            payload: serde_json::json!({}),
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: Utc::now().into(),
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: Utc::now().into(),
+            lock_token: None,
+            lock_expires_at: None,
+        };
+        repo.create(&task).await.expect("Failed to create task");
+        created_urls.push(url);
+    }
+
+    // 测试 1: 检查存在的 URL
+    let existing_urls = repo
+        .find_existing_urls(&created_urls)
+        .await
+        .expect("Failed to find existing URLs");
+    
+    // 验证所有创建的 URL 都被找到
+    assert_eq!(existing_urls.len(), 10, "Should find all 10 existing URLs");
+    for url in &created_urls {
+        assert!(
+            existing_urls.contains(url),
+            "URL {} should be in existing URLs",
+            url
+        );
+    }
+
+    // 测试 2: 混合存在和不存在的 URL
+    let mut mixed_urls = created_urls.clone();
+    mixed_urls.push(format!("https://{}.example.com/nonexistent/1", unique_prefix));
+    mixed_urls.push(format!("https://{}.example.com/nonexistent/2", unique_prefix));
+
+    let existing_mixed = repo
+        .find_existing_urls(&mixed_urls)
+        .await
+        .expect("Failed to find existing URLs");
+    
+    assert_eq!(
+        existing_mixed.len(), 10,
+        "Should find exactly 10 existing URLs from 12 total"
+    );
+
+    // 测试 3: 空列表
+    let empty_result = repo
+        .find_existing_urls(&[])
+        .await
+        .expect("Failed to handle empty URL list");
+    assert!(empty_result.is_empty(), "Empty input should return empty result");
+
+    // 测试 4: 全部不存在的 URL
+    let nonexistent_urls: Vec<String> = (0..5)
+        .map(|i| format!("https://{}.example.com/nonexistent/{}", unique_prefix, i))
+        .collect();
+    
+    let existing_nonexistent = repo
+        .find_existing_urls(&nonexistent_urls)
+        .await
+        .expect("Failed to find existing URLs");
+    
+    assert!(
+        existing_nonexistent.is_empty(),
+        "Should find no existing URLs"
+    );
+
+    // 清理测试创建的任务
+    task_entity::Entity::delete_many()
+        .filter(task_entity::Column::TeamId.eq(team_id))
+        .exec(app.db_pool.as_ref())
+        .await
+        .ok();
+}
+
+/// 测试批量 URL 查询性能
+///
+/// 验证批量查询在大数据量下的性能表现。
+/// 通过时间测量确保使用单个 IN 查询而非 N 次查询。
+///
+/// 对应文档章节：3.3.11
+#[tokio::test]
+async fn test_find_existing_urls_performance() {
+    let app = create_test_app().await;
+    let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
+    let team_id = app.team_id;
+
+    // 使用唯一前缀避免数据冲突
+    let unique_prefix = Uuid::new_v4().to_string();
+
+    // 创建 50 个任务用于性能测试
+    let mut created_urls = Vec::new();
+    for i in 0..50 {
+        let url = format!("https://{}.example.com/perf/{}", unique_prefix, i);
+        let task = Task {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Scrape,
+            status: TaskStatus::Queued,
+            priority: 0,
+            team_id,
+            api_key_id: app.api_key_id,
+            url: url.clone(),
+            payload: serde_json::json!({}),
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: Utc::now().into(),
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: Utc::now().into(),
+            lock_token: None,
+            lock_expires_at: None,
+        };
+        repo.create(&task).await.expect("Failed to create task");
+        created_urls.push(url);
+    }
+
+    // 测量批量查询时间
+    let start = std::time::Instant::now();
+    let existing_urls = repo
+        .find_existing_urls(&created_urls)
+        .await
+        .expect("Failed to find existing URLs");
+    let duration = start.elapsed();
+
+    // 验证结果正确性
+    assert_eq!(existing_urls.len(), 50, "Should find all 50 existing URLs");
+
+    // 性能断言：批量查询 50 个 URL 应该在合理时间内完成
+    // 使用 IN 查询应该在 1 秒内完成（实际应该更快）
+    // 如果是 N+1 查询，50 次查询可能需要更长时间
+    assert!(
+        duration.as_millis() < 1000,
+        "Batch query should complete in under 1 second, took {:?}",
+        duration
+    );
+
+    println!(
+        "Batch query for 50 URLs took {:?} (optimized with IN query)",
+        duration
+    );
+
+    // 清理测试创建的任务
+    task_entity::Entity::delete_many()
+        .filter(task_entity::Column::TeamId.eq(team_id))
+        .exec(app.db_pool.as_ref())
+        .await
+        .ok();
+}

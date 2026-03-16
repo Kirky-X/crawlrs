@@ -3,11 +3,20 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Feature flag repository implementation
+//!
+//! This module provides the concrete implementation of the FeatureFlagRepository trait
+//! defined in the domain layer.
+
+use async_trait::async_trait;
 use chrono::Utc;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use uuid::Uuid;
 
 use crate::domain::auth::{FeatureFlag, FeatureFlagOverride};
+use crate::domain::repositories::feature_flag_repository::{
+    FeatureFlagRepository, FeatureFlagRepositoryError,
+};
 use crate::infrastructure::database::entities::auth::feature_flag::{
     Column as FfColumn, Entity as FfEntity,
 };
@@ -15,17 +24,22 @@ use crate::infrastructure::database::entities::auth::feature_flag_override::{
     Column as FfoColumn, Entity as FfoEntity,
 };
 
+/// Feature flag repository implementation
 #[derive(Clone)]
-pub struct FeatureFlagRepository {
+pub struct FeatureFlagRepositoryImpl {
     db: DatabaseConnection,
 }
 
-impl FeatureFlagRepository {
+impl FeatureFlagRepositoryImpl {
+    /// Create a new feature flag repository instance
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }
+}
 
-    pub async fn find_by_name(&self, name: &str) -> Result<Option<FeatureFlag>, sea_orm::DbErr> {
+#[async_trait]
+impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
+    async fn find_by_name(&self, name: &str) -> Result<Option<FeatureFlag>, FeatureFlagRepositoryError> {
         let flag = FfEntity::find()
             .filter(FfColumn::Name.eq(name))
             .one(&self.db)
@@ -43,7 +57,7 @@ impl FeatureFlagRepository {
         }))
     }
 
-    pub async fn find_by_id(&self, id: Uuid) -> Result<Option<FeatureFlag>, sea_orm::DbErr> {
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<FeatureFlag>, FeatureFlagRepositoryError> {
         let flag = FfEntity::find_by_id(id).one(&self.db).await?;
         Ok(flag.map(|f| FeatureFlag {
             id: f.id,
@@ -57,7 +71,7 @@ impl FeatureFlagRepository {
         }))
     }
 
-    pub async fn list_all(&self) -> Result<Vec<FeatureFlag>, sea_orm::DbErr> {
+    async fn list_all(&self) -> Result<Vec<FeatureFlag>, FeatureFlagRepositoryError> {
         let flags = FfEntity::find().all(&self.db).await?;
         Ok(flags
             .into_iter()
@@ -74,11 +88,11 @@ impl FeatureFlagRepository {
             .collect())
     }
 
-    pub async fn find_override(
+    async fn find_override(
         &self,
         feature_flag_id: Uuid,
         api_key_id: Uuid,
-    ) -> Result<Option<FeatureFlagOverride>, sea_orm::DbErr> {
+    ) -> Result<Option<FeatureFlagOverride>, FeatureFlagRepositoryError> {
         let override_ = FfoEntity::find()
             .filter(FfoColumn::FeatureFlagId.eq(feature_flag_id))
             .filter(FfoColumn::ApiKeyId.eq(api_key_id))
@@ -93,10 +107,10 @@ impl FeatureFlagRepository {
         }))
     }
 
-    pub async fn list_overrides(
+    async fn list_overrides(
         &self,
         feature_flag_id: Uuid,
-    ) -> Result<Vec<FeatureFlagOverride>, sea_orm::DbErr> {
+    ) -> Result<Vec<FeatureFlagOverride>, FeatureFlagRepositoryError> {
         let overrides = FfoEntity::find()
             .filter(FfoColumn::FeatureFlagId.eq(feature_flag_id))
             .all(&self.db)
@@ -113,10 +127,10 @@ impl FeatureFlagRepository {
             .collect())
     }
 
-    pub async fn list_overrides_for_key(
+    async fn list_overrides_for_key(
         &self,
         api_key_id: Uuid,
-    ) -> Result<Vec<FeatureFlagOverride>, sea_orm::DbErr> {
+    ) -> Result<Vec<FeatureFlagOverride>, FeatureFlagRepositoryError> {
         let overrides = FfoEntity::find()
             .filter(FfoColumn::ApiKeyId.eq(api_key_id))
             .all(&self.db)
@@ -133,12 +147,12 @@ impl FeatureFlagRepository {
             .collect())
     }
 
-    pub async fn set_override(
+    async fn set_override(
         &self,
         feature_flag_id: Uuid,
         api_key_id: Uuid,
         enabled: bool,
-    ) -> Result<FeatureFlagOverride, sea_orm::DbErr> {
+    ) -> Result<FeatureFlagOverride, FeatureFlagRepositoryError> {
         let existing = self.find_override(feature_flag_id, api_key_id).await?;
 
         let override_model = match existing {
@@ -172,11 +186,11 @@ impl FeatureFlagRepository {
         })
     }
 
-    pub async fn delete_override(
+    async fn delete_override(
         &self,
         feature_flag_id: Uuid,
         api_key_id: Uuid,
-    ) -> Result<bool, sea_orm::DbErr> {
+    ) -> Result<bool, FeatureFlagRepositoryError> {
         let result = FfoEntity::delete_many()
             .filter(FfoColumn::FeatureFlagId.eq(feature_flag_id))
             .filter(FfoColumn::ApiKeyId.eq(api_key_id))
@@ -186,3 +200,6 @@ impl FeatureFlagRepository {
         Ok(result.rows_affected > 0)
     }
 }
+
+// Backward compatibility alias
+pub type FeatureFlagRepository = FeatureFlagRepositoryImpl;

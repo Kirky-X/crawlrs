@@ -1,0 +1,293 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0
+// See LICENSE file in the project root for full license information.
+
+//! Unified oxcache module for all caching operations.
+//!
+//! This module provides:
+//! - Search result caching
+//! - DNS caching
+//! - Regex caching
+//! - Rate limiting (using oxcache's TokenBucket)
+//! - Concurrency control (using oxcache's Semaphore)
+
+use crate::config::settings::CacheSettings;
+use crate::domain::models::search_result::SearchResult;
+use oxcache::rate_limiting::{GlobalRateLimiter, RateLimitConfig};
+use oxcache::Cache;
+use std::sync::Arc;
+use std::time::Duration;
+
+// =============================================================================
+// Cache Types
+// =============================================================================
+
+/// Search result cache type
+pub type SearchCache = Cache<String, Vec<SearchResult>>;
+
+// =============================================================================
+// Rate Limiting (using oxcache)
+// =============================================================================
+
+/// Rate limiter wrapper using oxcache's GlobalRateLimiter
+#[derive(Clone)]
+pub struct RateLimiter {
+    inner: Arc<oxcache::rate_limiting::ClientRateLimiter>,
+    config: RateLimitConfig,
+}
+
+impl RateLimiter {
+    /// Create a new rate limiter with default config
+    pub fn default() -> Self {
+        let config = RateLimitConfig {
+            max_requests_per_second: 60,
+            burst_capacity: 20,
+            block_duration_secs: 1,
+        };
+        Self::new(config)
+    }
+
+    /// Create a new rate limiter with custom config
+    pub fn new(config: RateLimitConfig) -> Self {
+        let global = oxcache::rate_limiting::GlobalRateLimiter::new(Some(config.clone()));
+        Self {
+            inner: global.inner().clone(),
+            config,
+        }
+    }
+
+    /// Create a new rate limiter with individual parameters
+    pub fn new_with_config(max_requests_per_second: f64, burst_capacity: u32) -> Self {
+        let config = RateLimitConfig {
+            max_requests_per_second,
+            burst_capacity,
+            block_duration_secs: 1,
+        };
+        Self::new(config)
+    }
+
+    /// Check if a request is allowed for the given client
+    pub async fn check_rate_limit(&self, client_id: &str) -> Result<(), ()> {
+        match self.inner.check_rate_limit(client_id, 1).await {
+            Ok(()) => Ok(()),
+            Err(()) => Err(()),
+        }
+    }
+
+    /// Check if N requests are allowed
+    pub async fn check_rate_limit_n(&self, client_id: &str, n: u64) -> Result<(), ()> {
+        match self.inner.check_rate_limit(client_id, n).await {
+            Ok(()) => Ok(()),
+            Err(()) => Err(()),
+        }
+    }
+
+    /// Get the configuration
+    pub fn config(&self) -> &RateLimitConfig {
+        &self.config
+    }
+}
+
+// =============================================================================
+// Concurrency Control (using Semaphore)
+// =============================================================================
+
+/// Semaphore-based concurrency controller
+#[derive(Clone)]
+pub struct ConcurrencyController {
+    semaphore: Arc<tokio::sync::Semaphore>,
+    max_permits: usize,
+}
+
+impl ConcurrencyController {
+    /// Create a new concurrency controller
+    pub fn new(max_permits: usize) -> Self {
+        Self {
+            semaphore: Arc::new(tokio::sync::Semaphore::new(max_permits)),
+            max_permits,
+        }
+    }
+
+    /// Acquire a permit, returns None if limited
+    pub async fn try_acquire(&self) -> Option<ConcurrencyPermit> {
+        match self.semaphore.try_acquire() {
+            Ok(permit) => Some(ConcurrencyPermit {
+                permit,
+                semaphore: self.semaphore.clone(),
+            }),
+            Err(_) => None,
+        }
+    }
+
+    /// Acquire a permit with wait, returns None if timeout
+    pub async fn acquire(&self, timeout: Duration) -> Option<ConcurrencyPermit> {
+        match tokio::time::timeout(timeout, self.semaphore.acquire()).await {
+            Ok(Ok(permit)) => Some(ConcurrencyPermit {
+                permit,
+                semaphore: self.semaphore.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Get current available permits
+    pub fn available_permits(&self) -> usize {
+        self.semaphore.available_permits()
+    }
+
+    /// Get max permits
+    pub fn max_permits(&self) -> usize {
+        self.max_permits
+    }
+}
+
+/// RAII guard for concurrency permit
+pub struct ConcurrencyPermit {
+    permit: tokio::sync::OwnedSemaphorePermit,
+    semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+impl Drop for ConcurrencyPermit {
+    fn drop(&mut self) {
+        // Permit is automatically released when dropped
+    }
+}
+
+// =============================================================================
+// Key Generation Utilities
+// =============================================================================
+
+/// Generate cache key from prefix and parameters
+pub fn generate_key(prefix: &str, params: &[(&str, &str)]) -> String {
+    if params.is_empty() {
+        return prefix.to_string();
+    }
+
+    let mut key = prefix.to_string();
+    for (k, v) in params {
+        key.push(':');
+        key.push_str(k);
+        key.push('=');
+        key.push_str(v);
+    }
+    key
+}
+
+/// Generate search cache key
+pub fn generate_search_key(query: &str, limit: u32, lang: Option<&str>, country: Option<&str>) -> String {
+    let mut key = format!("search:{}", query);
+    if let Some(l) = lang {
+        key.push_str(&format!(":lang={}", l));
+    }
+    if let Some(c) = country {
+        key.push_str(&format!(":country={}", c));
+    }
+    key.push_str(&format!(":limit={}", limit));
+    key
+}
+
+/// Generate DNS cache key
+pub fn generate_dns_key(hostname: &str, port: u16) -> String {
+    format!("dns:{}:{}", hostname, port)
+}
+
+/// Generate regex cache key (using hash for efficiency)
+pub fn generate_regex_key(pattern: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    pattern.hash(&mut hasher);
+    let hash = hasher.finish();
+    format!("regex:{:x}", hash)
+}
+
+// =============================================================================
+// Cache Initialization
+// =============================================================================
+
+/// Create a new oxcache instance with the given settings
+pub async fn create_cache(settings: &CacheSettings) -> Result<Arc<SearchCache>, oxcache::CacheError> {
+    let cache: SearchCache = Cache::builder()
+        .capacity(settings.memory.capacity)
+        .ttl(Duration::from_secs(settings.memory.ttl_seconds))
+        .build()
+        .await?;
+    Ok(Arc::new(cache))
+}
+
+/// Create oxcache with Redis backend (tiered cache)
+#[cfg(feature = "redis-cache")]
+pub async fn create_tiered_cache(
+    settings: &CacheSettings,
+) -> Result<Arc<SearchCache>, oxcache::CacheError> {
+    create_cache(settings).await
+}
+
+#[cfg(not(feature = "redis-cache"))]
+pub async fn create_tiered_cache(
+    settings: &CacheSettings,
+) -> Result<Arc<SearchCache>, oxcache::CacheError> {
+    create_cache(settings).await
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_key() {
+        assert_eq!(generate_key("search", &[]), "search");
+        assert_eq!(
+            generate_key("search", &[("q", "rust"), ("l", "en")]),
+            "search:q=rust:l=en"
+        );
+    }
+
+    #[test]
+    fn test_generate_search_key() {
+        let key = generate_search_key("rust", 10, Some("en"), Some("US"));
+        assert_eq!(key, "search:rust:lang=en:country=US:limit=10");
+    }
+
+    #[test]
+    fn test_generate_dns_key() {
+        let key = generate_dns_key("example.com", 80);
+        assert_eq!(key, "dns:example.com:80");
+    }
+
+    #[test]
+    fn test_generate_regex_key() {
+        let key1 = generate_regex_key(r"\d+");
+        let key2 = generate_regex_key(r"\d+");
+        assert_eq!(key1, key2);
+        assert!(key1.starts_with("regex:"));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter() {
+        let limiter = RateLimiter::default();
+        
+        // First few requests should succeed
+        for _ in 0..5 {
+            assert!(limiter.check_rate_limit("test_client").await.is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_controller() {
+        let controller = ConcurrencyController::new(2);
+        
+        // Should be able to acquire 2 permits
+        assert!(controller.try_acquire().await.is_some());
+        assert!(controller.try_acquire().await.is_some());
+        
+        // Third should fail
+        assert!(controller.try_acquire().await.is_none());
+    }
+}

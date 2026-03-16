@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 #[config(env_prefix = "CRAWLRS__BING_SEARCH__")]
 pub struct BingSearchSettings {
     /// Bing Search API 密钥 (敏感信息)
+    #[config(sensitive)]
     pub(crate) api_key: Option<String>,
 }
 

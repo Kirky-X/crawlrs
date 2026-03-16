@@ -18,7 +18,7 @@ pub mod task_handler;
 pub mod team_handler;
 pub mod webhook_handler;
 
-use crate::domain::models::task::Task;
+use crate::domain::models::Task;
 use std::collections::HashMap;
 use uuid::Uuid;
 

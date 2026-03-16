@@ -11,9 +11,9 @@
 //! - 类型安全的配置解析
 //! - 内置验证
 
-use confers::{Config, ConfigBuilder, Environment, File};
+use confers::Config;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+use validator::Validate;
 
 // 重新导出子模块中的类型
 pub use super::app::{
@@ -24,65 +24,6 @@ pub use super::llm::LLMSettings;
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 pub use super::search::{BingSearchSettings, SearchSettings};
 pub use super::storage::{StorageSettings, WebhookSettings};
-
-// =============================================================================
-// 错误类型
-// =============================================================================
-
-/// 配置错误类型
-#[derive(Debug, Error)]
-pub enum ConfigError {
-    #[error("File error: {0}")]
-    File(String),
-
-    #[error("Parse error: {0}")]
-    Parse(String),
-
-    #[error("Validation error: {0}")]
-    Validation(String),
-
-    #[error("CRITICAL: Webhook secret cannot be empty in production")]
-    EmptyWebhookSecret,
-
-    #[error("CRITICAL: Webhook secret uses weak default value. Must be changed!")]
-    WeakWebhookSecret,
-
-    #[error("CRITICAL: Webhook secret is too short ({0} bytes). Minimum 32 bytes required.")]
-    ShortWebhookSecret(usize),
-
-    #[error("CRITICAL: Database URL uses weak/default password")]
-    WeakDatabasePassword,
-
-    #[error("CRITICAL: Database password is too short ({0} bytes). Minimum 16 bytes required in production!")]
-    ShortDatabasePassword(usize),
-
-    #[error("S3 bucket must be configured when storage_type is 's3'")]
-    MissingS3Bucket,
-
-    #[error("SECURITY WARNING: S3 access key is not configured but storage type is 's3'")]
-    MissingS3AccessKey,
-
-    #[error("SECURITY WARNING: S3 secret key appears to be short (< 32 characters)")]
-    ShortS3SecretKey,
-
-    #[error("Invalid port number: port must be between 1 and 65535")]
-    InvalidPort,
-
-    #[error("Invalid variant_b_weight: must be between 0.0 and 1.0")]
-    InvalidVariantWeight,
-
-    #[error("Invalid storage_type: must be 'local' or 's3'")]
-    InvalidStorageType,
-
-    #[error("Rate limiting is disabled. This may expose the service to abuse.")]
-    RateLimitingDisabled,
-}
-
-impl From<confers::ConfigError> for ConfigError {
-    fn from(e: confers::ConfigError) -> Self {
-        ConfigError::Parse(e.to_string())
-    }
-}
 
 // =============================================================================
 // 主配置结构
@@ -103,8 +44,8 @@ impl From<confers::ConfigError> for ConfigError {
 ///     Ok(())
 /// }
 /// ```
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__", validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
+#[config(env_prefix = "CRAWLRS__", validate(custom = "validate_security"))]
 pub struct Settings {
     /// 服务器配置
     #[config(default)]
@@ -169,6 +110,14 @@ pub struct Settings {
     /// 超时配置
     #[config(default)]
     pub timeouts: TimeoutSettings,
+
+    /// 缓存配置
+    #[config(default)]
+    pub cache: CacheSettings,
+
+    /// 可信代理配置
+    #[config(default)]
+    pub trusted_proxies: TrustedProxySettings,
 }
 
 // =============================================================================
@@ -209,15 +158,6 @@ impl ProxySettings {
     /// 获取代理服务器URL
     pub fn url(&self) -> &str {
         &self.url
-    }
-}
-
-impl std::fmt::Debug for ProxySettings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProxySettings")
-            .field("url", &"[REDACTED]")
-            .field("enabled", &self.enabled)
-            .finish()
     }
 }
 
@@ -356,161 +296,385 @@ pub struct CacheTimeoutSettings {
 }
 
 // =============================================================================
-// 配置加载 API
+// Cache Configuration
 // =============================================================================
 
-impl Settings {
-    /// 创建新的配置实例（同步）
-    ///
-    /// 从配置文件加载配置，并应用环境变量覆盖。
-    /// 支持的配置加载顺序：
-    /// 1. 配置文件 (config/default.toml)
-    /// 2. 环境变量 (CRAWLRS__ 前缀)
-    /// 3. 默认值
-    ///
-    /// # 返回值
-    ///
-    /// * `Ok(Settings)` - 成功加载的配置
-    /// * `Err(ConfigError)` - 配置加载或验证失败
-    ///
-    /// # 示例
-    ///
-    /// ```rust,ignore
-    /// let settings = Settings::new()?;
-    /// ```
-    pub fn new() -> Result<Self, ConfigError> {
-        // 使用 ConfigBuilder 加载配置
-        let settings: Settings = ConfigBuilder::new()
-            .add_source(File::with_name("config/default.toml").required(false))
-            .add_source(Environment::with_prefix("CRAWLRS").separator("__"))
-            .build()?;
+/// 缓存类型配置
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__CACHE__TYPES__")]
+pub struct CacheTypeSettings {
+    #[config(default = 300)]
+    pub ttl_seconds: u64,
+    #[config(default = 10000)]
+    pub max_size: u64,
+}
 
-        // 运行自定义验证
-        settings.validate_security()?;
-        settings.validate()?;
+/// 统一缓存配置（oxcache）
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__CACHE__")]
+pub struct CacheSettings {
+    /// 是否启用缓存
+    #[config(default = true)]
+    pub enabled: bool,
 
-        Ok(settings)
-    }
+    /// L1 内存缓存配置
+    #[config(default)]
+    pub memory: MemoryCacheSettings,
 
-    /// 从指定路径加载配置
+    /// L2 Redis 缓存配置
+    #[config(default)]
+    pub redis: RedisCacheSettings,
+
+    /// 各缓存类型特定配置
+    #[config(default)]
+    pub types: CacheTypeSpecificSettings,
+}
+
+/// L1 内存缓存配置（Moka）
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__CACHE__MEMORY__")]
+pub struct MemoryCacheSettings {
+    /// 最大容量
+    #[config(default = 10000)]
+    pub capacity: u64,
+    /// TTL（秒）
+    #[config(default = 300)]
+    pub ttl_seconds: u64,
+}
+
+/// L2 Redis 缓存配置
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__CACHE__REDIS__")]
+pub struct RedisCacheSettings {
+    /// 是否启用 Redis 缓存
+    #[config(default = false)]
+    pub enabled: bool,
+
+    /// Redis URL
+    #[config(default = "redis://localhost:6379")]
+    pub url: String,
+
+    /// 连接池大小
+    #[config(default = 10)]
+    pub pool_size: u32,
+
+    /// TTL（秒）
+    #[config(default = 3600)]
+    pub ttl_seconds: u64,
+}
+
+/// 各缓存类型特定配置
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__CACHE__TYPES__")]
+pub struct CacheTypeSpecificSettings {
+    #[config(default)]
+    pub search: CacheTypeSettings,
+    #[config(default)]
+    pub dns: CacheTypeSettings,
+    #[config(default)]
+    pub regex: CacheTypeSettings,
+}
+
+// =============================================================================
+// 可信代理配置
+// =============================================================================
+
+/// 可信代理配置设置
+///
+/// 用于安全地提取客户端真实 IP 地址。
+/// 仅当请求来自可信代理时才信任 X-Forwarded-For 等请求头。
+///
+/// # 安全说明
+///
+/// 如果不配置可信代理，攻击者可以伪造 X-Forwarded-For 头来绕过
+/// 基于 IP 的安全控制（如速率限制、访问控制等）。
+///
+/// # 配置示例
+///
+/// ```toml
+/// [trusted_proxies]
+/// enabled = true
+/// proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__TRUSTED_PROXIES__")]
+pub struct TrustedProxySettings {
+    /// 是否启用可信代理验证
+    ///
+    /// - true: 仅当请求来自可信代理时才信任转发头
+    /// - false: 总是信任转发头（不安全，仅用于开发环境）
+    #[config(default = true)]
+    pub enabled: bool,
+
+    /// 可信代理 IP 地址列表
+    ///
+    /// 支持 CIDR 格式（如 "10.0.0.0/8"）和单个 IP（如 "127.0.0.1"）
+    ///
+    /// 默认包含常见的私有 IP 地址范围：
+    /// - 10.0.0.0/8 (Class A 私有网络)
+    /// - 172.16.0.0/12 (Class B 私有网络)
+    /// - 192.168.0.0/16 (Class C 私有网络)
+    /// - 127.0.0.1 (本地回环)
+    /// - ::1 (IPv6 本地回环)
+    #[config(default = vec![
+        "10.0.0.0/8".to_string(),
+        "172.16.0.0/12".to_string(),
+        "192.168.0.0/16".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ])]
+    pub proxies: Vec<String>,
+}
+
+impl TrustedProxySettings {
+    /// 检查 IP 地址是否在可信代理列表中
     ///
     /// # 参数
     ///
-    /// * `path` - 配置文件路径
-    pub fn load_with_path(path: &str) -> Result<Self, ConfigError> {
-        let settings: Settings = ConfigBuilder::new()
-            .add_source(File::with_name(path).required(false))
-            .add_source(Environment::with_prefix("CRAWLRS").separator("__"))
-            .build()?;
+    /// * `ip` - 要检查的 IP 地址
+    ///
+    /// # 返回值
+    ///
+    /// 如果 IP 在可信代理列表中返回 true，否则返回 false
+    pub fn is_trusted(&self, ip: &std::net::IpAddr) -> bool {
+        use std::net::IpAddr;
 
-        settings.validate_security()?;
-        settings.validate()?;
+        for proxy in &self.proxies {
+            // 尝试解析为 CIDR
+            if let Ok(network) = ipnetwork::IpNetwork::from_str_truncate(proxy) {
+                if network.contains(*ip) {
+                    return true;
+                }
+            } else {
+                // 尝试解析为单个 IP
+                if let Ok(trusted_ip) = proxy.parse::<IpAddr>() {
+                    if trusted_ip == *ip {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
 
-        Ok(settings)
+// =============================================================================
+// 自定义验证函数
+// =============================================================================
+
+/// 安全验证函数
+///
+/// 验证配置的安全性要求，包括 webhook secret、数据库密码、S3 凭据等
+pub fn validate_security(settings: &Settings) -> Result<(), validator::ValidationError> {
+    // 检查 webhook secret 是否为空
+    if settings.webhook.secret().is_empty() {
+        return Err(validator::ValidationError::new("webhook_secret_empty"));
     }
 
-    /// 验证配置安全性（公共方法）
-    pub fn validate_security(&self) -> Result<(), ConfigError> {
-        // 检查 webhook secret 是否使用默认值
-        let weak_secrets = [
-            "your-webhook-secret",
-            "your-secret-key",
-            "secret",
-            "webhook-secret",
-            "change-me",
-            "password",
-        ];
+    // 检查 webhook secret 是否使用默认值
+    let weak_secrets = [
+        "your-webhook-secret",
+        "your-secret-key",
+        "secret",
+        "webhook-secret",
+        "change-me",
+        "password",
+    ];
+    if weak_secrets.contains(&settings.webhook.secret()) {
+        return Err(validator::ValidationError::new("webhook_secret_weak"));
+    }
 
-        if self.webhook.secret().is_empty() {
-            return Err(ConfigError::EmptyWebhookSecret);
-        } else if weak_secrets.contains(&self.webhook.secret()) {
-            return Err(ConfigError::WeakWebhookSecret);
-        } else if self.webhook.secret().len() < 32 {
-            return Err(ConfigError::ShortWebhookSecret(self.webhook.secret().len()));
+    // 检查 webhook secret 长度
+    if settings.webhook.secret().len() < 32 {
+        return Err(validator::ValidationError::new("webhook_secret_short"));
+    }
+
+    // 检查速率限制是否禁用
+    if !settings.rate_limiting.enabled {
+        return Err(validator::ValidationError::new("rate_limiting_disabled"));
+    }
+
+    // 检查数据库密码
+    let weak_patterns = ["password=password", "password=postgres", "password=admin"];
+    if weak_patterns
+        .iter()
+        .any(|p| settings.database.url().contains(p))
+    {
+        return Err(validator::ValidationError::new("database_password_weak"));
+    }
+
+    // 生产环境密码长度验证
+    let env = std::env::var("APP_ENVIRONMENT")
+        .or_else(|_| std::env::var("CRAWLRS_ENV"))
+        .unwrap_or_else(|_| "development".to_string());
+    let is_production = env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod");
+
+    if is_production {
+        let password_length = extract_password_length(settings.database.url());
+        if password_length > 0 && password_length < 16 {
+            return Err(validator::ValidationError::new(
+                "database_password_short_production",
+            ));
         }
+    }
 
-        // 检查 S3 凭据安全性
-        if self.storage.storage_type == "s3" {
-            if self.storage.s3_access_key().is_none()
-                || self.storage.s3_access_key().is_some_and(|s| s.is_empty())
-            {
-                return Err(ConfigError::MissingS3AccessKey);
-            }
-
-            if self.storage.s3_secret_key().is_some_and(|s| s.len() < 32) {
-                return Err(ConfigError::ShortS3SecretKey);
-            }
-        }
-
-        // 检查速率限制是否禁用
-        if !self.rate_limiting.enabled {
-            return Err(ConfigError::RateLimitingDisabled);
-        }
-
-        // 检查数据库密码
-        let weak_patterns = ["password=password", "password=postgres", "password=admin"];
-        if weak_patterns
-            .iter()
-            .any(|p| self.database.url().contains(p))
+    // 检查 S3 配置
+    if settings.storage.storage_type == "s3" {
+        // 检查 S3 bucket
+        if settings.storage.s3_bucket.is_none()
+            || settings
+                .storage
+                .s3_bucket
+                .as_ref()
+                .is_some_and(|b| b.is_empty())
         {
-            return Err(ConfigError::WeakDatabasePassword);
+            return Err(validator::ValidationError::new("s3_bucket_missing"));
         }
 
-        // 生产环境密码长度验证
-        let env = std::env::var("APP_ENVIRONMENT")
-            .or_else(|_| std::env::var("CRAWLRS_ENV"))
-            .unwrap_or_else(|_| "development".to_string());
-        let is_production =
-            env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod");
-
-        if is_production {
-            let password_length = Self::extract_password_length(self.database.url());
-            if password_length > 0 && password_length < 16 {
-                return Err(ConfigError::ShortDatabasePassword(password_length));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// 验证配置值有效性（公共方法）
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        // 验证端口范围
-        if self.server.port == 0 {
-            return Err(ConfigError::InvalidPort);
-        }
-
-        // 验证 A/B 测试权重范围
-        if self.search.variant_b_weight < 0.0 || self.search.variant_b_weight > 1.0 {
-            return Err(ConfigError::InvalidVariantWeight);
-        }
-
-        // 验证存储类型
-        if self.storage.storage_type != "local" && self.storage.storage_type != "s3" {
-            return Err(ConfigError::InvalidStorageType);
-        }
-
-        // 验证 S3 配置完整性
-        if self.storage.storage_type == "s3"
-            && (self.storage.s3_bucket.is_none()
-                || self
-                    .storage
-                    .s3_bucket
-                    .as_ref()
-                    .is_some_and(|b| b.is_empty()))
+        // 检查 S3 access key
+        if settings.storage.s3_access_key().is_none()
+            || settings
+                .storage
+                .s3_access_key()
+                .is_some_and(|s| s.is_empty())
         {
-            return Err(ConfigError::MissingS3Bucket);
+            return Err(validator::ValidationError::new("s3_access_key_missing"));
         }
 
-        Ok(())
+        // 检查 S3 secret key 长度
+        if settings
+            .storage
+            .s3_secret_key()
+            .is_some_and(|s| s.len() < 32)
+        {
+            return Err(validator::ValidationError::new("s3_secret_key_short"));
+        }
     }
 
-    fn extract_password_length(url: &str) -> usize {
-        if let Some(at_pos) = url.find('@') {
-            if let Some(colon_pos) = url[..at_pos].find(':') {
-                return at_pos - colon_pos - 1;
-            }
+    Ok(())
+}
+
+/// 值验证函数
+///
+/// 验证配置值的有效性
+pub fn validate_values(settings: &Settings) -> Result<(), validator::ValidationError> {
+    // 验证端口范围
+    if settings.server.port == 0 {
+        return Err(validator::ValidationError::new("invalid_port"));
+    }
+
+    // 验证 A/B 测试权重范围
+    if settings.search.variant_b_weight < 0.0 || settings.search.variant_b_weight > 1.0 {
+        return Err(validator::ValidationError::new("invalid_variant_b_weight"));
+    }
+
+    // 验证存储类型
+    if settings.storage.storage_type != "local" && settings.storage.storage_type != "s3" {
+        return Err(validator::ValidationError::new("invalid_storage_type"));
+    }
+
+    Ok(())
+}
+
+fn extract_password_length(url: &str) -> usize {
+    if let Some(at_pos) = url.find('@') {
+        if let Some(colon_pos) = url[..at_pos].find(':') {
+            return at_pos - colon_pos - 1;
         }
-        0
+    }
+    0
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_settings_structure() {
+        let settings = Settings {
+            server: ServerSettings::default(),
+            database: DatabaseSettings::default(),
+            redis: RedisSettings::default(),
+            cors: CorsSettings::default(),
+            rate_limiting: RateLimitingSettings::default(),
+            concurrency: ConcurrencySettings::default(),
+            storage: StorageSettings::default(),
+            webhook: WebhookSettings::default(),
+            bing_search: BingSearchSettings::default(),
+            search: SearchSettings::default(),
+            llm: LLMSettings::default(),
+            proxy: ProxySettings::default(),
+            engines: EngineSettings::default(),
+            logging: LoggingSettings::default(),
+            workers: WorkerSettings::default(),
+            timeouts: TimeoutSettings::default(),
+            cache: CacheSettings::default(),
+            trusted_proxies: TrustedProxySettings::default(),
+        };
+
+        assert_eq!(settings.server.port, 8899);
+        assert!(settings.rate_limiting.enabled);
+        assert!(settings.trusted_proxies.enabled);
+    }
+
+    #[test]
+    fn test_trusted_proxy_settings_default() {
+        let settings = TrustedProxySettings::default();
+        assert!(settings.enabled);
+        assert!(!settings.proxies.is_empty());
+
+        // 测试私有 IP 地址
+        let ip: std::net::IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(settings.is_trusted(&ip));
+
+        let ip: std::net::IpAddr = "172.16.0.1".parse().unwrap();
+        assert!(settings.is_trusted(&ip));
+
+        let ip: std::net::IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(settings.is_trusted(&ip));
+
+        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(settings.is_trusted(&ip));
+
+        // 测试公网 IP
+        let ip: std::net::IpAddr = "8.8.8.8".parse().unwrap();
+        assert!(!settings.is_trusted(&ip));
+    }
+
+    #[test]
+    fn test_trusted_proxy_settings_ipv6() {
+        let settings = TrustedProxySettings::default();
+
+        // 测试 IPv6 本地回环
+        let ip: std::net::IpAddr = "::1".parse().unwrap();
+        assert!(settings.is_trusted(&ip));
+
+        // 测试 IPv6 公网地址
+        let ip: std::net::IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(!settings.is_trusted(&ip));
+    }
+
+    #[test]
+    fn test_trusted_proxy_settings_custom_cidr() {
+        let settings = TrustedProxySettings {
+            enabled: true,
+            proxies: vec!["203.0.113.0/24".to_string(), "198.51.100.1".to_string()],
+        };
+
+        // 测试 CIDR 范围内的 IP
+        let ip: std::net::IpAddr = "203.0.113.100".parse().unwrap();
+        assert!(settings.is_trusted(&ip));
+
+        // 测试单个 IP
+        let ip: std::net::IpAddr = "198.51.100.1".parse().unwrap();
+        assert!(settings.is_trusted(&ip));
+
+        // 测试不在范围内的 IP
+        let ip: std::net::IpAddr = "203.0.114.1".parse().unwrap();
+        assert!(!settings.is_trusted(&ip));
     }
 }

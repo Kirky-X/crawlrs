@@ -8,18 +8,18 @@
 #![allow(unused_variables)]
 
 use crate::application::dto::task_query_request::{
-    CancelledTaskInfoDto, FailedTaskInfoDto, TaskCancelDataDto, TaskCancelRequestDto,
-    TaskCancelResponseDto, TaskInfoDto, TaskQueryDataDto, TaskQueryRequestDto,
-    TaskQueryResponseDto,
+    CancelledTaskInfoDto, FailedTaskInfoDto, ScrapeResultInfoDto, TaskCancelDataDto,
+    TaskCancelRequestDto, TaskInfoDto, TaskQueryDataDto, TaskQueryRequestDto,
 };
 use crate::common::constants::crawl_task;
 use crate::common::constants::server_config;
-use crate::domain::models::task::TaskStatus;
+use crate::domain::models::TaskStatus;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
 use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::presentation::errors::AppError;
 use crate::presentation::handlers::extract_task_ids;
+use crate::presentation::handlers::response_builder::ApiResponse;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use anyhow;
 use axum::{extract::Extension, Json};
@@ -114,7 +114,7 @@ async fn query_tasks_for_poll(
     task_repo: &dyn TaskRepository,
     team_id: uuid::Uuid,
     task_ids: &[uuid::Uuid],
-) -> Result<Vec<crate::domain::models::task::Task>, AppError> {
+) -> Result<Vec<crate::domain::models::Task>, AppError> {
     let (tasks, _) = task_repo
         .query_tasks(TaskQueryParams {
             team_id,
@@ -129,7 +129,7 @@ async fn query_tasks_for_poll(
 /// 计算任务完成率
 #[inline]
 fn calculate_completion_rate(
-    tasks: &[crate::domain::models::task::Task],
+    tasks: &[crate::domain::models::Task],
     task_ids: &[uuid::Uuid],
 ) -> f64 {
     if task_ids.is_empty() {
@@ -170,13 +170,24 @@ fn calculate_next_interval(
     }
 }
 
+/// 任务查询响应扩展数据
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TaskQueryResponseMeta {
+    /// 同步状态
+    pub status: String,
+    /// 消耗的积分
+    pub credits_used: u32,
+    /// 响应时间（毫秒）
+    pub response_time_ms: u64,
+}
+
 /// 统一任务查询处理器
 pub async fn query_tasks<T: TaskRepository>(
     Extension(auth_state): Extension<AuthState>,
     Extension(task_repo): Extension<Arc<T>>,
     Extension(scrape_result_repo): Extension<Arc<ScrapeResultRepositoryImpl>>,
     Json(request): Json<TaskQueryRequestDto>,
-) -> Result<Json<TaskQueryResponseDto>, AppError> {
+) -> Result<Json<ApiResponse<TaskQueryDataDto>>, AppError> {
     let team_id = auth_state.team_id;
     let start_time = Instant::now();
 
@@ -220,21 +231,13 @@ pub async fn query_tasks<T: TaskRepository>(
     let task_infos = build_task_infos(&tasks, task_id_to_result.as_ref());
 
     // 构建并返回响应
-    let response_time_ms = start_time.elapsed().as_millis() as u64;
     let has_more = (offset + limit) < total as u32;
-    let status = determine_sync_status(sync_mode, waited_time_ms, sync_wait_ms);
 
-    Ok(Json(TaskQueryResponseDto {
-        success: true,
-        status,
-        data: TaskQueryDataDto {
-            tasks: task_infos,
-            total,
-            has_more,
-        },
-        credits_used: 1,
-        response_time_ms,
-    }))
+    Ok(Json(ApiResponse::success(TaskQueryDataDto {
+        tasks: task_infos,
+        total,
+        has_more,
+    })))
 }
 
 /// 验证请求参数
@@ -271,7 +274,7 @@ async fn execute_task_query<T: TaskRepository>(
     request: &TaskQueryRequestDto,
     limit: u32,
     offset: u32,
-) -> Result<(Vec<crate::domain::models::task::Task>, u64), AppError> {
+) -> Result<(Vec<crate::domain::models::Task>, u64), AppError> {
     task_repo
         .query_tasks(TaskQueryParams {
             team_id,
@@ -293,7 +296,7 @@ async fn execute_task_query<T: TaskRepository>(
 /// 处理同步等待模式
 async fn handle_sync_wait<T: TaskRepository>(
     task_repo: &T,
-    tasks: &[crate::domain::models::task::Task],
+    tasks: &[crate::domain::models::Task],
     team_id: uuid::Uuid,
     sync_wait_ms: u32,
 ) -> Result<u64, AppError> {
@@ -379,7 +382,7 @@ pub async fn handle_sync_wait_and_get_status(
 /// 获取抓取结果
 async fn fetch_scrape_results(
     scrape_result_repo: &ScrapeResultRepositoryImpl,
-    tasks: &[crate::domain::models::task::Task],
+    tasks: &[crate::domain::models::Task],
 ) -> Result<
     Option<
         std::collections::HashMap<uuid::Uuid, crate::domain::models::scrape_result::ScrapeResult>,
@@ -398,7 +401,7 @@ async fn fetch_scrape_results(
 
 /// 构建任务信息列表
 fn build_task_infos(
-    tasks: &[crate::domain::models::task::Task],
+    tasks: &[crate::domain::models::Task],
     results_map: Option<
         &std::collections::HashMap<uuid::Uuid, crate::domain::models::scrape_result::ScrapeResult>,
     >,
@@ -427,17 +430,17 @@ fn build_task_infos(
         .collect()
 }
 
-/// 构建抓取结果 JSON
+/// 构建抓取结果信息
 fn build_scrape_result_json(
     scrape_result: &crate::domain::models::scrape_result::ScrapeResult,
-) -> serde_json::Value {
+) -> ScrapeResultInfoDto {
     let escaped_content = html_escape::encode_text(&scrape_result.content);
-    serde_json::json!({
-        "id": scrape_result.id,
-        "status_code": scrape_result.status_code,
-        "content": escaped_content,
-        "metadata": scrape_result.meta_data,
-    })
+    ScrapeResultInfoDto {
+        id: scrape_result.id,
+        status_code: scrape_result.status_code,
+        content: escaped_content.to_string(),
+        metadata: scrape_result.meta_data.clone(),
+    }
 }
 
 /// 确定同步状态
@@ -457,9 +460,8 @@ pub async fn cancel_tasks<T: TaskRepository>(
     Extension(auth_state): Extension<AuthState>,
     Extension(task_repo): Extension<Arc<T>>,
     Json(request): Json<TaskCancelRequestDto>,
-) -> Result<Json<TaskCancelResponseDto>, AppError> {
+) -> Result<Json<ApiResponse<TaskCancelDataDto>>, AppError> {
     let team_id = auth_state.team_id;
-    let start_time = Instant::now();
 
     // 验证请求参数
     if let Err(errors) = request.validate() {
@@ -484,11 +486,8 @@ pub async fn cancel_tasks<T: TaskRepository>(
 
     // 同步等待机制：如果指定了sync_wait_ms且有任务被取消，等待取消操作完成
     let sync_mode = sync_wait_ms > 0 && !cancelled_task_ids.is_empty();
-    let mut waited_time_ms = 0u64;
 
     if sync_mode {
-        let wait_start = Instant::now();
-
         // 智能轮询等待取消的任务状态更新完成
         // 取消操作使用更短的初始轮询间隔（500ms），更快响应取消状态变化
         wait_for_tasks_completion(
@@ -499,8 +498,6 @@ pub async fn cancel_tasks<T: TaskRepository>(
             500, // 取消操作轮询间隔500ms
         )
         .await?;
-
-        waited_time_ms = wait_start.elapsed().as_millis() as u64;
     }
 
     // 构建取消成功的任务信息
@@ -519,31 +516,13 @@ pub async fn cancel_tasks<T: TaskRepository>(
         .map(|(task_id, reason)| FailedTaskInfoDto { task_id, reason })
         .collect();
 
-    let response_time_ms = start_time.elapsed().as_millis() as u64;
     let total_cancelled = cancelled_tasks.len() as u64;
     let total_failed = failed_tasks_info.len() as u64;
 
-    // 构建响应状态，包含同步等待信息
-    let status = if sync_mode {
-        if waited_time_ms >= sync_wait_ms as u64 {
-            "sync_timeout" // 同步等待超时
-        } else {
-            "sync_completed" // 同步等待完成
-        }
-    } else {
-        "async" // 异步模式
-    };
-
-    Ok(Json(TaskCancelResponseDto {
-        success: true,
-        status: status.to_string(),
-        data: TaskCancelDataDto {
-            cancelled_tasks,
-            failed_tasks: failed_tasks_info,
-            total_cancelled,
-            total_failed,
-        },
-        credits_used: total_cancelled as u32, // 每个取消的任务消耗1个credit，批量取消按数量计费
-        response_time_ms,
-    }))
+    Ok(Json(ApiResponse::success(TaskCancelDataDto {
+        cancelled_tasks,
+        failed_tasks: failed_tasks_info,
+        total_cancelled,
+        total_failed,
+    })))
 }

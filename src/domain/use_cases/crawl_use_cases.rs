@@ -6,8 +6,8 @@
 //! Crawl-related use cases
 
 use crate::application::dto::crawl_request::CrawlRequestDto;
-use crate::domain::models::crawl::{Crawl, CrawlStatus};
-use crate::domain::models::task::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Crawl, CrawlStatus};
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -113,13 +113,29 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> AsyncCrawlUseC
             "crawl_id": crawl.id,
             "config": request.request.config,
         });
-        let root_task = Task::new(
-            TaskType::Crawl,
-            request.team_id,
-            request.api_key_id,
-            request.request.url.clone(),
+        let now = chrono::Utc::now().naive_utc();
+        let root_task = Task {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Crawl.to_string(),
+            status: TaskStatus::Queued.to_string(),
+            priority: 0,
+            team_id: request.team_id,
+            api_key_id: request.api_key_id,
+            url: request.request.url.clone(),
             payload,
-        );
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+            crawl_id: Some(crawl.id),
+            updated_at: now,
+            lock_token: None,
+            lock_expires_at: None,
+        };
         self.task_repo.create(&root_task).await?;
 
         // 计算预估页面数
@@ -187,13 +203,29 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> SyncCrawlUseCa
             "crawl_id": crawl.id,
             "config": request.request.config,
         });
-        let root_task = Task::new(
-            TaskType::Crawl,
-            request.team_id,
-            request.api_key_id,
-            request.request.url.clone(),
+        let now = chrono::Utc::now().naive_utc();
+        let root_task = Task {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Crawl.to_string(),
+            status: TaskStatus::Queued.to_string(),
+            priority: 0,
+            team_id: request.team_id,
+            api_key_id: request.api_key_id,
+            url: request.request.url.clone(),
             payload,
-        );
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+            crawl_id: Some(crawl.id),
+            updated_at: now,
+            lock_token: None,
+            lock_expires_at: None,
+        };
         self.task_repo.create(&root_task).await?;
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;

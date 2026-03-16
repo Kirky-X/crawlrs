@@ -41,7 +41,7 @@ pub mod metrics {
     pub const PERFORMANCE_HISTORY_MAX_SIZE: usize = 1000;
 }
 
-/// 缓存配置常量 - 避免cache_strategy.rs中的魔法数字
+/// 缓存配置常量
 pub mod cache_config {
     pub const DEFAULT_TTL_SECS: u64 = 300; // 5分钟
     pub const ROBOTS_TTL_SECS: u64 = 3600; // 1小时

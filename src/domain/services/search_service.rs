@@ -4,9 +4,9 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::config::settings::Settings;
-use crate::domain::models::crawl::{Crawl, CrawlStatus};
-use crate::domain::models::credits::CreditsTransactionType;
-use crate::domain::models::task::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Crawl, CrawlStatus};
+use crate::domain::models::CreditsTransactionType;
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::{CreditsRepository, CreditsRepositoryError};
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -236,11 +236,11 @@ impl SearchService {
                     attempt_count: 0,
                     max_retries: 3,
                     scheduled_at: None,
-                    created_at: now.into(),
+                    created_at: now.naive_utc(),
                     started_at: None,
                     completed_at: None,
                     crawl_id: Some(cid),
-                    updated_at: now.into(),
+                    updated_at: now.naive_utc(),
                     lock_token: None,
                     lock_expires_at: None,
                     expires_at: None,

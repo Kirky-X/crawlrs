@@ -48,9 +48,11 @@ pub struct StorageSettings {
     pub s3_bucket: Option<String>,
 
     /// S3 访问密钥 (敏感信息)
+    #[config(sensitive)]
     pub(crate) s3_access_key: Option<String>,
 
     /// S3 密钥 (敏感信息)
+    #[config(sensitive)]
     pub(crate) s3_secret_key: Option<String>,
 
     /// S3 端点 (可选，用于 MinIO 等兼容服务)
@@ -129,6 +131,7 @@ impl StorageSettings {
 #[config(env_prefix = "CRAWLRS__WEBHOOK__")]
 pub struct WebhookSettings {
     /// Webhook签名密钥 (敏感信息)
+    #[config(sensitive)]
     pub(crate) secret: String,
 
     /// 最大重试次数

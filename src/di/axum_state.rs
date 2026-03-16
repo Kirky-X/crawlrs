@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
+use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -98,7 +99,9 @@ pub struct AppState {
     /// Expiration worker
     pub expiration_worker: Arc<crate::workers::expiration_worker::ExpirationWorker>,
     /// Geo location service
-    pub geo_location_service: Arc<crate::infrastructure::geolocation::GeoLocationService>,
+    pub geo_location_service: Arc<crate::infrastructure::geolocation::GeoLocationServiceImpl>,
+    /// Geo restriction repository
+    pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 
 /// Trait for extracting dependencies from AppState
@@ -165,7 +168,9 @@ pub trait AppStateExt {
     /// Get expiration worker
     fn expiration_worker(&self) -> Arc<crate::workers::expiration_worker::ExpirationWorker>;
     /// Get geo location service
-    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationService>;
+    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationServiceImpl>;
+    /// Get geo restriction repository
+    fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
 }
 
 impl AppStateExt for AppState {
@@ -285,7 +290,11 @@ impl AppStateExt for AppState {
         self.expiration_worker.clone()
     }
 
-    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationService> {
+    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationServiceImpl> {
         self.geo_location_service.clone()
+    }
+
+    fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
+        self.geo_restriction_repo.clone()
     }
 }

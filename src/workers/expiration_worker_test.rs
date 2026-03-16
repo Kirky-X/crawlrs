@@ -6,7 +6,7 @@
 #[cfg(test)]
 #[cfg(feature = "db-sqlite")]
 mod expiration_worker_tests {
-    use crate::domain::models::task::{TaskStatus, TaskType};
+    use crate::domain::models::{TaskStatus, TaskType};
     use crate::infrastructure::database::entities::{task, team};
     use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use crate::workers::expiration_worker::ExpirationWorker;

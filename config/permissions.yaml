@@ -1,0 +1,106 @@
+# DBNexus 权限配置文件
+# 位于: config/permissions.yaml
+#
+# 使用 dbnexus 的声明式权限控制
+# 格式: roles.<role_name>.tables.<table_name>.operations
+#
+# 可用操作:
+# - SELECT: 查询数据
+# - INSERT: 插入新数据
+# - UPDATE: 更新数据
+# - DELETE: 删除数据
+#
+# 特殊角色:
+# - admin: 管理员角色，拥有完全访问权限
+#   系统自动将 admin 角色的用户视为超级用户
+
+roles:
+  admin:
+    description: "Administrator with full access to all tables and operations"
+    tables:
+      tasks:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      crawls:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      scrape_results:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      search_results:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      credits:
+        operations: ["SELECT", "UPDATE"]
+      credits_transactions:
+        operations: ["SELECT", "INSERT"]
+      webhooks:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      webhook_events:
+        operations: ["SELECT", "INSERT", "UPDATE"]
+      tasks_backlog:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      geo_restriction_log:
+        operations: ["SELECT"]
+      auth_scopes:
+        operations: ["SELECT", "INSERT", "UPDATE"]
+      audit_log:
+        operations: ["SELECT"]
+      teams:
+        operations: ["SELECT", "INSERT", "UPDATE"]
+      api_keys:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+
+  scraper:
+    description: "Scraper role - can create and manage scraping tasks"
+    tables:
+      tasks:
+        operations: ["SELECT", "INSERT"]
+      crawls:
+        operations: ["SELECT", "INSERT"]
+      scrape_results:
+        operations: ["SELECT", "INSERT"]
+      search_results:
+        operations: ["SELECT", "INSERT"]
+      credits:
+        operations: ["SELECT"]
+      webhooks:
+        operations: ["SELECT"]
+      webhook_events:
+        operations: ["SELECT", "INSERT"]
+      tasks_backlog:
+        operations: ["SELECT", "INSERT"]
+
+  viewer:
+    description: "Read-only access - can view data but not modify"
+    tables:
+      tasks:
+        operations: ["SELECT"]
+      crawls:
+        operations: ["SELECT"]
+      scrape_results:
+        operations: ["SELECT"]
+      search_results:
+        operations: ["SELECT"]
+      credits:
+        operations: ["SELECT"]
+      webhooks:
+        operations: ["SELECT"]
+      webhook_events:
+        operations: ["SELECT"]
+      teams:
+        operations: ["SELECT"]
+      audit_log:
+        operations: ["SELECT"]
+
+  system:
+    description: "System service account - minimal required permissions"
+    tables:
+      tasks:
+        operations: ["SELECT", "UPDATE"]
+      tasks_backlog:
+        operations: ["SELECT", "UPDATE"]
+      credits:
+        operations: ["SELECT", "UPDATE"]
+      credits_transactions:
+        operations: ["INSERT"]
+      webhook_events:
+        operations: ["INSERT", "UPDATE"]
+      audit_log:
+        operations: ["INSERT"]

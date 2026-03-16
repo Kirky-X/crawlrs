@@ -3,6 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Tasks backlog repository trait and domain model
+//!
+//! This module defines the repository interface and domain model for task backlog.
+//! The trait is defined in the domain layer, while implementations reside in the
+//! infrastructure layer, following the Dependency Inversion Principle.
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -10,7 +16,6 @@ use shaku::Interface;
 use uuid::Uuid;
 
 use crate::domain::repositories::task_repository::RepositoryError;
-use crate::infrastructure::database::entities::tasks_backlog::Model as TasksBacklogModel;
 
 /// 任务积压状态枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,27 +154,6 @@ impl TasksBacklog {
     /// 检查是否可以重试
     pub fn can_retry(&self) -> bool {
         self.retry_count < self.max_retries
-    }
-}
-
-impl From<TasksBacklogModel> for TasksBacklog {
-    fn from(model: TasksBacklogModel) -> Self {
-        Self {
-            id: model.id,
-            task_id: model.task_id,
-            team_id: model.team_id,
-            task_type: model.task_type,
-            priority: model.priority,
-            payload: model.payload,
-            max_retries: model.max_retries,
-            retry_count: model.retry_count,
-            status: model.status.parse().unwrap_or(TasksBacklogStatus::Pending),
-            created_at: model.created_at.into(),
-            updated_at: model.updated_at.into(),
-            scheduled_at: model.scheduled_at.map(|dt| dt.into()),
-            expires_at: model.expires_at.map(|dt| dt.into()),
-            processed_at: model.processed_at.map(|dt| dt.into()),
-        }
     }
 }
 

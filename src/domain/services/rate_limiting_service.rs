@@ -262,7 +262,7 @@ pub trait QuotaService: Send + Sync {
         &self,
         team_id: Uuid,
         amount: i64,
-        transaction_type: crate::domain::models::credits::CreditsTransactionType,
+        transaction_type: crate::domain::models::CreditsTransactionType,
         description: String,
         reference_id: Option<Uuid>,
     ) -> Result<(), RateLimitingError>;

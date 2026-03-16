@@ -13,7 +13,7 @@ use crate::presentation::handlers::{
     task_handler, team_handler, webhook_handler,
 };
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde_json::json;
@@ -30,7 +30,7 @@ pub fn routes() -> Router {
         .route("/v1/version", get(version))
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
-        .route("/v1/scrape/{id}", delete(scrape_handler::cancel_scrape))
+        .route("/v1/scrape/{id}/_cancel", post(scrape_handler::cancel_scrape))
         .route(
             "/v1/extract",
             post(extract_handler::extract::<DatabaseGeoRestrictionRepository>),
@@ -45,7 +45,7 @@ pub fn routes() -> Router {
             "/v1/crawl/{id}/results",
             get(crawl_handler::get_crawl_results),
         )
-        .route("/v1/crawl/{id}", delete(crawl_handler::cancel_crawl))
+        .route("/v1/crawl/{id}/_cancel", post(crawl_handler::cancel_crawl))
         .route("/v1/search", post(search_handler::search))
         .route(
             "/v1/teams/geo-restrictions",
@@ -58,12 +58,12 @@ pub fn routes() -> Router {
         .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
         .route("/v1/audit/denied", get(audit_handler::get_denied_requests))
         .route(
-            "/v2/tasks/query",
+            "/v1/tasks/_query",
             post(task_handler::query_tasks::<TaskRepositoryImpl>),
         )
         .route(
-            "/v2/tasks/cancel",
-            delete(task_handler::cancel_tasks::<TaskRepositoryImpl>),
+            "/v1/tasks/_cancel",
+            post(task_handler::cancel_tasks::<TaskRepositoryImpl>),
         )
 }
 

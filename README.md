@@ -327,13 +327,15 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 |----------|--------|-------------|
 | `/v1/scrape` | POST | Create a scrape task |
 | `/v1/scrape/{id}` | GET | Get task details |
-| `/v1/scrape/{id}` | DELETE | Cancel scrape task |
+| `/v1/scrape/{id}/_cancel` | POST | Cancel scrape task |
 | `/v1/crawl` | POST | Create a crawl task |
 | `/v1/crawl/{id}` | GET | Get crawl status |
-| `/v1/crawl/{id}` | DELETE | Cancel crawl task |
+| `/v1/crawl/{id}/_cancel` | POST | Cancel crawl task |
 | `/v1/crawl/{id}/results` | GET | Get crawl results |
 | `/v1/search` | POST | Search with specified engine |
 | `/v1/extract` | POST | Extract data from HTML |
+| `/v1/tasks/_query` | POST | Query tasks (complex query) |
+| `/v1/tasks/_cancel` | POST | Batch cancel tasks |
 | `/v1/webhooks` | POST | Create webhook |
 | `/v1/teams/geo-restrictions` | GET | Get team geo restrictions |
 | `/v1/teams/geo-restrictions` | PUT | Update team geo restrictions |

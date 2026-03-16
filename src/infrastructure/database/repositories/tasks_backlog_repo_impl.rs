@@ -3,6 +3,11 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Tasks backlog repository implementation
+//!
+//! This module provides the concrete implementation of the TasksBacklogRepository trait
+//! defined in the domain layer.
+
 use async_trait::async_trait;
 use chrono::Utc;
 use sea_orm::{
@@ -19,13 +24,37 @@ use crate::domain::repositories::tasks_backlog_repository::{
 use crate::infrastructure::database::entities::tasks_backlog;
 use crate::infrastructure::database::entities::tasks_backlog::Entity as TasksBacklogEntity;
 
+/// Tasks backlog repository implementation
 pub struct TasksBacklogRepositoryImpl {
     db: Arc<DatabaseConnection>,
 }
 
 impl TasksBacklogRepositoryImpl {
+    /// Create a new tasks backlog repository instance
     pub fn new(db: Arc<DatabaseConnection>) -> Self {
         Self { db }
+    }
+}
+
+/// Convert database model to domain model
+impl From<tasks_backlog::Model> for TasksBacklog {
+    fn from(model: tasks_backlog::Model) -> Self {
+        Self {
+            id: model.id,
+            task_id: model.task_id,
+            team_id: model.team_id,
+            task_type: model.task_type,
+            priority: model.priority,
+            payload: model.payload,
+            max_retries: model.max_retries,
+            retry_count: model.retry_count,
+            status: model.status.parse().unwrap_or(TasksBacklogStatus::Pending),
+            created_at: model.created_at.into(),
+            updated_at: model.updated_at.into(),
+            scheduled_at: model.scheduled_at.map(|dt| dt.into()),
+            expires_at: model.expires_at.map(|dt| dt.into()),
+            processed_at: model.processed_at.map(|dt| dt.into()),
+        }
     }
 }
 
@@ -49,14 +78,16 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
             processed_at: Set(backlog.processed_at.map(|dt| dt.into())),
         };
 
-        let result = active_model.insert(self.db.as_ref()).await?;
+        let result = active_model.insert(self.db.as_ref()).await
+            .map_err(|e| anyhow::anyhow!(e))?;
         Ok(TasksBacklog::from(result))
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
         let result = TasksBacklogEntity::find_by_id(id)
             .one(self.db.as_ref())
-            .await?;
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
         Ok(result.map(TasksBacklog::from))
     }
 
@@ -67,7 +98,8 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
         let result = TasksBacklogEntity::find()
             .filter(tasks_backlog::Column::TaskId.eq(task_id))
             .one(self.db.as_ref())
-            .await?;
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
         Ok(result.map(TasksBacklog::from))
     }
 

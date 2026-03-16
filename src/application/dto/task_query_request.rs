@@ -3,9 +3,10 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::task::{TaskStatus, TaskType};
-use chrono::{DateTime, FixedOffset};
+use crate::domain::models::{TaskStatus, TaskType};
+use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -66,37 +67,57 @@ impl Default for TaskQueryRequestDto {
     }
 }
 
-/// 任务查询响应DTO
-#[derive(Debug, Serialize)]
-pub struct TaskQueryResponseDto {
-    pub success: bool,
-    pub status: String,
-    pub data: TaskQueryDataDto,
-    pub credits_used: u32,
-    pub response_time_ms: u64,
-}
-
+/// 任务查询响应数据DTO
 #[derive(Debug, Serialize)]
 pub struct TaskQueryDataDto {
+    /// 任务列表
     pub tasks: Vec<TaskInfoDto>,
+    /// 总数
     pub total: u64,
+    /// 是否有更多
     pub has_more: bool,
 }
 
+/// 任务信息DTO
 #[derive(Debug, Serialize)]
 pub struct TaskInfoDto {
+    /// 任务ID
     pub id: Uuid,
+    /// 任务类型
     pub task_type: TaskType,
+    /// 任务状态
     pub status: TaskStatus,
+    /// 优先级
     pub priority: i32,
+    /// URL
     pub url: String,
+    /// 尝试次数
     pub attempt_count: i32,
+    /// 最大重试次数
     pub max_retries: i32,
+    /// 创建时间
     pub created_at: DateTime<FixedOffset>,
+    /// 开始时间
     pub started_at: Option<DateTime<FixedOffset>>,
+    /// 完成时间
     pub completed_at: Option<DateTime<FixedOffset>>,
+    /// 爬取任务ID
     pub crawl_id: Option<Uuid>,
-    pub result: Option<serde_json::Value>,
+    /// 结果数据
+    pub result: Option<ScrapeResultInfoDto>,
+}
+
+/// 抓取结果信息DTO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrapeResultInfoDto {
+    /// 结果ID
+    pub id: Uuid,
+    /// HTTP状态码
+    pub status_code: u16,
+    /// 内容
+    pub content: String,
+    /// 元数据
+    pub metadata: Option<Value>,
 }
 
 /// 任务取消请求DTO
@@ -116,33 +137,35 @@ pub struct TaskCancelRequestDto {
     pub sync_wait_ms: Option<u32>,
 }
 
-/// 任务取消响应DTO
-#[derive(Debug, Serialize)]
-pub struct TaskCancelResponseDto {
-    pub success: bool,
-    pub status: String,
-    pub data: TaskCancelDataDto,
-    pub credits_used: u32,
-    pub response_time_ms: u64,
-}
-
+/// 任务取消响应数据DTO
 #[derive(Debug, Serialize)]
 pub struct TaskCancelDataDto {
+    /// 已取消的任务列表
     pub cancelled_tasks: Vec<CancelledTaskInfoDto>,
+    /// 失败的任务列表
     pub failed_tasks: Vec<FailedTaskInfoDto>,
+    /// 已取消总数
     pub total_cancelled: u64,
+    /// 失败总数
     pub total_failed: u64,
 }
 
+/// 已取消任务信息DTO
 #[derive(Debug, Serialize)]
 pub struct CancelledTaskInfoDto {
+    /// 任务ID
     pub task_id: Uuid,
+    /// 状态
     pub status: String,
+    /// 取消时间
     pub cancelled_at: DateTime<FixedOffset>,
 }
 
+/// 失败任务信息DTO
 #[derive(Debug, Serialize)]
 pub struct FailedTaskInfoDto {
+    /// 任务ID
     pub task_id: Uuid,
+    /// 失败原因
     pub reason: String,
 }

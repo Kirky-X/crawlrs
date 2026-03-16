@@ -10,6 +10,10 @@ pub mod reqwest;
 #[cfg(feature = "engine-playwright")]
 pub mod playwright;
 
+/// Playwright 浏览器实例池
+#[cfg(feature = "engine-playwright")]
+pub mod playwright_pool;
+
 /// Fire CDP 引擎模块
 #[cfg(feature = "engine-fire-cdp")]
 pub mod fire_cdp;
@@ -38,6 +42,13 @@ pub use self::reqwest::ReqwestEngine;
 /// Playwright 引擎
 #[cfg(feature = "engine-playwright")]
 pub use self::playwright::PlaywrightEngine;
+
+/// 浏览器池
+#[cfg(feature = "engine-playwright")]
+pub use self::playwright_pool::{
+    get_global_pool, init_global_pool, shutdown_global_pool, BrowserInstance, BrowserPool,
+    BrowserPoolConfig, BrowserPoolStats,
+};
 
 /// Fire CDP 引擎
 #[cfg(feature = "engine-fire-cdp")]

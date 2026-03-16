@@ -215,7 +215,7 @@ impl BacklogWorker {
             .ok_or_else(|| WorkerError::NotFound(format!("任务 {} 不存在", backlog.task_id)))?;
 
         // 2. 检查任务状态
-        if task.status != crate::domain::models::task::TaskStatus::Queued {
+        if task.status != "queued" {
             info!("任务 {} 状态为 {}，不需要重新激活", task.id, task.status);
 
             // 标记积压任务为已完成
@@ -234,8 +234,8 @@ impl BacklogWorker {
 
         // 3. 更新任务状态为queued，准备重新执行
         let mut updated_task = task.clone();
-        updated_task.status = crate::domain::models::task::TaskStatus::Queued;
-        updated_task.updated_at = Utc::now().into();
+        updated_task.status = "queued".to_string();
+        updated_task.updated_at = Utc::now().naive_utc();
 
         self.task_repository
             .update(&updated_task)
@@ -314,10 +314,10 @@ impl BacklogWorker {
 
         if let Some(task) = task {
             // 3. 如果任务还在pending状态，标记为失败
-            if task.status == crate::domain::models::task::TaskStatus::Queued {
+            if task.status == "queued" {
                 let mut failed_task = task.clone();
-                failed_task.status = crate::domain::models::task::TaskStatus::Failed;
-                failed_task.updated_at = Utc::now().into();
+                failed_task.status = "failed".to_string();
+                failed_task.updated_at = Utc::now().naive_utc();
 
                 self.task_repository.update(&failed_task).await.repo_err()?;
 

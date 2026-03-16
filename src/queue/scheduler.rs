@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::task::{Task, TaskStatus};
+use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::queue::task_queue::QueueError;
 use chrono::{DateTime, Duration, Utc};
@@ -95,12 +95,12 @@ impl<R: TaskRepository + Send + Sync + 'static> TaskScheduler<R> {
         mut task: Task,
         time: DateTime<Utc>,
     ) -> Result<Task, QueueError> {
-        task.scheduled_at = Some(time.into());
-        task.status = TaskStatus::Queued;
+        task.scheduled_at = Some(time.naive_utc());
+        task.status = "queued".to_string();
 
         // Ensure created_at is set if not already (Task::new sets it, but good to be safe)
         if task.created_at.timestamp() == 0 {
-            task.created_at = Utc::now().into();
+            task.created_at = Utc::now().naive_utc();
         }
 
         let created = self.repository.create(&task).await?;
@@ -141,15 +141,15 @@ impl<R: TaskRepository + Send + Sync + 'static> TaskScheduler<R> {
     ) -> Result<Task, QueueError> {
         if !task.can_retry() {
             // If cannot retry, mark as failed permanently
-            task.status = TaskStatus::Failed;
-            task.completed_at = Some(Utc::now().into());
+            task.status = "failed".to_string();
+            task.completed_at = Some(Utc::now().naive_utc());
             let updated = self.repository.update(&task).await?;
             return Ok(updated);
         }
 
-        task.status = TaskStatus::Queued;
+        task.status = "queued".to_string();
         task.attempt_count += 1;
-        task.scheduled_at = Some((Utc::now() + delay).into());
+        task.scheduled_at = Some((Utc::now() + delay).naive_utc());
         task.started_at = None; // Reset started_at as it's queued again
         task.completed_at = None;
 
@@ -173,8 +173,8 @@ impl<R: TaskRepository + Send + Sync + 'static> TaskScheduler<R> {
     /// 将任务优先级设置为100（高优先级），并立即调度执行
     pub async fn schedule_urgent(&self, mut task: Task) -> Result<Task, QueueError> {
         task.priority = 100; // Assuming 100 is high priority
-        task.scheduled_at = Some(Utc::now().into()); // Immediate
-        task.status = TaskStatus::Queued;
+        task.scheduled_at = Some(Utc::now().naive_utc()); // Immediate
+        task.status = "queued".to_string();
 
         let created = self.repository.create(&task).await?;
         Ok(created)

@@ -11,10 +11,11 @@ use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepos
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::team_service::TeamGeoRestrictions;
-use crate::presentation::handlers::response_builder::ApiResponse;
+use crate::presentation::handlers::response_builder::{
+    error_codes, error_response_with_code, ApiResponse,
+};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
-use serde_json::json;
 use std::sync::Arc;
 use tracing::error;
 use uuid::Uuid;
@@ -86,16 +87,19 @@ pub async fn get_team_usage(
     let credits_balance = credits_repo.get_balance(team_id).await.unwrap_or(0);
 
     // 获取团队平均响应时间
-    let avg_response_time_ms: f64 = scrape_result_repo.get_team_avg_response_time(team_id).await.unwrap_or(0.0);
+    let avg_response_time_ms: f64 = scrape_result_repo
+        .get_team_avg_response_time(team_id)
+        .await
+        .unwrap_or(0.0);
 
-    let response = TeamUsageResponse { 
-        team_id, 
-        period: "30d".to_string(), 
-        total_requests: 0, 
-        successful_requests: 0, 
-        failed_requests: 0, 
+    let response = TeamUsageResponse {
+        team_id,
+        period: "30d".to_string(),
+        total_requests: 0,
+        successful_requests: 0,
+        failed_requests: 0,
         credits_used: credits_balance.abs(), // 已使用的积分（负数表示已消耗）
-        avg_response_time_ms, 
+        avg_response_time_ms,
     };
 
     Json(ApiResponse::success(response)).into_response()
@@ -121,25 +125,15 @@ where
                 domain_blacklist: restrictions.domain_blacklist,
             };
 
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "success": true,
-                    "data": response
-                })),
-            )
-                .into_response()
+            (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
         }
         Err(e) => {
             error!("Failed to get team geo restrictions: {:?}", e);
-            (
+            error_response_with_code(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "success": false,
-                    "error": "Failed to get team geo restrictions"
-                })),
+                error_codes::INTERNAL_ERROR,
+                "Failed to get team geo restrictions",
             )
-                .into_response()
         }
     }
 }
@@ -158,14 +152,11 @@ where
     if let Some(ref countries) = request.allowed_countries {
         for country in countries {
             if country.len() != 2 {
-                return (
+                return error_response_with_code(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "success": false,
-                        "error": "Country codes must be 2-letter ISO 3166-1 alpha-2 format"
-                    })),
-                )
-                    .into_response();
+                    error_codes::VALIDATION_ERROR,
+                    "Country codes must be 2-letter ISO 3166-1 alpha-2 format",
+                );
             }
         }
     }
@@ -173,14 +164,11 @@ where
     if let Some(ref countries) = request.blocked_countries {
         for country in countries {
             if country.len() != 2 {
-                return (
+                return error_response_with_code(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "success": false,
-                        "error": "Country codes must be 2-letter ISO 3166-1 alpha-2 format"
-                    })),
-                )
-                    .into_response();
+                    error_codes::VALIDATION_ERROR,
+                    "Country codes must be 2-letter ISO 3166-1 alpha-2 format",
+                );
             }
         }
     }
@@ -189,14 +177,11 @@ where
     if let Some(ref whitelist) = request.ip_whitelist {
         for ip in whitelist {
             if !is_valid_ip_or_cidr(ip) {
-                return (
+                return error_response_with_code(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "success": false,
-                        "error": format!("Invalid IP address or CIDR notation: {}", ip)
-                    })),
-                )
-                    .into_response();
+                    error_codes::VALIDATION_ERROR,
+                    format!("Invalid IP address or CIDR notation: {}", ip),
+                );
             }
         }
     }
@@ -223,25 +208,15 @@ where
                 domain_blacklist: restrictions.domain_blacklist,
             };
 
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "success": true,
-                    "data": response
-                })),
-            )
-                .into_response()
+            (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
         }
         Err(e) => {
             error!("Failed to update team geo restrictions: {:?}", e);
-            (
+            error_response_with_code(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "success": false,
-                    "error": "Failed to update team geo restrictions"
-                })),
+                error_codes::INTERNAL_ERROR,
+                "Failed to update team geo restrictions",
             )
-                .into_response()
         }
     }
 }

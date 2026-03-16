@@ -9,8 +9,8 @@
 //! Supports dependency injection via Shaku.
 
 use crate::application::dto::scrape_request::ScrapeRequestDto;
-use crate::domain::models::task::Task;
-use crate::domain::models::webhook::{WebhookEvent, WebhookEventType, WebhookStatus};
+use crate::domain::models::Task;
+use crate::domain::models::{WebhookEvent, WebhookEventType, WebhookStatus};
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::services::webhook_sender::WebhookSender;
 use anyhow::{anyhow, Result};
@@ -99,23 +99,19 @@ impl WebhookServiceImpl {
 
     /// 获取事件类型
     fn get_event_type(&self, task: &Task) -> WebhookEventType {
-        match task.task_type {
-            crate::domain::models::task::TaskType::Scrape => WebhookEventType::ScrapeCompleted,
-            crate::domain::models::task::TaskType::Crawl => WebhookEventType::CrawlCompleted,
-            crate::domain::models::task::TaskType::Extract => {
-                WebhookEventType::Custom("extract.completed".to_string())
-            }
+        match task.task_type.as_str() {
+            "scrape" => WebhookEventType::ScrapeCompleted,
+            "crawl" => WebhookEventType::CrawlCompleted,
+            _ => WebhookEventType::Custom("extract.completed".to_string()),
         }
     }
 
     /// 获取失败事件类型
     fn get_failed_event_type(&self, task: &Task) -> WebhookEventType {
-        match task.task_type {
-            crate::domain::models::task::TaskType::Scrape => WebhookEventType::ScrapeFailed,
-            crate::domain::models::task::TaskType::Crawl => WebhookEventType::CrawlFailed,
-            crate::domain::models::task::TaskType::Extract => {
-                WebhookEventType::Custom("extract.failed".to_string())
-            }
+        match task.task_type.as_str() {
+            "scrape" => WebhookEventType::ScrapeFailed,
+            "crawl" => WebhookEventType::CrawlFailed,
+            _ => WebhookEventType::Custom("extract.failed".to_string()),
         }
     }
 }
@@ -201,18 +197,18 @@ impl WebhookServiceImpl {
             id: Uuid::new_v4(),
             team_id: task.team_id,
             webhook_id: Uuid::nil(),
-            event_type,
+            event_type: event_type.to_string(),
             payload,
             webhook_url,
-            status: WebhookStatus::Pending,
+            status: WebhookStatus::Pending.to_string(),
             attempt_count: 0,
             max_retries: 5,
             response_status: None,
             response_body: None,
             error_message: None,
             next_retry_at: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
             delivered_at: None,
         };
 
@@ -291,7 +287,7 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::task::TaskStatus;
+    use crate::domain::models::TaskStatus;
     use crate::domain::repositories::task_repository::RepositoryError;
     use async_trait::async_trait;
     use chrono::FixedOffset;
@@ -356,14 +352,14 @@ mod tests {
     }
 
     fn create_test_task() -> Task {
-        let now = Utc::now().with_timezone(&FixedOffset::east_opt(0).unwrap());
+        let now = Utc::now().naive_utc();
         Task {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
             api_key_id: Uuid::new_v4(),
             url: "http://example.com".to_string(),
-            task_type: crate::domain::models::task::TaskType::Scrape,
-            status: TaskStatus::Completed,
+            task_type: crate::domain::models::TaskType::Scrape,
+            status: crate::domain::models::TaskStatus::Completed,
             payload: serde_json::json!({
                 "url": "http://example.com",
                 "webhook": "https://example.com/webhook"

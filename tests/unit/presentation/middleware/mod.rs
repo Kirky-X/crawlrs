@@ -7,3 +7,5 @@
 ///
 /// 测试认证、限流等中间件功能
 pub mod auth_middleware_test;
+pub mod rate_limit_middleware_test;
+pub mod security_headers_middleware_test;

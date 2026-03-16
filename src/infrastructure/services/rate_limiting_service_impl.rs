@@ -687,8 +687,8 @@ impl BacklogService for RateLimitingServiceImpl {
                     })?;
 
                 if let Some(mut task) = task {
-                    if task.status == crate::domain::models::task::TaskStatus::Queued {
-                        task.status = crate::domain::models::task::TaskStatus::Active;
+                    if task.status == crate::domain::models::TaskStatus::Queued {
+                        task.status = crate::domain::models::TaskStatus::Active;
                         task.started_at = Some(chrono::Utc::now().into());
                         // 清除 lock_token 并设置 lock_expires_at，以便新的 Worker 可以获取此任务
                         task.lock_token = None;
@@ -733,7 +733,7 @@ impl QuotaService for RateLimitingServiceImpl {
         &self,
         team_id: Uuid,
         amount: i64,
-        transaction_type: crate::domain::models::credits::CreditsTransactionType,
+        transaction_type: crate::domain::models::CreditsTransactionType,
         description: String,
         reference_id: Option<Uuid>,
     ) -> Result<(), RateLimitingError> {

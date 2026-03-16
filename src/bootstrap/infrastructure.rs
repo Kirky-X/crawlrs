@@ -8,7 +8,8 @@
 use crate::config::settings::Settings;
 use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::infrastructure::cache::redis_client::RedisClient;
-use crate::infrastructure::database::connection;
+use crate::infrastructure::database::dbnexus_connection::DatabasePool;
+use crate::infrastructure::oxcache::{create_cache, SearchCache};
 use crate::infrastructure::repositories::{
     crawl_repo_impl::CrawlRepositoryImpl, credits_repo_impl::CreditsRepositoryImpl,
     database_geo_restriction_repo::DatabaseGeoRestrictionRepository,
@@ -17,13 +18,9 @@ use crate::infrastructure::repositories::{
     webhook_event_repo_impl::WebhookEventRepoImpl, webhook_repo_impl::WebhookRepoImpl,
 };
 use anyhow::Result;
-use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
-
-/// Database connection pool type.
-pub type DatabasePool = sea_orm::DbConn;
 
 /// All repository instances used by the application.
 #[derive(Clone)]
@@ -59,16 +56,11 @@ pub struct Repositories {
 ///
 /// Returns a connected database pool.
 pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
-    // Create SQLx connection pool for migrations
-    let sqlx_pool = PgPool::connect(settings.database.url()).await?;
-    let db = connection::create_pool(&settings.database).await?;
+    use crate::infrastructure::database::dbnexus_connection::create_pool;
+    
+    let db = create_pool(&settings.database).await?;
     let db = Arc::new(db);
     info!("Database connection established");
-
-    // Run migrations using SQLx
-    info!("Running database migrations...");
-    sqlx::migrate!().run(&sqlx_pool).await?;
-    info!("Database migrations applied");
 
     Ok(db)
 }
@@ -206,14 +198,49 @@ pub fn init_storage_repository(
 pub struct InfrastructureComponents {
     /// Database connection pool.
     pub db: Arc<DatabasePool>,
-    /// Redis client.
+    /// Redis client (used for complex operations like rate limiting with Lua scripts).
     pub redis_client: Arc<RedisClient>,
+    /// OxCache instance for simple caching scenarios (search results, DNS, regex).
+    pub oxcache: Option<Arc<SearchCache>>,
     /// HTTP client.
     pub http_client: Arc<reqwest::Client>,
     /// All application repositories.
     pub repositories: Repositories,
     /// Optional storage repository.
     pub storage_repo: Option<Arc<dyn StorageRepository + Send + Sync>>,
+}
+
+/// Initialize oxcache for simple caching scenarios.
+///
+/// This function creates an oxcache instance for caching search results,
+/// DNS lookups, and regex patterns. For complex rate limiting and
+/// distributed semaphore operations, RedisClient is still required.
+///
+/// # Arguments
+///
+/// * `settings` - Application settings containing cache configuration
+///
+/// # Returns
+///
+/// Returns an initialized oxcache instance wrapped in Arc.
+pub async fn init_oxcache(settings: &Settings) -> Result<Option<Arc<SearchCache>>> {
+    if !settings.cache.enabled {
+        info!("Cache is disabled, skipping oxcache initialization");
+        return Ok(None);
+    }
+
+    match create_cache(&settings.cache).await {
+        Ok(cache) => {
+            info!("OxCache initialized (capacity: {}, ttl: {}s)",
+                settings.cache.memory.capacity,
+                settings.cache.memory.ttl_seconds);
+            Ok(Some(cache))
+        }
+        Err(e) => {
+            tracing::warn!("Failed to initialize oxcache: {}. Cache will be disabled.", e);
+            Ok(None)
+        }
+    }
 }
 
 /// Initialize all infrastructure components.
@@ -234,10 +261,12 @@ pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureCo
     let http_client = init_http_client(settings)?;
     let repositories = init_repositories(db.clone(), settings);
     let storage_repo = init_storage_repository(settings)?;
+    let oxcache = init_oxcache(settings).await?;
 
     Ok(InfrastructureComponents {
         db,
         redis_client,
+        oxcache,
         http_client,
         repositories,
         storage_repo,

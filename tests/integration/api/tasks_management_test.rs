@@ -141,9 +141,9 @@ async fn test_batch_task_query_basic() {
         .await,
     ];
 
-    // When: POST /v2/tasks/query
+    // When: POST /v1/tasks/_query
     let response = server
-        .post("/v2/tasks/query")
+        .post("/v1/tasks/_query")
         .add_header("Authorization", format!("Bearer {}", api_key))
         .json(&json!({
             "task_ids": task_ids,
@@ -218,7 +218,7 @@ async fn test_batch_task_query_with_filters() {
 
     // When: 只查询已完成和失败的任务
     let response = server
-        .post("/v2/tasks/query")
+        .post("/v1/tasks/_query")
         .add_header("Authorization", format!("Bearer {}", api_key))
         .json(&json!({
             "task_ids": task_ids,
@@ -265,7 +265,7 @@ async fn test_batch_task_query_exclude_results() {
 
     // When: include_results=false
     let response = server
-        .post("/v2/tasks/query")
+        .post("/v1/tasks/_query")
         .add_header("Authorization", format!("Bearer {}", api_key))
         .json(&json!({
             "task_ids": [task_id.to_string()],
@@ -318,9 +318,9 @@ async fn test_batch_task_cancel_success() {
         .await,
     ];
 
-    // When: DELETE /v2/tasks/cancel (使用force=true来取消active状态的任务)
+    // When: POST /v1/tasks/_cancel (使用force=true来取消active状态的任务)
     let response = server
-        .delete("/v2/tasks/cancel")
+        .post("/v1/tasks/_cancel")
         .add_header("Authorization", format!("Bearer {}", api_key))
         .json(&json!({
             "task_ids": task_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
@@ -383,7 +383,7 @@ async fn test_cancel_completed_task() {
 
     // When: 尝试取消（不强制）
     let response = server
-        .delete("/v2/tasks/cancel")
+        .post("/v1/tasks/_cancel")
         .add_header("Authorization", format!("Bearer {}", api_key))
         .json(&json!({
             "task_ids": [task_id.to_string()],
@@ -441,7 +441,7 @@ async fn test_force_cancel_completed_task() {
 
     // When: 强制取消
     let response = server
-        .delete("/v2/tasks/cancel")
+        .post("/v1/tasks/_cancel")
         .add_header("Authorization", format!("Bearer {}", api_key))
         .json(&json!({
             "task_ids": [task_id.to_string()],
@@ -489,7 +489,7 @@ async fn test_batch_operations_empty_list() {
 
     // When: 查询空任务列表
     let response = server
-        .post("/v2/tasks/query")
+        .post("/v1/tasks/_query")
         .add_header("Authorization", format!("Bearer {}", api_key))
         .json(&json!({
             "task_ids": [],
@@ -508,7 +508,7 @@ async fn test_batch_operations_empty_list() {
 
     // When: 尝试取消空任务列表 (应该返回验证错误)
     let response = server
-        .delete("/v2/tasks/cancel")
+        .post("/v1/tasks/_cancel")
         .add_header("Authorization", format!("Bearer {}", api_key))
         .json(&json!({
             "task_ids": [],

@@ -243,6 +243,7 @@ async fn main() -> anyhow::Result<()> {
         backlog_worker: services.backlog_worker,
         expiration_worker: services.expiration_worker,
         geo_location_service: services.geo_location_service,
+        geo_restriction_repo: infrastructure.repositories.geo_restriction_repo,
     };
 
     tracing::info!("Application dependencies initialized successfully");

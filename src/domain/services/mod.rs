@@ -18,6 +18,7 @@ pub mod audit_service;
 /// - 提取服务（extraction_service）：处理内容提取和数据解析逻辑
 /// - 提取工具（extraction_utils）：消除提取逻辑重复的共享工具函数
 /// - 功能标志服务（feature_flag_service）：处理运行时功能开关
+/// - 地理位置服务（geo_location）：提供IP地址地理位置查询的抽象接口
 /// - LLM服务（llm_service）：集成大语言模型进行智能处理
 /// - 重试处理器（retry_handler）：处理任务失败的重试逻辑
 /// - 抓取服务（scrape_service）：处理单个网页的抓取逻辑
@@ -36,6 +37,7 @@ pub mod credits_service;
 pub mod extraction_service;
 pub mod extraction_utils;
 pub mod feature_flag_service;
+pub mod geo_location;
 pub mod llm_service;
 pub mod rate_limiting_service;
 pub mod relevance_scorer;

@@ -4,7 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use super::task_repository::RepositoryError;
-use crate::domain::models::crawl::Crawl;
+use crate::domain::models::{Crawl, CrawlStatus};
 use async_trait::async_trait;
 use shaku::Interface;
 use uuid::Uuid;
@@ -90,7 +90,7 @@ pub trait CrawlRepository: Interface + Send + Sync {
     async fn update_status(
         &self,
         id: Uuid,
-        status: crate::domain::models::crawl::CrawlStatus,
+        status: CrawlStatus,
     ) -> Result<(), RepositoryError>;
 
     /// 增加总任务计数

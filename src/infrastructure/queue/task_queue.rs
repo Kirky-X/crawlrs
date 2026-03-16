@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::task::Task;
+use crate::domain::models::Task;
 use crate::domain::repositories::task_repository::TaskRepository;
 use async_trait::async_trait;
 use std::sync::Arc;

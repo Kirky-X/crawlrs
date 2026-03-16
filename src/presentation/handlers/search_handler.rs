@@ -8,7 +8,6 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::json;
 use std::sync::Arc;
 
 use crate::{
@@ -16,14 +15,14 @@ use crate::{
     common::constants::crawl_task,
     domain::{
         repositories::task_repository::TaskRepository,
-        services::rate_limiting_service::{RateLimitResult, RateLimitingService},
+        services::rate_limiting_service::RateLimitingService,
         services::search_service::{SearchQuery, SearchServiceError, SearchServiceTrait},
     },
     presentation::handlers::response_builder::{error_response, success_response},
     presentation::handlers::task_handler::wait_for_tasks_completion,
+    presentation::helpers::rate_limit_helper::check_rate_limit,
     presentation::middleware::auth_middleware::AuthState,
 };
-use tracing::error;
 
 /// 处理搜索请求
 pub async fn search(
@@ -36,34 +35,10 @@ pub async fn search(
     let team_id = auth_state.team_id;
     let api_key_id = auth_state.api_key_id;
     let api_key = api_key_id.to_string();
+
     // 1. 检查限流
-    match rate_limiting_service
-        .check_rate_limit(&api_key, "/v1/search")
-        .await
-    {
-        Ok(RateLimitResult::Denied { reason }) => {
-            return error_response(
-                StatusCode::TOO_MANY_REQUESTS,
-                format!("Rate limit exceeded: {}", reason),
-            );
-        }
-        Ok(RateLimitResult::RetryAfter {
-            retry_after_seconds,
-        }) => {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(json!({
-                    "success": false,
-                    "error": "Rate limit exceeded, please retry later",
-                    "retry_after_seconds": retry_after_seconds
-                })),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            error!("Rate limiting service error: {}", e);
-        }
-        _ => {}
+    if let Err(response) = check_rate_limit(rate_limiting_service.as_ref(), &api_key, "/v1/search").await {
+        return response;
     }
 
     // 2. 检查配额 (SearchService 内部已经处理了配额检查)
