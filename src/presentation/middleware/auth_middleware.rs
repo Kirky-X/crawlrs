@@ -595,6 +595,7 @@ impl AuthState {
     }
 
     /// Create AuthState with trusted proxy configuration
+    #[allow(clippy::too_many_arguments)]
     pub fn with_trusted_proxies(
         pool: Arc<DbPool>,
         auth_scope_service: Option<AuthScopeService>,

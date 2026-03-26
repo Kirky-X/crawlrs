@@ -128,6 +128,7 @@ impl WebhookEvent {
     }
 
     /// Create a webhook event with all fields (for mappers)
+    #[allow(clippy::too_many_arguments)]
     pub fn with_all_fields(
         id: Uuid,
         team_id: Uuid,

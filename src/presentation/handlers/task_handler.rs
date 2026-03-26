@@ -454,6 +454,7 @@ fn build_scrape_result_json(
 }
 
 /// 确定同步状态
+#[allow(dead_code)]
 fn determine_sync_status(sync_mode: bool, waited_time_ms: u64, sync_wait_ms: u32) -> String {
     if !sync_mode {
         return "async".to_string();

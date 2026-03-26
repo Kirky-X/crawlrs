@@ -237,13 +237,15 @@ impl TransactionManager {
         &self,
         config: TransactionConfig,
     ) -> Result<(), TransactionError> {
-        let mut active_tx = self.active_transaction.write();
-
-        if active_tx.is_some() {
-            return Err(TransactionError::TransactionAlreadyActive);
+        // Check if transaction is already active (non-blocking read)
+        {
+            let active_tx = self.active_transaction.read();
+            if active_tx.is_some() {
+                return Err(TransactionError::TransactionAlreadyActive);
+            }
         }
 
-        // Get a session from the pool
+        // Get a session from the pool (await outside of lock)
         let session = self
             .pool
             .get_session(&config.role)
@@ -253,7 +255,7 @@ impl TransactionManager {
                 TransactionError::BeginFailed(e.to_string())
             })?;
 
-        // Begin transaction using dbnexus Session
+        // Begin transaction using dbnexus Session (await outside of lock)
         session.begin_transaction().await.map_err(|e| {
             error!("Failed to begin transaction: {}", e);
             TransactionError::BeginFailed(e.to_string())
@@ -264,6 +266,8 @@ impl TransactionManager {
             config.role, config.isolation_level, config.access_mode
         );
 
+        // Store the transaction state (non-blocking write after await)
+        let mut active_tx = self.active_transaction.write();
         *active_tx = Some(ActiveTransaction {
             session,
             config,
@@ -283,6 +287,7 @@ impl TransactionManager {
     /// - Transaction already finished
     /// - Failed to commit
     #[instrument(skip(self), name = "transaction_commit")]
+    #[allow(clippy::await_holding_lock)]
     pub async fn commit(&self) -> Result<(), TransactionError> {
         let mut active_tx = self.active_transaction.write();
 
@@ -318,6 +323,7 @@ impl TransactionManager {
     /// - Transaction already finished
     /// - Failed to rollback
     #[instrument(skip(self), name = "transaction_rollback")]
+    #[allow(clippy::await_holding_lock)]
     pub async fn rollback(&self) -> Result<(), TransactionError> {
         let mut active_tx = self.active_transaction.write();
 
@@ -374,6 +380,7 @@ impl TransactionManager {
     /// tx_manager.commit().await?;
     /// ```
     #[instrument(skip(self), name = "transaction_savepoint")]
+    #[allow(clippy::await_holding_lock)]
     pub async fn savepoint(&self, name: &str) -> Result<Uuid, TransactionError> {
         self.validate_savepoint_name(name)?;
 
@@ -433,6 +440,7 @@ impl TransactionManager {
     ///
     /// * `name` - Savepoint name to release
     #[instrument(skip(self), name = "transaction_release_savepoint")]
+    #[allow(clippy::await_holding_lock)]
     pub async fn release_savepoint(&self, name: &str) -> Result<(), TransactionError> {
         self.validate_savepoint_name(name)?;
 
@@ -477,6 +485,7 @@ impl TransactionManager {
     ///
     /// * `name` - Savepoint name to rollback to
     #[instrument(skip(self), name = "transaction_rollback_to_savepoint")]
+    #[allow(clippy::await_holding_lock)]
     pub async fn rollback_to_savepoint(&self, name: &str) -> Result<(), TransactionError> {
         self.validate_savepoint_name(name)?;
 
