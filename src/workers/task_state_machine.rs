@@ -124,17 +124,17 @@ impl TaskStateMachine {
 
         // 更新状态和元数据
         self.task.status = new_status;
-        self.task.updated_at = Utc::now().into();
+        self.task.updated_at = Utc::now();
 
         // 根据状态更新时间戳
         match new_status {
             TaskStatus::Active => {
                 if self.task.started_at.is_none() {
-                    self.task.started_at = Some(Utc::now().into());
+                    self.task.started_at = Some(Utc::now());
                 }
             }
             TaskStatus::Completed => {
-                self.task.completed_at = Some(Utc::now().into());
+                self.task.completed_at = Some(Utc::now());
             }
             _ => {}
         }

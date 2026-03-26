@@ -76,7 +76,7 @@ pub async fn create_scrape(
                 error = %e,
                 "SSRF attack attempt blocked"
             );
-            return errors::bad_request(&format!("SSRF protection: {}", e));
+            return errors::bad_request(format!("SSRF protection: {}", e));
         }
     }
 
@@ -229,8 +229,8 @@ pub async fn get_scrape_status(
                         status_code: result.status_code as u16,
                         content_type: Some(result.content_type),
                         response_time_ms: result.response_time_ms,
-                        headers: Some(result.headers.into()),
-                        meta_data: Some(result.meta_data.into()),
+                        headers: Some(result.headers),
+                        meta_data: Some(result.meta_data),
                         screenshot: result.screenshot,
                         created_at: result.created_at,
                     }),

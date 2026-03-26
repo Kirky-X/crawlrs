@@ -6,7 +6,7 @@
 //! Crawl-related use cases
 
 use crate::application::dto::crawl_request::CrawlRequestDto;
-use crate::domain::models::{Crawl, CrawlStatus};
+use crate::domain::models::Crawl;
 use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
@@ -91,7 +91,7 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> AsyncCrawlUseC
         request: AsyncCrawlRequest,
     ) -> Result<AsyncCrawlResponse, anyhow::Error> {
         // 创建爬取任务
-        let now = chrono::Utc::now();
+        let _now = chrono::Utc::now();
         let crawl = Crawl::new(
             Uuid::new_v4(),
             request.team_id,
@@ -175,7 +175,7 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> SyncCrawlUseCa
         let start_time = std::time::Instant::now();
 
         // 创建爬取任务
-        let now = chrono::Utc::now();
+        let _now = chrono::Utc::now();
         let crawl = Crawl::new(
             Uuid::new_v4(),
             request.team_id,

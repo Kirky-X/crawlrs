@@ -10,7 +10,7 @@
 
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::domain::models::Task;
-use crate::domain::models::{WebhookEvent, WebhookEventType, WebhookStatus};
+use crate::domain::models::{WebhookEvent, WebhookEventType};
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::services::webhook_sender::WebhookSender;
 use anyhow::{anyhow, Result};

@@ -34,16 +34,16 @@ impl From<DbError> for AuditRepositoryError {
         match err {
             DbError::Connection(db_err) => AuditRepositoryError::DatabaseError(db_err),
             DbError::Permission(msg) => AuditRepositoryError::DatabaseError(
-                sea_orm::DbErr::Custom(format!("Permission error: {}", msg).into()),
+                sea_orm::DbErr::Custom(format!("Permission error: {}", msg)),
             ),
             DbError::Transaction(msg) => AuditRepositoryError::DatabaseError(
-                sea_orm::DbErr::Custom(format!("Transaction error: {}", msg).into()),
+                sea_orm::DbErr::Custom(format!("Transaction error: {}", msg)),
             ),
             DbError::Migration(msg) => AuditRepositoryError::DatabaseError(
-                sea_orm::DbErr::Custom(format!("Migration error: {}", msg).into()),
+                sea_orm::DbErr::Custom(format!("Migration error: {}", msg)),
             ),
             DbError::Config(msg) => AuditRepositoryError::DatabaseError(
-                sea_orm::DbErr::Custom(format!("Config error: {}", msg).into()),
+                sea_orm::DbErr::Custom(format!("Config error: {}", msg)),
             ),
         }
     }

@@ -99,7 +99,7 @@ pub async fn limiteron_rate_limit_middleware(
     let remote_addr: Option<SocketAddr> = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map(|conn| conn.0.clone());
+        .map(|conn| conn.0);
 
     let client_ip = extract_client_ip(&request, remote_addr);
 

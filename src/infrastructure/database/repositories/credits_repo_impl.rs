@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use dbnexus::DbPool;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
 };
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use crate::common::time_utils;
 use crate::domain::models::{CreditsTransaction, CreditsTransactionType};
 use crate::domain::repositories::credits_repository::{CreditsRepository, CreditsRepositoryError};
 use crate::infrastructure::database::entities::{credits, credits_transactions};
-use crate::infrastructure::persistence::mappers::{CreditsMapper, CreditsTransactionMapper};
+use crate::infrastructure::persistence::mappers::CreditsTransactionMapper;
 
 pub struct CreditsRepositoryImpl {
     pool: Arc<DbPool>,
@@ -73,7 +73,7 @@ impl CreditsRepository for CreditsRepositoryImpl {
             "SELECT deduct_credits_safe('{}', {}, '{}', '{}', {})",
             team_id,
             amount,
-            transaction_type.to_string(),
+            transaction_type,
             description.replace("'", "''"),
             reference_id.map(|id| format!("'{}'", id)).unwrap_or("NULL".to_string())
         );
@@ -104,7 +104,7 @@ impl CreditsRepository for CreditsRepositoryImpl {
             "SELECT add_credits_safe('{}', {}, '{}', '{}', {})",
             team_id,
             amount,
-            transaction_type.to_string(),
+            transaction_type,
             description.replace("'", "''"),
             reference_id.map(|id| format!("'{}'", id)).unwrap_or("NULL".to_string())
         );

@@ -3,12 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::{Task, TaskStatus, TaskType, Crawl};
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use async_trait::async_trait;
 use sea_orm::DbErr;
-use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::pin::Pin;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use shaku::Interface;

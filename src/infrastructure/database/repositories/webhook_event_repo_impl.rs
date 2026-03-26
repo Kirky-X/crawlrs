@@ -5,7 +5,7 @@
 
 //! Webhook event repository implementation using Sea-ORM with Mapper
 
-use crate::domain::models::{WebhookEvent, WebhookEventType};
+use crate::domain::models::WebhookEvent;
 use crate::domain::repositories::task_repository::RepositoryError;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::infrastructure::database::entities::webhook_event;

@@ -10,10 +10,9 @@
 //! based implementation.
 
 use crate::config::DatabaseSettings;
-use dbnexus::{CacheConfig, DbConfig, DbPool, DbResult, Session};
+use dbnexus::{CacheConfig, DbConfig, DbPool, Session};
 use sea_orm::{ConnAcquireErr, DbErr};
 use std::ops::Deref;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -57,7 +56,7 @@ impl DatabasePool {
         self.inner
             .get_session(role)
             .await
-            .map_err(|e| DbErr::ConnectionAcquire(ConnAcquireErr::ConnectionClosed))
+            .map_err(|_e| DbErr::ConnectionAcquire(ConnAcquireErr::ConnectionClosed))
     }
 
     /// Get an admin session with full permissions
@@ -250,7 +249,7 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
     let max_connections = settings.max_connections.unwrap_or(100);
     let min_connections = settings.min_connections.unwrap_or(10);
     let idle_timeout = settings.idle_timeout.unwrap_or(300);
-    let acquire_timeout = settings.connect_timeout.map(|t| t as u64 * 1000).unwrap_or(30000);
+    let acquire_timeout = settings.connect_timeout.map(|t| t * 1000).unwrap_or(30000);
 
     debug!(
         "Creating dbnexus pool: max_connections={}, min_connections={}, idle_timeout={}s",
@@ -266,8 +265,8 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
     // Create DbConfig from settings
     let config = DbConfig {
         url: settings.url.clone(),
-        max_connections: max_connections as u32,
-        min_connections: min_connections as u32,
+        max_connections,
+        min_connections,
         idle_timeout,
         acquire_timeout,
         permissions_path,
@@ -283,7 +282,7 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
     // Create pool using dbnexus with_config (handles async initialization)
     let pool = DbPool::with_config(config)
         .await
-        .map_err(|e| DbErr::ConnectionAcquire(ConnAcquireErr::ConnectionClosed))?;
+        .map_err(|_e| DbErr::ConnectionAcquire(ConnAcquireErr::ConnectionClosed))?;
 
     Ok(pool)
 }

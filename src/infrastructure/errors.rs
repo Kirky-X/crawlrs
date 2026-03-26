@@ -7,7 +7,6 @@
 //!
 //! 定义外部系统交互的错误类型
 
-use sea_orm::DbErr;
 use thiserror::Error;
 
 /// Infrastructure层错误类型

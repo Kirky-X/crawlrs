@@ -33,7 +33,6 @@ use crate::domain::services::team_service::TeamService;
 use crate::domain::services::team_service::{GeoRestrictionResult, TeamGeoRestrictions};
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::router::EngineRouterTrait;
-use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::search::client::SearchClientTrait;
 use crate::utils::robots::RobotsCheckerTrait;
@@ -106,9 +105,9 @@ where
 
         let inner = crate::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl::new(
             redis_client,
-            Arc::from(task_repo),
-            Arc::from(tasks_backlog_repo),
-            Arc::from(credits_repo),
+            task_repo,
+            tasks_backlog_repo,
+            credits_repo,
             config,
         );
 

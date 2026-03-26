@@ -292,11 +292,11 @@ impl ScrapeWorker {
                     status_code: response.status_code as i32,
                     content: response.content.clone(),
                     content_type: response.content_type.clone(),
-                    headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null).into(),
-                    meta_data: Value::Null.into(),
+                    headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null),
+                    meta_data: Value::Null,
                     screenshot: response.screenshot.clone(),
                     response_time_ms: response.response_time_ms as i64,
-                    created_at: Utc::now().naive_utc().into(),
+                    created_at: Utc::now().naive_utc(),
                 };
 
                 if let Err(e) = self.handle_scrape_success(&task, &response).await {
@@ -792,11 +792,11 @@ impl ScrapeWorker {
             status_code: response.status_code as i32,
             content: response.content.clone(),
             content_type: "text/html".to_string(),
-            headers: json!({}).into(),
+            headers: json!({}),
             meta_data,
             screenshot: None,
             response_time_ms: 0,
-            created_at: Utc::now().naive_utc().into(),
+            created_at: Utc::now().naive_utc(),
         };
 
         self.result_repository.save(scrape_result).await?;
@@ -1136,11 +1136,11 @@ impl ScrapeWorker {
             status_code: response.status_code as i32,
             content: content_to_store,
             content_type: response.content_type.clone(),
-            headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null).into(),
+            headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null),
             meta_data,
             screenshot: response.screenshot.clone(),
             response_time_ms: response.response_time_ms as i64,
-            created_at: Utc::now().naive_utc().into(),
+            created_at: Utc::now().naive_utc(),
         };
 
         self.result_repository.save(result).await?;

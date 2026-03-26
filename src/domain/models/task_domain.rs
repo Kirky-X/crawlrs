@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
-use uuid::Uuid;
 
 /// 任务类型枚举
 ///

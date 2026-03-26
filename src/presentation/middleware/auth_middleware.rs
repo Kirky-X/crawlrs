@@ -17,7 +17,6 @@ use crate::infrastructure::security;
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 use axum::{
     body::Body,
-    extract::State,
     http::{header, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},

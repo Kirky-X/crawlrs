@@ -207,14 +207,14 @@ pub async fn query_tasks<T: TaskRepository>(
 
     // 处理同步等待模式
     let sync_mode = sync_wait_ms > 0 && !tasks.is_empty();
-    let mut waited_time_ms = 0u64;
+    let _waited_time_ms;
 
     if sync_mode {
-        waited_time_ms =
+        _waited_time_ms =
             handle_sync_wait(task_repo.as_ref(), &tasks, team_id, sync_wait_ms).await?;
 
         // 重新查询任务状态
-        if waited_time_ms > 0 {
+        if _waited_time_ms > 0 {
             (tasks, _) =
                 execute_task_query(task_repo.as_ref(), team_id, &request, limit, offset).await?;
         }

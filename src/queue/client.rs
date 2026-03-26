@@ -7,7 +7,7 @@
 //!
 //! 提供统一的任务队列操作接口，支持单任务和批量操作、优先级、指标收集等
 
-use crate::domain::models::{Task, TaskStatus, TaskType};
+use crate::domain::models::Task;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;

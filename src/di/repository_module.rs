@@ -22,7 +22,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
+use shaku::{Component, HasComponent, Module, ModuleBuildContext};
 
 use dbnexus::DbPool;
 
@@ -52,7 +52,7 @@ use crate::infrastructure::storage::LocalStorage;
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use anyhow::Result;
 
-use super::database_module::{DatabasePoolTrait, SettingsTrait};
+use super::database_module::DatabasePoolTrait;
 
 // =============================================================================
 // Repository Component Macro

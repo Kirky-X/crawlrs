@@ -52,7 +52,7 @@ impl Default for ConcurrencyStrategy {
 #[derive(Debug)]
 pub struct ConcurrencyPermit {
     /// 底层的信号量许可
-    permit: OwnedSemaphorePermit,
+    _permit: OwnedSemaphorePermit,
     /// 活跃计数器的引用（用于统计）
     active_count: Arc<AtomicU32>,
     /// 全局计数器的引用（用于统计）
@@ -62,12 +62,12 @@ pub struct ConcurrencyPermit {
 impl ConcurrencyPermit {
     /// 创建新的并发许可
     fn new(
-        permit: OwnedSemaphorePermit,
+        _permit: OwnedSemaphorePermit,
         active_count: Arc<AtomicU32>,
         global_counter: Arc<AtomicU32>,
     ) -> Self {
         Self {
-            permit,
+            _permit,
             active_count,
             global_counter,
         }
@@ -96,7 +96,7 @@ impl Drop for ConcurrencyPermit {
 #[derive(Debug)]
 pub struct ConcurrencyGuard {
     /// 底层的信号量许可
-    permit: tokio::sync::SemaphorePermit<'static>,
+    _permit: tokio::sync::SemaphorePermit<'static>,
     /// 活跃计数器的引用
     active_count: Arc<AtomicU32>,
     /// 全局计数器的引用
@@ -106,12 +106,12 @@ pub struct ConcurrencyGuard {
 impl ConcurrencyGuard {
     /// 创建新的并发守卫
     fn new(
-        permit: tokio::sync::SemaphorePermit<'static>,
+        _permit: tokio::sync::SemaphorePermit<'static>,
         active_count: Arc<AtomicU32>,
         global_counter: Arc<AtomicU32>,
     ) -> Self {
         Self {
-            permit,
+            _permit,
             active_count,
             global_counter,
         }
@@ -316,6 +316,7 @@ impl From<&FineGrainedConcurrencyController> for ConcurrencyStats {
 ///
 /// 根据系统负载动态调整并发限制
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct AdaptiveConcurrencyController {
     base_controller: FineGrainedConcurrencyController,
     min_concurrent: u32,

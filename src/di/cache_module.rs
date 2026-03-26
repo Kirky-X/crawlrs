@@ -13,7 +13,6 @@ use std::sync::Arc;
 use futures::executor::block_on;
 use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
 
-use crate::config::Settings;
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::oxcache::{
     create_cache, ConcurrencyController, RateLimiter, SearchCache,

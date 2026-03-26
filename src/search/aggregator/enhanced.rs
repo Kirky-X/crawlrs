@@ -1,12 +1,13 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};
 use crate::infrastructure::oxcache::generate_search_key;
 
+#[allow(dead_code)]
 pub struct EnhancedSearchAggregator {
     engines: Vec<Arc<dyn SearchEngine>>,
     timeout: Duration,
@@ -23,6 +24,7 @@ impl EnhancedSearchAggregator {
         }
     }
 
+    #[allow(dead_code)]
     fn generate_cache_key(
         &self,
         query: &str,

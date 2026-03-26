@@ -37,7 +37,7 @@ pub fn load_settings() -> Result<Settings> {
 ///
 /// Returns `Ok(())` if validation passes, or an error with details about
 /// the security issue.
-pub fn validate_security(settings: &Settings, is_production: bool) -> Result<()> {
+pub fn validate_security(_settings: &Settings, _is_production: bool) -> Result<()> {
     // Validation is now handled by confers automatically via #[config(validate)]
     // This function can be used for additional production-specific checks if needed
     debug!("Security validation configured via confers library");

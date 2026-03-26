@@ -7,10 +7,8 @@
 
 use crate::domain::models::ScrapeResult;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
-use crate::domain::repositories::task_repository::RepositoryError;
 use crate::infrastructure::database::entities::scrape_result as db_entity;
 use async_trait::async_trait;
-use chrono::Utc;
 use dbnexus::DbPool;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use std::sync::Arc;

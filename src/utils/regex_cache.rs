@@ -9,11 +9,9 @@
 //! and compile it on demand. This provides fast lookup while avoiding serialization issues.
 
 use crate::infrastructure::oxcache::RegexCacheType;
-use oxcache::Cache;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::warn;
 

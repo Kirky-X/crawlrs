@@ -407,10 +407,10 @@ impl BacklogService for LimiteronService {
                 if let Ok(Some(mut task)) = self.task_repository.find_by_id(backlog.task_id).await {
                     if task.status == crate::domain::models::TaskStatus::Queued {
                         task.status = crate::domain::models::TaskStatus::Active;
-                        task.started_at = Some(chrono::Utc::now().into());
+                        task.started_at = Some(chrono::Utc::now());
                         task.lock_token = None;
                         task.lock_expires_at =
-                            Some((chrono::Utc::now() + chrono::Duration::seconds(300)).into());
+                            Some(chrono::Utc::now() + chrono::Duration::seconds(300));
 
                         if let Err(e) = self.task_repository.update(&task).await {
                             tracing::error!("LimiteronService: Database error updating task: {:?}", e);

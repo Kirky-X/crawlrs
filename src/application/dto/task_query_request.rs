@@ -4,7 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::models::{TaskStatus, TaskType};
-use chrono::{DateTime, FixedOffset, NaiveDateTime};
+use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;

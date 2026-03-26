@@ -15,7 +15,6 @@ use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
 use crate::config::Settings;
 use crate::infrastructure::database::dbnexus_connection::DatabasePool;
 use crate::infrastructure::database::transaction::TransactionManager;
-use sea_orm::DatabaseConnection;
 
 // =============================================================================
 // Settings Component

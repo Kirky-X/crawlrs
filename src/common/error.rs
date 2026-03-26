@@ -280,6 +280,7 @@ fn sanitize_engine_error(error: &str) -> String {
 /// 脱敏通用错误信息
 ///
 /// 对所有错误消息进行脱敏处理，移除敏感信息
+#[allow(dead_code)]
 fn sanitize_error_message(msg: &str) -> String {
     let mut sanitized = msg.to_string();
 

@@ -304,6 +304,7 @@ impl Default for RedirectValidator {
 /// Validate a redirect URL without creating a validator instance.
 ///
 /// This is a convenience function for one-off validation.
+#[allow(dead_code)]
 pub fn validate_redirect(redirect_url: &str) -> Result<(), SsrfError> {
     // Quick static check
     if is_internal_url(redirect_url) {
@@ -333,6 +334,7 @@ pub fn validate_redirect(redirect_url: &str) -> Result<(), SsrfError> {
 /// This function creates a custom redirect policy that validates
 /// each redirect URL before following it.
 #[cfg(feature = "engine-reqwest")]
+#[allow(dead_code)]
 pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
         // Check redirect count

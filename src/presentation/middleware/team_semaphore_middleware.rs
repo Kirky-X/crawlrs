@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use axum::{
-    body::Body,
     extract::Request,
     http::StatusCode,
     middleware::Next,

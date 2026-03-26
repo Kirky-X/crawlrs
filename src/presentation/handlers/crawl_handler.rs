@@ -65,7 +65,7 @@ pub async fn create_crawl(
                 error = %e,
                 "SSRF attack attempt blocked"
             );
-            return errors::bad_request(&format!("SSRF protection: {}", e));
+            return errors::bad_request(format!("SSRF protection: {}", e));
         }
     }
 

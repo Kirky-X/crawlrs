@@ -8,7 +8,7 @@
 //! This implementation uses the Mapper pattern to convert between
 //! domain models and database entities, following clean architecture principles.
 
-use crate::domain::models::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::{
     RepositoryError, TaskQueryParams, TaskRepository,
 };
@@ -301,7 +301,7 @@ impl TaskRepository for TaskRepositoryImpl {
                 Expr::value(TaskStatus::Cancelled.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-            .filter(task_entity::Column::Id.is_in(task_ids.iter().map(|id| *id)))
+            .filter(task_entity::Column::Id.is_in(task_ids.iter().copied()))
             .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
@@ -340,7 +340,7 @@ impl TaskRepository for TaskRepositoryImpl {
                 Expr::value(TaskStatus::Failed.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-            .filter(task_entity::Column::Id.is_in(task_ids.iter().map(|id| *id)))
+            .filter(task_entity::Column::Id.is_in(task_ids.iter().copied()))
             .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
@@ -424,7 +424,7 @@ impl TaskRepository for TaskRepositoryImpl {
         // PERF: 使用批量查询代替 N+1 查询
         // 一次性获取所有任务，验证团队所有权
         let entities: Vec<task_entity::Model> = task_entity::Entity::find()
-            .filter(task_entity::Column::Id.is_in(task_ids.iter().map(|id| *id)))
+            .filter(task_entity::Column::Id.is_in(task_ids.iter().copied()))
             .all(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
@@ -460,7 +460,7 @@ impl TaskRepository for TaskRepositoryImpl {
                     Expr::value(TaskStatus::Cancelled.to_string()),
                 )
                 .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-                .filter(task_entity::Column::Id.is_in(owned_ids.iter().map(|id| *id)))
+                .filter(task_entity::Column::Id.is_in(owned_ids.iter().copied()))
                 .exec(conn)
                 .await
                 .map_err(|e| RepositoryError::Database(e.into()))?;

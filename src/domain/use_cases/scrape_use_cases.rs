@@ -7,7 +7,7 @@
 
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::application::dto::scrape_response::ScrapeResponseDto;
-use crate::domain::models::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskType};
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -88,7 +88,7 @@ impl<T: TaskRepository, R: ScrapeResultRepository, Cr: CreditsRepository>
     ) -> Result<AsyncScrapeResponse, anyhow::Error> {
         // 创建抓取任务
         let payload = serde_json::to_value(&request.request).unwrap_or_default();
-        let now = chrono::Utc::now();
+        let _now = chrono::Utc::now();
         let task = Task::new(
             Uuid::new_v4(),
             TaskType::Scrape,

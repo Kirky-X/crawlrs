@@ -61,12 +61,15 @@ use url::Url;
 use crate::infrastructure::dns::DnsCacheService;
 
 /// Maximum URL length to prevent resource exhaustion
+#[allow(dead_code)]
 const MAX_URL_LENGTH: usize = 2048;
 
 /// Maximum number of redirects to follow
+#[allow(dead_code)]
 const MAX_REDIRECTS: u8 = 10;
 
 /// Default DNS cache TTL in seconds
+#[allow(dead_code)]
 const DEFAULT_DNS_CACHE_TTL: u64 = 300;
 
 /// Unified SSRF protection validator with DNS caching support.
@@ -74,6 +77,7 @@ const DEFAULT_DNS_CACHE_TTL: u64 = 300;
 /// This struct provides the main entry point for SSRF protection.
 /// It combines static validation, DNS resolution, and redirect validation.
 #[derive(Clone)]
+#[derive(Default)]
 pub struct SsrfValidator {
     /// DNS cache for resolution results
     dns_cache: Option<Arc<DnsCacheService>>,
@@ -81,14 +85,6 @@ pub struct SsrfValidator {
     config: SsrfConfig,
 }
 
-impl Default for SsrfValidator {
-    fn default() -> Self {
-        Self {
-            dns_cache: None,
-            config: SsrfConfig::default(),
-        }
-    }
-}
 
 impl SsrfValidator {
     /// Create a new SSRF validator without DNS caching.

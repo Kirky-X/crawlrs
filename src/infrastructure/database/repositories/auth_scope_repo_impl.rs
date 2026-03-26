@@ -82,7 +82,7 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
         let existing = self.find_by_api_key_id(api_key_id).await?;
 
         match existing {
-            Some(existing_scope) => {
+            Some(_existing_scope) => {
                 // Update existing scope - need to get the ID from existing record
                 let existing_model = ScopeEntity::find()
                     .filter(ScopeColumn::ApiKeyId.eq(api_key_id))

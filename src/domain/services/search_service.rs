@@ -4,9 +4,9 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::config::settings::Settings;
-use crate::domain::models::{Crawl, CrawlStatus};
+use crate::domain::models::Crawl;
 use crate::domain::models::CreditsTransactionType;
-use crate::domain::models::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::{CreditsRepository, CreditsRepositoryError};
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -190,7 +190,7 @@ impl SearchService {
         // 2. If crawl_results is true, create a crawl task
         if query.crawl_results.unwrap_or(false) && !results.is_empty() {
             let cid = Uuid::new_v4();
-            let now = Utc::now();
+            let _now = Utc::now();
 
             let config = query.crawl_config.unwrap_or(SearchCrawlConfig {
                 max_depth: 1,
@@ -204,7 +204,7 @@ impl SearchService {
                 extraction_rules: None,
             });
 
-            let now = chrono::Utc::now();
+            let _now = chrono::Utc::now();
             let crawl = Crawl::new(
                 cid,
                 team_id,

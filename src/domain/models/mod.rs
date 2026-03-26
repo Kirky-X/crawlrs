@@ -13,7 +13,6 @@
 /// 命名规则：
 /// - *_model.rs: 纯领域模型（无 ORM 注解）
 /// - *_domain.rs: 领域业务逻辑（枚举、错误类型）
-
 // Pure domain models (no ORM annotations)
 pub mod crawl_model;
 pub mod credits_model;

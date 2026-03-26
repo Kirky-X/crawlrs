@@ -53,7 +53,8 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     /// Create a new rate limiter with default config
-    pub fn default() -> Self {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new_default() -> Self {
         let config = RateLimitConfig {
             max_requests_per_second: 60,
             burst_capacity: 20,
@@ -120,7 +121,7 @@ impl ConcurrencyController {
     /// Acquire a permit, returns None if limited
     pub async fn try_acquire(&self) -> Option<ConcurrencyPermit> {
         match self.semaphore.clone().try_acquire_owned() {
-            Ok(permit) => Some(ConcurrencyPermit { permit }),
+            Ok(permit) => Some(ConcurrencyPermit { _permit: permit }),
             Err(_) => None,
         }
     }
@@ -128,7 +129,7 @@ impl ConcurrencyController {
     /// Acquire a permit with wait, returns None if timeout
     pub async fn acquire(&self, timeout: Duration) -> Option<ConcurrencyPermit> {
         match tokio::time::timeout(timeout, self.semaphore.clone().acquire_owned()).await {
-            Ok(Ok(permit)) => Some(ConcurrencyPermit { permit }),
+            Ok(Ok(permit)) => Some(ConcurrencyPermit { _permit: permit }),
             _ => None,
         }
     }
@@ -146,7 +147,7 @@ impl ConcurrencyController {
 
 /// RAII guard for concurrency permit
 pub struct ConcurrencyPermit {
-    permit: tokio::sync::OwnedSemaphorePermit,
+    _permit: tokio::sync::OwnedSemaphorePermit,
 }
 
 impl Drop for ConcurrencyPermit {
@@ -292,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_limiter() {
-        let limiter = RateLimiter::default();
+        let limiter = RateLimiter::new_default();
         
         // First few requests should succeed
         for _ in 0..5 {

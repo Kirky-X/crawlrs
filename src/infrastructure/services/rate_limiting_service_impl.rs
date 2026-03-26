@@ -239,7 +239,7 @@ impl RateLimitingServiceImpl {
         requests_per_hour: u32,
     ) -> Result<RateLimitResult, RateLimitingError> {
         let mut conn = self.get_redis_conn().await?;
-        let sha = self.get_or_load_script_sha().await?;
+        let _sha = self.get_or_load_script_sha().await?;
 
         // 构建 Redis 键
         let per_second_key = self.build_api_rate_limit_key(api_key, endpoint, "per_second");
@@ -328,6 +328,7 @@ impl RateLimitingServiceImpl {
     }
 
     /// 实现令牌桶限流算法
+    #[allow(dead_code)]
     async fn check_token_bucket_rate_limit(
         &self,
         key: String,
@@ -864,11 +865,11 @@ impl BacklogService for RateLimitingServiceImpl {
                 if let Some(mut task) = task {
                     if task.status == crate::domain::models::TaskStatus::Queued {
                         task.status = crate::domain::models::TaskStatus::Active;
-                        task.started_at = Some(chrono::Utc::now().into());
+                        task.started_at = Some(chrono::Utc::now());
                         // 清除 lock_token 并设置 lock_expires_at，以便新的 Worker 可以获取此任务
                         task.lock_token = None;
                         task.lock_expires_at =
-                            Some((chrono::Utc::now() + chrono::Duration::seconds(300)).into());
+                            Some(chrono::Utc::now() + chrono::Duration::seconds(300));
                         self.task_repository.update(&task).await.map_err(|e| {
                             tracing::error!("Database error updating task: {:?}", e);
                             RateLimitingError::DatabaseError
