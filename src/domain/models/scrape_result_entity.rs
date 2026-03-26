@@ -5,7 +5,6 @@
 
 //! ScrapeResult entity definition using dbnexus
 
-use dbnexus::{db_crud, db_permission};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -13,8 +12,6 @@ use uuid::Uuid;
 /// ScrapeResult entity
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "scrape_results")]
-#[db_crud(table_name = "scrape_results")]
-#[db_permission(roles = ["admin", "scraper", "viewer"], operations = ["SELECT", "INSERT", "UPDATE", "DELETE"])]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: Uuid,

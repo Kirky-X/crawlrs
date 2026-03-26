@@ -39,7 +39,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use sea_orm::{
     AccessMode, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr, IsolationLevel,
-    QueryFilter, Statement,
+    QueryFilter, Statement, TransactionTrait,
 };
 use thiserror::Error;
 use tracing::{debug, error, info, instrument, warn};
@@ -172,7 +172,7 @@ struct Savepoint {
 /// Active transaction state
 struct ActiveTransaction {
     /// The underlying Sea-ORM transaction
-    transaction: DatabaseTransaction,
+    transaction: Option<DatabaseTransaction>,
     /// Configuration used for this transaction
     config: TransactionConfig,
     /// Stack of active savepoints (for nested transactions)
@@ -266,13 +266,12 @@ impl TransactionManager {
             return Err(TransactionError::TransactionAlreadyActive);
         }
 
-        let isolation: IsolationLevel = config.isolation_level.into();
-        let access_mode: AccessMode = config.access_mode.into();
-
+        // Sea-ORM 2.0 uses begin() without config parameters
+        // Isolation level and access mode can be set via SET TRANSACTION if needed
         let transaction = self
             .pool
             .as_ref()
-            .begin_with_config(Some(isolation), Some(access_mode))
+            .begin()
             .await
             .map_err(|e| {
                 error!("Failed to begin transaction: {}", e);
@@ -285,7 +284,7 @@ impl TransactionManager {
         );
 
         *active_tx = Some(ActiveTransaction {
-            transaction,
+            transaction: Some(transaction),
             config,
             savepoints: VecDeque::new(),
             finished: false,
@@ -314,12 +313,18 @@ impl TransactionManager {
             return Err(TransactionError::NoActiveTransaction);
         }
 
-        tx_state.transaction.commit().await.map_err(|e| {
+        // Take ownership of the transaction for commit (Sea-ORM 2.0 requires ownership)
+        let transaction = tx_state.transaction.take().ok_or_else(|| {
+            TransactionError::CommitFailed("Transaction already consumed".to_string())
+        })?;
+        drop(tx_state); // Release the borrow before commit
+
+        transaction.commit().await.map_err(|e| {
             error!("Failed to commit transaction: {}", e);
             TransactionError::CommitFailed(e.to_string())
         })?;
 
-        tx_state.finished = true;
+        // Clear the active transaction
         *active_tx = None;
 
         info!("Transaction committed successfully");
@@ -346,12 +351,18 @@ impl TransactionManager {
             return Err(TransactionError::NoActiveTransaction);
         }
 
-        tx_state.transaction.rollback().await.map_err(|e| {
+        // Take ownership of the transaction for rollback (Sea-ORM 2.0 requires ownership)
+        let transaction = tx_state.transaction.take().ok_or_else(|| {
+            TransactionError::RollbackFailed("Transaction already consumed".to_string())
+        })?;
+        drop(tx_state); // Release the borrow before rollback
+
+        transaction.rollback().await.map_err(|e| {
             error!("Failed to rollback transaction: {}", e);
             TransactionError::RollbackFailed(e.to_string())
         })?;
 
-        tx_state.finished = true;
+        // Clear the active transaction
         *active_tx = None;
 
         info!("Transaction rolled back successfully");
@@ -420,10 +431,12 @@ impl TransactionManager {
         let sql = format!("SAVEPOINT {}", name);
         tx_state
             .transaction
-            .execute(Statement::from_string(
-                sea_orm::DatabaseBackend::Postgres,
-                sql,
-            ))
+            .as_ref()
+            .ok_or_else(|| TransactionError::SavepointFailed {
+                name: name.to_string(),
+                message: "Transaction not available".to_string(),
+            })?
+            .execute_unprepared(&sql)
             .await
             .map_err(|e| {
                 error!("Failed to create savepoint '{}': {}", name, e);
@@ -479,10 +492,12 @@ impl TransactionManager {
         let sql = format!("RELEASE SAVEPOINT {}", name);
         tx_state
             .transaction
-            .execute(Statement::from_string(
-                sea_orm::DatabaseBackend::Postgres,
-                sql,
-            ))
+            .as_ref()
+            .ok_or_else(|| TransactionError::ReleaseSavepointFailed {
+                name: name.to_string(),
+                message: "Transaction not available".to_string(),
+            })?
+            .execute_unprepared(&sql)
             .await
             .map_err(|e| {
                 error!("Failed to release savepoint '{}': {}", name, e);
@@ -528,10 +543,12 @@ impl TransactionManager {
         let sql = format!("ROLLBACK TO SAVEPOINT {}", name);
         tx_state
             .transaction
-            .execute(Statement::from_string(
-                sea_orm::DatabaseBackend::Postgres,
-                sql,
-            ))
+            .as_ref()
+            .ok_or_else(|| TransactionError::RollbackToSavepointFailed {
+                name: name.to_string(),
+                message: "Transaction not available".to_string(),
+            })?
+            .execute_unprepared(&sql)
             .await
             .map_err(|e| {
                 error!("Failed to rollback to savepoint '{}': {}", name, e);
@@ -546,7 +563,7 @@ impl TransactionManager {
             .savepoints
             .iter()
             .position(|sp| sp.name == name)
-            .unwrap();
+            .expect("Savepoint existence verified above, position must exist");
         tx_state.savepoints.truncate(position + 1);
 
         debug!("Rolled back to savepoint '{}'", name);
@@ -581,22 +598,25 @@ impl TransactionManager {
     #[instrument(skip(self, f), name = "transaction_execute")]
     pub async fn execute_in_transaction<F, Fut, T>(&self, f: F) -> Result<T, TransactionError>
     where
-        F: FnOnce(DatabaseTransaction) -> Fut,
+        F: FnOnce(&DatabaseTransaction) -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
         self.begin().await?;
 
-        // Get the transaction
-        let transaction = {
+        // Get a reference to the transaction
+        let result = {
             let active_tx = self.active_transaction.read();
-            active_tx
+            let tx_state = active_tx
                 .as_ref()
-                .ok_or(TransactionError::NoActiveTransaction)?
-                .transaction
-                .clone()
+                .ok_or(TransactionError::NoActiveTransaction)?;
+            
+            let transaction = tx_state.transaction.as_ref()
+                .ok_or_else(|| TransactionError::NoActiveTransaction)?;
+            
+            f(transaction).await
         };
 
-        match f(transaction).await {
+        match result {
             Ok(result) => {
                 self.commit().await?;
                 Ok(result)
@@ -622,22 +642,25 @@ impl TransactionManager {
         f: F,
     ) -> Result<T, TransactionError>
     where
-        F: FnOnce(DatabaseTransaction) -> Fut,
+        F: FnOnce(&DatabaseTransaction) -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
         self.begin_with_config(config).await?;
 
-        // Get the transaction
-        let transaction = {
+        // Get a reference to the transaction
+        let result = {
             let active_tx = self.active_transaction.read();
-            active_tx
+            let tx_state = active_tx
                 .as_ref()
-                .ok_or(TransactionError::NoActiveTransaction)?
-                .transaction
-                .clone()
+                .ok_or(TransactionError::NoActiveTransaction)?;
+            
+            let transaction = tx_state.transaction.as_ref()
+                .ok_or_else(|| TransactionError::NoActiveTransaction)?;
+            
+            f(transaction).await
         };
 
-        match f(transaction).await {
+        match result {
             Ok(result) => {
                 self.commit().await?;
                 Ok(result)
@@ -670,7 +693,7 @@ impl TransactionManager {
     ///
     /// // Nested operation with savepoint
     /// tx_manager.execute_in_savepoint("nested_op", |tx| async move {
-    ///     risky_operation(&tx).await?;
+    ///     risky_operation(tx).await?;
     ///     Ok(())
     /// }).await?;
     ///
@@ -683,22 +706,25 @@ impl TransactionManager {
         f: F,
     ) -> Result<T, TransactionError>
     where
-        F: FnOnce(DatabaseTransaction) -> Fut,
+        F: FnOnce(&DatabaseTransaction) -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
         self.savepoint(name).await?;
 
-        // Get the transaction
-        let transaction = {
+        // Get a reference to the transaction
+        let result = {
             let active_tx = self.active_transaction.read();
-            active_tx
+            let tx_state = active_tx
                 .as_ref()
-                .ok_or(TransactionError::NoActiveTransaction)?
-                .transaction
-                .clone()
+                .ok_or(TransactionError::NoActiveTransaction)?;
+            
+            let transaction = tx_state.transaction.as_ref()
+                .ok_or_else(|| TransactionError::NoActiveTransaction)?;
+            
+            f(transaction).await
         };
 
-        match f(transaction).await {
+        match result {
             Ok(result) => {
                 self.release_savepoint(name).await?;
                 Ok(result)
@@ -717,18 +743,21 @@ impl TransactionManager {
     /// Check if there is an active transaction
     pub fn is_active(&self) -> bool {
         let active_tx = self.active_transaction.read();
-        active_tx.is_some() && !active_tx.as_ref().unwrap().finished
+        active_tx
+            .as_ref()
+            .map(|tx| !tx.finished)
+            .unwrap_or(false)
     }
 
-    /// Get the current transaction (if any)
+    /// Check if there is an active transaction
     ///
-    /// Returns a clone of the active transaction for use in operations.
-    pub fn get_transaction(&self) -> Option<DatabaseTransaction> {
+    /// Returns true if there is an active transaction that has not been finished.
+    pub fn has_transaction(&self) -> bool {
         let active_tx = self.active_transaction.read();
         active_tx
             .as_ref()
             .filter(|tx| !tx.finished)
-            .map(|tx| tx.transaction.clone())
+            .is_some()
     }
 
     /// Get the number of active savepoints

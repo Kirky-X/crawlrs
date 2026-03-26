@@ -58,7 +58,11 @@ pub struct Repositories {
 pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
     use crate::infrastructure::database::dbnexus_connection::create_pool;
     
-    let db = create_pool(&settings.database).await?;
+    let pool = create_pool(&settings.database).await?;
+    let db = DatabasePool {
+        inner: Arc::new(pool),
+        stats: Default::default(),
+    };
     let db = Arc::new(db);
     info!("Database connection established");
 
@@ -68,7 +72,7 @@ pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
 /// Initialize Redis client.
 ///
 /// This function creates a Redis client connection based on the
-/// configured Redis URL.
+/// configured Redis URL and connection pool settings.
 ///
 /// # Arguments
 ///
@@ -76,10 +80,15 @@ pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
 ///
 /// # Returns
 ///
-/// Returns a connected Redis client.
+/// Returns a connected Redis client with connection pool.
 pub async fn init_redis(settings: &Settings) -> Result<Arc<RedisClient>> {
-    let redis_client = Arc::new(RedisClient::new(settings.redis.url())?);
-    info!("Redis client initialized");
+    let redis_client = Arc::new(RedisClient::from_settings(&settings.redis)?);
+    info!(
+        "Redis client initialized with connection pool (max: {}, connection_timeout: {}s, recycle_timeout: {}s)",
+        settings.redis.max_connections(),
+        settings.redis.connection_timeout(),
+        settings.redis.idle_timeout()
+    );
     Ok(redis_client)
 }
 
@@ -143,16 +152,16 @@ pub fn init_http_client(settings: &Settings) -> Result<Arc<reqwest::Client>> {
 /// Returns a struct containing all initialized repositories.
 pub fn init_repositories(db: Arc<DatabasePool>, settings: &Settings) -> Repositories {
     let task_repo = Arc::new(TaskRepositoryImpl::new(
-        db.clone(),
+        db.inner().clone(),
         chrono::Duration::seconds(settings.concurrency.task_lock_duration_seconds),
     ));
-    let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db.clone()));
-    let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db.clone()));
-    let webhook_event_repo = Arc::new(WebhookEventRepoImpl::new(db.clone()));
-    let webhook_repo = Arc::new(WebhookRepoImpl::new(db.clone()));
-    let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.clone()));
-    let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.clone()));
-    let tasks_backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db.clone()));
+    let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db.inner().clone()));
+    let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db.inner().clone()));
+    let webhook_event_repo = Arc::new(WebhookEventRepoImpl::new(db.inner().clone()));
+    let webhook_repo = Arc::new(WebhookRepoImpl::new(db.inner().clone()));
+    let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.inner().clone()));
+    let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.inner().clone()));
+    let tasks_backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db.inner().clone()));
 
     Repositories {
         task_repo,

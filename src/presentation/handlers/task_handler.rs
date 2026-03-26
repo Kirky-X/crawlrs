@@ -23,7 +23,7 @@ use crate::presentation::handlers::response_builder::ApiResponse;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use anyhow;
 use axum::{extract::Extension, Json};
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -281,8 +281,8 @@ async fn execute_task_query<T: TaskRepository>(
             task_ids: request.task_ids.clone(),
             task_types: request.task_types.clone(),
             statuses: request.statuses.clone(),
-            created_after: request.created_after,
-            created_before: request.created_before,
+            created_after: request.created_after.map(|dt| dt.with_timezone(&Utc)),
+            created_before: request.created_before.map(|dt| dt.with_timezone(&Utc)),
             crawl_id: request.crawl_id,
             limit,
             offset,
@@ -420,9 +420,19 @@ fn build_task_infos(
                 url: task.url.clone(),
                 attempt_count: task.attempt_count,
                 max_retries: task.max_retries,
-                created_at: task.created_at,
-                started_at: task.started_at,
-                completed_at: task.completed_at,
+                created_at: chrono::FixedOffset::east_opt(0)
+                    .unwrap()
+                    .from_utc_datetime(&task.created_at.naive_utc()),
+                started_at: task.started_at.as_ref().map(|dt| {
+                    chrono::FixedOffset::east_opt(0)
+                        .unwrap()
+                        .from_utc_datetime(&dt.naive_utc())
+                }),
+                completed_at: task.completed_at.as_ref().map(|dt| {
+                    chrono::FixedOffset::east_opt(0)
+                        .unwrap()
+                        .from_utc_datetime(&dt.naive_utc())
+                }),
                 crawl_id: task.crawl_id,
                 result,
             }
@@ -437,9 +447,9 @@ fn build_scrape_result_json(
     let escaped_content = html_escape::encode_text(&scrape_result.content);
     ScrapeResultInfoDto {
         id: scrape_result.id,
-        status_code: scrape_result.status_code,
+        status_code: scrape_result.status_code as u16,
         content: escaped_content.to_string(),
-        metadata: scrape_result.meta_data.clone(),
+        metadata: Some(scrape_result.meta_data.clone()),
     }
 }
 

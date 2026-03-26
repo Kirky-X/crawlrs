@@ -5,6 +5,7 @@
 
 //! Task Mapper - converts between Task domain model and database entity
 
+use crate::common::time_utils::{from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt};
 use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::infrastructure::database::entities::task;
 
@@ -26,15 +27,15 @@ impl TaskMapper {
             retry_count: entity.retry_count,
             attempt_count: entity.attempt_count,
             max_retries: entity.max_retries,
-            scheduled_at: entity.scheduled_at.map(|dt| dt.with_timezone(&chrono::Utc)),
-            expires_at: entity.expires_at.map(|dt| dt.with_timezone(&chrono::Utc)),
-            created_at: entity.created_at.with_timezone(&chrono::Utc),
-            started_at: entity.started_at.map(|dt| dt.with_timezone(&chrono::Utc)),
-            completed_at: entity.completed_at.map(|dt| dt.with_timezone(&chrono::Utc)),
+            scheduled_at: from_db_datetime_opt(entity.scheduled_at),
+            expires_at: from_db_datetime_opt(entity.expires_at),
+            created_at: from_db_datetime(entity.created_at),
+            started_at: from_db_datetime_opt(entity.started_at),
+            completed_at: from_db_datetime_opt(entity.completed_at),
             crawl_id: entity.crawl_id,
-            updated_at: entity.updated_at.with_timezone(&chrono::Utc),
+            updated_at: from_db_datetime(entity.updated_at),
             lock_token: entity.lock_token,
-            lock_expires_at: entity.lock_expires_at.map(|dt| dt.with_timezone(&chrono::Utc)),
+            lock_expires_at: from_db_datetime_opt(entity.lock_expires_at),
         }
     }
 
@@ -52,15 +53,15 @@ impl TaskMapper {
             retry_count: domain.retry_count,
             attempt_count: domain.attempt_count,
             max_retries: domain.max_retries,
-            scheduled_at: domain.scheduled_at.map(|dt| dt.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
-            expires_at: domain.expires_at.map(|dt| dt.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
-            created_at: domain.created_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
-            started_at: domain.started_at.map(|dt| dt.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
-            completed_at: domain.completed_at.map(|dt| dt.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
+            scheduled_at: to_db_datetime_opt(domain.scheduled_at),
+            expires_at: to_db_datetime_opt(domain.expires_at),
+            created_at: to_db_datetime(domain.created_at),
+            started_at: to_db_datetime_opt(domain.started_at),
+            completed_at: to_db_datetime_opt(domain.completed_at),
             crawl_id: domain.crawl_id,
-            updated_at: domain.updated_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
+            updated_at: to_db_datetime(domain.updated_at),
             lock_token: domain.lock_token,
-            lock_expires_at: domain.lock_expires_at.map(|dt| dt.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
+            lock_expires_at: to_db_datetime_opt(domain.lock_expires_at),
         }
     }
 

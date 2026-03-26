@@ -107,13 +107,25 @@ impl PooledBrowser {
     }
 
     fn touch(&self) {
-        let mut last_used = self.last_used_at.lock().unwrap();
+        let mut last_used = match self.last_used_at.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::error!("PooledBrowser last_used_at mutex poisoned: {}", e);
+                return;
+            }
+        };
         *last_used = Instant::now();
         self.use_count.fetch_add(1, Ordering::Relaxed);
     }
 
     fn last_used(&self) -> Instant {
-        *self.last_used_at.lock().unwrap()
+        match self.last_used_at.lock() {
+            Ok(g) => *g,
+            Err(e) => {
+                tracing::error!("PooledBrowser last_used_at mutex poisoned: {}", e);
+                Instant::now()
+            }
+        }
     }
 
     fn mark_unhealthy(&self) {
@@ -165,7 +177,7 @@ struct BrowserPoolState {
     /// 归还处理任务句柄
     return_task: Mutex<Option<JoinHandle<()>>>,
     /// 归还通道发送端
-    return_sender: mpsc::Sender<ReturnMessage>,
+    return_sender: Mutex<Option<mpsc::Sender<ReturnMessage>>>,
     /// 关闭标志
     shutdown: AtomicBool,
     /// 浏览器路径缓存
@@ -179,7 +191,6 @@ impl BrowserPoolState {
         download_manager: Arc<BrowserDownloadManager>,
     ) -> Self {
         let max_instances = config.max_instances;
-        let (return_sender, _) = mpsc::channel(32);
         Self {
             config,
             browser_config,
@@ -191,7 +202,7 @@ impl BrowserPoolState {
             download_manager,
             cleanup_task: Mutex::new(None),
             return_task: Mutex::new(None),
-            return_sender,
+            return_sender: Mutex::new(None),
             shutdown: AtomicBool::new(false),
             browser_path: RwLock::new(None),
         }
@@ -583,10 +594,16 @@ impl BrowserPool {
     pub async fn acquire(&self) -> Result<BrowserInstance, EngineError> {
         let (instance_id, browser) = self.state.acquire().await?;
 
+        // 获取归还通道发送端
+        let return_sender = {
+            let sender = self.state.return_sender.lock().await;
+            sender.clone()
+        };
+
         Ok(BrowserInstance {
             browser: Some(browser),
             instance_id,
-            return_sender: Some(self.state.return_sender.clone()),
+            return_sender,
         })
     }
 
@@ -632,10 +649,10 @@ impl BrowserPool {
             let state = self.state.clone();
             let (sender, mut receiver) = mpsc::channel::<ReturnMessage>(32);
 
-            // 更新发送端
+            // 保存发送端到状态中
             {
-                let mut old_sender = self.state.return_sender.clone();
-                // 由于 return_sender 不是 mut 的，我们需要在创建时设置
+                let mut return_sender = self.state.return_sender.lock().await;
+                *return_sender = Some(sender);
             }
 
             let handle = tokio::spawn(async move {
@@ -705,8 +722,9 @@ impl BrowserPool {
     }
 
     /// 获取归还通道发送端
-    fn get_return_sender(&self) -> Option<mpsc::Sender<ReturnMessage>> {
-        Some(self.state.return_sender.clone())
+    async fn get_return_sender(&self) -> Option<mpsc::Sender<ReturnMessage>> {
+        let sender = self.state.return_sender.lock().await;
+        sender.clone()
     }
 }
 

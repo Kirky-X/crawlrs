@@ -46,9 +46,11 @@ impl<M: Module + HasComponent<dyn SettingsTrait>> Component<M> for RedisClientCo
     fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
         let settings_component = M::build_component(context);
         let settings = settings_component.get();
-        let redis_url = settings.redis.url().to_string();
-        let client = Arc::new(RedisClient::new(&redis_url).expect("Failed to create Redis client"));
-        Box::new(Self::new(redis_url, client))
+        let client = Arc::new(
+            RedisClient::from_settings(&settings.redis)
+                .expect("Failed to create Redis client"),
+        );
+        Box::new(Self::new(settings.redis.url().to_string(), client))
     }
 }
 
@@ -99,8 +101,8 @@ impl<M: Module + HasComponent<dyn SettingsTrait>> Component<M> for OxCacheCompon
 
         // Create rate limiter with config from settings
         let rate_limiter = Arc::new(RateLimiter::new_with_config(
-            settings.rate_limiting.default_limit as f64,
-            settings.rate_limiting.burst_size as u32,
+            settings.rate_limiting.default_limit as u64,
+            settings.rate_limiting.burst_size as u64,
         ));
 
         // Create concurrency controller

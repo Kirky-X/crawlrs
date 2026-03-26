@@ -7,9 +7,9 @@ use crate::{
     application::dto::crawl_request::CrawlRequestDto,
     domain::{
         models::{
-            crawl::{Crawl, CrawlStatus},
+            Crawl, CrawlStatus,
             scrape_result::ScrapeResult,
-            task::{Task, TaskStatus, TaskType},
+            Task, TaskStatus, TaskType,
         },
         repositories::{
             crawl_repository::CrawlRepository,
@@ -21,7 +21,7 @@ use crate::{
         services::team_service::TeamService,
     },
 };
-use chrono::{FixedOffset, Utc};
+use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
@@ -292,18 +292,14 @@ impl CrawlUseCase {
             attempt_count: 0,   // 尝试次数 0
             max_retries: 3,     // 最大重试次数 3
             scheduled_at: None, // 尚未调度
-            created_at: now.naive_utc(),
+            created_at: now,
             started_at: None,         // 尚未开始
             completed_at: None,       // 尚未完成
             crawl_id: Some(crawl_id), // 关联的爬取任务 ID
-            updated_at: now.naive_utc(),
+            updated_at: now,
             lock_token: None,      // 尚未加锁
             lock_expires_at: None, // 锁未过期
-            expires_at: dto.expires_at.map(|dt| {
-                let offset = FixedOffset::east_opt(8 * 3600)
-                    .expect("Failed to create timezone offset for UTC+8");
-                dt.with_timezone(&offset)
-            }), // 任务过期时间
+            expires_at: dto.expires_at, // 任务过期时间
         };
 
         // 6. 保存初始任务到数据库

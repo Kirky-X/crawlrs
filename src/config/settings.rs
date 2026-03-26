@@ -45,78 +45,60 @@ pub use super::storage::{StorageSettings, WebhookSettings};
 /// }
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
-#[config(env_prefix = "CRAWLRS__", validate(custom = "validate_security"))]
+#[config(env_prefix = "CRAWLRS__", validate, app_name = "crawlrs")]
 pub struct Settings {
     /// 服务器配置
-    #[config(default)]
     pub server: ServerSettings,
 
     /// 数据库配置
-    #[config(default)]
     pub database: DatabaseSettings,
 
     /// Redis 配置
-    #[config(default)]
     pub redis: RedisSettings,
 
     /// CORS 配置
-    #[config(default)]
     pub cors: CorsSettings,
 
     /// 速率限制配置
-    #[config(default)]
     pub rate_limiting: RateLimitingSettings,
 
     /// 并发控制配置
-    #[config(default)]
     pub concurrency: ConcurrencySettings,
 
     /// 存储配置
-    #[config(default)]
     pub storage: StorageSettings,
 
     /// Webhook 配置
-    #[config(default)]
     pub webhook: WebhookSettings,
 
     /// Bing Search API 配置
-    #[config(default)]
     pub bing_search: BingSearchSettings,
 
     /// 搜索配置 (包含 A/B 测试)
-    #[config(default)]
     pub search: SearchSettings,
 
     /// LLM 配置
-    #[config(default)]
     pub llm: LLMSettings,
 
     /// HTTP 代理配置
-    #[config(default)]
     pub proxy: ProxySettings,
 
     /// 引擎配置
-    #[config(default)]
     pub engines: EngineSettings,
 
     /// 日志配置
-    #[config(default)]
     pub logging: LoggingSettings,
 
     /// Worker 配置
-    #[config(default)]
     pub workers: WorkerSettings,
 
     /// 超时配置
-    #[config(default)]
     pub timeouts: TimeoutSettings,
 
     /// 缓存配置
-    #[config(default)]
     pub cache: CacheSettings,
 
     /// 可信代理配置
-    #[config(default)]
     pub trusted_proxies: TrustedProxySettings,
 }
 
@@ -131,7 +113,7 @@ pub struct Settings {
 #[config(env_prefix = "CRAWLRS__CORS__")]
 pub struct CorsSettings {
     /// 允许的跨域来源列表（逗号分隔）
-    #[config(default = "*")]
+    #[config(default = "*".to_string())]
     pub allowed_origins: String,
 }
 
@@ -146,12 +128,21 @@ pub struct CorsSettings {
 #[config(env_prefix = "CRAWLRS__PROXY__")]
 pub struct ProxySettings {
     /// 代理服务器URL (可能包含认证信息)
-    #[config(default = "http://localhost:10808")]
+    #[config(default = "http://localhost:10808".to_string())]
     pub(crate) url: String,
 
     /// 是否启用代理
     #[config(default = false)]
     pub enabled: bool,
+}
+
+impl std::fmt::Debug for ProxySettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxySettings")
+            .field("url", &"***REDACTED***")
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 impl ProxySettings {
@@ -172,7 +163,6 @@ impl ProxySettings {
 #[config(env_prefix = "CRAWLRS__WORKERS__")]
 pub struct WorkerSettings {
     /// Worker数量配置
-    #[config(default)]
     pub count: WorkerCount,
 }
 
@@ -219,19 +209,15 @@ impl WorkerCount {
 #[config(env_prefix = "CRAWLRS__TIMEOUTS__")]
 pub struct TimeoutSettings {
     /// Worker相关超时
-    #[config(default)]
     pub workers: WorkerTimeoutSettings,
 
     /// 引擎相关超时
-    #[config(default)]
     pub engines: EngineTimeoutSettings,
 
     /// 重试策略超时
-    #[config(default)]
     pub retry: RetryTimeoutSettings,
 
     /// 缓存TTL设置
-    #[config(default)]
     pub cache: CacheTimeoutSettings,
 }
 
@@ -318,15 +304,12 @@ pub struct CacheSettings {
     pub enabled: bool,
 
     /// L1 内存缓存配置
-    #[config(default)]
     pub memory: MemoryCacheSettings,
 
     /// L2 Redis 缓存配置
-    #[config(default)]
     pub redis: RedisCacheSettings,
 
     /// 各缓存类型特定配置
-    #[config(default)]
     pub types: CacheTypeSpecificSettings,
 }
 
@@ -351,7 +334,7 @@ pub struct RedisCacheSettings {
     pub enabled: bool,
 
     /// Redis URL
-    #[config(default = "redis://localhost:6379")]
+    #[config(default = "redis://localhost:6379".to_string())]
     pub url: String,
 
     /// 连接池大小
@@ -367,11 +350,13 @@ pub struct RedisCacheSettings {
 #[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "CRAWLRS__CACHE__TYPES__")]
 pub struct CacheTypeSpecificSettings {
-    #[config(default)]
+    /// 搜索结果缓存配置
     pub search: CacheTypeSettings,
-    #[config(default)]
+
+    /// DNS 缓存配置
     pub dns: CacheTypeSettings,
-    #[config(default)]
+
+    /// 正则缓存配置
     pub regex: CacheTypeSettings,
 }
 
@@ -438,10 +423,11 @@ impl TrustedProxySettings {
     /// 如果 IP 在可信代理列表中返回 true，否则返回 false
     pub fn is_trusted(&self, ip: &std::net::IpAddr) -> bool {
         use std::net::IpAddr;
+        use std::str::FromStr;
 
         for proxy in &self.proxies {
             // 尝试解析为 CIDR
-            if let Ok(network) = ipnetwork::IpNetwork::from_str_truncate(proxy) {
+            if let Ok(network) = ipnetwork::IpNetwork::from_str(proxy) {
                 if network.contains(*ip) {
                     return true;
                 }

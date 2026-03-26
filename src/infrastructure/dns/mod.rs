@@ -5,3 +5,5 @@
 
 /// DNS基础设施模块
 pub mod dns_cache;
+
+pub use dns_cache::{DnsCacheService, DnsCacheStats};

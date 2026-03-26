@@ -5,6 +5,7 @@
 
 use crate::config::DatabaseSettings;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -20,6 +21,20 @@ impl DatabasePool {
     /// Get current pool statistics
     pub fn stats(&self) -> PoolStats {
         self.stats.clone()
+    }
+}
+
+impl Deref for DatabasePool {
+    type Target = DatabaseConnection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl AsRef<DatabaseConnection> for DatabasePool {
+    fn as_ref(&self) -> &DatabaseConnection {
+        &self.inner
     }
 }
 

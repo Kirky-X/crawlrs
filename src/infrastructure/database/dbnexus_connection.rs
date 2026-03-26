@@ -10,8 +10,10 @@
 //! based implementation.
 
 use crate::config::DatabaseSettings;
-use dbnexus::DbPool;
-use sea_orm::DbErr;
+use dbnexus::config::CacheConfig;
+use dbnexus::{DbConfig, DbPool};
+use sea_orm::{ConnAcquireErr, DbErr};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -40,8 +42,22 @@ impl DatabasePool {
     }
 }
 
+impl Deref for DatabasePool {
+    type Target = DbPool;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl AsRef<DbPool> for DatabasePool {
+    fn as_ref(&self) -> &DbPool {
+        &self.inner
+    }
+}
+
 /// Pool statistics
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PoolStats {
     /// Number of active connections
     pub active_connections: u32,
@@ -120,7 +136,7 @@ pub async fn create_pool_with_retry(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| DbErr::ConnectionAcquire("Connection timeout".to_string())))
+    Err(last_error.unwrap_or_else(|| DbErr::ConnectionAcquire(ConnAcquireErr::Timeout)))
 }
 
 /// Create a database connection pool
@@ -132,29 +148,38 @@ pub async fn create_pool_with_retry(
 /// # Returns
 ///
 /// Result containing the pool or a database error
-pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
+pub async fn create_pool(settings: &DatabaseSettings) -> Result<dbnexus::DbPool, DbErr> {
     // Configure pool settings
     let max_connections = settings.max_connections.unwrap_or(100);
     let min_connections = settings.min_connections.unwrap_or(10);
-    let connect_timeout = settings.connect_timeout.unwrap_or(30);
     let idle_timeout = settings.idle_timeout.unwrap_or(300);
-    let max_lifetime = settings.max_lifetime.unwrap_or(1800);
+    let acquire_timeout = settings.connect_timeout.map(|t| t as u64 * 1000).unwrap_or(30000);
 
     debug!(
-        "Creating dbnexus pool: max_connections={}, min_connections={}, connect_timeout={}s",
-        max_connections, min_connections, connect_timeout
+        "Creating dbnexus pool: max_connections={}, min_connections={}, idle_timeout={}s",
+        max_connections, min_connections, idle_timeout
     );
 
-    // Create pool using dbnexus
-    let pool = DbPool::builder()
-        .max_connections(max_connections as u32)
-        .min_connections(min_connections as u32)
-        .connect_timeout(Duration::from_secs(connect_timeout))
-        .idle_timeout(Duration::from_secs(idle_timeout))
-        .max_lifetime(Duration::from_secs(max_lifetime))
-        .build(&settings.url)
-        .await
-        .map_err(|e| DbErr::ConnectionAcquire(e.to_string()))?;
+    // Create DbConfig from settings
+    let config = DbConfig {
+        url: settings.url.clone(),
+        max_connections: max_connections as u32,
+        min_connections: min_connections as u32,
+        idle_timeout,
+        acquire_timeout,
+        permissions_path: None,
+        migrations_dir: None,
+        auto_migrate: false,
+        migration_timeout: 300,
+        admin_role: "admin".to_string(),
+        warmup_timeout: 30,
+        warmup_retries: 3,
+        cache_config: CacheConfig::default(),
+    };
+
+    // Create pool using dbnexus DbConfig::try_from
+    let pool = dbnexus::DbPool::try_from(&config)
+        .map_err(|e| DbErr::ConnectionAcquire(ConnAcquireErr::ConnectionClosed))?;
 
     Ok(pool)
 }
@@ -162,7 +187,7 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
 /// Get pool status
 ///
 /// Returns current pool statistics for monitoring
-pub async fn get_pool_stats(pool: &DbPool) -> PoolStats {
+pub async fn get_pool_stats(_pool: &dbnexus::DbPool) -> PoolStats {
     // dbnexus doesn't expose direct stats, return estimated values
     PoolStats {
         active_connections: 1,

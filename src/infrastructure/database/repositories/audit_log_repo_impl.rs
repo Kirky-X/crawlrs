@@ -5,8 +5,9 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use dbnexus::DbPool;
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set,
+    ColumnTrait, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -19,18 +20,22 @@ use crate::infrastructure::database::entities::auth::audit_log::{
 
 #[derive(Clone)]
 pub struct AuditLogRepositoryImpl {
-    db: Arc<DatabaseConnection>,
+    pool: Arc<DbPool>,
 }
 
 impl AuditLogRepositoryImpl {
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
-        Self { db }
+    pub fn new(pool: Arc<DbPool>) -> Self {
+        Self { pool }
     }
 }
 
 #[async_trait]
 impl AuditLogRepository for AuditLogRepositoryImpl {
     async fn create(&self, entry: &AuditLogEntry) -> Result<AuditLogEntry, AuditRepositoryError> {
+        let session = self.pool.get_session("admin").await?;
+        
+        let conn = session.connection()?;
+        
         let entry_cloned = entry.clone();
         let metadata_value = serde_json::to_value(entry_cloned.metadata).unwrap_or_default();
         let scope_used_value = entry_cloned
@@ -55,7 +60,7 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
                 ..Default::default()
             };
 
-        AuditEntity::insert(active_model).exec(&*self.db).await?;
+        AuditEntity::insert(active_model).exec(conn).await?;
         Ok(entry.clone())
     }
 
@@ -65,12 +70,16 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+        let session = self.pool.get_session("admin").await?;
+        
+        let conn = session.connection()?;
+        
         let logs = AuditEntity::find()
             .filter(AuditColumn::ApiKeyId.eq(api_key_id))
             .order_by(AuditColumn::CreatedAt, Order::Desc)
             .limit(limit)
             .offset(offset)
-            .all(&*self.db)
+            .all(conn)
             .await?;
 
         Ok(logs.into_iter().map(|l| l.into()).collect())
@@ -82,12 +91,16 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+        let session = self.pool.get_session("admin").await?;
+        
+        let conn = session.connection()?;
+        
         let logs = AuditEntity::find()
             .filter(AuditColumn::TeamId.eq(team_id))
             .order_by(AuditColumn::CreatedAt, Order::Desc)
             .limit(limit)
             .offset(offset)
-            .all(&*self.db)
+            .all(conn)
             .await?;
 
         Ok(logs.into_iter().map(|l| l.into()).collect())
@@ -98,12 +111,16 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
         api_key_id: Uuid,
         limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+        let session = self.pool.get_session("admin").await?;
+        
+        let conn = session.connection()?;
+        
         let logs = AuditEntity::find()
             .filter(AuditColumn::ApiKeyId.eq(api_key_id))
             .filter(AuditColumn::Decision.eq(AuditDecision::Deny.to_string()))
             .order_by(AuditColumn::CreatedAt, Order::Desc)
             .limit(limit)
-            .all(&*self.db)
+            .all(conn)
             .await?;
 
         Ok(logs.into_iter().map(|l| l.into()).collect())
@@ -111,10 +128,14 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
 
     async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditRepositoryError> {
         let cutoff = Utc::now() - chrono::Duration::days(retention_days);
+        
+        let session = self.pool.get_session("admin").await?;
+        
+        let conn = session.connection()?;
 
         let result = AuditEntity::delete_many()
             .filter(AuditColumn::CreatedAt.lt(cutoff))
-            .exec(&*self.db)
+            .exec(conn)
             .await?;
 
         Ok(result.rows_affected as u64)

@@ -82,19 +82,33 @@ impl RateLimiter {
         let now = Instant::now();
         let mut counts = self.in_memory_counts.write();
 
-        if let Some((count, last_time)) = counts.get(key) {
+        // 先检查是否存在记录
+        let should_reset = if let Some((count, last_time)) = counts.get(key) {
             let elapsed = now.duration_since(*last_time);
-            if elapsed < Duration::from_secs(self.window_seconds) {
-                if *count >= self.limit {
-                    return false; // 超过限制
-                }
-                // 增加计数
-                counts.insert(key.to_string(), (*count + 1, *last_time));
-                return true;
-            }
+            elapsed >= Duration::from_secs(self.window_seconds) || *count >= self.limit
+        } else {
+            false
+        };
+
+        if should_reset {
+            // 没有记录或已过期，重置计数
+            counts.insert(key.to_string(), (1, now));
+            return true;
         }
 
-        // 没有记录或已过期，重置计数
+        // 获取当前值并检查
+        if let Some((count, last_time)) = counts.get(key) {
+            if *count >= self.limit {
+                return false; // 超过限制
+            }
+            // 增加计数
+            let new_count = *count + 1;
+            let last_time = *last_time;
+            counts.insert(key.to_string(), (new_count, last_time));
+            return true;
+        }
+
+        // 没有记录，创建新记录
         counts.insert(key.to_string(), (1, now));
         true
     }
@@ -304,19 +318,20 @@ pub async fn rate_limit_middleware(
     let api_key = extract_bearer_token(&req);
 
     // If no API key, apply IP-based rate limiting
-    if api_key.is_none() {
-        debug!(
-            "No Bearer token found for request to {}, applying IP rate limit for {}",
-            path, client_ip
-        );
+    let api_key = match api_key {
+        Some(key) => key,
+        None => {
+            debug!(
+                "No Bearer token found for request to {}, applying IP rate limit for {}",
+                path, client_ip
+            );
 
-        match apply_ip_rate_limit(&client_ip) {
-            Ok(()) => return next.run(req).await,
-            Err(response) => return response,
+            match apply_ip_rate_limit(&client_ip) {
+                Ok(()) => return next.run(req).await,
+                Err(response) => return response,
+            }
         }
-    }
-
-    let api_key = api_key.unwrap();
+    };
 
     // 获取请求路径作为 endpoint
     let endpoint = path;
@@ -331,7 +346,8 @@ pub async fn rate_limit_middleware(
                 "error": "Rate limit exceeded",
                 "message": reason
             });
-            let json_body = serde_json::to_string(&body).unwrap();
+            let json_body = serde_json::to_string(&body)
+                .expect("JSON serialization of rate limit response should never fail");
             let mut response = Response::new(Body::from(json_body));
             *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
             response.headers_mut().insert(
@@ -348,7 +364,8 @@ pub async fn rate_limit_middleware(
                 "error": "Rate limit exceeded",
                 "message": format!("Retry after {} seconds", retry_after_seconds)
             });
-            let json_body = serde_json::to_string(&body).unwrap();
+            let json_body = serde_json::to_string(&body)
+                .expect("JSON serialization of rate limit response should never fail");
             let mut response = Response::new(Body::from(json_body));
             *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
             response.headers_mut().insert(

@@ -7,7 +7,7 @@
 //!
 //! 提供统一的任务队列操作接口，支持单任务和批量操作、优先级、指标收集等
 
-use crate::domain::models::Task;
+use crate::domain::models::{Task, TaskStatus, TaskType};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -471,28 +471,14 @@ impl<T: TaskQueue> QueueClient<T> {
             .parse()
             .map_err(|_| QueueClientError::InvalidTaskType(request.task_type.clone()))?;
 
-        let mut task = Task {
-            id: Uuid::new_v4(),
-            task_type: task_type.to_string(),
-            status: TaskStatus::Queued.to_string(),
-            priority: 0,
-            team_id: request.team_id,
-            api_key_id: request.api_key_id,
-            url: request.url,
-            payload: request.payload,
-            retry_count: 0,
-            attempt_count: 0,
-            max_retries: 3,
-            scheduled_at: None,
-            expires_at: None,
-            created_at: chrono::Utc::now().naive_utc(),
-            started_at: None,
-            completed_at: None,
-            crawl_id: None,
-            updated_at: chrono::Utc::now().naive_utc(),
-            lock_token: None,
-            lock_expires_at: None,
-        };
+        let mut task = Task::new(
+            Uuid::new_v4(),
+            task_type,
+            request.team_id,
+            request.api_key_id,
+            request.url,
+            request.payload,
+        );
 
         task.priority = priority;
         task.max_retries = request
@@ -501,12 +487,12 @@ impl<T: TaskQueue> QueueClient<T> {
 
         if let Some(delay) = request.delay_seconds {
             task.scheduled_at =
-                Some((chrono::Utc::now() + chrono::Duration::seconds(delay as i64)).naive_utc());
+                Some(chrono::Utc::now() + chrono::Duration::seconds(delay as i64));
         }
 
         if let Some(expire) = request.expire_seconds {
             task.expires_at =
-                Some((chrono::Utc::now() + chrono::Duration::seconds(expire as i64)).naive_utc());
+                Some(chrono::Utc::now() + chrono::Duration::seconds(expire as i64));
         }
 
         let result = self.inner.enqueue(task).await?;
@@ -541,6 +527,7 @@ impl<T: TaskQueue> QueueClient<T> {
                 .map_err(|_| QueueClientError::InvalidTaskType(request.task_type.clone()))?;
 
             let mut task = Task::new(
+                Uuid::new_v4(),
                 task_type,
                 request.team_id,
                 request.api_key_id,

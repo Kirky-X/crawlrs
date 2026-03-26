@@ -5,6 +5,7 @@
 
 //! Credits Mapper - converts between Credits domain model and database entity
 
+use crate::common::time_utils::{from_db_datetime, to_db_datetime};
 use crate::domain::models::{Credits, CreditsTransaction, CreditsTransactionType};
 use crate::infrastructure::database::entities::{credits, credits_transactions};
 
@@ -18,8 +19,8 @@ impl CreditsMapper {
             entity.id,
             entity.team_id,
             entity.balance,
-            entity.created_at.with_timezone(&chrono::Utc),
-            entity.updated_at.with_timezone(&chrono::Utc),
+            from_db_datetime(entity.created_at),
+            from_db_datetime(entity.updated_at),
         )
     }
 
@@ -29,8 +30,8 @@ impl CreditsMapper {
             id: domain.id,
             team_id: domain.team_id,
             balance: domain.balance(),
-            created_at: domain.created_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
-            updated_at: domain.updated_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
+            created_at: to_db_datetime(domain.created_at),
+            updated_at: to_db_datetime(domain.updated_at),
         }
     }
 
@@ -53,7 +54,7 @@ impl CreditsTransactionMapper {
             Self::parse_transaction_type(&entity.transaction_type),
             entity.description,
             entity.reference_id,
-            entity.created_at.with_timezone(&chrono::Utc),
+            from_db_datetime(entity.created_at),
         )
     }
 
@@ -66,7 +67,7 @@ impl CreditsTransactionMapper {
             transaction_type: domain.transaction_type.to_string(),
             description: domain.description.clone(),
             reference_id: domain.reference_id,
-            created_at: domain.created_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
+            created_at: to_db_datetime(domain.created_at),
         }
     }
 

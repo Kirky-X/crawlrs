@@ -17,7 +17,8 @@
 //! - Cross-Origin-Resource-Policy
 
 use axum::{
-    http::{HeaderValue, Request, Response},
+    body::Body,
+    http::{HeaderValue, Request, Response, uri::Scheme},
     middleware::Next,
 };
 
@@ -32,10 +33,10 @@ const PERMISSIONS_POLICY: &str = "accelerometer=(), camera=(), geolocation=(), g
 const HSTS_VALUE: &str = "max-age=31536000; includeSubDomains";
 
 /// Add security headers to response
-pub async fn security_headers_middleware(req: Request, next: Next) -> Response {
+pub async fn security_headers_middleware(req: Request<Body>, next: Next) -> Response<Body> {
     // Extract URI from request before passing to next
     let uri = req.uri().clone();
-    let is_https = uri.scheme() == Some(&http::uri::Scheme::HTTPS);
+    let is_https = uri.scheme() == Some(&Scheme::HTTPS);
 
     let mut response = next.run(req).await;
 

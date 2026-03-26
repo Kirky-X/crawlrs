@@ -113,11 +113,11 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> AsyncCrawlUseC
             "crawl_id": crawl.id,
             "config": request.request.config,
         });
-        let now = chrono::Utc::now().naive_utc();
+        let now = chrono::Utc::now();
         let root_task = Task {
             id: Uuid::new_v4(),
-            task_type: TaskType::Crawl.to_string(),
-            status: TaskStatus::Queued.to_string(),
+            task_type: TaskType::Crawl,
+            status: TaskStatus::Queued,
             priority: 0,
             team_id: request.team_id,
             api_key_id: request.api_key_id,
@@ -203,11 +203,11 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> SyncCrawlUseCa
             "crawl_id": crawl.id,
             "config": request.request.config,
         });
-        let now = chrono::Utc::now().naive_utc();
+        let now = chrono::Utc::now();
         let root_task = Task {
             id: Uuid::new_v4(),
-            task_type: TaskType::Crawl.to_string(),
-            status: TaskStatus::Queued.to_string(),
+            task_type: TaskType::Crawl,
+            status: TaskStatus::Queued,
             priority: 0,
             team_id: request.team_id,
             api_key_id: request.api_key_id,

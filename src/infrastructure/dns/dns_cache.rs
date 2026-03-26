@@ -5,36 +5,23 @@
 
 //! DNS缓存模块（使用 oxcache）
 
-use crate::infrastructure::oxcache::{generate_dns_key, SearchCache};
+use crate::infrastructure::oxcache::{generate_dns_key, DnsCache, DnsCacheEntry};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tracing::{debug, warn};
 
-/// DNS解析结果缓存条目
-#[derive(Debug, Clone)]
-struct DnsCacheEntry {
-    ips: Vec<IpAddr>,
-    remaining_ttl: Duration,
-}
-
-impl DnsCacheEntry {
-    fn is_expired(&self) -> bool {
-        self.remaining_ttl.is_zero()
-    }
-}
-
 /// 线程安全的DNS缓存（使用 oxcache）
 #[derive(Debug, Clone)]
-pub struct DnsCache {
-    cache: Arc<SearchCache>,
+pub struct DnsCacheService {
+    cache: Arc<DnsCache>,
     default_ttl: Duration,
 }
 
-impl DnsCache {
+impl DnsCacheService {
     /// 创建新的DNS缓存
-    pub fn new(cache: Arc<SearchCache>, default_ttl_seconds: u64) -> Self {
+    pub fn new(cache: Arc<DnsCache>, default_ttl_seconds: u64) -> Self {
         Self {
             cache,
             default_ttl: Duration::from_secs(default_ttl_seconds),
@@ -67,7 +54,7 @@ impl DnsCache {
         let addr_str = format!("{}:{}", hostname, port);
         let ips: Vec<IpAddr> = lookup_host(&addr_str)
             .await?
-            .map(|result| result.map(|socket_addr| socket_addr.ip()))
+            .map(|socket_addr| socket_addr.ip())
             .collect();
 
         if ips.is_empty() {
@@ -80,7 +67,7 @@ impl DnsCache {
         // 存储到缓存
         let entry = DnsCacheEntry {
             ips: ips.clone(),
-            remaining_ttl: self.default_ttl,
+            remaining_ttl_secs: self.default_ttl.as_secs(),
         };
 
         if let Err(e) = self.cache.set(&cache_key, &entry).await {
@@ -121,7 +108,7 @@ impl DnsCache {
         let cache_key = generate_dns_key(hostname, port);
         let entry = DnsCacheEntry {
             ips,
-            remaining_ttl: Duration::from_secs(ttl_seconds),
+            remaining_ttl_secs: ttl_seconds,
         };
 
         if let Err(e) = self.cache.set(&cache_key, &entry).await {
@@ -134,7 +121,7 @@ impl DnsCache {
     /// 移除特定主机的缓存
     pub async fn remove(&self, hostname: &str, port: u16) {
         let cache_key = generate_dns_key(hostname, port);
-        if let Err(e) = self.cache.remove(&cache_key).await {
+        if let Err(e) = self.cache.delete(&cache_key).await {
             warn!("Failed to remove DNS cache for {}: {}", cache_key, e);
         } else {
             debug!("Removed DNS cache for {}", cache_key);
@@ -159,14 +146,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_dns_cache_creation() {
-        let cache = Arc::new(oxcache::Cache::builder()
-            .capacity(100)
-            .ttl(Duration::from_secs(300))
-            .build()
-            .await
-            .unwrap());
+        let cache = Arc::new(
+            oxcache::Cache::builder()
+                .capacity(100)
+                .ttl(Duration::from_secs(300))
+                .build()
+                .await
+                .unwrap(),
+        );
 
-        let dns_cache = DnsCache::new(cache, 300);
+        let dns_cache = DnsCacheService::new(cache, 300);
         assert_eq!(dns_cache.default_ttl.as_secs(), 300);
     }
 

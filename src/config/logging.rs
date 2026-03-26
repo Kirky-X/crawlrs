@@ -13,11 +13,9 @@ use serde::{Deserialize, Serialize};
 #[config(env_prefix = "CRAWLRS__LOGGING__")]
 pub struct LoggingSettings {
     /// 控制台输出配置
-    #[config(default)]
     pub console: ConsoleLoggingSettings,
 
     /// 文件输出配置
-    #[config(default)]
     pub file: FileLoggingSettings,
 }
 
@@ -39,7 +37,7 @@ pub struct FileLoggingSettings {
     pub enabled: bool,
 
     /// 日志文件路径
-    #[config(default = "logs/crawlrs.log")]
+    #[config(default = "logs/crawlrs.log".to_string())]
     pub path: String,
 
     /// 单个日志文件最大大小（MB）

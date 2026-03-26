@@ -306,7 +306,7 @@ impl CrawlService {
         };
 
         let scheduled_at = if delay_ms > 0 {
-            Some((Utc::now() + chrono::Duration::milliseconds(delay_ms as i64)).naive_utc())
+            Some(Utc::now() + chrono::Duration::milliseconds(delay_ms as i64))
         } else {
             None
         };
@@ -324,11 +324,11 @@ impl CrawlService {
             attempt_count: 0,
             max_retries: parent_task.max_retries,
             scheduled_at,
-            created_at: Utc::now().naive_utc(),
+            created_at: Utc::now(),
             started_at: None,
             completed_at: None,
             crawl_id: parent_task.crawl_id,
-            updated_at: Utc::now().naive_utc(),
+            updated_at: Utc::now(),
             lock_token: None,
             lock_expires_at: None,
             expires_at: parent_task.expires_at,

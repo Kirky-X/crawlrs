@@ -30,13 +30,20 @@ pub enum TaskType {
     Extract,
 }
 
+impl TaskType {
+    /// 返回任务类型的字符串表示
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskType::Scrape => "scrape",
+            TaskType::Crawl => "crawl",
+            TaskType::Extract => "extract",
+        }
+    }
+}
+
 impl fmt::Display for TaskType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            TaskType::Scrape => write!(f, "scrape"),
-            TaskType::Crawl => write!(f, "crawl"),
-            TaskType::Extract => write!(f, "extract"),
-        }
+        write!(f, "{}", self.as_str())
     }
 }
 

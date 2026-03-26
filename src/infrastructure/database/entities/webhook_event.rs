@@ -31,11 +31,14 @@ pub struct Model {
     pub status: SeaWebhookStatus,
     pub payload: JsonValue,
     pub webhook_url: String,
-    pub response_status: Option<i16>,
+    pub response_status: Option<i32>,
+    pub response_body: Option<String>,
+    pub error_message: Option<String>,
     pub attempt_count: i32,
     pub max_retries: i32,
     pub next_retry_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
+    pub updated_at: DateTimeWithTimeZone,
     pub delivered_at: Option<DateTimeWithTimeZone>,
 }
 

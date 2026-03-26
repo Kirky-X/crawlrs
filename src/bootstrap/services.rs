@@ -15,6 +15,7 @@ use crate::config::settings::Settings;
 use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
 use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::extraction_service::{ExtractionService, ExtractionServiceTrait};
+use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy, RateLimitingService,
@@ -62,7 +63,7 @@ pub struct ServicesComponents {
     /// Team service.
     pub team_service: Arc<TeamService>,
     /// Geo Location Service
-    pub geo_location_service: Arc<GeoLocationService>,
+    pub geo_location_service: Arc<dyn GeoLocationService>,
     /// Robots.txt checker.
     pub robots_checker: Arc<RobotsChecker>,
     /// Search engine service.
@@ -247,18 +248,18 @@ pub fn init_search_service(
 
 /// Initialize auth scope service.
 ///
-/// This function creates the AuthScopeService for managing API key scopes
-/// and permissions, following dependency injection principles.
+/// This function creates the AuthScopeService for authentication scope operations,
+/// following dependency injection principles.
 ///
 /// # Arguments
 ///
-/// * `db` - Database connection
+/// * `pool` - Database pool
 ///
 /// # Returns
 ///
 /// Returns an initialized auth scope service wrapped in Arc.
-pub fn init_auth_scope_service(db: &sea_orm::DbConn) -> Arc<AuthScopeService> {
-    let repo = Arc::new(AuthScopeRepositoryImpl::new((*db).clone()));
+pub fn init_auth_scope_service(pool: Arc<dbnexus::DbPool>) -> Arc<AuthScopeService> {
+    let repo = Arc::new(AuthScopeRepositoryImpl::new(pool));
     Arc::new(AuthScopeService::new(repo))
 }
 
@@ -291,7 +292,15 @@ pub fn init_llm_service(
 ///
 /// Returns an initialized regex cache wrapped in Arc.
 pub fn init_regex_cache() -> Arc<RegexCache> {
-    Arc::new(RegexCache::new())
+    let cache = futures::executor::block_on(async {
+        oxcache::Cache::builder()
+            .capacity(1000)
+            .ttl(std::time::Duration::from_secs(3600))
+            .build()
+            .await
+            .expect("Failed to create regex cache")
+    });
+    Arc::new(RegexCache::new(Arc::new(cache)))
 }
 
 /// Initialize all application services.
@@ -377,14 +386,14 @@ pub fn init_services(
     let search_service = init_search_service(repositories, settings, search_client.clone());
 
     // Initialize auth scope service
-    let auth_scope_service = Some(init_auth_scope_service(&infrastructure.db));
+    let auth_scope_service = Some(init_auth_scope_service(infrastructure.db.inner().clone()));
 
     // Initialize task queue
     let queue: Arc<dyn TaskQueue> =
         Arc::new(PostgresTaskQueue::new(repositories.task_repo.clone()));
 
     // Initialize audit service
-    let audit_repo = Arc::new(AuditLogRepositoryImpl::new(infrastructure.db.clone()));
+    let audit_repo = Arc::new(AuditLogRepositoryImpl::new(infrastructure.db.inner().clone()));
     let audit_service = Arc::new(AuditService::new(audit_repo));
 
     // Initialize LLM service (使用依赖注入的 http_client)

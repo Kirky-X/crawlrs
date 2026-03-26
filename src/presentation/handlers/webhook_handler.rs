@@ -29,9 +29,24 @@ pub async fn create_webhook<R: WebhookRepository>(
 
     // Validate webhook URL for SSRF protection
     match validate_url(&payload.url).await {
-        Ok(_) => {}
+        Ok(validated) => {
+            tracing::debug!(
+                target: "security",
+                url = %payload.url,
+                team_id = %team_id,
+                resolved_ips = ?validated.resolved_ips,
+                "Webhook URL passed SSRF validation"
+            );
+        }
         Err(e) => {
-            tracing::warn!("Webhook URL validation failed for team {}: {}", team_id, e);
+            tracing::warn!(
+                target: "security_audit",
+                url = %payload.url,
+                team_id = %team_id,
+                api_key_id = %auth_state.api_key_id,
+                error = %e,
+                "SSRF attack attempt blocked via webhook URL"
+            );
             return Err(AppError::Validation(
                 "Invalid webhook URL: potential security risk detected".to_string(),
             ));

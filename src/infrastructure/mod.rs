@@ -23,6 +23,7 @@
 pub mod cache;
 pub mod concurrency;
 pub mod database;
+pub mod dns;
 pub mod errors;
 pub mod geolocation;
 pub mod metrics;

@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
+use tracing::warn;
 
 /// Unified request structure for scraping operations.
 ///
@@ -177,7 +178,55 @@ impl ScrapeOptionsBuilder {
         self
     }
 
+    /// Configure whether to skip TLS certificate verification.
+    ///
+    /// # Security Warning
+    ///
+    /// Skipping TLS verification is **FORBIDDEN** in production environments.
+    /// This option is only available in development/test environments for testing purposes.
+    ///
+    /// In production, attempting to skip TLS verification will:
+    /// - Log a security warning
+    /// - Ignore the skip request (TLS verification remains enabled)
+    ///
+    /// # Arguments
+    ///
+    /// * `skip` - Whether to skip TLS verification (ignored in production)
+    ///
+    /// # Returns
+    ///
+    /// Returns the builder with TLS verification settings applied.
     pub fn skip_tls_verification(mut self, skip: bool) -> Self {
+        if skip {
+            // Check environment - use both APP_ENVIRONMENT and CRAWLRS_ENV for compatibility
+            let env = std::env::var("APP_ENVIRONMENT")
+                .or_else(|_| std::env::var("CRAWLRS_ENV"))
+                .unwrap_or_else(|_| "development".to_string());
+
+            let is_production = env.eq_ignore_ascii_case("production")
+                || env.eq_ignore_ascii_case("prod");
+
+            if is_production {
+                // SECURITY: Reject TLS verification skip in production
+                warn!(
+                    target: "security",
+                    "SECURITY ALERT: Attempt to skip TLS verification in production environment '{}' - DENIED. \
+                     TLS verification will remain enabled to prevent man-in-the-middle attacks.",
+                    env
+                );
+                // Return without modifying the setting - TLS verification stays enabled
+                return self;
+            }
+
+            // Allow skip in non-production environments with warning
+            warn!(
+                target: "security",
+                "TLS certificate verification disabled in '{}' environment. \
+                 This should ONLY be used for testing purposes. \
+                 NEVER disable TLS verification in production as it enables man-in-the-middle attacks.",
+                env
+            );
+        }
         self.0.skip_tls_verification = skip;
         self
     }

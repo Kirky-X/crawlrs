@@ -95,12 +95,12 @@ impl<R: TaskRepository + Send + Sync + 'static> TaskScheduler<R> {
         mut task: Task,
         time: DateTime<Utc>,
     ) -> Result<Task, QueueError> {
-        task.scheduled_at = Some(time.naive_utc());
-        task.status = "queued".to_string();
+        task.scheduled_at = Some(time);
+        task.status = TaskStatus::Queued;
 
         // Ensure created_at is set if not already (Task::new sets it, but good to be safe)
         if task.created_at.timestamp() == 0 {
-            task.created_at = Utc::now().naive_utc();
+            task.created_at = Utc::now();
         }
 
         let created = self.repository.create(&task).await?;
@@ -141,15 +141,15 @@ impl<R: TaskRepository + Send + Sync + 'static> TaskScheduler<R> {
     ) -> Result<Task, QueueError> {
         if !task.can_retry() {
             // If cannot retry, mark as failed permanently
-            task.status = "failed".to_string();
-            task.completed_at = Some(Utc::now().naive_utc());
+            task.status = TaskStatus::Failed;
+            task.completed_at = Some(Utc::now());
             let updated = self.repository.update(&task).await?;
             return Ok(updated);
         }
 
-        task.status = "queued".to_string();
+        task.status = TaskStatus::Queued;
         task.attempt_count += 1;
-        task.scheduled_at = Some((Utc::now() + delay).naive_utc());
+        task.scheduled_at = Some(Utc::now() + delay);
         task.started_at = None; // Reset started_at as it's queued again
         task.completed_at = None;
 
@@ -173,8 +173,8 @@ impl<R: TaskRepository + Send + Sync + 'static> TaskScheduler<R> {
     /// 将任务优先级设置为100（高优先级），并立即调度执行
     pub async fn schedule_urgent(&self, mut task: Task) -> Result<Task, QueueError> {
         task.priority = 100; // Assuming 100 is high priority
-        task.scheduled_at = Some(Utc::now().naive_utc()); // Immediate
-        task.status = "queued".to_string();
+        task.scheduled_at = Some(Utc::now()); // Immediate
+        task.status = TaskStatus::Queued;
 
         let created = self.repository.create(&task).await?;
         Ok(created)

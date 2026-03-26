@@ -200,6 +200,3 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
         Ok(result.rows_affected > 0)
     }
 }
-
-// Backward compatibility alias
-pub type FeatureFlagRepository = FeatureFlagRepositoryImpl;

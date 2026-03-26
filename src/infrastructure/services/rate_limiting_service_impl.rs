@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -23,6 +24,90 @@ use crate::domain::services::rate_limiting_service::{
 };
 #[cfg(feature = "rate-limiting")]
 use crate::infrastructure::cache::redis_client::RedisClient;
+
+/// 合并的限流检查 Lua 脚本
+/// 一次性检查每秒、每分钟、每小时的限流，减少网络往返
+#[cfg(feature = "rate-limiting")]
+const RATE_LIMIT_CHECK_SCRIPT: &str = r#"
+local per_second_key = KEYS[1]
+local per_minute_key = KEYS[2]
+local per_hour_key = KEYS[3]
+local now = tonumber(ARGV[1])
+local per_second_capacity = tonumber(ARGV[2])
+local per_second_refill_rate = tonumber(ARGV[3])
+local per_second_window = tonumber(ARGV[4])
+local per_minute_capacity = tonumber(ARGV[5])
+local per_minute_refill_rate = tonumber(ARGV[6])
+local per_minute_window = tonumber(ARGV[7])
+local per_hour_capacity = tonumber(ARGV[8])
+local per_hour_refill_rate = tonumber(ARGV[9])
+local per_hour_window = tonumber(ARGV[10])
+
+-- 检查每秒限流
+local per_second_tokens_key = per_second_key .. ":tokens"
+local per_second_last_refill_key = per_second_key .. ":last_refill"
+local per_second_tokens = tonumber(redis.call("GET", per_second_tokens_key) or per_second_capacity)
+local per_second_last_refill = tonumber(redis.call("GET", per_second_last_refill_key)) or now
+local per_second_time_passed = now - per_second_last_refill
+local per_second_tokens_to_add = per_second_time_passed * per_second_refill_rate
+per_second_tokens = math.min(per_second_capacity, per_second_tokens + per_second_tokens_to_add)
+
+if per_second_tokens >= 1 then
+    per_second_tokens = per_second_tokens - 1
+    redis.call("SET", per_second_tokens_key, per_second_tokens)
+    redis.call("SET", per_second_last_refill_key, now)
+    redis.call("EXPIRE", per_second_tokens_key, per_second_window)
+    redis.call("EXPIRE", per_second_last_refill_key, per_second_window)
+else
+    local wait_time = math.ceil((1 - per_second_tokens) / per_second_refill_rate)
+    return {0, 'per_second', wait_time, per_second_tokens, per_second_capacity}
+end
+
+-- 检查每分钟限流
+local per_minute_tokens_key = per_minute_key .. ":tokens"
+local per_minute_last_refill_key = per_minute_key .. ":last_refill"
+local per_minute_tokens = tonumber(redis.call("GET", per_minute_tokens_key) or per_minute_capacity)
+local per_minute_last_refill = tonumber(redis.call("GET", per_minute_last_refill_key)) or now
+local per_minute_time_passed = now - per_minute_last_refill
+local per_minute_tokens_to_add = per_minute_time_passed * per_minute_refill_rate
+per_minute_tokens = math.min(per_minute_capacity, per_minute_tokens + per_minute_tokens_to_add)
+
+if per_minute_tokens >= 1 then
+    per_minute_tokens = per_minute_tokens - 1
+    redis.call("SET", per_minute_tokens_key, per_minute_tokens)
+    redis.call("SET", per_minute_last_refill_key, now)
+    redis.call("EXPIRE", per_minute_tokens_key, per_minute_window)
+    redis.call("EXPIRE", per_minute_last_refill_key, per_minute_window)
+else
+    local wait_time = math.ceil((1 - per_minute_tokens) / per_minute_refill_rate)
+    return {0, 'per_minute', wait_time, per_minute_tokens, per_minute_capacity}
+end
+
+-- 检查每小时限流
+local per_hour_tokens_key = per_hour_key .. ":tokens"
+local per_hour_last_refill_key = per_hour_key .. ":last_refill"
+local per_hour_tokens = tonumber(redis.call("GET", per_hour_tokens_key) or per_hour_capacity)
+local per_hour_last_refill = tonumber(redis.call("GET", per_hour_last_refill_key)) or now
+local per_hour_time_passed = now - per_hour_last_refill
+local per_hour_tokens_to_add = per_hour_time_passed * per_hour_refill_rate
+per_hour_tokens = math.min(per_hour_capacity, per_hour_tokens + per_hour_tokens_to_add)
+
+if per_hour_tokens >= 1 then
+    per_hour_tokens = per_hour_tokens - 1
+    redis.call("SET", per_hour_tokens_key, per_hour_tokens)
+    redis.call("SET", per_hour_last_refill_key, now)
+    redis.call("EXPIRE", per_hour_tokens_key, per_hour_window)
+    redis.call("EXPIRE", per_hour_last_refill_key, per_hour_window)
+    return {1, 'allowed', per_second_tokens, per_minute_tokens, per_hour_tokens}
+else
+    local wait_time = math.ceil((1 - per_hour_tokens) / per_hour_refill_rate)
+    return {0, 'per_hour', wait_time, per_hour_tokens, per_hour_capacity}
+end
+"#;
+
+/// 脚本 SHA 缓存
+#[cfg(feature = "rate-limiting")]
+static SCRIPT_SHA: OnceLock<String> = OnceLock::new();
 
 /// 限流与并发控制服务实现
 ///
@@ -83,7 +168,7 @@ impl RateLimitingServiceImpl {
     }
 
     /// 获取Redis连接
-    async fn get_redis_conn(&self) -> Result<redis::aio::MultiplexedConnection, RateLimitingError> {
+    async fn get_redis_conn(&self) -> Result<deadpool_redis::Connection, RateLimitingError> {
         self.redis.get_connection().await.map_err(|e| {
             tracing::error!("Redis connection failed: {}", e);
             RateLimitingError::RedisError
@@ -113,6 +198,133 @@ impl RateLimitingServiceImpl {
     /// 构建团队信号量键
     fn build_team_semaphore_key(&self, team_id: Uuid) -> String {
         self.build_redis_key(&format!("team:{}:semaphore", team_id))
+    }
+
+    /// 获取或加载脚本 SHA
+    /// 使用 EVALSHA 优化 Lua 脚本执行，避免每次都发送完整脚本
+    async fn get_or_load_script_sha(&self) -> Result<String, RateLimitingError> {
+        // 如果已经缓存了 SHA，直接返回
+        if let Some(sha) = SCRIPT_SHA.get() {
+            return Ok(sha.clone());
+        }
+
+        // 否则加载脚本并缓存 SHA
+        let mut conn = self.get_redis_conn().await?;
+        
+        // 使用 redis crate 的 Script API 来加载脚本
+        // deadpool_redis::Connection 实现了 DerefMut<Target = Connection>
+        // 所以可以直接用于 invoke_async
+        let script = redis::Script::new(RATE_LIMIT_CHECK_SCRIPT);
+        let sha = script.load_async(&mut *conn).await.map_err(|e| {
+            tracing::error!("Failed to load rate limit script: {}", e);
+            RateLimitingError::RedisError
+        })?;
+
+        // 缓存 SHA
+        let sha_string = sha;
+        let _ = SCRIPT_SHA.set(sha_string.clone());
+        
+        debug!("Rate limit script loaded with SHA: {}", sha_string);
+        Ok(sha_string)
+    }
+
+    /// 优化的限流检查 - 使用合并的 Lua 脚本
+    /// 一次性检查每秒、每分钟、每小时的限流，减少网络往返次数
+    async fn check_rate_limit_optimized(
+        &self,
+        api_key: &str,
+        endpoint: &str,
+        bucket_capacity: u32,
+        requests_per_minute: u32,
+        requests_per_hour: u32,
+    ) -> Result<RateLimitResult, RateLimitingError> {
+        let mut conn = self.get_redis_conn().await?;
+        let sha = self.get_or_load_script_sha().await?;
+
+        // 构建 Redis 键
+        let per_second_key = self.build_api_rate_limit_key(api_key, endpoint, "per_second");
+        let per_minute_key = self.build_api_rate_limit_key(api_key, endpoint, "per_minute");
+        let per_hour_key = self.build_api_rate_limit_key(api_key, endpoint, "per_hour");
+
+        let now = chrono::Utc::now().timestamp();
+
+        // 计算填充速率
+        let per_second_refill_rate = self.config.rate_limit.requests_per_second as f64;
+        let per_minute_refill_rate = requests_per_minute as f64 / 60.0;
+        let per_hour_refill_rate = requests_per_hour as f64 / 3600.0;
+
+        // 使用 EVALSHA 执行脚本
+        let script = redis::Script::new(RATE_LIMIT_CHECK_SCRIPT);
+        let result: Vec<redis::Value> = script
+            .key(&per_second_key)
+            .key(&per_minute_key)
+            .key(&per_hour_key)
+            .arg(now)
+            .arg(bucket_capacity)
+            .arg(per_second_refill_rate)
+            .arg(1) // per_second_window
+            .arg(requests_per_minute)
+            .arg(per_minute_refill_rate)
+            .arg(60) // per_minute_window
+            .arg(requests_per_hour)
+            .arg(per_hour_refill_rate)
+            .arg(3600) // per_hour_window
+            .invoke_async(&mut *conn)
+            .await
+            .map_err(|e| {
+                tracing::error!("Redis script execution error: {}", e);
+                RateLimitingError::RedisError
+            })?;
+
+        // 解析结果
+        // 返回格式: {状态码, 限流类型/allowed, 等待时间/令牌数, ...}
+        if result.len() < 2 {
+            tracing::error!("Invalid script result length: {:?}", result);
+            return Err(RateLimitingError::RedisError);
+        }
+
+        let status_code = match &result[0] {
+            redis::Value::BulkString(data) => {
+                String::from_utf8_lossy(data).parse::<i64>().unwrap_or(0)
+            }
+            redis::Value::Int(i) => *i,
+            _ => {
+                tracing::error!("Invalid status code in result: {:?}", result[0]);
+                return Err(RateLimitingError::RedisError);
+            }
+        };
+
+        if status_code == 1 {
+            // 允许通过
+            debug!("Rate limit check passed");
+            Ok(RateLimitResult::Allowed)
+        } else {
+            // 被限流，解析等待时间
+            let limit_type = match &result[1] {
+                redis::Value::BulkString(data) => String::from_utf8_lossy(data).to_string(),
+                _ => "unknown".to_string(),
+            };
+
+            let wait_time = if result.len() > 2 {
+                match &result[2] {
+                    redis::Value::BulkString(data) => {
+                        String::from_utf8_lossy(data).parse::<u64>().unwrap_or(1)
+                    }
+                    redis::Value::Int(i) => *i as u64,
+                    _ => 1,
+                }
+            } else {
+                1
+            };
+
+            debug!(
+                "Rate limit exceeded: type={}, wait_time={}s",
+                limit_type, wait_time
+            );
+            Ok(RateLimitResult::RetryAfter {
+                retry_after_seconds: wait_time,
+            })
+        }
     }
 
     /// 实现令牌桶限流算法
@@ -171,7 +383,7 @@ impl RateLimitingServiceImpl {
             .arg(refill_rate)
             .arg(window_seconds)
             .arg(now)
-            .invoke_async(&mut conn)
+            .invoke_async(&mut *conn)
             .await
             .map_err(|e| {
                 tracing::error!("Redis script error: {}", e);
@@ -228,7 +440,7 @@ impl RateLimitingServiceImpl {
             .arg(timeout_seconds)
             .arg(now)
             .arg(&token)
-            .invoke_async(&mut conn)
+            .invoke_async(&mut *conn)
             .await
             .map_err(|e| {
                 tracing::error!("Redis semaphore script error: {}", e);
@@ -271,7 +483,7 @@ impl RateLimitingServiceImpl {
             .key(&key)
             .arg(self.config.concurrency.lock_timeout_seconds)
             .arg(now)
-            .invoke_async(&mut conn)
+            .invoke_async(&mut *conn)
             .await
             .map_err(|e| {
                 tracing::error!("Redis concurrency script error: {}", e);
@@ -373,7 +585,7 @@ impl RateLimitService for RateLimitingServiceImpl {
         api_key: &str,
         endpoint: &str,
     ) -> Result<RateLimitResult, RateLimitingError> {
-        debug!("========== RATE LIMIT CHECK ==========");
+        debug!("========== RATE LIMIT CHECK (OPTIMIZED) ==========");
         // 使用SHA256哈希代替部分掩码，更安全地记录API key
         let mut hasher = Sha256::new();
         hasher.update(api_key.as_bytes());
@@ -419,60 +631,23 @@ impl RateLimitService for RateLimitingServiceImpl {
             rph = requests_per_hour
         );
 
-        // 检查每秒限流
-        debug!("Checking per-second rate limit...");
-        let per_second_key = self.build_api_rate_limit_key(api_key, endpoint, "per_second");
-        let per_second_result = self
-            .check_token_bucket_rate_limit(
-                per_second_key,
+        // 使用优化的合并限流检查
+        // 一次性检查每秒、每分钟、每小时的限流，减少网络往返次数
+        debug!("Checking all rate limits in single Redis call...");
+        let result = self
+            .check_rate_limit_optimized(
+                api_key,
+                endpoint,
                 bucket_capacity,
-                self.config.rate_limit.requests_per_second as f64,
-                1,
-            )
-            .await?;
-
-        debug!(?per_second_result);
-
-        if !matches!(per_second_result, RateLimitResult::Allowed) {
-            debug!("Per-second rate limit exceeded");
-            return Ok(per_second_result);
-        }
-
-        // 检查每分钟限流
-        debug!("Checking per-minute rate limit...");
-        let per_minute_key = self.build_api_rate_limit_key(api_key, endpoint, "per_minute");
-        let per_minute_result = self
-            .check_token_bucket_rate_limit(
-                per_minute_key,
                 requests_per_minute,
-                requests_per_minute as f64 / 60.0,
-                60,
-            )
-            .await?;
-
-        debug!(?per_minute_result);
-
-        if !matches!(per_minute_result, RateLimitResult::Allowed) {
-            debug!("Per-minute rate limit exceeded");
-            return Ok(per_minute_result);
-        }
-
-        // 检查每小时限流
-        debug!("Checking per-hour rate limit...");
-        let per_hour_key = self.build_api_rate_limit_key(api_key, endpoint, "per_hour");
-        let per_hour_result = self
-            .check_token_bucket_rate_limit(
-                per_hour_key,
                 requests_per_hour,
-                requests_per_hour as f64 / 3600.0,
-                3600,
             )
             .await?;
 
-        debug!(?per_hour_result);
+        debug!(?result);
         debug!("========== RATE LIMIT CHECK COMPLETE ==========");
 
-        Ok(per_hour_result)
+        Ok(result)
     }
 
     async fn get_team_rate_limit_config(

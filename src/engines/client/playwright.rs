@@ -107,7 +107,13 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     }
 
     async fn cleanup(&self) {
-        let mut guard = self.browser.lock().unwrap();
+        let mut guard = match self.browser.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::error!("Browser mutex poisoned during cleanup: {}", e);
+                return;
+            }
+        };
         if let Some(browser) = guard.take() {
             tracing::info!("Closing browser instance");
             drop(browser);
@@ -115,7 +121,13 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     }
 
     fn reset(&self) {
-        let mut guard = self.browser.lock().unwrap();
+        let mut guard = match self.browser.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::error!("Browser mutex poisoned during reset: {}", e);
+                return;
+            }
+        };
         *guard = None;
     }
 

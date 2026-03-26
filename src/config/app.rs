@@ -8,7 +8,16 @@
 //! 包含数据库、Redis、服务器、速率限制和并发控制等核心配置项
 
 use confers::Config;
+use confers::validator::Validate;
 use serde::{Deserialize, Serialize};
+
+/// 验证速率限制必须启用
+fn validate_rate_limit_enabled(v: &bool, _: &()) -> garde::Result {
+    if !v {
+        return Err(garde::Error::new("rate limiting must be enabled for security"));
+    }
+    Ok(())
+}
 
 /// 数据库配置设置
 ///
@@ -33,36 +42,51 @@ use serde::{Deserialize, Serialize};
 #[config(env_prefix = "CRAWLRS__DATABASE__")]
 pub struct DatabaseSettings {
     /// 数据库连接URL (敏感信息)
-    #[config(sensitive)]
+    /// 注意：此字段包含敏感信息，仅 crate 内部可访问
     pub(crate) url: String,
 
     /// 最大连接数
-    #[config(default = 150)]
+    #[config(default = Some(150))]
     pub max_connections: Option<u32>,
 
     /// 最小连接数
-    #[config(default = 20)]
+    #[config(default = Some(20))]
     pub min_connections: Option<u32>,
 
     /// 连接超时时间（秒）
-    #[config(default = 15)]
+    #[config(default = Some(15))]
     pub connect_timeout: Option<u64>,
 
     /// 空闲连接超时时间（秒）
-    #[config(default = 300)]
+    #[config(default = Some(300))]
     pub idle_timeout: Option<u64>,
 
     /// 连接最大存活时间（秒）
-    #[config(default = 1800)]
+    #[config(default = Some(1800))]
     pub max_lifetime: Option<u64>,
 
     /// 连接存活检查间隔（秒）
-    #[config(default = 30)]
+    #[config(default = Some(30))]
     pub connection_keepalive: Option<u64>,
 
     /// 健康检查间隔（秒）
-    #[config(default = 60)]
+    #[config(default = Some(60))]
     pub health_check_interval: Option<u64>,
+}
+
+impl std::fmt::Debug for DatabaseSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DatabaseSettings")
+            .field("url", &"***REDACTED***")
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("idle_timeout", &self.idle_timeout)
+            .field("max_lifetime", &self.max_lifetime)
+            .field("connection_keepalive", &self.connection_keepalive)
+            .field("health_check_interval", &self.health_check_interval)
+            .finish()
+    }
 }
 
 impl DatabaseSettings {
@@ -79,11 +103,15 @@ impl DatabaseSettings {
 
 /// Redis配置设置
 ///
-/// 配置 Redis 连接参数
+/// 配置 Redis 连接参数和连接池设置
 ///
 /// # 字段说明
 ///
 /// * `url` - Redis 连接字符串，格式为 redis://host:port/db（敏感信息，仅 crate 可见）
+/// * `max_connections` - 连接池中最大连接数，默认 20
+/// * `min_connections` - 连接池中最小连接数，默认 5
+/// * `connection_timeout` - 连接超时时间（秒），默认 10 秒
+/// * `idle_timeout` - 空闲连接超时时间（秒），默认 300 秒
 ///
 /// # 安全提示
 ///
@@ -93,8 +121,36 @@ impl DatabaseSettings {
 #[config(env_prefix = "CRAWLRS__REDIS__")]
 pub struct RedisSettings {
     /// Redis连接URL (敏感信息)
-    #[config(sensitive)]
+    /// 注意：此字段包含敏感信息，仅 crate 内部可访问
     pub(crate) url: String,
+
+    /// 最大连接数
+    #[config(default = Some(20))]
+    pub max_connections: Option<u32>,
+
+    /// 最小连接数（连接池预热）
+    #[config(default = Some(5))]
+    pub min_connections: Option<u32>,
+
+    /// 连接超时时间（秒）
+    #[config(default = Some(10))]
+    pub connection_timeout: Option<u64>,
+
+    /// 空闲连接超时时间（秒）
+    #[config(default = Some(300))]
+    pub idle_timeout: Option<u64>,
+}
+
+impl std::fmt::Debug for RedisSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisSettings")
+            .field("url", &"***REDACTED***")
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("connection_timeout", &self.connection_timeout)
+            .field("idle_timeout", &self.idle_timeout)
+            .finish()
+    }
 }
 
 impl RedisSettings {
@@ -106,6 +162,26 @@ impl RedisSettings {
     /// 不要记录到日志或暴露给用户。
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// 获取最大连接数
+    pub fn max_connections(&self) -> u32 {
+        self.max_connections.unwrap_or(20)
+    }
+
+    /// 获取最小连接数
+    pub fn min_connections(&self) -> u32 {
+        self.min_connections.unwrap_or(5)
+    }
+
+    /// 获取连接超时时间（秒）
+    pub fn connection_timeout(&self) -> u64 {
+        self.connection_timeout.unwrap_or(10)
+    }
+
+    /// 获取空闲连接超时时间（秒）
+    pub fn idle_timeout(&self) -> u64 {
+        self.idle_timeout.unwrap_or(300)
     }
 }
 
@@ -122,7 +198,7 @@ impl RedisSettings {
 #[config(env_prefix = "CRAWLRS__SERVER__")]
 pub struct ServerSettings {
     /// 服务器监听主机地址
-    #[config(default = "0.0.0.0")]
+    #[config(default = "0.0.0.0".to_string())]
     pub host: String,
 
     /// 服务器监听端口
@@ -142,23 +218,27 @@ pub struct ServerSettings {
 ///
 /// * `enabled` - 是否启用速率限制，默认 true
 /// * `default_rpm` - 默认每分钟请求数限制，默认 100
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
 #[config(env_prefix = "CRAWLRS__RATE_LIMITING__")]
 pub struct RateLimitingSettings {
     /// 是否启用速率限制
     #[config(default = true)]
+    #[garde(custom(validate_rate_limit_enabled))]
     pub enabled: bool,
 
     /// 默认每分钟请求数限制
     #[config(default = 100)]
+    #[garde(range(min = 1, max = 10000))]
     pub default_rpm: u32,
 
     /// 默认速率限制（别名，兼容旧代码）
     #[config(default = 100)]
+    #[garde(range(min = 1, max = 10000))]
     pub default_limit: u32,
 
     /// 突发请求数大小
     #[config(default = 20)]
+    #[garde(range(min = 1, max = 1000))]
     pub burst_size: u32,
 }
 

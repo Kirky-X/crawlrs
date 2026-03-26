@@ -16,11 +16,9 @@ use std::time::Duration;
 #[config(env_prefix = "CRAWLRS__RUNTIME__")]
 pub struct RuntimeConfig {
     /// Worker相关配置
-    #[config(default)]
     pub worker: WorkerConfig,
 
     /// 后台任务配置
-    #[config(default)]
     pub background_tasks: BackgroundTaskConfig,
 }
 

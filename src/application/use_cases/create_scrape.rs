@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
+use shaku::Interface;
 
 use crate::application::dto::scrape_request::{
     ScrapeActionDto, ScrapeOptionsDto, ScrapeRequestDto,
@@ -27,7 +28,7 @@ use crate::engines::engine_client::{
 
 /// Trait for CreateScrapeUseCase - enables dependency injection
 #[async_trait::async_trait]
-pub trait CreateScrapeUseCaseTrait: Send + Sync {
+pub trait CreateScrapeUseCaseTrait: Interface + Send + Sync {
     /// Execute the scrape use case with the given request DTO
     async fn execute(&self, request_dto: ScrapeRequestDto) -> Result<ScrapeResponse, DomainError>;
 }

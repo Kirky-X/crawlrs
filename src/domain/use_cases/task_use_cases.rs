@@ -87,29 +87,25 @@ impl<T: TaskRepository, R: CreditsRepository> CreateTaskUseCase<T, R> {
     ) -> Result<CreateTaskResponse, anyhow::Error> {
         // 创建任务
         let payload = request.config.unwrap_or_else(|| serde_json::json!({}));
-        let now = chrono::Utc::now().naive_utc();
-        let task = Task {
-            id: Uuid::new_v4(),
-            task_type: request.task_type.to_string(),
-            status: TaskStatus::Queued.to_string(),
-            priority: request.priority.unwrap_or(0),
-            team_id: request.team_id,
-            api_key_id: request.api_key_id,
-            url: request.url,
+        let mut task = Task::new(
+            Uuid::new_v4(),
+            request.task_type,
+            request.team_id,
+            request.api_key_id,
+            request.url,
             payload,
-            retry_count: 0,
-            attempt_count: 0,
-            max_retries: request.max_retries.unwrap_or(3),
-            scheduled_at: None,
-            expires_at: None,
-            created_at: now,
-            started_at: None,
-            completed_at: None,
-            crawl_id: None,
-            updated_at: now,
-            lock_token: None,
-            lock_expires_at: None,
-        };
+        );
+        
+        // 设置可选参数
+        if let Some(priority) = request.priority {
+            task.priority = priority;
+        }
+        if let Some(max_retries) = request.max_retries {
+            task.max_retries = max_retries;
+        }
+        if let Some(expires_at) = request.expires_at {
+            task.expires_at = Some(expires_at);
+        }
 
         self.task_repo.create(&task).await?;
 
@@ -136,8 +132,8 @@ impl<T: TaskRepository> QueryTasksUseCase<T> {
             task_ids: request.task_ids,
             task_types: request.task_types,
             statuses: request.statuses,
-            created_after: request.created_after,
-            created_before: request.created_before,
+            created_after: request.created_after.map(|dt| dt.with_timezone(&chrono::Utc)),
+            created_before: request.created_before.map(|dt| dt.with_timezone(&chrono::Utc)),
             crawl_id: request.crawl_id,
             limit: request.limit.unwrap_or(100),
             offset: request.offset.unwrap_or(0),
@@ -187,7 +183,7 @@ impl<T: TaskRepository, R: CreditsRepository> CancelTasksUseCase<T, R> {
                         continue;
                     }
 
-                    if task.status == "completed" || task.status == "failed" {
+                    if task.status == TaskStatus::Completed || task.status == TaskStatus::Failed {
                         failed.push((
                             *task_id,
                             format!("Cannot cancel task in status: {}", task.status),
@@ -196,7 +192,7 @@ impl<T: TaskRepository, R: CreditsRepository> CancelTasksUseCase<T, R> {
                     }
 
                     // 如果不是强制取消且任务正在执行中，则不允许取消
-                    if !request.force.unwrap_or(false) && task.status == "active" {
+                    if !request.force.unwrap_or(false) && task.status == TaskStatus::Active {
                         failed.push((
                             *task_id,
                             "Task is running, use force=true to cancel".to_string(),

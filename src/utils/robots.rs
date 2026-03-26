@@ -37,6 +37,12 @@ pub enum RobotsCheckerError {
 
 impl_basic_error_conversions!(RobotsCheckerError, ValidationError);
 
+impl From<crate::presentation::helpers::ssrf::SsrfError> for RobotsCheckerError {
+    fn from(err: crate::presentation::helpers::ssrf::SsrfError) -> Self {
+        RobotsCheckerError::ValidationError(err.to_string())
+    }
+}
+
 /// Robots.txt缓存统计
 #[derive(Default, Clone)]
 pub struct CacheStats {

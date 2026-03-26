@@ -67,7 +67,13 @@ impl DependencyStateManager {
 
     /// Register a component with the state manager
     pub fn register_component(&self, name: &str) {
-        let mut states = self.states.write().unwrap();
+        let mut states = match self.states.write() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during register_component: {}", e);
+                return;
+            }
+        };
         states.insert(
             name.to_string(),
             ComponentStateInfo {
@@ -81,7 +87,13 @@ impl DependencyStateManager {
 
     /// Mark a component as initializing
     pub fn mark_initializing(&self, name: &str) {
-        let mut states = self.states.write().unwrap();
+        let mut states = match self.states.write() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during mark_initializing: {}", e);
+                return;
+            }
+        };
         if let Some(info) = states.get_mut(name) {
             info.state = ComponentState::Initializing;
         }
@@ -89,7 +101,13 @@ impl DependencyStateManager {
 
     /// Mark a component as ready
     pub fn mark_ready(&self, name: &str) {
-        let mut states = self.states.write().unwrap();
+        let mut states = match self.states.write() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during mark_ready: {}", e);
+                return;
+            }
+        };
         if let Some(info) = states.get_mut(name) {
             info.state = ComponentState::Ready;
             info.initialized_at = Some(std::time::SystemTime::now());
@@ -98,7 +116,13 @@ impl DependencyStateManager {
 
     /// Mark a component as failed
     pub fn mark_failed(&self, name: &str, error: &str) {
-        let mut states = self.states.write().unwrap();
+        let mut states = match self.states.write() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during mark_failed: {}", e);
+                return;
+            }
+        };
         if let Some(info) = states.get_mut(name) {
             info.state = ComponentState::Failed(error.to_string());
             info.error_message = Some(error.to_string());
@@ -107,19 +131,37 @@ impl DependencyStateManager {
 
     /// Get the state of a specific component
     pub fn get_component_state(&self, name: &str) -> Option<ComponentStateInfo> {
-        let states = self.states.read().unwrap();
+        let states = match self.states.read() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during get_component_state: {}", e);
+                return None;
+            }
+        };
         states.get(name).cloned()
     }
 
     /// Get the states of all components
     pub fn get_all_states(&self) -> Vec<ComponentStateInfo> {
-        let states = self.states.read().unwrap();
+        let states = match self.states.read() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during get_all_states: {}", e);
+                return Vec::new();
+            }
+        };
         states.values().cloned().collect()
     }
 
     /// Get components by state
     pub fn get_components_by_state(&self, state: ComponentState) -> Vec<ComponentStateInfo> {
-        let states = self.states.read().unwrap();
+        let states = match self.states.read() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during get_components_by_state: {}", e);
+                return Vec::new();
+            }
+        };
         states
             .values()
             .filter(|info| info.state == state)
@@ -129,7 +171,13 @@ impl DependencyStateManager {
 
     /// Check if all components are ready
     pub fn all_ready(&self) -> bool {
-        let states = self.states.read().unwrap();
+        let states = match self.states.read() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during all_ready: {}", e);
+                return false;
+            }
+        };
         states
             .values()
             .all(|info| info.state == ComponentState::Ready)
@@ -137,13 +185,25 @@ impl DependencyStateManager {
 
     /// Get count of components by state
     pub fn count_by_state(&self, state: &ComponentState) -> usize {
-        let states = self.states.read().unwrap();
+        let states = match self.states.read() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during count_by_state: {}", e);
+                return 0;
+            }
+        };
         states.values().filter(|info| &info.state == state).count()
     }
 
     /// Get a summary of component states
     pub fn get_summary(&self) -> HashMap<ComponentState, usize> {
-        let states = self.states.read().unwrap();
+        let states = match self.states.read() {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!("State manager RwLock poisoned during get_summary: {}", e);
+                return HashMap::new();
+            }
+        };
         let mut summary = HashMap::new();
         for info in states.values() {
             *summary.entry(info.state.clone()).or_insert(0) += 1;

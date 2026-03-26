@@ -349,22 +349,24 @@ impl AdaptiveConcurrencyController {
     /// 启动自适应调整任务
     pub fn start_adaptive_adjustment(&self) {
         let controller = self.base_controller.clone();
+        let adjustment_interval = self.adjustment_interval;
+        let target_utilization = self.target_utilization;
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(self.adjustment_interval);
+            let mut interval = tokio::time::interval(adjustment_interval);
 
             loop {
                 interval.tick().await;
 
                 let utilization = controller.utilization();
 
-                if utilization < self.target_utilization * 0.8 {
+                if utilization < target_utilization * 0.8 {
                     // 低于目标利用率，增加并发
                     warn!(
                         "Low utilization detected: {:.1}%. Consider increasing concurrency.",
                         utilization * 100.0
                     );
-                } else if utilization > self.target_utilization * 1.2 {
+                } else if utilization > target_utilization * 1.2 {
                     // 高于目标利用率，减少并发
                     warn!(
                         "High utilization detected: {:.1}%. Consider decreasing concurrency.",

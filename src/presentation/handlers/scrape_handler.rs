@@ -23,11 +23,12 @@ use crate::{
     domain::repositories::{
         scrape_result_repository::ScrapeResultRepository, task_repository::TaskRepository,
     },
-    domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService},
+    domain::services::rate_limiting_service::RateLimitingService,
     infrastructure::cache::redis_client::RedisClient,
     presentation::handlers::response_builder::{errors, success_response, ApiResponse},
     presentation::handlers::task_handler::handle_sync_wait_and_get_status,
-    presentation::helpers::ssrf::is_internal_url,
+    presentation::helpers::rate_limit_helper::check_rate_limit,
+    presentation::helpers::ssrf::validate_url,
     presentation::middleware::auth_middleware::AuthState,
     queue::task_queue::TaskQueue,
 };
@@ -55,9 +56,28 @@ pub async fn create_scrape(
         }
     }
 
-    if is_internal_url(&payload.url) {
-        tracing::error!("SSRF Protection: Blocking internal URL {}", payload.url);
-        return errors::bad_request("SSRF protection: Internal URLs are not allowed");
+    // SSRF 验证 - 使用完整的异步 DNS 验证
+    match validate_url(&payload.url).await {
+        Ok(validated) => {
+            tracing::debug!(
+                target: "security",
+                url = %payload.url,
+                team_id = %team_id,
+                resolved_ips = ?validated.resolved_ips,
+                "URL passed SSRF validation"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "security_audit",
+                url = %payload.url,
+                team_id = %team_id,
+                api_key_id = %auth_state.api_key_id,
+                error = %e,
+                "SSRF attack attempt blocked"
+            );
+            return errors::bad_request(&format!("SSRF protection: {}", e));
+        }
     }
 
     // 1. 检查限流
@@ -82,11 +102,11 @@ pub async fn create_scrape(
         return errors::payment_required(e.to_string());
     }
 
-    let now = chrono::Utc::now().naive_utc();
+    let now = chrono::Utc::now();
     let task = Task {
         id: Uuid::new_v4(),
-        task_type: TaskType::Scrape.to_string(),
-        status: TaskStatus::Queued.to_string(),
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Queued,
         priority: 0,
         team_id,
         api_key_id: auth_state.api_key_id,
@@ -206,11 +226,11 @@ pub async fn get_scrape_status(
                 match result_repository.find_by_task_id(task.id).await {
                     Ok(Some(result)) => Some(ScrapeResultDto {
                         content: result.content,
-                        status_code: result.status_code,
-                        content_type: result.content_type,
+                        status_code: result.status_code as u16,
+                        content_type: Some(result.content_type),
                         response_time_ms: result.response_time_ms,
-                        headers: result.headers,
-                        meta_data: result.meta_data,
+                        headers: Some(result.headers.into()),
+                        meta_data: Some(result.meta_data.into()),
                         screenshot: result.screenshot,
                         created_at: result.created_at,
                     }),
@@ -229,10 +249,10 @@ pub async fn get_scrape_status(
 
             let response = ScrapeStatusResponseDto {
                 id: task.id,
-                status: task.status,
+                status: task.status.to_string(),
                 url: task.url,
-                created_at: task.created_at,
-                completed_at: task.completed_at,
+                created_at: task.created_at.naive_utc(),
+                completed_at: task.completed_at.map(|dt| dt.naive_utc()),
                 result: result_data,
                 metadata: task.payload.get("metadata").cloned(),
                 error: if task.status == TaskStatus::Failed {

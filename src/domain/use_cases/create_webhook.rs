@@ -19,7 +19,7 @@ impl<R: WebhookRepository> CreateWebhookUseCase<R> {
     }
 
     pub async fn execute(&self, team_id: Uuid, url: String) -> Result<Webhook, RepositoryError> {
-        let now = chrono::Utc::now().naive_utc();
+        let now = chrono::Utc::now();
         let webhook = Webhook {
             id: Uuid::new_v4(),
             team_id,

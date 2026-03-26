@@ -3,7 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use dbnexus::{db_crud, db_permission};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -13,8 +12,6 @@ use uuid::Uuid;
 /// 对应数据库中的 crawls 表，存储爬取任务的基本信息和状态
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "crawls")]
-#[db_crud(table_name = "crawls")]
-#[db_permission(roles = ["admin", "scraper"], operations = ["SELECT", "INSERT", "UPDATE", "DELETE"])]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,

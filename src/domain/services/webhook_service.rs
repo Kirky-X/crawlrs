@@ -193,24 +193,14 @@ impl WebhookServiceImpl {
             payload["error"] = json!(msg);
         }
 
-        let event = WebhookEvent {
-            id: Uuid::new_v4(),
-            team_id: task.team_id,
-            webhook_id: Uuid::nil(),
-            event_type: event_type.to_string(),
+        let event = WebhookEvent::new(
+            Uuid::new_v4(),
+            task.team_id,
+            Uuid::nil(),
+            event_type,
             payload,
             webhook_url,
-            status: WebhookStatus::Pending.to_string(),
-            attempt_count: 0,
-            max_retries: 5,
-            response_status: None,
-            response_body: None,
-            error_message: None,
-            next_retry_at: None,
-            created_at: Utc::now().naive_utc(),
-            updated_at: Utc::now().naive_utc(),
-            delivered_at: None,
-        };
+        );
 
         // Save event to repository
         if let Err(e) = self.repository.create(&event).await {

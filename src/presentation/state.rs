@@ -169,13 +169,13 @@ impl CrawlHandlerState {
     /// ensures consistency with the main application state.
     pub fn from_app_state(app_state: &Arc<AppState>) -> Self {
         Self {
-            crawl_repo: app_state.crawl_repo(),
-            task_repo: app_state.task_repo(),
-            webhook_repo: app_state.webhook_repo(),
-            scrape_result_repo: app_state.result_repo(),
-            geo_restriction_repo: app_state.geo_restriction_repo(),
-            team_service: app_state.team_service(),
-            rate_limiting_service: app_state.rate_limiting_service(),
+            crawl_repo: app_state.crawl_repo.clone(),
+            task_repo: app_state.task_repo.clone(),
+            webhook_repo: app_state.webhook_repo.clone(),
+            scrape_result_repo: app_state.result_repo.clone(),
+            geo_restriction_repo: app_state.geo_restriction_repo.clone(),
+            team_service: app_state.team_service.clone(),
+            rate_limiting_service: app_state.rate_limiting_service.clone(),
         }
     }
 

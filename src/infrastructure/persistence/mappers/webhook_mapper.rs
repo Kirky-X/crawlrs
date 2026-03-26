@@ -5,8 +5,10 @@
 
 //! Webhook Mapper - converts between Webhook domain model and database entity
 
+use crate::common::time_utils::{from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt};
 use crate::domain::models::{Webhook, WebhookEvent, WebhookEventType, WebhookStatus};
 use crate::infrastructure::database::entities::{webhook, webhook_event};
+use uuid::Uuid;
 
 /// Mapper for converting between Webhook domain model and database entity
 pub struct WebhookMapper;
@@ -18,7 +20,7 @@ impl WebhookMapper {
             id: entity.id,
             team_id: entity.team_id,
             url: entity.url,
-            created_at: entity.created_at.with_timezone(&chrono::Utc),
+            created_at: from_db_datetime(entity.created_at),
         }
     }
 
@@ -28,7 +30,7 @@ impl WebhookMapper {
             id: domain.id,
             team_id: domain.team_id,
             url: domain.url.clone(),
-            created_at: domain.created_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
+            created_at: to_db_datetime(domain.created_at),
         }
     }
 
@@ -47,20 +49,20 @@ impl WebhookEventMapper {
         WebhookEvent::with_all_fields(
             entity.id,
             entity.team_id,
-            entity.webhook_id,
+            entity.webhook_id.unwrap_or(Uuid::nil()),
             Self::parse_event_type(&entity.event_type),
             entity.payload,
             entity.webhook_url,
-            Self::parse_status(&entity.status),
+            Self::parse_status_from_enum(&entity.status),
             entity.attempt_count,
             entity.max_retries,
             entity.response_status,
             entity.response_body,
             entity.error_message,
-            entity.next_retry_at.map(|dt| dt.with_timezone(&chrono::Utc)),
-            entity.created_at.with_timezone(&chrono::Utc),
-            entity.updated_at.with_timezone(&chrono::Utc),
-            entity.delivered_at.map(|dt| dt.with_timezone(&chrono::Utc)),
+            from_db_datetime_opt(entity.next_retry_at),
+            from_db_datetime(entity.created_at),
+            from_db_datetime(entity.updated_at),
+            from_db_datetime_opt(entity.delivered_at),
         )
     }
 
@@ -69,20 +71,20 @@ impl WebhookEventMapper {
         webhook_event::Model {
             id: domain.id,
             team_id: domain.team_id,
-            webhook_id: domain.webhook_id,
+            webhook_id: Some(domain.webhook_id),
             event_type: domain.event_type.to_string(),
             payload: domain.payload.clone(),
             webhook_url: domain.webhook_url.clone(),
-            status: domain.status.to_string(),
+            status: Self::status_to_enum(&domain.status),
             attempt_count: domain.attempt_count,
             max_retries: domain.max_retries,
             response_status: domain.response_status,
             response_body: domain.response_body.clone(),
             error_message: domain.error_message.clone(),
-            next_retry_at: domain.next_retry_at.map(|dt| dt.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
-            created_at: domain.created_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
-            updated_at: domain.updated_at.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap()),
-            delivered_at: domain.delivered_at.map(|dt| dt.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap())),
+            next_retry_at: to_db_datetime_opt(domain.next_retry_at),
+            created_at: to_db_datetime(domain.created_at),
+            updated_at: to_db_datetime(domain.updated_at),
+            delivered_at: to_db_datetime_opt(domain.delivered_at),
         }
     }
 
@@ -96,9 +98,24 @@ impl WebhookEventMapper {
         s.parse().unwrap_or(WebhookEventType::Custom(s.to_string()))
     }
 
-    /// Parse status from string
-    fn parse_status(s: &str) -> WebhookStatus {
-        s.parse().unwrap_or_default()
+    /// Parse status from enum
+    fn parse_status_from_enum(status: &webhook_event::SeaWebhookStatus) -> WebhookStatus {
+        match status {
+            webhook_event::SeaWebhookStatus::Pending => WebhookStatus::Pending,
+            webhook_event::SeaWebhookStatus::Delivered => WebhookStatus::Delivered,
+            webhook_event::SeaWebhookStatus::Failed => WebhookStatus::Failed,
+            webhook_event::SeaWebhookStatus::Dead => WebhookStatus::Dead,
+        }
+    }
+
+    /// Convert status to enum
+    fn status_to_enum(status: &WebhookStatus) -> webhook_event::SeaWebhookStatus {
+        match status {
+            WebhookStatus::Pending => webhook_event::SeaWebhookStatus::Pending,
+            WebhookStatus::Delivered => webhook_event::SeaWebhookStatus::Delivered,
+            WebhookStatus::Failed => webhook_event::SeaWebhookStatus::Failed,
+            WebhookStatus::Dead => webhook_event::SeaWebhookStatus::Dead,
+        }
     }
 }
 

@@ -75,9 +75,11 @@ impl TrustedProxyConfig {
     ///
     /// 如果 IP 在可信代理列表中返回 true，否则返回 false
     pub fn is_trusted(&self, ip: &IpAddr) -> bool {
+        use std::str::FromStr;
+
         for proxy in &self.proxies {
             // 尝试解析为 CIDR
-            if let Ok(network) = ipnetwork::IpNetwork::from_str_truncate(proxy) {
+            if let Ok(network) = ipnetwork::IpNetwork::from_str(proxy) {
                 if network.contains(*ip) {
                     return true;
                 }

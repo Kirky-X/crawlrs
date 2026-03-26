@@ -24,7 +24,7 @@ use crate::presentation::handlers::response_builder::{error_response, success_re
 use crate::presentation::handlers::task_handler::handle_sync_wait_and_get_status;
 use crate::presentation::handlers::task_handler::SyncWaitResult;
 use crate::presentation::helpers::rate_limit_helper::check_rate_limit;
-use crate::presentation::helpers::ssrf::is_internal_url;
+use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::state::CrawlHandlerState;
 use tracing::error;
@@ -45,8 +45,28 @@ pub async fn create_crawl(
         return errors::unprocessable_entity("max_depth must be between 0 and 5");
     }
 
-    if is_internal_url(&payload.url) {
-        return errors::bad_request("SSRF protection: Internal URLs are not allowed");
+    // SSRF 验证 - 使用完整的异步 DNS 验证
+    match validate_url(&payload.url).await {
+        Ok(validated) => {
+            tracing::debug!(
+                target: "security",
+                url = %payload.url,
+                team_id = %team_id,
+                resolved_ips = ?validated.resolved_ips,
+                "URL passed SSRF validation"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "security_audit",
+                url = %payload.url,
+                team_id = %team_id,
+                api_key_id = %auth_state.api_key_id,
+                error = %e,
+                "SSRF attack attempt blocked"
+            );
+            return errors::bad_request(&format!("SSRF protection: {}", e));
+        }
     }
 
     // 1. 检查限流

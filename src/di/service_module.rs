@@ -15,6 +15,7 @@ use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::di::database_module::{HttpClientTrait, SettingsTrait};
 use crate::di::cache_module::RedisClientTrait;
+use crate::domain::repositories::audit_log_repository::AuditLogRepository;
 use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
@@ -42,25 +43,14 @@ pub trait RateLimitingServiceTrait: Interface + Send + Sync {
     fn get_service(&self) -> &dyn RateLimitingService;
 }
 
-/// RateLimitingService component
-#[allow(dead_code)]
+/// RateLimitingService component - delegates to RateLimitingServiceImpl
+#[cfg(feature = "rate-limiting")]
 pub struct RateLimitingServiceComponent {
-    /// Redis client
-    redis_client: Arc<RedisClient>,
-    /// Credits repo
-    credits_repo: Arc<dyn CreditsRepository>,
-    /// Task repo
-    task_repo: Arc<dyn TaskRepository>,
-    /// Tasks backlog repo
-    tasks_backlog_repo: Arc<dyn TasksBacklogRepository>,
-    /// Rate limit enabled
-    enabled: bool,
-    /// Default rate limit per second
-    default_rate_limit: u32,
-    /// Burst size
-    burst_size: u32,
+    /// Inner implementation
+    inner: crate::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl,
 }
 
+#[cfg(feature = "rate-limiting")]
 impl<M: Module> Component<M> for RateLimitingServiceComponent
 where
     M: HasComponent<dyn RedisClientTrait>
@@ -76,6 +66,11 @@ where
         context: &mut ModuleBuildContext<M>,
         _params: Self::Parameters,
     ) -> Box<dyn RateLimitingServiceTrait> {
+        use crate::domain::services::rate_limiting_service::{
+            ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy,
+        };
+        use crate::infrastructure::services::rate_limiting_service_impl::RateLimitingConfig;
+
         let redis_client_component: Arc<dyn RedisClientTrait> = M::build_component(context);
         let redis_client = redis_client_component.get_client();
         let credits_repo: Arc<dyn CreditsRepository> = M::build_component(context);
@@ -84,194 +79,177 @@ where
         let settings_component: Arc<dyn SettingsTrait> = M::build_component(context);
         let settings = settings_component.get();
 
-        let enabled = settings.rate_limiting.enabled;
-        let default_rate_limit = settings.rate_limiting.default_limit;
-        let burst_size = settings.rate_limiting.burst_size;
+        let rate_limit_config = RateLimitConfig {
+            strategy: RateLimitStrategy::TokenBucket,
+            requests_per_second: settings.rate_limiting.default_rpm / 60,
+            requests_per_minute: settings.rate_limiting.default_rpm,
+            requests_per_hour: settings.rate_limiting.default_rpm * 60,
+            bucket_capacity: Some(settings.rate_limiting.burst_size),
+            enabled: settings.rate_limiting.enabled,
+        };
 
-        Box::new(Self::new(
+        let concurrency_config = ConcurrencyConfig {
+            strategy: ConcurrencyStrategy::DistributedSemaphore,
+            max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
+            max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
+            lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds as u64,
+            enabled: true,
+        };
+
+        let config = RateLimitingConfig {
+            redis_key_prefix: "crawlrs".to_string(),
+            rate_limit: rate_limit_config,
+            concurrency: concurrency_config,
+            backlog_process_interval_seconds: 30,
+            rate_limit_ttl_seconds: 3600,
+        };
+
+        let inner = crate::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl::new(
             redis_client,
-            Arc::from(credits_repo),
             Arc::from(task_repo),
             Arc::from(tasks_backlog_repo),
-            enabled,
-            default_rate_limit,
-            burst_size,
-        ))
+            Arc::from(credits_repo),
+            config,
+        );
+
+        Box::new(Self { inner })
     }
 }
 
-impl RateLimitingServiceComponent {
-    /// Create a new RateLimitingServiceComponent with explicit dependencies
-    pub fn new(
-        redis_client: Arc<RedisClient>,
-        credits_repo: Arc<dyn CreditsRepository>,
-        task_repo: Arc<dyn TaskRepository>,
-        tasks_backlog_repo: Arc<dyn TasksBacklogRepository>,
-        enabled: bool,
-        default_rate_limit: u32,
-        burst_size: u32,
-    ) -> Self {
-        Self {
-            redis_client,
-            credits_repo,
-            task_repo,
-            tasks_backlog_repo,
-            enabled,
-            default_rate_limit,
-            burst_size,
-        }
-    }
-}
-
+#[cfg(feature = "rate-limiting")]
 impl RateLimitingServiceTrait for RateLimitingServiceComponent {
     fn get_service(&self) -> &dyn RateLimitingService {
-        self
+        &self.inner
     }
 }
 
-// Implement individual sub-traits for RateLimitingServiceComponent
+#[cfg(feature = "rate-limiting")]
 #[async_trait::async_trait]
 impl crate::domain::services::rate_limiting_service::RateLimitService
     for RateLimitingServiceComponent
 {
     async fn check_rate_limit(
         &self,
-        _api_key: &str,
-        _endpoint: &str,
+        api_key: &str,
+        endpoint: &str,
     ) -> Result<
         crate::domain::services::rate_limiting_service::RateLimitResult,
         crate::domain::services::rate_limiting_service::RateLimitingError,
     > {
-        Ok(crate::domain::services::rate_limiting_service::RateLimitResult::Allowed)
+        self.inner.check_rate_limit(api_key, endpoint).await
     }
 
     async fn get_team_rate_limit_config(
         &self,
-        _team_id: uuid::Uuid,
+        team_id: uuid::Uuid,
     ) -> Result<
         crate::domain::services::rate_limiting_service::RateLimitConfig,
         crate::domain::services::rate_limiting_service::RateLimitingError,
     > {
-        Ok(
-            crate::domain::services::rate_limiting_service::RateLimitConfig {
-                strategy:
-                    crate::domain::services::rate_limiting_service::RateLimitStrategy::TokenBucket,
-                requests_per_second: self.default_rate_limit,
-                requests_per_minute: self.default_rate_limit * 60,
-                requests_per_hour: self.default_rate_limit * 3600,
-                bucket_capacity: Some(self.burst_size),
-                enabled: self.enabled,
-            },
-        )
+        self.inner.get_team_rate_limit_config(team_id).await
     }
 
     async fn update_team_rate_limit_config(
         &self,
-        _team_id: uuid::Uuid,
-        _config: crate::domain::services::rate_limiting_service::RateLimitConfig,
+        team_id: uuid::Uuid,
+        config: crate::domain::services::rate_limiting_service::RateLimitConfig,
     ) -> Result<(), crate::domain::services::rate_limiting_service::RateLimitingError> {
-        Ok(())
+        self.inner.update_team_rate_limit_config(team_id, config).await
     }
 
     async fn cleanup_expired_rate_limits(
         &self,
     ) -> Result<u64, crate::domain::services::rate_limiting_service::RateLimitingError> {
-        Ok(0)
+        self.inner.cleanup_expired_rate_limits().await
     }
 }
 
+#[cfg(feature = "rate-limiting")]
 #[async_trait::async_trait]
 impl crate::domain::services::rate_limiting_service::ConcurrencyControlService
     for RateLimitingServiceComponent
 {
     async fn check_team_concurrency(
         &self,
-        _team_id: uuid::Uuid,
-        _task_id: uuid::Uuid,
+        team_id: uuid::Uuid,
+        task_id: uuid::Uuid,
     ) -> Result<
         crate::domain::services::rate_limiting_service::ConcurrencyResult,
         crate::domain::services::rate_limiting_service::RateLimitingError,
     > {
-        Ok(crate::domain::services::rate_limiting_service::ConcurrencyResult::Allowed)
+        self.inner.check_team_concurrency(team_id, task_id).await
     }
 
     async fn release_team_concurrency_slot(
         &self,
-        _team_id: uuid::Uuid,
-        _task_id: uuid::Uuid,
+        team_id: uuid::Uuid,
+        task_id: uuid::Uuid,
     ) -> Result<(), crate::domain::services::rate_limiting_service::RateLimitingError> {
-        Ok(())
+        self.inner.release_team_concurrency_slot(team_id, task_id).await
     }
 
     async fn get_team_current_concurrency(
         &self,
-        _team_id: uuid::Uuid,
+        team_id: uuid::Uuid,
     ) -> Result<u32, crate::domain::services::rate_limiting_service::RateLimitingError> {
-        Ok(0)
+        self.inner.get_team_current_concurrency(team_id).await
     }
 
     async fn get_team_concurrency_config(
         &self,
-        _team_id: uuid::Uuid,
+        team_id: uuid::Uuid,
     ) -> Result<
         crate::domain::services::rate_limiting_service::ConcurrencyConfig,
         crate::domain::services::rate_limiting_service::RateLimitingError,
     > {
-        Ok(
-            crate::domain::services::rate_limiting_service::ConcurrencyConfig {
-                strategy:
-                    crate::domain::services::rate_limiting_service::ConcurrencyStrategy::Semaphore,
-                max_concurrent_tasks: 100,
-                max_concurrent_per_team: 10,
-                lock_timeout_seconds: 300,
-                enabled: true,
-            },
-        )
+        self.inner.get_team_concurrency_config(team_id).await
     }
 
     async fn update_team_concurrency_config(
         &self,
-        _team_id: uuid::Uuid,
-        _config: crate::domain::services::rate_limiting_service::ConcurrencyConfig,
+        team_id: uuid::Uuid,
+        config: crate::domain::services::rate_limiting_service::ConcurrencyConfig,
     ) -> Result<(), crate::domain::services::rate_limiting_service::RateLimitingError> {
-        Ok(())
+        self.inner.update_team_concurrency_config(team_id, config).await
     }
 }
 
+#[cfg(feature = "rate-limiting")]
 #[async_trait::async_trait]
 impl crate::domain::services::rate_limiting_service::BacklogService
     for RateLimitingServiceComponent
 {
     async fn process_backlog_tasks(
         &self,
-        _team_id: uuid::Uuid,
+        team_id: uuid::Uuid,
     ) -> Result<u32, crate::domain::services::rate_limiting_service::RateLimitingError> {
-        Ok(0)
+        self.inner.process_backlog_tasks(team_id).await
     }
 }
 
+#[cfg(feature = "rate-limiting")]
 #[async_trait::async_trait]
 impl crate::domain::services::rate_limiting_service::QuotaService for RateLimitingServiceComponent {
     async fn check_and_deduct_quota(
         &self,
-        _team_id: uuid::Uuid,
-        _amount: i64,
-        _transaction_type: crate::domain::models::CreditsTransactionType,
-        _description: String,
-        _reference_id: Option<uuid::Uuid>,
+        team_id: uuid::Uuid,
+        amount: i64,
+        transaction_type: crate::domain::models::CreditsTransactionType,
+        description: String,
+        reference_id: Option<uuid::Uuid>,
     ) -> Result<(), crate::domain::services::rate_limiting_service::RateLimitingError> {
-        Ok(())
+        self.inner.check_and_deduct_quota(team_id, amount, transaction_type, description, reference_id).await
     }
 
     async fn get_quota_balance(
         &self,
-        _team_id: uuid::Uuid,
+        team_id: uuid::Uuid,
     ) -> Result<i64, crate::domain::services::rate_limiting_service::RateLimitingError> {
-        Ok(1000)
+        self.inner.get_quota_balance(team_id).await
     }
 }
 
-// RateLimitingService is automatically implemented when all sub-traits are implemented
+#[cfg(feature = "rate-limiting")]
 impl RateLimitingService for RateLimitingServiceComponent {}
 
 /// TeamService component
@@ -393,17 +371,27 @@ pub trait CreateScrapeUseCaseTraitDI: Interface + Send + Sync {
     fn get_use_case(&self) -> &dyn CreateScrapeUseCaseTrait;
 }
 
-/// CreateScrapeUseCase component
-#[allow(dead_code)]
+/// CreateScrapeUseCase component - delegates to CreateScrapeUseCase
 pub struct CreateScrapeUseCaseComponent {
-    /// Engine router
-    engine_router: Arc<dyn EngineRouterTrait>,
+    /// Engine client
+    engine_client: Arc<crate::engines::engine_client::EngineClient>,
+}
+
+impl<M: Module + HasComponent<dyn EngineRouterTrait>> Component<M> for CreateScrapeUseCaseComponent {
+    type Interface = dyn CreateScrapeUseCaseTrait;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let engine_router: Arc<dyn EngineRouterTrait> = M::build_component(context);
+        let engine_client = Arc::new(crate::engines::engine_client::EngineClient::with_router(engine_router));
+        Box::new(Self::new(engine_client))
+    }
 }
 
 impl CreateScrapeUseCaseComponent {
     /// Create a new CreateScrapeUseCaseComponent with explicit dependencies
-    pub fn new(engine_router: Arc<dyn EngineRouterTrait>) -> Self {
-        Self { engine_router }
+    pub fn new(engine_client: Arc<crate::engines::engine_client::EngineClient>) -> Self {
+        Self { engine_client }
     }
 }
 
@@ -411,68 +399,18 @@ impl CreateScrapeUseCaseComponent {
 impl CreateScrapeUseCaseTrait for CreateScrapeUseCaseComponent {
     async fn execute(
         &self,
-        _request_dto: crate::application::dto::scrape_request::ScrapeRequestDto,
+        request_dto: crate::application::dto::scrape_request::ScrapeRequestDto,
     ) -> Result<
         crate::engines::engine_client::ScrapeResponse,
         crate::domain::models::DomainError,
     > {
-        // Placeholder implementation
-        Err(crate::domain::models::DomainError::EngineError(
-            "CreateScrapeUseCase not fully implemented".to_string(),
-        ))
+        let use_case = crate::application::use_cases::create_scrape::CreateScrapeUseCase::new(self.engine_client.clone());
+        use_case.execute(request_dto).await
     }
 }
 
 impl CreateScrapeUseCaseTraitDI for CreateScrapeUseCaseComponent {
     fn get_use_case(&self) -> &dyn CreateScrapeUseCaseTrait {
-        self
-    }
-}
-
-/// Trait for RobotsChecker component
-pub trait RobotsCheckerTraitDI: Interface + Send + Sync {
-    fn get_checker(&self) -> &dyn RobotsCheckerTrait;
-}
-
-/// RobotsChecker component
-#[allow(dead_code)]
-#[derive(Component, Default)]
-#[shaku(interface = RobotsCheckerTraitDI)]
-pub struct RobotsCheckerComponent {
-    /// HTTP client
-    #[shaku(default)]
-    http_client: Arc<reqwest::Client>,
-    /// Redis client
-    #[shaku(default)]
-    redis_client: Arc<RedisClient>,
-}
-
-impl RobotsCheckerComponent {
-    /// Create a new RobotsCheckerComponent with explicit dependencies
-    pub fn new(http_client: Arc<reqwest::Client>, redis_client: Arc<RedisClient>) -> Self {
-        Self {
-            http_client,
-            redis_client,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl RobotsCheckerTrait for RobotsCheckerComponent {
-    async fn is_allowed(&self, _url_str: &str, _user_agent: &str) -> anyhow::Result<bool> {
-        Ok(true)
-    }
-    async fn get_crawl_delay(
-        &self,
-        _url_str: &str,
-        _user_agent: &str,
-    ) -> anyhow::Result<Option<std::time::Duration>> {
-        Ok(None)
-    }
-}
-
-impl RobotsCheckerTraitDI for RobotsCheckerComponent {
-    fn get_checker(&self) -> &dyn RobotsCheckerTrait {
         self
     }
 }
@@ -523,74 +461,105 @@ pub trait AuditServiceTraitDI: Send + Sync {
     fn get_service(&self) -> &dyn AuditServiceTrait;
 }
 
-/// AuditService component
-#[derive(Component, Default)]
-#[shaku(interface = AuditServiceTrait)]
-pub struct AuditServiceComponent {}
+/// AuditService component with cached implementation instance
+pub struct AuditServiceComponent {
+    audit_repo: Arc<dyn AuditLogRepository>,
+}
+
+impl<M: Module + HasComponent<dyn AuditLogRepository>> Component<M> for AuditServiceComponent {
+    type Interface = dyn AuditServiceTrait;
+    type Parameters = ();
+
+    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        let audit_repo: Arc<dyn AuditLogRepository> = M::build_component(context);
+        Box::new(Self::new(audit_repo))
+    }
+}
+
+impl AuditServiceComponent {
+    /// Create a new AuditServiceComponent with explicit dependencies
+    pub fn new(audit_repo: Arc<dyn AuditLogRepository>) -> Self {
+        Self { audit_repo }
+    }
+}
 
 #[async_trait::async_trait]
 impl AuditServiceTrait for AuditServiceComponent {
     async fn log(
         &self,
-        _entry: crate::domain::auth::AuditLogEntry,
+        entry: crate::domain::auth::AuditLogEntry,
     ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+        self.audit_repo.create(&entry).await?;
         Ok(())
     }
 
     async fn log_allow(
         &self,
-        _action: String,
-        _api_key_id: uuid::Uuid,
-        _team_id: uuid::Uuid,
-        _scope: crate::domain::auth::ApiKeyScope,
+        action: String,
+        api_key_id: uuid::Uuid,
+        team_id: uuid::Uuid,
+        scope: crate::domain::auth::ApiKeyScope,
     ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+        let entry = crate::domain::services::audit_service::AuditLogBuilder::new(action, crate::domain::auth::AuditDecision::Allow)
+            .with_api_key_id(api_key_id)
+            .with_team_id(team_id)
+            .with_scope(scope)
+            .build();
+        self.audit_repo.create(&entry).await?;
         Ok(())
     }
 
     async fn log_deny(
         &self,
-        _action: String,
-        _api_key_id: Option<uuid::Uuid>,
-        _team_id: Option<uuid::Uuid>,
-        _reason: String,
-        _scope: Option<crate::domain::auth::ApiKeyScope>,
+        action: String,
+        api_key_id: Option<uuid::Uuid>,
+        team_id: Option<uuid::Uuid>,
+        reason: String,
+        scope: Option<crate::domain::auth::ApiKeyScope>,
     ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+        let entry = crate::domain::services::audit_service::AuditLogBuilder::new(action, crate::domain::auth::AuditDecision::Deny)
+            .with_api_key_id(api_key_id.unwrap_or_default())
+            .with_team_id(team_id.unwrap_or_default())
+            .with_denial_reason(reason)
+            .with_scope(scope.unwrap_or_default())
+            .build();
+        self.audit_repo.create(&entry).await?;
         Ok(())
     }
 
     async fn get_logs_for_key(
         &self,
-        _api_key_id: uuid::Uuid,
-        _limit: u64,
-        _offset: u64,
+        api_key_id: uuid::Uuid,
+        limit: u64,
+        offset: u64,
     ) -> Result<
         Vec<crate::domain::auth::AuditLogEntry>,
         crate::domain::services::audit_service::AuditServiceError,
     > {
-        Ok(Vec::new())
+        self.audit_repo.find_by_api_key_id(api_key_id, limit, offset).await.map_err(Into::into)
     }
 
     async fn get_logs_for_team(
         &self,
-        _team_id: uuid::Uuid,
-        _limit: u64,
-        _offset: u64,
+        team_id: uuid::Uuid,
+        limit: u64,
+        offset: u64,
     ) -> Result<
         Vec<crate::domain::auth::AuditLogEntry>,
         crate::domain::services::audit_service::AuditServiceError,
     > {
-        Ok(Vec::new())
+        self.audit_repo.find_by_team_id(team_id, limit, offset).await.map_err(Into::into)
     }
 
     async fn get_denied_requests(
         &self,
-        _api_key_id: uuid::Uuid,
-        _limit: u64,
+        api_key_id: uuid::Uuid,
+        limit: u64,
     ) -> Result<
         Vec<crate::domain::auth::AuditLogEntry>,
         crate::domain::services::audit_service::AuditServiceError,
     > {
-        Ok(Vec::new())
+        self.audit_repo.find_denied_for_key(api_key_id, limit).await.map_err(Into::into)
     }
 }
 

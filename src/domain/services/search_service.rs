@@ -223,28 +223,16 @@ impl SearchService {
             self.crawl_repo.create(&crawl).await?;
 
             for result in &results {
-                let task = Task {
-                    id: Uuid::new_v4(),
-                    task_type: TaskType::Crawl,
-                    status: TaskStatus::Queued,
-                    priority: 100,
+                let mut task = Task::new(
+                    Uuid::new_v4(),
+                    TaskType::Crawl,
                     team_id,
                     api_key_id,
-                    url: result.url.clone(),
-                    payload: json!({ "crawl_id": cid, "depth": 0, "config": config }),
-                    retry_count: 0,
-                    attempt_count: 0,
-                    max_retries: 3,
-                    scheduled_at: None,
-                    created_at: now.naive_utc(),
-                    started_at: None,
-                    completed_at: None,
-                    crawl_id: Some(cid),
-                    updated_at: now.naive_utc(),
-                    lock_token: None,
-                    lock_expires_at: None,
-                    expires_at: None,
-                };
+                    result.url.clone(),
+                    json!({ "crawl_id": cid, "depth": 0, "config": config }),
+                );
+                task.priority = 100;
+                task.crawl_id = Some(cid);
                 self.task_repo.create(&task).await?;
             }
 

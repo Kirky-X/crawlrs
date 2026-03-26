@@ -7,6 +7,7 @@
 
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
+use crate::presentation::middleware::auth_middleware::invalidate_cache_by_api_key_id;
 use async_trait::async_trait;
 use shaku::Interface;
 use std::sync::Arc;
@@ -48,10 +49,20 @@ pub trait AuthScopeServiceTrait: Interface + Send + Sync {
 }
 
 /// Service for managing API Key scopes
-#[derive(Clone)]
 pub struct AuthScopeService {
     scope_repo: Arc<dyn AuthScopeRepository>,
 }
+
+impl Clone for AuthScopeService {
+    fn clone(&self) -> Self {
+        Self {
+            scope_repo: Arc::clone(&self.scope_repo),
+        }
+    }
+}
+
+unsafe impl Send for AuthScopeService {}
+unsafe impl Sync for AuthScopeService {}
 
 impl std::fmt::Debug for AuthScopeService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -171,19 +182,41 @@ impl AuthScopeServiceTrait for AuthScopeService {
         scope: ApiKeyScope,
     ) -> Result<ApiKeyScope, AuthScopeServiceError> {
         debug!("Setting scope for API Key: {:?}", scope);
-        self.scope_repo
+        let result = self.scope_repo
             .upsert(api_key_id, scope)
             .await
-            .map_err(Into::into)
+            .map_err(Into::into);
+        
+        // Invalidate cache after scope change for security
+        if result.is_ok() {
+            let removed = invalidate_cache_by_api_key_id(api_key_id).await;
+            debug!(
+                "Invalidated {} cache entries for API key {} after scope update",
+                removed, api_key_id
+            );
+        }
+        
+        result
     }
 
     /// Delete custom scope for an API Key (revert to defaults)
     async fn delete_scope(&self, api_key_id: Uuid) -> Result<bool, AuthScopeServiceError> {
         debug!("Deleting custom scope for API Key: {}", api_key_id);
-        self.scope_repo
+        let result = self.scope_repo
             .delete_by_api_key_id(api_key_id)
             .await
-            .map_err(Into::into)
+            .map_err(Into::into);
+        
+        // Invalidate cache after scope deletion for security
+        if result.is_ok() {
+            let removed = invalidate_cache_by_api_key_id(api_key_id).await;
+            debug!(
+                "Invalidated {} cache entries for API key {} after scope deletion",
+                removed, api_key_id
+            );
+        }
+        
+        result
     }
 }
 

@@ -26,6 +26,13 @@ pub enum RepositoryError {
     NotFound,
 }
 
+/// 实现 From<sea_orm::DbErr> trait，支持 ? 操作符自动转换
+impl From<DbErr> for RepositoryError {
+    fn from(err: DbErr) -> Self {
+        RepositoryError::Database(anyhow::anyhow!(err))
+    }
+}
+
 /// 任务查询参数
 #[derive(Debug, Default, Clone)]
 pub struct TaskQueryParams {

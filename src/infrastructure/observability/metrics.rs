@@ -167,7 +167,13 @@ impl SystemMonitor {
 
     /// Update system metrics
     fn update(&mut self) {
-        let mut sys = self.system.lock().unwrap();
+        let mut sys = match self.system.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!("System monitor mutex poisoned, cannot update metrics");
+                return;
+            }
+        };
         sys.refresh_cpu_all();
         sys.refresh_memory();
     }
@@ -175,14 +181,26 @@ impl SystemMonitor {
     /// Get current CPU usage (0.0 - 1.0)
     pub fn cpu_usage(&mut self) -> f64 {
         self.update();
-        let sys = self.system.lock().unwrap();
+        let sys = match self.system.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!("System monitor mutex poisoned, returning 0.0 for CPU usage");
+                return 0.0;
+            }
+        };
         f64::from(sys.global_cpu_usage()) / 100.0
     }
 
     /// Get current memory usage (0.0 - 1.0)
     pub fn memory_usage(&mut self) -> f64 {
         self.update();
-        let sys = self.system.lock().unwrap();
+        let sys = match self.system.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!("System monitor mutex poisoned, returning 0.0 for memory usage");
+                return 0.0;
+            }
+        };
         let total_mem = sys.total_memory();
         if total_mem > 0 {
             sys.used_memory() as f64 / total_mem as f64
@@ -218,18 +236,36 @@ impl MutableSystemMonitor {
     }
 
     fn refresh(&mut self) {
-        let mut sys = self.system.lock().unwrap();
+        let mut sys = match self.system.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!("MutableSystemMonitor mutex poisoned, cannot refresh");
+                return;
+            }
+        };
         sys.refresh_cpu_all();
         sys.refresh_memory();
     }
 
     fn cpu_usage(&self) -> f64 {
-        let sys = self.system.lock().unwrap();
+        let sys = match self.system.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!("MutableSystemMonitor mutex poisoned, returning 0.0 for CPU usage");
+                return 0.0;
+            }
+        };
         f64::from(sys.global_cpu_usage()) / 100.0
     }
 
     fn memory_usage(&self) -> f64 {
-        let sys = self.system.lock().unwrap();
+        let sys = match self.system.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::error!("MutableSystemMonitor mutex poisoned, returning 0.0 for memory usage");
+                return 0.0;
+            }
+        };
         let total_mem = sys.total_memory();
         if total_mem > 0 {
             sys.used_memory() as f64 / total_mem as f64

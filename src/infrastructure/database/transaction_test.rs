@@ -338,9 +338,9 @@ mod tests {
         );
     }
 
-    /// Test get_transaction method
+    /// Test has_transaction method
     #[tokio::test]
-    async fn test_get_transaction() {
+    async fn test_has_transaction() {
         if std::env::var("SKIP_DATABASE_TESTS").is_ok() {
             return;
         }
@@ -349,19 +349,19 @@ mod tests {
         let tx_manager = TransactionManager::new(Arc::new(db));
 
         // No transaction initially
-        assert!(tx_manager.get_transaction().is_none(), "Should have no transaction initially");
+        assert!(!tx_manager.has_transaction(), "Should have no transaction initially");
 
         // Begin transaction
         tx_manager.begin().await.unwrap();
 
         // Should have transaction now
-        assert!(tx_manager.get_transaction().is_some(), "Should have transaction after begin");
+        assert!(tx_manager.has_transaction(), "Should have transaction after begin");
 
         // Commit
         tx_manager.commit().await.unwrap();
 
         // No transaction after commit
-        assert!(tx_manager.get_transaction().is_none(), "Should have no transaction after commit");
+        assert!(!tx_manager.has_transaction(), "Should have no transaction after commit");
     }
 
     /// Test isolation level conversion

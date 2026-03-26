@@ -156,7 +156,7 @@ impl ScrapeWorker {
         let stale_threshold = now - 3600.0; // 1 hour stale
 
         // Get limit - Priority: 1. Task Payload 2. Redis Key 3. Default
-        let payload_limit = if task.task_type == "crawl" {
+        let payload_limit = if task.task_type == TaskType::Crawl {
             task.payload
                 .get("config")
                 .and_then(|c| c.get("max_concurrency"))
@@ -202,7 +202,7 @@ impl ScrapeWorker {
 
         // Check Task Expiration
         if let Some(expires_at) = task.expires_at {
-            if Utc::now().naive_utc() > expires_at {
+            if Utc::now() > expires_at {
                 warn!("Task {} expired at {}", task.id, expires_at);
                 self.repository.mark_failed(task.id).await?;
                 // Trigger failure webhook if needed
@@ -220,8 +220,8 @@ impl ScrapeWorker {
             );
             // Reschedule logic (Backlog)
             // Delay by 30 seconds
-            task.scheduled_at = Some((Utc::now() + chrono::Duration::seconds(30)).naive_utc());
-            task.status = "queued".to_string();
+            task.scheduled_at = Some(Utc::now() + chrono::Duration::seconds(30));
+            task.status = TaskStatus::Queued;
             // Reset attempt count to avoid failing task due to concurrency limits?
             // Or keep it? If we keep it, it might eventually fail.
             // PRD says "Enter backlog". It doesn't imply failure count increment.
@@ -289,14 +289,14 @@ impl ScrapeWorker {
                     id: Uuid::new_v4(),
                     task_id: task.id,
                     url: task.url.clone(),
-                    status_code: response.status_code,
+                    status_code: response.status_code as i32,
                     content: response.content.clone(),
                     content_type: response.content_type.clone(),
-                    headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null),
-                    meta_data: Value::Null,
+                    headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null).into(),
+                    meta_data: Value::Null.into(),
                     screenshot: response.screenshot.clone(),
-                    response_time_ms: response.response_time_ms,
-                    created_at: Utc::now().naive_utc(),
+                    response_time_ms: response.response_time_ms as i64,
+                    created_at: Utc::now().naive_utc().into(),
                 };
 
                 if let Err(e) = self.handle_scrape_success(&task, &response).await {
@@ -329,8 +329,8 @@ impl ScrapeWorker {
                     debug!("Timeout or AllEnginesFailed detected, marking task as failed");
                     // Fetch task to ensure we have latest state
                     if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
-                        t.status = "failed".to_string();
-                        t.completed_at = Some(Utc::now().naive_utc());
+                        t.status = TaskStatus::Failed;
+                        t.completed_at = Some(Utc::now());
                         // Add error to payload for tracking
                         let mut payload = t.payload.clone();
                         if let Some(obj) = payload.as_object_mut() {
@@ -411,7 +411,25 @@ impl ScrapeWorker {
             return Ok(());
         }
 
-        // 3. 构建抓取请求
+        // 3. 构建并执行抓取请求
+        let request = self.build_crawl_request(&task, &config);
+        let response = self.engine_client.scrape(&request).await;
+
+        // 4. 处理结果
+        match response {
+            Ok(response) => {
+                self.handle_crawl_success(&task, response, crawl_id, depth, &config, &request)
+                    .await
+            }
+            Err(e) => {
+                self.handle_crawl_failure(&mut task, e.into(), crawl_id, &request)
+                    .await
+            }
+        }
+    }
+
+    /// 构建 Crawl 任务的 ScrapeRequest
+    fn build_crawl_request(&self, task: &Task, config: &CrawlConfigDto) -> ScrapeRequest {
         let mut headers = HashMap::with_capacity(16);
         if let Some(h) = &config.headers {
             if let Some(obj) = h.as_object() {
@@ -423,12 +441,12 @@ impl ScrapeWorker {
             }
         }
 
-        let request = ScrapeRequest::new(task.url.clone()).with_options(ScrapeOptions {
+        ScrapeRequest::new(task.url.clone()).with_options(ScrapeOptions {
             method: HttpMethod::Get,
             body: None,
             headers,
             timeout: Duration::from_secs(self.settings.timeouts.engines.default_timeout_seconds),
-            needs_js: false, // 爬虫默认不需要 JS，除非配置指定
+            needs_js: false,
             needs_screenshot: false,
             screenshot_config: None,
             mobile: false,
@@ -438,185 +456,162 @@ impl ScrapeWorker {
             use_fire_engine: false,
             actions: Vec::new(),
             sync_wait_ms: 0,
-        });
+        })
+    }
 
-        // 检查配置中是否有自定义请求头 (假设 CrawlConfigDto 中可能包含 headers 字段，如果没有则忽略)
-        // 目前 CrawlConfigDto 定义如下：
-        // pub struct CrawlConfigDto {
-        //     pub max_depth: u32,
-        //     pub include_patterns: Option<Vec<String>>,
-        //     pub exclude_patterns: Option<Vec<String>>,
-        //     pub strategy: Option<String>,
-        // }
-        // 我们可以扩展 CrawlConfigDto 或在 payload 中单独传递 headers。
-        // 暂时假设不传递自定义 headers，或者从 config.strategy 中解析特殊需求。
+    /// 处理 Crawl 任务成功响应
+    async fn handle_crawl_success(
+        &self,
+        task: &Task,
+        response: ScrapeResponse,
+        crawl_id: Uuid,
+        depth: u32,
+        config: &CrawlConfigDto,
+        request: &ScrapeRequest,
+    ) -> Result<()> {
+        info!(
+            "Crawl step successful, url: {}, status: {}",
+            task.url, response.status_code
+        );
 
-        let response = self.engine_client.scrape(&request).await;
+        // 文本编码处理
+        let processed_content = match self.process_text_encoding(task, &response).await {
+            Ok(content) => content,
+            Err(e) => {
+                warn!("文本编码处理失败，使用原始内容: {}", e);
+                response.content.clone()
+            }
+        };
 
-        match response {
-            Ok(response) => {
-                info!(
-                    "Crawl step successful, url: {}, status: {}",
-                    task.url, response.status_code
-                );
+        let processed_response = ScrapeResponse {
+            content: processed_content,
+            ..response
+        };
 
-                // 文本编码处理 - 集成文本处理功能
-                let processed_content = match self.process_text_encoding(&task, &response).await {
-                    Ok(content) => content,
-                    Err(e) => {
-                        warn!("文本编码处理失败，使用原始内容: {}", e);
-                        response.content.clone()
-                    }
-                };
+        // 执行数据提取（如果配置了提取规则）
+        let extracted_data = self
+            .extract_data_with_rules(task, &processed_response, config)
+            .await;
 
-                // 创建处理后的响应用于后续处理
-                let processed_response = ScrapeResponse {
-                    content: processed_content,
-                    ..response
-                };
+        // 保存结果
+        self.save_result(task, &processed_response, extracted_data)
+            .await?;
 
-                // Map ScrapeResponse to ScrapeResult (No need to map here, we use ScrapeResponse directly)
+        // 如果深度未达上限，解析链接并生成子任务
+        if depth < config.max_depth {
+            self.extract_and_queue_links(task, &processed_response, crawl_id, depth, config)
+                .await?;
+        }
 
-                // 3. 执行数据提取（如果配置了提取规则）
-                let mut extracted_data = None;
-                if let Some(rules) = &config.extraction_rules {
-                    match self
-                        .extraction_service
-                        .extract(&processed_response.content, rules, Some(&task.url))
+        // 更新任务状态和 Crawl 统计
+        self.repository.mark_completed(task.id).await?;
+        if let Err(e) = self.crawl_repository.increment_completed_tasks(crawl_id).await {
+            error!(
+                "Failed to increment completed tasks for crawl {}: {}",
+                crawl_id, e
+            );
+        }
+
+        // 检查是否所有任务都已完成
+        self.update_crawl_completion_status(crawl_id).await;
+
+        // 扣除高级功能费用
+        self.deduct_feature_credits(
+            task.team_id,
+            task.id,
+            processed_response.screenshot.is_some(),
+            request.options.proxy.is_some(),
+        )
+        .await;
+
+        Ok(())
+    }
+
+    /// 使用配置的规则提取数据
+    async fn extract_data_with_rules(
+        &self,
+        task: &Task,
+        response: &ScrapeResponse,
+        config: &CrawlConfigDto,
+    ) -> Option<Value> {
+        if let Some(rules) = &config.extraction_rules {
+            match self
+                .extraction_service
+                .extract(&response.content, rules, Some(&task.url))
+                .await
+            {
+                Ok((data, usage)) => {
+                    self.deduct_token_credits(task.team_id, task.id, &usage, "Tokens used for extraction")
+                        .await;
+                    Some(data)
+                }
+                Err(e) => {
+                    error!("Extraction failed for url {}: {}", task.url, e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    /// 处理 Crawl 任务失败响应
+    async fn handle_crawl_failure(
+        &self,
+        task: &mut Task,
+        error: anyhow::Error,
+        crawl_id: Uuid,
+        request: &ScrapeRequest,
+    ) -> Result<()> {
+        // 扣除代理费用（即使失败）
+        self.deduct_feature_credits(task.team_id, task.id, false, request.options.proxy.is_some())
+            .await;
+
+        error!("Crawl step failed: {}", error);
+        self.handle_failure(task).await?;
+
+        if let Err(e) = self.crawl_repository.increment_failed_tasks(crawl_id).await {
+            error!(
+                "Failed to increment failed tasks for crawl {}: {}",
+                crawl_id, e
+            );
+        }
+
+        // 检查是否所有任务都已完成
+        self.update_crawl_completion_status(crawl_id).await;
+
+        // 触发失败 Webhook
+        self.trigger_webhook(task, Some(error.to_string())).await;
+
+        Ok(())
+    }
+
+    /// 更新 Crawl 完成状态（检查是否所有任务都已完成）
+    async fn update_crawl_completion_status(&self, crawl_id: Uuid) {
+        match self.crawl_repository.find_by_id(crawl_id).await {
+            Ok(Some(c)) => {
+                if c.completed_tasks() + c.failed_tasks() == c.total_tasks() {
+                    info!(
+                        "All tasks completed for crawl {}, marking as completed",
+                        crawl_id
+                    );
+                    if let Err(e) = self
+                        .crawl_repository
+                        .update_status(crawl_id, CrawlStatus::Completed)
                         .await
                     {
-                        Ok((data, usage)) => {
-                            extracted_data = Some(data);
-                            // Record usage (PRD-334: Tokens Billing)
-                            self.deduct_token_credits(
-                                task.team_id,
-                                task.id,
-                                &usage,
-                                "Tokens used for extraction",
-                            )
-                            .await;
-                        }
-                        Err(e) => {
-                            error!("Extraction failed for url {}: {}", task.url, e);
-                        }
+                        error!(
+                            "Failed to update crawl status to completed for crawl {}: {}",
+                            crawl_id, e
+                        );
                     }
                 }
-
-                // 4. 保存结果
-                self.save_result(&task, &processed_response, extracted_data)
-                    .await?;
-
-                // 5. 如果深度未达上限，解析链接并生成子任务
-                if depth < config.max_depth {
-                    self.extract_and_queue_links(
-                        &task,
-                        &processed_response,
-                        crawl_id,
-                        depth,
-                        &config,
-                    )
-                    .await?;
-                }
-
-                // 5. 更新任务状态和 Crawl 统计
-                self.repository.mark_completed(task.id).await?;
-                if let Err(e) = self
-                    .crawl_repository
-                    .increment_completed_tasks(crawl_id)
-                    .await
-                {
-                    error!(
-                        "Failed to increment completed tasks for crawl {}: {}",
-                        crawl_id, e
-                    );
-                }
-
-                // Check if all tasks are completed
-                match self.crawl_repository.find_by_id(crawl_id).await {
-                    Ok(Some(c)) => {
-                        if c.completed_tasks + c.failed_tasks == c.total_tasks {
-                            info!(
-                                "All tasks completed for crawl {}, marking as completed",
-                                crawl_id
-                            );
-                            if let Err(e) = self
-                                .crawl_repository
-                                .update_status(crawl_id, CrawlStatus::Completed)
-                                .await
-                            {
-                                error!(
-                                    "Failed to update crawl status to completed for crawl {}: {}",
-                                    crawl_id, e
-                                );
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        error!("Crawl not found for id {}", crawl_id);
-                    }
-                    Err(e) => {
-                        error!("Failed to fetch crawl {}: {}", crawl_id, e);
-                    }
-                }
-
-                // 扣除高级功能费用 (Proxy/Screenshot)
-                self.deduct_feature_credits(
-                    task.team_id,
-                    task.id,
-                    processed_response.screenshot.is_some(),
-                    request.options.proxy.is_some(),
-                )
-                .await;
-
-                Ok(())
+            }
+            Ok(None) => {
+                error!("Crawl not found for id {}", crawl_id);
             }
             Err(e) => {
-                // Deduct proxy credits if proxy was used, even if failed
-                self.deduct_feature_credits(
-                    task.team_id,
-                    task.id,
-                    false, // No screenshot on failure
-                    request.options.proxy.is_some(),
-                )
-                .await;
-
-                error!("Crawl step failed: {}", e);
-                self.handle_failure(&mut task).await?;
-                if let Err(e) = self.crawl_repository.increment_failed_tasks(crawl_id).await {
-                    error!(
-                        "Failed to increment failed tasks for crawl {}: {}",
-                        crawl_id, e
-                    );
-                }
-
-                // Check if all tasks are completed (even with failure)
-                match self.crawl_repository.find_by_id(crawl_id).await {
-                    Ok(Some(c)) => {
-                        if c.completed_tasks + c.failed_tasks == c.total_tasks {
-                            info!("All tasks completed (some failed) for crawl {}, marking as completed", crawl_id);
-                            if let Err(e) = self
-                                .crawl_repository
-                                .update_status(crawl_id, CrawlStatus::Completed)
-                                .await
-                            {
-                                error!(
-                                    "Failed to update crawl status to completed for crawl {}: {}",
-                                    crawl_id, e
-                                );
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        error!("Crawl not found for id {}", crawl_id);
-                    }
-                    Err(e) => {
-                        error!("Failed to fetch crawl {}: {}", crawl_id, e);
-                    }
-                }
-
-                // 触发失败 Webhook
-                self.trigger_webhook(&task, Some(e.to_string())).await;
-                Ok(())
+                error!("Failed to fetch crawl {}: {}", crawl_id, e);
             }
         }
     }
@@ -674,169 +669,142 @@ impl ScrapeWorker {
             }
         };
 
-        // 创建处理后的响应用于后续处理
         let processed_scrape_resp = ScrapeResponse {
             content: processed_content,
             ..scrape_resp
         };
 
-        // 2. Extract Data using ExtractionService (which uses LLM internally if configured)
-
-        // Handle extraction rules if provided
+        // 4. 根据不同的提取方式处理
         if let Some(rules) = payload.rules {
-            debug!(?rules);
-            // Use provided extraction rules with potential LLM usage
-            let (extracted_data, usage) = self
-                .extraction_service
-                .extract(&processed_scrape_resp.content, &rules, Some(&url))
-                .await?;
-            // Record usage and deduct credits for LLM usage
-            self.deduct_token_credits(
-                task.team_id,
-                task.id,
-                &usage,
-                "Tokens used for extraction rules",
-            )
-            .await;
-
-            // Save results
-            let mut scrape_result = ScrapeResult::new(
-                task.id,
-                url.clone(),
-                processed_scrape_resp.status_code,
-                processed_scrape_resp.content.clone(),
-                "text/html".to_string(),
-                0,
-            );
-            scrape_result.meta_data = json!({
-                "extracted_data": extracted_data
-            });
-
-            self.result_repository.save(scrape_result).await?;
-
-            task.status = TaskStatus::Completed;
-            self.repository.update(&task).await?;
-
-            self.trigger_webhook(&task, None).await;
-
-            return Ok(());
-        }
-
-        // Handle prompt-based extraction (legacy)
-        let mut rules = HashMap::with_capacity(8);
-        if let Some(prompt) = payload.prompt {
-            rules.insert(
-                "extracted_data".to_string(),
-                crate::domain::services::extraction_service::ExtractionRule {
-                    selector: None,
-                    attr: None,
-                    is_array: false,
-                    use_llm: Some(true),
-                    llm_prompt: Some(prompt),
-                    output_format: None,
-                },
-            );
-
-            // Use extraction rules for prompt-based extraction
-            let (extracted_data, usage) = self
-                .extraction_service
-                .extract(&processed_scrape_resp.content, &rules, Some(&url))
-                .await?;
-
-            // Record usage and deduct credits
-            self.deduct_token_credits(task.team_id, task.id, &usage, "Tokens used for extraction")
+            return self
+                .handle_rules_extraction(&mut task, &processed_scrape_resp, &rules, &url)
                 .await;
-
-            // Save results
-            let mut scrape_result = ScrapeResult::new(
-                task.id,
-                url.clone(),
-                processed_scrape_resp.status_code,
-                processed_scrape_resp.content.clone(),
-                "text/html".to_string(),
-                0,
-            );
-            scrape_result.meta_data = json!({
-                "extracted_data": extracted_data
-            });
-
-            self.result_repository.save(scrape_result).await?;
-
-            task.status = "completed".to_string();
-            self.repository.update(&task).await?;
-
-            self.trigger_webhook(&task, None).await;
-
-            return Ok(());
-        } else if let Some(_schema) = payload.schema {
-            // 使用新实现的 extract_with_schema 优化提取流程
-            let (extracted_data, usage) = self
-                .extraction_service
-                .extract_with_schema(&processed_scrape_resp.content, &_schema)
-                .await?;
-
-            // Record usage and deduct credits
-            self.deduct_token_credits(
-                task.team_id,
-                task.id,
-                &usage,
-                "Tokens used for schema extraction",
-            )
-            .await;
-
-            // Save results
-            let now = Utc::now().naive_utc();
-            let mut scrape_result = ScrapeResult {
-                id: Uuid::new_v4(),
-                task_id: task.id,
-                url: url.clone(),
-                status_code: processed_scrape_resp.status_code,
-                content: processed_scrape_resp.content.clone(),
-                content_type: "text/html".to_string(),
-                headers: json!({}),
-                meta_data: json!({}),
-                screenshot: None,
-                response_time_ms: 0,
-                created_at: now,
-            };
-            scrape_result.meta_data = json!({
-                "extracted_data": extracted_data
-            });
-
-            self.result_repository.save(scrape_result).await?;
-
-            task.status = "completed".to_string();
-            self.repository.update(&task).await?;
-
-            self.trigger_webhook(&task, None).await;
-
-            return Ok(());
         }
 
-        // Fallback if no schema/prompt (should usually have one)
-        // If we reach here, it means we didn't do the direct LLM call above.
-        // We could default to empty extraction or error.
+        if let Some(prompt) = payload.prompt {
+            return self
+                .handle_prompt_extraction(&mut task, &processed_scrape_resp, prompt, &url)
+                .await;
+        }
 
-        let now = Utc::now().naive_utc();
+        if let Some(schema) = payload.schema {
+            return self
+                .handle_schema_extraction(&mut task, &processed_scrape_resp, &schema, &url)
+                .await;
+        }
+
+        // Fallback: 无提取规则时保存原始结果
+        self.save_extract_result(&mut task, &processed_scrape_resp, None, &url)
+            .await
+    }
+
+    /// 处理基于规则的提取
+    async fn handle_rules_extraction(
+        &self,
+        task: &mut Task,
+        response: &ScrapeResponse,
+        rules: &HashMap<String, crate::domain::services::extraction_service::ExtractionRule>,
+        url: &str,
+    ) -> Result<()> {
+        debug!(?rules);
+
+        let (extracted_data, usage) = self
+            .extraction_service
+            .extract(&response.content, rules, Some(url))
+            .await?;
+
+        self.deduct_token_credits(task.team_id, task.id, &usage, "Tokens used for extraction rules")
+            .await;
+
+        self.save_extract_result(task, response, Some(extracted_data), url)
+            .await
+    }
+
+    /// 处理基于 Prompt 的提取
+    async fn handle_prompt_extraction(
+        &self,
+        task: &mut Task,
+        response: &ScrapeResponse,
+        prompt: String,
+        url: &str,
+    ) -> Result<()> {
+        let mut rules = HashMap::with_capacity(1);
+        rules.insert(
+            "extracted_data".to_string(),
+            crate::domain::services::extraction_service::ExtractionRule {
+                selector: None,
+                attr: None,
+                is_array: false,
+                use_llm: Some(true),
+                llm_prompt: Some(prompt),
+                output_format: None,
+            },
+        );
+
+        let (extracted_data, usage) = self
+            .extraction_service
+            .extract(&response.content, &rules, Some(url))
+            .await?;
+
+        self.deduct_token_credits(task.team_id, task.id, &usage, "Tokens used for extraction")
+            .await;
+
+        self.save_extract_result(task, response, Some(extracted_data), url)
+            .await
+    }
+
+    /// 处理基于 Schema 的提取
+    async fn handle_schema_extraction(
+        &self,
+        task: &mut Task,
+        response: &ScrapeResponse,
+        schema: &serde_json::Value,
+        url: &str,
+    ) -> Result<()> {
+        let (extracted_data, usage) = self
+            .extraction_service
+            .extract_with_schema(&response.content, schema)
+            .await?;
+
+        self.deduct_token_credits(task.team_id, task.id, &usage, "Tokens used for schema extraction")
+            .await;
+
+        self.save_extract_result(task, response, Some(extracted_data), url)
+            .await
+    }
+
+    /// 保存提取结果
+    async fn save_extract_result(
+        &self,
+        task: &mut Task,
+        response: &ScrapeResponse,
+        extracted_data: Option<Value>,
+        url: &str,
+    ) -> Result<()> {
+        let meta_data = extracted_data
+            .map(|data| json!({ "extracted_data": data }))
+            .unwrap_or(json!({}));
+
         let scrape_result = ScrapeResult {
             id: Uuid::new_v4(),
             task_id: task.id,
-            url,
-            status_code: processed_scrape_resp.status_code,
-            content: processed_scrape_resp.content,
+            url: url.to_string(),
+            status_code: response.status_code as i32,
+            content: response.content.clone(),
             content_type: "text/html".to_string(),
-            headers: json!({}),
-            meta_data: json!({}),
+            headers: json!({}).into(),
+            meta_data,
             screenshot: None,
             response_time_ms: 0,
-            created_at: now,
+            created_at: Utc::now().naive_utc().into(),
         };
-            self.result_repository.save(scrape_result).await?;
 
-            task.status = "completed".to_string();
-            self.repository.update(&task).await?;
+        self.result_repository.save(scrape_result).await?;
 
-        self.trigger_webhook(&task, None).await;
+        task.status = TaskStatus::Completed;
+        self.repository.update(task).await?;
+
+        self.trigger_webhook(task, None).await;
 
         Ok(())
     }
@@ -930,11 +898,11 @@ impl ScrapeWorker {
                 attempt_count: 0,
                 max_retries: 3,
                 scheduled_at: None,
-                created_at: Utc::now().naive_utc(),
+                created_at: Utc::now(),
                 started_at: None,
                 completed_at: None,
                 crawl_id: Some(crawl_id),
-                updated_at: Utc::now().naive_utc(),
+                updated_at: Utc::now(),
                 lock_token: None,
                 lock_expires_at: None,
                 expires_at: None,
@@ -1165,14 +1133,14 @@ impl ScrapeWorker {
             id: Uuid::new_v4(),
             task_id: task.id,
             url: task.url.clone(),
-            status_code: response.status_code,
+            status_code: response.status_code as i32,
             content: content_to_store,
             content_type: response.content_type.clone(),
-            headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null),
+            headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null).into(),
             meta_data,
             screenshot: response.screenshot.clone(),
-            response_time_ms: response.response_time_ms,
-            created_at: Utc::now(),
+            response_time_ms: response.response_time_ms as i64,
+            created_at: Utc::now().naive_utc().into(),
         };
 
         self.result_repository.save(result).await?;

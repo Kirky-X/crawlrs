@@ -14,8 +14,9 @@
 
 use crate::config::settings::CacheSettings;
 use crate::domain::models::search_result::SearchResult;
-use oxcache::rate_limiting::{GlobalRateLimiter, RateLimitConfig};
+use oxcache::rate_limiting::RateLimitConfig;
 use oxcache::Cache;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +26,19 @@ use std::time::Duration;
 
 /// Search result cache type
 pub type SearchCache = Cache<String, Vec<SearchResult>>;
+
+/// Regex cache type - stores compiled regex as string pattern (Regex doesn't impl Serialize)
+pub type RegexCacheType = Cache<String, String>;
+
+/// DNS cache entry
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DnsCacheEntry {
+    pub ips: Vec<IpAddr>,
+    pub remaining_ttl_secs: u64,
+}
+
+/// DNS cache type
+pub type DnsCache = Cache<String, DnsCacheEntry>;
 
 // =============================================================================
 // Rate Limiting (using oxcache)
@@ -58,7 +72,7 @@ impl RateLimiter {
     }
 
     /// Create a new rate limiter with individual parameters
-    pub fn new_with_config(max_requests_per_second: f64, burst_capacity: u32) -> Self {
+    pub fn new_with_config(max_requests_per_second: u64, burst_capacity: u64) -> Self {
         let config = RateLimitConfig {
             max_requests_per_second,
             burst_capacity,
@@ -68,19 +82,13 @@ impl RateLimiter {
     }
 
     /// Check if a request is allowed for the given client
-    pub async fn check_rate_limit(&self, client_id: &str) -> Result<(), ()> {
-        match self.inner.check_rate_limit(client_id, 1).await {
-            Ok(()) => Ok(()),
-            Err(()) => Err(()),
-        }
+    pub async fn check_rate_limit(&self, client_id: &str) -> Result<(), Duration> {
+        self.inner.check_rate_limit(client_id, 1).await
     }
 
     /// Check if N requests are allowed
-    pub async fn check_rate_limit_n(&self, client_id: &str, n: u64) -> Result<(), ()> {
-        match self.inner.check_rate_limit(client_id, n).await {
-            Ok(()) => Ok(()),
-            Err(()) => Err(()),
-        }
+    pub async fn check_rate_limit_n(&self, client_id: &str, n: u64) -> Result<(), Duration> {
+        self.inner.check_rate_limit(client_id, n).await
     }
 
     /// Get the configuration
@@ -111,22 +119,16 @@ impl ConcurrencyController {
 
     /// Acquire a permit, returns None if limited
     pub async fn try_acquire(&self) -> Option<ConcurrencyPermit> {
-        match self.semaphore.try_acquire() {
-            Ok(permit) => Some(ConcurrencyPermit {
-                permit,
-                semaphore: self.semaphore.clone(),
-            }),
+        match self.semaphore.clone().try_acquire_owned() {
+            Ok(permit) => Some(ConcurrencyPermit { permit }),
             Err(_) => None,
         }
     }
 
     /// Acquire a permit with wait, returns None if timeout
     pub async fn acquire(&self, timeout: Duration) -> Option<ConcurrencyPermit> {
-        match tokio::time::timeout(timeout, self.semaphore.acquire()).await {
-            Ok(Ok(permit)) => Some(ConcurrencyPermit {
-                permit,
-                semaphore: self.semaphore.clone(),
-            }),
+        match tokio::time::timeout(timeout, self.semaphore.clone().acquire_owned()).await {
+            Ok(Ok(permit)) => Some(ConcurrencyPermit { permit }),
             _ => None,
         }
     }
@@ -145,7 +147,6 @@ impl ConcurrencyController {
 /// RAII guard for concurrency permit
 pub struct ConcurrencyPermit {
     permit: tokio::sync::OwnedSemaphorePermit,
-    semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl Drop for ConcurrencyPermit {
@@ -212,6 +213,26 @@ pub async fn create_cache(settings: &CacheSettings) -> Result<Arc<SearchCache>, 
     let cache: SearchCache = Cache::builder()
         .capacity(settings.memory.capacity)
         .ttl(Duration::from_secs(settings.memory.ttl_seconds))
+        .build()
+        .await?;
+    Ok(Arc::new(cache))
+}
+
+/// Create a new DNS cache instance
+pub async fn create_dns_cache(capacity: u64, ttl_seconds: u64) -> Result<Arc<DnsCache>, oxcache::CacheError> {
+    let cache: DnsCache = Cache::builder()
+        .capacity(capacity)
+        .ttl(Duration::from_secs(ttl_seconds))
+        .build()
+        .await?;
+    Ok(Arc::new(cache))
+}
+
+/// Create a new Regex cache instance
+pub async fn create_regex_cache(capacity: u64, ttl_seconds: u64) -> Result<Arc<RegexCacheType>, oxcache::CacheError> {
+    let cache: RegexCacheType = Cache::builder()
+        .capacity(capacity)
+        .ttl(Duration::from_secs(ttl_seconds))
         .build()
         .await?;
     Ok(Arc::new(cache))

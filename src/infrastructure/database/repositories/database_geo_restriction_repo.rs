@@ -8,7 +8,8 @@ use crate::domain::repositories::geo_restriction_repository::{
 };
 use crate::domain::services::team_service::TeamGeoRestrictions;
 use crate::infrastructure::database::entities::{geo_restriction_log, team};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+use dbnexus::DbPool;
+use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use uuid::Uuid;
 
 use std::sync::Arc;
@@ -16,13 +17,13 @@ use std::sync::Arc;
 /// 基于数据库的地理限制仓库实现
 #[derive(Clone)]
 pub struct DatabaseGeoRestrictionRepository {
-    db: Arc<DatabaseConnection>,
+    pool: Arc<DbPool>,
 }
 
 impl DatabaseGeoRestrictionRepository {
     /// 创建新的数据库地理限制仓库实例
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
-        Self { db }
+    pub fn new(pool: Arc<DbPool>) -> Self {
+        Self { pool }
     }
 }
 
@@ -33,9 +34,14 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         &self,
         team_id: Uuid,
     ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+        
+        let conn = session.connection().map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+        
         // 查询团队记录
         let team_model = team::Entity::find_by_id(team_id)
-            .one(self.db.as_ref())
+            .one(conn)
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?
             .ok_or(GeoRestrictionRepositoryError::TeamNotFound(team_id))?;
@@ -72,9 +78,14 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         team_id: Uuid,
         restrictions: &TeamGeoRestrictions,
     ) -> Result<(), GeoRestrictionRepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+        
+        let conn = session.connection().map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+        
         // 查询团队记录
         let team_model = team::Entity::find_by_id(team_id)
-            .one(self.db.as_ref())
+            .one(conn)
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?
             .ok_or(GeoRestrictionRepositoryError::TeamNotFound(team_id))?;
@@ -87,23 +98,27 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         active_model.allowed_countries = Set(restrictions
             .allowed_countries
             .as_ref()
-            .map(|countries| serde_json::to_value(countries).unwrap()));
+            .map(|countries| serde_json::to_value(countries)
+                .expect("Failed to serialize allowed_countries: this should never fail for Vec<String>")));
         active_model.blocked_countries = Set(restrictions
             .blocked_countries
             .as_ref()
-            .map(|countries| serde_json::to_value(countries).unwrap()));
+            .map(|countries| serde_json::to_value(countries)
+                .expect("Failed to serialize blocked_countries: this should never fail for Vec<String>")));
         active_model.ip_whitelist = Set(restrictions
             .ip_whitelist
             .as_ref()
-            .map(|whitelist| serde_json::to_value(whitelist).unwrap()));
+            .map(|whitelist| serde_json::to_value(whitelist)
+                .expect("Failed to serialize ip_whitelist: this should never fail for Vec<String>")));
         active_model.domain_blacklist = Set(restrictions
             .domain_blacklist
             .as_ref()
-            .map(|blacklist| serde_json::to_value(blacklist).unwrap()));
+            .map(|blacklist| serde_json::to_value(blacklist)
+                .expect("Failed to serialize domain_blacklist: this should never fail for Vec<String>")));
 
         // 更新记录
         active_model
-            .update(self.db.as_ref())
+            .update(conn)
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
 
@@ -119,6 +134,11 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         action: &str,
         reason: &str,
     ) -> Result<(), GeoRestrictionRepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+        
+        let conn = session.connection().map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+        
         let log_entry = geo_restriction_log::ActiveModel {
             id: Set(Uuid::new_v4()),
             team_id: Set(team_id),
@@ -131,7 +151,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         };
 
         log_entry
-            .insert(self.db.as_ref())
+            .insert(conn)
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
 

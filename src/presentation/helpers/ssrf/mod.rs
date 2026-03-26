@@ -58,7 +58,7 @@ use std::sync::Arc;
 use tokio::net::lookup_host;
 use url::Url;
 
-use crate::infrastructure::dns::dns_cache::DnsCache;
+use crate::infrastructure::dns::DnsCacheService;
 
 /// Maximum URL length to prevent resource exhaustion
 const MAX_URL_LENGTH: usize = 2048;
@@ -76,7 +76,7 @@ const DEFAULT_DNS_CACHE_TTL: u64 = 300;
 #[derive(Clone)]
 pub struct SsrfValidator {
     /// DNS cache for resolution results
-    dns_cache: Option<Arc<DnsCache>>,
+    dns_cache: Option<Arc<DnsCacheService>>,
     /// Configuration options
     config: SsrfConfig,
 }
@@ -97,7 +97,7 @@ impl SsrfValidator {
     }
 
     /// Create a new SSRF validator with DNS caching support.
-    pub fn with_dns_cache(dns_cache: Arc<DnsCache>) -> Self {
+    pub fn with_dns_cache(dns_cache: Arc<DnsCacheService>) -> Self {
         Self {
             dns_cache: Some(dns_cache),
             config: SsrfConfig::default(),
@@ -113,7 +113,7 @@ impl SsrfValidator {
     }
 
     /// Create a new SSRF validator with DNS cache and custom configuration.
-    pub fn with_dns_cache_and_config(dns_cache: Arc<DnsCache>, config: SsrfConfig) -> Self {
+    pub fn with_dns_cache_and_config(dns_cache: Arc<DnsCacheService>, config: SsrfConfig) -> Self {
         Self {
             dns_cache: Some(dns_cache),
             config,

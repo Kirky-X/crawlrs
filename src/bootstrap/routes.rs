@@ -8,7 +8,6 @@
 use crate::config::settings::Settings;
 use crate::di::infrastructure_module::GeoRestrictionRepositoryComponent;
 use crate::di::{AppState, AppStateExt};
-use crate::domain::auth::ApiKeyScope;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
@@ -120,14 +119,14 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
 
     // Create geo restriction repository for extension (使用 DI 组件)
     let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
-        Arc::new(GeoRestrictionRepositoryComponent::new(state.db.clone()));
+        Arc::new(GeoRestrictionRepositoryComponent::new(state.db_pool.clone()));
 
     // Create concrete DatabaseGeoRestrictionRepository for handlers that need the concrete type
     let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
-        Arc::new(DatabaseGeoRestrictionRepository::new(state.db.clone()));
+        Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
 
     // Create concrete WebhookRepoImpl for handlers that need the concrete type
-    let webhook_repo_impl: Arc<WebhookRepoImpl> = Arc::new(WebhookRepoImpl::new(state.db.clone()));
+    let webhook_repo_impl: Arc<WebhookRepoImpl> = Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
 
     // Create Arc<AppState> for crawl handlers that use unified state
     let app_state_arc = Arc::new(state.clone());
@@ -135,15 +134,8 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
     // Auth state for middleware
     // Convert from Arc<AuthScopeService> to AuthScopeService (unwrap the Arc)
     let auth_scope_service = state.auth_scope_service.as_ref().map(|arc| (**arc).clone());
-    let auth_state = AuthState {
-        db: state.db.clone(),
-        auth_scope_service,
-        team_id: uuid::Uuid::nil(),
-        api_key_id: uuid::Uuid::nil(),
-        scope: ApiKeyScope::default(),
-        api_key_cache: None,
-        auth_rate_limiter: None,
-    };
+    // Use new_for_middleware to ensure global cache is initialized
+    let auth_state = AuthState::new_for_middleware(state.db_pool.clone(), auth_scope_service);
 
     Router::new()
         .route("/v1/scrape", post(scrape_handler::create_scrape))
@@ -219,15 +211,8 @@ pub fn create_v2_routes_with_state(state: &AppState) -> Router {
     let webhook_event_repo = state.webhook_event_repo();
     let team_semaphore = state.team_semaphore.clone();
 
-    let auth_state = AuthState {
-        db: state.db.clone(),
-        auth_scope_service: None,
-        team_id: uuid::Uuid::nil(),
-        api_key_id: uuid::Uuid::nil(),
-        scope: ApiKeyScope::default(),
-        api_key_cache: None,
-        auth_rate_limiter: None,
-    };
+    // Use new_for_middleware to ensure global cache is initialized
+    let auth_state = AuthState::new_for_middleware(state.db_pool.clone(), None);
 
     task_routes()
         .layer(Extension(task_repo.clone()))
@@ -268,7 +253,7 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
     let tasks_backlog_repo = state.webhook_event_repo();
     let queue = state.task_queue.clone();
     let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
-        Arc::new(GeoRestrictionRepositoryComponent::new(state.db.clone()));
+        Arc::new(GeoRestrictionRepositoryComponent::new(state.db_pool.clone()));
     let credits_repo = state.credits_repo();
     let crawl_repo = state.crawl_repo.clone();
     let webhook_event_repo = state.webhook_event_repo();

@@ -141,11 +141,11 @@ where
         .urls
         .first()
         .expect("URLs already validated as non-empty");
-    let now = chrono::Utc::now().naive_utc();
+    let now = chrono::Utc::now();
     let task = Task {
         id: Uuid::new_v4(),
-        task_type: TaskType::Extract.to_string(),
-        status: TaskStatus::Queued.to_string(),
+        task_type: TaskType::Extract,
+        status: TaskStatus::Queued,
         priority: 0,
         team_id,
         api_key_id: auth_state.api_key_id,

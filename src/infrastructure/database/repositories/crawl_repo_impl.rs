@@ -11,36 +11,40 @@ use crate::domain::repositories::task_repository::RepositoryError;
 use crate::infrastructure::database::entities::crawl;
 use crate::infrastructure::persistence::mappers::CrawlMapper;
 use async_trait::async_trait;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
+use dbnexus::DbPool;
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
 use std::sync::Arc;
 use uuid::Uuid;
 
 /// Crawl repository implementation using Sea-ORM
 pub struct CrawlRepositoryImpl {
-    /// Database connection
-    db: Arc<DatabaseConnection>,
+    /// Database pool
+    pool: Arc<DbPool>,
 }
 
 impl CrawlRepositoryImpl {
     /// Create new crawl repository instance
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
-        Self { db }
+    pub fn new(pool: Arc<DbPool>) -> Self {
+        Self { pool }
     }
 
-    /// Get database connection reference
-    pub fn db(&self) -> &Arc<DatabaseConnection> {
-        &self.db
+    /// Get database pool reference
+    pub fn pool(&self) -> &Arc<DbPool> {
+        &self.pool
     }
 }
 
 #[async_trait]
 impl CrawlRepository for CrawlRepositoryImpl {
     async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        
         let entity = CrawlMapper::to_entity(crawl);
         let active_model = crawl::ActiveModel::from(entity);
 
         active_model
-            .insert(self.db.as_ref())
+            .insert(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -48,8 +52,11 @@ impl CrawlRepository for CrawlRepositoryImpl {
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        
         let entity = crawl::Entity::find_by_id(id)
-            .one(self.db.as_ref())
+            .one(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -57,11 +64,14 @@ impl CrawlRepository for CrawlRepositoryImpl {
     }
 
     async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        
         let entity = CrawlMapper::to_entity(crawl);
         let active_model = crawl::ActiveModel::from(entity);
 
         active_model
-            .update(self.db.as_ref())
+            .update(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -69,8 +79,13 @@ impl CrawlRepository for CrawlRepositoryImpl {
     }
 
     async fn increment_completed_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        
+        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
+        
         if let Some(entity) = crawl::Entity::find_by_id(id)
-            .one(self.db.as_ref())
+            .one(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?
         {
@@ -81,7 +96,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             let active_model = crawl::ActiveModel::from(updated_entity);
 
             active_model
-                .update(self.db.as_ref())
+                .update(conn)
                 .await
                 .map_err(|e| RepositoryError::Database(e.into()))?;
         }
@@ -90,8 +105,13 @@ impl CrawlRepository for CrawlRepositoryImpl {
     }
 
     async fn increment_failed_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        
+        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
+        
         if let Some(entity) = crawl::Entity::find_by_id(id)
-            .one(self.db.as_ref())
+            .one(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?
         {
@@ -102,7 +122,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             let active_model = crawl::ActiveModel::from(updated_entity);
 
             active_model
-                .update(self.db.as_ref())
+                .update(conn)
                 .await
                 .map_err(|e| RepositoryError::Database(e.into()))?;
         }
@@ -111,8 +131,13 @@ impl CrawlRepository for CrawlRepositoryImpl {
     }
 
     async fn update_status(&self, id: Uuid, status: CrawlStatus) -> Result<(), RepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        
+        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
+        
         if let Some(entity) = crawl::Entity::find_by_id(id)
-            .one(self.db.as_ref())
+            .one(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?
         {
@@ -124,7 +149,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             let active_model = crawl::ActiveModel::from(updated_entity);
 
             active_model
-                .update(self.db.as_ref())
+                .update(conn)
                 .await
                 .map_err(|e| RepositoryError::Database(e.into()))?;
         }
@@ -133,8 +158,13 @@ impl CrawlRepository for CrawlRepositoryImpl {
     }
 
     async fn increment_total_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        
+        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
+        
         if let Some(entity) = crawl::Entity::find_by_id(id)
-            .one(self.db.as_ref())
+            .one(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?
         {
@@ -145,7 +175,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             let active_model = crawl::ActiveModel::from(updated_entity);
 
             active_model
-                .update(self.db.as_ref())
+                .update(conn)
                 .await
                 .map_err(|e| RepositoryError::Database(e.into()))?;
         }
@@ -159,12 +189,15 @@ impl CrawlRepository for CrawlRepositoryImpl {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<Crawl>, RepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        
         let entities = crawl::Entity::find()
             .filter(crawl::Column::TeamId.eq(team_id))
             .order_by_desc(crawl::Column::CreatedAt)
             .limit(limit as u64)
             .offset(offset as u64)
-            .all(self.db.as_ref())
+            .all(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -172,9 +205,12 @@ impl CrawlRepository for CrawlRepositoryImpl {
     }
 
     async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+        
         let count = crawl::Entity::find()
             .filter(crawl::Column::TeamId.eq(team_id))
-            .count(self.db.as_ref())
+            .count(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 

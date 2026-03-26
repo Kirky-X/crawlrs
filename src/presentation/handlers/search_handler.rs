@@ -9,6 +9,7 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
+use tracing::error;
 
 use crate::{
     application::dto::search_request::{SearchRequestDto, SearchResponseDto, SearchResultDto},

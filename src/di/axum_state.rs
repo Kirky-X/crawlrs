@@ -36,12 +36,15 @@ use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
 use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsCheckerTrait;
+use dbnexus::DbPool;
 
 /// State extracted from Shaku module for use in Axum handlers
 #[derive(Clone)]
 pub struct AppState {
     /// Database connection
     pub db: Arc<sea_orm::DbConn>,
+    /// Database pool (dbnexus DbPool for repositories that need it)
+    pub db_pool: Arc<DbPool>,
     /// Redis client
     pub redis_client: Arc<RedisClient>,
     /// Task repository
@@ -147,6 +150,8 @@ pub trait AppStateExt {
     fn redis_client(&self) -> Arc<RedisClient>;
     /// Get database connection
     fn db(&self) -> Arc<sea_orm::DbConn>;
+    /// Get database pool (dbnexus DbPool)
+    fn db_pool(&self) -> Arc<DbPool>;
     /// Get storage repository
     fn storage_repo(&self) -> Arc<dyn StorageRepository>;
     /// Get tasks backlog repository
@@ -250,6 +255,10 @@ impl AppStateExt for AppState {
         self.db.clone()
     }
 
+    fn db_pool(&self) -> Arc<DbPool> {
+        self.db_pool.clone()
+    }
+
     fn storage_repo(&self) -> Arc<dyn StorageRepository> {
         self.storage_repo.clone()
     }
@@ -296,5 +305,135 @@ impl AppStateExt for AppState {
 
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
         self.geo_restriction_repo.clone()
+    }
+}
+
+impl AppStateExt for Arc<AppState> {
+    fn task_repo(&self) -> Arc<dyn TaskRepository> {
+        self.as_ref().task_repo()
+    }
+
+    fn credits_repo(&self) -> Arc<dyn CreditsRepository> {
+        self.as_ref().credits_repo()
+    }
+
+    fn crawl_repo(&self) -> Arc<dyn CrawlRepository> {
+        self.as_ref().crawl_repo()
+    }
+
+    fn result_repo(&self) -> Arc<dyn ScrapeResultRepository> {
+        self.as_ref().result_repo()
+    }
+
+    fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
+        self.as_ref().webhook_repo()
+    }
+
+    fn webhook_event_repo(&self) -> Arc<dyn WebhookEventRepository> {
+        self.as_ref().webhook_event_repo()
+    }
+
+    fn rate_limiting_service(&self) -> Arc<dyn RateLimitingService> {
+        self.as_ref().rate_limiting_service()
+    }
+
+    fn team_service(&self) -> Arc<TeamService> {
+        self.as_ref().team_service()
+    }
+
+    fn webhook_service(&self) -> Arc<dyn WebhookService> {
+        self.as_ref().webhook_service()
+    }
+
+    fn engine_router(&self) -> Arc<EngineRouter> {
+        self.as_ref().engine_router()
+    }
+
+    fn engine_client(&self) -> Arc<EngineClient> {
+        self.as_ref().engine_client()
+    }
+
+    fn create_scrape_use_case(&self) -> Arc<dyn CreateScrapeUseCaseTrait> {
+        self.as_ref().create_scrape_use_case()
+    }
+
+    fn search_client(&self) -> Arc<SearchClient> {
+        self.as_ref().search_client()
+    }
+
+    fn search_service(&self) -> Arc<dyn SearchServiceTrait> {
+        self.as_ref().search_service()
+    }
+
+    fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>> {
+        self.as_ref().auth_scope_service()
+    }
+
+    fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {
+        self.as_ref().llm_service()
+    }
+
+    fn regex_cache(&self) -> Arc<RegexCache> {
+        self.as_ref().regex_cache()
+    }
+
+    fn redis_client(&self) -> Arc<RedisClient> {
+        self.as_ref().redis_client()
+    }
+
+    fn db(&self) -> Arc<sea_orm::DbConn> {
+        self.as_ref().db()
+    }
+
+    fn db_pool(&self) -> Arc<DbPool> {
+        self.as_ref().db_pool()
+    }
+
+    fn storage_repo(&self) -> Arc<dyn StorageRepository> {
+        self.as_ref().storage_repo()
+    }
+
+    fn tasks_backlog_repo(&self) -> Arc<dyn TasksBacklogRepository> {
+        self.as_ref().tasks_backlog_repo()
+    }
+
+    fn task_queue(&self) -> Arc<dyn TaskQueue> {
+        self.as_ref().task_queue()
+    }
+
+    fn robots_checker(&self) -> Arc<dyn RobotsCheckerTrait> {
+        self.as_ref().robots_checker()
+    }
+
+    fn team_semaphore(&self) -> Arc<TeamSemaphore> {
+        self.as_ref().team_semaphore()
+    }
+
+    fn audit_service(&self) -> Arc<dyn AuditServiceTrait> {
+        self.as_ref().audit_service()
+    }
+
+    fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait> {
+        self.as_ref().extraction_service()
+    }
+
+    fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker> {
+        self.as_ref().webhook_worker()
+    }
+
+    fn backlog_worker(&self) -> Arc<crate::workers::backlog_worker::BacklogWorker> {
+        self.as_ref().backlog_worker()
+    }
+
+    fn expiration_worker(&self) -> Arc<crate::workers::expiration_worker::ExpirationWorker> {
+        self.as_ref().expiration_worker()
+    }
+
+    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationServiceImpl> {
+        self.as_ref().geo_location_service()
+    }
+
+    fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
+        self.as_ref().geo_restriction_repo()
     }
 }

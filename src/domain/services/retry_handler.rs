@@ -71,8 +71,8 @@ impl RetryHandler {
 
             task.attempt_count = new_attempt_count as i32;
             task.retry_count += 1;
-            task.status = "failed".to_string();
-            task.completed_at = Some(Utc::now().naive_utc());
+            task.status = TaskStatus::Failed;
+            task.completed_at = Some(Utc::now());
 
             if let Err(e) = self.repository.update(task).await {
                 return HandleFailureResult::Error(e.into());
@@ -87,8 +87,8 @@ impl RetryHandler {
 
         task.attempt_count = new_attempt_count as i32;
         task.retry_count += 1;
-        task.scheduled_at = Some(next_retry.naive_utc());
-        task.status = "queued".to_string();
+        task.scheduled_at = Some(next_retry);
+        task.status = TaskStatus::Queued;
         task.started_at = None;
         task.completed_at = None;
 

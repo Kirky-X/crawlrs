@@ -31,10 +31,10 @@ pub use super::database_module::{
 };
 pub use super::infrastructure_service_module::{WebhookSenderComponent, WebhookSenderTrait};
 pub use super::repository_module::{
-    AuthScopeRepositoryComponent, CrawlRepositoryComponent, CreditsRepositoryComponent,
-    GeoRestrictionRepositoryComponent, ScrapeResultRepositoryComponent, StorageRepositoryComponent,
-    TaskQueueComponent, TaskRepositoryComponent, TasksBacklogRepositoryComponent,
-    WebhookEventRepositoryComponent, WebhookRepositoryComponent,
+    AuditLogRepositoryComponent, AuthScopeRepositoryComponent, CrawlRepositoryComponent,
+    CreditsRepositoryComponent, GeoRestrictionRepositoryComponent, ScrapeResultRepositoryComponent,
+    StorageRepositoryComponent, TaskQueueComponent, TaskRepositoryComponent,
+    TasksBacklogRepositoryComponent, WebhookEventRepositoryComponent, WebhookRepositoryComponent,
 };
 
 // Infrastructure module components - for Shaku DI
