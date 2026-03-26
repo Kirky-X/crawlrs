@@ -178,7 +178,18 @@ zeroize = "1.8"
 ipnetwork = "0.21"
 
 # Rate limiting and circuit breaking
-governor = "0.10"
+# 已移除 governor，替换为 limiteron
+limiteron = { path = "/home/dev/projects/limiteron", features = [
+    "full",
+    "postgres",
+    "ban-manager",
+    "quota-control",
+    "circuit-breaker",
+    "audit-log",
+    "telemetry",
+    "monitoring",
+    "parallel-checker",
+] }
 
 # Concurrency and synchronization
 parking_lot = "0.12"
@@ -199,6 +210,7 @@ toml = "0.9.11"
 shaku = "0.6"
 shaku_axum = "0.6"
 oxcache = { version = "0.2.0", path = "/home/dev/projects/oxcache", default-features = false, features = ["moka", "redis", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "wal-recovery", "rate-limiting", "tracing", "futures"] }
+ahash = "0.8.12"
 
 # API Documentation (optional - controlled by 'openapi' feature)
 # utoipa = { version = "5.4", optional = true }

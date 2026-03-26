@@ -9,6 +9,7 @@
 /// 包括限流服务等核心功能
 pub mod config_service;
 pub mod concurrency_controller_impl;
+pub mod limiteron_service;
 pub mod rate_limiting_service_impl;
 pub mod webhook_sender_impl;
 

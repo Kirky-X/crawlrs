@@ -6,11 +6,21 @@
 //! 工作器常量
 //!
 //! 定义工作器模块使用的常量
+//!
+//! 注意：此文件中的 CONCURRENCY_CONTROL_LUA 脚本保留用于 Worker 层的分布式并发控制。
+//! 虽然 limiteron 库提供了速率限制功能，但其 ConcurrencyLimiter 使用本地信号量，
+//! 不适合分布式 Worker 场景。因此 Worker 层的并发控制继续使用 Redis Lua 脚本。
 
 /// 并发控制 Lua 脚本
 ///
 /// 使用原子操作管理任务并发控制，减少 Redis 调用次数
 /// 支持心跳机制和动态限制
+///
+/// 该脚本实现以下功能：
+/// 1. 清理过期的任务（基于时间戳）
+/// 2. 从 Redis 获取限制值或使用默认值
+/// 3. 检查任务是否已在集合中（心跳场景）
+/// 4. 检查当前计数并在限制内获取许可
 pub const CONCURRENCY_CONTROL_LUA: &str = r#"
 local active_key = KEYS[1]
 local limit_key = KEYS[2]

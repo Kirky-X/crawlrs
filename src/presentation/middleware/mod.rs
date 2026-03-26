@@ -14,6 +14,8 @@ pub mod rate_limit_middleware;
 pub mod security_headers_middleware;
 pub mod team_semaphore;
 pub mod team_semaphore_middleware;
+#[cfg(feature = "rate-limiting")]
+pub mod limiteron_rate_limit_middleware;
 
 /// Public endpoints that don't require authentication or rate limiting
 pub const PUBLIC_ENDPOINTS: &[&str] = &["/health", "/metrics", "/v1/version"];
