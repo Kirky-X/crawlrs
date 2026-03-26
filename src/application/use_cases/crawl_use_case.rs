@@ -254,21 +254,21 @@ impl CrawlUseCase {
 
         // 3. 创建爬取任务实体
         let url = dto.url.clone();
-        let crawl = Crawl {
-            id: crawl_id,
+        let crawl = Crawl::with_all_fields(
+            crawl_id,
             team_id,
-            name: dto.name.unwrap_or_else(|| "Untitled Crawl".to_string()), // 默认名称
-            root_url: url.clone(),
+            dto.name.unwrap_or_else(|| "Untitled Crawl".to_string()),
+            url.clone(),
             url,
-            status: CrawlStatus::Queued, // 初始状态为排队中
-            config: json!(dto.config),   // 序列化配置为 JSON
-            total_tasks: 1,              // 初始任务数 1
-            completed_tasks: 0,          // 已完成任务数 0
-            failed_tasks: 0,             // 失败任务数 0
-            created_at: now,
-            updated_at: now,
-            completed_at: None, // 尚未完成
-        };
+            CrawlStatus::Queued,
+            json!(dto.config),
+            1,  // total_tasks
+            0,  // completed_tasks
+            0,  // failed_tasks
+            now,
+            now,
+            None,
+        );
 
         // 4. 保存爬取任务到数据库
         self.crawl_repo.create(&crawl).await?;

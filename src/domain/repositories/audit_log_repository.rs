@@ -9,6 +9,7 @@
 //! 具体实现由基础设施层提供。
 
 use async_trait::async_trait;
+use dbnexus::DbError;
 use shaku::Interface;
 use uuid::Uuid;
 
@@ -26,54 +27,24 @@ pub enum AuditRepositoryError {
     NotFound,
 }
 
-/// 实现 From<dbnexus::config::DbError> trait，支持 ? 操作符自动转换
-impl From<dbnexus::config::DbError> for AuditRepositoryError {
-    fn from(err: dbnexus::config::DbError) -> Self {
+/// 实现 From<dbnexus::DbError> trait，支持 ? 操作符自动转换
+impl From<DbError> for AuditRepositoryError {
+    fn from(err: DbError) -> Self {
+        use dbnexus::DbError;
         match err {
-            dbnexus::config::DbError::Connection(db_err) => AuditRepositoryError::DatabaseError(db_err),
-            dbnexus::config::DbError::Config(msg) => {
-                AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(format!("Configuration error: {}", msg)))
-            }
-            dbnexus::config::DbError::Permission(msg) => {
-                AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(format!("Permission denied: {}", msg)))
-            }
-            dbnexus::config::DbError::Transaction(msg) => {
-                AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(format!("Transaction error: {}", msg)))
-            }
-            dbnexus::config::DbError::Migration(msg) => {
-                AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(format!("Migration error: {}", msg)))
-            }
-        }
-    }
-}
-
-/// 实现 From<dbnexus::error::DbError> trait，支持 ? 操作符自动转换
-impl From<dbnexus::error::DbError> for AuditRepositoryError {
-    fn from(err: dbnexus::error::DbError) -> Self {
-        AuditRepositoryError::DatabaseError(err.inner().clone())
-    }
-}
-
-/// 实现 From<dbnexus::error::DbNexusError> trait，支持 ? 操作符自动转换
-impl From<dbnexus::error::DbNexusError> for AuditRepositoryError {
-    fn from(err: dbnexus::error::DbNexusError) -> Self {
-        match err {
-            dbnexus::error::DbNexusError::Database(db_err) => db_err.into(),
-            dbnexus::error::DbNexusError::Pool(pool_err) => {
-                AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(format!("Pool error: {}", pool_err)))
-            }
-            dbnexus::error::DbNexusError::Permission(perm_err) => {
-                AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(format!("Permission error: {}", perm_err)))
-            }
-            dbnexus::error::DbNexusError::Config(config_err) => {
-                AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(format!("Config error: {}", config_err)))
-            }
-            dbnexus::error::DbNexusError::Migration(mig_err) => {
-                AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(format!("Migration error: {}", mig_err)))
-            }
-            dbnexus::error::DbNexusError::Audit(audit_err) => {
-                AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(format!("Audit error: {}", audit_err)))
-            }
+            DbError::Connection(db_err) => AuditRepositoryError::DatabaseError(db_err),
+            DbError::Permission(msg) => AuditRepositoryError::DatabaseError(
+                sea_orm::DbErr::Custom(format!("Permission error: {}", msg).into()),
+            ),
+            DbError::Transaction(msg) => AuditRepositoryError::DatabaseError(
+                sea_orm::DbErr::Custom(format!("Transaction error: {}", msg).into()),
+            ),
+            DbError::Migration(msg) => AuditRepositoryError::DatabaseError(
+                sea_orm::DbErr::Custom(format!("Migration error: {}", msg).into()),
+            ),
+            DbError::Config(msg) => AuditRepositoryError::DatabaseError(
+                sea_orm::DbErr::Custom(format!("Config error: {}", msg).into()),
+            ),
         }
     }
 }

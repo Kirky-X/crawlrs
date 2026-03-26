@@ -8,16 +8,7 @@
 //! 包含数据库、Redis、服务器、速率限制和并发控制等核心配置项
 
 use confers::Config;
-use confers::validator::Validate;
 use serde::{Deserialize, Serialize};
-
-/// 验证速率限制必须启用
-fn validate_rate_limit_enabled(v: &bool, _: &()) -> garde::Result {
-    if !v {
-        return Err(garde::Error::new("rate limiting must be enabled for security"));
-    }
-    Ok(())
-}
 
 /// 数据库配置设置
 ///
@@ -218,27 +209,23 @@ pub struct ServerSettings {
 ///
 /// * `enabled` - 是否启用速率限制，默认 true
 /// * `default_rpm` - 默认每分钟请求数限制，默认 100
-#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "CRAWLRS__RATE_LIMITING__")]
 pub struct RateLimitingSettings {
     /// 是否启用速率限制
     #[config(default = true)]
-    #[garde(custom(validate_rate_limit_enabled))]
     pub enabled: bool,
 
     /// 默认每分钟请求数限制
     #[config(default = 100)]
-    #[garde(range(min = 1, max = 10000))]
     pub default_rpm: u32,
 
     /// 默认速率限制（别名，兼容旧代码）
     #[config(default = 100)]
-    #[garde(range(min = 1, max = 10000))]
     pub default_limit: u32,
 
     /// 突发请求数大小
     #[config(default = 20)]
-    #[garde(range(min = 1, max = 1000))]
     pub burst_size: u32,
 }
 

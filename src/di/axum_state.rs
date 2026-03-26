@@ -23,6 +23,7 @@ use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
+use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm_service::LLMServiceTrait;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::search_service::SearchServiceTrait;
@@ -41,8 +42,6 @@ use dbnexus::DbPool;
 /// State extracted from Shaku module for use in Axum handlers
 #[derive(Clone)]
 pub struct AppState {
-    /// Database connection
-    pub db: Arc<sea_orm::DbConn>,
     /// Database pool (dbnexus DbPool for repositories that need it)
     pub db_pool: Arc<DbPool>,
     /// Redis client
@@ -102,7 +101,7 @@ pub struct AppState {
     /// Expiration worker
     pub expiration_worker: Arc<crate::workers::expiration_worker::ExpirationWorker>,
     /// Geo location service
-    pub geo_location_service: Arc<crate::infrastructure::geolocation::GeoLocationServiceImpl>,
+    pub geo_location_service: Arc<dyn GeoLocationService>,
     /// Geo restriction repository
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
@@ -148,8 +147,6 @@ pub trait AppStateExt {
     fn regex_cache(&self) -> Arc<RegexCache>;
     /// Get Redis client
     fn redis_client(&self) -> Arc<RedisClient>;
-    /// Get database connection
-    fn db(&self) -> Arc<sea_orm::DbConn>;
     /// Get database pool (dbnexus DbPool)
     fn db_pool(&self) -> Arc<DbPool>;
     /// Get storage repository
@@ -173,7 +170,7 @@ pub trait AppStateExt {
     /// Get expiration worker
     fn expiration_worker(&self) -> Arc<crate::workers::expiration_worker::ExpirationWorker>;
     /// Get geo location service
-    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationServiceImpl>;
+    fn geo_location_service(&self) -> Arc<dyn GeoLocationService>;
     /// Get geo restriction repository
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
 }
@@ -251,10 +248,6 @@ impl AppStateExt for AppState {
         self.redis_client.clone()
     }
 
-    fn db(&self) -> Arc<sea_orm::DbConn> {
-        self.db.clone()
-    }
-
     fn db_pool(&self) -> Arc<DbPool> {
         self.db_pool.clone()
     }
@@ -299,7 +292,7 @@ impl AppStateExt for AppState {
         self.expiration_worker.clone()
     }
 
-    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationServiceImpl> {
+    fn geo_location_service(&self) -> Arc<dyn GeoLocationService> {
         self.geo_location_service.clone()
     }
 
@@ -381,10 +374,6 @@ impl AppStateExt for Arc<AppState> {
         self.as_ref().redis_client()
     }
 
-    fn db(&self) -> Arc<sea_orm::DbConn> {
-        self.as_ref().db()
-    }
-
     fn db_pool(&self) -> Arc<DbPool> {
         self.as_ref().db_pool()
     }
@@ -429,7 +418,7 @@ impl AppStateExt for Arc<AppState> {
         self.as_ref().expiration_worker()
     }
 
-    fn geo_location_service(&self) -> Arc<crate::infrastructure::geolocation::GeoLocationServiceImpl> {
+    fn geo_location_service(&self) -> Arc<dyn GeoLocationService> {
         self.as_ref().geo_location_service()
     }
 

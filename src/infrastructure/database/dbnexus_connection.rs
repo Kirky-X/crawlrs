@@ -10,10 +10,10 @@
 //! based implementation.
 
 use crate::config::DatabaseSettings;
-use dbnexus::config::CacheConfig;
-use dbnexus::{DbConfig, DbPool};
+use dbnexus::{CacheConfig, DbConfig, DbPool, DbResult, Session};
 use sea_orm::{ConnAcquireErr, DbErr};
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -40,6 +40,58 @@ impl DatabasePool {
     pub fn inner(&self) -> &Arc<DbPool> {
         &self.inner
     }
+
+    /// Get a session for the specified role
+    ///
+    /// This is the primary method for obtaining database sessions.
+    /// The session is automatically returned to the pool when dropped.
+    ///
+    /// # Arguments
+    ///
+    /// * `role` - The role to use for permission checking (e.g., "admin", "system")
+    ///
+    /// # Returns
+    ///
+    /// Result containing the session or a database error
+    pub async fn get_session(&self, role: &str) -> Result<Session, DbErr> {
+        self.inner
+            .get_session(role)
+            .await
+            .map_err(|e| DbErr::ConnectionAcquire(ConnAcquireErr::ConnectionClosed))
+    }
+
+    /// Get an admin session with full permissions
+    ///
+    /// Convenience method for getting a session with admin role.
+    pub async fn get_admin_session(&self) -> Result<Session, DbErr> {
+        self.get_session("admin").await
+    }
+
+    /// Get a system session for internal operations
+    ///
+    /// Convenience method for getting a session with system role.
+    pub async fn get_system_session(&self) -> Result<Session, DbErr> {
+        self.get_session("system").await
+    }
+
+    /// Get a read-only session
+    ///
+    /// Convenience method for getting a session with readonly role.
+    pub async fn get_readonly_session(&self) -> Result<Session, DbErr> {
+        self.get_session("readonly").await
+    }
+
+    /// Get pool status
+    ///
+    /// Returns current pool statistics for monitoring.
+    pub async fn get_pool_stats(&self) -> PoolStats {
+        let status = self.inner.status();
+        PoolStats {
+            active_connections: status.active,
+            idle_connections: status.idle,
+            total_connections: status.total,
+        }
+    }
 }
 
 impl Deref for DatabasePool {
@@ -53,6 +105,21 @@ impl Deref for DatabasePool {
 impl AsRef<DbPool> for DatabasePool {
     fn as_ref(&self) -> &DbPool {
         &self.inner
+    }
+}
+
+impl From<DatabasePool> for Arc<DbPool> {
+    fn from(pool: DatabasePool) -> Self {
+        pool.inner
+    }
+}
+
+impl From<Arc<DbPool>> for DatabasePool {
+    fn from(inner: Arc<DbPool>) -> Self {
+        Self {
+            inner,
+            stats: PoolStats::default(),
+        }
     }
 }
 
@@ -91,6 +158,31 @@ impl Default for DatabasePool {
             },
         }
     }
+}
+
+/// Get the permissions config path
+///
+/// Looks for permissions.yaml in the config directory.
+fn get_permissions_path() -> Option<String> {
+    // Try config directory relative to current working directory
+    let config_path = std::path::PathBuf::from("config").join("permissions.yaml");
+    if config_path.exists() {
+        return Some(config_path.to_string_lossy().to_string());
+    }
+
+    // Try parent config directory
+    let parent_config = std::path::PathBuf::from("../config").join("permissions.yaml");
+    if parent_config.exists() {
+        return Some(parent_config.to_string_lossy().to_string());
+    }
+
+    // Try /etc/crawlrs/permissions.yaml
+    let etc_path = std::path::PathBuf::from("/etc/crawlrs/permissions.yaml");
+    if etc_path.exists() {
+        return Some(etc_path.to_string_lossy().to_string());
+    }
+
+    None
 }
 
 /// Create a database connection pool with retry mechanism
@@ -141,6 +233,11 @@ pub async fn create_pool_with_retry(
 
 /// Create a database connection pool
 ///
+/// Uses dbnexus DbPool::with_config for proper initialization including:
+/// - Permission config loading
+/// - Connection pool warmup
+/// - Auto-migration if configured
+///
 /// # Arguments
 ///
 /// * `settings` - Database configuration settings
@@ -148,7 +245,7 @@ pub async fn create_pool_with_retry(
 /// # Returns
 ///
 /// Result containing the pool or a database error
-pub async fn create_pool(settings: &DatabaseSettings) -> Result<dbnexus::DbPool, DbErr> {
+pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
     // Configure pool settings
     let max_connections = settings.max_connections.unwrap_or(100);
     let min_connections = settings.min_connections.unwrap_or(10);
@@ -160,6 +257,12 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<dbnexus::DbPool,
         max_connections, min_connections, idle_timeout
     );
 
+    // Get permissions path if exists
+    let permissions_path = get_permissions_path();
+    if let Some(ref path) = permissions_path {
+        info!("Loading permissions config from: {:?}", path);
+    }
+
     // Create DbConfig from settings
     let config = DbConfig {
         url: settings.url.clone(),
@@ -167,7 +270,7 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<dbnexus::DbPool,
         min_connections: min_connections as u32,
         idle_timeout,
         acquire_timeout,
-        permissions_path: None,
+        permissions_path,
         migrations_dir: None,
         auto_migrate: false,
         migration_timeout: 300,
@@ -177,23 +280,12 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<dbnexus::DbPool,
         cache_config: CacheConfig::default(),
     };
 
-    // Create pool using dbnexus DbConfig::try_from
-    let pool = dbnexus::DbPool::try_from(&config)
+    // Create pool using dbnexus with_config (handles async initialization)
+    let pool = DbPool::with_config(config)
+        .await
         .map_err(|e| DbErr::ConnectionAcquire(ConnAcquireErr::ConnectionClosed))?;
 
     Ok(pool)
-}
-
-/// Get pool status
-///
-/// Returns current pool statistics for monitoring
-pub async fn get_pool_stats(_pool: &dbnexus::DbPool) -> PoolStats {
-    // dbnexus doesn't expose direct stats, return estimated values
-    PoolStats {
-        active_connections: 1,
-        idle_connections: 1,
-        total_connections: 1,
-    }
 }
 
 #[cfg(test)]
@@ -221,5 +313,27 @@ mod tests {
 
         let pool = create_pool(&settings).await;
         assert!(pool.is_ok(), "Failed to create pool: {:?}", pool.err());
+    }
+
+    #[tokio::test]
+    async fn test_get_session() {
+        if std::env::var("SKIP_DATABASE_TESTS").is_ok() {
+            return;
+        }
+
+        let settings = DatabaseSettings {
+            url: "postgresql://postgres:postgres@localhost/crawlrs".to_string(),
+            max_connections: Some(5),
+            min_connections: Some(1),
+            connect_timeout: Some(10),
+            idle_timeout: Some(300),
+            max_lifetime: Some(1800),
+            connection_keepalive: Some(30),
+            health_check_interval: Some(60),
+        };
+
+        let pool = create_pool(&settings).await.unwrap();
+        let session = pool.get_session("admin").await;
+        assert!(session.is_ok(), "Failed to get session: {:?}", session.err());
     }
 }

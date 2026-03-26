@@ -3,14 +3,16 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Feature flag repository implementation
+//! Feature flag repository implementation using dbnexus
 //!
 //! This module provides the concrete implementation of the FeatureFlagRepository trait
 //! defined in the domain layer.
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use dbnexus::DbPool;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::auth::{FeatureFlag, FeatureFlagOverride};
@@ -24,25 +26,30 @@ use crate::infrastructure::database::entities::auth::feature_flag_override::{
     Column as FfoColumn, Entity as FfoEntity,
 };
 
-/// Feature flag repository implementation
+/// Feature flag repository implementation using dbnexus Session
 #[derive(Clone)]
 pub struct FeatureFlagRepositoryImpl {
-    db: DatabaseConnection,
+    pool: Arc<DbPool>,
 }
 
 impl FeatureFlagRepositoryImpl {
     /// Create a new feature flag repository instance
-    pub fn new(db: DatabaseConnection) -> Self {
-        Self { db }
+    pub fn new(pool: Arc<DbPool>) -> Self {
+        Self { pool }
     }
 }
 
 #[async_trait]
 impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
     async fn find_by_name(&self, name: &str) -> Result<Option<FeatureFlag>, FeatureFlagRepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let conn = session.connection().map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
         let flag = FfEntity::find()
             .filter(FfColumn::Name.eq(name))
-            .one(&self.db)
+            .one(conn)
             .await?;
 
         Ok(flag.map(|f| FeatureFlag {
@@ -58,7 +65,13 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<FeatureFlag>, FeatureFlagRepositoryError> {
-        let flag = FfEntity::find_by_id(id).one(&self.db).await?;
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let conn = session.connection().map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let flag = FfEntity::find_by_id(id).one(conn).await?;
+
         Ok(flag.map(|f| FeatureFlag {
             id: f.id,
             name: f.name,
@@ -72,7 +85,13 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
     }
 
     async fn list_all(&self) -> Result<Vec<FeatureFlag>, FeatureFlagRepositoryError> {
-        let flags = FfEntity::find().all(&self.db).await?;
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let conn = session.connection().map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let flags = FfEntity::find().all(conn).await?;
+
         Ok(flags
             .into_iter()
             .map(|f| FeatureFlag {
@@ -93,10 +112,15 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
         feature_flag_id: Uuid,
         api_key_id: Uuid,
     ) -> Result<Option<FeatureFlagOverride>, FeatureFlagRepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let conn = session.connection().map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
         let override_ = FfoEntity::find()
             .filter(FfoColumn::FeatureFlagId.eq(feature_flag_id))
             .filter(FfoColumn::ApiKeyId.eq(api_key_id))
-            .one(&self.db)
+            .one(conn)
             .await?;
 
         Ok(override_.map(|o| FeatureFlagOverride {
@@ -111,9 +135,14 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
         &self,
         feature_flag_id: Uuid,
     ) -> Result<Vec<FeatureFlagOverride>, FeatureFlagRepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let conn = session.connection().map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
         let overrides = FfoEntity::find()
             .filter(FfoColumn::FeatureFlagId.eq(feature_flag_id))
-            .all(&self.db)
+            .all(conn)
             .await?;
 
         Ok(overrides
@@ -131,9 +160,14 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
         &self,
         api_key_id: Uuid,
     ) -> Result<Vec<FeatureFlagOverride>, FeatureFlagRepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let conn = session.connection().map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
         let overrides = FfoEntity::find()
             .filter(FfoColumn::ApiKeyId.eq(api_key_id))
-            .all(&self.db)
+            .all(conn)
             .await?;
 
         Ok(overrides
@@ -153,6 +187,11 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
         api_key_id: Uuid,
         enabled: bool,
     ) -> Result<FeatureFlagOverride, FeatureFlagRepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let conn = session.connection().map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
         let existing = self.find_override(feature_flag_id, api_key_id).await?;
 
         let override_model = match existing {
@@ -176,7 +215,7 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
             }
         };
 
-        FfoEntity::update(override_model).exec(&self.db).await?;
+        FfoEntity::update(override_model).exec(conn).await?;
 
         Ok(FeatureFlagOverride {
             id: existing.map(|o| o.id).unwrap_or_else(Uuid::new_v4),
@@ -191,10 +230,15 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
         feature_flag_id: Uuid,
         api_key_id: Uuid,
     ) -> Result<bool, FeatureFlagRepositoryError> {
+        let session = self.pool.get_session("admin").await
+            .map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
+        let conn = session.connection().map_err(|e| FeatureFlagRepositoryError::DatabaseError(e.to_string()))?;
+
         let result = FfoEntity::delete_many()
             .filter(FfoColumn::FeatureFlagId.eq(feature_flag_id))
             .filter(FfoColumn::ApiKeyId.eq(api_key_id))
-            .exec(&self.db)
+            .exec(conn)
             .await?;
 
         Ok(result.rows_affected > 0)

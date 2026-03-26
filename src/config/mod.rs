@@ -39,7 +39,6 @@ pub use runtime::RuntimeConfig;
 pub use settings::{TimeoutSettings, WorkerCount, WorkerSettings};
 
 // 主配置结构体
-pub mod defaults;  // 内联默认值辅助函数
 pub mod settings;
 pub use settings::Settings;
 pub use settings::TrustedProxySettings;

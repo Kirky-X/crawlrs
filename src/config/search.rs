@@ -8,7 +8,6 @@
 //! 包含 Bing Search 和搜索功能配置
 
 use confers::Config;
-use confers::validator::Validate;
 use serde::{Deserialize, Serialize};
 
 /// Bing Search API 配置设置
@@ -40,41 +39,34 @@ impl BingSearchSettings {
 /// 搜索配置设置
 ///
 /// 配置搜索相关功能参数
-#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "CRAWLRS__SEARCH__")]
 pub struct SearchSettings {
     /// 是否启用 A/B 测试
     #[config(default = false)]
-    #[garde(skip)]
     pub ab_test_enabled: bool,
 
     /// Variant B 的流量权重 (0.0 到 1.0)
     #[config(default = 0.1)]
-    #[garde(range(min = 0.0, max = 1.0))]
     pub variant_b_weight: f64,
 
     /// 搜索超时时间（秒）
     #[config(default = 30)]
-    #[garde(range(min = 1, max = 300))]
     pub timeout_seconds: u64,
 
     /// 是否启用速率限制
     #[config(default = true)]
-    #[garde(skip)]
     pub rate_limiting_enabled: bool,
 
     /// 是否启用测试数据
     #[config(default = false)]
-    #[garde(skip)]
     pub test_data_enabled: bool,
 
     /// 最大重试次数
     #[config(default = 3)]
-    #[garde(range(min = 0, max = 10))]
     pub max_retries: u32,
 
     /// 重试延迟（毫秒）
     #[config(default = 1000)]
-    #[garde(range(min = 100, max = 60000))]
     pub retry_delay_ms: u64,
 }

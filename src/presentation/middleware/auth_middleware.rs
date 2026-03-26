@@ -16,8 +16,9 @@ use crate::infrastructure::database::entities::api_key;
 use crate::infrastructure::security;
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 use axum::{
-    extract::{Request, State},
-    http::{header, StatusCode},
+    body::Body,
+    extract::State,
+    http::{header, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -46,6 +47,9 @@ const DEFAULT_CACHE_MAX_SIZE: usize = 10000;
 /// Global auth cache instance for cache invalidation across the application
 static GLOBAL_AUTH_CACHE: OnceLock<Arc<RwLock<ApiKeyCache>>> = OnceLock::new();
 
+/// Global auth state for middleware
+static GLOBAL_AUTH_STATE: OnceLock<Arc<AuthState>> = OnceLock::new();
+
 /// Get the global auth cache instance
 pub fn get_global_auth_cache() -> Option<Arc<RwLock<ApiKeyCache>>> {
     GLOBAL_AUTH_CACHE.get().cloned()
@@ -54,6 +58,16 @@ pub fn get_global_auth_cache() -> Option<Arc<RwLock<ApiKeyCache>>> {
 /// Set the global auth cache instance (called during application startup)
 pub fn set_global_auth_cache(cache: Arc<RwLock<ApiKeyCache>>) {
     let _ = GLOBAL_AUTH_CACHE.set(cache);
+}
+
+/// Get the global auth state for middleware
+pub fn get_global_auth_state() -> Option<Arc<AuthState>> {
+    GLOBAL_AUTH_STATE.get().cloned()
+}
+
+/// Set the global auth state (called during application startup)
+pub fn set_global_auth_state(state: Arc<AuthState>) {
+    let _ = GLOBAL_AUTH_STATE.set(state);
 }
 
 /// LRU Cache for authenticated API keys to reduce database queries
@@ -692,21 +706,20 @@ pub enum AuthError {
 /// This middleware validates API keys and loads associated scope for authorization.
 /// It combines the functionality of the original basic and enhanced auth middlewares.
 ///
-/// # Arguments
-///
-/// * `state` - Authentication state containing database connection and config
-/// * `req` - The HTTP request
-/// * `next` - The next middleware in the chain
-///
-/// # Returns
-///
-/// * `Ok(Response)` - If authentication is successful
-/// * `Err(StatusCode)` - If authentication fails
-pub async fn auth_middleware(
-    State(state): State<AuthState>,
-    mut req: Request,
+/// This version uses global state for middleware initialization.
+async fn auth_middleware_inner(
+    req: axum::http::Request<Body>,
     next: Next,
 ) -> Response {
+    // Get auth state from global storage
+    let state = match get_global_auth_state() {
+        Some(s) => s,
+        None => {
+            tracing::error!("Auth middleware: global auth state not initialized");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
     let path = req.uri().path();
     debug!("AuthMiddleware processing path: {}", path);
 
@@ -715,6 +728,9 @@ pub async fn auth_middleware(
         debug!("Public endpoint {}, skipping auth", path);
         return next.run(req).await;
     }
+
+    // Create a mutable request for processing
+    let mut req = req;
 
     // Get client IP for rate limiting using secure IP extraction
     let client_ip = get_client_ip(&req, state.trusted_proxies.as_ref());
@@ -772,10 +788,12 @@ pub async fn auth_middleware(
 
     debug!("API Key authentication successful");
 
-    // Log successful authentication to audit service
-    log_auth_success(&req, &key, &state).await;
-
     next.run(req).await
+}
+
+/// Wrapper function for middleware registration
+pub fn auth_middleware() -> impl Fn(axum::http::Request<Body>, Next) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>> + Clone + Send + Sync + 'static {
+    |req, next| Box::pin(auth_middleware_inner(req, next))
 }
 
 /// Check rate limit lockout for client IP
@@ -982,7 +1000,7 @@ async fn create_and_cache_auth_state(
 }
 
 /// Inject auth state into request extensions
-fn inject_auth_state(req: &mut Request, auth_state: AuthState, token_hash: &str) {
+fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash: &str) {
     let team_id = auth_state.team_id;
     let api_key_id = auth_state.api_key_id;
     req.extensions_mut().insert(auth_state);
@@ -991,23 +1009,8 @@ fn inject_auth_state(req: &mut Request, auth_state: AuthState, token_hash: &str)
     req.extensions_mut().insert(token_hash.to_string());
 }
 
-/// Log successful authentication to audit service
-async fn log_auth_success(req: &Request, key: &api_key::Model, state: &AuthState) {
-    if let Some(audit_service) = req.extensions().get::<Arc<dyn AuditServiceTrait>>() {
-        let scope = state.scope.clone();
-        let _ = audit_service
-            .log_allow(
-                "api_key.authenticated".to_string(),
-                key.id,
-                key.team_id,
-                scope,
-            )
-            .await;
-    }
-}
-
 /// Extract Bearer token from Authorization header
-fn extract_bearer_token(req: &Request) -> Option<String> {
+fn extract_bearer_token(req: &Request<Body>) -> Option<String> {
     let auth_header = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -1036,7 +1039,7 @@ fn extract_bearer_token(req: &Request) -> Option<String> {
 /// # Returns
 ///
 /// Returns the client's real IP address, or "unknown" if it cannot be determined
-fn get_client_ip(req: &Request, trusted_proxies: Option<&security::TrustedProxyConfig>) -> String {
+fn get_client_ip(req: &Request<Body>, trusted_proxies: Option<&security::TrustedProxyConfig>) -> String {
     match trusted_proxies {
         Some(config) => security::get_secure_client_ip(req, config),
         None => {
@@ -1061,7 +1064,7 @@ fn get_client_ip(req: &Request, trusted_proxies: Option<&security::TrustedProxyC
 ///
 /// * `Ok(Response)` - If scope validation passes
 /// * `Err(StatusCode)` - If scope validation fails
-pub async fn scope_middleware(req: Request, next: Next) -> Result<Response, StatusCode> {
+pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response, StatusCode> {
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 

@@ -3,14 +3,17 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use dbnexus::{db_cache, db_permission, DbEntity};
 use sea_orm::entity::prelude::*;
 use uuid::Uuid;
 
 /// 任务积压数据库实体模型
 ///
 /// 对应数据库中的 tasks_backlog 表，存储当团队并发限制达到时的积压任务
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, DbEntity, DeriveEntityModel)]
 #[sea_orm(table_name = "tasks_backlog")]
+#[db_permission(roles = ["admin", "system"], operations = ["select", "insert", "update", "delete"])]
+#[db_cache(ttl = 60, max_capacity = 500)]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,

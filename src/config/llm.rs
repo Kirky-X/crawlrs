@@ -8,7 +8,6 @@
 //! 包含大语言模型服务配置
 
 use confers::Config;
-use confers::validator::Validate;
 use serde::{Deserialize, Serialize};
 
 /// LLM 配置设置
@@ -25,25 +24,21 @@ use serde::{Deserialize, Serialize};
 ///
 /// `api_key` 字段包含 LLM API 密钥，泄露可能导致未经授权的访问。
 /// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
-#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "CRAWLRS__LLM__")]
 pub struct LLMSettings {
     /// LLM 提供商 (openai, ollama, anthropic, etc)
-    #[garde(skip)]
     pub provider: Option<String>,
 
     /// LLM API 密钥 (敏感信息)
-    #[garde(skip)]
     pub(crate) api_key: Option<String>,
 
     /// 使用的模型名称
     #[config(default = Some("gpt-3.5-turbo".to_string()))]
-    #[garde(skip)]
     pub model: Option<String>,
 
     /// LLM API 基础 URL
     #[config(default = Some("https://api.openai.com/v1".to_string()))]
-    #[garde(url)]
     pub api_base_url: Option<String>,
 }
 

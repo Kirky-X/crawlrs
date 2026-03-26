@@ -45,7 +45,7 @@ pub use super::storage::{StorageSettings, WebhookSettings};
 /// }
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
-#[config(env_prefix = "CRAWLRS__", validate, app_name = "crawlrs")]
+#[config(env_prefix = "CRAWLRS__", validate)]
 pub struct Settings {
     /// 服务器配置
     pub server: ServerSettings,

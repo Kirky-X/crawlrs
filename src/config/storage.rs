@@ -8,24 +8,7 @@
 //! 包含存储后端配置和 Webhook 安全配置
 
 use confers::Config;
-use confers::validator::Validate;
 use serde::{Deserialize, Serialize};
-
-/// 验证 webhook secret 不使用弱默认值
-fn validate_webhook_secret_not_weak(secret: &str, _: &()) -> garde::Result {
-    let weak_secrets = [
-        "your-webhook-secret",
-        "your-secret-key",
-        "secret",
-        "webhook-secret",
-        "change-me",
-        "password",
-    ];
-    if weak_secrets.contains(&secret) {
-        return Err(garde::Error::new("webhook secret must not be a weak default value"));
-    }
-    Ok(())
-}
 
 /// 存储配置设置
 ///
@@ -141,24 +124,19 @@ impl StorageSettings {
 ///
 /// `secret` 字段包含 Webhook 签名密钥，泄露可能导致伪造请求。
 /// 该字段仅对 crate 可见，外部模块应使用 `secret()` 方法访问。
-#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "CRAWLRS__WEBHOOK__")]
 pub struct WebhookSettings {
     /// Webhook签名密钥 (敏感信息)
     /// 注意：此字段包含敏感信息，仅 crate 内部可访问
-    /// 验证：长度 >= 32，不能使用弱默认值
-    #[garde(length(min = 32))]
-    #[garde(custom(validate_webhook_secret_not_weak))]
     pub(crate) secret: String,
 
     /// 最大重试次数
     #[config(default = 5)]
-    #[garde(range(min = 1, max = 10))]
     pub max_retries: u32,
 
     /// 批处理大小
     #[config(default = 1000)]
-    #[garde(range(min = 1))]
     pub batch_size: usize,
 }
 

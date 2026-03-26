@@ -25,6 +25,7 @@ use axum::{
     Extension, Router,
 };
 use std::sync::Arc;
+use tower::{layer::Layer, ServiceBuilder};
 use tower_http::cors::{Any, CorsLayer};
 
 // 导入常量
@@ -131,13 +132,13 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
     // Create Arc<AppState> for crawl handlers that use unified state
     let app_state_arc = Arc::new(state.clone());
 
-    // Auth state for middleware
-    // Convert from Arc<AuthScopeService> to AuthScopeService (unwrap the Arc)
+    // Auth state for middleware - wrap in Arc and set global state
     let auth_scope_service = state.auth_scope_service.as_ref().map(|arc| (**arc).clone());
-    // Use new_for_middleware to ensure global cache is initialized
-    let auth_state = AuthState::new_for_middleware(state.db_pool.clone(), auth_scope_service);
+    let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone(), auth_scope_service));
+    // Set global auth state for middleware
+    crate::presentation::middleware::auth_middleware::set_global_auth_state(auth_state.clone());
 
-    Router::new()
+    let app: Router = Router::new()
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
         .route(
@@ -172,9 +173,8 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
         )
         .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
         .route("/v1/audit/denied", get(audit_handler::get_denied_requests))
-        .layer(axum::middleware::from_fn_with_state(
-            auth_state.clone(),
-            crate::presentation::middleware::auth_middleware::auth_middleware,
+        .layer(axum::middleware::from_fn(
+            crate::presentation::middleware::auth_middleware::auth_middleware(),
         ))
         .layer(Extension(geo_restriction_repo))
         .layer(Extension(team_semaphore))
@@ -195,7 +195,9 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
         .layer(Extension(app_state_arc)) // Unified AppState for crawl handlers
         .layer(Extension(credits_repo))
         .layer(Extension(webhook_repo_impl))
-        .layer(Extension(geo_restriction_repo_impl))
+        .layer(Extension(geo_restriction_repo_impl));
+
+    app
 }
 
 /// Create v2 task routes using AppState.
@@ -212,17 +214,18 @@ pub fn create_v2_routes_with_state(state: &AppState) -> Router {
     let team_semaphore = state.team_semaphore.clone();
 
     // Use new_for_middleware to ensure global cache is initialized
-    let auth_state = AuthState::new_for_middleware(state.db_pool.clone(), None);
+    let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone(), None));
+    // Set global auth state for middleware (will be overwritten but that's ok)
+    crate::presentation::middleware::auth_middleware::set_global_auth_state(auth_state);
 
     task_routes()
         .layer(Extension(task_repo.clone()))
         .layer(Extension(result_repo.clone()))
-        .layer(axum::middleware::from_fn_with_state(
-            auth_state.clone(),
-            crate::presentation::middleware::auth_middleware::auth_middleware,
+        .layer(Extension(team_semaphore))
+        .layer(axum::middleware::from_fn(
+            crate::presentation::middleware::auth_middleware::auth_middleware(),
         ))
-        .layer(axum::middleware::from_fn_with_state(
-            team_semaphore.clone(),
+        .layer(axum::middleware::from_fn(
             team_semaphore_middleware,
         ))
         .layer(Extension(task_repo.clone()))

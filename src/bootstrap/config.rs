@@ -8,37 +8,16 @@
 //! 此模块负责在应用启动早期进行配置和环境变量的安全验证
 
 use crate::config::settings::Settings;
-use crate::config::defaults::get_inline_defaults;
 use crate::infrastructure::security::env_var_security::{EnvVarSecurityMonitor, EnvVarValidator};
 use anyhow::Result;
-use confers::ConfigBuilder;
 use tracing::{debug, error, info, warn};
 
 /// Load application configuration from settings file.
 ///
 /// This function reads the configuration from the standard settings location
 /// and returns a configured [`Settings`] instance.
-///
-/// Configuration sources (in order of precedence, highest first):
-/// 1. Environment variables (CRAWLRS__ prefix)
-/// 2. Config file (config/default.toml)
-/// 3. Code defaults (lowest precedence)
 pub fn load_settings() -> Result<Settings> {
-    debug!("Loading configuration with ConfigBuilder...");
-
-    let builder = ConfigBuilder::<Settings>::new()
-        // 1. 从默认配置文件加载 (较低优先级)
-        .file("config/default.toml")
-        // 2. 环境变量覆盖 (最高优先级)
-        .env_prefix("CRAWLRS__")
-        // 3. 内联默认值 (最低优先级，作为后备)
-        .defaults(get_inline_defaults());
-
-    let settings = builder.build().map_err(|e| {
-        error!("Failed to load configuration: {}", e);
-        anyhow::anyhow!("配置加载失败: {}", e)
-    })?;
-
+    let settings = Settings::load_sync()?;
     info!("Configuration loaded successfully from config sources");
     Ok(settings)
 }

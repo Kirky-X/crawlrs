@@ -21,7 +21,7 @@ use crate::domain::auth::{FeatureFlag, FeatureFlagOverride};
 pub enum FeatureFlagRepositoryError {
     /// Database error
     #[error("Database error: {0}")]
-    DatabaseError(#[from] sea_orm::DbErr),
+    DatabaseError(String),
     /// Feature flag not found
     #[error("Feature flag not found: {name}")]
     NotFound { name: String },
@@ -31,6 +31,12 @@ pub enum FeatureFlagRepositoryError {
         feature_flag_id: Uuid,
         api_key_id: Uuid,
     },
+}
+
+impl From<sea_orm::DbErr> for FeatureFlagRepositoryError {
+    fn from(err: sea_orm::DbErr) -> Self {
+        FeatureFlagRepositoryError::DatabaseError(err.to_string())
+    }
 }
 
 /// Feature flag repository trait

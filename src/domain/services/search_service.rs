@@ -204,21 +204,15 @@ impl SearchService {
                 extraction_rules: None,
             });
 
-            let crawl = Crawl {
-                id: cid,
+            let now = chrono::Utc::now();
+            let crawl = Crawl::new(
+                cid,
                 team_id,
-                name: format!("Search Crawl: {}", query.query),
-                root_url: "search://".to_string() + &query.query,
-                url: "search://".to_string() + &query.query,
-                status: CrawlStatus::Queued,
-                config: json!(config),
-                total_tasks: results.len() as i32,
-                completed_tasks: 0,
-                failed_tasks: 0,
-                created_at: now,
-                updated_at: now,
-                completed_at: None,
-            };
+                format!("Search Crawl: {}", query.query),
+                "search://".to_string() + &query.query,
+                "search://".to_string() + &query.query,
+                json!(config),
+            );
 
             self.crawl_repo.create(&crawl).await?;
 

@@ -59,7 +59,7 @@ pub fn init_engines(
     ))];
 
     #[cfg(feature = "engine-playwright")]
-    engines.push(Arc::new(PlaywrightEngine));
+    engines.push(Arc::new(PlaywrightEngine::new()));
 
     #[cfg(feature = "engine-fire-tls")]
     if engine_config.fire_tls.enabled {

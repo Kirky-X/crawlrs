@@ -146,11 +146,10 @@ impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M> for Transacti
         let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
         let pool = pool_component.get_pool();
 
-        // Create TransactionManager with the database connection
-        // Note: We need to get the DatabaseConnection from the pool
-        // For dbnexus, we'll use the inner connection
-        let db_connection = Arc::new(DatabaseConnection::default());
-        let manager = Arc::new(TransactionManager::new(db_connection));
+        // Create TransactionManager with the dbnexus DbPool
+        // DatabasePool wraps the dbnexus DbPool internally
+        let db_pool = pool.inner().clone();
+        let manager = Arc::new(TransactionManager::new(db_pool));
 
         Box::new(Self { manager })
     }
@@ -162,9 +161,9 @@ impl TransactionManagerComponent {
         Self { manager }
     }
 
-    /// Create with database connection
-    pub fn with_connection(db: Arc<DatabaseConnection>) -> Self {
-        let manager = Arc::new(TransactionManager::new(db));
+    /// Create with dbnexus DbPool
+    pub fn with_db_pool(db_pool: Arc<dbnexus::DbPool>) -> Self {
+        let manager = Arc::new(TransactionManager::new(db_pool));
         Self { manager }
     }
 }

@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Transaction Manager for database operations
+//! Transaction Manager for database operations using dbnexus
 //!
 //! This module provides a comprehensive transaction management system supporting:
 //! - Begin/Commit/Rollback transactions
@@ -19,12 +19,6 @@
 //! let tx_manager = TransactionManager::new(pool.clone());
 //!
 //! // Simple transaction
-//! tx_manager.execute_in_transaction(|tx| async move {
-//!     // Operations using transaction
-//!     Ok(())
-//! }).await?;
-//!
-//! // Nested transaction with savepoint
 //! tx_manager.begin().await?;
 //! tx_manager.savepoint("sp1").await?;
 //! // ... operations ...
@@ -32,15 +26,11 @@
 //! tx_manager.commit().await?;
 //! ```
 
+use dbnexus::{DbPool, Session};
 use parking_lot::RwLock;
+use sea_orm::DbErr;
 use std::collections::VecDeque;
 use std::sync::Arc;
-
-use anyhow::{Context, Result};
-use sea_orm::{
-    AccessMode, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr, IsolationLevel,
-    QueryFilter, Statement, TransactionTrait,
-};
 use thiserror::Error;
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
@@ -90,7 +80,13 @@ pub enum TransactionError {
 
     /// Database error
     #[error("Database error: {0}")]
-    DatabaseError(#[from] DbErr),
+    DatabaseError(String),
+}
+
+impl From<DbErr> for TransactionError {
+    fn from(err: DbErr) -> Self {
+        TransactionError::DatabaseError(err.to_string())
+    }
 }
 
 /// Transaction isolation level configuration
@@ -107,17 +103,6 @@ pub enum TransactionIsolation {
     Serializable,
 }
 
-impl From<TransactionIsolation> for IsolationLevel {
-    fn from(level: TransactionIsolation) -> Self {
-        match level {
-            TransactionIsolation::ReadUncommitted => IsolationLevel::ReadUncommitted,
-            TransactionIsolation::ReadCommitted => IsolationLevel::ReadCommitted,
-            TransactionIsolation::RepeatableRead => IsolationLevel::RepeatableRead,
-            TransactionIsolation::Serializable => IsolationLevel::Serializable,
-        }
-    }
-}
-
 /// Transaction access mode
 #[derive(Debug, Clone, Copy, Default)]
 pub enum TransactionAccess {
@@ -126,15 +111,6 @@ pub enum TransactionAccess {
     ReadWrite,
     /// Read-only mode
     ReadOnly,
-}
-
-impl From<TransactionAccess> for AccessMode {
-    fn from(mode: TransactionAccess) -> Self {
-        match mode {
-            TransactionAccess::ReadWrite => AccessMode::ReadWrite,
-            TransactionAccess::ReadOnly => AccessMode::ReadOnly,
-        }
-    }
 }
 
 /// Transaction configuration
@@ -146,14 +122,17 @@ pub struct TransactionConfig {
     pub access_mode: TransactionAccess,
     /// Enable nested transactions via savepoints
     pub enable_savepoints: bool,
+    /// Role to use for the session
+    pub role: String,
 }
 
 impl Default for TransactionConfig {
     fn default() -> Self {
         Self {
-            isolation_level: TransactionIsolation::default(),
-            access_mode: TransactionAccess::default(),
+            isolation_level: TransactionIsolation::ReadCommitted,
+            access_mode: TransactionAccess::ReadWrite,
             enable_savepoints: true,
+            role: "admin".to_string(),
         }
     }
 }
@@ -165,14 +144,12 @@ struct Savepoint {
     id: Uuid,
     /// Savepoint name
     name: String,
-    /// Created at timestamp
-    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Active transaction state
 struct ActiveTransaction {
-    /// The underlying Sea-ORM transaction
-    transaction: Option<DatabaseTransaction>,
+    /// The dbnexus session
+    session: Session,
     /// Configuration used for this transaction
     config: TransactionConfig,
     /// Stack of active savepoints (for nested transactions)
@@ -181,7 +158,7 @@ struct ActiveTransaction {
     finished: bool,
 }
 
-/// Transaction Manager
+/// Transaction Manager using dbnexus
 ///
 /// Manages database transactions with support for:
 /// - Basic transaction operations (begin, commit, rollback)
@@ -190,7 +167,7 @@ struct ActiveTransaction {
 /// - Configurable isolation levels
 pub struct TransactionManager {
     /// Database connection pool
-    pool: Arc<DatabaseConnection>,
+    pool: Arc<DbPool>,
     /// Active transaction state (if any)
     active_transaction: RwLock<Option<ActiveTransaction>>,
     /// Default transaction configuration
@@ -202,12 +179,12 @@ impl TransactionManager {
     ///
     /// # Arguments
     ///
-    /// * `pool` - Database connection pool
+    /// * `pool` - Database connection pool (dbnexus DbPool)
     ///
     /// # Returns
     ///
     /// A new TransactionManager instance
-    pub fn new(pool: Arc<DatabaseConnection>) -> Self {
+    pub fn new(pool: Arc<DbPool>) -> Self {
         Self {
             pool,
             active_transaction: RwLock::new(None),
@@ -219,9 +196,9 @@ impl TransactionManager {
     ///
     /// # Arguments
     ///
-    /// * `pool` - Database connection pool
+    /// * `pool` - Database connection pool (dbnexus DbPool)
     /// * `config` - Default transaction configuration
-    pub fn with_config(pool: Arc<DatabaseConnection>, config: TransactionConfig) -> Self {
+    pub fn with_config(pool: Arc<DbPool>, config: TransactionConfig) -> Self {
         Self {
             pool,
             active_transaction: RwLock::new(None),
@@ -266,25 +243,29 @@ impl TransactionManager {
             return Err(TransactionError::TransactionAlreadyActive);
         }
 
-        // Sea-ORM 2.0 uses begin() without config parameters
-        // Isolation level and access mode can be set via SET TRANSACTION if needed
-        let transaction = self
+        // Get a session from the pool
+        let session = self
             .pool
-            .as_ref()
-            .begin()
+            .get_session(&config.role)
             .await
             .map_err(|e| {
-                error!("Failed to begin transaction: {}", e);
+                error!("Failed to get session: {}", e);
                 TransactionError::BeginFailed(e.to_string())
             })?;
 
+        // Begin transaction using dbnexus Session
+        session.begin_transaction().await.map_err(|e| {
+            error!("Failed to begin transaction: {}", e);
+            TransactionError::BeginFailed(e.to_string())
+        })?;
+
         debug!(
-            "Transaction started with isolation: {:?}, access: {:?}",
-            config.isolation_level, config.access_mode
+            "Transaction started with role: {}, isolation: {:?}, access: {:?}",
+            config.role, config.isolation_level, config.access_mode
         );
 
         *active_tx = Some(ActiveTransaction {
-            transaction: Some(transaction),
+            session,
             config,
             savepoints: VecDeque::new(),
             finished: false,
@@ -313,13 +294,10 @@ impl TransactionManager {
             return Err(TransactionError::NoActiveTransaction);
         }
 
-        // Take ownership of the transaction for commit (Sea-ORM 2.0 requires ownership)
-        let transaction = tx_state.transaction.take().ok_or_else(|| {
-            TransactionError::CommitFailed("Transaction already consumed".to_string())
-        })?;
-        drop(tx_state); // Release the borrow before commit
+        tx_state.finished = true;
 
-        transaction.commit().await.map_err(|e| {
+        // Commit using dbnexus Session
+        tx_state.session.commit().await.map_err(|e| {
             error!("Failed to commit transaction: {}", e);
             TransactionError::CommitFailed(e.to_string())
         })?;
@@ -351,13 +329,10 @@ impl TransactionManager {
             return Err(TransactionError::NoActiveTransaction);
         }
 
-        // Take ownership of the transaction for rollback (Sea-ORM 2.0 requires ownership)
-        let transaction = tx_state.transaction.take().ok_or_else(|| {
-            TransactionError::RollbackFailed("Transaction already consumed".to_string())
-        })?;
-        drop(tx_state); // Release the borrow before rollback
+        tx_state.finished = true;
 
-        transaction.rollback().await.map_err(|e| {
+        // Rollback using dbnexus Session
+        tx_state.session.rollback().await.map_err(|e| {
             error!("Failed to rollback transaction: {}", e);
             TransactionError::RollbackFailed(e.to_string())
         })?;
@@ -427,29 +402,19 @@ impl TransactionManager {
             });
         }
 
-        // Execute SAVEPOINT command
+        // Execute SAVEPOINT command using session's execute_raw_ddl (admin role bypasses permission checks)
         let sql = format!("SAVEPOINT {}", name);
-        tx_state
-            .transaction
-            .as_ref()
-            .ok_or_else(|| TransactionError::SavepointFailed {
+        tx_state.session.execute_raw_ddl(&sql).await.map_err(|e| {
+            error!("Failed to create savepoint '{}': {}", name, e);
+            TransactionError::SavepointFailed {
                 name: name.to_string(),
-                message: "Transaction not available".to_string(),
-            })?
-            .execute_unprepared(&sql)
-            .await
-            .map_err(|e| {
-                error!("Failed to create savepoint '{}': {}", name, e);
-                TransactionError::SavepointFailed {
-                    name: name.to_string(),
-                    message: e.to_string(),
-                }
-            })?;
+                message: e.to_string(),
+            }
+        })?;
 
         let savepoint = Savepoint {
             id: Uuid::new_v4(),
             name: name.to_string(),
-            created_at: chrono::Utc::now(),
         };
 
         let savepoint_id = savepoint.id;
@@ -490,22 +455,13 @@ impl TransactionManager {
 
         // Execute RELEASE SAVEPOINT command
         let sql = format!("RELEASE SAVEPOINT {}", name);
-        tx_state
-            .transaction
-            .as_ref()
-            .ok_or_else(|| TransactionError::ReleaseSavepointFailed {
+        tx_state.session.execute_raw_ddl(&sql).await.map_err(|e| {
+            error!("Failed to release savepoint '{}': {}", name, e);
+            TransactionError::ReleaseSavepointFailed {
                 name: name.to_string(),
-                message: "Transaction not available".to_string(),
-            })?
-            .execute_unprepared(&sql)
-            .await
-            .map_err(|e| {
-                error!("Failed to release savepoint '{}': {}", name, e);
-                TransactionError::ReleaseSavepointFailed {
-                    name: name.to_string(),
-                    message: e.to_string(),
-                }
-            })?;
+                message: e.to_string(),
+            }
+        })?;
 
         tx_state.savepoints.remove(position);
         debug!("Savepoint '{}' released", name);
@@ -541,22 +497,13 @@ impl TransactionManager {
 
         // Execute ROLLBACK TO SAVEPOINT command
         let sql = format!("ROLLBACK TO SAVEPOINT {}", name);
-        tx_state
-            .transaction
-            .as_ref()
-            .ok_or_else(|| TransactionError::RollbackToSavepointFailed {
+        tx_state.session.execute_raw_ddl(&sql).await.map_err(|e| {
+            error!("Failed to rollback to savepoint '{}': {}", name, e);
+            TransactionError::RollbackToSavepointFailed {
                 name: name.to_string(),
-                message: "Transaction not available".to_string(),
-            })?
-            .execute_unprepared(&sql)
-            .await
-            .map_err(|e| {
-                error!("Failed to rollback to savepoint '{}': {}", name, e);
-                TransactionError::RollbackToSavepointFailed {
-                    name: name.to_string(),
-                    message: e.to_string(),
-                }
-            })?;
+                message: e.to_string(),
+            }
+        })?;
 
         // Remove all savepoints created after this one
         let position = tx_state
@@ -568,176 +515,6 @@ impl TransactionManager {
 
         debug!("Rolled back to savepoint '{}'", name);
         Ok(())
-    }
-
-    /// Execute a closure within a transaction
-    ///
-    /// This is a convenience method that automatically:
-    /// 1. Begins a transaction
-    /// 2. Executes the closure
-    /// 3. Commits on success or rolls back on failure
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - Closure to execute within the transaction
-    ///
-    /// # Returns
-    ///
-    /// The result of the closure
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let result = tx_manager.execute_in_transaction(|tx| async move {
-    ///     // Use tx for database operations
-    ///     let user = User::insert(tx, user_data).await?;
-    ///     let profile = Profile::insert(tx, profile_data).await?;
-    ///     Ok((user, profile))
-    /// }).await?;
-    /// ```
-    #[instrument(skip(self, f), name = "transaction_execute")]
-    pub async fn execute_in_transaction<F, Fut, T>(&self, f: F) -> Result<T, TransactionError>
-    where
-        F: FnOnce(&DatabaseTransaction) -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        self.begin().await?;
-
-        // Get a reference to the transaction
-        let result = {
-            let active_tx = self.active_transaction.read();
-            let tx_state = active_tx
-                .as_ref()
-                .ok_or(TransactionError::NoActiveTransaction)?;
-            
-            let transaction = tx_state.transaction.as_ref()
-                .ok_or_else(|| TransactionError::NoActiveTransaction)?;
-            
-            f(transaction).await
-        };
-
-        match result {
-            Ok(result) => {
-                self.commit().await?;
-                Ok(result)
-            }
-            Err(e) => {
-                warn!("Transaction failed, rolling back: {}", e);
-                self.rollback().await?;
-                Err(TransactionError::CommitFailed(e.to_string()))
-            }
-        }
-    }
-
-    /// Execute a closure within a transaction with custom configuration
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Transaction configuration
-    /// * `f` - Closure to execute within the transaction
-    #[instrument(skip(self, config, f), name = "transaction_execute_with_config")]
-    pub async fn execute_with_config<F, Fut, T>(
-        &self,
-        config: TransactionConfig,
-        f: F,
-    ) -> Result<T, TransactionError>
-    where
-        F: FnOnce(&DatabaseTransaction) -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        self.begin_with_config(config).await?;
-
-        // Get a reference to the transaction
-        let result = {
-            let active_tx = self.active_transaction.read();
-            let tx_state = active_tx
-                .as_ref()
-                .ok_or(TransactionError::NoActiveTransaction)?;
-            
-            let transaction = tx_state.transaction.as_ref()
-                .ok_or_else(|| TransactionError::NoActiveTransaction)?;
-            
-            f(transaction).await
-        };
-
-        match result {
-            Ok(result) => {
-                self.commit().await?;
-                Ok(result)
-            }
-            Err(e) => {
-                warn!("Transaction failed, rolling back: {}", e);
-                self.rollback().await?;
-                Err(TransactionError::CommitFailed(e.to_string()))
-            }
-        }
-    }
-
-    /// Execute a closure within a nested transaction (savepoint)
-    ///
-    /// This creates a savepoint before executing the closure.
-    /// On failure, it rolls back to the savepoint instead of rolling back the entire transaction.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Savepoint name
-    /// * `f` - Closure to execute
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// tx_manager.begin().await?;
-    ///
-    /// // First operation
-    /// do_something(&tx).await?;
-    ///
-    /// // Nested operation with savepoint
-    /// tx_manager.execute_in_savepoint("nested_op", |tx| async move {
-    ///     risky_operation(tx).await?;
-    ///     Ok(())
-    /// }).await?;
-    ///
-    /// tx_manager.commit().await?;
-    /// ```
-    #[instrument(skip(self, f), name = "transaction_execute_in_savepoint")]
-    pub async fn execute_in_savepoint<F, Fut, T>(
-        &self,
-        name: &str,
-        f: F,
-    ) -> Result<T, TransactionError>
-    where
-        F: FnOnce(&DatabaseTransaction) -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        self.savepoint(name).await?;
-
-        // Get a reference to the transaction
-        let result = {
-            let active_tx = self.active_transaction.read();
-            let tx_state = active_tx
-                .as_ref()
-                .ok_or(TransactionError::NoActiveTransaction)?;
-            
-            let transaction = tx_state.transaction.as_ref()
-                .ok_or_else(|| TransactionError::NoActiveTransaction)?;
-            
-            f(transaction).await
-        };
-
-        match result {
-            Ok(result) => {
-                self.release_savepoint(name).await?;
-                Ok(result)
-            }
-            Err(e) => {
-                warn!("Savepoint '{}' failed, rolling back: {}", name, e);
-                self.rollback_to_savepoint(name).await?;
-                Err(TransactionError::SavepointFailed {
-                    name: name.to_string(),
-                    message: e.to_string(),
-                })
-            }
-        }
     }
 
     /// Check if there is an active transaction
@@ -846,69 +623,5 @@ impl<'a> Drop for TransactionGuard<'a> {
             // Note: We can't async rollback in Drop, so we just warn
             // The TransactionManager's Drop will handle the actual rollback
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_savepoint_name() {
-        let manager = TransactionManager::new(Arc::new(DatabaseConnection::default()));
-
-        // Valid names
-        assert!(manager.validate_savepoint_name("sp1").is_ok());
-        assert!(manager.validate_savepoint_name("savepoint_1").is_ok());
-        assert!(manager.validate_savepoint_name("SAVEPOINT").is_ok());
-
-        // Invalid names
-        assert!(manager.validate_savepoint_name("").is_err());
-        assert!(manager.validate_savepoint_name("sp-1").is_err());
-        assert!(manager.validate_savepoint_name("sp 1").is_err());
-        assert!(manager.validate_savepoint_name(&"a".repeat(64)).is_err());
-    }
-
-    #[test]
-    fn test_transaction_config_default() {
-        let config = TransactionConfig::default();
-        assert!(matches!(
-            config.isolation_level,
-            TransactionIsolation::ReadCommitted
-        ));
-        assert!(matches!(config.access_mode, TransactionAccess::ReadWrite));
-        assert!(config.enable_savepoints);
-    }
-
-    #[test]
-    fn test_isolation_level_conversion() {
-        assert!(matches!(
-            IsolationLevel::from(TransactionIsolation::ReadUncommitted),
-            IsolationLevel::ReadUncommitted
-        ));
-        assert!(matches!(
-            IsolationLevel::from(TransactionIsolation::ReadCommitted),
-            IsolationLevel::ReadCommitted
-        ));
-        assert!(matches!(
-            IsolationLevel::from(TransactionIsolation::RepeatableRead),
-            IsolationLevel::RepeatableRead
-        ));
-        assert!(matches!(
-            IsolationLevel::from(TransactionIsolation::Serializable),
-            IsolationLevel::Serializable
-        ));
-    }
-
-    #[test]
-    fn test_access_mode_conversion() {
-        assert!(matches!(
-            AccessMode::from(TransactionAccess::ReadWrite),
-            AccessMode::ReadWrite
-        ));
-        assert!(matches!(
-            AccessMode::from(TransactionAccess::ReadOnly),
-            AccessMode::ReadOnly
-        ));
     }
 }

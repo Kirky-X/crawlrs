@@ -211,7 +211,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create AppState using struct literal
     let app_state = AppState {
-        db: infrastructure.db,
+        db_pool: infrastructure.db.inner().clone(),
         redis_client: infrastructure.redis_client,
         task_repo: infrastructure.repositories.task_repo,
         credits_repo: infrastructure.repositories.credits_repo,

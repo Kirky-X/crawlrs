@@ -91,21 +91,15 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> AsyncCrawlUseC
         request: AsyncCrawlRequest,
     ) -> Result<AsyncCrawlResponse, anyhow::Error> {
         // 创建爬取任务
-        let crawl = Crawl {
-            id: Uuid::new_v4(),
-            team_id: request.team_id,
-            name: request.request.name.unwrap_or_default(),
-            root_url: request.request.url.clone(),
-            url: request.request.url.clone(),
-            status: CrawlStatus::Queued,
-            config: serde_json::to_value(&request.request.config).unwrap_or_default(),
-            total_tasks: 0,
-            completed_tasks: 0,
-            failed_tasks: 0,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            completed_at: None,
-        };
+        let now = chrono::Utc::now();
+        let crawl = Crawl::new(
+            Uuid::new_v4(),
+            request.team_id,
+            request.request.name.unwrap_or_default(),
+            request.request.url.clone(),
+            request.request.url.clone(),
+            serde_json::to_value(&request.request.config).unwrap_or_default(),
+        );
         self.crawl_repo.create(&crawl).await?;
 
         // 创建根任务
@@ -181,21 +175,15 @@ impl<C: CrawlRepository, T: TaskRepository, R: CreditsRepository> SyncCrawlUseCa
         let start_time = std::time::Instant::now();
 
         // 创建爬取任务
-        let crawl = Crawl {
-            id: Uuid::new_v4(),
-            team_id: request.team_id,
-            name: request.request.name.unwrap_or_default(),
-            root_url: request.request.url.clone(),
-            url: request.request.url.clone(),
-            status: CrawlStatus::Queued,
-            config: serde_json::to_value(&request.request.config).unwrap_or_default(),
-            total_tasks: 0,
-            completed_tasks: 0,
-            failed_tasks: 0,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            completed_at: None,
-        };
+        let now = chrono::Utc::now();
+        let crawl = Crawl::new(
+            Uuid::new_v4(),
+            request.team_id,
+            request.request.name.unwrap_or_default(),
+            request.request.url.clone(),
+            request.request.url.clone(),
+            serde_json::to_value(&request.request.config).unwrap_or_default(),
+        );
         self.crawl_repo.create(&crawl).await?;
 
         // 创建根任务

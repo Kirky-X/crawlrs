@@ -13,60 +13,74 @@
 # 特殊角色:
 # - admin: 管理员角色，拥有完全访问权限
 #   系统自动将 admin 角色的用户视为超级用户
+#
+# 表名说明: 所有表名使用复数形式以与数据库保持一致
 
 roles:
+  # 管理员角色 - 完全权限
   admin:
     description: "Administrator with full access to all tables and operations"
     tables:
-      tasks:
-        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
-      crawls:
-        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
-      scrape_results:
-        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
-      search_results:
-        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
-      credits:
-        operations: ["SELECT", "UPDATE"]
-      credits_transactions:
-        operations: ["SELECT", "INSERT"]
-      webhooks:
-        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
-      webhook_events:
-        operations: ["SELECT", "INSERT", "UPDATE"]
-      tasks_backlog:
-        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
-      geo_restriction_log:
-        operations: ["SELECT"]
-      auth_scopes:
-        operations: ["SELECT", "INSERT", "UPDATE"]
-      audit_log:
-        operations: ["SELECT"]
+      # 核心业务表
       teams:
-        operations: ["SELECT", "INSERT", "UPDATE"]
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
       api_keys:
         operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      tasks:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      crawls:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      scrape_results:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      webhooks:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      webhook_events:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      tasks_backlog:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      # 积分相关表
+      credits:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      credits_transactions:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      # 审计和配置表
+      geo_restriction_logs:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      audit_logs:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      feature_flags:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      feature_flag_overrides:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      scopes:
+        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
 
-  scraper:
-    description: "Scraper role - can create and manage scraping tasks"
+  # API 用户角色 - 应用程序访问
+  api_user:
+    description: "API user role - standard application access"
     tables:
       tasks:
-        operations: ["SELECT", "INSERT"]
+        operations: ["SELECT", "INSERT", "UPDATE"]
       crawls:
-        operations: ["SELECT", "INSERT"]
+        operations: ["SELECT", "INSERT", "UPDATE"]
       scrape_results:
         operations: ["SELECT", "INSERT"]
-      search_results:
-        operations: ["SELECT", "INSERT"]
-      credits:
-        operations: ["SELECT"]
       webhooks:
-        operations: ["SELECT"]
+        operations: ["SELECT", "INSERT", "UPDATE"]
       webhook_events:
         operations: ["SELECT", "INSERT"]
       tasks_backlog:
+        operations: ["SELECT", "INSERT", "UPDATE"]
+      credits:
+        operations: ["SELECT"]
+      credits_transactions:
         operations: ["SELECT", "INSERT"]
+      teams:
+        operations: ["SELECT"]
+      api_keys:
+        operations: ["SELECT"]
 
+  # 查看器角色 - 只读访问
   viewer:
     description: "Read-only access - can view data but not modify"
     tables:
@@ -76,31 +90,69 @@ roles:
         operations: ["SELECT"]
       scrape_results:
         operations: ["SELECT"]
-      search_results:
-        operations: ["SELECT"]
-      credits:
-        operations: ["SELECT"]
       webhooks:
         operations: ["SELECT"]
       webhook_events:
         operations: ["SELECT"]
+      tasks_backlog:
+        operations: ["SELECT"]
+      credits:
+        operations: ["SELECT"]
+      credits_transactions:
+        operations: ["SELECT"]
       teams:
         operations: ["SELECT"]
-      audit_log:
+      api_keys:
+        operations: ["SELECT"]
+      audit_logs:
+        operations: ["SELECT"]
+      feature_flags:
+        operations: ["SELECT"]
+      scopes:
         operations: ["SELECT"]
 
+  # 系统角色 - 后台服务和内部调用
   system:
     description: "System service account - minimal required permissions"
     tables:
       tasks:
-        operations: ["SELECT", "UPDATE"]
+        operations: ["SELECT", "INSERT", "UPDATE"]
+      crawls:
+        operations: ["SELECT", "INSERT", "UPDATE"]
+      scrape_results:
+        operations: ["SELECT", "INSERT"]
       tasks_backlog:
-        operations: ["SELECT", "UPDATE"]
+        operations: ["SELECT", "INSERT", "UPDATE"]
+      webhook_events:
+        operations: ["SELECT", "INSERT"]
       credits:
         operations: ["SELECT", "UPDATE"]
       credits_transactions:
         operations: ["INSERT"]
+      geo_restriction_logs:
+        operations: ["SELECT", "INSERT"]
+      audit_logs:
+        operations: ["SELECT", "INSERT"]
+      teams:
+        operations: ["SELECT"]
+      webhooks:
+        operations: ["SELECT"]
+
+  # 爬虫角色 - 爬取任务管理
+  scraper:
+    description: "Scraper role - can create and manage scraping tasks"
+    tables:
+      tasks:
+        operations: ["SELECT", "INSERT"]
+      crawls:
+        operations: ["SELECT", "INSERT"]
+      scrape_results:
+        operations: ["SELECT", "INSERT"]
+      tasks_backlog:
+        operations: ["SELECT", "INSERT"]
+      credits:
+        operations: ["SELECT"]
       webhook_events:
-        operations: ["INSERT", "UPDATE"]
-      audit_log:
-        operations: ["INSERT"]
+        operations: ["SELECT", "INSERT"]
+      webhooks:
+        operations: ["SELECT"]

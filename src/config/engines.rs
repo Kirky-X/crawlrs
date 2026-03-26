@@ -8,7 +8,6 @@
 //! 包含 FlareSolverr、Fire Engine 等抓取引擎的配置设置
 
 use confers::Config;
-use confers::validator::Validate;
 use serde::{Deserialize, Serialize};
 
 /// FlareSolverr 引擎配置设置
@@ -21,27 +20,23 @@ use serde::{Deserialize, Serialize};
 /// * `url` - FlareSolverr 服务器 URL
 /// * `timeout_seconds` - 请求超时时间（秒）
 /// * `max_retries` - 最大重试次数
-#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "CRAWLRS__ENGINES__FLARESOLVERR__")]
 pub struct FlareSolverrSettings {
     /// 是否启用 FlareSolverr 引擎
     #[config(default = false)]
-    #[garde(skip)]
     pub enabled: bool,
 
     /// FlareSolverr 服务器 URL
     #[config(default = "http://localhost:8191/v1".to_string())]
-    #[garde(url)]
     pub url: String,
 
     /// 请求超时时间（秒）
     #[config(default = 30)]
-    #[garde(range(min = 1, max = 300))]
     pub timeout_seconds: u64,
 
     /// 最大重试次数
     #[config(default = 3)]
-    #[garde(range(min = 0, max = 10))]
     pub max_retries: u32,
 }
 
@@ -53,17 +48,15 @@ pub struct FlareSolverrSettings {
 ///
 /// * `enabled` - 是否启用 Fire Engine CDP
 /// * `url` - Fire Engine CDP 服务器 URL
-#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "CRAWLRS__ENGINES__FIRE_CDP__")]
 pub struct FireCdpSettings {
     /// 是否启用 Fire Engine CDP
     #[config(default = false)]
-    #[garde(skip)]
     pub enabled: bool,
 
     /// Fire Engine CDP 服务器 URL
     #[config(default = "http://localhost:8191/v1".to_string())]
-    #[garde(url)]
     pub url: String,
 }
 
@@ -75,17 +68,15 @@ pub struct FireCdpSettings {
 ///
 /// * `enabled` - 是否启用 Fire Engine TLS
 /// * `url` - Fire Engine TLS 服务器 URL
-#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "CRAWLRS__ENGINES__FIRE_TLS__")]
 pub struct FireTlsSettings {
     /// 是否启用 Fire Engine TLS
     #[config(default = false)]
-    #[garde(skip)]
     pub enabled: bool,
 
     /// Fire Engine TLS 服务器 URL
     #[config(default = "http://localhost:8191/v1".to_string())]
-    #[garde(url)]
     pub url: String,
 }
 
