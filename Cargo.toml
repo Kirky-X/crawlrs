@@ -91,7 +91,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 confers = { path = "/home/dev/projects/confers", default-features = false, features = ["toml", "json", "yaml", "env", "validation", "watch", "dynamic"] }
-figment = { version = "0.10", features = ["toml", "json", "yaml", "env"] }
 
 # Error handling
 thiserror = "2.0.17"

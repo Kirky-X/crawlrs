@@ -19,7 +19,7 @@ use chrono::{Duration, Utc};
 use dbnexus::DbPool;
 use sea_orm::{
     sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set,
+    QueryOrder, QuerySelect,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -272,72 +272,80 @@ impl TaskRepository for TaskRepositoryImpl {
     async fn cancel_tasks_by_crawl_id(&self, crawl_id: Uuid) -> Result<u64, RepositoryError> {
         let session = self.pool.get_session("admin").await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let tasks = task_entity::Entity::find()
+
+        // PERF: 使用批量更新代替 N+1 查询
+        // 获取所有需要取消的任务 ID
+        let task_ids: Vec<Uuid> = task_entity::Entity::find()
+            .select_only()
+            .column_as(task_entity::Column::Id, "id")
             .filter(task_entity::Column::CrawlId.eq(crawl_id))
             .filter(task_entity::Column::Status.is_in(vec![
                 TaskStatus::Queued.to_string(),
                 TaskStatus::Active.to_string(),
             ]))
+            .into_tuple()
             .all(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let mut count = 0u64;
-
-        for entity in tasks {
-            let mut domain = TaskMapper::to_domain(entity);
-            domain.cancel();
-
-            let updated_entity = TaskMapper::to_entity(&domain);
-            let active_model = task_entity::ActiveModel::from(updated_entity);
-
-            active_model
-                .update(conn)
-                .await
-                .map_err(|e| RepositoryError::Database(e.into()))?;
-
-            count += 1;
+        if task_ids.is_empty() {
+            return Ok(0);
         }
 
-        Ok(count)
+        // 批量更新所有任务为取消状态
+        let update_count = task_entity::Entity::update_many()
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(TaskStatus::Cancelled.to_string()),
+            )
+            .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(task_entity::Column::Id.is_in(task_ids.iter().map(|id| *id)))
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        Ok(update_count.rows_affected)
     }
 
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
         let now = Utc::now();
-        
+
         let session = self.pool.get_session("admin").await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let tasks = task_entity::Entity::find()
+        // PERF: 使用批量更新代替 N+1 查询
+        // 获取所有需要过期处理的任务 ID
+        let task_ids: Vec<Uuid> = task_entity::Entity::find()
+            .select_only()
+            .column_as(task_entity::Column::Id, "id")
             .filter(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
             .filter(task_entity::Column::ExpiresAt.lt(now))
+            .into_tuple()
             .all(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let mut count = 0u64;
-
-        for entity in tasks {
-            let mut domain = TaskMapper::to_domain(entity);
-            domain.fail();
-
-            let updated_entity = TaskMapper::to_entity(&domain);
-            let active_model = task_entity::ActiveModel::from(updated_entity);
-
-            active_model
-                .update(conn)
-                .await
-                .map_err(|e| RepositoryError::Database(e.into()))?;
-
-            count += 1;
+        if task_ids.is_empty() {
+            return Ok(0);
         }
 
-        Ok(count)
+        // 批量更新所有过期任务为失败状态
+        let update_count = task_entity::Entity::update_many()
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(TaskStatus::Failed.to_string()),
+            )
+            .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(task_entity::Column::Id.is_in(task_ids.iter().map(|id| *id)))
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        Ok(update_count.rows_affected)
     }
 
     async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
@@ -404,37 +412,62 @@ impl TaskRepository for TaskRepositoryImpl {
         team_id: Uuid,
         _force: bool,
     ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        if task_ids.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+
         let session = self.pool.get_session("admin").await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        // PERF: 使用批量查询代替 N+1 查询
+        // 一次性获取所有任务，验证团队所有权
+        let entities: Vec<task_entity::Model> = task_entity::Entity::find()
+            .filter(task_entity::Column::Id.is_in(task_ids.iter().map(|id| *id)))
+            .all(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let mut cancelled = Vec::new();
         let mut errors = Vec::new();
 
-        for id in task_ids {
-            if let Some(entity) = task_entity::Entity::find_by_id(id)
-                .one(conn)
-                .await
-                .map_err(|e| RepositoryError::Database(e.into()))?
-            {
+        // 按团队所有权分组
+        let mut owned_ids = Vec::new();
+        let mut not_found_ids = Vec::new();
+
+        for id in &task_ids {
+            if let Some(entity) = entities.iter().find(|e| e.id == *id) {
                 if entity.team_id == team_id {
-                    let mut domain = TaskMapper::to_domain(entity);
-                    domain.cancel();
-
-                    let updated_entity = TaskMapper::to_entity(&domain);
-                    let active_model = task_entity::ActiveModel::from(updated_entity);
-
-                    match active_model.update(conn).await {
-                        Ok(_) => cancelled.push(id),
-                        Err(e) => errors.push((id, e.to_string())),
-                    }
+                    owned_ids.push(entity.id);
                 } else {
-                    errors.push((id, "Team ID mismatch".to_string()));
+                    errors.push((*id, "Team ID mismatch".to_string()));
                 }
             } else {
-                errors.push((id, "Task not found".to_string()));
+                not_found_ids.push(*id);
             }
+        }
+
+        for id in not_found_ids {
+            errors.push((id, "Task not found".to_string()));
+        }
+
+        // 批量更新所有归属当前团队的任务
+        if !owned_ids.is_empty() {
+            let update_count = task_entity::Entity::update_many()
+                .col_expr(
+                    task_entity::Column::Status,
+                    Expr::value(TaskStatus::Cancelled.to_string()),
+                )
+                .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+                .filter(task_entity::Column::Id.is_in(owned_ids.iter().map(|id| *id)))
+                .exec(conn)
+                .await
+                .map_err(|e| RepositoryError::Database(e.into()))?;
+
+            // 所有更新的任务都成功取消
+            cancelled.extend(owned_ids);
+            let _ = update_count;
         }
 
         Ok((cancelled, errors))

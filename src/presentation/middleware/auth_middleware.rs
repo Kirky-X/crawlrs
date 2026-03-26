@@ -154,16 +154,22 @@ impl ApiKeyCache {
     }
 
     /// Invalidate all cache entries for a specific API key ID
-    /// 
+    ///
     /// # Security
-    /// 
+    ///
     /// This method should be called when an API key's permissions are updated
     /// but the token hash is not immediately available.
-    /// 
+    ///
+    /// # Thread Safety
+    ///
+    /// This method must be called while holding a write lock on the cache.
+    /// For global cache, use `invalidate_cache_by_api_key_id()` instead.
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `api_key_id` - The UUID of the API key to invalidate
     pub fn invalidate_by_api_key_id(&mut self, api_key_id: Uuid) {
+        // SEC-004: 收集匹配的键后批量删除（在持有写锁的情况下执行）
         let keys_to_remove: Vec<String> = self
             .cache
             .iter()
@@ -184,27 +190,32 @@ impl ApiKeyCache {
     }
 
     /// Invalidate all cache entries for a specific team
-    /// 
+    ///
     /// # Security
-    /// 
+    ///
     /// This method should be called when:
     /// - A team is suspended or deleted
     /// - Team-wide permissions are changed
     /// - All team API keys need to be re-validated
-    /// 
+    ///
+    /// # Thread Safety
+    ///
+    /// This method must be called while holding a write lock on the cache.
+    /// For global cache, use `invalidate_cache_by_team()` instead.
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `team_id` - The UUID of the team whose cache entries should be invalidated
     pub fn invalidate_team(&mut self, team_id: Uuid) {
-        // Collect keys to remove (can't modify cache while iterating)
+        // SEC-004: 收集匹配的键后批量删除（在持有写锁的情况下执行）
         let keys_to_remove: Vec<String> = self.cache
             .iter()
             .filter(|(_, result)| result.team_id == team_id)
             .map(|(key, _)| key.clone())
             .collect();
-        
+
         let removed_count = keys_to_remove.len();
-        
+
         // Remove collected keys
         for key in keys_to_remove {
             self.cache.pop(&key);

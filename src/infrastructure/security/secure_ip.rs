@@ -116,12 +116,46 @@ impl SecureIpExtractor {
     /// # 参数
     ///
     /// * `req` - HTTP 请求
+    /// * `direct_ip_override` - 可选的直接连接 IP 地址覆盖（用于从 ConnectInfo 提取）
     ///
     /// # 返回值
     ///
     /// 返回客户端的真实 IP 地址，如果无法确定则返回 None
-    pub fn extract_client_ip(&self, req: &Request) -> Option<String> {
-        // 获取直接连接的 IP 地址
+    pub fn extract_client_ip_with_override(
+        &self,
+        req: &Request,
+        direct_ip_override: Option<std::net::IpAddr>,
+    ) -> Option<String> {
+        // 如果提供了覆盖 IP，直接使用它
+        if let Some(direct_ip) = direct_ip_override {
+            // 如果可信代理验证已禁用，直接信任转发头
+            if !self.trusted_proxies.enabled {
+                debug!("Trusted proxy validation disabled, using forwarded headers");
+                return self
+                    .extract_from_forwarded_headers(req)
+                    .or_else(|| Some(direct_ip.to_string()));
+            }
+
+            // 检查直接连接的 IP 是否来自可信代理
+            if self.trusted_proxies.is_trusted(&direct_ip) {
+                debug!(
+                    "Request from trusted proxy {}, extracting IP from forwarded headers",
+                    direct_ip
+                );
+                return self
+                    .extract_from_forwarded_headers(req)
+                    .or_else(|| Some(direct_ip.to_string()));
+            } else {
+                // 不是可信代理，使用直接连接的 IP
+                debug!(
+                    "Request from non-trusted source {}, using direct IP",
+                    direct_ip
+                );
+                return Some(direct_ip.to_string());
+            }
+        }
+
+        // 否则从请求扩展中获取
         let direct_ip = req.extensions().get::<SocketAddr>().map(|addr| addr.ip());
 
         // 如果可信代理验证已禁用，直接信任转发头（不安全，仅用于开发）
@@ -158,6 +192,19 @@ impl SecureIpExtractor {
             );
             Some(direct_ip.to_string())
         }
+    }
+
+    /// 从请求中安全地提取客户端 IP 地址（便捷函数）
+    ///
+    /// # 参数
+    ///
+    /// * `req` - HTTP 请求
+    ///
+    /// # 返回值
+    ///
+    /// 返回客户端的真实 IP 地址，如果无法确定则返回 None
+    pub fn extract_client_ip(&self, req: &Request) -> Option<String> {
+        self.extract_client_ip_with_override(req, None)
     }
 
     /// 从转发头中提取 IP 地址

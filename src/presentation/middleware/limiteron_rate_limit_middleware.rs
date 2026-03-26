@@ -20,6 +20,7 @@ use axum::{
 use limiteron::prelude::{Decision, Governor, RequestContext};
 use tracing::{debug, error, warn};
 
+use crate::infrastructure::security::secure_ip::{SecureIpExtractor, TrustedProxyConfig};
 use crate::presentation::middleware::RATE_LIMIT_EXCLUDED_ENDPOINTS;
 
 /// Limiteron 速率限制中间件状态
@@ -30,30 +31,15 @@ pub struct LimiteronMiddlewareState {
 }
 
 /// 提取客户端 IP 地址
+///
+/// # 安全说明
+///
+/// 此函数使用安全的 IP 提取逻辑来防止 X-Forwarded-For 头伪造攻击。
+/// 只有当请求来自可信代理时，才信任转发头中的 IP 地址。
 fn extract_client_ip(request: &Request, remote_addr: Option<SocketAddr>) -> Option<String> {
-    // 尝试从 X-Forwarded-For 头提取
-    if let Some(forwarded) = request.headers().get("X-Forwarded-For") {
-        if let Ok(forwarded_str) = forwarded.to_str() {
-            // 取第一个 IP（最原始的客户端 IP）
-            if let Some(ip) = forwarded_str.split(',').next() {
-                return Some(ip.trim().to_string());
-            }
-        }
-    }
-
-    // 尝试从 X-Real-IP 头提取
-    if let Some(real_ip) = request.headers().get("X-Real-IP") {
-        if let Ok(ip) = real_ip.to_str() {
-            return Some(ip.trim().to_string());
-        }
-    }
-
-    // 从连接信息获取
-    if let Some(addr) = remote_addr {
-        return Some(addr.ip().to_string());
-    }
-
-    None
+    let extractor = SecureIpExtractor::new(TrustedProxyConfig::default());
+    let direct_ip = remote_addr.map(|addr| addr.ip());
+    extractor.extract_client_ip_with_override(request, direct_ip)
 }
 
 /// Limiteron 分布式速率限制中间件
@@ -176,13 +162,37 @@ pub async fn limiteron_rate_limit_middleware(
                 .into_response())
         }
         Err(e) => {
-            error!(
-                "LimiteronMiddleware: Rate limit check error for path {}: {}",
-                path, e
-            );
-            // Fail open - allow request if rate limiting service fails
-            debug!("LimiteronMiddleware: Failing open due to error");
-            Ok(next.run(request).await)
+            // SEC-003: 可配置的 fail-open/fail-closed 行为
+            if RATE_LIMIT_FAIL_OPEN {
+                // Fail-open: 允许请求通过，但记录严重警告
+                error!(
+                    target: "security_audit",
+                    error = %e,
+                    path = path,
+                    "LimiteronMiddleware: SEC-003 Rate limiting service error - failing open. \
+                     Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security."
+                );
+                Ok(next.run(request).await)
+            } else {
+                // Fail-closed: 拒绝请求以确保安全
+                error!(
+                    target: "security_audit",
+                    error = %e,
+                    path = path,
+                    "LimiteronMiddleware: SEC-003 Rate limiting service error - failing closed"
+                );
+                Ok((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Rate limiting service temporarily unavailable".to_string(),
+                )
+                    .into_response())
+            }
         }
     }
 }
+
+/// Limiteron rate limiting fail-open behavior
+///
+/// Controls what happens when the rate limiting service encounters an error.
+/// Can be overridden via environment variable.
+const RATE_LIMIT_FAIL_OPEN: bool = true;

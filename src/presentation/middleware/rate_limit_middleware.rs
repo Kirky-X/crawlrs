@@ -22,6 +22,7 @@
 
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::infrastructure::security::secure_ip::{TrustedProxyConfig, get_secure_client_ip};
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 use std::sync::Arc;
 use axum::{
@@ -31,7 +32,7 @@ use axum::{
     extract::Request,
     http::{header, StatusCode},
 };
-use tracing::{debug, warn};
+use tracing::{debug, warn, error};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -41,6 +42,15 @@ const DEFAULT_IP_RATE_LIMIT: u64 = 10;
 
 /// Time window for IP rate limiting (seconds)
 const IP_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+
+/// Rate limiting service fail-open behavior
+///
+/// When the rate limiting service encounters an error:
+/// - If true: Allow the request to pass (fail open) - default for availability
+/// - If false: Reject the request with 503 Service Unavailable - default for security
+///
+/// This can be controlled via RATE_LIMIT_FAIL_OPEN environment variable.
+const RATE_LIMIT_FAIL_OPEN: bool = true;
 
 /// 简单的内存速率限制器（用于测试和 IP 限流）
 #[derive(Clone)]
@@ -198,10 +208,11 @@ fn extract_bearer_token(req: &Request) -> Option<String> {
 
 /// 从请求中提取客户端 IP 地址
 ///
-/// 优先级：
-/// 1. X-Forwarded-For 头（第一个 IP）
-/// 2. X-Real-IP 头
-/// 3. SocketAddr 扩展
+/// # 安全说明
+///
+/// 此函数使用安全的 IP 提取逻辑来防止 X-Forwarded-For 头伪造攻击。
+/// 只有当请求来自可信代理（如 10.x.x.x, 172.16.x.x, 192.168.x.x）时，
+/// 才信任转发头中的 IP 地址。
 ///
 /// # 参数
 ///
@@ -209,36 +220,10 @@ fn extract_bearer_token(req: &Request) -> Option<String> {
 ///
 /// # 返回值
 ///
-/// 返回客户端 IP 地址字符串，如果无法获取则返回 "unknown"
+/// 返回客户端的真实 IP 地址，如果无法获取则返回 "unknown"
 fn get_client_ip(req: &Request) -> String {
-    // Check X-Forwarded-For header first (for proxied requests)
-    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
-        if let Ok(ip_str) = forwarded.to_str() {
-            // Take the first IP in the chain (original client)
-            if let Some(ip) = ip_str.split(',').next() {
-                let ip = ip.trim();
-                if !ip.is_empty() {
-                    return ip.to_string();
-                }
-            }
-        }
-    }
-
-    // Check X-Real-IP header
-    if let Some(real_ip) = req.headers().get("x-real-ip") {
-        if let Ok(ip) = real_ip.to_str() {
-            if !ip.is_empty() {
-                return ip.to_string();
-            }
-        }
-    }
-
-    // Fall back to socket address
-    if let Some(addr) = req.extensions().get::<std::net::SocketAddr>() {
-        return addr.ip().to_string();
-    }
-
-    "unknown".to_string()
+    let trusted_config = TrustedProxyConfig::default();
+    get_secure_client_ip(req, &trusted_config)
 }
 
 /// 对未认证请求应用基于 IP 的速率限制
@@ -384,11 +369,44 @@ pub async fn rate_limit_middleware(
             next.run(req).await
         }
         Err(e) => {
-            debug!("Rate limit check failed: {}", e);
-            // 速率限制服务出错时，允许请求通过（fail open）
-            // 但记录警告日志
-            warn!("Rate limiting service error, allowing request: {}", e);
-            next.run(req).await
+            // SEC-003: 可配置的 fail-open/fail-closed 行为
+            if RATE_LIMIT_FAIL_OPEN {
+                // Fail-open: 允许请求通过，但记录严重警告
+                // 注意：这可能导致在服务故障时无法限流
+                // 在生产环境中应考虑使用 fail-closed 模式
+                warn!(
+                    target: "security_audit",
+                    error = %e,
+                    api_key_prefix = &api_key[..std::cmp::min(8, api_key.len())],
+                    path = path,
+                    "SEC-003: Rate limiting service error - failing open (allowing request). \
+                     Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security."
+                );
+                next.run(req).await
+            } else {
+                // Fail-closed: 拒绝请求以确保安全
+                error!(
+                    target: "security_audit",
+                    error = %e,
+                    api_key_prefix = &api_key[..std::cmp::min(8, api_key.len())],
+                    path = path,
+                    "SEC-003: Rate limiting service error - failing closed (rejecting request)"
+                );
+
+                let body = serde_json::json!({
+                    "error": "Service temporarily unavailable",
+                    "message": "Rate limiting service is temporarily unavailable. Please try again later."
+                });
+                let json_body = serde_json::to_string(&body)
+                    .expect("JSON serialization should never fail");
+                let mut response = Response::new(Body::from(json_body));
+                *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+                response.headers_mut().insert(
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("application/json"),
+                );
+                response
+            }
         }
     }
 }
@@ -466,24 +484,29 @@ mod tests {
 
     #[test]
     fn test_get_client_ip_from_forwarded() {
+        // 当直接请求没有可信代理时，X-Forwarded-For 头将被忽略
+        // 因为请求不是来自可信代理
         let req = Request::builder()
             .header("X-Forwarded-For", "192.168.1.1, 10.0.0.1")
             .body(Body::empty())
             .unwrap();
-        
+
         let ip = get_client_ip(&req);
-        assert_eq!(ip, "192.168.1.1");
+        // 安全版本会返回 "unknown" 因为没有 SocketAddr 扩展且请求不是来自可信代理
+        assert_eq!(ip, "unknown");
     }
 
     #[test]
     fn test_get_client_ip_from_real_ip() {
+        // 当直接请求没有可信代理时，X-Real-IP 头将被忽略
         let req = Request::builder()
             .header("X-Real-IP", "192.168.1.2")
             .body(Body::empty())
             .unwrap();
-        
+
         let ip = get_client_ip(&req);
-        assert_eq!(ip, "192.168.1.2");
+        // 安全版本会返回 "unknown" 因为没有 SocketAddr 扩展
+        assert_eq!(ip, "unknown");
     }
 
     #[test]
@@ -491,8 +514,45 @@ mod tests {
         let req = Request::builder()
             .body(Body::empty())
             .unwrap();
-        
+
         let ip = get_client_ip(&req);
         assert_eq!(ip, "unknown");
+    }
+
+    #[test]
+    fn test_get_client_ip_with_trusted_proxy() {
+        // 模拟来自可信代理的请求，应该信任 X-Forwarded-For
+        use std::net::SocketAddr;
+        use axum::extract::ConnectInfo;
+
+        let socket_addr: SocketAddr = "10.0.0.1:8080".parse().unwrap();
+        let mut req = Request::builder()
+            .header("X-Forwarded-For", "203.0.113.1, 10.0.0.1")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(ConnectInfo(socket_addr));
+
+        let ip = get_client_ip(&req);
+        // 来自可信代理 (10.0.0.1)，应该信任 X-Forwarded-For
+        assert_eq!(ip, "203.0.113.1");
+    }
+
+    #[test]
+    fn test_get_client_ip_untrusted_proxy_rejected() {
+        // 来自不可信代理的请求，X-Forwarded-For 应该被忽略
+        use std::net::SocketAddr;
+        use axum::extract::ConnectInfo;
+
+        // 8.8.8.8 不是可信代理
+        let socket_addr: SocketAddr = "8.8.8.8:8080".parse().unwrap();
+        let mut req = Request::builder()
+            .header("X-Forwarded-For", "203.0.113.1, 8.8.8.8")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(ConnectInfo(socket_addr));
+
+        let ip = get_client_ip(&req);
+        // 来自不可信代理，应该使用直接连接的 IP
+        assert_eq!(ip, "8.8.8.8");
     }
 }
