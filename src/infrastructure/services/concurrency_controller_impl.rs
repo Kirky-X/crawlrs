@@ -174,18 +174,18 @@ mod tests {
 
     #[test]
     fn test_extract_payload_limit_scrape_task() {
-        let task = Task {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
-            task_type: TaskType::Scrape,
-            url: "http://example.com".to_string(),
-            payload: serde_json::json!({
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
                 "config": {
                     "max_concurrency": 5
                 }
             }),
-            ..Task::default()
-        };
+        );
 
         // Scrape tasks don't check payload limit
         let limit = RedisConcurrencyController::extract_payload_limit(&task);
@@ -194,18 +194,18 @@ mod tests {
 
     #[test]
     fn test_extract_payload_limit_crawl_task() {
-        let task = Task {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
-            task_type: TaskType::Crawl,
-            url: "http://example.com".to_string(),
-            payload: serde_json::json!({
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
                 "config": {
                     "max_concurrency": 10
                 }
             }),
-            ..Task::default()
-        };
+        );
 
         let limit = RedisConcurrencyController::extract_payload_limit(&task);
         assert_eq!(limit, Some(10));
@@ -213,14 +213,14 @@ mod tests {
 
     #[test]
     fn test_extract_payload_limit_no_config() {
-        let task = Task {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
-            task_type: TaskType::Scrape,
-            url: "http://example.com".to_string(),
-            payload: serde_json::json!({}),
-            ..Task::default()
-        };
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({}),
+        );
 
         let limit = RedisConcurrencyController::extract_payload_limit(&task);
         assert_eq!(limit, None);
@@ -228,18 +228,18 @@ mod tests {
 
     #[test]
     fn test_extract_payload_limit_non_crawl_task() {
-        let task = Task {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
-            task_type: TaskType::Extract,
-            url: "http://example.com".to_string(),
-            payload: serde_json::json!({
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Extract,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
                 "config": {
                     "max_concurrency": 5
                 }
             }),
-            ..Task::default()
-        };
+        );
 
         // Non-Crawl tasks don't check payload limit
         let limit = RedisConcurrencyController::extract_payload_limit(&task);

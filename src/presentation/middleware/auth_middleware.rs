@@ -1160,7 +1160,7 @@ pub async fn check_feature_flag(
 
 /// Create an auth state for testing purposes
 #[cfg(test)]
-pub fn test_auth_state(db: Arc<DatabaseConnection>, team_id: Uuid, api_key_id: Uuid) -> AuthState {
+pub fn test_auth_state(db: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid) -> AuthState {
     AuthState::new(db, team_id, api_key_id, ApiKeyScope::default())
 }
 
