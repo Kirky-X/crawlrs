@@ -492,10 +492,7 @@ mod tests {
         assert!(user_msg.contains("Database operation failed"));
 
         // 网络错误应该返回通用消息
-        let net_err = AppError::Network(reqwest::Error::new(
-            reqwest::ErrorKind::Connect,
-            "Connection refused to 10.0.0.1:8080".into(),
-        ));
+        let net_err = crate::utils::error_helpers::map_to_network_error("Connection refused to 10.0.0.1:8080");
         let user_msg = net_err.user_message();
         assert!(!user_msg.contains("10.0.0.1"));
         assert!(user_msg.contains("External service unavailable"));

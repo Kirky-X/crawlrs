@@ -342,7 +342,7 @@ mod tests {
     }
 
     fn create_test_task() -> Task {
-        let now = Utc::now().naive_utc();
+        let now = Utc::now();
         Task {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),

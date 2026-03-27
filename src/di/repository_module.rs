@@ -80,12 +80,11 @@ use super::database_module::DatabasePoolTrait;
 /// impl_repository_component!(
 ///     CreditsRepositoryComponent,
 ///     CreditsRepositoryImpl,
-///     CreditsRepository,
-///     inner
+///     CreditsRepository
 /// );
 /// ```
 macro_rules! impl_repository_component {
-    ($component_name:ident, $impl_type:ty, $trait_type:path, $pool_field:ident) => {
+    ($component_name:ident, $impl_type:ty, $trait_type:path) => {
         /// Repository component with cached implementation instance.
         ///
         /// Uses `OnceLock` to cache the underlying repository implementation,
@@ -117,7 +116,7 @@ macro_rules! impl_repository_component {
 
             /// Get or create the cached repository instance.
             fn get_repo(&self) -> &$impl_type {
-                self.repo_cache.get_or_init(|| <$impl_type>::new(self.pool.$pool_field.clone()))
+                self.repo_cache.get_or_init(|| <$impl_type>::new(self.pool.clone_inner()))
             }
         }
 
@@ -147,12 +146,14 @@ pub struct TaskRepositoryComponent {
     repo_cache: OnceLock<TaskRepositoryImpl>,
 }
 
-impl<M: Module> Component<M> for TaskRepositoryComponent {
+impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M> for TaskRepositoryComponent {
     type Interface = dyn TaskRepository;
-    type Parameters = (Arc<DatabasePool>, i64);
+    type Parameters = i64;
 
-    fn build(_: &mut ModuleBuildContext<M>, params: Self::Parameters) -> Box<Self::Interface> {
-        Box::new(Self::new(params.0, params.1))
+    fn build(context: &mut ModuleBuildContext<M>, lock_duration: Self::Parameters) -> Box<Self::Interface> {
+        let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
+        let pool = pool_component.get_pool();
+        Box::new(Self::new(pool, lock_duration))
     }
 }
 
@@ -179,7 +180,7 @@ impl TaskRepositoryComponent {
     fn get_repo(&self) -> &TaskRepositoryImpl {
         self.repo_cache.get_or_init(|| {
             TaskRepositoryImpl::new(
-                self.pool.inner.clone(),
+                self.pool.clone_inner(),
                 chrono::Duration::seconds(self.task_lock_duration_seconds),
             )
         })
@@ -334,8 +335,7 @@ impl TaskRepository for TaskRepositoryComponent {
 impl_repository_component!(
     CreditsRepositoryComponent,
     CreditsRepositoryImpl,
-    CreditsRepository,
-    inner
+    CreditsRepository
 );
 
 #[async_trait::async_trait]
@@ -396,8 +396,7 @@ impl CreditsRepository for CreditsRepositoryComponent {
 impl_repository_component!(
     CrawlRepositoryComponent,
     CrawlRepositoryImpl,
-    CrawlRepository,
-    inner
+    CrawlRepository
 );
 
 #[async_trait::async_trait]
@@ -484,8 +483,7 @@ impl CrawlRepository for CrawlRepositoryComponent {
 impl_repository_component!(
     ScrapeResultRepositoryComponent,
     ScrapeResultRepositoryImpl,
-    ScrapeResultRepository,
-    inner
+    ScrapeResultRepository
 );
 
 #[async_trait::async_trait]
@@ -519,8 +517,7 @@ impl ScrapeResultRepository for ScrapeResultRepositoryComponent {
 impl_repository_component!(
     WebhookRepositoryComponent,
     WebhookRepoImpl,
-    WebhookRepository,
-    inner
+    WebhookRepository
 );
 
 #[async_trait::async_trait]
@@ -559,8 +556,7 @@ impl WebhookRepository for WebhookRepositoryComponent {
 impl_repository_component!(
     WebhookEventRepositoryComponent,
     WebhookEventRepoImpl,
-    WebhookEventRepository,
-    inner
+    WebhookEventRepository
 );
 
 #[async_trait::async_trait]
@@ -628,8 +624,7 @@ impl WebhookEventRepository for WebhookEventRepositoryComponent {
 impl_repository_component!(
     TasksBacklogRepositoryComponent,
     TasksBacklogRepositoryImpl,
-    TasksBacklogRepository,
-    inner
+    TasksBacklogRepository
 );
 
 #[async_trait::async_trait]
@@ -722,8 +717,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
 impl_repository_component!(
     AuthScopeRepositoryComponent,
     AuthScopeRepositoryImpl,
-    AuthScopeRepository,
-    inner
+    AuthScopeRepository
 );
 
 #[async_trait::async_trait]
@@ -770,8 +764,7 @@ impl AuthScopeRepository for AuthScopeRepositoryComponent {
 impl_repository_component!(
     AuditLogRepositoryComponent,
     AuditLogRepositoryImpl,
-    AuditLogRepository,
-    inner
+    AuditLogRepository
 );
 
 #[async_trait::async_trait]

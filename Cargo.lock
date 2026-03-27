@@ -1526,10 +1526,10 @@ dependencies = [
  "arc-swap",
  "base64",
  "compact_str 0.9.0",
- "confers-macros",
  "dashmap",
  "garde",
  "indexmap 2.13.0",
+ "macros",
  "notify-debouncer-full",
  "regex",
  "schemars 1.2.0",
@@ -1540,16 +1540,6 @@ dependencies = [
  "tokio",
  "toml 1.1.0+spec-1.1.0",
  "url",
-]
-
-[[package]]
-name = "confers-macros"
-version = "0.3.0"
-dependencies = [
- "darling 0.23.0",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -3789,7 +3779,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "confers",
- "confers-macros",
  "dashmap",
  "dbnexus",
  "futures",
@@ -3921,6 +3910,16 @@ dependencies = [
  "nix",
  "serde",
  "winapi",
+]
+
+[[package]]
+name = "macros"
+version = "0.3.0"
+dependencies = [
+ "darling 0.23.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

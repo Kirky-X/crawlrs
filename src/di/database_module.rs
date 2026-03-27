@@ -96,12 +96,14 @@ pub struct DatabasePoolComponent {
     pool: Arc<DatabasePool>,
 }
 
-impl<M: Module> Component<M> for DatabasePoolComponent {
+impl<M: Module + HasComponent<dyn SettingsTrait>> Component<M> for DatabasePoolComponent {
     type Interface = dyn DatabasePoolTrait;
-    type Parameters = Arc<DatabasePool>;
+    type Parameters = ();
 
-    fn build(_: &mut ModuleBuildContext<M>, pool: Self::Parameters) -> Box<Self::Interface> {
-        Box::new(Self { pool })
+    fn build(_context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+        // Note: This component requires explicit pool creation via bootstrap
+        // The pool should be created and passed to the module during initialization
+        panic!("DatabasePoolComponent must be initialized with an explicit pool. Use DatabasePoolComponent::from(pool) instead.")
     }
 }
 
