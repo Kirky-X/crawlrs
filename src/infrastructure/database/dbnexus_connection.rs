@@ -40,6 +40,25 @@ impl DatabasePool {
         &self.inner
     }
 
+    /// Clone the inner Arc<DbPool> for dependency injection
+    ///
+    /// # Performance
+    ///
+    /// This is a zero-cost operation - Arc::clone only increments
+    /// the reference count, no deep copy occurs.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let pool: Arc<DatabasePool> = /* ... */;
+    /// let inner: Arc<DbPool> = pool.clone_inner();
+    /// let repo = MyRepository::new(inner);
+    /// ```
+    #[inline]
+    pub fn clone_inner(&self) -> Arc<DbPool> {
+        Arc::clone(&self.inner)
+    }
+
     /// Get a session for the specified role
     ///
     /// This is the primary method for obtaining database sessions.
@@ -131,32 +150,6 @@ pub struct PoolStats {
     pub idle_connections: u32,
     /// Total number of connections
     pub total_connections: u32,
-}
-
-impl Default for DatabasePool {
-    fn default() -> Self {
-        // For testing, create a mock pool
-        let settings = DatabaseSettings {
-            url: "postgresql://postgres:postgres@localhost/crawlrs".to_string(),
-            max_connections: Some(10),
-            min_connections: Some(1),
-            connect_timeout: Some(30),
-            idle_timeout: Some(600),
-            max_lifetime: Some(1800),
-            connection_keepalive: Some(30),
-            health_check_interval: Some(60),
-        };
-        let pool = futures::executor::block_on(create_pool(&settings))
-            .expect("Failed to create default database pool");
-        Self {
-            inner: Arc::new(pool),
-            stats: PoolStats {
-                active_connections: 1,
-                idle_connections: 1,
-                total_connections: 1,
-            },
-        }
-    }
 }
 
 /// Get the permissions config path
