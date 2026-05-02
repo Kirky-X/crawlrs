@@ -7,10 +7,10 @@ use crate::domain::repositories::geo_restriction_repository::{
     GeoRestrictionRepository, GeoRestrictionRepositoryError,
 };
 use crate::domain::services::geo_location::GeoLocation;
+use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::team_service::{
     GeoRestrictionResult, TeamGeoRestrictions, TeamService,
 };
-use crate::domain::services::geo_location::GeoLocationService;
 use async_trait::async_trait;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -77,8 +77,7 @@ impl GeoRestrictionRepository for MockGeoRestrictionRepository {
 
 #[tokio::test]
 async fn test_geo_restrictions_disabled_returns_allowed() {
-    let geo_service: Arc<dyn GeoLocationService> =
-        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoService::new("US".to_string()));
     let geo_repo = Arc::new(MockGeoRestrictionRepository);
     let service = TeamService::new(geo_service, geo_repo);
 
@@ -96,8 +95,7 @@ async fn test_geo_restrictions_disabled_returns_allowed() {
 
 #[tokio::test]
 async fn test_invalid_ip_format_returns_denied() {
-    let geo_service: Arc<dyn GeoLocationService> =
-        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoService::new("US".to_string()));
     let geo_repo = Arc::new(MockGeoRestrictionRepository);
     let service = TeamService::new(geo_service, geo_repo);
 
@@ -139,8 +137,7 @@ async fn test_ip_whitelist_cidr_allows() {
 
 #[tokio::test]
 async fn test_non_whitelisted_ip_blocks() {
-    let geo_service: Arc<dyn GeoLocationService> =
-        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoService::new("US".to_string()));
     let geo_repo = Arc::new(MockGeoRestrictionRepository);
     let service = TeamService::new(geo_service, geo_repo);
 
@@ -159,8 +156,7 @@ async fn test_non_whitelisted_ip_blocks() {
 
 #[tokio::test]
 async fn test_allowed_countries_allows() {
-    let geo_service: Arc<dyn GeoLocationService> =
-        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoService::new("US".to_string()));
     let geo_repo = Arc::new(MockGeoRestrictionRepository);
     let service = TeamService::new(geo_service, geo_repo);
 
@@ -203,8 +199,7 @@ async fn test_blocked_countries_denies() {
 
 #[tokio::test]
 async fn test_case_insensitive_country_matching() {
-    let geo_service: Arc<dyn GeoLocationService> =
-        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoService::new("US".to_string()));
     let geo_repo = Arc::new(MockGeoRestrictionRepository);
     let service = TeamService::new(geo_service, geo_repo);
 
@@ -224,8 +219,7 @@ async fn test_case_insensitive_country_matching() {
 
 #[tokio::test]
 async fn test_domain_blacklist_allows_safe_domain() {
-    let geo_service: Arc<dyn GeoLocationService> =
-        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoService::new("US".to_string()));
     let geo_repo = Arc::new(MockGeoRestrictionRepository);
     let service = TeamService::new(geo_service, geo_repo);
 
@@ -242,8 +236,7 @@ async fn test_domain_blacklist_allows_safe_domain() {
 
 #[tokio::test]
 async fn test_domain_blacklist_blocks_matched_domain() {
-    let geo_service: Arc<dyn GeoLocationService> =
-        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoService::new("US".to_string()));
     let geo_repo = Arc::new(MockGeoRestrictionRepository);
     let service = TeamService::new(geo_service, geo_repo);
 
@@ -265,8 +258,7 @@ async fn test_domain_blacklist_blocks_matched_domain() {
 
 #[tokio::test]
 async fn test_domain_blacklist_disabled_returns_allowed() {
-    let geo_service: Arc<dyn GeoLocationService> =
-        Arc::new(MockGeoService::new("US".to_string()));
+    let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoService::new("US".to_string()));
     let geo_repo = Arc::new(MockGeoRestrictionRepository);
     let service = TeamService::new(geo_service, geo_repo);
 

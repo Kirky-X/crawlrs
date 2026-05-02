@@ -274,3 +274,4 @@ Cargo.lock  # Uncomment if binary, keep if library
 .worktrees/
 
 # End of .gitignore
+.gitnexus
