@@ -46,8 +46,7 @@ impl<M: Module + HasComponent<dyn SettingsTrait>> Component<M> for RedisClientCo
         let settings_component = M::build_component(context);
         let settings = settings_component.get();
         let client = Arc::new(
-            RedisClient::from_settings(&settings.redis)
-                .expect("Failed to create Redis client"),
+            RedisClient::from_settings(&settings.redis).expect("Failed to create Redis client"),
         );
         Box::new(Self::new(settings.redis.url().to_string(), client))
     }

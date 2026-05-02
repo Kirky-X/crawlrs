@@ -13,8 +13,8 @@ use std::sync::Arc;
 use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
 
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
-use crate::di::database_module::{HttpClientTrait, SettingsTrait};
 use crate::di::cache_module::RedisClientTrait;
+use crate::di::database_module::{HttpClientTrait, SettingsTrait};
 use crate::domain::repositories::audit_log_repository::AuditLogRepository;
 use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
@@ -153,7 +153,9 @@ impl crate::domain::services::rate_limiting_service::RateLimitService
         team_id: uuid::Uuid,
         config: crate::domain::services::rate_limiting_service::RateLimitConfig,
     ) -> Result<(), crate::domain::services::rate_limiting_service::RateLimitingError> {
-        self.inner.update_team_rate_limit_config(team_id, config).await
+        self.inner
+            .update_team_rate_limit_config(team_id, config)
+            .await
     }
 
     async fn cleanup_expired_rate_limits(
@@ -184,7 +186,9 @@ impl crate::domain::services::rate_limiting_service::ConcurrencyControlService
         team_id: uuid::Uuid,
         task_id: uuid::Uuid,
     ) -> Result<(), crate::domain::services::rate_limiting_service::RateLimitingError> {
-        self.inner.release_team_concurrency_slot(team_id, task_id).await
+        self.inner
+            .release_team_concurrency_slot(team_id, task_id)
+            .await
     }
 
     async fn get_team_current_concurrency(
@@ -209,7 +213,9 @@ impl crate::domain::services::rate_limiting_service::ConcurrencyControlService
         team_id: uuid::Uuid,
         config: crate::domain::services::rate_limiting_service::ConcurrencyConfig,
     ) -> Result<(), crate::domain::services::rate_limiting_service::RateLimitingError> {
-        self.inner.update_team_concurrency_config(team_id, config).await
+        self.inner
+            .update_team_concurrency_config(team_id, config)
+            .await
     }
 }
 
@@ -237,7 +243,9 @@ impl crate::domain::services::rate_limiting_service::QuotaService for RateLimiti
         description: String,
         reference_id: Option<uuid::Uuid>,
     ) -> Result<(), crate::domain::services::rate_limiting_service::RateLimitingError> {
-        self.inner.check_and_deduct_quota(team_id, amount, transaction_type, description, reference_id).await
+        self.inner
+            .check_and_deduct_quota(team_id, amount, transaction_type, description, reference_id)
+            .await
     }
 
     async fn get_quota_balance(
@@ -376,13 +384,17 @@ pub struct CreateScrapeUseCaseComponent {
     engine_client: Arc<crate::engines::engine_client::EngineClient>,
 }
 
-impl<M: Module + HasComponent<dyn EngineRouterTrait>> Component<M> for CreateScrapeUseCaseComponent {
+impl<M: Module + HasComponent<dyn EngineRouterTrait>> Component<M>
+    for CreateScrapeUseCaseComponent
+{
     type Interface = dyn CreateScrapeUseCaseTrait;
     type Parameters = ();
 
     fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
         let engine_router: Arc<dyn EngineRouterTrait> = M::build_component(context);
-        let engine_client = Arc::new(crate::engines::engine_client::EngineClient::with_router(engine_router));
+        let engine_client = Arc::new(crate::engines::engine_client::EngineClient::with_router(
+            engine_router,
+        ));
         Box::new(Self::new(engine_client))
     }
 }
@@ -399,11 +411,11 @@ impl CreateScrapeUseCaseTrait for CreateScrapeUseCaseComponent {
     async fn execute(
         &self,
         request_dto: crate::application::dto::scrape_request::ScrapeRequestDto,
-    ) -> Result<
-        crate::engines::engine_client::ScrapeResponse,
-        crate::domain::models::DomainError,
-    > {
-        let use_case = crate::application::use_cases::create_scrape::CreateScrapeUseCase::new(self.engine_client.clone());
+    ) -> Result<crate::engines::engine_client::ScrapeResponse, crate::domain::models::DomainError>
+    {
+        let use_case = crate::application::use_cases::create_scrape::CreateScrapeUseCase::new(
+            self.engine_client.clone(),
+        );
         use_case.execute(request_dto).await
     }
 }
@@ -451,7 +463,9 @@ pub trait TeamSemaphoreTrait: Interface + Send + Sync {
 #[async_trait::async_trait]
 impl TeamSemaphoreTrait for TeamSemaphoreComponent {
     fn get_semaphore(&self) -> Arc<TeamSemaphore> {
-        self.semaphore.clone().unwrap_or_else(|| Arc::new(TeamSemaphore::new(self.default_permits)))
+        self.semaphore
+            .clone()
+            .unwrap_or_else(|| Arc::new(TeamSemaphore::new(self.default_permits)))
     }
 }
 
@@ -499,11 +513,14 @@ impl AuditServiceTrait for AuditServiceComponent {
         team_id: uuid::Uuid,
         scope: crate::domain::auth::ApiKeyScope,
     ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
-        let entry = crate::domain::services::audit_service::AuditLogBuilder::new(action, crate::domain::auth::AuditDecision::Allow)
-            .with_api_key_id(api_key_id)
-            .with_team_id(team_id)
-            .with_scope(scope)
-            .build();
+        let entry = crate::domain::services::audit_service::AuditLogBuilder::new(
+            action,
+            crate::domain::auth::AuditDecision::Allow,
+        )
+        .with_api_key_id(api_key_id)
+        .with_team_id(team_id)
+        .with_scope(scope)
+        .build();
         self.audit_repo.create(&entry).await?;
         Ok(())
     }
@@ -516,12 +533,15 @@ impl AuditServiceTrait for AuditServiceComponent {
         reason: String,
         scope: Option<crate::domain::auth::ApiKeyScope>,
     ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
-        let entry = crate::domain::services::audit_service::AuditLogBuilder::new(action, crate::domain::auth::AuditDecision::Deny)
-            .with_api_key_id(api_key_id.unwrap_or_default())
-            .with_team_id(team_id.unwrap_or_default())
-            .with_denial_reason(reason)
-            .with_scope(scope.unwrap_or_default())
-            .build();
+        let entry = crate::domain::services::audit_service::AuditLogBuilder::new(
+            action,
+            crate::domain::auth::AuditDecision::Deny,
+        )
+        .with_api_key_id(api_key_id.unwrap_or_default())
+        .with_team_id(team_id.unwrap_or_default())
+        .with_denial_reason(reason)
+        .with_scope(scope.unwrap_or_default())
+        .build();
         self.audit_repo.create(&entry).await?;
         Ok(())
     }
@@ -535,7 +555,10 @@ impl AuditServiceTrait for AuditServiceComponent {
         Vec<crate::domain::auth::AuditLogEntry>,
         crate::domain::services::audit_service::AuditServiceError,
     > {
-        self.audit_repo.find_by_api_key_id(api_key_id, limit, offset).await.map_err(Into::into)
+        self.audit_repo
+            .find_by_api_key_id(api_key_id, limit, offset)
+            .await
+            .map_err(Into::into)
     }
 
     async fn get_logs_for_team(
@@ -547,7 +570,10 @@ impl AuditServiceTrait for AuditServiceComponent {
         Vec<crate::domain::auth::AuditLogEntry>,
         crate::domain::services::audit_service::AuditServiceError,
     > {
-        self.audit_repo.find_by_team_id(team_id, limit, offset).await.map_err(Into::into)
+        self.audit_repo
+            .find_by_team_id(team_id, limit, offset)
+            .await
+            .map_err(Into::into)
     }
 
     async fn get_denied_requests(
@@ -558,7 +584,10 @@ impl AuditServiceTrait for AuditServiceComponent {
         Vec<crate::domain::auth::AuditLogEntry>,
         crate::domain::services::audit_service::AuditServiceError,
     > {
-        self.audit_repo.find_denied_for_key(api_key_id, limit).await.map_err(Into::into)
+        self.audit_repo
+            .find_denied_for_key(api_key_id, limit)
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -774,8 +803,9 @@ impl crate::domain::services::geo_location::GeoLocationService for GeoLocationSe
         &self,
         ip: &std::net::IpAddr,
     ) -> anyhow::Result<crate::domain::services::geo_location::GeoLocation> {
-        let service =
-            crate::infrastructure::geolocation::GeoLocationServiceImpl::new(self.http_client.get().clone());
+        let service = crate::infrastructure::geolocation::GeoLocationServiceImpl::new(
+            self.http_client.get().clone(),
+        );
         service.get_location(ip).await
     }
 }

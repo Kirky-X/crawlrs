@@ -99,7 +99,10 @@ macro_rules! impl_repository_component {
             type Interface = dyn $trait_type;
             type Parameters = ();
 
-            fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
+            fn build(
+                context: &mut ModuleBuildContext<M>,
+                _: Self::Parameters,
+            ) -> Box<Self::Interface> {
                 let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
                 Box::new(Self::new(pool_component.get_pool()))
             }
@@ -116,7 +119,8 @@ macro_rules! impl_repository_component {
 
             /// Get or create the cached repository instance.
             fn get_repo(&self) -> &$impl_type {
-                self.repo_cache.get_or_init(|| <$impl_type>::new(self.pool.clone_inner()))
+                self.repo_cache
+                    .get_or_init(|| <$impl_type>::new(self.pool.clone_inner()))
             }
         }
 
@@ -150,7 +154,10 @@ impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M> for TaskRepos
     type Interface = dyn TaskRepository;
     type Parameters = i64;
 
-    fn build(context: &mut ModuleBuildContext<M>, lock_duration: Self::Parameters) -> Box<Self::Interface> {
+    fn build(
+        context: &mut ModuleBuildContext<M>,
+        lock_duration: Self::Parameters,
+    ) -> Box<Self::Interface> {
         let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
         let pool = pool_component.get_pool();
         Box::new(Self::new(pool, lock_duration))
@@ -381,7 +388,9 @@ impl CreditsRepository for CreditsRepositoryComponent {
         Vec<crate::domain::models::CreditsTransaction>,
         crate::domain::repositories::credits_repository::CreditsRepositoryError,
     > {
-        self.get_repo().get_transaction_history(team_id, limit).await
+        self.get_repo()
+            .get_transaction_history(team_id, limit)
+            .await
     }
 
     async fn initialize_team_credits(
@@ -389,7 +398,9 @@ impl CreditsRepository for CreditsRepositoryComponent {
         team_id: uuid::Uuid,
         initial_balance: i64,
     ) -> Result<i64, crate::domain::repositories::credits_repository::CreditsRepositoryError> {
-        self.get_repo().initialize_team_credits(team_id, initial_balance).await
+        self.get_repo()
+            .initialize_team_credits(team_id, initial_balance)
+            .await
     }
 }
 
@@ -469,7 +480,9 @@ impl CrawlRepository for CrawlRepositoryComponent {
         Vec<crate::domain::models::Crawl>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        self.get_repo().find_by_team_id_paginated(team_id, limit, offset).await
+        self.get_repo()
+            .find_by_team_id_paginated(team_id, limit, offset)
+            .await
     }
 
     async fn count_by_team_id(
@@ -600,7 +613,9 @@ impl WebhookEventRepository for WebhookEventRepositoryComponent {
         Vec<crate::domain::models::WebhookEvent>,
         crate::domain::repositories::task_repository::RepositoryError,
     > {
-        self.get_repo().find_by_team_id_paginated(team_id, limit, offset).await
+        self.get_repo()
+            .find_by_team_id_paginated(team_id, limit, offset)
+            .await
     }
 
     async fn count_by_team_id(
@@ -788,7 +803,9 @@ impl AuditLogRepository for AuditLogRepositoryComponent {
         Vec<crate::domain::auth::AuditLogEntry>,
         crate::domain::repositories::audit_log_repository::AuditRepositoryError,
     > {
-        self.get_repo().find_by_api_key_id(api_key_id, limit, offset).await
+        self.get_repo()
+            .find_by_api_key_id(api_key_id, limit, offset)
+            .await
     }
 
     async fn find_by_team_id(
@@ -800,7 +817,9 @@ impl AuditLogRepository for AuditLogRepositoryComponent {
         Vec<crate::domain::auth::AuditLogEntry>,
         crate::domain::repositories::audit_log_repository::AuditRepositoryError,
     > {
-        self.get_repo().find_by_team_id(team_id, limit, offset).await
+        self.get_repo()
+            .find_by_team_id(team_id, limit, offset)
+            .await
     }
 
     async fn find_denied_for_key(
@@ -847,7 +866,8 @@ impl GeoRestrictionRepositoryComponent {
 
     /// Get or create the cached repository instance.
     fn get_repo(&self) -> &DatabaseGeoRestrictionRepository {
-        self.repo_cache.get_or_init(|| DatabaseGeoRestrictionRepository::new(self.db.clone()))
+        self.repo_cache
+            .get_or_init(|| DatabaseGeoRestrictionRepository::new(self.db.clone()))
     }
 }
 
@@ -871,7 +891,9 @@ impl GeoRestrictionRepository for GeoRestrictionRepositoryComponent {
         (),
         crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
     > {
-        self.get_repo().update_team_restrictions(team_id, restrictions).await
+        self.get_repo()
+            .update_team_restrictions(team_id, restrictions)
+            .await
     }
 
     async fn log_geo_restriction_action(
@@ -931,7 +953,8 @@ impl StorageRepositoryComponent {
 
     /// Get or create the cached storage instance.
     fn get_storage(&self) -> &LocalStorage {
-        self.storage_cache.get_or_init(|| LocalStorage::new(self.storage_path.clone()))
+        self.storage_cache
+            .get_or_init(|| LocalStorage::new(self.storage_path.clone()))
     }
 }
 
@@ -997,8 +1020,7 @@ impl TaskQueue for TaskQueueComponent {
     async fn dequeue(
         &self,
         worker_id: uuid::Uuid,
-    ) -> Result<Option<crate::domain::models::Task>, crate::queue::task_queue::QueueError>
-    {
+    ) -> Result<Option<crate::domain::models::Task>, crate::queue::task_queue::QueueError> {
         let queue = PostgresTaskQueue::new(self.task_repo.clone());
         queue.dequeue(worker_id).await
     }

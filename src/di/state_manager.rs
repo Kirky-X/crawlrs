@@ -70,7 +70,10 @@ impl DependencyStateManager {
         let mut states = match self.states.write() {
             Ok(guard) => guard,
             Err(e) => {
-                tracing::error!("State manager RwLock poisoned during register_component: {}", e);
+                tracing::error!(
+                    "State manager RwLock poisoned during register_component: {}",
+                    e
+                );
                 return;
             }
         };
@@ -90,7 +93,10 @@ impl DependencyStateManager {
         let mut states = match self.states.write() {
             Ok(guard) => guard,
             Err(e) => {
-                tracing::error!("State manager RwLock poisoned during mark_initializing: {}", e);
+                tracing::error!(
+                    "State manager RwLock poisoned during mark_initializing: {}",
+                    e
+                );
                 return;
             }
         };
@@ -134,7 +140,10 @@ impl DependencyStateManager {
         let states = match self.states.read() {
             Ok(guard) => guard,
             Err(e) => {
-                tracing::error!("State manager RwLock poisoned during get_component_state: {}", e);
+                tracing::error!(
+                    "State manager RwLock poisoned during get_component_state: {}",
+                    e
+                );
                 return None;
             }
         };
@@ -158,7 +167,10 @@ impl DependencyStateManager {
         let states = match self.states.read() {
             Ok(guard) => guard,
             Err(e) => {
-                tracing::error!("State manager RwLock poisoned during get_components_by_state: {}", e);
+                tracing::error!(
+                    "State manager RwLock poisoned during get_components_by_state: {}",
+                    e
+                );
                 return Vec::new();
             }
         };

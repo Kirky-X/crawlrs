@@ -24,7 +24,9 @@
 //! for frequently accessed repositories.
 
 // Re-export all components from sub-modules for backward compatibility
-pub use super::cache_module::{OxCacheComponent, OxCacheTrait, RedisClientComponent, RedisClientTrait};
+pub use super::cache_module::{
+    OxCacheComponent, OxCacheTrait, RedisClientComponent, RedisClientTrait,
+};
 pub use super::database_module::{
     DatabasePoolComponent, DatabasePoolTrait, HttpClientComponent, HttpClientTrait,
     SettingsComponent, SettingsTrait, TransactionManagerComponent, TransactionManagerTrait,
