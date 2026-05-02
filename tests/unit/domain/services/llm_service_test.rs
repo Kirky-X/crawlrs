@@ -8,13 +8,17 @@
 mod tests {
     use crawlrs::domain::services::llm_service::{LLMService, TokenUsage};
     use serde_json::json;
+    use std::sync::Arc;
 
     #[tokio::test]
-#[ignore]  # Skip: Test requires specific features or has private field access
+    #[ignore] // Skip: Test requires specific features or has private field access
     async fn test_extract_data_with_real_implementation() {
         use crawlrs::config::settings::Settings;
-        let settings = Settings::new().unwrap_or_default();
-        let service = LLMService::new(&settings);
+        use reqwest::Client;
+
+        let settings = Settings::load_sync().unwrap_or_default();
+        let http_client = Arc::new(Client::new());
+        let service = LLMService::new(&settings, http_client);
 
         // Test with a simple schema and text
         let text = "The price of the product is $29.99 and it has 4.5 stars rating.";

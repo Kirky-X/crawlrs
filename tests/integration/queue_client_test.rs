@@ -4,7 +4,8 @@
 // See LICENSE file in the project root for full license information.
 
 use async_trait::async_trait;
-use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
+use crawlrs::domain::models::task_model::Task;
 use crawlrs::queue::client::QueueClientError;
 use crawlrs::queue::{
     BatchDequeueResult, DequeueRequest, QueueClientBuilder, StatusUpdateRequest, TaskQueue,

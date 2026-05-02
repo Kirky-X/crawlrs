@@ -8,7 +8,8 @@
 use chrono::Duration;
 use chrono::{DateTime, FixedOffset, Utc};
 use crawlrs::config::settings::Settings;
-use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
 use crawlrs::domain::services::llm_service::LLMService;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;

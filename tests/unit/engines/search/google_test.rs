@@ -1,19 +1,18 @@
 #![cfg(test)]
 use crawlrs::common::constants::testing::QUICK_TEST_TIMEOUT;
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
-
 use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::search::client::google::GoogleSearchEngine;
 use std::sync::Arc;
 use std::time::Duration;
 
+fn create_test_engine() -> GoogleSearchEngine {
+    GoogleSearchEngine::new(Arc::new(EngineClient::new()))
+}
+
 #[tokio::test]
-#[ignore]  # Skip: Test requires specific features or has private field access
+#[ignore] // Skip: Test requires specific features or has private field access
 async fn test_google_arc_id_generation() {
-    let engine = GoogleSearchEngine::new(Arc::new(EngineClient::new()));
+    let engine = create_test_engine();
 
     // When: 首次获取 ARC_ID
     let arc_id_1: String = engine.get_arc_id(0).await;
@@ -31,9 +30,9 @@ async fn test_google_arc_id_generation() {
 }
 
 #[tokio::test]
-#[ignore]  # Skip: Test requires specific features or has private field access
+#[ignore] // Skip: Test requires specific features or has private field access
 async fn test_google_arc_id_refresh_after_hour() {
-    let engine = GoogleSearchEngine::new(Arc::new(EngineClient::new()));
+    let engine = create_test_engine();
 
     // Given: 获取初始 ARC_ID
     let arc_id_1 = engine.get_arc_id(0).await;
@@ -58,7 +57,7 @@ fn test_google_result_parsing() {
         </div>
     "#;
 
-    let engine = GoogleSearchEngine::new(Arc::new(EngineClient::new()));
+    let engine = create_test_engine();
     let results = engine
         .parse_results(html)
         .expect("Failed to parse google search results");

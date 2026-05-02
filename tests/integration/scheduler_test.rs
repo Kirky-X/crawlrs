@@ -7,7 +7,8 @@
 
 use super::helpers::create_test_app_no_worker;
 use chrono::{Duration, Utc};
-use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use serde_json::json;
 use uuid::Uuid;

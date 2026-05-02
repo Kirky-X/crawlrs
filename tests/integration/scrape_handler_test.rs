@@ -5,7 +5,7 @@
 
 use super::helpers::create_test_app_with_rate_limit_options;
 use axum::http::StatusCode;
-use crawlrs::domain::models::task::{TaskStatus, TaskType};
+use crawlrs::domain::models::task_model::{TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 
 #[tokio::test]

@@ -28,7 +28,8 @@ impl WorkerProcess for SuccessfulProcessor {
     }
 
     async fn process(&self) -> ProcessResult {
-        self.call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         ProcessResult::Completed
     }
 }
@@ -348,18 +349,9 @@ async fn test_multiple_workers_parallel() {
     assert!(results.2.is_ok());
 
     // 验证每个工作器都被调用了
-    assert_eq!(
-        call_count1.load(std::sync::atomic::Ordering::SeqCst),
-        3
-    );
-    assert_eq!(
-        call_count2.load(std::sync::atomic::Ordering::SeqCst),
-        3
-    );
-    assert_eq!(
-        call_count3.load(std::sync::atomic::Ordering::SeqCst),
-        3
-    );
+    assert_eq!(call_count1.load(std::sync::atomic::Ordering::SeqCst), 3);
+    assert_eq!(call_count2.load(std::sync::atomic::Ordering::SeqCst), 3);
+    assert_eq!(call_count3.load(std::sync::atomic::Ordering::SeqCst), 3);
 }
 
 // === Edge Cases and Error Handling ===

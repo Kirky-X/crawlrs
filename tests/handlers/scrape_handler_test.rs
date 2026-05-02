@@ -6,8 +6,9 @@
 use crawlrs::config::settings::Settings;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::queue::task_queue::{PostgresTaskQueue, TaskQueue};
-use crawlrs::domain::models::task::{Task, TaskType};
-use crawlrs::domain::models::task::TaskStatus;
+use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::TaskType;
+use crawlrs::domain::models::task_domain::TaskStatus;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use sea_orm::{Database, DatabaseConnection};
 use std::sync::Arc;

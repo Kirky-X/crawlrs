@@ -3,12 +3,19 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::search::client::bing::BingSearchEngine;
+use crawlrs::search::types::SearchEngineType;
+use std::sync::Arc;
+
+fn create_test_engine() -> BingSearchEngine {
+    BingSearchEngine::new(Arc::new(EngineClient::new()))
+}
 
 /// Test BingSearchEngine with real HTML parsing - using sample data
 #[tokio::test]
 async fn test_bing_search_engine_real_parsing() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
 
     // Test with real-world HTML structure that Bing actually returns
     let real_bing_html = r#"
@@ -51,7 +58,7 @@ async fn test_bing_search_engine_real_parsing() {
     "#;
 
     let result = engine
-        .parse_search_results(real_bing_html, "rust programming")
+        .parse_search_results(real_bing_html)
         .await;
 
     assert!(result.is_ok());
@@ -61,8 +68,7 @@ async fn test_bing_search_engine_real_parsing() {
     // Verify first result
     assert_eq!(results[0].title, "Rust Programming Language");
     assert_eq!(results[0].url, "https://www.rust-lang.org/");
-    assert_eq!(results[0].engine, "bing");
-    assert!(results[0].score >= 0.0 && results[0].score <= 1.0);
+    assert_eq!(results[0].engine, SearchEngineType::Bing);
 
     // Verify second result
     assert_eq!(
@@ -70,14 +76,13 @@ async fn test_bing_search_engine_real_parsing() {
         "The Rust Programming Language - The Rust Programming Language Book"
     );
     assert_eq!(results[1].url, "https://doc.rust-lang.org/book/");
-    assert_eq!(results[1].engine, "bing");
-    assert!(results[1].score >= 0.0 && results[1].score <= 1.0);
+    assert_eq!(results[1].engine, SearchEngineType::Bing);
 }
 
 /// Test BingSearchEngine with real HTML that has malformed elements
 #[tokio::test]
 async fn test_bing_search_engine_real_malformed_html() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
 
     // Test with real HTML that has missing or malformed elements
     let malformed_html = r#"
@@ -123,7 +128,7 @@ async fn test_bing_search_engine_real_malformed_html() {
     "#;
 
     let result = engine
-        .parse_search_results(malformed_html, "test query")
+        .parse_search_results(malformed_html)
         .await;
 
     assert!(result.is_ok());
@@ -138,7 +143,7 @@ async fn test_bing_search_engine_real_malformed_html() {
 /// Test BingSearchEngine with real HTML containing dates and metadata
 #[tokio::test]
 async fn test_bing_search_engine_real_html_with_dates() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
 
     // Test with real HTML that contains publication dates
     let html_with_dates = r#"
@@ -181,7 +186,7 @@ async fn test_bing_search_engine_real_html_with_dates() {
     "#;
 
     let result = engine
-        .parse_search_results(html_with_dates, "rust tutorial")
+        .parse_search_results(html_with_dates)
         .await;
 
     assert!(result.is_ok());
@@ -198,8 +203,6 @@ async fn test_bing_search_engine_real_html_with_dates() {
     assert_eq!(results[0].url, "https://blog.example.com/rust-tutorial");
     assert!(results[0]
         .description
-        .as_ref()
-        .expect("Missing description in result 0")
         .contains("Published on Jan 15, 2024"));
 
     // Verify second result with date
@@ -207,15 +210,13 @@ async fn test_bing_search_engine_real_html_with_dates() {
     assert_eq!(results[1].url, "https://tutorial.example.com/rust");
     assert!(results[1]
         .description
-        .as_ref()
-        .expect("Missing description in result 1")
         .contains("Last updated: March 2024"));
 }
 
 /// Test BingSearchEngine with empty real HTML
 #[tokio::test]
 async fn test_bing_search_engine_real_empty_html() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
 
     // Test with real empty HTML
     let empty_html = r#"
@@ -233,7 +234,7 @@ async fn test_bing_search_engine_real_empty_html() {
     "#;
 
     let result = engine
-        .parse_search_results(empty_html, "nonexistent query")
+        .parse_search_results(empty_html)
         .await;
 
     // Should return empty results, not an error
@@ -245,7 +246,7 @@ async fn test_bing_search_engine_real_empty_html() {
 /// Test BingSearchEngine cookie and URL building with real parameters
 #[tokio::test]
 async fn test_bing_search_engine_real_cookie_construction() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
 
     // Test real cookie construction for different locales
     let test_cases = vec![
@@ -274,7 +275,7 @@ async fn test_bing_search_engine_real_cookie_construction() {
 /// Test BingSearchEngine URL building with real pagination
 #[tokio::test]
 async fn test_bing_search_engine_real_url_construction() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
 
     let query = "rust programming tutorial";
 

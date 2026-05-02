@@ -323,7 +323,7 @@ mod engine_client_tests {
     // === Integration-style Tests (Async) ===
 
     #[tokio::test]
-#[ignore]  # Skip: Test requires specific features or has private field access
+    #[ignore] // Skip: Test requires specific features or has private field access
     async fn test_health_check_returns_healthy_for_empty_client() {
         let client = EngineClient::new();
         let status = client.health_check().await;
@@ -340,7 +340,7 @@ mod engine_client_tests {
     // === URL Validation Tests ===
 
     #[tokio::test]
-#[ignore]  # Skip: Test requires specific features or has private field access
+    #[ignore] // Skip: Test requires specific features or has private field access
     async fn test_scrape_request_rejects_invalid_url() {
         let client = EngineClient::new();
         let request = ScrapeRequest::new("not-a-valid-url");
@@ -363,7 +363,7 @@ mod engine_client_tests {
     }
 
     #[tokio::test]
-#[ignore]  # Skip: Test requires specific features or has private field access
+    #[ignore] // Skip: Test requires specific features or has private field access
     async fn test_scrape_request_rejects_internal_url() {
         let client = EngineClient::new();
         let request = ScrapeRequest::new("http://localhost:8080");

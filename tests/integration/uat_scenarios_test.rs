@@ -16,7 +16,8 @@
 
 use super::helpers::create_test_app_no_worker;
 use crate::common::constants::timeouts::{E2E_TEST_TIMEOUT, QUICK_TEST_TIMEOUT};
-use crawlrs::domain::models::task::{Task, TaskStatus};
+use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::TaskStatus;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::domain::services::crawl_service::CrawlService;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
@@ -947,7 +948,8 @@ async fn test_uat004_javascript_rendering() {
 #[ignore]  # Skip: Integration test requiring full environment
 async fn test_uat025_degradation_strategy() {
     use super::helpers::create_test_app_no_worker;
-    use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+    use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
     use crawlrs::domain::services::crawl_service::CrawlService;
     use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use std::sync::Arc;
@@ -1260,7 +1262,8 @@ async fn test_uat019_team_concurrency_limit() {
     // 这个测试需要验证任务处理器的并发控制逻辑
     // 在我们的系统中，并发控制是在 RateLimitingService 中实现的
     use super::helpers::create_test_app_no_worker;
-    use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+    use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
     use crawlrs::domain::repositories::task_repository::TaskRepository;
     use crawlrs::domain::services::rate_limiting_service::{
         ConcurrencyResult, RateLimitingService,
@@ -1490,7 +1493,8 @@ async fn test_uat026_sync_wait_perf() {
 
     // 这里使用简单的内存 repo 模拟
     use chrono::Utc;
-    use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+    use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
     use crawlrs::domain::repositories::task_repository::TaskRepository;
     use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use crawlrs::presentation::handlers::task_handler::wait_for_tasks_completion;
@@ -1616,7 +1620,8 @@ async fn test_uat026_sync_wait_perf() {
 async fn test_uat027_task_mgmt_perf() {
     // 1. 设置测试环境
     use chrono::Utc;
-    use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+    use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
     use crawlrs::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
     use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use serde_json::json;
@@ -1774,7 +1779,8 @@ async fn test_uat016_sync_wait_integration() {
     // 1. 设置环境
     use super::helpers::create_test_app_no_worker;
     use chrono::Utc;
-    use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+    use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
     use crawlrs::domain::repositories::task_repository::TaskRepository;
     use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use crawlrs::presentation::handlers::task_handler::wait_for_tasks_completion;
@@ -1963,7 +1969,8 @@ async fn test_uat016_sync_wait_integration() {
 async fn test_uat017_task_management_api() {
     use super::helpers::create_test_app_no_worker;
     use chrono::Utc;
-    use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+    use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
     use crawlrs::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
     use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use serde_json::json;

@@ -8,7 +8,7 @@
 /// 数据库测试固件
 ///
 /// 提供内存数据库和PostgreSQL数据库的设置和清理功能
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend};
 use std::sync::Arc;
 
 /// 数据库连接选项
@@ -61,27 +61,16 @@ impl DatabaseFixture {
 
         let mut opt = ConnectOptions::new(&options.url);
         opt.max_connections(20)
-           .min_connections(5)
-           .connect_timeout(std::time::Duration::from_secs(60))
-           .idle_timeout(std::time::Duration::from_secs(600))
-           .max_lifetime(std::time::Duration::from_secs(1800))
-           .sqlx_logging(false);
+            .min_connections(5)
+            .connect_timeout(std::time::Duration::from_secs(60))
+            .idle_timeout(std::time::Duration::from_secs(600))
+            .max_lifetime(std::time::Duration::from_secs(1800))
+            .sqlx_logging(false);
 
         let db = Database::connect(opt)
             .await
             .expect("Failed to connect to database");
         let db_pool = Arc::new(db);
-
-        // 运行数据库迁移（使用 sqlx PgPool）
-        if options.url.starts_with("postgres://") {
-            let sqlx_pool = sqlx::postgres::PgPoolOptions::new()
-                .max_connections(20)
-                .acquire_timeout(std::time::Duration::from_secs(60))
-                .connect(&options.url)
-                .await
-                .expect("Failed to connect to database for migration");
-            let _ = sqlx::migrate!().run(&sqlx_pool).await;
-        }
 
         let db_backend = if options.url.starts_with("postgres://") {
             DbBackend::Postgres
@@ -104,28 +93,25 @@ impl DatabaseFixture {
             DbBackend::Postgres => {
                 // PostgreSQL语法
                 self.db_pool
-                    .execute(Statement::from_sql_and_values(
-                        DbBackend::Postgres,
-                        "DELETE FROM tasks WHERE url LIKE $1",
-                        vec![cleanup_pattern.into()],
+                    .execute_unprepared(&format!(
+                        "DELETE FROM tasks WHERE url LIKE '{}'",
+                        cleanup_pattern
                     ))
                     .await
                     .expect("Failed to delete tasks");
 
                 self.db_pool
-                    .execute(Statement::from_sql_and_values(
-                        DbBackend::Postgres,
-                        "DELETE FROM tasks_backlog WHERE payload->>'url' LIKE $1",
-                        vec![cleanup_pattern.into()],
+                    .execute_unprepared(&format!(
+                        "DELETE FROM tasks_backlog WHERE payload->>'url' LIKE '{}'",
+                        cleanup_pattern
                     ))
                     .await
                     .expect("Failed to delete tasks from backlog");
 
                 self.db_pool
-                    .execute(Statement::from_sql_and_values(
-                        DbBackend::Postgres,
-                        "DELETE FROM scrape_results WHERE url LIKE $1",
-                        vec![cleanup_pattern.into()],
+                    .execute_unprepared(&format!(
+                        "DELETE FROM scrape_results WHERE url LIKE '{}'",
+                        cleanup_pattern
                     ))
                     .await
                     .expect("Failed to delete scrape results");
@@ -133,28 +119,25 @@ impl DatabaseFixture {
             DbBackend::Sqlite => {
                 // SQLite语法
                 self.db_pool
-                    .execute(Statement::from_sql_and_values(
-                        DbBackend::Sqlite,
-                        "DELETE FROM tasks WHERE url LIKE ?",
-                        vec![cleanup_pattern.into()],
+                    .execute_unprepared(&format!(
+                        "DELETE FROM tasks WHERE url LIKE '{}'",
+                        cleanup_pattern
                     ))
                     .await
                     .expect("Failed to delete tasks");
 
                 self.db_pool
-                    .execute(Statement::from_sql_and_values(
-                        DbBackend::Sqlite,
-                        "DELETE FROM tasks_backlog WHERE payload->>'url' LIKE ?",
-                        vec![cleanup_pattern.into()],
+                    .execute_unprepared(&format!(
+                        "DELETE FROM tasks_backlog WHERE json_extract(payload, '$.url') LIKE '{}'",
+                        cleanup_pattern
                     ))
                     .await
                     .expect("Failed to delete tasks from backlog");
 
                 self.db_pool
-                    .execute(Statement::from_sql_and_values(
-                        DbBackend::Sqlite,
-                        "DELETE FROM scrape_results WHERE url LIKE ?",
-                        vec![cleanup_pattern.into()],
+                    .execute_unprepared(&format!(
+                        "DELETE FROM scrape_results WHERE url LIKE '{}'",
+                        cleanup_pattern
                     ))
                     .await
                     .expect("Failed to delete scrape results");

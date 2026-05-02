@@ -23,7 +23,7 @@ impl LLMServiceTrait for NoOpLLMService {
         _text: &str,
         _schema: &Value,
         _format: &str,
-    ) -> Result<(Value, TokenUsage)> {
+    ) -> Result<(Value, TokenUsage), anyhow::Error> {
         Ok((json!({}), TokenUsage::default()))
     }
 }

@@ -5,14 +5,21 @@
 
 #[cfg(test)]
 mod tests {
+    use crawlrs::engines::engine_client::EngineClient;
     use crawlrs::search::client::sogou::SogouSearchEngine;
     use crawlrs::search::engine_trait::SearchEngine;
+    use crawlrs::search::types::SearchEngineType;
     use crawlrs::search::SearchRequest;
-    
+    use std::sync::Arc;
+
+    fn create_test_engine() -> SogouSearchEngine {
+        SogouSearchEngine::new(Arc::new(EngineClient::new()))
+    }
+
     #[test]
     fn test_sogou_html_parsing() {
-        let engine = SogouSearchEngine::new();
-        
+        let engine = create_test_engine();
+
         // 测试HTML解析 - 标准结果结构
         let html_response = r#"
         <!DOCTYPE html>
@@ -34,25 +41,27 @@ mod tests {
         </body>
         </html>
         "#;
-        
-        let results = engine.parse_search_results(html_response).expect("Failed to parse search results");
+
+        let results = engine
+            .parse_search_results(html_response)
+            .expect("Failed to parse search results");
 
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].title, "测试文章标题1");
         assert_eq!(results[0].url, "https://example.com/article1");
-        assert_eq!(results[0].engine, "sogou");
-        
+        assert_eq!(results[0].engine, SearchEngineType::Sogou);
+
         assert_eq!(results[1].title, "测试文章标题2");
         assert_eq!(results[1].url, "https://example.com/article2");
-        
+
         assert_eq!(results[2].title, "备选结构标题");
         assert_eq!(results[2].url, "https://example.com/article3");
     }
-    
+
     #[test]
     fn test_sogou_empty_html() {
-        let engine = SogouSearchEngine::new();
-        
+        let engine = create_test_engine();
+
         // 测试空HTML
         let empty_html = r#"
         <!DOCTYPE html>
@@ -63,16 +72,18 @@ mod tests {
         </body>
         </html>
         "#;
-        
-        let results = engine.parse_search_results(empty_html).expect("Failed to parse empty HTML");
+
+        let results = engine
+            .parse_search_results(empty_html)
+            .expect("Failed to parse empty HTML");
 
         assert_eq!(results.len(), 0);
     }
-    
+
     #[test]
     fn test_sogou_malformed_html() {
-        let engine = SogouSearchEngine::new();
-        
+        let engine = create_test_engine();
+
         // 测试缺少链接的HTML结构
         let malformed_html = r#"
         <!DOCTYPE html>
@@ -91,17 +102,19 @@ mod tests {
         </body>
         </html>
         "#;
-        
-        let results = engine.parse_search_results(malformed_html).expect("Failed to parse malformed HTML");
+
+        let results = engine
+            .parse_search_results(malformed_html)
+            .expect("Failed to parse malformed HTML");
 
         // 应该过滤掉不完整的条目
         assert_eq!(results.len(), 0);
     }
-    
+
     #[test]
     fn test_sogou_relevance_scoring() {
-        let engine = SogouSearchEngine::new();
-        
+        let engine = create_test_engine();
+
         // 测试相关性评分
         let html_with_dates = r#"
         <!DOCTYPE html>
@@ -119,24 +132,23 @@ mod tests {
         </body>
         </html>
         "#;
-        
-        let results = engine.parse_search_results(html_with_dates).expect("Failed to parse search results");
-        
+
+        let results = engine
+            .parse_search_results(html_with_dates)
+            .expect("Failed to parse search results");
+
         assert_eq!(results.len(), 2);
-        
+
         // 第一个结果应该包含查询词，相关性更高
         assert!(results[0].title.contains("Rust") || results[0].title.contains("编程"));
-        
-        // 验证评分机制（70%相关性 + 30%新鲜度）
-        assert!(results[0].score > 0.0);
-        assert!(results[1].score > 0.0);
     }
-    
+
     #[tokio::test]
+    #[ignore] // 需要网络访问且可能被反爬
     async fn test_sogou_search_real() {
         println!("测试搜狗搜索引擎 - 搜索: 鸿蒙系统");
-        
-        let engine = SogouSearchEngine::new();
+
+        let engine = create_test_engine();
         let request = SearchRequest {
             query: "鸿蒙系统".to_string(),
             limit: 5,
@@ -154,38 +166,43 @@ mod tests {
                 panic!("搜狗搜索测试失败: {}", e);
             }
         };
-        
+
         println!("找到 {} 个结果:", results.len());
         for (i, result) in results.iter().enumerate() {
             println!("结果 {}: {}", i + 1, result.title);
             println!("  URL: {}", result.url);
-            println!("  描述: {}", result.description.as_ref().unwrap_or(&"无描述".to_string()));
-            println!("  引擎: {}", result.engine);
-            println!("  评分: {}", result.score);
+            println!(
+                "  描述: {}",
+                if result.description.is_empty() { "无描述" } else { &result.description }
+            );
+            println!("  引擎: {:?}", result.engine);
             println!();
         }
-        
+
         // 验证结果
         assert!(!results.is_empty(), "应该找到至少一个结果");
-        
+
         // 检查是否包含相关关键词
-        let has_hongmeng = results.iter().any(|r| 
-            r.title.contains("鸿蒙") || 
-            r.description.as_ref().map_or(false, |d| d.contains("鸿蒙")) ||
-            r.title.contains("HarmonyOS") || 
-            r.description.as_ref().map_or(false, |d| d.contains("HarmonyOS"))
-        );
-        
+        let has_hongmeng = results.iter().any(|r| {
+            r.title.contains("鸿蒙")
+                || r.description.contains("鸿蒙")
+                || r.title.contains("HarmonyOS")
+                || r.description.contains("HarmonyOS")
+        });
+
         if has_hongmeng {
             println!("✓ 找到包含'鸿蒙'或'HarmonyOS'的相关结果");
         } else {
-            println!("! 未找到直接包含关键词的结果，但找到 {} 个搜索结果", results.len());
+            println!(
+                "! 未找到直接包含关键词的结果，但找到 {} 个搜索结果",
+                results.len()
+            );
         }
     }
-    
+
     #[test]
     fn test_sogou_engine_name() {
-        let engine = SogouSearchEngine::new();
-        assert_eq!(engine.name(), "sogou");
+        let engine = create_test_engine();
+        assert_eq!(engine.name(), "Sogou");
     }
 }

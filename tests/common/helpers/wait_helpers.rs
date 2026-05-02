@@ -5,7 +5,8 @@
 
 #![allow(dead_code)]
 
-use crawlrs::domain::models::task::{Task, TaskStatus};
+use crawlrs::domain::models::task_domain::TaskStatus;
+use crawlrs::domain::models::task_model::Task;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use std::time::Duration;
 use tokio::time::sleep;

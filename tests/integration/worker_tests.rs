@@ -8,7 +8,8 @@
 //! Tests for worker concurrency control with Lua script optimization
 
 use chrono::Utc;
-use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::infrastructure::cache::redis_client::RedisClient;
 use crawlrs::infrastructure::database::entities::task as task_entity;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;

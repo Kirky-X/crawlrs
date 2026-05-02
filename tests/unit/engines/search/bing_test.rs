@@ -1,17 +1,18 @@
 #![cfg(test)]
 use crawlrs::common::constants::testing::QUICK_TEST_TIMEOUT;
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
-
+use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::search::client::bing::BingSearchEngine;
+use std::sync::Arc;
 use std::time::Duration;
 
+fn create_test_engine() -> BingSearchEngine {
+    BingSearchEngine::new(Arc::new(EngineClient::new()))
+}
+
 #[tokio::test]
-#[ignore]  # Skip: Test requires specific features or has private field access
+#[ignore] // Skip: Test requires specific features or has private field access
 async fn test_bing_cookie_management() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
 
     // When: 首次获取 Cookie
     let cookie_1 = engine.get_bing_cookies("en", "US");
@@ -26,7 +27,7 @@ async fn test_bing_cookie_management() {
 
 #[test]
 fn test_bing_cookie_construction() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
     let cookies = engine.get_bing_cookies("en", "US");
 
     assert_eq!(cookies.get("_EDGE_CD"), Some(&"m=US&u=en".to_string()));
@@ -35,7 +36,7 @@ fn test_bing_cookie_construction() {
 
 #[test]
 fn test_bing_form_parameter_logic() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
 
     // Page 1: 无 FORM 参数
     let params_1 = engine.build_params("rust", 1);
@@ -56,7 +57,7 @@ fn test_bing_form_parameter_logic() {
 
 #[test]
 fn test_bing_url_decoding() {
-    let engine = BingSearchEngine::new();
+    let engine = create_test_engine();
     let encoded = "https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbQ";
     let decoded = engine.decode_bing_url(encoded);
 

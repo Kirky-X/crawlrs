@@ -9,7 +9,7 @@ use crawlrs::common::constants::testing::QUICK_TEST_TIMEOUT;
 
 use super::helpers::create_test_app;
 use axum::http::StatusCode;
-use crawlrs::domain::models::task::TaskStatus;
+use crawlrs::domain::models::task_domain::TaskStatus;
 use crawlrs::infrastructure::database::entities::task;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::json;

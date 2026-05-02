@@ -6,7 +6,8 @@
 use super::helpers::create_test_app;
 use axum::{routing::get, Router};
 use chrono::Utc;
-use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::domain::services::crawl_service::CrawlService;
 use tokio::net::TcpListener;

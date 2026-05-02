@@ -1,7 +1,7 @@
 // Minimal test helpers for queue_client_test and task_repository_test
 // This file provides just enough functionality to run the basic tests
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -45,42 +45,27 @@ pub async fn create_test_app_no_worker() -> TestApp {
 
     // 先在 teams 表中创建团队（因为 tasks 表有 foreign key 约束）
     let _ = db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO teams (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
-            vec![team_id.into(), format!("Test Team {}", team_id).into()],
+        .execute_unprepared(&format!(
+            "INSERT INTO teams (id, name) VALUES ('{}', '{}') ON CONFLICT (id) DO NOTHING",
+            team_id,
+            format!("Test Team {}", team_id)
         ))
         .await;
 
     // 创建 API key（因为 tasks 表有外键约束）
     let _ = db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO api_keys (id, key, key_hash, team_id) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
-            vec![
-                api_key_id.into(),
-                format!("test-api-key-{}", api_key_id).into(),
-                format!("hash-{}", api_key_id).into(),
-                team_id.into(),
-            ],
+        .execute_unprepared(&format!(
+            "INSERT INTO api_keys (id, key, key_hash, team_id) VALUES ('{}', '{}', '{}', '{}') ON CONFLICT (id) DO NOTHING",
+            api_key_id,
+            format!("test-api-key-{}", api_key_id),
+            format!("hash-{}", api_key_id),
+            team_id
         ))
         .await;
 
     // 清理测试数据 - 只清理 tasks，保留 api_keys 和 teams
-    let _ = db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "DELETE FROM tasks",
-            vec![],
-        ))
-        .await;
-    let _ = db_pool
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "DELETE FROM tasks_backlog",
-            vec![],
-        ))
-        .await;
+    let _ = db_pool.execute_unprepared("DELETE FROM tasks").await;
+    let _ = db_pool.execute_unprepared("DELETE FROM tasks_backlog").await;
 
     let redis_port = std::env::var("TEST_REDIS_PORT")
         .unwrap_or_else(|_| "6380".to_string())

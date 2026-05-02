@@ -3,8 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-mod bing_real_test;
-mod sogou_test;
-// mod bing_test;
-
-// mod google_test;
+pub mod baidu_test;
+pub mod bing_real_test;
+pub mod sogou_test;

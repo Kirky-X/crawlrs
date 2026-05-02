@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use crawlrs::domain::models::task::{TaskStatus, TaskType};
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::infrastructure::database::entities::task::{self, Entity as TaskEntity};
 use sea_orm::{DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;

@@ -4,7 +4,8 @@
 // See LICENSE file in the project root for full license information.
 
 use chrono::{DateTime, FixedOffset, Utc};
-use crawlrs::domain::models::task::{Task, TaskStatus, TaskType};
+use crawlrs::domain::models::task_model::Task;
+use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::presentation::handlers::task_handler::wait_for_tasks_completion;
