@@ -38,7 +38,9 @@ pub async fn search(
     let api_key = api_key_id.to_string();
 
     // 1. 检查限流
-    if let Err(response) = check_rate_limit(rate_limiting_service.as_ref(), &api_key, "/v1/search").await {
+    if let Err(response) =
+        check_rate_limit(rate_limiting_service.as_ref(), &api_key, "/v1/search").await
+    {
         return response;
     }
 

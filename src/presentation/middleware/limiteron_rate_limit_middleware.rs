@@ -69,10 +69,7 @@ pub async fn limiteron_rate_limit_middleware(
         .iter()
         .any(|&endpoint| path == endpoint || path.starts_with(endpoint))
     {
-        debug!(
-            "LimiteronMiddleware: Skipping public endpoint {}",
-            path
-        );
+        debug!("LimiteronMiddleware: Skipping public endpoint {}", path);
         return Ok(next.run(request).await);
     }
 

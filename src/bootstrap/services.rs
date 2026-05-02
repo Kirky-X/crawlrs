@@ -20,11 +20,7 @@ use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy, RateLimitingService,
 };
-use crate::infrastructure::services::rate_limiting_service_impl::{
-    RateLimitingConfig, RateLimitingServiceImpl,
-};
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
-use crate::search::client::SearchClientTrait;
 use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::{WebhookService, WebhookServiceImpl};
 use crate::engines::engine_client::EngineClient;
@@ -33,15 +29,19 @@ use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
 use crate::infrastructure::database::repositories::auth_scope_repo_impl::AuthScopeRepositoryImpl;
 use crate::infrastructure::geolocation::GeoLocationServiceImpl;
+use crate::infrastructure::services::rate_limiting_service_impl::{
+    RateLimitingConfig, RateLimitingServiceImpl,
+};
+use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::presentation::middleware::auth_middleware::AuthRateLimiter;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use crate::search::ab_test::SearchABTestEngine;
 use crate::search::aggregator::SearchAggregator;
+use crate::search::client::SearchClientTrait;
 use crate::search::engine_trait::SearchEngine;
 use crate::search::smart as smart_search;
-use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsChecker;
 
@@ -101,7 +101,9 @@ pub struct ServicesComponents {
 /// # Returns
 ///
 /// Returns an initialized rate limit middleware.
-pub fn init_rate_limit_middleware(rate_limiting_service: Arc<dyn RateLimitingService>) -> RateLimitMiddleware {
+pub fn init_rate_limit_middleware(
+    rate_limiting_service: Arc<dyn RateLimitingService>,
+) -> RateLimitMiddleware {
     RateLimitMiddleware::new(rate_limiting_service)
 }
 
@@ -354,9 +356,7 @@ pub fn init_services(
     ));
 
     // Initialize GeoLocationService
-    let geo_location_service = Arc::new(
-        GeoLocationServiceImpl::new(http_client.clone()),
-    );
+    let geo_location_service = Arc::new(GeoLocationServiceImpl::new(http_client.clone()));
 
     // Initialize team service
     let team_service = Arc::new(TeamService::new(
@@ -378,9 +378,10 @@ pub fn init_services(
     );
 
     // Initialize search client (wraps search engines)
-    let search_client: Arc<dyn SearchClientTrait> = Arc::new(crate::search::client::SearchClient::new(
-        Arc::new(EngineClient::with_router(engine_router.clone()))
-    ));
+    let search_client: Arc<dyn SearchClientTrait> =
+        Arc::new(crate::search::client::SearchClient::new(Arc::new(
+            EngineClient::with_router(engine_router.clone()),
+        )));
 
     // Initialize search service
     let search_service = init_search_service(repositories, settings, search_client.clone());
@@ -393,7 +394,9 @@ pub fn init_services(
         Arc::new(PostgresTaskQueue::new(repositories.task_repo.clone()));
 
     // Initialize audit service
-    let audit_repo = Arc::new(AuditLogRepositoryImpl::new(infrastructure.db.inner().clone()));
+    let audit_repo = Arc::new(AuditLogRepositoryImpl::new(
+        infrastructure.db.inner().clone(),
+    ));
     let audit_service = Arc::new(AuditService::new(audit_repo));
 
     // Initialize LLM service (使用依赖注入的 http_client)

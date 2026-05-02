@@ -76,15 +76,13 @@ const DEFAULT_DNS_CACHE_TTL: u64 = 300;
 ///
 /// This struct provides the main entry point for SSRF protection.
 /// It combines static validation, DNS resolution, and redirect validation.
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SsrfValidator {
     /// DNS cache for resolution results
     dns_cache: Option<Arc<DnsCacheService>>,
     /// Configuration options
     config: SsrfConfig,
 }
-
 
 impl SsrfValidator {
     /// Create a new SSRF validator without DNS caching.

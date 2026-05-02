@@ -57,7 +57,7 @@ pub struct Repositories {
 /// Returns a connected database pool.
 pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
     use crate::infrastructure::database::dbnexus_connection::create_pool;
-    
+
     let pool = create_pool(&settings.database).await?;
     let db = DatabasePool {
         inner: Arc::new(pool),
@@ -240,13 +240,17 @@ pub async fn init_oxcache(settings: &Settings) -> Result<Option<Arc<SearchCache>
 
     match create_cache(&settings.cache).await {
         Ok(cache) => {
-            info!("OxCache initialized (capacity: {}, ttl: {}s)",
-                settings.cache.memory.capacity,
-                settings.cache.memory.ttl_seconds);
+            info!(
+                "OxCache initialized (capacity: {}, ttl: {}s)",
+                settings.cache.memory.capacity, settings.cache.memory.ttl_seconds
+            );
             Ok(Some(cache))
         }
         Err(e) => {
-            tracing::warn!("Failed to initialize oxcache: {}. Cache will be disabled.", e);
+            tracing::warn!(
+                "Failed to initialize oxcache: {}. Cache will be disabled.",
+                e
+            );
             Ok(None)
         }
     }

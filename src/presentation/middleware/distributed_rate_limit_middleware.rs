@@ -95,14 +95,19 @@ pub async fn distributed_rate_limit_middleware(
             )
                 .into_response())
         }
-        Ok(RateLimitResult::RetryAfter { retry_after_seconds }) => {
+        Ok(RateLimitResult::RetryAfter {
+            retry_after_seconds,
+        }) => {
             warn!(
                 "Rate limit exceeded for API Key starting with {}: retry after {} seconds",
                 api_key_prefix, retry_after_seconds
             );
             Ok((
                 StatusCode::TOO_MANY_REQUESTS,
-                format!("Rate limit exceeded, retry after {} seconds", retry_after_seconds),
+                format!(
+                    "Rate limit exceeded, retry after {} seconds",
+                    retry_after_seconds
+                ),
             )
                 .into_response())
         }

@@ -86,9 +86,10 @@ pub async fn check_rate_limit_as_app_error<T: RateLimitingService + ?Sized>(
     endpoint: &str,
 ) -> Result<(), AppError> {
     match service.check_rate_limit(api_key, endpoint).await {
-        Ok(RateLimitResult::Denied { reason }) => {
-            Err(AppError::RateLimited(format!("Rate limit exceeded: {}", reason)))
-        }
+        Ok(RateLimitResult::Denied { reason }) => Err(AppError::RateLimited(format!(
+            "Rate limit exceeded: {}",
+            reason
+        ))),
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
         }) => Err(AppError::RateLimited(format!(
@@ -112,6 +113,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use uuid::Uuid;
 
     struct MockRateLimitingService {

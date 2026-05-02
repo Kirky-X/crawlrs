@@ -22,20 +22,20 @@
 
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::infrastructure::cache::redis_client::RedisClient;
-use crate::infrastructure::security::secure_ip::{TrustedProxyConfig, get_secure_client_ip};
+use crate::infrastructure::security::secure_ip::{get_secure_client_ip, TrustedProxyConfig};
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
-use std::sync::Arc;
 use axum::{
     body::Body,
-    response::Response,
-    middleware::{Next},
     extract::Request,
     http::{header, StatusCode},
+    middleware::Next,
+    response::Response,
 };
-use tracing::{debug, warn, error};
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing::{debug, error, warn};
 
 /// Default rate limit for unauthenticated requests (requests per minute)
 const DEFAULT_IP_RATE_LIMIT: u64 = 10;
@@ -149,7 +149,7 @@ impl RateLimiter {
 }
 
 /// IP 速率限制器（全局单例）
-static IP_RATE_LIMITER: once_cell::sync::Lazy<RateLimiter> = 
+static IP_RATE_LIMITER: once_cell::sync::Lazy<RateLimiter> =
     once_cell::sync::Lazy::new(|| RateLimiter::new_for_ip_limit(DEFAULT_IP_RATE_LIMIT));
 
 /// 速率限制中间件
@@ -237,7 +237,7 @@ fn get_client_ip(req: &Request) -> String {
 /// 返回 `Ok(())` 如果请求被允许，返回 `Err(Response)` 如果请求被拒绝
 fn apply_ip_rate_limit(client_ip: &str) -> Result<(), Box<Response>> {
     let limiter = &*IP_RATE_LIMITER;
-    
+
     if !limiter.check_rate_limit(client_ip) {
         let (current, _) = limiter.get_status(client_ip);
         warn!(
@@ -253,11 +253,11 @@ fn apply_ip_rate_limit(client_ip: &str) -> Result<(), Box<Response>> {
             ),
             "retry_after_seconds": IP_RATE_LIMIT_WINDOW_SECS
         });
-        
+
         let json_body = serde_json::to_string(&body).unwrap_or_else(|_| {
             r#"{"error":"Rate limit exceeded","message":"Too many requests"}"#.to_string()
         });
-        
+
         let mut response = Response::new(Body::from(json_body));
         *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
         response.headers_mut().insert(
@@ -268,7 +268,7 @@ fn apply_ip_rate_limit(client_ip: &str) -> Result<(), Box<Response>> {
             "Retry-After",
             axum::http::HeaderValue::from(IP_RATE_LIMIT_WINDOW_SECS),
         );
-        
+
         return Err(Box::new(response));
     }
 
@@ -322,10 +322,16 @@ pub async fn rate_limit_middleware(
     let endpoint = path;
 
     // 调用服务检查速率限制
-    match rate_limiting_service.check_rate_limit(&api_key, endpoint).await {
+    match rate_limiting_service
+        .check_rate_limit(&api_key, endpoint)
+        .await
+    {
         Ok(RateLimitResult::Denied { reason }) => {
-            debug!("Rate limit exceeded for API key starting with {}: {}",
-                &api_key[..std::cmp::min(8, api_key.len())], reason);
+            debug!(
+                "Rate limit exceeded for API key starting with {}: {}",
+                &api_key[..std::cmp::min(8, api_key.len())],
+                reason
+            );
 
             let body = serde_json::json!({
                 "error": "Rate limit exceeded",
@@ -341,9 +347,14 @@ pub async fn rate_limit_middleware(
             );
             response
         }
-        Ok(RateLimitResult::RetryAfter { retry_after_seconds }) => {
-            debug!("Rate limit retry after for API key starting with {}: {} seconds",
-                &api_key[..std::cmp::min(8, api_key.len())], retry_after_seconds);
+        Ok(RateLimitResult::RetryAfter {
+            retry_after_seconds,
+        }) => {
+            debug!(
+                "Rate limit retry after for API key starting with {}: {} seconds",
+                &api_key[..std::cmp::min(8, api_key.len())],
+                retry_after_seconds
+            );
 
             let body = serde_json::json!({
                 "error": "Rate limit exceeded",
@@ -364,8 +375,10 @@ pub async fn rate_limit_middleware(
             response
         }
         Ok(RateLimitResult::Allowed) => {
-            debug!("Rate limit check passed for API key starting with: {}",
-                &api_key[..std::cmp::min(8, api_key.len())]);
+            debug!(
+                "Rate limit check passed for API key starting with: {}",
+                &api_key[..std::cmp::min(8, api_key.len())]
+            );
             next.run(req).await
         }
         Err(e) => {
@@ -397,8 +410,8 @@ pub async fn rate_limit_middleware(
                     "error": "Service temporarily unavailable",
                     "message": "Rate limiting service is temporarily unavailable. Please try again later."
                 });
-                let json_body = serde_json::to_string(&body)
-                    .expect("JSON serialization should never fail");
+                let json_body =
+                    serde_json::to_string(&body).expect("JSON serialization should never fail");
                 let mut response = Response::new(Body::from(json_body));
                 *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
                 response.headers_mut().insert(
@@ -421,17 +434,15 @@ mod tests {
             .header("Authorization", "Bearer test-token-123")
             .body(Body::empty())
             .unwrap();
-        
+
         let token = extract_bearer_token(&req);
         assert_eq!(token, Some("test-token-123".to_string()));
     }
 
     #[test]
     fn test_extract_bearer_token_missing() {
-        let req = Request::builder()
-            .body(Body::empty())
-            .unwrap();
-        
+        let req = Request::builder().body(Body::empty()).unwrap();
+
         let token = extract_bearer_token(&req);
         assert!(token.is_none());
     }
@@ -442,7 +453,7 @@ mod tests {
             .header("Authorization", "Basic dXNlcjpwYXNz")
             .body(Body::empty())
             .unwrap();
-        
+
         let token = extract_bearer_token(&req);
         assert!(token.is_none());
     }
@@ -453,7 +464,7 @@ mod tests {
             .header("Authorization", "Bearer ")
             .body(Body::empty())
             .unwrap();
-        
+
         let token = extract_bearer_token(&req);
         assert!(token.is_none());
     }
@@ -462,7 +473,7 @@ mod tests {
     fn test_rate_limiter_allows_under_limit() {
         let limiter = RateLimiter::new_for_ip_limit(5);
         let key = "test-ip";
-        
+
         for _ in 0..5 {
             assert!(limiter.check_rate_limit(key));
         }
@@ -472,12 +483,12 @@ mod tests {
     fn test_rate_limiter_blocks_over_limit() {
         let limiter = RateLimiter::new_for_ip_limit(3);
         let key = "test-ip-2";
-        
+
         // First 3 should pass
         assert!(limiter.check_rate_limit(key));
         assert!(limiter.check_rate_limit(key));
         assert!(limiter.check_rate_limit(key));
-        
+
         // 4th should be blocked
         assert!(!limiter.check_rate_limit(key));
     }
@@ -511,9 +522,7 @@ mod tests {
 
     #[test]
     fn test_get_client_ip_unknown() {
-        let req = Request::builder()
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().body(Body::empty()).unwrap();
 
         let ip = get_client_ip(&req);
         assert_eq!(ip, "unknown");
@@ -522,8 +531,8 @@ mod tests {
     #[test]
     fn test_get_client_ip_with_trusted_proxy() {
         // 模拟来自可信代理的请求，应该信任 X-Forwarded-For
-        use std::net::SocketAddr;
         use axum::extract::ConnectInfo;
+        use std::net::SocketAddr;
 
         let socket_addr: SocketAddr = "10.0.0.1:8080".parse().unwrap();
         let mut req = Request::builder()
@@ -540,8 +549,8 @@ mod tests {
     #[test]
     fn test_get_client_ip_untrusted_proxy_rejected() {
         // 来自不可信代理的请求，X-Forwarded-For 应该被忽略
-        use std::net::SocketAddr;
         use axum::extract::ConnectInfo;
+        use std::net::SocketAddr;
 
         // 8.8.8.8 不是可信代理
         let socket_addr: SocketAddr = "8.8.8.8:8080".parse().unwrap();

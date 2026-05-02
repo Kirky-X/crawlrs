@@ -118,22 +118,27 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
     let credits_repo = state.credits_repo();
 
     // Create geo restriction repository for extension (使用 DI 组件)
-    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
-        Arc::new(GeoRestrictionRepositoryComponent::new(state.db_pool.clone()));
+    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = Arc::new(
+        GeoRestrictionRepositoryComponent::new(state.db_pool.clone()),
+    );
 
     // Create concrete DatabaseGeoRestrictionRepository for handlers that need the concrete type
     let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
         Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
 
     // Create concrete WebhookRepoImpl for handlers that need the concrete type
-    let webhook_repo_impl: Arc<WebhookRepoImpl> = Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
+    let webhook_repo_impl: Arc<WebhookRepoImpl> =
+        Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
 
     // Create Arc<AppState> for crawl handlers that use unified state
     let app_state_arc = Arc::new(state.clone());
 
     // Auth state for middleware - wrap in Arc and set global state
     let auth_scope_service = state.auth_scope_service.as_ref().map(|arc| (**arc).clone());
-    let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone(), auth_scope_service));
+    let auth_state = Arc::new(AuthState::new_for_middleware(
+        state.db_pool.clone(),
+        auth_scope_service,
+    ));
     // Set global auth state for middleware
     crate::presentation::middleware::auth_middleware::set_global_auth_state(auth_state.clone());
 
@@ -224,9 +229,7 @@ pub fn create_v2_routes_with_state(state: &AppState) -> Router {
         .layer(axum::middleware::from_fn(
             crate::presentation::middleware::auth_middleware::auth_middleware(),
         ))
-        .layer(axum::middleware::from_fn(
-            team_semaphore_middleware,
-        ))
+        .layer(axum::middleware::from_fn(team_semaphore_middleware))
         .layer(Extension(task_repo.clone()))
         .layer(Extension(result_repo.clone()))
         .layer(Extension(crawl_repo.clone()))
@@ -254,8 +257,9 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
     let search_engine_service = state.search_client();
     let tasks_backlog_repo = state.webhook_event_repo();
     let queue = state.task_queue.clone();
-    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
-        Arc::new(GeoRestrictionRepositoryComponent::new(state.db_pool.clone()));
+    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = Arc::new(
+        GeoRestrictionRepositoryComponent::new(state.db_pool.clone()),
+    );
     let credits_repo = state.credits_repo();
     let crawl_repo = state.crawl_repo.clone();
     let webhook_event_repo = state.webhook_event_repo();

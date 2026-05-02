@@ -18,7 +18,7 @@
 
 use axum::{
     body::Body,
-    http::{HeaderValue, Request, Response, uri::Scheme},
+    http::{uri::Scheme, HeaderValue, Request, Response},
     middleware::Next,
 };
 
