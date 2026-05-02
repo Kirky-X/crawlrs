@@ -105,13 +105,16 @@ impl Task {
 
     /// Check if the task is expired
     pub fn is_expired(&self) -> bool {
-        self.expires_at.is_some_and(|expires_at| Utc::now() > expires_at)
+        self.expires_at
+            .is_some_and(|expires_at| Utc::now() > expires_at)
     }
 
     /// Check if the task is locked
     pub fn is_locked(&self) -> bool {
-        self.lock_token.is_some() && 
-            self.lock_expires_at.is_some_and(|expires_at| Utc::now() < expires_at)
+        self.lock_token.is_some()
+            && self
+                .lock_expires_at
+                .is_some_and(|expires_at| Utc::now() < expires_at)
     }
 
     /// Mark the task as started

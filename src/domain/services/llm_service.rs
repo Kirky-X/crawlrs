@@ -132,7 +132,7 @@ pub trait LLMServiceTrait: shaku::Interface + Send + Sync {
         text: &str,
         schema: &Value,
         format: &str,
-    ) -> Result<(Value, TokenUsage)>;
+    ) -> Result<(Value, TokenUsage), anyhow::Error>;
 }
 
 /// LLM服务 - 处理与LLM提供商的交互

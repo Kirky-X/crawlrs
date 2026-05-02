@@ -173,7 +173,12 @@ impl WebhookEvent {
     }
 
     /// Record a delivery attempt
-    pub fn record_attempt(&mut self, success: bool, response_status: Option<i32>, error: Option<String>) {
+    pub fn record_attempt(
+        &mut self,
+        success: bool,
+        response_status: Option<i32>,
+        error: Option<String>,
+    ) {
         self.attempt_count += 1;
         self.updated_at = Utc::now();
 

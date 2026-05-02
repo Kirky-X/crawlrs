@@ -277,10 +277,8 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::TaskStatus;
     use crate::domain::repositories::task_repository::RepositoryError;
     use async_trait::async_trait;
-    use chrono::FixedOffset;
     use serde_json::Value;
     use std::collections::HashMap;
 

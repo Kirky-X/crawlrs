@@ -30,8 +30,8 @@ pub mod search_result;
 // Re-export pure domain models
 pub use crawl_model::{Crawl, CrawlStatus};
 pub use credits_model::{Credits, CreditsError, CreditsTransaction, CreditsTransactionType};
-pub use task_model::Task;
 pub use task_domain::{DomainError, TaskStatus, TaskType};
+pub use task_model::Task;
 pub use webhook_model::{Webhook, WebhookError, WebhookEvent, WebhookEventType, WebhookStatus};
 
 // Legacy re-exports for backward compatibility

@@ -182,11 +182,12 @@ impl AuthScopeServiceTrait for AuthScopeService {
         scope: ApiKeyScope,
     ) -> Result<ApiKeyScope, AuthScopeServiceError> {
         debug!("Setting scope for API Key: {:?}", scope);
-        let result = self.scope_repo
+        let result = self
+            .scope_repo
             .upsert(api_key_id, scope)
             .await
             .map_err(Into::into);
-        
+
         // Invalidate cache after scope change for security
         if result.is_ok() {
             let removed = invalidate_cache_by_api_key_id(api_key_id).await;
@@ -195,18 +196,19 @@ impl AuthScopeServiceTrait for AuthScopeService {
                 removed, api_key_id
             );
         }
-        
+
         result
     }
 
     /// Delete custom scope for an API Key (revert to defaults)
     async fn delete_scope(&self, api_key_id: Uuid) -> Result<bool, AuthScopeServiceError> {
         debug!("Deleting custom scope for API Key: {}", api_key_id);
-        let result = self.scope_repo
+        let result = self
+            .scope_repo
             .delete_by_api_key_id(api_key_id)
             .await
             .map_err(Into::into);
-        
+
         // Invalidate cache after scope deletion for security
         if result.is_ok() {
             let removed = invalidate_cache_by_api_key_id(api_key_id).await;
@@ -215,7 +217,7 @@ impl AuthScopeServiceTrait for AuthScopeService {
                 removed, api_key_id
             );
         }
-        
+
         result
     }
 }

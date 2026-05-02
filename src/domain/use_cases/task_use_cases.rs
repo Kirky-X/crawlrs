@@ -95,7 +95,7 @@ impl<T: TaskRepository, R: CreditsRepository> CreateTaskUseCase<T, R> {
             request.url,
             payload,
         );
-        
+
         // 设置可选参数
         if let Some(priority) = request.priority {
             task.priority = priority;
@@ -132,8 +132,12 @@ impl<T: TaskRepository> QueryTasksUseCase<T> {
             task_ids: request.task_ids,
             task_types: request.task_types,
             statuses: request.statuses,
-            created_after: request.created_after.map(|dt| dt.with_timezone(&chrono::Utc)),
-            created_before: request.created_before.map(|dt| dt.with_timezone(&chrono::Utc)),
+            created_after: request
+                .created_after
+                .map(|dt| dt.with_timezone(&chrono::Utc)),
+            created_before: request
+                .created_before
+                .map(|dt| dt.with_timezone(&chrono::Utc)),
             crawl_id: request.crawl_id,
             limit: request.limit.unwrap_or(100),
             offset: request.offset.unwrap_or(0),
