@@ -43,7 +43,7 @@ pub trait TaskQueue: Send + Sync {
 /// PostgreSQL任务队列实现
 pub struct PostgresTaskQueue {
     /// 任务仓库
-    repository: Arc<dyn TaskRepository>,
+    pub repository: Arc<dyn TaskRepository>,
 }
 
 impl PostgresTaskQueue {

@@ -43,22 +43,22 @@ impl RegexCache {
     #[inline]
     pub fn get_or_insert(&self, pattern: &str) -> Result<Regex, String> {
         let key = format!("regex:{}", pattern);
-        
+
         let compiled_read = futures::executor::block_on(self.compiled.read());
         if let Some(regex) = compiled_read.get(&key) {
             return Ok((**regex).clone());
         }
         drop(compiled_read);
-        
+
         let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
-        
+
         let mut compiled_write = futures::executor::block_on(self.compiled.write());
         compiled_write.insert(key.clone(), Arc::new(regex.clone()));
-        
+
         if let Err(e) = futures::executor::block_on(self.cache.set(&key, &pattern.to_string())) {
             warn!("Failed to cache regex pattern: {}", e);
         }
-        
+
         Ok(regex)
     }
 
@@ -71,23 +71,23 @@ impl RegexCache {
     #[inline]
     pub fn get_or_compile(&self, pattern: &str) -> Result<Arc<Regex>, String> {
         let key = format!("regex:{}", pattern);
-        
+
         let compiled_read = futures::executor::block_on(self.compiled.read());
         if let Some(regex) = compiled_read.get(&key) {
             return Ok(regex.clone());
         }
         drop(compiled_read);
-        
+
         let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
         let regex_arc = Arc::new(regex);
-        
+
         let mut compiled_write = futures::executor::block_on(self.compiled.write());
         compiled_write.insert(key.clone(), regex_arc.clone());
-        
+
         if let Err(e) = futures::executor::block_on(self.cache.set(&key, &pattern.to_string())) {
             warn!("Failed to cache regex pattern: {}", e);
         }
-        
+
         Ok(regex_arc)
     }
 }

@@ -13,4 +13,6 @@ pub mod time_utils;
 
 pub use constants::*;
 pub use error::{AppError, AppResult};
-pub use time_utils::{from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt, UTC_OFFSET};
+pub use time_utils::{
+    from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt, UTC_OFFSET,
+};

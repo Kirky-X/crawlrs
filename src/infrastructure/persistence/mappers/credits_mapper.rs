@@ -78,7 +78,8 @@ impl CreditsTransactionMapper {
 
     /// Parse transaction type from string
     fn parse_transaction_type(s: &str) -> CreditsTransactionType {
-        s.parse().unwrap_or(CreditsTransactionType::ManualAdjustment)
+        s.parse()
+            .unwrap_or(CreditsTransactionType::ManualAdjustment)
     }
 }
 
@@ -91,13 +92,7 @@ mod tests {
     #[test]
     fn test_credits_mapper_roundtrip() {
         let now = Utc::now();
-        let domain = Credits::with_timestamps(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            1000,
-            now,
-            now,
-        );
+        let domain = Credits::with_timestamps(Uuid::new_v4(), Uuid::new_v4(), 1000, now, now);
 
         let entity = CreditsMapper::to_entity(&domain);
         let back_to_domain = CreditsMapper::to_domain(entity);

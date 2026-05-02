@@ -14,10 +14,7 @@ pub struct EnhancedSearchAggregator {
 }
 
 impl EnhancedSearchAggregator {
-    pub fn new(
-        engines: Vec<Arc<dyn SearchEngine>>,
-        timeout_ms: u64,
-    ) -> Self {
+    pub fn new(engines: Vec<Arc<dyn SearchEngine>>, timeout_ms: u64) -> Self {
         Self {
             engines,
             timeout: Duration::from_millis(timeout_ms),
@@ -67,7 +64,11 @@ impl EnhancedSearchAggregator {
             }
         }
 
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         all_results.truncate(limit as usize);
 
         Ok(all_results)

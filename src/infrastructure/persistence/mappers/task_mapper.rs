@@ -5,7 +5,9 @@
 
 //! Task Mapper - converts between Task domain model and database entity
 
-use crate::common::time_utils::{from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt};
+use crate::common::time_utils::{
+    from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt,
+};
 use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::infrastructure::database::entities::task;
 
@@ -84,7 +86,7 @@ impl TaskMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, Utc};
+    use chrono::Utc;
     use uuid::Uuid;
 
     #[test]

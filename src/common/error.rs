@@ -122,8 +122,12 @@ impl AppError {
     /// 用于生产环境中的错误响应。
     pub fn user_message(&self) -> String {
         match self {
-            AppError::Database(_) => "Database operation failed. Please try again later.".to_string(),
-            AppError::Network(_) => "External service unavailable. Please try again later.".to_string(),
+            AppError::Database(_) => {
+                "Database operation failed. Please try again later.".to_string()
+            }
+            AppError::Network(_) => {
+                "External service unavailable. Please try again later.".to_string()
+            }
             AppError::Config(_) => "Configuration error. Please contact support.".to_string(),
             AppError::Validation(msg) => format!("Validation error: {}", msg),
             AppError::NotFound(msg) => format!("Resource not found: {}", msg),
@@ -134,7 +138,9 @@ impl AppError {
             AppError::Engine(e) => sanitize_engine_error(e),
             AppError::Cache(_) => "Cache service unavailable. Please try again later.".to_string(),
             AppError::Task(_) => "Task processing error. Please try again later.".to_string(),
-            AppError::RateLimit(_) => "Rate limit exceeded. Please slow down your requests.".to_string(),
+            AppError::RateLimit(_) => {
+                "Rate limit exceeded. Please slow down your requests.".to_string()
+            }
             AppError::Other(_) => "Internal server error. Please try again later.".to_string(),
         }
     }
@@ -192,7 +198,9 @@ fn should_show_detailed_errors() -> bool {
         .unwrap_or_else(|_| "production".to_string());
 
     // 只有明确设置为开发环境时才显示详细错误
-    env.eq_ignore_ascii_case("development") || env.eq_ignore_ascii_case("dev") || env.eq_ignore_ascii_case("local")
+    env.eq_ignore_ascii_case("development")
+        || env.eq_ignore_ascii_case("dev")
+        || env.eq_ignore_ascii_case("local")
 }
 
 /// 脱敏引擎错误信息
@@ -213,8 +221,8 @@ fn sanitize_engine_error(error: &str) -> String {
         .to_string();
 
     // 移除行号信息 (如 "at line 42", "src/file.rs:42")
-    let line_number_pattern = Regex::new(r"[a-zA-Z0-9_/.-]+\.rs:\d+")
-        .expect("Invalid regex pattern for line numbers");
+    let line_number_pattern =
+        Regex::new(r"[a-zA-Z0-9_/.-]+\.rs:\d+").expect("Invalid regex pattern for line numbers");
     sanitized = line_number_pattern
         .replace_all(&sanitized, "[LOCATION]")
         .to_string();
@@ -242,15 +250,15 @@ fn sanitize_engine_error(error: &str) -> String {
         .to_string();
 
     // 移除 URL 中的查询参数（可能包含敏感信息）
-    let url_params_pattern = Regex::new(r"\?[^#\s]+")
-        .expect("Invalid regex pattern for URL parameters");
+    let url_params_pattern =
+        Regex::new(r"\?[^#\s]+").expect("Invalid regex pattern for URL parameters");
     sanitized = url_params_pattern
         .replace_all(&sanitized, "?[PARAMS_REDACTED]")
         .to_string();
 
     // 移除 URL 中的用户名和密码
-    let url_credentials_pattern = Regex::new(r"(https?://)[^:]+:[^@]+@")
-        .expect("Invalid regex pattern for URL credentials");
+    let url_credentials_pattern =
+        Regex::new(r"(https?://)[^:]+:[^@]+@").expect("Invalid regex pattern for URL credentials");
     sanitized = url_credentials_pattern
         .replace_all(&sanitized, "$1[CREDENTIALS_REDACTED]@")
         .to_string();
@@ -485,20 +493,25 @@ mod tests {
     #[test]
     fn test_user_message_sanitization() {
         // 数据库错误应该返回通用消息
-        let db_err = AppError::Database(sea_orm::DbErr::Custom("Connection failed to postgres://user:password123@localhost:5432".to_string()));
+        let db_err = AppError::Database(sea_orm::DbErr::Custom(
+            "Connection failed to postgres://user:password123@localhost:5432".to_string(),
+        ));
         let user_msg = db_err.user_message();
         assert!(!user_msg.contains("password123"));
         assert!(!user_msg.contains("localhost:5432"));
         assert!(user_msg.contains("Database operation failed"));
 
         // 网络错误应该返回通用消息
-        let net_err = crate::utils::error_helpers::map_to_network_error("Connection refused to 10.0.0.1:8080");
+        let net_err = crate::utils::error_helpers::map_to_network_error(
+            "Connection refused to 10.0.0.1:8080",
+        );
         let user_msg = net_err.user_message();
         assert!(!user_msg.contains("10.0.0.1"));
         assert!(user_msg.contains("External service unavailable"));
 
         // 配置错误应该返回通用消息
-        let config_err = AppError::Config("Missing database URL in /home/dev/crawlrs/.env".to_string());
+        let config_err =
+            AppError::Config("Missing database URL in /home/dev/crawlrs/.env".to_string());
         let user_msg = config_err.user_message();
         assert!(!user_msg.contains("/home/dev/"));
         assert!(user_msg.contains("Configuration error"));
@@ -512,7 +525,7 @@ mod tests {
     #[test]
     fn test_detailed_message_preserves_info() {
         let err = AppError::Database(sea_orm::DbErr::Custom(
-            "Connection failed to postgres://user:password123@localhost:5432".to_string()
+            "Connection failed to postgres://user:password123@localhost:5432".to_string(),
         ));
         let detailed = err.detailed_message();
         // 详细消息应该包含所有信息
@@ -650,7 +663,8 @@ mod tests {
 
     #[test]
     fn test_sanitize_engine_error_multiple_patterns() {
-        let error = "Error at /home/dev/crawlrs/src/main.rs:42 with IP 10.0.0.1 and api_key=secret123";
+        let error =
+            "Error at /home/dev/crawlrs/src/main.rs:42 with IP 10.0.0.1 and api_key=secret123";
         let sanitized = sanitize_engine_error(error);
         assert!(sanitized.contains("[FILE_PATH]") || sanitized.contains("[LOCATION]"));
         assert!(sanitized.contains("[INTERNAL_IP]"));

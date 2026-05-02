@@ -262,7 +262,9 @@ impl MutableSystemMonitor {
         let sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                tracing::error!("MutableSystemMonitor mutex poisoned, returning 0.0 for memory usage");
+                tracing::error!(
+                    "MutableSystemMonitor mutex poisoned, returning 0.0 for memory usage"
+                );
                 return 0.0;
             }
         };

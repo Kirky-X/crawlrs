@@ -486,13 +486,11 @@ impl<T: TaskQueue> QueueClient<T> {
             .unwrap_or(self.config.default_max_retries);
 
         if let Some(delay) = request.delay_seconds {
-            task.scheduled_at =
-                Some(chrono::Utc::now() + chrono::Duration::seconds(delay as i64));
+            task.scheduled_at = Some(chrono::Utc::now() + chrono::Duration::seconds(delay as i64));
         }
 
         if let Some(expire) = request.expire_seconds {
-            task.expires_at =
-                Some(chrono::Utc::now() + chrono::Duration::seconds(expire as i64));
+            task.expires_at = Some(chrono::Utc::now() + chrono::Duration::seconds(expire as i64));
         }
 
         let result = self.inner.enqueue(task).await?;

@@ -203,8 +203,8 @@ impl ScrapeOptionsBuilder {
                 .or_else(|_| std::env::var("CRAWLRS_ENV"))
                 .unwrap_or_else(|_| "development".to_string());
 
-            let is_production = env.eq_ignore_ascii_case("production")
-                || env.eq_ignore_ascii_case("prod");
+            let is_production =
+                env.eq_ignore_ascii_case("production") || env.eq_ignore_ascii_case("prod");
 
             if is_production {
                 // SECURITY: Reject TLS verification skip in production

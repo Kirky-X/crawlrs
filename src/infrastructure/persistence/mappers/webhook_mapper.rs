@@ -5,7 +5,9 @@
 
 //! Webhook Mapper - converts between Webhook domain model and database entity
 
-use crate::common::time_utils::{from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt};
+use crate::common::time_utils::{
+    from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt,
+};
 use crate::domain::models::{Webhook, WebhookEvent, WebhookEventType, WebhookStatus};
 use crate::infrastructure::database::entities::{webhook, webhook_event};
 use uuid::Uuid;

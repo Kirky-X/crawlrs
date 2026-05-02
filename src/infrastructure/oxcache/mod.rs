@@ -177,7 +177,12 @@ pub fn generate_key(prefix: &str, params: &[(&str, &str)]) -> String {
 }
 
 /// Generate search cache key
-pub fn generate_search_key(query: &str, limit: u32, lang: Option<&str>, country: Option<&str>) -> String {
+pub fn generate_search_key(
+    query: &str,
+    limit: u32,
+    lang: Option<&str>,
+    country: Option<&str>,
+) -> String {
     let mut key = format!("search:{}", query);
     if let Some(l) = lang {
         key.push_str(&format!(":lang={}", l));
@@ -210,7 +215,9 @@ pub fn generate_regex_key(pattern: &str) -> String {
 // =============================================================================
 
 /// Create a new oxcache instance with the given settings
-pub async fn create_cache(settings: &CacheSettings) -> Result<Arc<SearchCache>, oxcache::CacheError> {
+pub async fn create_cache(
+    settings: &CacheSettings,
+) -> Result<Arc<SearchCache>, oxcache::CacheError> {
     let cache: SearchCache = Cache::builder()
         .capacity(settings.memory.capacity)
         .ttl(Duration::from_secs(settings.memory.ttl_seconds))
@@ -220,7 +227,10 @@ pub async fn create_cache(settings: &CacheSettings) -> Result<Arc<SearchCache>, 
 }
 
 /// Create a new DNS cache instance
-pub async fn create_dns_cache(capacity: u64, ttl_seconds: u64) -> Result<Arc<DnsCache>, oxcache::CacheError> {
+pub async fn create_dns_cache(
+    capacity: u64,
+    ttl_seconds: u64,
+) -> Result<Arc<DnsCache>, oxcache::CacheError> {
     let cache: DnsCache = Cache::builder()
         .capacity(capacity)
         .ttl(Duration::from_secs(ttl_seconds))
@@ -230,7 +240,10 @@ pub async fn create_dns_cache(capacity: u64, ttl_seconds: u64) -> Result<Arc<Dns
 }
 
 /// Create a new Regex cache instance
-pub async fn create_regex_cache(capacity: u64, ttl_seconds: u64) -> Result<Arc<RegexCacheType>, oxcache::CacheError> {
+pub async fn create_regex_cache(
+    capacity: u64,
+    ttl_seconds: u64,
+) -> Result<Arc<RegexCacheType>, oxcache::CacheError> {
     let cache: RegexCacheType = Cache::builder()
         .capacity(capacity)
         .ttl(Duration::from_secs(ttl_seconds))
@@ -294,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limiter() {
         let limiter = RateLimiter::new_default();
-        
+
         // First few requests should succeed
         for _ in 0..5 {
             assert!(limiter.check_rate_limit("test_client").await.is_ok());
@@ -304,11 +317,11 @@ mod tests {
     #[tokio::test]
     async fn test_concurrency_controller() {
         let controller = ConcurrencyController::new(2);
-        
+
         // Should be able to acquire 2 permits
         assert!(controller.try_acquire().await.is_some());
         assert!(controller.try_acquire().await.is_some());
-        
+
         // Third should fail
         assert!(controller.try_acquire().await.is_none());
     }

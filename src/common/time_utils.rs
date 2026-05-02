@@ -108,7 +108,10 @@ mod tests {
 
     #[test]
     fn test_from_db_datetime() {
-        let fixed_dt = FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2025, 1, 1, 12, 0, 0).unwrap();
+        let fixed_dt = FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2025, 1, 1, 12, 0, 0)
+            .unwrap();
         let converted = from_db_datetime(fixed_dt);
 
         assert_eq!(fixed_dt.timestamp(), converted.timestamp());
@@ -116,7 +119,10 @@ mod tests {
 
     #[test]
     fn test_from_db_datetime_opt_some() {
-        let fixed_dt = FixedOffset::east_opt(0).unwrap().with_ymd_and_hms(2025, 1, 1, 12, 0, 0).unwrap();
+        let fixed_dt = FixedOffset::east_opt(0)
+            .unwrap()
+            .with_ymd_and_hms(2025, 1, 1, 12, 0, 0)
+            .unwrap();
         let converted = from_db_datetime_opt(Some(fixed_dt));
 
         assert!(converted.is_some());
@@ -139,6 +145,9 @@ mod tests {
         let back_to_utc = from_db_datetime(to_db);
 
         assert_eq!(now.timestamp(), back_to_utc.timestamp());
-        assert_eq!(now.timestamp_subsec_nanos(), back_to_utc.timestamp_subsec_nanos());
+        assert_eq!(
+            now.timestamp_subsec_nanos(),
+            back_to_utc.timestamp_subsec_nanos()
+        );
     }
 }

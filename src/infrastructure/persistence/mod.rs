@@ -20,4 +20,7 @@
 pub mod mappers;
 
 // Re-export mappers for convenience
-pub use mappers::{CrawlMapper, CreditsMapper, CreditsTransactionMapper, TaskMapper, WebhookEventMapper, WebhookMapper};
+pub use mappers::{
+    CrawlMapper, CreditsMapper, CreditsTransactionMapper, TaskMapper, WebhookEventMapper,
+    WebhookMapper,
+};
