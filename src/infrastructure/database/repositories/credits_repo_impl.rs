@@ -34,11 +34,16 @@ impl CreditsRepositoryImpl {
 #[async_trait]
 impl CreditsRepository for CreditsRepositoryImpl {
     async fn get_balance(&self, team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
-        let conn = session.connection().map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
+
         let credits = credits::Entity::find()
             .filter(credits::Column::TeamId.eq(team_id))
             .one(conn)
@@ -62,11 +67,16 @@ impl CreditsRepository for CreditsRepositoryImpl {
         description: String,
         reference_id: Option<Uuid>,
     ) -> Result<(), CreditsRepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
-        let conn = session.connection().map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
+
         // Use the stored procedure for atomic deduction with row-level locking
         // Note: Using execute_unprepared for stored procedure call
         let sql = format!(
@@ -75,7 +85,9 @@ impl CreditsRepository for CreditsRepositoryImpl {
             amount,
             transaction_type,
             description.replace("'", "''"),
-            reference_id.map(|id| format!("'{}'", id)).unwrap_or("NULL".to_string())
+            reference_id
+                .map(|id| format!("'{}'", id))
+                .unwrap_or("NULL".to_string())
         );
 
         conn.execute_unprepared(&sql)
@@ -93,11 +105,16 @@ impl CreditsRepository for CreditsRepositoryImpl {
         description: String,
         reference_id: Option<Uuid>,
     ) -> Result<i64, CreditsRepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
-        let conn = session.connection().map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
+
         // Use the stored procedure for atomic addition
         // Note: Using execute_unprepared for stored procedure call
         let sql = format!(
@@ -106,7 +123,9 @@ impl CreditsRepository for CreditsRepositoryImpl {
             amount,
             transaction_type,
             description.replace("'", "''"),
-            reference_id.map(|id| format!("'{}'", id)).unwrap_or("NULL".to_string())
+            reference_id
+                .map(|id| format!("'{}'", id))
+                .unwrap_or("NULL".to_string())
         );
 
         conn.execute_unprepared(&sql)
@@ -123,11 +142,16 @@ impl CreditsRepository for CreditsRepositoryImpl {
         team_id: Uuid,
         limit: Option<u32>,
     ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
-        let conn = session.connection().map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
+
         let mut query = credits_transactions::Entity::find()
             .filter(credits_transactions::Column::TeamId.eq(team_id))
             .order_by_desc(credits_transactions::Column::CreatedAt);
@@ -149,11 +173,16 @@ impl CreditsRepository for CreditsRepositoryImpl {
         team_id: Uuid,
         initial_balance: i64,
     ) -> Result<i64, CreditsRepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
-        let conn = session.connection().map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
+
         // Check if credits already exist
         let existing = credits::Entity::find()
             .filter(credits::Column::TeamId.eq(team_id))

@@ -326,6 +326,10 @@ mod tests {
 
         let pool = create_pool(&settings).await.unwrap();
         let session = pool.get_session("admin").await;
-        assert!(session.is_ok(), "Failed to get session: {:?}", session.err());
+        assert!(
+            session.is_ok(),
+            "Failed to get session: {:?}",
+            session.err()
+        );
     }
 }

@@ -32,14 +32,21 @@ impl WebhookRepoImpl {
 #[async_trait]
 impl WebhookRepository for WebhookRepoImpl {
     async fn create(&self, webhook: &Webhook) -> Result<Webhook, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entity = WebhookMapper::to_entity(webhook);
         let active_model = webhook::ActiveModel::from(entity);
 
         active_model
-            .insert(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .insert(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -47,11 +54,18 @@ impl WebhookRepository for WebhookRepoImpl {
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entity = webhook::Entity::find_by_id(id)
-            .one(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .one(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -59,12 +73,19 @@ impl WebhookRepository for WebhookRepoImpl {
     }
 
     async fn find_by_team_id(&self, team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entities = webhook::Entity::find()
             .filter(webhook::Column::TeamId.eq(team_id))
-            .all(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .all(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 

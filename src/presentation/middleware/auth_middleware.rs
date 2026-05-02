@@ -97,8 +97,7 @@ impl ApiKeyCache {
     fn new(max_size: usize, ttl_seconds: u64) -> Self {
         Self {
             cache: LruCache::new(
-                NonZeroUsize::new(max_size)
-                    .expect("ApiKeyCache max_size must be greater than 0"),
+                NonZeroUsize::new(max_size).expect("ApiKeyCache max_size must be greater than 0"),
             ),
             ttl: Duration::from_secs(ttl_seconds),
             max_size,
@@ -129,16 +128,16 @@ impl ApiKeyCache {
     }
 
     /// Invalidate cache for a specific API key by token hash
-    /// 
+    ///
     /// # Security
-    /// 
+    ///
     /// This method should be called when:
     /// - An API key is revoked or deleted
     /// - An API key's permissions are changed
     /// - An API key is regenerated
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `token_hash` - The SHA-256 hash of the API key token (format: "sha256:...")
     pub fn invalidate(&mut self, token_hash: &str) {
         if let Some(removed) = self.cache.pop(token_hash) {
@@ -207,7 +206,8 @@ impl ApiKeyCache {
     /// * `team_id` - The UUID of the team whose cache entries should be invalidated
     pub fn invalidate_team(&mut self, team_id: Uuid) {
         // SEC-004: 收集匹配的键后批量删除（在持有写锁的情况下执行）
-        let keys_to_remove: Vec<String> = self.cache
+        let keys_to_remove: Vec<String> = self
+            .cache
             .iter()
             .filter(|(_, result)| result.team_id == team_id)
             .map(|(key, _)| key.clone())
@@ -231,9 +231,9 @@ impl ApiKeyCache {
     }
 
     /// Clear all cache entries
-    /// 
+    ///
     /// # Security
-    /// 
+    ///
     /// This method should be called when:
     /// - A critical security event occurs
     /// - System-wide permission changes are made
@@ -272,21 +272,21 @@ pub struct CacheStats {
 // ============================================================================
 
 /// Invalidate cache for a specific API key by token hash (using global cache)
-/// 
+///
 /// # Security
-/// 
+///
 /// This function provides a convenient way to invalidate cache entries from
 /// anywhere in the application. It should be called when:
 /// - An API key is revoked or deleted
 /// - An API key's permissions are changed
 /// - An API key is regenerated
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `token_hash` - The SHA-256 hash of the API key token (format: "sha256:...")
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns `true` if the cache entry was found and removed, `false` otherwise.
 pub async fn invalidate_cache_by_token_hash(token_hash: &str) -> bool {
     if let Some(cache) = get_global_auth_cache() {
@@ -304,18 +304,18 @@ pub async fn invalidate_cache_by_token_hash(token_hash: &str) -> bool {
 }
 
 /// Invalidate all cache entries for a specific API key ID (using global cache)
-/// 
+///
 /// # Security
-/// 
+///
 /// This function should be called when an API key's permissions are updated
 /// but the token hash is not immediately available.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `api_key_id` - The UUID of the API key to invalidate
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns the number of cache entries removed.
 pub async fn invalidate_cache_by_api_key_id(api_key_id: Uuid) -> usize {
     if let Some(cache) = get_global_auth_cache() {
@@ -334,20 +334,20 @@ pub async fn invalidate_cache_by_api_key_id(api_key_id: Uuid) -> usize {
 }
 
 /// Invalidate all cache entries for a specific team (using global cache)
-/// 
+///
 /// # Security
-/// 
+///
 /// This function should be called when:
 /// - A team is suspended or deleted
 /// - Team-wide permissions are changed
 /// - All team API keys need to be re-validated
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `team_id` - The UUID of the team whose cache entries should be invalidated
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns the number of cache entries removed.
 pub async fn invalidate_cache_by_team(team_id: Uuid) -> usize {
     if let Some(cache) = get_global_auth_cache() {
@@ -366,16 +366,16 @@ pub async fn invalidate_cache_by_team(team_id: Uuid) -> usize {
 }
 
 /// Clear all cache entries (using global cache)
-/// 
+///
 /// # Security
-/// 
+///
 /// This function should be called when:
 /// - A critical security event occurs
 /// - System-wide permission changes are made
 /// - Emergency cache invalidation is required
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns the number of cache entries removed.
 pub async fn invalidate_all_cache() -> usize {
     if let Some(cache) = get_global_auth_cache() {
@@ -393,9 +393,9 @@ pub async fn invalidate_all_cache() -> usize {
 }
 
 /// Get cache statistics (using global cache)
-/// 
+///
 /// # Returns
-/// 
+///
 /// Returns cache statistics if the global cache is initialized, `None` otherwise.
 pub async fn get_cache_stats() -> Option<CacheStats> {
     if let Some(cache) = get_global_auth_cache() {
@@ -535,12 +535,7 @@ impl std::fmt::Debug for ApiKeyCache {
 
 impl AuthState {
     /// Create a new AuthState with required fields
-    pub fn new(
-        pool: Arc<DbPool>,
-        team_id: Uuid,
-        api_key_id: Uuid,
-        scope: ApiKeyScope,
-    ) -> Self {
+    pub fn new(pool: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid, scope: ApiKeyScope) -> Self {
         Self {
             pool,
             auth_scope_service: None,
@@ -619,12 +614,12 @@ impl AuthState {
     }
 
     /// Create AuthState with global cache support
-    /// 
+    ///
     /// This method creates an AuthState that uses the global cache instance,
     /// enabling cache invalidation across the application.
-    /// 
+    ///
     /// # Security
-    /// 
+    ///
     /// Using the global cache allows for centralized cache invalidation when
     /// API keys are revoked, permissions are changed, or teams are suspended.
     pub fn with_global_cache(
@@ -649,7 +644,7 @@ impl AuthState {
     }
 
     /// Create a new AuthState for middleware initialization with global cache
-    /// 
+    ///
     /// This is used during application startup to create the initial AuthState
     /// that will be passed to the middleware.
     pub fn new_for_middleware(
@@ -718,10 +713,7 @@ pub enum AuthError {
 /// It combines the functionality of the original basic and enhanced auth middlewares.
 ///
 /// This version uses global state for middleware initialization.
-async fn auth_middleware_inner(
-    req: axum::http::Request<Body>,
-    next: Next,
-) -> Response {
+async fn auth_middleware_inner(req: axum::http::Request<Body>, next: Next) -> Response {
     // Get auth state from global storage
     let state = match get_global_auth_state() {
         Some(s) => s,
@@ -803,7 +795,14 @@ async fn auth_middleware_inner(
 }
 
 /// Wrapper function for middleware registration
-pub fn auth_middleware() -> impl Fn(axum::http::Request<Body>, Next) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>> + Clone + Send + Sync + 'static {
+pub fn auth_middleware() -> impl Fn(
+    axum::http::Request<Body>,
+    Next,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>
+       + Clone
+       + Send
+       + Sync
+       + 'static {
     |req, next| Box::pin(auth_middleware_inner(req, next))
 }
 
@@ -862,17 +861,16 @@ async fn validate_api_key_from_db(
     token_hash: &str,
     client_ip: &str,
 ) -> Result<Option<api_key::Model>, StatusCode> {
-    let session = state.pool.get_session("admin").await
-        .map_err(|e| {
-            tracing::error!("Failed to get database session: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    
+    let session = state.pool.get_session("admin").await.map_err(|e| {
+        tracing::error!("Failed to get database session: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
     let conn = session.connection().map_err(|e| {
         tracing::error!("Failed to get database connection: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    
+
     match api_key::Entity::find()
         .filter(api_key::Column::KeyHash.eq(token_hash))
         .one(conn)
@@ -1050,7 +1048,10 @@ fn extract_bearer_token(req: &Request<Body>) -> Option<String> {
 /// # Returns
 ///
 /// Returns the client's real IP address, or "unknown" if it cannot be determined
-fn get_client_ip(req: &Request<Body>, trusted_proxies: Option<&security::TrustedProxyConfig>) -> String {
+fn get_client_ip(
+    req: &Request<Body>,
+    trusted_proxies: Option<&security::TrustedProxyConfig>,
+) -> String {
     match trusted_proxies {
         Some(config) => security::get_secure_client_ip(req, config),
         None => {
@@ -1172,7 +1173,11 @@ mod tests {
     #[tokio::test]
     async fn test_cache_ttl_is_2_minutes() {
         let cache = ApiKeyCache::new_default();
-        assert_eq!(cache.ttl, Duration::from_secs(120), "TTL should be 120 seconds (2 minutes)");
+        assert_eq!(
+            cache.ttl,
+            Duration::from_secs(120),
+            "TTL should be 120 seconds (2 minutes)"
+        );
     }
 
     #[tokio::test]
@@ -1318,7 +1323,10 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Verify cache miss after expiration
-        assert!(cache.get(&token_hash).is_none(), "Cache entry should be expired");
+        assert!(
+            cache.get(&token_hash).is_none(),
+            "Cache entry should be expired"
+        );
     }
 
     #[tokio::test]
@@ -1340,7 +1348,10 @@ mod tests {
         assert!(cache2.is_some());
 
         let cache2 = cache2.unwrap();
-        assert!(Arc::ptr_eq(&cache1, &cache2), "Global cache should be a singleton");
+        assert!(
+            Arc::ptr_eq(&cache1, &cache2),
+            "Global cache should be a singleton"
+        );
     }
 
     #[tokio::test]

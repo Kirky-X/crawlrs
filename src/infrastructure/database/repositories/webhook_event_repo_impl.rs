@@ -13,7 +13,10 @@ use crate::infrastructure::persistence::mappers::WebhookEventMapper;
 use async_trait::async_trait;
 use chrono::Utc;
 use dbnexus::DbPool;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect,
+};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -34,14 +37,21 @@ impl WebhookEventRepoImpl {
 #[async_trait]
 impl WebhookEventRepository for WebhookEventRepoImpl {
     async fn create(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entity = WebhookEventMapper::to_entity(event);
         let active_model = webhook_event::ActiveModel::from(entity);
 
         active_model
-            .insert(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .insert(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -49,11 +59,18 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entity = webhook_event::Entity::find_by_id(id)
-            .one(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .one(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -63,10 +80,15 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
     async fn find_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError> {
         let now = Utc::now();
 
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
         // Find pending events
         let pending = webhook_event::Entity::find()
@@ -92,14 +114,21 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
     }
 
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entity = WebhookEventMapper::to_entity(event);
         let active_model = webhook_event::ActiveModel::from(entity);
 
         active_model
-            .update(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .update(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -112,15 +141,22 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<WebhookEvent>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entities = webhook_event::Entity::find()
             .filter(webhook_event::Column::TeamId.eq(team_id))
             .order_by(webhook_event::Column::CreatedAt, sea_orm::Order::Desc)
             .limit(limit as u64)
             .offset(offset as u64)
-            .all(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .all(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -128,12 +164,19 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
     }
 
     async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let count = webhook_event::Entity::find()
             .filter(webhook_event::Column::TeamId.eq(team_id))
-            .count(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .count(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 

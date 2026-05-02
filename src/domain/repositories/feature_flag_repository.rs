@@ -56,7 +56,10 @@ pub trait FeatureFlagRepository: Interface + Send + Sync {
     /// * `Ok(Some(FeatureFlag))` - Found feature flag
     /// * `Ok(None)` - Feature flag not found
     /// * `Err(FeatureFlagRepositoryError)` - Database error
-    async fn find_by_name(&self, name: &str) -> Result<Option<FeatureFlag>, FeatureFlagRepositoryError>;
+    async fn find_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<FeatureFlag>, FeatureFlagRepositoryError>;
 
     /// Find a feature flag by its ID
     ///
@@ -69,7 +72,8 @@ pub trait FeatureFlagRepository: Interface + Send + Sync {
     /// * `Ok(Some(FeatureFlag))` - Found feature flag
     /// * `Ok(None)` - Feature flag not found
     /// * `Err(FeatureFlagRepositoryError)` - Database error
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<FeatureFlag>, FeatureFlagRepositoryError>;
+    async fn find_by_id(&self, id: Uuid)
+        -> Result<Option<FeatureFlag>, FeatureFlagRepositoryError>;
 
     /// List all feature flags
     ///

@@ -34,11 +34,16 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         &self,
         team_id: Uuid,
     ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
-        
-        let conn = session.connection().map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+
         // 查询团队记录
         let team_model = team::Entity::find_by_id(team_id)
             .one(conn)
@@ -78,11 +83,16 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         team_id: Uuid,
         restrictions: &TeamGeoRestrictions,
     ) -> Result<(), GeoRestrictionRepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
-        
-        let conn = session.connection().map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+
         // 查询团队记录
         let team_model = team::Entity::find_by_id(team_id)
             .one(conn)
@@ -95,26 +105,28 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
 
         // 设置地理限制字段
         active_model.enable_geo_restrictions = Set(restrictions.enable_geo_restrictions);
-        active_model.allowed_countries = Set(restrictions
-            .allowed_countries
-            .as_ref()
-            .map(|countries| serde_json::to_value(countries)
-                .expect("Failed to serialize allowed_countries: this should never fail for Vec<String>")));
-        active_model.blocked_countries = Set(restrictions
-            .blocked_countries
-            .as_ref()
-            .map(|countries| serde_json::to_value(countries)
-                .expect("Failed to serialize blocked_countries: this should never fail for Vec<String>")));
-        active_model.ip_whitelist = Set(restrictions
-            .ip_whitelist
-            .as_ref()
-            .map(|whitelist| serde_json::to_value(whitelist)
-                .expect("Failed to serialize ip_whitelist: this should never fail for Vec<String>")));
-        active_model.domain_blacklist = Set(restrictions
-            .domain_blacklist
-            .as_ref()
-            .map(|blacklist| serde_json::to_value(blacklist)
-                .expect("Failed to serialize domain_blacklist: this should never fail for Vec<String>")));
+        active_model.allowed_countries =
+            Set(restrictions.allowed_countries.as_ref().map(|countries| {
+                serde_json::to_value(countries).expect(
+                    "Failed to serialize allowed_countries: this should never fail for Vec<String>",
+                )
+            }));
+        active_model.blocked_countries =
+            Set(restrictions.blocked_countries.as_ref().map(|countries| {
+                serde_json::to_value(countries).expect(
+                    "Failed to serialize blocked_countries: this should never fail for Vec<String>",
+                )
+            }));
+        active_model.ip_whitelist = Set(restrictions.ip_whitelist.as_ref().map(|whitelist| {
+            serde_json::to_value(whitelist)
+                .expect("Failed to serialize ip_whitelist: this should never fail for Vec<String>")
+        }));
+        active_model.domain_blacklist =
+            Set(restrictions.domain_blacklist.as_ref().map(|blacklist| {
+                serde_json::to_value(blacklist).expect(
+                    "Failed to serialize domain_blacklist: this should never fail for Vec<String>",
+                )
+            }));
 
         // 更新记录
         active_model
@@ -134,11 +146,16 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         action: &str,
         reason: &str,
     ) -> Result<(), GeoRestrictionRepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
-        
-        let conn = session.connection().map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+
         let log_entry = geo_restriction_log::ActiveModel {
             id: Set(Uuid::new_v4()),
             team_id: Set(team_id),

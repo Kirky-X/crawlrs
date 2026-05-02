@@ -87,11 +87,7 @@ pub trait CrawlRepository: Interface + Send + Sync {
     ///
     /// * `Ok(())` - 成功更新状态
     /// * `Err(RepositoryError)` - 更新失败时返回错误
-    async fn update_status(
-        &self,
-        id: Uuid,
-        status: CrawlStatus,
-    ) -> Result<(), RepositoryError>;
+    async fn update_status(&self, id: Uuid, status: CrawlStatus) -> Result<(), RepositoryError>;
 
     /// 增加总任务计数
     ///

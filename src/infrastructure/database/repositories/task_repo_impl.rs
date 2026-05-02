@@ -37,7 +37,10 @@ pub struct TaskRepositoryImpl {
 impl TaskRepositoryImpl {
     /// Create new task repository instance
     pub fn new(pool: Arc<DbPool>, lock_duration: Duration) -> Self {
-        Self { pool, lock_duration }
+        Self {
+            pool,
+            lock_duration,
+        }
     }
 
     /// Get database pool reference
@@ -49,14 +52,21 @@ impl TaskRepositoryImpl {
 #[async_trait]
 impl TaskRepository for TaskRepositoryImpl {
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entity = TaskMapper::to_entity(task);
         let active_model = task_entity::ActiveModel::from(entity);
 
         active_model
-            .insert(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .insert(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -64,11 +74,18 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entity = task_entity::Entity::find_by_id(id)
-            .one(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .one(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -76,14 +93,21 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
         let entity = TaskMapper::to_entity(task);
         let active_model = task_entity::ActiveModel::from(entity);
 
         active_model
-            .update(session.connection().map_err(|e| RepositoryError::Database(e.into()))?)
+            .update(
+                session
+                    .connection()
+                    .map_err(|e| RepositoryError::Database(e.into()))?,
+            )
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
@@ -91,11 +115,16 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         // Find next queued task with expired lock or no lock
         let entity = task_entity::Entity::find()
             .filter(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
@@ -126,11 +155,16 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn mark_completed(&self, id: Uuid) -> Result<(), RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         if let Some(entity) = task_entity::Entity::find_by_id(id)
             .one(conn)
             .await
@@ -152,11 +186,16 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn mark_failed(&self, id: Uuid) -> Result<(), RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         if let Some(entity) = task_entity::Entity::find_by_id(id)
             .one(conn)
             .await
@@ -178,11 +217,16 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn mark_cancelled(&self, id: Uuid) -> Result<(), RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         if let Some(entity) = task_entity::Entity::find_by_id(id)
             .one(conn)
             .await
@@ -204,11 +248,16 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn exists_by_url(&self, url: &str) -> Result<bool, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let count = task_entity::Entity::find()
             .filter(task_entity::Column::Url.eq(url))
             .count(conn)
@@ -226,11 +275,16 @@ impl TaskRepository for TaskRepositoryImpl {
             return Ok(HashSet::new());
         }
 
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let existing_tasks = task_entity::Entity::find()
             .filter(task_entity::Column::Url.is_in(urls.to_vec()))
             .all(conn)
@@ -244,11 +298,16 @@ impl TaskRepository for TaskRepositoryImpl {
 
     async fn reset_stuck_tasks(&self, timeout: Duration) -> Result<u64, RepositoryError> {
         let cutoff = Utc::now() - timeout;
-        
-        let session = self.pool.get_session("admin").await
+
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
         // 使用批量 UPDATE 替代循环更新，避免 N+1 查询问题
         let result = task_entity::Entity::update_many()
@@ -256,9 +315,15 @@ impl TaskRepository for TaskRepositoryImpl {
                 task_entity::Column::Status,
                 Expr::value(TaskStatus::Queued.to_string()),
             )
-            .col_expr(task_entity::Column::StartedAt, Expr::value(None::<chrono::DateTime<Utc>>))
+            .col_expr(
+                task_entity::Column::StartedAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
             .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
-            .col_expr(task_entity::Column::LockExpiresAt, Expr::value(None::<chrono::DateTime<Utc>>))
+            .col_expr(
+                task_entity::Column::LockExpiresAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
             .filter(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
             .filter(task_entity::Column::StartedAt.lt(cutoff))
@@ -270,10 +335,15 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn cancel_tasks_by_crawl_id(&self, crawl_id: Uuid) -> Result<u64, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
         // PERF: 使用批量更新代替 N+1 查询
         // 获取所有需要取消的任务 ID
@@ -312,10 +382,15 @@ impl TaskRepository for TaskRepositoryImpl {
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
         let now = Utc::now();
 
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
         // PERF: 使用批量更新代替 N+1 查询
         // 获取所有需要过期处理的任务 ID
@@ -349,11 +424,16 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 
     async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let entities = task_entity::Entity::find()
             .filter(task_entity::Column::CrawlId.eq(crawl_id))
             .all(conn)
@@ -367,11 +447,16 @@ impl TaskRepository for TaskRepositoryImpl {
         &self,
         params: TaskQueryParams,
     ) -> Result<(Vec<Task>, u64), RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let mut query =
             task_entity::Entity::find().filter(task_entity::Column::TeamId.eq(params.team_id));
 
@@ -416,10 +501,15 @@ impl TaskRepository for TaskRepositoryImpl {
             return Ok((Vec::new(), Vec::new()));
         }
 
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
         // PERF: 使用批量查询代替 N+1 查询
         // 一次性获取所有任务，验证团队所有权

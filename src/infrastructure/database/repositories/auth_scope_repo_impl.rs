@@ -3,12 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::common::time_utils;
+use chrono::Utc;
 use dbnexus::DbPool;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
 use std::sync::Arc;
 use uuid::Uuid;
-use chrono::Utc;
-use crate::common::time_utils;
 
 use crate::domain::auth::ApiKeyScope;
 use crate::domain::repositories::auth_scope_repository::{AuthScopeRepository, RepositoryError};
@@ -37,9 +37,9 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
         api_key_id: Uuid,
     ) -> Result<Option<ApiKeyScope>, RepositoryError> {
         let session = self.pool.get_session("admin").await?;
-        
+
         let conn = session.connection()?;
-        
+
         let scope = ScopeEntity::find()
             .filter(ScopeColumn::ApiKeyId.eq(api_key_id))
             .one(conn)
@@ -56,9 +56,9 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
 
     async fn find_by_api_key(&self, key: &str) -> Result<Option<ApiKeyScope>, RepositoryError> {
         let session = self.pool.get_session("admin").await?;
-        
+
         let conn = session.connection()?;
-        
+
         let api_key = ApiKeyEntity::find()
             .filter(ApiKeyColumn::Key.eq(key))
             .one(conn)
@@ -76,9 +76,9 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
         scope: ApiKeyScope,
     ) -> Result<ApiKeyScope, RepositoryError> {
         let session = self.pool.get_session("admin").await?;
-        
+
         let conn = session.connection()?;
-        
+
         let existing = self.find_by_api_key_id(api_key_id).await?;
 
         match existing {
@@ -88,7 +88,12 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
                     .filter(ScopeColumn::ApiKeyId.eq(api_key_id))
                     .one(conn)
                     .await?
-                    .ok_or_else(|| RepositoryError::NotFound(format!("Scope not found for api_key_id: {}", api_key_id)))?;
+                    .ok_or_else(|| {
+                        RepositoryError::NotFound(format!(
+                            "Scope not found for api_key_id: {}",
+                            api_key_id
+                        ))
+                    })?;
 
                 let scope_active_model =
                     crate::infrastructure::database::entities::auth::scope::ActiveModel {
@@ -103,9 +108,7 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
                         updated_at: Set(Utc::now().with_timezone(&time_utils::UTC_OFFSET)),
                     };
 
-                ScopeEntity::update(scope_active_model)
-                    .exec(conn)
-                    .await?;
+                ScopeEntity::update(scope_active_model).exec(conn).await?;
 
                 Ok(scope)
             }
@@ -124,9 +127,7 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
                         updated_at: Set(now),
                     };
 
-                ScopeEntity::insert(scope_active_model)
-                    .exec(conn)
-                    .await?;
+                ScopeEntity::insert(scope_active_model).exec(conn).await?;
                 Ok(scope)
             }
         }
@@ -134,9 +135,9 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
 
     async fn delete_by_api_key_id(&self, api_key_id: Uuid) -> Result<bool, RepositoryError> {
         let session = self.pool.get_session("admin").await?;
-        
+
         let conn = session.connection()?;
-        
+
         let result = ScopeEntity::delete_many()
             .filter(ScopeColumn::ApiKeyId.eq(api_key_id))
             .exec(conn)

@@ -23,10 +23,18 @@ impl From<dbnexus::DbError> for RepositoryError {
         use dbnexus::DbError;
         match err {
             DbError::Connection(db_err) => RepositoryError::Database(db_err),
-            DbError::Config(msg) => RepositoryError::Database(sea_orm::DbErr::Custom(format!("Config: {}", msg))),
-            DbError::Permission(msg) => RepositoryError::Database(sea_orm::DbErr::Custom(format!("Permission: {}", msg))),
-            DbError::Transaction(msg) => RepositoryError::Database(sea_orm::DbErr::Custom(format!("Transaction: {}", msg))),
-            DbError::Migration(msg) => RepositoryError::Database(sea_orm::DbErr::Custom(format!("Migration: {}", msg))),
+            DbError::Config(msg) => {
+                RepositoryError::Database(sea_orm::DbErr::Custom(format!("Config: {}", msg)))
+            }
+            DbError::Permission(msg) => {
+                RepositoryError::Database(sea_orm::DbErr::Custom(format!("Permission: {}", msg)))
+            }
+            DbError::Transaction(msg) => {
+                RepositoryError::Database(sea_orm::DbErr::Custom(format!("Transaction: {}", msg)))
+            }
+            DbError::Migration(msg) => {
+                RepositoryError::Database(sea_orm::DbErr::Custom(format!("Migration: {}", msg)))
+            }
         }
     }
 }

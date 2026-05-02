@@ -6,9 +6,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use dbnexus::DbPool;
-use sea_orm::{
-    ColumnTrait, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set,
-};
+use sea_orm::{ColumnTrait, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -33,9 +31,9 @@ impl AuditLogRepositoryImpl {
 impl AuditLogRepository for AuditLogRepositoryImpl {
     async fn create(&self, entry: &AuditLogEntry) -> Result<AuditLogEntry, AuditRepositoryError> {
         let session = self.pool.get_session("admin").await?;
-        
+
         let conn = session.connection()?;
-        
+
         let entry_cloned = entry.clone();
         let metadata_value = serde_json::to_value(entry_cloned.metadata).unwrap_or_default();
         let scope_used_value = entry_cloned
@@ -71,9 +69,9 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         let session = self.pool.get_session("admin").await?;
-        
+
         let conn = session.connection()?;
-        
+
         let logs = AuditEntity::find()
             .filter(AuditColumn::ApiKeyId.eq(api_key_id))
             .order_by(AuditColumn::CreatedAt, Order::Desc)
@@ -92,9 +90,9 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         let session = self.pool.get_session("admin").await?;
-        
+
         let conn = session.connection()?;
-        
+
         let logs = AuditEntity::find()
             .filter(AuditColumn::TeamId.eq(team_id))
             .order_by(AuditColumn::CreatedAt, Order::Desc)
@@ -112,9 +110,9 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
         limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         let session = self.pool.get_session("admin").await?;
-        
+
         let conn = session.connection()?;
-        
+
         let logs = AuditEntity::find()
             .filter(AuditColumn::ApiKeyId.eq(api_key_id))
             .filter(AuditColumn::Decision.eq(AuditDecision::Deny.to_string()))
@@ -128,9 +126,9 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
 
     async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditRepositoryError> {
         let cutoff = Utc::now() - chrono::Duration::days(retention_days);
-        
+
         let session = self.pool.get_session("admin").await?;
-        
+
         let conn = session.connection()?;
 
         let result = AuditEntity::delete_many()

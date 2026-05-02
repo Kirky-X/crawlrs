@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use dbnexus::DbPool;
 use sea_orm::{
-    sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -62,11 +62,16 @@ impl From<tasks_backlog::Model> for TasksBacklog {
 #[async_trait]
 impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
     async fn create(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let active_model = tasks_backlog::ActiveModel {
             id: Set(backlog.id),
             task_id: Set(backlog.task_id),
@@ -89,14 +94,17 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let result = TasksBacklogEntity::find_by_id(id)
-            .one(conn)
-            .await?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let result = TasksBacklogEntity::find_by_id(id).one(conn).await?;
         Ok(result.map(TasksBacklog::from))
     }
 
@@ -104,11 +112,16 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
         &self,
         task_id: Uuid,
     ) -> Result<Option<TasksBacklog>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let result = TasksBacklogEntity::find()
             .filter(tasks_backlog::Column::TaskId.eq(task_id))
             .one(conn)
@@ -117,11 +130,16 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
     }
 
     async fn update(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let active_model = tasks_backlog::ActiveModel {
             id: Set(backlog.id),
             task_id: Set(backlog.task_id),
@@ -144,14 +162,17 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
     }
 
     async fn delete(&self, id: Uuid) -> Result<(), RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        TasksBacklogEntity::delete_by_id(id)
-            .exec(conn)
-            .await?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        TasksBacklogEntity::delete_by_id(id).exec(conn).await?;
         Ok(())
     }
 
@@ -160,11 +181,16 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
         team_id: Option<Uuid>,
         limit: Option<u64>,
     ) -> Result<Vec<TasksBacklog>, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let mut query = TasksBacklogEntity::find()
             .filter(tasks_backlog::Column::Status.eq(TasksBacklogStatus::Pending.to_string()))
             .order_by_asc(tasks_backlog::Column::Priority)
@@ -187,12 +213,17 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
         limit: Option<u64>,
     ) -> Result<Vec<TasksBacklog>, RepositoryError> {
         let now = Utc::now();
-        
-        let session = self.pool.get_session("admin").await
+
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let mut query = TasksBacklogEntity::find()
             .filter(tasks_backlog::Column::ExpiresAt.lt(now))
             .filter(tasks_backlog::Column::Status.ne(TasksBacklogStatus::Expired.to_string()))
@@ -211,11 +242,16 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
         team_id: Option<Uuid>,
         status: TasksBacklogStatus,
     ) -> Result<i64, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let mut query =
             TasksBacklogEntity::find().filter(tasks_backlog::Column::Status.eq(status.to_string()));
 
@@ -232,11 +268,16 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
         ids: &[Uuid],
         status: TasksBacklogStatus,
     ) -> Result<u64, RepositoryError> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
-        
-        let conn = session.connection().map_err(|e| RepositoryError::Database(e.into()))?;
-        
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
         let result = TasksBacklogEntity::update_many()
             .col_expr(
                 tasks_backlog::Column::Status,

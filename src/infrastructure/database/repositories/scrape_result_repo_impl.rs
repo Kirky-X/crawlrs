@@ -45,7 +45,10 @@ impl ScrapeResultRepositoryImpl {
             meta_data: Set(Some(result.meta_data.clone())),
             screenshot: Set(result.screenshot.clone()),
             response_time_ms: Set(result.response_time_ms),
-            created_at: Set(result.created_at.and_utc().with_timezone(&FixedOffset::east_opt(0).unwrap())),
+            created_at: Set(result
+                .created_at
+                .and_utc()
+                .with_timezone(&FixedOffset::east_opt(0).unwrap())),
         }
     }
 
@@ -70,33 +73,43 @@ impl ScrapeResultRepositoryImpl {
 #[async_trait]
 impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
     async fn save(&self, result: ScrapeResult) -> anyhow::Result<()> {
-        let session = self.pool.get_session("scraper").await
+        let session = self
+            .pool
+            .get_session("scraper")
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
-        
-        let conn = session.connection()
+
+        let conn = session
+            .connection()
             .map_err(|e| anyhow::anyhow!("Failed to get connection: {}", e))?;
-        
+
         let active_model = Self::to_active_model(&result);
 
-        active_model.insert(conn).await
+        active_model
+            .insert(conn)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to insert: {}", e))?;
-        
+
         Ok(())
     }
 
     async fn find_by_task_id(&self, task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
-        
-        let conn = session.connection()
+
+        let conn = session
+            .connection()
             .map_err(|e| anyhow::anyhow!("Failed to get connection: {}", e))?;
-        
+
         let result = db_entity::Entity::find()
             .filter(db_entity::Column::TaskId.eq(task_id))
             .one(conn)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to find: {}", e))?;
-        
+
         Ok(result.map(Self::to_domain))
     }
 
@@ -105,18 +118,22 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
             return Ok(Vec::new());
         }
 
-        let session = self.pool.get_session("admin").await
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
-        
-        let conn = session.connection()
+
+        let conn = session
+            .connection()
             .map_err(|e| anyhow::anyhow!("Failed to get connection: {}", e))?;
-        
+
         let results = db_entity::Entity::find()
             .filter(db_entity::Column::TaskId.is_in(task_ids.to_vec()))
             .all(conn)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to find: {}", e))?;
-        
+
         Ok(results.into_iter().map(Self::to_domain).collect())
     }
 

@@ -246,14 +246,10 @@ impl TransactionManager {
         }
 
         // Get a session from the pool (await outside of lock)
-        let session = self
-            .pool
-            .get_session(&config.role)
-            .await
-            .map_err(|e| {
-                error!("Failed to get session: {}", e);
-                TransactionError::BeginFailed(e.to_string())
-            })?;
+        let session = self.pool.get_session(&config.role).await.map_err(|e| {
+            error!("Failed to get session: {}", e);
+            TransactionError::BeginFailed(e.to_string())
+        })?;
 
         // Begin transaction using dbnexus Session (await outside of lock)
         session.begin_transaction().await.map_err(|e| {
@@ -529,10 +525,7 @@ impl TransactionManager {
     /// Check if there is an active transaction
     pub fn is_active(&self) -> bool {
         let active_tx = self.active_transaction.read();
-        active_tx
-            .as_ref()
-            .map(|tx| !tx.finished)
-            .unwrap_or(false)
+        active_tx.as_ref().map(|tx| !tx.finished).unwrap_or(false)
     }
 
     /// Check if there is an active transaction
@@ -540,10 +533,7 @@ impl TransactionManager {
     /// Returns true if there is an active transaction that has not been finished.
     pub fn has_transaction(&self) -> bool {
         let active_tx = self.active_transaction.read();
-        active_tx
-            .as_ref()
-            .filter(|tx| !tx.finished)
-            .is_some()
+        active_tx.as_ref().filter(|tx| !tx.finished).is_some()
     }
 
     /// Get the number of active savepoints

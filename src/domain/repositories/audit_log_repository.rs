@@ -39,12 +39,12 @@ impl From<DbError> for AuditRepositoryError {
             DbError::Transaction(msg) => AuditRepositoryError::DatabaseError(
                 sea_orm::DbErr::Custom(format!("Transaction error: {}", msg)),
             ),
-            DbError::Migration(msg) => AuditRepositoryError::DatabaseError(
-                sea_orm::DbErr::Custom(format!("Migration error: {}", msg)),
-            ),
-            DbError::Config(msg) => AuditRepositoryError::DatabaseError(
-                sea_orm::DbErr::Custom(format!("Config error: {}", msg)),
-            ),
+            DbError::Migration(msg) => AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
+                format!("Migration error: {}", msg),
+            )),
+            DbError::Config(msg) => AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
+                format!("Config error: {}", msg),
+            )),
         }
     }
 }
