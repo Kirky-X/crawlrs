@@ -7,7 +7,8 @@
 //!
 //! 该模块包含对 crawlrs 系统核心组件的性能基准测试
 
-use crawlrs::domain::models::task::{Task, TaskType};
+use crawlrs::domain::models::task_domain::TaskType;
+use crawlrs::domain::models::task_model::Task;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::hint::black_box;
 use tokio::runtime::Runtime;
@@ -17,7 +18,7 @@ use uuid::Uuid;
 ///
 /// 测试在不同并发级别下创建任务的性能表现
 fn benchmark_task_creation(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let _rt = Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("task_creation");
 
@@ -31,9 +32,10 @@ fn benchmark_task_creation(c: &mut Criterion) {
                     let mut tasks = Vec::new();
                     for i in 0..size {
                         let task = Task::new(
+                            Uuid::new_v4(),
                             TaskType::Scrape,
                             Uuid::new_v4(),
-                            Uuid::new_v4(), // team_id
+                            Uuid::new_v4(),
                             format!("https://example{}.com", i),
                             serde_json::json!({"test": true}),
                         );
@@ -60,16 +62,17 @@ fn benchmark_task_status_transitions(c: &mut Criterion) {
     group.bench_function("single_task_lifecycle", |b| {
         b.iter(|| {
             let mut task = Task::new(
+                Uuid::new_v4(),
                 TaskType::Scrape,
                 Uuid::new_v4(),
-                Uuid::new_v4(), // team_id
+                Uuid::new_v4(),
                 "https://example.com".to_string(),
                 serde_json::json!({}),
             );
 
             // 模拟完整的任务生命周期
-            task = task.start().unwrap();
-            task = task.complete().unwrap();
+            task.start();
+            task.complete();
 
             black_box(task)
         });
@@ -85,13 +88,14 @@ fn benchmark_task_status_transitions(c: &mut Criterion) {
                     let mut tasks = Vec::new();
                     for i in 0..batch_size {
                         let mut task = Task::new(
+                            Uuid::new_v4(),
                             TaskType::Scrape,
                             Uuid::new_v4(),
-                            Uuid::new_v4(), // team_id
+                            Uuid::new_v4(),
                             format!("https://example{}.com", i),
                             serde_json::json!({}),
                         );
-                        task = task.start().unwrap();
+                        task.start();
                         tasks.push(task);
                     }
                     black_box(tasks)
@@ -113,6 +117,7 @@ fn benchmark_json_serialization(c: &mut Criterion) {
 
     // 创建测试任务
     let task = Task::new(
+        Uuid::new_v4(),
         TaskType::Scrape,
         Uuid::new_v4(),
         Uuid::new_v4(),
