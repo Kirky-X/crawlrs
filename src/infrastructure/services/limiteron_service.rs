@@ -104,7 +104,9 @@ impl LimiteronService {
     }
 
     /// 从配置构建 FlowControlConfig
-    fn build_flow_control_config(config: &RateLimitingConfig) -> Result<FlowControlConfig, RateLimitingError> {
+    fn build_flow_control_config(
+        config: &RateLimitingConfig,
+    ) -> Result<FlowControlConfig, RateLimitingError> {
         use limiteron::config::types::{
             Action, ActionConfig, GlobalConfig, LimiterConfig, Matcher, Rule,
         };
@@ -282,16 +284,12 @@ impl ConcurrencyControlService for LimiteronService {
         };
 
         // 检查团队当前并发数
-        let current_concurrency = self
-            .get_team_current_concurrency(team_id)
-            .await?;
+        let current_concurrency = self.get_team_current_concurrency(team_id).await?;
 
         if current_concurrency < self.config.concurrency.max_concurrent_per_team {
             debug!(
                 "LimiteronService: Team {} concurrency check passed (current: {}, max: {})",
-                team_id,
-                current_concurrency,
-                self.config.concurrency.max_concurrent_per_team
+                team_id, current_concurrency, self.config.concurrency.max_concurrent_per_team
             );
             Ok(ConcurrencyResult::Allowed)
         } else {
@@ -338,7 +336,10 @@ impl ConcurrencyControlService for LimiteronService {
         Ok(())
     }
 
-    async fn get_team_current_concurrency(&self, _team_id: uuid::Uuid) -> Result<u32, RateLimitingError> {
+    async fn get_team_current_concurrency(
+        &self,
+        _team_id: uuid::Uuid,
+    ) -> Result<u32, RateLimitingError> {
         // 在实际实现中，应该从存储中获取当前并发数
         // 这里暂时返回 0，生产环境需要从 Redis 或数据库获取
         Ok(0)
@@ -377,7 +378,10 @@ impl BacklogService for LimiteronService {
         {
             Ok(backlogs) => backlogs,
             Err(e) => {
-                tracing::error!("LimiteronService: Database error getting pending tasks: {:?}", e);
+                tracing::error!(
+                    "LimiteronService: Database error getting pending tasks: {:?}",
+                    e
+                );
                 return Err(RateLimitingError::DatabaseError);
             }
         };
@@ -413,7 +417,10 @@ impl BacklogService for LimiteronService {
                             Some(chrono::Utc::now() + chrono::Duration::seconds(300));
 
                         if let Err(e) = self.task_repository.update(&task).await {
-                            tracing::error!("LimiteronService: Database error updating task: {:?}", e);
+                            tracing::error!(
+                                "LimiteronService: Database error updating task: {:?}",
+                                e
+                            );
                             continue;
                         }
                     }

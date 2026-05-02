@@ -20,8 +20,8 @@ use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::config::settings::Settings;
-use crate::domain::models::CrawlStatus;
 use crate::domain::models::scrape_result::ScrapeResult;
+use crate::domain::models::CrawlStatus;
 use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
@@ -505,7 +505,11 @@ impl ScrapeWorker {
 
         // 更新任务状态和 Crawl 统计
         self.repository.mark_completed(task.id).await?;
-        if let Err(e) = self.crawl_repository.increment_completed_tasks(crawl_id).await {
+        if let Err(e) = self
+            .crawl_repository
+            .increment_completed_tasks(crawl_id)
+            .await
+        {
             error!(
                 "Failed to increment completed tasks for crawl {}: {}",
                 crawl_id, e
@@ -541,8 +545,13 @@ impl ScrapeWorker {
                 .await
             {
                 Ok((data, usage)) => {
-                    self.deduct_token_credits(task.team_id, task.id, &usage, "Tokens used for extraction")
-                        .await;
+                    self.deduct_token_credits(
+                        task.team_id,
+                        task.id,
+                        &usage,
+                        "Tokens used for extraction",
+                    )
+                    .await;
                     Some(data)
                 }
                 Err(e) => {
@@ -564,8 +573,13 @@ impl ScrapeWorker {
         request: &ScrapeRequest,
     ) -> Result<()> {
         // 扣除代理费用（即使失败）
-        self.deduct_feature_credits(task.team_id, task.id, false, request.options.proxy.is_some())
-            .await;
+        self.deduct_feature_credits(
+            task.team_id,
+            task.id,
+            false,
+            request.options.proxy.is_some(),
+        )
+        .await;
 
         error!("Crawl step failed: {}", error);
         self.handle_failure(task).await?;
@@ -713,8 +727,13 @@ impl ScrapeWorker {
             .extract(&response.content, rules, Some(url))
             .await?;
 
-        self.deduct_token_credits(task.team_id, task.id, &usage, "Tokens used for extraction rules")
-            .await;
+        self.deduct_token_credits(
+            task.team_id,
+            task.id,
+            &usage,
+            "Tokens used for extraction rules",
+        )
+        .await;
 
         self.save_extract_result(task, response, Some(extracted_data), url)
             .await
@@ -766,8 +785,13 @@ impl ScrapeWorker {
             .extract_with_schema(&response.content, schema)
             .await?;
 
-        self.deduct_token_credits(task.team_id, task.id, &usage, "Tokens used for schema extraction")
-            .await;
+        self.deduct_token_credits(
+            task.team_id,
+            task.id,
+            &usage,
+            "Tokens used for schema extraction",
+        )
+        .await;
 
         self.save_extract_result(task, response, Some(extracted_data), url)
             .await
@@ -1003,19 +1027,26 @@ impl ScrapeWorker {
                             let credits_to_deduct =
                                 std::cmp::max(1, (usage.total_tokens as i64 * 10 + 999) / 1000);
                             if credits_to_deduct > 0 {
-                                if let Err(e) = self.credits_repository.deduct_credits(
-                                    task.team_id,
-                                    credits_to_deduct,
-                                    crate::domain::models::CreditsTransactionType::Extract,
-                                    format!("Tokens used for extraction ({} tokens)", usage.total_tokens),
-                                    Some(task.id),
-                                ).await {
+                                if let Err(e) = self
+                                    .credits_repository
+                                    .deduct_credits(
+                                        task.team_id,
+                                        credits_to_deduct,
+                                        crate::domain::models::CreditsTransactionType::Extract,
+                                        format!(
+                                            "Tokens used for extraction ({} tokens)",
+                                            usage.total_tokens
+                                        ),
+                                        Some(task.id),
+                                    )
+                                    .await
+                                {
                                     error!("Failed to deduct credits for token usage: {}", e);
                                 } else {
                                     info!(
-                                            "Deducted {} credits for {} tokens for team {}",
-                                            credits_to_deduct, usage.total_tokens, task.team_id
-                                        );
+                                        "Deducted {} credits for {} tokens for team {}",
+                                        credits_to_deduct, usage.total_tokens, task.team_id
+                                    );
                                 }
                             }
                         }

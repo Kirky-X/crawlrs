@@ -6,11 +6,7 @@
 use crate::{
     application::dto::crawl_request::CrawlRequestDto,
     domain::{
-        models::{
-            Crawl, CrawlStatus,
-            scrape_result::ScrapeResult,
-            Task, TaskStatus, TaskType,
-        },
+        models::{scrape_result::ScrapeResult, Crawl, CrawlStatus, Task, TaskStatus, TaskType},
         repositories::{
             crawl_repository::CrawlRepository,
             geo_restriction_repository::GeoRestrictionRepository,
@@ -262,9 +258,9 @@ impl CrawlUseCase {
             url,
             CrawlStatus::Queued,
             json!(dto.config),
-            1,  // total_tasks
-            0,  // completed_tasks
-            0,  // failed_tasks
+            1, // total_tasks
+            0, // completed_tasks
+            0, // failed_tasks
             now,
             now,
             None,
@@ -297,8 +293,8 @@ impl CrawlUseCase {
             completed_at: None,       // 尚未完成
             crawl_id: Some(crawl_id), // 关联的爬取任务 ID
             updated_at: now,
-            lock_token: None,      // 尚未加锁
-            lock_expires_at: None, // 锁未过期
+            lock_token: None,           // 尚未加锁
+            lock_expires_at: None,      // 锁未过期
             expires_at: dto.expires_at, // 任务过期时间
         };
 

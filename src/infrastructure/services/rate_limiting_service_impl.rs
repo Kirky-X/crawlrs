@@ -210,7 +210,7 @@ impl RateLimitingServiceImpl {
 
         // 否则加载脚本并缓存 SHA
         let mut conn = self.get_redis_conn().await?;
-        
+
         // 使用 redis crate 的 Script API 来加载脚本
         // deadpool_redis::Connection 实现了 DerefMut<Target = Connection>
         // 所以可以直接用于 invoke_async
@@ -223,7 +223,7 @@ impl RateLimitingServiceImpl {
         // 缓存 SHA
         let sha_string = sha;
         let _ = SCRIPT_SHA.set(sha_string.clone());
-        
+
         debug!("Rate limit script loaded with SHA: {}", sha_string);
         Ok(sha_string)
     }

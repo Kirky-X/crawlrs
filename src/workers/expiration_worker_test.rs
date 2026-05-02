@@ -127,7 +127,10 @@ mod expiration_worker_tests {
                 INSERT INTO api_keys (id, key, key_hash, team_id, created_at, updated_at)
                 VALUES ('{}', 'test-key-{}', 'hash-{}', '{}', '{}', '{}')
             "#,
-            api_key_id, api_key_id, api_key_id, team_id,
+            api_key_id,
+            api_key_id,
+            api_key_id,
+            team_id,
             Utc::now().format("%Y-%m-%d %H:%M:%S.%f UTC"),
             Utc::now().format("%Y-%m-%d %H:%M:%S.%f UTC")
         );
@@ -137,7 +140,7 @@ mod expiration_worker_tests {
         ))
         .await
         .expect("Failed to insert api_key into database");
-        
+
         api_key_id
     }
 

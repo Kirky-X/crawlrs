@@ -49,7 +49,10 @@ impl WebhookSenderImpl {
 
     /// 使用默认配置创建 WebhookSenderImpl
     pub fn with_default_config() -> Self {
-        Self::new(create_http_client(), Duration::from_secs(WEBHOOK_TIMEOUT_SECS))
+        Self::new(
+            create_http_client(),
+            Duration::from_secs(WEBHOOK_TIMEOUT_SECS),
+        )
     }
 
     /// 构建请求 builder
@@ -182,9 +185,7 @@ mod tests {
         let headers = HashMap::new();
 
         let webhook_url = format!("{}/webhook", mock_server.uri());
-        let result = sender
-            .send(&webhook_url, &payload, Some(&headers))
-            .await;
+        let result = sender.send(&webhook_url, &payload, Some(&headers)).await;
 
         assert!(result.is_ok());
     }
@@ -211,9 +212,7 @@ mod tests {
         let payload = json!({"test": "data"});
 
         let webhook_url = format!("{}/webhook", mock_server.uri());
-        let result = sender
-            .send(&webhook_url, &payload, None)
-            .await;
+        let result = sender.send(&webhook_url, &payload, None).await;
 
         assert!(result.is_err());
     }
@@ -245,9 +244,7 @@ mod tests {
         headers.insert("X-Crawlrs-Signature".to_string(), "sig-123".to_string());
 
         let webhook_url = format!("{}/webhook", mock_server.uri());
-        let result = sender
-            .send(&webhook_url, &payload, Some(&headers))
-            .await;
+        let result = sender.send(&webhook_url, &payload, Some(&headers)).await;
 
         assert!(result.is_ok());
     }

@@ -13,9 +13,7 @@ use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::domain::services::concurrency_controller::{
-    ConcurrencyController, ConcurrencyResult,
-};
+use crate::domain::services::concurrency_controller::{ConcurrencyController, ConcurrencyResult};
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
 
@@ -66,10 +64,7 @@ impl RedisConcurrencyController {
     }
 
     /// 获取有效的并发限制
-    pub fn get_effective_limit(
-        &self,
-        task: &crate::domain::models::Task,
-    ) -> usize {
+    pub fn get_effective_limit(&self, task: &crate::domain::models::Task) -> usize {
         Self::extract_payload_limit(task).unwrap_or(self.default_concurrency_limit)
     }
 
