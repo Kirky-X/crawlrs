@@ -121,12 +121,6 @@ impl ApiKeyCache {
         self.cache.push(key, result);
     }
 
-    fn clear_expired(&mut self) {
-        let _now = Instant::now();
-        let _ttl = self.ttl;
-        // Note: Simple cleanup - in production, use a more efficient approach
-    }
-
     /// Invalidate cache for a specific API key by token hash
     ///
     /// # Security

@@ -23,8 +23,8 @@
 - [x] [T016] [P1] 为 sdforge 封装的接口编写集成测试（tests/integration/sdk_api_test.rs），验证 HTTP 端点可调用
 
 ## Phase 4: 幽灵函数移除（gitnexus 深度分析）
-- [ ] [T017] [P1] 用 gitnexus cypher 查询无入边 Function 节点，过滤 trait 实现/标准 trait/getter/构造器/test_*/路由 handler，生成候选清单到 /tmp/ghost-functions-candidates.txt
-- [ ] [T018] [P1] 逐个验证候选函数：读源码确认 + gitnexus context 查 360° 引用 + Grep 搜索字符串引用，确认 0 引用后移除死代码（src/ 下各模块）
+- [x] [T017] [P1] 用 gitnexus cypher 查询无入边 Function 节点，过滤 trait 实现/标准 trait/getter/构造器/test_*/路由 handler，生成候选清单到 /tmp/ghost-functions-candidates.txt
+- [x] [T018] [P1] 逐个验证候选函数：读源码确认 + gitnexus context 查 360° 引用 + Grep 搜索字符串引用，确认 0 引用后移除死代码（src/ 下各模块）
 
 ## Phase 5: 命名修复（gitnexus 分析）
 - [ ] [T019] [P1] 用 gitnexus query 搜索可能的旧名调用（如 governor→limiteron、sea-orm 旧 API、db-postgres→dbnexus-postgres），修复 src/ 下所有过时命名引用
