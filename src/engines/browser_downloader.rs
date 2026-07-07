@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::info;
+use log::info;
 
 /// 下载状态
 #[derive(Debug, Clone, PartialEq)]
@@ -196,7 +196,7 @@ impl BrowserDownloadManager {
             match self.do_fetcher_download().await {
                 Ok(path) => return Ok(path),
                 Err(e) => {
-                    tracing::warn!("fetcher 下载失败: {}", e);
+                    log::warn!("fetcher 下载失败: {}", e);
                 }
             }
         }
@@ -258,7 +258,7 @@ pub async fn find_system_browser() -> Option<PathBuf> {
 
     for path in &common_paths {
         if path.exists() {
-            tracing::info!("找到系统浏览器: {:?}", path);
+            log::info!("找到系统浏览器: {:?}", path);
             return Some(path.clone());
         }
     }

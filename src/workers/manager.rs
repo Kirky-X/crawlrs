@@ -21,7 +21,7 @@ use crate::workers::{AbstractWorker, Worker};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use log::{error, info};
 
 use crate::config::settings::Settings;
 use crate::utils::robots::RobotsCheckerTrait;

@@ -7,11 +7,11 @@
 //!
 //! 演示如何实现代理IP轮换。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("代理轮换示例");
     info!("实现代理IP自动轮换");
 }

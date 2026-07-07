@@ -13,7 +13,7 @@
 //! cargo run --example result_pagination
 //!
 
-use tracing::info;
+use log::info;
 
 /// 分页查询参数
 #[derive(Debug, Clone)]
@@ -64,7 +64,7 @@ impl<T> PaginatedResult<T> {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始结果分页示例");
     info!("=====================================\n");

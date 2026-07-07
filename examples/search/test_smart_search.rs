@@ -22,7 +22,7 @@ use crawlrs::search::types::SearchEngineType;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
-use tracing::info;
+use log::info;
 
 const TEST_QUERY: &str = "rust programming language";
 const TIMEOUT_SECS: u64 = 30;
@@ -30,10 +30,7 @@ const RESULT_LIMIT: u32 = 5;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(true)
-        .init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("==========================================");
     info!("SmartSearchEngine 智能搜索引擎演示");

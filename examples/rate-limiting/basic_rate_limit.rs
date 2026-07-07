@@ -7,11 +7,11 @@
 //!
 //! 演示如何配置API限流。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("基础限流配置示例");
     info!("配置请求频率限制");
 }

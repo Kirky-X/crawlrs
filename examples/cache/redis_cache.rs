@@ -7,11 +7,11 @@
 //!
 //! 演示如何使用Redis进行缓存。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("Redis缓存示例");
     info!("配置和使用Redis缓存");
 }

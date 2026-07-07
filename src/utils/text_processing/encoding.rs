@@ -9,7 +9,7 @@ use lru::LruCache;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, warn};
+use log::{debug, warn};
 
 /// 文本编码处理错误类型
 #[derive(Error, Debug, Clone)]

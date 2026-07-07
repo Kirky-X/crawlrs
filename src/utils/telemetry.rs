@@ -3,130 +3,70 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Telemetry initialization - logging and tracing setup
-
-#![allow(unused_variables)]
+//! Telemetry initialization - logging setup via inklog
+//!
+//! inklog 同时安装 tracing subscriber 和 log::Log adapter，
+//! 项目代码使用 log facade（log::info! 等）记录日志。
 
 use crate::config::{FileLoggingSettings, LoggingSettings};
-use std::path::Path;
-use tracing_appender::{non_blocking, rolling};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use inklog::{
+    ConsoleSinkConfig, FileSinkConfig, GlobalConfig, InklogConfig, LoggerManager,
+};
+use std::path::PathBuf;
 
-/// 初始化遥测系统
+/// 初始化遥测系统（inklog 日志基础设施）
 ///
-/// 根据配置初始化日志系统，支持控制台和文件输出
+/// 根据配置构建 InklogConfig 并通过 LoggerManager::with_config 启动。
+/// 返回的 LoggerManager 必须在应用生命周期内保持存活，否则日志 worker 线程会被释放。
 ///
 /// # 参数
 ///
 /// * `settings` - 日志配置
-pub fn init_telemetry(settings: &LoggingSettings) {
-    // 创建环境过滤器
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "info,crawlrs=debug".into());
+///
+/// # 返回值
+///
+/// * `Ok(LoggerManager)` - 日志管理器，调用方必须持有
+/// * `Err(InklogError)` - 初始化失败
+pub async fn init_telemetry(
+    settings: &LoggingSettings,
+) -> Result<LoggerManager, inklog::InklogError> {
+    let config = build_inklog_config(settings);
+    LoggerManager::with_config(config).await
+}
 
-    // 根据配置构建 subscriber
-    match (settings.console.enabled, settings.file.enabled) {
-        (true, false) => {
-            // 仅控制台输出
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(tracing_subscriber::fmt::layer())
-                .init();
-        }
-        (false, true) => {
-            // 仅文件输出
-            let _guard = init_file_logging(&settings.file);
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(
-                    tracing_subscriber::fmt::layer()
-                        .with_writer(create_file_writer(&settings.file)),
-                )
-                .init();
-        }
-        (true, true) => {
-            // 同时输出到控制台和文件
-            let _guard = init_file_logging(&settings.file);
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(tracing_subscriber::fmt::layer())
-                .with(
-                    tracing_subscriber::fmt::layer()
-                        .with_writer(create_file_writer(&settings.file)),
-                )
-                .init();
-        }
-        (false, false) => {
-            // 都不启用，仅初始化基础注册器
-            tracing_subscriber::registry().with(env_filter).init();
-        }
+/// 从 LoggingSettings 构建 InklogConfig
+///
+/// 映射 crawlrs 的日志配置到 inklog 的配置结构。
+fn build_inklog_config(settings: &LoggingSettings) -> InklogConfig {
+    let console_sink = if settings.console.enabled {
+        Some(ConsoleSinkConfig::default())
+    } else {
+        None
+    };
+
+    let file_sink = if settings.file.enabled {
+        Some(build_file_sink_config(&settings.file))
+    } else {
+        None
+    };
+
+    InklogConfig {
+        global: GlobalConfig::default(),
+        console_sink,
+        file_sink,
+        database_sink: None,
+        performance: Default::default(),
+        http_server: None,
     }
 }
 
-/// 确保日志目录存在
-///
-/// # 参数
-///
-/// * `file_settings` - 文件日志配置
-fn ensure_log_directory_exists(file_settings: &FileLoggingSettings) {
-    if let Some(parent) = Path::new(&file_settings.path).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-                eprintln!("Failed to create log directory: {}", e);
-            });
-        }
+/// 从 FileLoggingSettings 构建 FileSinkConfig
+fn build_file_sink_config(file_settings: &FileLoggingSettings) -> FileSinkConfig {
+    FileSinkConfig {
+        enabled: true,
+        path: PathBuf::from(&file_settings.path),
+        max_size: format!("{}MB", file_settings.max_file_size_mb),
+        keep_files: file_settings.file_count as u32,
+        ..Default::default()
     }
-}
-
-/// 创建滚动文件 appender
-///
-/// # 参数
-///
-/// * `file_settings` - 文件日志配置
-///
-/// # 返回值
-///
-/// * file_appender - 滚动文件 appender
-fn create_file_appender(file_settings: &FileLoggingSettings) -> rolling::RollingFileAppender {
-    rolling::daily(
-        Path::new(&file_settings.path)
-            .parent()
-            .unwrap_or_else(|| Path::new(".")),
-        Path::new(&file_settings.path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("crawlrs.log"),
-    )
-}
-
-/// 初始化文件日志
-///
-/// # 参数
-///
-/// * `file_settings` - 文件日志配置
-///
-/// # 返回值
-///
-/// * guard - 守护者（用于刷新缓冲区）
-fn init_file_logging(file_settings: &FileLoggingSettings) -> non_blocking::WorkerGuard {
-    ensure_log_directory_exists(file_settings);
-    let file_appender = create_file_appender(file_settings);
-    let (non_blocking, guard) = non_blocking(file_appender);
-    guard
-}
-
-/// 创建文件写入器
-///
-/// # 参数
-///
-/// * `file_settings` - 文件日志配置
-///
-/// # 返回值
-///
-/// * non_blocking - 非阻塞写入器
-fn create_file_writer(file_settings: &FileLoggingSettings) -> non_blocking::NonBlocking {
-    ensure_log_directory_exists(file_settings);
-    let file_appender = create_file_appender(file_settings);
-    let (non_blocking, _guard) = non_blocking(file_appender);
-    non_blocking
 }

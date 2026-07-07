@@ -80,7 +80,7 @@ impl ScraperEngine for FireEngineTls {
         let custom_headers = proxy_url.map(|proxy| {
             let mut headers = std::collections::HashMap::new();
             headers.insert("X-Proxy-URL".to_string(), proxy.clone());
-            tracing::debug!("FireEngineTls using proxy: {}", proxy);
+            log::debug!("FireEngineTls using proxy: {}", proxy);
             headers
         });
 

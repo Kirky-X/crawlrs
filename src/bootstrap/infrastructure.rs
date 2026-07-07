@@ -20,7 +20,7 @@ use crate::infrastructure::repositories::{
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::info;
+use log::info;
 
 /// All repository instances used by the application.
 #[derive(Clone)]
@@ -125,7 +125,7 @@ pub fn init_http_client(settings: &Settings) -> Result<Arc<reqwest::Client>> {
                 info!("HTTP client configured with proxy (credentials hidden)");
             }
             Err(e) => {
-                tracing::warn!("Invalid proxy URL '{}', disabling proxy: {}", proxy_url, e);
+                log::warn!("Invalid proxy URL '{}', disabling proxy: {}", proxy_url, e);
             }
         }
     }
@@ -193,7 +193,7 @@ pub fn init_storage_repository(
     match crate::infrastructure::storage::create_storage_repository(&settings.storage) {
         Ok(repo) => Ok(Some(Arc::from(repo))),
         Err(e) => {
-            tracing::error!("Failed to initialize storage repository: {}", e);
+            log::error!("Failed to initialize storage repository: {}", e);
             Err(anyhow::anyhow!(
                 "Failed to initialize storage repository: {}",
                 e
@@ -247,7 +247,7 @@ pub async fn init_oxcache(settings: &Settings) -> Result<Option<Arc<SearchCache>
             Ok(Some(cache))
         }
         Err(e) => {
-            tracing::warn!(
+            log::warn!(
                 "Failed to initialize oxcache: {}. Cache will be disabled.",
                 e
             );

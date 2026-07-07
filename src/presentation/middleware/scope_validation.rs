@@ -7,7 +7,7 @@
 
 use crate::domain::auth::ScopePermission;
 use axum::{extract::Request, http::StatusCode};
-use tracing::warn;
+use log::warn;
 
 /// Extension to extract and validate scopes from requests
 pub trait ScopeValidationExt {

@@ -23,12 +23,12 @@
 
 use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
 use std::time::Duration;
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
     // 初始化日志系统
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始基础爬取示例");
     info!("=====================================\n");

@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{debug, error, info, instrument, warn};
+use log::{debug, error, info, warn};
 use url::Url;
 use uuid::Uuid;
 
@@ -195,9 +195,8 @@ impl ScrapeWorker {
         Ok(())
     }
 
-    #[instrument(skip(self, task), fields(task_id = %task.id, url = %task.url, task_type = %task.task_type))]
     async fn process_task(&self, mut task: Task) -> Result<()> {
-        debug!(task_id = %task.id, task_type = ?task.task_type);
+        debug!("process_task: task_id={}, url={}, task_type={}", task.id, task.url, task.task_type);
         info!("Processing task");
 
         // Check Task Expiration
@@ -257,7 +256,7 @@ impl ScrapeWorker {
         }
 
         if let Err(ref e) = result {
-            debug!(error = %e);
+            debug!("error={}", e);
         } else {
             debug!("Task processing completed successfully");
         }
@@ -266,7 +265,7 @@ impl ScrapeWorker {
     }
 
     async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
-        debug!(task_id = %task.id);
+        debug!("task_id={}", task.id);
 
         // Resolve engine router directly to handle actions if they exist
         let scrape_request = Self::build_scrape_request(&task).unwrap_or_else(|e| {
@@ -280,7 +279,7 @@ impl ScrapeWorker {
 
         match response {
             Ok(response) => {
-                debug!(status_code = response.status_code);
+                debug!("status_code={:?}", response.status_code);
                 info!("Scrape successful, status: {}", response.status_code);
 
                 // Map ScrapeResponse to ScrapeResult
@@ -301,7 +300,7 @@ impl ScrapeWorker {
 
                 if let Err(e) = self.handle_scrape_success(&task, &response).await {
                     error!("Scrape success handler failed: {}", e);
-                    debug!(error = %e);
+                    debug!("error={}", e);
                     self.handle_failure(&mut task).await?;
                 } else {
                     debug!("Scrape success handler completed successfully");
@@ -318,7 +317,7 @@ impl ScrapeWorker {
             }
             Err(e) => {
                 error!("Scrape failed: {}", e);
-                debug!(error = %e);
+                debug!("error={}", e);
 
                 // If it's a timeout error, mark as failed immediately instead of rescheduling
                 let err_str = e.to_string().to_lowercase();
@@ -665,9 +664,9 @@ impl ScrapeWorker {
 
         // 1. 解析 Payload
         let (payload, url) = self.parse_extract_payload(&task).await?;
-        debug!(has_rules = payload.rules.is_some());
+        debug!("has_rules={:?}", payload.rules.is_some());
         if let Some(ref rules) = payload.rules {
-            debug!(rules_count = rules.len());
+            debug!("rules_count={:?}", rules.len());
         }
 
         // 2. 构建并执行 Scrape 请求
@@ -720,7 +719,7 @@ impl ScrapeWorker {
         rules: &HashMap<String, crate::domain::services::extraction_service::ExtractionRule>,
         url: &str,
     ) -> Result<()> {
-        debug!(?rules);
+        debug!("{:?}", rules);
 
         let (extracted_data, usage) = self
             .extraction_service
@@ -979,7 +978,7 @@ impl ScrapeWorker {
     }
 
     async fn handle_scrape_success(&self, task: &Task, response: &ScrapeResponse) -> Result<()> {
-        debug!(task_id = %task.id);
+        debug!("task_id={}", task.id);
 
         // 文本编码处理 - 集成文本处理功能
         let processed_content = match self.process_text_encoding(task, response).await {
@@ -1060,9 +1059,9 @@ impl ScrapeWorker {
 
         self.save_result(task, &processed_response, extracted_data)
             .await?;
-        debug!(task_id = %task.id, "About to mark task as completed");
+        debug!("About to mark task as completed task_id={}", task.id);
         self.repository.mark_completed(task.id).await?;
-        debug!(task_id = %task.id, "Successfully marked task as completed");
+        debug!("Successfully marked task as completed task_id={}", task.id);
 
         self.trigger_webhook(task, None).await;
         Ok(())
@@ -1074,7 +1073,7 @@ impl ScrapeWorker {
         task: &Task,
         response: &ScrapeResponse,
     ) -> Result<String> {
-        use tracing::{info, warn};
+        use log::{info, warn};
 
         info!(
             "开始处理文本编码转换，任务ID: {}, URL: {}",

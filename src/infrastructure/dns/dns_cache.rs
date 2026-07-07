@@ -10,7 +10,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
-use tracing::{debug, warn};
+use log::{debug, warn};
 
 /// 线程安全的DNS缓存（使用 oxcache）
 #[derive(Debug, Clone)]

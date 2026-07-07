@@ -10,7 +10,7 @@ use crawlrs::workers::{AbstractWorker, Worker};
 use std::sync::Arc;
 use std::{env, process};
 use tokio::net::TcpListener;
-use tracing::error;
+use log::error;
 
 /// Service type enumeration.
 enum ServiceType {
@@ -43,7 +43,7 @@ async fn start_api_service(
     app_state: &AppState,
     settings: Arc<crawlrs::config::settings::Settings>,
 ) -> anyhow::Result<()> {
-    tracing::info!("Starting API service...");
+    log::info!("Starting API service...");
 
     // Start webhook worker
     let webhook_worker = AbstractWorker::new(
@@ -78,7 +78,7 @@ async fn start_api_service(
     // Start the server
     let addr = format!("{}:{}", settings.server.host, settings.server.port);
     let listener = TcpListener::bind(&addr).await?;
-    tracing::info!("Server listening on {}", addr);
+    log::info!("Server listening on {}", addr);
 
     axum::serve(
         listener,
@@ -95,7 +95,7 @@ async fn start_worker_service(
     settings: Arc<crawlrs::config::settings::Settings>,
     http_client: Arc<reqwest::Client>,
 ) -> anyhow::Result<()> {
-    tracing::info!("Starting Worker service...");
+    log::info!("Starting Worker service...");
 
     // Start webhook worker
     let webhook_worker = AbstractWorker::new(
@@ -133,7 +133,7 @@ async fn start_worker_service(
 
     // Start workers
     let worker_count = settings.workers.count.resolve();
-    tracing::info!("Starting {} worker(s)", worker_count);
+    log::info!("Starting {} worker(s)", worker_count);
     worker_manager.start_workers(worker_count).await;
 
     // Start backlog worker
@@ -156,7 +156,7 @@ async fn start_worker_service(
 
     // Keep the main thread alive
     tokio::signal::ctrl_c().await?;
-    tracing::info!("Shutting down worker service...");
+    log::info!("Shutting down worker service...");
 
     Ok(())
 }
@@ -171,17 +171,19 @@ async fn main() -> anyhow::Result<()> {
     let (settings, _port) = crawlrs::bootstrap::config::load_and_configure(is_production)?;
     let settings = Arc::new(settings);
 
-    // 2. Initialize telemetry and metrics
-    crawlrs::bootstrap::telemetry::init_all(&settings.logging);
+    // 2. Initialize telemetry and metrics (inklog LoggerManager must be held alive)
+    let _logger_manager = crawlrs::bootstrap::telemetry::init_all(&settings.logging)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize inklog logger: {}", e))?;
 
     // 3. Set proxy environment variables if enabled
     if settings.proxy.enabled {
         env::set_var("CRAWLRS_PROXY_URL", settings.proxy.url());
-        tracing::info!("HTTP proxy enabled (credentials hidden)");
+        log::info!("HTTP proxy enabled (credentials hidden)");
     }
 
     // 4. Create application state using bootstrap infrastructure
-    tracing::info!("Initializing application dependencies...");
+    log::info!("Initializing application dependencies...");
 
     // Initialize infrastructure first (needed for http_client)
     let proxy_url = settings.proxy.url();
@@ -246,7 +248,7 @@ async fn main() -> anyhow::Result<()> {
         geo_restriction_repo: infrastructure.repositories.geo_restriction_repo,
     };
 
-    tracing::info!("Application dependencies initialized successfully");
+    log::info!("Application dependencies initialized successfully");
 
     // 5. Start service based on type
     match ServiceType::from_args() {

@@ -7,11 +7,11 @@
 //!
 //! 演示最佳错误处理实践。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("错误处理模式示例");
     info!("优雅的错误处理机制");
 }

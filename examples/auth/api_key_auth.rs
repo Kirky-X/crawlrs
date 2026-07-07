@@ -7,11 +7,11 @@
 //!
 //! 演示如何使用API密钥进行身份验证。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("API密钥认证示例");
     info!("配置API密钥进行身份验证");
 }

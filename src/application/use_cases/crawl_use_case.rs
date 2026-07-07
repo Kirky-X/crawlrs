@@ -21,7 +21,7 @@ use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::log::error;
+use log::error;
 use uuid::Uuid;
 
 /// 爬取用例错误类型

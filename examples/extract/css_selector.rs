@@ -23,7 +23,7 @@
 //! cargo run --example css_selector
 //!
 
-use tracing::info;
+use log::info;
 
 /// CSS选择器示例
 #[derive(Debug)]
@@ -35,7 +35,7 @@ struct CssSelectorExample {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始CSS选择器提取示例");
     info!("=====================================\n");

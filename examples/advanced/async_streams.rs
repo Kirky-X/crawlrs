@@ -7,11 +7,11 @@
 //!
 //! 演示如何使用异步流处理数据。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("异步流处理示例");
     info!("使用async stream处理数据");
 }

@@ -21,7 +21,7 @@
 //! cargo run --example status_tracking
 //!
 
-use tracing::info;
+use log::info;
 
 /// 爬取任务状态
 #[derive(Debug, Clone, PartialEq)]
@@ -107,7 +107,7 @@ impl CrawlProgress {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始爬取状态跟踪示例");
     info!("=====================================\n");

@@ -23,11 +23,11 @@
 
 use crawlrs::engines::engine_client::{EngineClient, PageAction, ScrapeOptionsBuilder};
 use std::time::Duration;
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始页面交互示例");
     info!("=====================================\n");

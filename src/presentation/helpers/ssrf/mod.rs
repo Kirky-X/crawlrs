@@ -235,7 +235,7 @@ impl SsrfValidator {
         let has_public = ips.iter().any(|ip| !is_private_ip(*ip));
 
         if has_private && has_public {
-            tracing::warn!(
+            log::warn!(
                 "DNS rebinding attack detected: hostname {} resolved to mixed private/public IPs",
                 hostname
             );
@@ -254,7 +254,7 @@ impl SsrfValidator {
 
         // Log if multiple IPs resolved (potential DNS round-robin)
         if ips.len() > 1 {
-            tracing::debug!(
+            log::debug!(
                 "DNS resolution returned {} IPs for hostname {}",
                 ips.len(),
                 hostname

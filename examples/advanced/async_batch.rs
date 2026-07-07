@@ -7,11 +7,11 @@
 //!
 //! 演示如何进行异步批量数据处理。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("异步批量处理示例");
     info!("并发处理多个任务");
 }

@@ -118,7 +118,7 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
     reqwest::redirect::Policy::custom(move |attempt| {
         // Check redirect count
         if attempt.previous().len() >= max_redirects as usize {
-            tracing::warn!(
+            log::warn!(
                 "Redirect limit ({}) exceeded, stopping redirect chain",
                 max_redirects
             );
@@ -130,7 +130,7 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
 
         // Validate redirect URL for SSRF
         if is_internal_url(&redirect_url) {
-            tracing::warn!(
+            log::warn!(
                 "SSRF protection: Blocking redirect to internal URL: {}",
                 redirect_url
             );
@@ -138,7 +138,7 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
         }
 
         // Log redirect for debugging
-        tracing::debug!(
+        log::debug!(
             "Following redirect {} -> {}",
             attempt
                 .previous()

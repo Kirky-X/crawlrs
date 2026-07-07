@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use limiteron::prelude::*;
 use limiteron::storage::{BanStorage, MemoryBanStorage, MemoryStorage, Storage};
-use tracing::{debug, warn};
+use log::{debug, warn};
 
 use crate::domain::repositories::{
     credits_repository::CreditsRepository, task_repository::TaskRepository,
@@ -280,7 +280,7 @@ impl ConcurrencyControlService for LimiteronService {
                 return Err(RateLimitingError::DatabaseError);
             }
             Err(e) => {
-                tracing::error!("LimiteronService: Database error finding task: {:?}", e);
+                log::error!("LimiteronService: Database error finding task: {:?}", e);
                 return Err(RateLimitingError::DatabaseError);
             }
         };
@@ -315,7 +315,7 @@ impl ConcurrencyControlService for LimiteronService {
                     backlog_id: saved_backlog.id,
                 }),
                 Err(e) => {
-                    tracing::error!("LimiteronService: Database error creating backlog: {:?}", e);
+                    log::error!("LimiteronService: Database error creating backlog: {:?}", e);
                     Err(RateLimitingError::DatabaseError)
                 }
             }
@@ -380,7 +380,7 @@ impl BacklogService for LimiteronService {
         {
             Ok(backlogs) => backlogs,
             Err(e) => {
-                tracing::error!(
+                log::error!(
                     "LimiteronService: Database error getting pending tasks: {:?}",
                     e
                 );
@@ -395,12 +395,12 @@ impl BacklogService for LimiteronService {
             if backlog.is_expired() {
                 let mut expired_backlog = backlog.clone();
                 if let Err(e) = expired_backlog.mark_expired() {
-                    tracing::error!("LimiteronService: Error marking backlog expired: {}", e);
+                    log::error!("LimiteronService: Error marking backlog expired: {}", e);
                     continue;
                 }
 
                 if let Err(e) = self.tasks_backlog_repository.update(&expired_backlog).await {
-                    tracing::error!("LimiteronService: Database error updating backlog: {:?}", e);
+                    log::error!("LimiteronService: Database error updating backlog: {:?}", e);
                 }
                 continue;
             }
@@ -419,7 +419,7 @@ impl BacklogService for LimiteronService {
                             Some(chrono::Utc::now() + chrono::Duration::seconds(300));
 
                         if let Err(e) = self.task_repository.update(&task).await {
-                            tracing::error!(
+                            log::error!(
                                 "LimiteronService: Database error updating task: {:?}",
                                 e
                             );
@@ -431,12 +431,12 @@ impl BacklogService for LimiteronService {
                 // 更新积压任务状态
                 let mut updated_backlog = backlog.clone();
                 if let Err(e) = updated_backlog.mark_completed() {
-                    tracing::error!("LimiteronService: Error marking backlog completed: {}", e);
+                    log::error!("LimiteronService: Error marking backlog completed: {}", e);
                     continue;
                 }
 
                 if let Err(e) = self.tasks_backlog_repository.update(&updated_backlog).await {
-                    tracing::error!("LimiteronService: Database error updating backlog: {:?}", e);
+                    log::error!("LimiteronService: Database error updating backlog: {:?}", e);
                     continue;
                 }
 
@@ -475,7 +475,7 @@ impl QuotaService for LimiteronService {
         let balance = match self.credits_repository.get_balance(team_id).await {
             Ok(balance) => balance,
             Err(e) => {
-                tracing::error!("LimiteronService: Credits error getting balance: {:?}", e);
+                log::error!("LimiteronService: Credits error getting balance: {:?}", e);
                 return Err(RateLimitingError::CreditsError);
             }
         };
@@ -501,7 +501,7 @@ impl QuotaService for LimiteronService {
                 Ok(())
             }
             Err(e) => {
-                tracing::error!("LimiteronService: Credits error deducting: {:?}", e);
+                log::error!("LimiteronService: Credits error deducting: {:?}", e);
                 Err(RateLimitingError::CreditsError)
             }
         }
@@ -511,7 +511,7 @@ impl QuotaService for LimiteronService {
         match self.credits_repository.get_balance(team_id).await {
             Ok(balance) => Ok(balance),
             Err(e) => {
-                tracing::error!("LimiteronService: Credits error getting balance: {:?}", e);
+                log::error!("LimiteronService: Credits error getting balance: {:?}", e);
                 Err(RateLimitingError::CreditsError)
             }
         }

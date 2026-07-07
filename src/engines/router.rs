@@ -19,7 +19,7 @@ use rand::seq::SliceRandom;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use log::{info, warn};
 
 // === Section: EngineRouterTrait Definition ===
 
@@ -408,7 +408,7 @@ impl EngineRouter {
             // Feature detection filtering
             if self.feature_filter_enabled {
                 if let Some(reason) = self.should_filter_by_feature(request, engine) {
-                    tracing::debug!(
+                    log::debug!(
                         "Engine {} filtered by feature detection: {}",
                         engine_name,
                         reason

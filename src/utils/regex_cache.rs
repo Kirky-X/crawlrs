@@ -13,7 +13,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::warn;
+use log::warn;
 
 /// Regex cache trait
 pub trait RegexCacheTrait: Send + Sync {

@@ -7,11 +7,11 @@
 //!
 //! 演示如何使用熔断器保护服务。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("熔断器示例");
     info!("配置熔断保护机制");
 }

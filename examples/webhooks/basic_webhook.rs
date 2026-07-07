@@ -19,7 +19,7 @@
 //! - 事件类型选择
 //! - 负载配置
 
-use tracing::{info, warn};
+use log::{info, warn};
 use uuid::Uuid;
 use std::time::Duration;
 
@@ -119,7 +119,7 @@ impl WebhookSender {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("=== 基础 Webhook 配置示例 ===\n");
 

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tracing::{debug, error, info};
+use log::{debug, error, info};
 
 /// 文本处理错误类型
 #[derive(Error, Debug)]

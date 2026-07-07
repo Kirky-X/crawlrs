@@ -7,11 +7,11 @@
 //!
 //! 演示如何使用XPath表达式提取数据。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("XPath提取示例 - 功能演示");
     info!("支持常用XPath表达式");
 }

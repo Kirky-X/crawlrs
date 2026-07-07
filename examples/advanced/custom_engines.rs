@@ -13,7 +13,7 @@
 //! cargo run --bin custom_engines
 //! ```
 
-use tracing::info;
+use log::info;
 use std::time::Duration;
 
 // 模拟的错误类型
@@ -95,7 +95,7 @@ impl CustomHttpEngine {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("=== 自定义引擎集成示例 ===\n");
 

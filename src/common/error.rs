@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use regex::Regex;
 use serde::Serialize;
-use tracing::error;
+use log::error;
 
 /// 应用程序错误类型
 ///
@@ -347,12 +347,8 @@ impl IntoResponse for AppError {
         let detailed_msg = self.detailed_message();
 
         // 记录详细错误到服务器日志
-        error!(
-            error_code = error_code,
-            status_code = status.as_u16(),
-            error_details = %detailed_msg,
-            "Request error occurred"
-        );
+        error!("Request error occurred error_code={:?} status_code={} error_details={}",
+            error_code, status.as_u16(), detailed_msg);
 
         // 根据环境决定返回给客户端的错误信息
         let error_response = if should_show_detailed_errors() {

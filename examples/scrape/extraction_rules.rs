@@ -18,7 +18,7 @@
 
 use crawlrs::engines::engine_client::ScrapeRequest;
 use std::time::Duration;
-use tracing::info;
+use log::info;
 
 /// 提取规则配置
 #[derive(Debug)]
@@ -54,7 +54,7 @@ impl ExtractionRule {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始提取规则示例");
     info!("=====================================\n");

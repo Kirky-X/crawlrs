@@ -32,7 +32,7 @@ use sea_orm::DbErr;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, info, instrument, warn};
+use log::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Transaction error types
@@ -222,8 +222,8 @@ impl TransactionManager {
     /// // ... perform operations ...
     /// tx_manager.commit().await?;
     /// ```
-    #[instrument(skip(self), name = "transaction_begin")]
     pub async fn begin(&self) -> Result<(), TransactionError> {
+        debug!("transaction_begin");
         self.begin_with_config(self.default_config.clone()).await
     }
 
@@ -232,11 +232,11 @@ impl TransactionManager {
     /// # Arguments
     ///
     /// * `config` - Transaction configuration
-    #[instrument(skip(self, config), name = "transaction_begin_with_config")]
     pub async fn begin_with_config(
         &self,
         config: TransactionConfig,
     ) -> Result<(), TransactionError> {
+        debug!("transaction_begin_with_config");
         // Check if transaction is already active (non-blocking read)
         {
             let active_tx = self.active_transaction.read();
@@ -282,9 +282,9 @@ impl TransactionManager {
     /// - No active transaction
     /// - Transaction already finished
     /// - Failed to commit
-    #[instrument(skip(self), name = "transaction_commit")]
     #[allow(clippy::await_holding_lock)]
     pub async fn commit(&self) -> Result<(), TransactionError> {
+        debug!("transaction_commit");
         let mut active_tx = self.active_transaction.write();
 
         let tx_state = active_tx
@@ -318,9 +318,9 @@ impl TransactionManager {
     /// - No active transaction
     /// - Transaction already finished
     /// - Failed to rollback
-    #[instrument(skip(self), name = "transaction_rollback")]
     #[allow(clippy::await_holding_lock)]
     pub async fn rollback(&self) -> Result<(), TransactionError> {
+        debug!("transaction_rollback");
         let mut active_tx = self.active_transaction.write();
 
         let tx_state = active_tx
@@ -375,9 +375,9 @@ impl TransactionManager {
     /// tx_manager.release_savepoint("before_critical_operation").await?;
     /// tx_manager.commit().await?;
     /// ```
-    #[instrument(skip(self), name = "transaction_savepoint")]
     #[allow(clippy::await_holding_lock)]
     pub async fn savepoint(&self, name: &str) -> Result<Uuid, TransactionError> {
+        debug!("transaction_savepoint: name={}", name);
         self.validate_savepoint_name(name)?;
 
         let mut active_tx = self.active_transaction.write();
@@ -435,9 +435,9 @@ impl TransactionManager {
     /// # Arguments
     ///
     /// * `name` - Savepoint name to release
-    #[instrument(skip(self), name = "transaction_release_savepoint")]
     #[allow(clippy::await_holding_lock)]
     pub async fn release_savepoint(&self, name: &str) -> Result<(), TransactionError> {
+        debug!("transaction_release_savepoint: name={}", name);
         self.validate_savepoint_name(name)?;
 
         let mut active_tx = self.active_transaction.write();
@@ -480,9 +480,9 @@ impl TransactionManager {
     /// # Arguments
     ///
     /// * `name` - Savepoint name to rollback to
-    #[instrument(skip(self), name = "transaction_rollback_to_savepoint")]
     #[allow(clippy::await_holding_lock)]
     pub async fn rollback_to_savepoint(&self, name: &str) -> Result<(), TransactionError> {
+        debug!("transaction_rollback_to_savepoint: name={}", name);
         self.validate_savepoint_name(name)?;
 
         let mut active_tx = self.active_transaction.write();

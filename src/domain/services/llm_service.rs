@@ -46,7 +46,7 @@ impl FileTemplateLoader {
     pub fn new(file_path: impl Into<String>) -> Self {
         let path = file_path.into();
         let templates = Self::read_templates(&path).unwrap_or_else(|e| {
-            tracing::error!("Failed to load templates from {}: {}", path, e);
+            log::error!("Failed to load templates from {}: {}", path, e);
             HashMap::new()
         });
 

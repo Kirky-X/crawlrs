@@ -24,7 +24,7 @@
 //!
 //! 需要配置LLM API密钥才能使用此功能。
 
-use tracing::info;
+use log::info;
 
 /// LLM提取配置
 #[derive(Debug)]
@@ -48,7 +48,7 @@ impl Default for LlmExtractionConfig {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始LLM智能提取示例");
     info!("=====================================\n");

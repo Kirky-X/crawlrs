@@ -16,7 +16,7 @@ use axum::{
     Json,
 };
 use serde_json::json;
-use tracing::error;
+use log::error;
 
 /// Check rate limit for an API key and endpoint.
 ///

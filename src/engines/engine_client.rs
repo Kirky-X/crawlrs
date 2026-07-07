@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tracing::warn;
+use log::warn;
 
 /// Unified request structure for scraping operations.
 ///

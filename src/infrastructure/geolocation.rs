@@ -17,7 +17,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
-use tracing::{debug, error, warn};
+use log::{debug, error, warn};
 
 /// IP地理定位服务实现
 pub struct GeoLocationServiceImpl {

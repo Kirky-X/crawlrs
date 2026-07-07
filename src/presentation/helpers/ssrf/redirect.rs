@@ -347,7 +347,7 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
 
         // Validate redirect URL
         if is_internal_url(&redirect_url) {
-            tracing::warn!(
+            log::warn!(
                 "SSRF protection: Blocking redirect to internal URL: {}",
                 redirect_url
             );

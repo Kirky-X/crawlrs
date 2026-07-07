@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use thiserror::Error;
-use tracing::debug;
+use log::debug;
 use uuid::Uuid;
 
 use crate::domain::auth::FeatureFlag;

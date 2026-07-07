@@ -15,7 +15,7 @@ use sea_orm::{ConnAcquireErr, DbErr};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info, warn};
+use log::{debug, info, warn};
 
 /// Database pool wrapper type with metrics support using dbnexus
 ///

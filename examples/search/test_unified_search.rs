@@ -13,7 +13,7 @@ use crawlrs::search::google::GoogleSearchEngine;
 use crawlrs::search::SearchRequest;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
-use tracing::info;
+use log::info;
 
 const ENGINE_TIMEOUT_SECS: u64 = 30;
 const TEST_KEYWORD: &str = "gemini-3-pro";
@@ -21,10 +21,7 @@ const RESULT_LIMIT: u32 = 10;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(true)
-        .init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("==========================================");
     info!("统一搜索引擎测试");

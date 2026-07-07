@@ -13,7 +13,7 @@
 //! cargo run --example structured_data
 //!
 
-use tracing::info;
+use log::info;
 
 /// 结构化数据项
 #[derive(Debug, serde::Serialize)]
@@ -40,7 +40,7 @@ struct Article {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始结构化数据提取示例");
     info!("=====================================\n");

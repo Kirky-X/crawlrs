@@ -7,11 +7,11 @@
 //!
 //! 演示如何管理缓存的生存时间。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("TTL管理示例");
     info!("配置缓存生存时间");
 }

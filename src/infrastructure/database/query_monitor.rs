@@ -8,7 +8,7 @@
 //! Provides utilities to monitor and log database query performance.
 
 use std::time::Instant;
-use tracing::{debug, warn};
+use log::{debug, warn};
 
 /// Query performance monitor
 ///

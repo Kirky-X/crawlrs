@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use log::{error, info, warn};
 
 /// 积压任务处理Worker
 ///

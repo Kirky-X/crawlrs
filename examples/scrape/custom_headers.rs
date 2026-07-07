@@ -20,11 +20,11 @@
 use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始自定义请求头示例");
     info!("=====================================\n");

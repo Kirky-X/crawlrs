@@ -35,7 +35,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, warn};
+use log::{debug, error, warn};
 
 /// Default rate limit for unauthenticated requests (requests per minute)
 const DEFAULT_IP_RATE_LIMIT: u64 = 10;
@@ -387,24 +387,16 @@ pub async fn rate_limit_middleware(
                 // Fail-open: 允许请求通过，但记录严重警告
                 // 注意：这可能导致在服务故障时无法限流
                 // 在生产环境中应考虑使用 fail-closed 模式
-                warn!(
-                    target: "security_audit",
-                    error = %e,
-                    api_key_prefix = &api_key[..std::cmp::min(8, api_key.len())],
-                    path = path,
-                    "SEC-003: Rate limiting service error - failing open (allowing request). \
-                     Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security."
-                );
+                warn!("SEC-003: Rate limiting service error - failing open (allowing request). \
+                     Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security. \
+                     error={} api_key_prefix={:?} path={}",
+                    e, &api_key[..std::cmp::min(8, api_key.len())], path);
                 next.run(req).await
             } else {
                 // Fail-closed: 拒绝请求以确保安全
-                error!(
-                    target: "security_audit",
-                    error = %e,
-                    api_key_prefix = &api_key[..std::cmp::min(8, api_key.len())],
-                    path = path,
-                    "SEC-003: Rate limiting service error - failing closed (rejecting request)"
-                );
+                error!("SEC-003: Rate limiting service error - failing closed (rejecting request) \
+                     error={} api_key_prefix={:?} path={}",
+                    e, &api_key[..std::cmp::min(8, api_key.len())], path);
 
                 let body = serde_json::json!({
                     "error": "Service temporarily unavailable",

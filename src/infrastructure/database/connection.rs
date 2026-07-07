@@ -8,7 +8,7 @@ use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info, warn};
+use log::{debug, info, warn};
 
 /// Database pool wrapper type with metrics support
 #[derive(Clone)]

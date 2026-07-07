@@ -19,11 +19,11 @@
 //!
 
 use crawlrs::application::dto::crawl_request::CrawlConfigDto;
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始URL过滤模式示例");
     info!("=====================================\n");

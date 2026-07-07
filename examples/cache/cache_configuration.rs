@@ -7,11 +7,11 @@
 //!
 //! 演示如何配置缓存行为。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("缓存配置示例");
     info!("配置缓存策略和参数");
 }

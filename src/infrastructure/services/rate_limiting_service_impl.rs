@@ -11,7 +11,7 @@ use chrono::Utc;
 #[cfg(feature = "rate-limiting")]
 use redis::AsyncCommands;
 use sha2::{Digest, Sha256};
-use tracing::debug;
+use log::debug;
 use uuid::Uuid;
 
 use crate::domain::repositories::{
@@ -170,7 +170,7 @@ impl RateLimitingServiceImpl {
     /// 获取Redis连接
     async fn get_redis_conn(&self) -> Result<deadpool_redis::Connection, RateLimitingError> {
         self.redis.get_connection().await.map_err(|e| {
-            tracing::error!("Redis connection failed: {}", e);
+            log::error!("Redis connection failed: {}", e);
             RateLimitingError::RedisError
         })
     }
@@ -216,7 +216,7 @@ impl RateLimitingServiceImpl {
         // 所以可以直接用于 invoke_async
         let script = redis::Script::new(RATE_LIMIT_CHECK_SCRIPT);
         let sha = script.load_async(&mut *conn).await.map_err(|e| {
-            tracing::error!("Failed to load rate limit script: {}", e);
+            log::error!("Failed to load rate limit script: {}", e);
             RateLimitingError::RedisError
         })?;
 
@@ -272,14 +272,14 @@ impl RateLimitingServiceImpl {
             .invoke_async(&mut *conn)
             .await
             .map_err(|e| {
-                tracing::error!("Redis script execution error: {}", e);
+                log::error!("Redis script execution error: {}", e);
                 RateLimitingError::RedisError
             })?;
 
         // 解析结果
         // 返回格式: {状态码, 限流类型/allowed, 等待时间/令牌数, ...}
         if result.len() < 2 {
-            tracing::error!("Invalid script result length: {:?}", result);
+            log::error!("Invalid script result length: {:?}", result);
             return Err(RateLimitingError::RedisError);
         }
 
@@ -289,7 +289,7 @@ impl RateLimitingServiceImpl {
             }
             redis::Value::Int(i) => *i,
             _ => {
-                tracing::error!("Invalid status code in result: {:?}", result[0]);
+                log::error!("Invalid status code in result: {:?}", result[0]);
                 return Err(RateLimitingError::RedisError);
             }
         };
@@ -387,7 +387,7 @@ impl RateLimitingServiceImpl {
             .invoke_async(&mut *conn)
             .await
             .map_err(|e| {
-                tracing::error!("Redis script error: {}", e);
+                log::error!("Redis script error: {}", e);
                 RateLimitingError::RedisError
             })?;
 
@@ -444,7 +444,7 @@ impl RateLimitingServiceImpl {
             .invoke_async(&mut *conn)
             .await
             .map_err(|e| {
-                tracing::error!("Redis semaphore script error: {}", e);
+                log::error!("Redis semaphore script error: {}", e);
                 RateLimitingError::RedisError
             })?;
 
@@ -456,7 +456,7 @@ impl RateLimitingServiceImpl {
         let mut conn = self.get_redis_conn().await?;
 
         conn.zrem::<_, _, ()>(&key, token).await.map_err(|e| {
-            tracing::error!("Redis zrem error: {}", e);
+            log::error!("Redis zrem error: {}", e);
             RateLimitingError::RedisError
         })?;
 
@@ -487,7 +487,7 @@ impl RateLimitingServiceImpl {
             .invoke_async(&mut *conn)
             .await
             .map_err(|e| {
-                tracing::error!("Redis concurrency script error: {}", e);
+                log::error!("Redis concurrency script error: {}", e);
                 RateLimitingError::RedisError
             })?;
 
@@ -501,7 +501,7 @@ impl RateLimitingServiceImpl {
         let config_key = self.build_redis_key(&format!("config:{}", hashed_key));
         let fallback_key = self.build_redis_key(&format!("fallback:config:{}", hashed_key));
 
-        tracing::debug!(
+        log::debug!(
             "Looking for rate limit config with keys: primary={}, fallback={}",
             config_key,
             fallback_key
@@ -510,31 +510,31 @@ impl RateLimitingServiceImpl {
         let mut conn = match self.get_redis_conn().await {
             Ok(conn) => conn,
             Err(e) => {
-                tracing::warn!("Failed to get Redis connection: {}", e);
+                log::warn!("Failed to get Redis connection: {}", e);
                 return None;
             }
         };
 
         let config_str = match conn.get::<&str, Option<String>>(&config_key).await {
             Ok(Some(s)) => {
-                tracing::debug!("Found config with primary key: {}", s);
+                log::debug!("Found config with primary key: {}", s);
                 Some(s)
             }
             Ok(None) => {
-                tracing::debug!("No config found with primary key");
+                log::debug!("No config found with primary key");
                 match conn.get::<&str, Option<String>>(&fallback_key).await {
                     Ok(Some(s)) => {
-                        tracing::debug!("Found config with fallback key: {}", s);
+                        log::debug!("Found config with fallback key: {}", s);
                         Some(s)
                     }
                     _ => {
-                        tracing::debug!("No config found with fallback key either");
+                        log::debug!("No config found with fallback key either");
                         None
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Redis error getting config: {}", e);
+                log::warn!("Redis error getting config: {}", e);
                 None
             }
         };
@@ -543,7 +543,7 @@ impl RateLimitingServiceImpl {
             Some(s) => match serde_json::from_str(&s) {
                 Ok(v) => v,
                 Err(e) => {
-                    tracing::warn!("Failed to parse config JSON: {}", e);
+                    log::warn!("Failed to parse config JSON: {}", e);
                     return None;
                 }
             },
@@ -591,8 +591,8 @@ impl RateLimitService for RateLimitingServiceImpl {
         let mut hasher = Sha256::new();
         hasher.update(api_key.as_bytes());
         let _api_key_hash = format!("{:x}", hasher.finalize());
-        debug!(endpoint);
-        debug!(enabled = self.config.rate_limit.enabled);
+        debug!("endpoint={}", endpoint);
+        debug!("enabled={:?}", self.config.rate_limit.enabled);
 
         if !self.config.rate_limit.enabled {
             debug!("Rate limiting is DISABLED globally, allowing request");
@@ -603,7 +603,7 @@ impl RateLimitService for RateLimitingServiceImpl {
         debug!("Attempting to get custom rate limit config from Redis...");
         let custom_config = self.get_custom_rate_limit_config(api_key).await;
 
-        debug!(?custom_config);
+        debug!("{:?}", custom_config);
 
         let (bucket_capacity, requests_per_minute, requests_per_hour) = match custom_config {
             Some(config) => {
@@ -626,11 +626,7 @@ impl RateLimitService for RateLimitingServiceImpl {
             }
         };
 
-        debug!(
-            bucket_capacity,
-            rpm = requests_per_minute,
-            rph = requests_per_hour
-        );
+        debug!("{:?} rpm={:?} rph={:?}", bucket_capacity, requests_per_minute, requests_per_hour);
 
         // 使用优化的合并限流检查
         // 一次性检查每秒、每分钟、每小时的限流，减少网络往返次数
@@ -645,7 +641,7 @@ impl RateLimitService for RateLimitingServiceImpl {
             )
             .await?;
 
-        debug!(?result);
+        debug!("{:?}", result);
         debug!("========== RATE LIMIT CHECK COMPLETE ==========");
 
         Ok(result)
@@ -674,21 +670,21 @@ impl RateLimitService for RateLimitingServiceImpl {
 
         let pattern = format!("{}:*", self.config.redis_key_prefix);
         let keys: Vec<String> = conn.keys(&pattern).await.map_err(|e| {
-            tracing::error!("Redis keys error: {}", e);
+            log::error!("Redis keys error: {}", e);
             RateLimitingError::RedisError
         })?;
 
         let mut cleaned_count = 0;
         for key in keys {
             let ttl: i64 = conn.ttl(&key).await.map_err(|e| {
-                tracing::error!("Redis ttl error: {}", e);
+                log::error!("Redis ttl error: {}", e);
                 RateLimitingError::RedisError
             })?;
 
             if ttl == -2 {
                 // 键已过期
                 let _: i64 = conn.del(&key).await.map_err(|e| {
-                    tracing::error!("Redis del error: {}", e);
+                    log::error!("Redis del error: {}", e);
                     RateLimitingError::RedisError
                 })?;
                 cleaned_count += 1;
@@ -732,7 +728,7 @@ impl ConcurrencyControlService for RateLimitingServiceImpl {
                 .find_by_id(task_id)
                 .await
                 .map_err(|e| {
-                    tracing::error!("Database error finding task: {:?}", e);
+                    log::error!("Database error finding task: {:?}", e);
                     RateLimitingError::DatabaseError
                 })?;
 
@@ -752,7 +748,7 @@ impl ConcurrencyControlService for RateLimitingServiceImpl {
                     .create(&backlog)
                     .await
                     .map_err(|e| {
-                        tracing::error!("Database error creating backlog: {:?}", e);
+                        log::error!("Database error creating backlog: {:?}", e);
                         RateLimitingError::DatabaseError
                     })?;
 
@@ -814,7 +810,7 @@ impl BacklogService for RateLimitingServiceImpl {
             .get_pending_tasks(Some(team_id), Some(10))
             .await
             .map_err(|e| {
-                tracing::error!("Database error getting pending tasks: {:?}", e);
+                log::error!("Database error getting pending tasks: {:?}", e);
                 RateLimitingError::DatabaseError
             })?;
 
@@ -832,7 +828,7 @@ impl BacklogService for RateLimitingServiceImpl {
                     .update(&expired_backlog)
                     .await
                     .map_err(|e| {
-                        tracing::error!("Database error updating backlog: {:?}", e);
+                        log::error!("Database error updating backlog: {:?}", e);
                         RateLimitingError::DatabaseError
                     })?;
 
@@ -858,7 +854,7 @@ impl BacklogService for RateLimitingServiceImpl {
                     .find_by_id(backlog.task_id)
                     .await
                     .map_err(|e| {
-                        tracing::error!("Database error finding task: {:?}", e);
+                        log::error!("Database error finding task: {:?}", e);
                         RateLimitingError::DatabaseError
                     })?;
 
@@ -871,7 +867,7 @@ impl BacklogService for RateLimitingServiceImpl {
                         task.lock_expires_at =
                             Some(chrono::Utc::now() + chrono::Duration::seconds(300));
                         self.task_repository.update(&task).await.map_err(|e| {
-                            tracing::error!("Database error updating task: {:?}", e);
+                            log::error!("Database error updating task: {:?}", e);
                             RateLimitingError::DatabaseError
                         })?;
                     }
@@ -887,7 +883,7 @@ impl BacklogService for RateLimitingServiceImpl {
                     .update(&updated_backlog)
                     .await
                     .map_err(|e| {
-                        tracing::error!("Database error updating backlog: {:?}", e);
+                        log::error!("Database error updating backlog: {:?}", e);
                         RateLimitingError::DatabaseError
                     })?;
 
@@ -919,7 +915,7 @@ impl QuotaService for RateLimitingServiceImpl {
             .get_balance(team_id)
             .await
             .map_err(|e| {
-                tracing::error!("Credits error getting balance: {:?}", e);
+                log::error!("Credits error getting balance: {:?}", e);
                 RateLimitingError::CreditsError
             })?;
 
@@ -934,7 +930,7 @@ impl QuotaService for RateLimitingServiceImpl {
             .deduct_credits(team_id, amount, transaction_type, description, reference_id)
             .await
             .map_err(|e| {
-                tracing::error!("Credits error deducting: {:?}", e);
+                log::error!("Credits error deducting: {:?}", e);
                 RateLimitingError::CreditsError
             })?;
 
@@ -946,7 +942,7 @@ impl QuotaService for RateLimitingServiceImpl {
             .get_balance(team_id)
             .await
             .map_err(|e| {
-                tracing::error!("Credits error getting balance: {:?}", e);
+                log::error!("Credits error getting balance: {:?}", e);
                 RateLimitingError::CreditsError
             })
     }

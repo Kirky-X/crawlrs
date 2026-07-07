@@ -7,7 +7,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::workers::worker::{ProcessResult, WorkerProcess};
 use async_trait::async_trait;
 use std::sync::Arc;
-use tracing::info;
+use log::info;
 
 /// 任务过期清理工作器
 ///

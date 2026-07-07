@@ -11,7 +11,7 @@ use crate::domain::repositories::audit_log_repository::{AuditLogRepository, Audi
 use shaku::Interface;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::debug;
+use log::debug;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]

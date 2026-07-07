@@ -19,7 +19,7 @@
 //! - 处理事件负载
 //! - 事件过滤和路由
 
-use tracing::info;
+use log::info;
 use uuid::Uuid;
 use std::collections::HashMap;
 
@@ -123,7 +123,7 @@ impl EventRouter {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("=== 任务事件订阅示例 ===\n");
 

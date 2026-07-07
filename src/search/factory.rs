@@ -25,7 +25,7 @@ use crate::search::types::SearchEngineType;
 use reqwest::Client;
 use std::sync::Arc;
 
-use tracing::info;
+use log::info;
 
 /// 搜索引擎工厂配置
 #[derive(Debug, Clone)]

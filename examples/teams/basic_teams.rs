@@ -19,7 +19,7 @@
 //! - 团队成员管理
 //! - 团队积分配额
 
-use tracing::{info, warn};
+use log::{info, warn};
 use uuid::Uuid;
 
 // 模拟团队结构（实际使用时请通过依赖注入获取真实服务）
@@ -64,7 +64,7 @@ impl Team {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("=== 基础团队管理示例 ===\n");
 

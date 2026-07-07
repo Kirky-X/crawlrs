@@ -13,7 +13,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::utils::retry_policy::RetryPolicy;
 use chrono::{Duration, Utc};
 use std::sync::Arc;
-use tracing::{info, warn};
+use log::{info, warn};
 
 /// Result of handling task failure
 pub enum HandleFailureResult {

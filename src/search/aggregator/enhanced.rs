@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::warn;
+use log::warn;
 
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::search::engine::{SearchEngine, SearchError};

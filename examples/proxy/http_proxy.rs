@@ -7,11 +7,11 @@
 //!
 //! 演示如何配置HTTP代理。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("HTTP代理配置示例");
     info!("配置HTTP代理服务器");
 }

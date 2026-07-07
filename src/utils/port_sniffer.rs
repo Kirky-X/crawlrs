@@ -6,7 +6,7 @@
 use std::net::TcpListener;
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{info, warn};
+use log::{info, warn};
 
 /// 端口嗅探错误类型
 #[derive(Error, Debug)]

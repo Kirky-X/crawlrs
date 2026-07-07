@@ -255,7 +255,7 @@ impl ExtractionService {
                     }
                     Err(e) => {
                         println!("LLM extraction failed for key '{}': {}", key, e);
-                        tracing::error!("LLM extraction failed for key '{}': {}", key, e);
+                        log::error!("LLM extraction failed for key '{}': {}", key, e);
                         result.insert(key.clone(), Value::Null);
                     }
                 }

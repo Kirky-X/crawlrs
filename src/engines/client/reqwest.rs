@@ -56,12 +56,12 @@ impl ReqwestEngine {
             match reqwest::Proxy::http(url) {
                 Ok(proxy) => {
                     if let Ok(client) = builder.proxy(proxy).build() {
-                        tracing::debug!("Using HTTP proxy: {}", url);
+                        log::debug!("Using HTTP proxy: {}", url);
                         return client;
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to configure HTTP proxy: {}", e);
+                    log::warn!("Failed to configure HTTP proxy: {}", e);
                 }
             }
         }

@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error};
+use log::{debug, error};
 
 use super::models::DomainEvent;
 use super::traits::{EventBus, EventHandler, EventPublisher};

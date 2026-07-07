@@ -10,7 +10,7 @@ use chrono::{DateTime, Duration, Utc};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, Duration as TokioDuration};
-use tracing::{error, info};
+use log::{error, info};
 
 /// 任务调度器
 pub struct TaskScheduler<R: TaskRepository + Send + Sync + 'static> {

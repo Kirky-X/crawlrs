@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use log::{info, warn};
 
 /// 搜索引擎指标
 #[derive(Debug, Clone, Default)]

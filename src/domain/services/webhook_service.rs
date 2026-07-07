@@ -21,7 +21,7 @@ use serde_json::json;
 use sha2::Sha256;
 use shaku::{Component, Interface};
 use std::sync::Arc;
-use tracing::{error, info};
+use log::{error, info};
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -74,7 +74,7 @@ impl WebhookServiceImpl {
         let mut mac = match HmacSha256::new_from_slice(self.secret.as_bytes()) {
             Ok(mac) => mac,
             Err(e) => {
-                tracing::error!("Failed to initialize HMAC: {}", e);
+                log::error!("Failed to initialize HMAC: {}", e);
                 return String::new();
             }
         };
@@ -238,7 +238,7 @@ fn generate_signature(secret: &str, payload: &str, timestamp: i64) -> String {
     let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
         Ok(mac) => mac,
         Err(e) => {
-            tracing::error!("Failed to initialize HMAC: {}", e);
+            log::error!("Failed to initialize HMAC: {}", e);
             return String::new();
         }
     };
@@ -257,7 +257,7 @@ pub fn verify_webhook_signature(
 ) -> bool {
     // 首先验证时间戳是否在有效期内
     if !validate_timestamp(timestamp) {
-        tracing::warn!("Webhook timestamp is outside valid window");
+        log::warn!("Webhook timestamp is outside valid window");
         return false;
     }
 

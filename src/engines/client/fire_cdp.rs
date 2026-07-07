@@ -75,7 +75,7 @@ impl ScraperEngine for FireEngineCdp {
         let custom_headers = proxy_url.map(|proxy| {
             let mut headers = std::collections::HashMap::new();
             headers.insert("X-Proxy-URL".to_string(), proxy.clone());
-            tracing::debug!("FireEngineCdp using proxy: {}", proxy);
+            log::debug!("FireEngineCdp using proxy: {}", proxy);
             headers
         });
 

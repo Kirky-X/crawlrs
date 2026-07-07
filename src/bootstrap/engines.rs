@@ -63,7 +63,7 @@ pub fn init_engines(
 
     #[cfg(feature = "engine-fire-tls")]
     if engine_config.fire_tls.enabled {
-        tracing::info!(
+        log::info!(
             "Fire Engine TLS enabled with URL: {}",
             engine_config.fire_tls.url
         );
@@ -76,7 +76,7 @@ pub fn init_engines(
 
     #[cfg(feature = "engine-fire-cdp")]
     if engine_config.fire_cdp.enabled {
-        tracing::info!(
+        log::info!(
             "Fire Engine CDP enabled with URL: {}",
             engine_config.fire_cdp.url
         );
@@ -89,7 +89,7 @@ pub fn init_engines(
 
     #[cfg(feature = "engine-flaresolverr")]
     if engine_config.flaresolverr.enabled {
-        tracing::info!(
+        log::info!(
             "FlareSolverr enabled with URL: {}",
             engine_config.flaresolverr.url
         );

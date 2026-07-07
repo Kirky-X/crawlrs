@@ -22,7 +22,7 @@ use scraper::{Html, Selector};
 use shaku::{Component, Interface};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::debug;
+use log::debug;
 use url::Url;
 use uuid::Uuid;
 
@@ -74,7 +74,7 @@ impl CrawlService {
         parent_task: &Task,
         html_content: &str,
     ) -> Result<Vec<Task>, DomainError> {
-        tracing::debug!("Processing crawl result for task: {}", parent_task.id);
+        log::debug!("Processing crawl result for task: {}", parent_task.id);
 
         let config = self.parse_crawl_config(parent_task)?;
 
@@ -85,7 +85,7 @@ impl CrawlService {
         let effective_max_depth = self.apply_load_degradation(config.depth, config.max_depth);
 
         if config.depth >= effective_max_depth {
-            tracing::warn!(
+            log::warn!(
                 "Crawl depth limited by degradation strategy: depth={}, effective_max_depth={}",
                 config.depth,
                 effective_max_depth
@@ -102,7 +102,7 @@ impl CrawlService {
         {
             Ok(tasks) => Ok(tasks),
             Err(e) => {
-                tracing::error!("Crawl service error: {:?}", e);
+                log::error!("Crawl service error: {:?}", e);
                 Err(DomainError::CrawlError(e.to_string()))
             }
         }
@@ -160,14 +160,14 @@ impl CrawlService {
         let mem_usage = self.system_monitor.memory_usage();
 
         if cpu_usage > HIGH_LOAD_THRESHOLD || mem_usage > HIGH_LOAD_THRESHOLD {
-            tracing::warn!(
+            log::warn!(
                 "High load detected: cpu={}, mem={}, limiting depth",
                 cpu_usage,
                 mem_usage
             );
             std::cmp::min(max_depth, depth + 1)
         } else if cpu_usage > MEDIUM_LOAD_THRESHOLD || mem_usage > MEDIUM_LOAD_THRESHOLD {
-            tracing::warn!(
+            log::warn!(
                 "Medium load detected: cpu={}, mem={}, limiting depth",
                 cpu_usage,
                 mem_usage
@@ -216,10 +216,10 @@ impl CrawlService {
             }
 
             if existing_urls.contains(&link) {
-                debug!(url_exists = link);
+                debug!("url_exists={:?}", link);
                 continue;
             }
-            debug!(url_new = link);
+            debug!("url_new={:?}", link);
 
             if let Some(task) = self
                 .create_single_task(parent_task, &link, &config, effective_max_depth)
@@ -253,8 +253,8 @@ impl CrawlService {
             .iter()
             .find(|d| domain.contains(d.as_str()))
         {
-            tracing::info!("Skipping blacklisted domain: {} for link: {}", domain, link);
-            debug!(domain);
+            log::info!("Skipping blacklisted domain: {} for link: {}", domain, link);
+            debug!("domain={}", domain);
             return true;
         }
 
@@ -279,12 +279,12 @@ impl CrawlService {
 
         let user_agent = "Crawlrs/0.1.0";
         let allowed = self.robots_checker.is_allowed(link, user_agent).await?;
-        debug!(link, allowed);
+        debug!("link={} allowed={}", link, allowed);
         if !allowed {
-            debug!(robots_blocked = link);
+            debug!("robots_blocked={:?}", link);
             return Ok(None);
         }
-        debug!(robots_allowed = link);
+        debug!("robots_allowed={:?}", link);
 
         let robots_delay = self
             .robots_checker
@@ -386,7 +386,7 @@ impl LinkDiscoverer {
     /// * `Ok(HashSet<String>)` - 提取到的链接集合
     /// * `Err(anyhow::Error)` - 提取过程中出现的错误
     pub fn extract_links(html_content: &str, base_url: &str) -> anyhow::Result<HashSet<String>> {
-        debug!(base_url);
+        debug!("base_url={}", base_url);
         let fragment = Html::parse_document(html_content);
         let selector =
             Selector::parse("a").map_err(|e| anyhow::anyhow!("Invalid selector: {:?}", e))?;
@@ -395,7 +395,7 @@ impl LinkDiscoverer {
 
         for element in fragment.select(&selector) {
             if let Some(href) = element.value().attr("href") {
-                debug!(href);
+                debug!("href={}", href);
                 // Ignore fragment identifiers, mailto and javascript links
                 if href.starts_with('#')
                     || href.starts_with("mailto:")
@@ -406,26 +406,26 @@ impl LinkDiscoverer {
 
                 match base.join(href) {
                     Ok(url) => {
-                        debug!(url = %url);
+                        debug!("url={}", url);
                         // Only keep http/https links
                         if url.scheme() == "http" || url.scheme() == "https" {
                             // Remove fragment to improve deduplication
                             let mut url_clean = url.clone();
                             url_clean.set_fragment(None);
                             links.insert(url_clean.to_string());
-                            debug!(url = %url_clean);
+                            debug!("url={}", url_clean);
                         } else {
-                            debug!(skipped_scheme = url.scheme());
+                            debug!("skipped_scheme={:?}", url.scheme());
                         }
                     }
                     Err(e) => {
-                        debug!(error = ?e);
+                        debug!("error={:?}", e);
                     }
                 }
             }
         }
 
-        debug!(total = links.len());
+        debug!("total={:?}", links.len());
         Ok(links)
     }
 
@@ -447,11 +447,8 @@ impl LinkDiscoverer {
         include_patterns: &[String],
         exclude_patterns: &[String],
     ) -> HashSet<String> {
-        debug!(
-            total_links = links.len(),
-            ?include_patterns,
-            ?exclude_patterns
-        );
+        debug!("total_links={:?} include_patterns={:?} exclude_patterns={:?}",
+            links.len(), include_patterns, exclude_patterns);
 
         // Convert glob patterns to regex patterns
         let include_regexes: Vec<Regex> = include_patterns
@@ -467,7 +464,7 @@ impl LinkDiscoverer {
         let filtered: HashSet<String> = links
             .into_iter()
             .filter(|link| {
-                debug!(link);
+                debug!("link={}", link);
                 // If include patterns are provided, link must match at least one
                 let matches_include = if include_regexes.is_empty() {
                     debug!("No include patterns, allowing all");
@@ -475,28 +472,28 @@ impl LinkDiscoverer {
                 } else {
                     let matched = include_regexes.iter().any(|regex| {
                         let matches = regex.is_match(link);
-                        debug!(link, pattern = regex.as_str(), matches);
+                        debug!("{:?} pattern={:?} matches={}", link, regex.as_str(), matches);
                         matches
                     });
-                    debug!(matches_include = matched);
+                    debug!("matches_include={:?}", matched);
                     matched
                 };
 
                 // Link must NOT match any exclude pattern
                 let matches_exclude = exclude_regexes.iter().any(|regex| {
                     let matches = regex.is_match(link);
-                    debug!(link, pattern = regex.as_str(), matches);
+                    debug!("{:?} pattern={:?} matches={}", link, regex.as_str(), matches);
                     matches
                 });
-                debug!(matches_exclude = matches_exclude);
+                debug!("matches_exclude={:?}", matches_exclude);
 
                 let result = matches_include && !matches_exclude;
-                debug!(link, result);
+                debug!("link={} result={}", link, result);
                 result
             })
             .collect();
 
-        debug!(filtered_count = filtered.len());
+        debug!("filtered_count={:?}", filtered.len());
         filtered
     }
 }

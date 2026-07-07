@@ -5,7 +5,7 @@
 
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use log::info;
 
 /// 指标响应数据传输对象
 #[derive(Debug, Clone, Serialize, Deserialize)]

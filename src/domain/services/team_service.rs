@@ -84,7 +84,7 @@ impl TeamService {
         if let Some(ref whitelist) = restrictions.ip_whitelist {
             for cidr in whitelist {
                 if is_ip_in_cidr(&ip, cidr) {
-                    tracing::info!(
+                    log::info!(
                         "IP {} allowed by whitelist (CIDR: {}) for team {}",
                         ip_address,
                         cidr,
@@ -102,7 +102,7 @@ impl TeamService {
                 .iter()
                 .any(|code| code.to_uppercase() == country_code)
             {
-                tracing::warn!(
+                log::warn!(
                     "IP {} from country {} not in allowed list for team {} (allowed countries: {:?})",
                     ip_address,
                     country_code,
@@ -121,7 +121,7 @@ impl TeamService {
                 .iter()
                 .any(|code| code.to_uppercase() == country_code)
             {
-                tracing::warn!(
+                log::warn!(
                     "IP {} from country {} blocked for team {} (blocked countries: {:?})",
                     ip_address,
                     country_code,
@@ -135,7 +135,7 @@ impl TeamService {
             }
         }
 
-        tracing::info!(
+        log::info!(
             "IP {} from country {} allowed for team {}",
             ip_address,
             country_code,
@@ -156,7 +156,7 @@ impl TeamService {
             .get_location(ip)
             .await
             .map_err(|e| {
-                tracing::error!(
+                log::error!(
                     "Failed to get geolocation for IP {} for team {}: {}",
                     ip_address,
                     team_id,
@@ -197,7 +197,7 @@ impl TeamService {
             .await
         {
             Ok(restrictions) => {
-                tracing::debug!(
+                log::debug!(
                     "Retrieved geo restrictions for team {}: {:?}",
                     team_id,
                     restrictions
@@ -205,7 +205,7 @@ impl TeamService {
                 restrictions
             }
             Err(e) => {
-                tracing::warn!(
+                log::warn!(
                     "Failed to get geo restrictions for team {}: {}. Using default configuration.",
                     team_id,
                     e

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
-use tracing::{debug, error, info};
+use log::{debug, error, info};
 
 /// Worker trait定义
 ///

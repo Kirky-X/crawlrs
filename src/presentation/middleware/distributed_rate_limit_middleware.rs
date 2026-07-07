@@ -13,7 +13,7 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
-use tracing::{debug, error, warn};
+use log::{debug, error, warn};
 
 /// 分布式速率限制中间件
 ///

@@ -17,7 +17,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, warn};
+use log::{error, warn};
 
 /// Webhook 发送超时时间（秒）
 const WEBHOOK_TIMEOUT_SECS: u64 = 10;

@@ -110,12 +110,12 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
         let mut guard = match self.browser.lock() {
             Ok(g) => g,
             Err(e) => {
-                tracing::error!("Browser mutex poisoned during cleanup: {}", e);
+                log::error!("Browser mutex poisoned during cleanup: {}", e);
                 return;
             }
         };
         if let Some(browser) = guard.take() {
-            tracing::info!("Closing browser instance");
+            log::info!("Closing browser instance");
             drop(browser);
         }
     }
@@ -124,7 +124,7 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
         let mut guard = match self.browser.lock() {
             Ok(g) => g,
             Err(e) => {
-                tracing::error!("Browser mutex poisoned during reset: {}", e);
+                log::error!("Browser mutex poisoned during reset: {}", e);
                 return;
             }
         };
@@ -155,7 +155,7 @@ impl PlaywrightBrowserManagerComponent {
             match self.get_or_init_browser().await {
                 Ok(browser) => return Ok(browser),
                 Err(e) if attempts < max_attempts => {
-                    tracing::warn!(
+                    log::warn!(
                         "Browser initialization attempt {} failed: {}, retrying...",
                         attempts,
                         e
@@ -190,7 +190,7 @@ impl PlaywrightBrowserManagerComponent {
         let proxy_url = self.config.get_proxy_url();
 
         let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
-            tracing::info!("Connecting to remote Chrome instance at: {}", url);
+            log::info!("Connecting to remote Chrome instance at: {}", url);
             Browser::connect(url).await.map_err(|e| {
                 EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
             })?
@@ -204,13 +204,13 @@ impl PlaywrightBrowserManagerComponent {
 
             // 设置浏览器路径（如果 chromiumoxide 支持）
             if let Some(ref path) = browser_path {
-                tracing::info!("Using browser at: {:?}", path);
+                log::info!("Using browser at: {:?}", path);
             }
 
             builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
 
             if let Some(ref proxy) = proxy_url {
-                tracing::info!("Using proxy for Playwright: {}", proxy);
+                log::info!("Using proxy for Playwright: {}", proxy);
                 builder = builder.arg(format!("--proxy-server={}", proxy));
             }
 
@@ -227,7 +227,7 @@ impl PlaywrightBrowserManagerComponent {
         tokio::spawn(async move {
             while let Some(h) = handler.next().await {
                 if let Err(e) = h {
-                    tracing::debug!("Browser handler event error (continuing): {:?}", e);
+                    log::debug!("Browser handler event error (continuing): {:?}", e);
                 }
             }
         });
@@ -247,7 +247,7 @@ impl PlaywrightBrowserManagerComponent {
     async fn download_browser_if_needed(&self) -> Result<Option<PathBuf>, EngineError> {
         // 首先检查系统是否有浏览器
         if let Some(path) = crate::engines::browser_downloader::find_system_browser().await {
-            tracing::info!("使用系统浏览器");
+            log::info!("使用系统浏览器");
             return Ok(Some(path));
         }
 
@@ -256,19 +256,19 @@ impl PlaywrightBrowserManagerComponent {
             let path = crate::engines::browser_downloader::get_browser_executable_path(
                 self.download_manager.get_cache_dir(),
             );
-            tracing::info!("使用已下载的浏览器: {:?}", path);
+            log::info!("使用已下载的浏览器: {:?}", path);
             return Ok(Some(path));
         }
 
         // 自动下载浏览器
-        tracing::info!("未检测到可用浏览器，开始自动下载...");
+        log::info!("未检测到可用浏览器，开始自动下载...");
         match self.download_manager.download_browser().await {
             Ok(path) => {
-                tracing::info!("浏览器下载成功: {:?}", path);
+                log::info!("浏览器下载成功: {:?}", path);
                 Ok(Some(path))
             }
             Err(e) => {
-                tracing::warn!("浏览器下载失败: {}，将尝试使用系统路径", e);
+                log::warn!("浏览器下载失败: {}，将尝试使用系统路径", e);
                 Ok(None)
             }
         }
@@ -397,7 +397,7 @@ impl ScraperEngine for PlaywrightEngine {
             if !request.headers.is_empty() {
                 // 如果 chromiumoxide 的 API 限制太多，我们暂时记录日志并跳过，
                 // 或者在未来版本中寻找更底层的 CDP 调用方式
-                tracing::warn!("Custom headers are currently partially supported in PlaywrightEngine due to API constraints");
+                log::warn!("Custom headers are currently partially supported in PlaywrightEngine due to API constraints");
             }
 
             // Navigate and wait for load
@@ -419,7 +419,7 @@ impl ScraperEngine for PlaywrightEngine {
             if content.contains("如果您在几秒钟内没有被重定向") || 
                content.contains("Having trouble accessing Google") ||
                content.contains("enablejs") {
-                tracing::warn!("Detected bot detection page from Google");
+                log::warn!("Detected bot detection page from Google");
                 // Still return the content, let the parser handle it
             }
 

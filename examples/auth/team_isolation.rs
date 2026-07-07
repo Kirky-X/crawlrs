@@ -7,11 +7,11 @@
 //!
 //! 演示如何在多租户环境中实现资源隔离。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("团队隔离示例");
     info!("多租户环境下的资源隔离机制");
 }

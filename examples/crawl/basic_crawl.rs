@@ -24,11 +24,11 @@ use crawlrs::domain::repositories::crawl_repo::CrawlRepository;
 use crawlrs::domain::repositories::task_repo::TaskRepository;
 use crawlrs::domain::services::extraction_service::ExtractionRule;
 use std::collections::HashMap;
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始基础整站爬取示例");
     info!("=====================================\n");

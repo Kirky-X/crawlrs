@@ -7,11 +7,11 @@
 //!
 //! 演示如何导出Prometheus指标。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("指标导出示例");
     info!("导出Prometheus指标");
 }

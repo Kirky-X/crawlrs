@@ -163,11 +163,10 @@ sysinfo = "0.37"
 dirs = "5.0"
 
 # Logging and observability
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-appender = "0.2"
-# inklog: 新一代结构化日志库（替换 tracing 的下一 phase）
-# crates.io 版 features 适配：file/console-sink 等基础功能在 default 中
+# inklog: 企业级结构化日志库（已完全替换 tracing）
+# inklog 内部同时安装 tracing subscriber 和 log::Log adapter，
+# 项目代码使用 log facade（log::info! 等）记录日志
+log = "0.4"
 inklog = { version = "0.1.2", default-features = false, features = ["cli", "http", "postgres"], optional = true }
 # sdforge: API SDK 封装库（基于 axum/tower 的接口生成器）
 # crates.io 版 features 适配：serde/serde_json/chrono 为必需依赖非 feature

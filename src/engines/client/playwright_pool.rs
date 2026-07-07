@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use log::{debug, error, info, warn};
 
 /// 浏览器实例池配置
 #[derive(Debug, Clone)]
@@ -110,7 +110,7 @@ impl PooledBrowser {
         let mut last_used = match self.last_used_at.lock() {
             Ok(g) => g,
             Err(e) => {
-                tracing::error!("PooledBrowser last_used_at mutex poisoned: {}", e);
+                log::error!("PooledBrowser last_used_at mutex poisoned: {}", e);
                 return;
             }
         };
@@ -122,7 +122,7 @@ impl PooledBrowser {
         match self.last_used_at.lock() {
             Ok(g) => *g,
             Err(e) => {
-                tracing::error!("PooledBrowser last_used_at mutex poisoned: {}", e);
+                log::error!("PooledBrowser last_used_at mutex poisoned: {}", e);
                 Instant::now()
             }
         }

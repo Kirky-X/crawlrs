@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use rand::Rng;
 use std::sync::Arc;
-use tracing::info;
+use log::info;
 
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use shaku::Interface;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::debug;
+use log::debug;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]

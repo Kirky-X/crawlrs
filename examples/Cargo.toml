@@ -21,9 +21,8 @@ crawlrs = { path = "..", default-features = true }
 # 异步运行时
 tokio = { version = "1.49", features = ["full"] }
 
-# 日志记录
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# 日志记录（使用 log facade，inklog 在 crawlrs 主项目中初始化）
+log = "0.4"
 
 # 其他常用依赖
 anyhow = "1.0"

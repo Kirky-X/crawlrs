@@ -60,12 +60,12 @@ pub async fn run_engine_test_with_output<E: SearchEngine>(
                 }
             }
 
-            tracing::info!(
+            log::info!(
                 "[{}] Search completed in {:.2}s",
                 name,
                 elapsed.as_secs_f64()
             );
-            tracing::info!("[{}] Total results: {}", name, total);
+            log::info!("[{}] Total results: {}", name, total);
 
             Ok(TestResult {
                 total,
@@ -74,11 +74,11 @@ pub async fn run_engine_test_with_output<E: SearchEngine>(
             })
         }
         Ok(Err(e)) => {
-            tracing::error!("[{}] Search failed: {:?}", name, e);
+            log::error!("[{}] Search failed: {:?}", name, e);
             Err(e.into())
         }
         Err(_) => {
-            tracing::error!("[{}] Search timed out after {}s", name, timeout_secs);
+            log::error!("[{}] Search timed out after {}s", name, timeout_secs);
             Err(anyhow::anyhow!("Search timed out"))
         }
     }

@@ -19,7 +19,7 @@
 //! - 使用计费（按请求/数据量）
 //! - 配额监控和警告
 
-use tracing::{info, warn};
+use log::{info, warn};
 use uuid::Uuid;
 
 // 积分交易类型
@@ -109,7 +109,7 @@ impl CreditsManager {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("=== 积分管理示例 ===\n");
 

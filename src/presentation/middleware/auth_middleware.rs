@@ -29,7 +29,7 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use log::{debug, info, warn};
 use uuid::Uuid;
 
 /// Maximum authentication failures before lockout
@@ -141,13 +141,7 @@ impl ApiKeyCache {
     /// * `token_hash` - The SHA-256 hash of the API key token (format: "sha256:...")
     pub fn invalidate(&mut self, token_hash: &str) {
         if let Some(removed) = self.cache.pop(token_hash) {
-            info!(
-                target: "security_audit",
-                token_hash = %token_hash,
-                api_key_id = %removed.api_key_id,
-                team_id = %removed.team_id,
-                "API Key cache invalidated for security"
-            );
+            info!("API Key cache invalidated for security token_hash={} api_key_id={} team_id={}", token_hash, removed.api_key_id, removed.team_id);
         }
     }
 
@@ -177,12 +171,7 @@ impl ApiKeyCache {
 
         for key in keys_to_remove {
             if let Some(removed) = self.cache.pop(&key) {
-                info!(
-                    target: "security_audit",
-                    api_key_id = %api_key_id,
-                    team_id = %removed.team_id,
-                    "API Key cache invalidated by ID for security"
-                );
+                info!("API Key cache invalidated by ID for security api_key_id={} team_id={}", api_key_id, removed.team_id);
             }
         }
     }
@@ -221,12 +210,7 @@ impl ApiKeyCache {
         }
 
         if removed_count > 0 {
-            info!(
-                target: "security_audit",
-                team_id = %team_id,
-                removed_count = removed_count,
-                "Team API Key cache invalidated for security"
-            );
+            info!("Team API Key cache invalidated for security team_id={} removed_count={:?}", team_id, removed_count);
         }
     }
 
@@ -242,11 +226,7 @@ impl ApiKeyCache {
         let count = self.cache.len();
         self.cache.clear();
 
-        info!(
-            target: "security_audit",
-            removed_count = count,
-            "All API Key cache invalidated for security"
-        );
+        info!("All API Key cache invalidated for security removed_count={:?}", count);
     }
 
     /// Get cache statistics for monitoring
@@ -324,11 +304,7 @@ pub async fn invalidate_cache_by_api_key_id(api_key_id: Uuid) -> usize {
         cache_guard.invalidate_by_api_key_id(api_key_id);
         initial_size - cache_guard.cache.len()
     } else {
-        warn!(
-            target: "security_audit",
-            api_key_id = %api_key_id,
-            "Global auth cache not initialized when attempting to invalidate by API key ID"
-        );
+        warn!("Global auth cache not initialized when attempting to invalidate by API key ID api_key_id={}", api_key_id);
         0
     }
 }
@@ -356,11 +332,7 @@ pub async fn invalidate_cache_by_team(team_id: Uuid) -> usize {
         cache_guard.invalidate_team(team_id);
         initial_size - cache_guard.cache.len()
     } else {
-        warn!(
-            target: "security_audit",
-            team_id = %team_id,
-            "Global auth cache not initialized when attempting to invalidate by team"
-        );
+        warn!("Global auth cache not initialized when attempting to invalidate by team team_id={}", team_id);
         0
     }
 }
@@ -682,7 +654,7 @@ impl AuthState {
                     );
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to load scope from database: {:?}, using default", e);
+                    log::warn!("Failed to load scope from database: {:?}, using default", e);
                     // Keep using default scope
                 }
             }
@@ -718,7 +690,7 @@ async fn auth_middleware_inner(req: axum::http::Request<Body>, next: Next) -> Re
     let state = match get_global_auth_state() {
         Some(s) => s,
         None => {
-            tracing::error!("Auth middleware: global auth state not initialized");
+            log::error!("Auth middleware: global auth state not initialized");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
@@ -811,7 +783,7 @@ async fn check_rate_limit_lockout(state: &AuthState, client_ip: &str) -> Result<
     if let Some(ref rate_limiter) = state.auth_rate_limiter {
         if rate_limiter.is_locked_out(client_ip).await {
             let remaining = rate_limiter.get_lockout_remaining(client_ip).await;
-            tracing::warn!(
+            log::warn!(
                 "Auth rate limit exceeded for IP: {}, lockout remaining: {}s",
                 client_ip,
                 remaining
@@ -862,12 +834,12 @@ async fn validate_api_key_from_db(
     client_ip: &str,
 ) -> Result<Option<api_key::Model>, StatusCode> {
     let session = state.pool.get_session("admin").await.map_err(|e| {
-        tracing::error!("Failed to get database session: {}", e);
+        log::error!("Failed to get database session: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
     let conn = session.connection().map_err(|e| {
-        tracing::error!("Failed to get database connection: {}", e);
+        log::error!("Failed to get database connection: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -893,7 +865,7 @@ async fn validate_api_key_from_db(
             Err(StatusCode::UNAUTHORIZED)
         }
         Err(e) => {
-            tracing::error!("Database error checking API key: {}", e);
+            log::error!("Database error checking API key: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -920,7 +892,7 @@ fn verify_key_hash(key: &api_key::Model, token_str: &str) -> bool {
         }
     } else {
         // SECURITY: Plaintext API keys are never allowed
-        tracing::error!(
+        log::error!(
             "SECURITY CRITICAL: Attempted authentication with plaintext API key (key_id={}). \
             Plaintext API keys are never allowed in any environment. \
             Please migrate to hashed storage immediately.",
@@ -934,7 +906,7 @@ fn verify_key_hash(key: &api_key::Model, token_str: &str) -> bool {
 fn check_key_expiration(key: &api_key::Model) -> Result<(), StatusCode> {
     // Reject keys without hash
     if key.key_hash.is_none() {
-        tracing::error!(
+        log::error!(
             "SECURITY CRITICAL: Attempted authentication with plaintext API key (key_id={}). \
             Plaintext API keys are never allowed in any environment. \
             Please migrate to hashed storage immediately.",
@@ -950,7 +922,7 @@ fn check_key_expiration(key: &api_key::Model) -> Result<(), StatusCode> {
 
         // If key hasn't been updated in 90 days, reject access
         if days_since_update > 90 {
-            tracing::warn!(
+            log::warn!(
                 "API key {} has not been updated in {} days, may be expired",
                 key.id,
                 days_since_update
@@ -972,7 +944,7 @@ async fn create_and_cache_auth_state(
     let auth_scope_service = match state.auth_scope_service.clone() {
         Some(service) => service,
         None => {
-            tracing::error!(
+            log::error!(
                 "FATAL: AuthScopeService not initialized in AppState. \
                 This indicates a startup configuration error."
             );

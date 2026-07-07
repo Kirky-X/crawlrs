@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-use tracing::{error, warn};
+use log::{error, warn};
 
 /// 系统监控 trait（支持 DI）
 ///
@@ -69,7 +69,7 @@ impl SystemMonitorComponent {
         let sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                tracing::error!("System monitor mutex poisoned, cannot update metrics");
+                log::error!("System monitor mutex poisoned, cannot update metrics");
                 // On poisoning, we cannot recover the system state
                 // Skip this update cycle
                 return;
@@ -88,7 +88,7 @@ impl SystemMonitorComponent {
             let sys = match self.system.lock() {
                 Ok(guard) => guard,
                 Err(_) => {
-                    tracing::error!("Failed to acquire system monitor lock for CPU usage");
+                    log::error!("Failed to acquire system monitor lock for CPU usage");
                     return;
                 }
             };
@@ -99,7 +99,7 @@ impl SystemMonitorComponent {
             let sys = match self.system.lock() {
                 Ok(guard) => guard,
                 Err(_) => {
-                    tracing::error!("Failed to acquire system monitor lock for memory usage");
+                    log::error!("Failed to acquire system monitor lock for memory usage");
                     return;
                 }
             };
@@ -170,7 +170,7 @@ impl SystemMonitor {
         let mut sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                tracing::error!("System monitor mutex poisoned, cannot update metrics");
+                log::error!("System monitor mutex poisoned, cannot update metrics");
                 return;
             }
         };
@@ -184,7 +184,7 @@ impl SystemMonitor {
         let sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                tracing::error!("System monitor mutex poisoned, returning 0.0 for CPU usage");
+                log::error!("System monitor mutex poisoned, returning 0.0 for CPU usage");
                 return 0.0;
             }
         };
@@ -197,7 +197,7 @@ impl SystemMonitor {
         let sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                tracing::error!("System monitor mutex poisoned, returning 0.0 for memory usage");
+                log::error!("System monitor mutex poisoned, returning 0.0 for memory usage");
                 return 0.0;
             }
         };
@@ -239,7 +239,7 @@ impl MutableSystemMonitor {
         let mut sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                tracing::error!("MutableSystemMonitor mutex poisoned, cannot refresh");
+                log::error!("MutableSystemMonitor mutex poisoned, cannot refresh");
                 return;
             }
         };
@@ -251,7 +251,7 @@ impl MutableSystemMonitor {
         let sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                tracing::error!("MutableSystemMonitor mutex poisoned, returning 0.0 for CPU usage");
+                log::error!("MutableSystemMonitor mutex poisoned, returning 0.0 for CPU usage");
                 return 0.0;
             }
         };
@@ -262,7 +262,7 @@ impl MutableSystemMonitor {
         let sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                tracing::error!(
+                log::error!(
                     "MutableSystemMonitor mutex poisoned, returning 0.0 for memory usage"
                 );
                 return 0.0;
@@ -283,7 +283,7 @@ impl MutableSystemMonitor {
 pub fn init_metrics() {
     let builder = PrometheusBuilder::new();
     if let Err(e) = builder.with_http_listener(([0, 0, 0, 0], 9100)).install() {
-        tracing::warn!(
+        log::warn!(
             "Failed to install Prometheus recorder: {}. Metrics will be disabled.",
             e
         );

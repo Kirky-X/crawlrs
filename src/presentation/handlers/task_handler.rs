@@ -102,7 +102,7 @@ pub async fn wait_for_tasks_completion(
 #[inline]
 fn poll_count_exceeded(count: u32, max_count: u32) -> bool {
     if count >= max_count {
-        tracing::debug!("Reached max poll count ({}) for task completion", max_count);
+        log::debug!("Reached max poll count ({}) for task completion", max_count);
         true
     } else {
         false
@@ -368,7 +368,7 @@ pub async fn handle_sync_wait_and_get_status(
             })
         }
         Err(e) => {
-            tracing::error!("Failed to wait for task completion: {:?}", e);
+            log::error!("Failed to wait for task completion: {:?}", e);
             // 即使等待失败，也返回已创建的任务信息
             let waited_time_ms = wait_start.elapsed().as_millis() as u64;
             Ok(SyncWaitResult {

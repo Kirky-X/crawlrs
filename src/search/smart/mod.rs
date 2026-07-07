@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use rand::prelude::*;
 use scraper::{Html, Selector};
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use log::{error, info, warn};
 
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::services::rate_limiting_service::{

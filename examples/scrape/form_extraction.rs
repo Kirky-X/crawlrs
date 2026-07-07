@@ -18,7 +18,7 @@
 
 use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
 use std::time::Duration;
-use tracing::info;
+use log::info;
 
 /// 模拟的表单数据提取结果
 #[derive(Debug)]
@@ -35,7 +35,7 @@ struct FormField {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始表单数据提取示例");
     info!("=====================================\n");

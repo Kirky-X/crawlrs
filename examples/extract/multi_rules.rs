@@ -7,11 +7,11 @@
 //!
 //! 演示如何同时使用多个提取规则。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("多规则提取示例 - 功能演示");
     info!("支持批量配置提取规则");
 }

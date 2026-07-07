@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use strsim::jaro_winkler;
-use tracing::{info, warn};
+use log::{info, warn};
 
 use crate::common::constants::cache_config;
 use crate::domain::models::search_result::SearchResult;

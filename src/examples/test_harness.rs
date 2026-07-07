@@ -19,8 +19,21 @@
 use crate::utils::search_test::{run_engine_test_with_output, TestResult};
 use anyhow::Result;
 use tokio::time::{timeout, Duration};
-use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+use log::{info, Level, Metadata, Record};
+
+/// 最小化的 stderr 日志实现（替代 tracing_subscriber 用于测试）
+struct StderrLogger;
+impl log::Log for StderrLogger {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= Level::Info
+    }
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            eprintln!("[{} {}] {}", record.level(), record.target(), record.args());
+        }
+    }
+    fn flush(&self) {}
+}
 
 /// 搜索测试工具类
 pub struct SearchTestHarness {
@@ -47,15 +60,12 @@ impl SearchTestHarness {
         self
     }
 
-    /// 初始化日志系统
+    /// 初始化日志系统（使用最小化 stderr logger）
     pub fn init_logging(&self) {
-        let subscriber = FmtSubscriber::builder()
-            .with_max_level(Level::INFO)
-            .with_target(true)
-            .finish();
-
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("Failed to set tracing subscriber");
+        let logger = StderrLogger;
+        log::set_boxed_logger(Box::new(logger))
+            .ok();
+        log::set_max_level(log::LevelFilter::Info);
     }
 
     /// 运行测试引擎

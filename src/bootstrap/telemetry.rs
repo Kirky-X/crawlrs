@@ -6,19 +6,26 @@
 //! Telemetry and metrics initialization.
 
 use crate::config::LoggingSettings;
-use tracing::info;
+use inklog::LoggerManager;
+use log::info;
 
-/// Initialize telemetry and tracing systems.
+/// Initialize telemetry (inklog logging infrastructure).
 ///
-/// This function sets up the global tracing subscriber for structured logging
-/// across the application.
+/// This function sets up the inklog LoggerManager which installs both
+/// a tracing subscriber and a log::Log adapter globally.
+///
+/// The returned LoggerManager must be held for the application lifetime
+/// to keep log worker threads alive.
 ///
 /// # Parameters
 ///
 /// * `settings` - 日志配置
-pub fn init_telemetry(settings: &LoggingSettings) {
-    crate::utils::telemetry::init_telemetry(settings);
+pub async fn init_telemetry(
+    settings: &LoggingSettings,
+) -> Result<LoggerManager, inklog::InklogError> {
+    let manager = crate::utils::telemetry::init_telemetry(settings).await?;
     info!("Telemetry initialized");
+    Ok(manager)
 }
 
 /// Initialize Prometheus metrics collection.
@@ -38,7 +45,10 @@ pub fn init_metrics() {
 /// # Parameters
 ///
 /// * `settings` - 日志配置
-pub fn init_all(settings: &LoggingSettings) {
-    init_telemetry(settings);
+pub async fn init_all(
+    settings: &LoggingSettings,
+) -> Result<LoggerManager, inklog::InklogError> {
+    let manager = init_telemetry(settings).await?;
     init_metrics();
+    Ok(manager)
 }

@@ -108,7 +108,7 @@ impl GeoRestrictionRepository for InMemoryGeoRestrictionRepository {
         let mut restrictions_map = self.restrictions.write().await;
         restrictions_map.insert(team_id, restrictions.clone());
 
-        tracing::info!(
+        log::info!(
             "Updated geographic restrictions for team {}: {:?}",
             team_id,
             restrictions
@@ -138,7 +138,7 @@ impl GeoRestrictionRepository for InMemoryGeoRestrictionRepository {
 
         audit_logs.push(log_entry);
 
-        tracing::info!(
+        log::info!(
             "Logged geo restriction action for team {}: IP {} from {} was {} (reason: {})",
             team_id,
             ip_address,

@@ -30,7 +30,7 @@ pub async fn team_semaphore_middleware(
     let team_id = match extract_team_id(&request) {
         Some(id) => id,
         None => {
-            tracing::warn!(
+            log::warn!(
                 "No team_id found in request extensions - authentication may have failed"
             );
             return StatusCode::UNAUTHORIZED.into_response();

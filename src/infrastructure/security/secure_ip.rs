@@ -24,7 +24,7 @@
 
 use axum::extract::Request;
 use std::net::{IpAddr, SocketAddr};
-use tracing::{debug, warn};
+use log::{debug, warn};
 
 /// 安全的客户端 IP 提取器
 ///

@@ -18,7 +18,7 @@
 //! cargo run --example robots_compliance
 //!
 
-use tracing::info;
+use log::info;
 
 /// robots.txt解析结果
 #[derive(Debug)]
@@ -101,7 +101,7 @@ impl RobotsTxt {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始robots.txt合规示例");
     info!("=====================================\n");

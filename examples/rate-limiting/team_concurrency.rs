@@ -7,11 +7,11 @@
 //!
 //! 演示如何控制团队的并发请求数。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("团队并发控制示例");
     info!("配置团队级别的并发限制");
 }

@@ -7,11 +7,11 @@
 //!
 //! 演示如何使用API作用域控制访问权限。
 
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
     info!("作用域验证示例");
     info!("配置API作用域控制访问权限");
 }

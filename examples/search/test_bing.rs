@@ -8,13 +8,13 @@
 use crawlrs::search::client::BingSearchEngine;
 use crawlrs::search::SearchEngine;
 use crawlrs::search::SearchRequest;
-use tracing::info;
+use log::info;
 
 const TIMEOUT_SECS: u64 = 60;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("==========================================");
     info!("测试 Bing 搜索引擎真实搜索功能");

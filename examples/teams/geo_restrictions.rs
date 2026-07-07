@@ -19,7 +19,7 @@
 //! - 国家/地区访问控制
 //! - 域名黑名单
 
-use tracing::info;
+use log::info;
 use std::net::IpAddr;
 use uuid::Uuid;
 
@@ -82,7 +82,7 @@ fn validate_domain(domain: &str, blacklist: &Option<Vec<String>>) -> Result<(), 
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("=== 地理限制管理示例 ===\n");
 

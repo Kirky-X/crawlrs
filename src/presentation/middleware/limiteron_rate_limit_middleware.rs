@@ -18,7 +18,7 @@ use axum::{
     response::IntoResponse,
 };
 use limiteron::prelude::{Decision, Governor, RequestContext};
-use tracing::{debug, error, warn};
+use log::{debug, error, warn};
 
 use crate::infrastructure::security::secure_ip::{SecureIpExtractor, TrustedProxyConfig};
 use crate::presentation::middleware::RATE_LIMIT_EXCLUDED_ENDPOINTS;
@@ -162,22 +162,12 @@ pub async fn limiteron_rate_limit_middleware(
             // SEC-003: 可配置的 fail-open/fail-closed 行为
             if RATE_LIMIT_FAIL_OPEN {
                 // Fail-open: 允许请求通过，但记录严重警告
-                error!(
-                    target: "security_audit",
-                    error = %e,
-                    path = path,
-                    "LimiteronMiddleware: SEC-003 Rate limiting service error - failing open. \
-                     Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security."
-                );
+                error!("LimiteronMiddleware: SEC-003 Rate limiting service error - failing open. \
+                     Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security. error={} path={:?}", e, path);
                 Ok(next.run(request).await)
             } else {
                 // Fail-closed: 拒绝请求以确保安全
-                error!(
-                    target: "security_audit",
-                    error = %e,
-                    path = path,
-                    "LimiteronMiddleware: SEC-003 Rate limiting service error - failing closed"
-                );
+                error!("LimiteronMiddleware: SEC-003 Rate limiting service error - failing closed error={} path={:?}", e, path);
                 Ok((
                     StatusCode::SERVICE_UNAVAILABLE,
                     "Rate limiting service temporarily unavailable".to_string(),

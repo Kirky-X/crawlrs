@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use log::{debug, error, info, warn};
 
 /// 环境变量白名单配置
 #[derive(Debug, Clone)]

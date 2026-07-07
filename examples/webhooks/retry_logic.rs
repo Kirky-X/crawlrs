@@ -19,7 +19,7 @@
 //! - 最大重试次数配置
 //! - 重试条件判断
 
-use tracing::{info, warn};
+use log::{info, warn};
 use std::time::Duration;
 use rand::Rng;
 
@@ -142,7 +142,7 @@ impl WebhookDelivery {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("=== Webhook 重试逻辑示例 ===\n");
 

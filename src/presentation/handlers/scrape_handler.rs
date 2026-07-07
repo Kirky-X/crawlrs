@@ -9,7 +9,7 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
-use tracing::error;
+use log::error;
 use uuid::Uuid;
 
 use crate::{
@@ -59,23 +59,10 @@ pub async fn create_scrape(
     // SSRF 验证 - 使用完整的异步 DNS 验证
     match validate_url(&payload.url).await {
         Ok(validated) => {
-            tracing::debug!(
-                target: "security",
-                url = %payload.url,
-                team_id = %team_id,
-                resolved_ips = ?validated.resolved_ips,
-                "URL passed SSRF validation"
-            );
+            log::debug!("URL passed SSRF validation url={} team_id={} resolved_ips={:?}", payload.url, team_id, validated.resolved_ips);
         }
         Err(e) => {
-            tracing::warn!(
-                target: "security_audit",
-                url = %payload.url,
-                team_id = %team_id,
-                api_key_id = %auth_state.api_key_id,
-                error = %e,
-                "SSRF attack attempt blocked"
-            );
+            log::warn!("SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}", payload.url, team_id, auth_state.api_key_id, e);
             return errors::bad_request(format!("SSRF protection: {}", e));
         }
     }

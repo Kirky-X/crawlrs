@@ -27,7 +27,7 @@ use crate::presentation::helpers::rate_limit_helper::check_rate_limit;
 use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::state::CrawlHandlerState;
-use tracing::error;
+use log::error;
 
 /// 创建新的爬取任务
 pub async fn create_crawl(
@@ -48,23 +48,10 @@ pub async fn create_crawl(
     // SSRF 验证 - 使用完整的异步 DNS 验证
     match validate_url(&payload.url).await {
         Ok(validated) => {
-            tracing::debug!(
-                target: "security",
-                url = %payload.url,
-                team_id = %team_id,
-                resolved_ips = ?validated.resolved_ips,
-                "URL passed SSRF validation"
-            );
+            log::debug!("URL passed SSRF validation url={} team_id={} resolved_ips={:?}", payload.url, team_id, validated.resolved_ips);
         }
         Err(e) => {
-            tracing::warn!(
-                target: "security_audit",
-                url = %payload.url,
-                team_id = %team_id,
-                api_key_id = %auth_state.api_key_id,
-                error = %e,
-                "SSRF attack attempt blocked"
-            );
+            log::warn!("SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}", payload.url, team_id, auth_state.api_key_id, e);
             return errors::bad_request(format!("SSRF protection: {}", e));
         }
     }

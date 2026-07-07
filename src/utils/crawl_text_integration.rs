@@ -6,7 +6,7 @@
 use crate::utils::text_processing::processor::{CrawlProcessingError, CrawlTextProcessor};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use log::{debug, error, info, warn};
 
 pub struct CrawlTextIntegration {
     processor: Arc<RwLock<CrawlTextProcessor>>,

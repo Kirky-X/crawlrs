@@ -10,7 +10,7 @@
 use crate::config::settings::Settings;
 use crate::infrastructure::security::env_var_security::{EnvVarSecurityMonitor, EnvVarValidator};
 use anyhow::Result;
-use tracing::{debug, error, info, warn};
+use log::{debug, error, info, warn};
 
 /// Load application configuration from settings file.
 ///

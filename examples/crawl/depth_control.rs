@@ -23,11 +23,11 @@
 //!
 
 use crawlrs::application::dto::crawl_request::{CrawlConfigDto, CrawlRequestDto};
-use tracing::info;
+use log::info;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始深度控制爬取示例");
     info!("=====================================\n");

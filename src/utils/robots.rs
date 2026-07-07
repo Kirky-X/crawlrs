@@ -259,7 +259,7 @@ impl RobotsChecker {
         }
 
         if let Some(err) = last_error {
-            tracing::warn!("Failed to fetch robots.txt from {}: {}", robots_url, err);
+            log::warn!("Failed to fetch robots.txt from {}: {}", robots_url, err);
             // Default to empty content on persistent error
             content = "".to_string();
         }

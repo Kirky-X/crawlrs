@@ -6,7 +6,7 @@
 //! Application services initialization.
 
 use std::sync::Arc;
-use tracing::info;
+use log::info;
 
 use crate::application::use_cases::create_scrape::{CreateScrapeUseCase, CreateScrapeUseCaseTrait};
 use crate::bootstrap::infrastructure::InfrastructureComponents;
@@ -147,7 +147,7 @@ pub fn init_rate_limiting_service(
 
     // Validate rate limit config
     if let Err(e) = rate_limit_config.validate() {
-        tracing::error!("Rate limit configuration error: {}", e);
+        log::error!("Rate limit configuration error: {}", e);
     }
 
     let concurrency_config = ConcurrencyConfig {
@@ -160,7 +160,7 @@ pub fn init_rate_limiting_service(
 
     // Validate concurrency config
     if let Err(e) = concurrency_config.validate() {
-        tracing::error!("Concurrency configuration error: {}", e);
+        log::error!("Concurrency configuration error: {}", e);
     }
 
     let rate_limiting_config = RateLimitingConfig {

@@ -11,11 +11,11 @@
 - [x] [T008] [P0] 运行 cargo check --no-default-features --features default 验证 Cargo.toml 语法正确，修复编译错误（commit b1f305d1 修复 21 文件 34 个 API 兼容错误）
 
 ## Phase 2: inklog 完全替换 tracing
-- [ ] [T009] [P0] 更新 Cargo.toml：移除 tracing/tracing-subscriber/tracing-appender 依赖，确认 inklog 已添加。在 src/bootstrap/ 日志初始化代码中用 inklog::LoggerManager::with_config() 替换 tracing_subscriber 初始化
-- [ ] [T010] [P0] 全项目 sed 替换：tracing::info!→log::info!、tracing::error!→log::error!、tracing::warn!→log::warn!、tracing::debug!→log::trace!（src/ 下所有 .rs 文件）
-- [ ] [T011] [P0] 移除全项目 #[tracing::instrument] 属性宏（src/ 下所有 .rs 文件），替换为 inklog 结构化日志的 context 字段
-- [ ] [T012] [P0] 移除全项目 tracing::Span / tracing::Instrument / tracing::instrument 用法（src/ 下），替换为 inklog 的日志 context
-- [ ] [T013] [P1] 验证 cargo build --features default 通过，修复所有编译错误
+- [x] [T009] [P0] 更新 Cargo.toml：移除 tracing/tracing-subscriber/tracing-appender 依赖，确认 inklog 已添加。在 src/bootstrap/ 日志初始化代码中用 inklog::LoggerManager::with_config() 替换 tracing_subscriber 初始化
+- [x] [T010] [P0] 全项目 sed 替换：tracing::info!→log::info!、tracing::error!→log::error!、tracing::warn!→log::warn!、tracing::debug!→log::trace!（src/ 下所有 .rs 文件）
+- [x] [T011] [P0] 移除全项目 #[tracing::instrument] 属性宏（src/ 下所有 .rs 文件），替换为 inklog 结构化日志的 context 字段
+- [x] [T012] [P0] 移除全项目 tracing::Span / tracing::Instrument / tracing::instrument 用法（src/ 下），替换为 inklog 的日志 context
+- [x] [T013] [P1] 验证 cargo build --features default 通过，修复所有编译错误
 
 ## Phase 3: sdforge 接口封装
 - [ ] [T014] [P1] 在 src/presentation/sdk/ 新建模块，用 sdforge 宏封装 domain services 的核心 trait（TaskService/CrawlService/ScrapeService/SearchService）为 HTTP 接口，gate 在 api-sdk feature 后

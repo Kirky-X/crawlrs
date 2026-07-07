@@ -17,7 +17,7 @@ use crate::presentation::handlers::response_builder::{
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
 use std::sync::Arc;
-use tracing::error;
+use log::error;
 use uuid::Uuid;
 
 /// 团队信息响应

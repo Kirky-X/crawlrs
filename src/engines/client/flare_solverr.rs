@@ -21,7 +21,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use log::{debug, error, info, warn};
 
 /// FlareSolverr configuration
 #[derive(Debug, Clone)]

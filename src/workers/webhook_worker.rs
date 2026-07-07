@@ -14,7 +14,7 @@ use chrono::Utc;
 use metrics::counter;
 use shaku::Component;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use log::{error, info, warn};
 
 /// Webhook Worker Trait
 #[async_trait::async_trait]

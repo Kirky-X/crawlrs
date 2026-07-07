@@ -44,7 +44,7 @@ fn create_cors_layer(settings: &Settings) -> CorsLayer {
 
     let cors_layer = if allowed_origins.is_empty() || allowed_origins.iter().any(|o| o == "*") {
         // 生产环境不应使用通配符，这里仅作为开发回退
-        tracing::warn!("CORS 使用通配符 '*'，建议在生产环境中配置具体的来源");
+        log::warn!("CORS 使用通配符 '*'，建议在生产环境中配置具体的来源");
         CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
@@ -56,7 +56,7 @@ fn create_cors_layer(settings: &Settings) -> CorsLayer {
             .collect();
 
         if origins.is_empty() {
-            tracing::warn!("CORS 配置无效，允许所有来源作为回退");
+            log::warn!("CORS 配置无效，允许所有来源作为回退");
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
