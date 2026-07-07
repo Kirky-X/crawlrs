@@ -3,14 +3,11 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use dbnexus::{db_cache, db_permission, DbEntity};
 use sea_orm::entity::prelude::*;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, PartialEq, DbEntity, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "feature_flags")]
-#[db_permission(roles = ["admin"], operations = ["select", "insert", "update", "delete"])]
-#[db_cache(ttl = 60, max_capacity = 100)]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,

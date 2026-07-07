@@ -3,7 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use dbnexus::{db_cache, db_permission, DbEntity};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -11,10 +10,8 @@ use uuid::Uuid;
 /// 团队数据库实体模型
 ///
 /// 对应数据库中的 teams 表，存储团队的基本信息和地理限制配置
-#[derive(Clone, Debug, PartialEq, DbEntity, DeriveEntityModel, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "teams")]
-#[db_permission(roles = ["admin", "api_user", "system", "viewer"], operations = ["select", "insert", "update", "delete"])]
-#[db_cache(ttl = 300, max_capacity = 200)]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,

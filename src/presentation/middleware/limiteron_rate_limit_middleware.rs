@@ -137,12 +137,12 @@ pub async fn limiteron_rate_limit_middleware(
         }
         Ok(Decision::Rejected(reason)) => {
             warn!(
-                "LimiteronMiddleware: Rate limit exceeded for path {}: {}",
+                "LimiteronMiddleware: Rate limit exceeded for path {}: {:?}",
                 path, reason
             );
             Ok((
                 StatusCode::TOO_MANY_REQUESTS,
-                format!("Rate limit exceeded: {}", reason),
+                format!("Rate limit exceeded: {}", reason.reason),
             )
                 .into_response())
         }

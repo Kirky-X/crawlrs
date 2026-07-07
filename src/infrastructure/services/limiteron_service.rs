@@ -107,7 +107,7 @@ impl LimiteronService {
     fn build_flow_control_config(
         config: &RateLimitingConfig,
     ) -> Result<FlowControlConfig, RateLimitingError> {
-        use limiteron::config::types::{
+        use limiteron::config::{
             Action, ActionConfig, GlobalConfig, LimiterConfig, Matcher, Rule,
         };
 
@@ -202,11 +202,13 @@ impl RateLimitService for LimiteronService {
             }
             Ok(Decision::Rejected(reason)) => {
                 warn!(
-                    "LimiteronService: Rate limit exceeded for API key: {}...: {}",
+                    "LimiteronService: Rate limit exceeded for API key: {}...: {:?}",
                     &api_key[..std::cmp::min(8, api_key.len())],
                     reason
                 );
-                Ok(RateLimitResult::Denied { reason })
+                Ok(RateLimitResult::Denied {
+                    reason: reason.reason.clone(),
+                })
             }
             Ok(Decision::Banned(ban_info)) => {
                 warn!(

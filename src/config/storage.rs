@@ -36,7 +36,7 @@ pub struct StorageSettings {
     pub storage_type: String,
 
     /// 本地存储路径 (当 type=local 时使用)
-    #[config(default = Some("./storage".to_string()))]
+    #[config(default = "./storage".to_string())]
     pub local_path: Option<String>,
 
     /// S3 区域

@@ -14,11 +14,11 @@
 
 use crate::config::settings::CacheSettings;
 use crate::domain::models::search_result::SearchResult;
-use oxcache::rate_limiting::RateLimitConfig;
 use oxcache::Cache;
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // =============================================================================
 // Cache Types
@@ -41,13 +41,31 @@ pub struct DnsCacheEntry {
 pub type DnsCache = Cache<String, DnsCacheEntry>;
 
 // =============================================================================
-// Rate Limiting (using oxcache)
+// Rate Limiting (token bucket implementation)
 // =============================================================================
 
-/// Rate limiter wrapper using oxcache's GlobalRateLimiter
+/// Rate limit configuration
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    /// Maximum requests per second
+    pub max_requests_per_second: u64,
+    /// Burst capacity (max tokens in bucket)
+    pub burst_capacity: u64,
+    /// Block duration in seconds when rate limit exceeded
+    pub block_duration_secs: u64,
+}
+
+/// Per-client token bucket state
+#[derive(Clone)]
+struct TokenBucket {
+    tokens: f64,
+    last_refill: Instant,
+}
+
+/// Rate limiter using token bucket algorithm
 #[derive(Clone)]
 pub struct RateLimiter {
-    inner: Arc<oxcache::rate_limiting::ClientRateLimiter>,
+    inner: Arc<tokio::sync::Mutex<HashMap<String, TokenBucket>>>,
     config: RateLimitConfig,
 }
 
@@ -65,9 +83,8 @@ impl RateLimiter {
 
     /// Create a new rate limiter with custom config
     pub fn new(config: RateLimitConfig) -> Self {
-        let global = oxcache::rate_limiting::GlobalRateLimiter::new(Some(config.clone()));
         Self {
-            inner: global.inner().clone(),
+            inner: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             config,
         }
     }
@@ -84,12 +101,35 @@ impl RateLimiter {
 
     /// Check if a request is allowed for the given client
     pub async fn check_rate_limit(&self, client_id: &str) -> Result<(), Duration> {
-        self.inner.check_rate_limit(client_id, 1).await
+        self.check_rate_limit_n(client_id, 1).await
     }
 
     /// Check if N requests are allowed
     pub async fn check_rate_limit_n(&self, client_id: &str, n: u64) -> Result<(), Duration> {
-        self.inner.check_rate_limit(client_id, n).await
+        let mut buckets = self.inner.lock().await;
+        let refill_rate = self.config.max_requests_per_second as f64;
+        let capacity = self.config.burst_capacity as f64;
+
+        let bucket = buckets.entry(client_id.to_string()).or_insert(TokenBucket {
+            tokens: capacity,
+            last_refill: Instant::now(),
+        });
+
+        // Refill tokens based on elapsed time
+        let now = Instant::now();
+        let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
+        bucket.tokens = (bucket.tokens + elapsed * refill_rate).min(capacity);
+        bucket.last_refill = now;
+
+        let requested = n as f64;
+        if bucket.tokens >= requested {
+            bucket.tokens -= requested;
+            Ok(())
+        } else {
+            let needed = requested - bucket.tokens;
+            let retry_after = needed / refill_rate;
+            Err(Duration::from_secs_f64(retry_after))
+        }
     }
 
     /// Get the configuration
