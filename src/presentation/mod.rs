@@ -13,4 +13,6 @@ pub mod handlers;
 pub mod helpers;
 pub mod middleware;
 pub mod routes;
+#[cfg(feature = "api-sdk")]
+pub mod sdk;
 pub mod state;

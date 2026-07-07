@@ -270,6 +270,11 @@ name = "integration_tests"
 path = "tests/integration/mod.rs"
 required-features = ["full"]
 
+[[test]]
+name = "sdk_api_test"
+path = "tests/sdk_api_test.rs"
+required-features = ["api-sdk"]
+
 [[bench]]
 name = "benchmark"
 harness = false

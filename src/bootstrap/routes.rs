@@ -268,11 +268,21 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
     // 创建 CORS 层
     let cors_layer = create_cors_layer(&settings);
 
-    Router::new()
+    let app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
-        .merge(v2_routes)
-        .layer(cors_layer)
+        .merge(v2_routes);
+
+    // SDK routes (only when api-sdk feature is enabled)
+    #[cfg(feature = "api-sdk")]
+    let app = app.merge(
+        crate::presentation::sdk::build_sdk_router()
+            .layer(Extension(state.search_service.clone()))
+            .layer(Extension(state.task_queue.clone()))
+            .layer(Extension(state.crawl_repo.clone())),
+    );
+
+    app.layer(cors_layer)
         // Security headers middleware - should be applied early in the middleware chain
         .layer(axum::middleware::from_fn(
             crate::presentation::middleware::security_headers_middleware::security_headers_middleware,

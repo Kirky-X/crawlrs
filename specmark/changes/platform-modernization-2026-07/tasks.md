@@ -18,9 +18,9 @@
 - [x] [T013] [P1] 验证 cargo build --features default 通过，修复所有编译错误
 
 ## Phase 3: sdforge 接口封装
-- [ ] [T014] [P1] 在 src/presentation/sdk/ 新建模块，用 sdforge 宏封装 domain services 的核心 trait（TaskService/CrawlService/ScrapeService/SearchService）为 HTTP 接口，gate 在 api-sdk feature 后
-- [ ] [T015] [P1] 在 src/bootstrap/routes.rs 注册 sdforge 生成的 HTTP 路由到 Axum router（#[cfg(feature = "api-sdk")]）
-- [ ] [T016] [P1] 为 sdforge 封装的接口编写集成测试（tests/integration/sdk_api_test.rs），验证 HTTP 端点可调用
+- [x] [T014] [P1] 在 src/presentation/sdk/ 新建模块，用 sdforge 宏封装 domain services 的核心 trait（TaskService/CrawlService/ScrapeService/SearchService）为 HTTP 接口，gate 在 api-sdk feature 后
+- [x] [T015] [P1] 在 src/bootstrap/routes.rs 注册 sdforge 生成的 HTTP 路由到 Axum router（#[cfg(feature = "api-sdk")]）
+- [x] [T016] [P1] 为 sdforge 封装的接口编写集成测试（tests/integration/sdk_api_test.rs），验证 HTTP 端点可调用
 
 ## Phase 4: 幽灵函数移除（gitnexus 深度分析）
 - [ ] [T017] [P1] 用 gitnexus cypher 查询无入边 Function 节点，过滤 trait 实现/标准 trait/getter/构造器/test_*/路由 handler，生成候选清单到 /tmp/ghost-functions-candidates.txt
