@@ -13,12 +13,12 @@ exclude = []
 
 [features]
 # 默认核心功能（不包含 S3、genai）
-default = ["engine-reqwest", "redis-cache", "rate-limiting", "metrics", "dbnexus-postgres"]
+default = ["engine-reqwest", "redis-cache", "rate-limiting", "metrics", "dbnexus-postgres", "logging", "config", "oxcache-cache"]
 
 # 预设配置
 lite = ["engine-reqwest", "dbnexus-sqlite"]
 standard = ["default", "engine-playwright"]
-full = ["standard", "engine-fire-cdp", "engine-fire-tls", "engine-flaresolverr", "dbnexus-sqlite", "storage-s3", "search-all"]
+full = ["standard", "engine-fire-cdp", "engine-fire-tls", "engine-flaresolverr", "dbnexus-sqlite", "storage-s3", "search-all", "api-sdk"]
 
 # 实验性功能（需要显式启用）
 experimental = ["dep:genai"]
@@ -64,6 +64,21 @@ metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
 dbnexus-postgres = ["dep:dbnexus", "dep:sea_orm"]
 dbnexus-sqlite = ["dep:dbnexus", "dep:sea_orm"]
 
+# --- 配置管理特性 ---
+config = ["dep:confers"]
+
+# --- 日志特性 ---
+# inklog: 新一代结构化日志库（替换 tracing 的下一 phase）
+logging = ["dep:inklog"]
+
+# --- API SDK 封装特性 ---
+# sdforge: 基于 axum/tower 的接口生成器
+api-sdk = ["dep:sdforge"]
+
+# --- 缓存特性 ---
+# oxcache: 多后端缓存库（moka + redis）
+oxcache-cache = ["dep:oxcache"]
+
 # --- 已移除的旧数据库特性 (不再使用) ---
 # db-postgres = ["sea-orm/sqlx-postgres", "sqlx/postgres"]
 # db-sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
@@ -90,7 +105,9 @@ tower-http = { version = "0.6", features = ["trace", "cors"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-confers = { path = "/home/dev/projects/confers", default-features = false, features = ["toml", "json", "yaml", "env", "validation", "watch", "dynamic"] }
+confers = { version = "0.2.2", default-features = false, features = ["validation", "watch", "derive"], optional = true }
+# figment: confers 的 Config derive 宏生成代码引用 figment，需作为直接依赖
+figment = { version = "0.10", features = ["toml", "json", "yaml", "env"] }
 
 # Error handling
 thiserror = "2.0.17"
@@ -104,7 +121,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # Database - 使用 dbnexus (完全负责数据库底层)
 # dbnexus 提供：连接池管理、权限控制、迁移框架、指标监控、审计日志
 # 注意：需要同时添加 sea-orm 以支持实体宏
-dbnexus = { path = "/home/dev/projects/dbnexus", optional = true, default-features = false, features = [
+dbnexus = { version = "0.2.0", default-features = false, features = [
     "postgres",           # 仅 PostgreSQL，不再支持 SQLite
     "runtime-tokio-rustls",
     "permission",         # 声明式权限控制
@@ -113,9 +130,12 @@ dbnexus = { path = "/home/dev/projects/dbnexus", optional = true, default-featur
     "migration",          # 数据库迁移框架
     "sql-parser",         # SQL 解析器 (包含 regex)
     "metrics",            # Prometheus 指标监控
-    "config-yaml",        # YAML 权限配置支持
     "config-env",         # 环境变量配置支持
-] }
+    "config-toml",        # TOML 配置支持 (替代旧的 config-yaml)
+    "chrono",             # chrono 时间类型支持 (crates.io 版名称)
+    "uuid",               # UUID 类型支持 (crates.io 版名称)
+    "with-json",          # JSON 类型支持
+], optional = true }
 
 # Sea-ORM - 需要用于实体宏定义 (dbnexus 构建在 Sea-ORM 之上)
 # 注意：版本必须与 dbnexus 保持一致 (2.0.0-rc.27)
@@ -146,6 +166,12 @@ dirs = "5.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
+# inklog: 新一代结构化日志库（替换 tracing 的下一 phase）
+# crates.io 版 features 适配：file/console-sink 等基础功能在 default 中
+inklog = { version = "0.1.2", default-features = false, features = ["cli", "http", "postgres"], optional = true }
+# sdforge: API SDK 封装库（基于 axum/tower 的接口生成器）
+# crates.io 版 features 适配：serde/serde_json/chrono 为必需依赖非 feature
+sdforge = { version = "0.3.1", default-features = false, features = ["http", "axum", "tower", "tower-http", "tokio", "uuid", "validator", "regex"], optional = true }
 metrics = { version = "0.24.3", optional = true }
 metrics-exporter-prometheus = { version = "0.18.1", default-features = false, features = ["http-listener"], optional = true }
 
@@ -178,16 +204,15 @@ ipnetwork = "0.21"
 
 # Rate limiting and circuit breaking
 # 已移除 governor，替换为 limiteron
-limiteron = { path = "/home/dev/projects/limiteron", features = [
-    "full",
+limiteron = { version = "0.2.1", default-features = false, features = [
     "postgres",
     "ban-manager",
     "quota-control",
     "circuit-breaker",
-    "audit-log",
     "telemetry",
     "monitoring",
     "parallel-checker",
+    "audit-log",
 ] }
 
 # Concurrency and synchronization
@@ -208,7 +233,7 @@ toml = "0.9.11"
 # Dependency Injection
 shaku = "0.6"
 shaku_axum = "0.6"
-oxcache = { version = "0.2.0", path = "/home/dev/projects/oxcache", default-features = false, features = ["moka", "redis", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "wal-recovery", "rate-limiting", "tracing", "futures"] }
+oxcache = { version = "0.3.3", default-features = false, features = ["memory", "redis", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing", "futures"], optional = true }
 ahash = "0.8.12"
 
 # API Documentation (optional - controlled by 'openapi' feature)
