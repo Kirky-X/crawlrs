@@ -18,8 +18,8 @@ use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use dbnexus::DbPool;
 use sea_orm::{
-    sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect,
+    sea_query::Expr, ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -381,6 +381,8 @@ impl TaskRepository for TaskRepositoryImpl {
 
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
         let now = Utc::now();
+        // Stale threshold: tasks queued or active for more than 24h are considered stale
+        let stale_threshold = now - Duration::hours(24);
 
         let session = self
             .pool
@@ -393,12 +395,33 @@ impl TaskRepository for TaskRepositoryImpl {
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
         // PERF: 使用批量更新代替 N+1 查询
-        // 获取所有需要过期处理的任务 ID
+        // 获取所有需要过期处理的任务 ID:
+        // 1. Queued tasks with explicit expires_at in the past
+        // 2. Queued tasks older than 24h (stale, no expires_at)
+        // 3. Active tasks started more than 24h ago (stale)
         let task_ids: Vec<Uuid> = task_entity::Entity::find()
             .select_only()
             .column_as(task_entity::Column::Id, "id")
-            .filter(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
-            .filter(task_entity::Column::ExpiresAt.lt(now))
+            .filter(
+                Condition::any()
+                    .add(
+                        Condition::all()
+                            .add(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
+                            .add(task_entity::Column::ExpiresAt.lt(now)),
+                    )
+                    .add(
+                        Condition::all()
+                            .add(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
+                            .add(task_entity::Column::ExpiresAt.is_null())
+                            .add(task_entity::Column::CreatedAt.lt(stale_threshold)),
+                    )
+                    .add(
+                        Condition::all()
+                            .add(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
+                            .add(task_entity::Column::StartedAt.is_not_null())
+                            .add(task_entity::Column::StartedAt.lt(stale_threshold)),
+                    ),
+            )
             .into_tuple()
             .all(conn)
             .await

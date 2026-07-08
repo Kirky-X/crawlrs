@@ -71,7 +71,7 @@ mod tests {
 
         let result = client.scrape(&request).await;
         if let Err(e) = &result {
-            tracing::error!("Scrape failed: {:?}", e);
+            log::error!("Scrape failed: {:?}", e);
         }
         assert!(result.is_ok());
 

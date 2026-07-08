@@ -61,8 +61,8 @@ metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
 # --- 数据库特性 (使用 dbnexus) ---
 # dbnexus 负责所有数据库访问，包括连接池、权限控制、迁移等
 # 注意：sea_orm 内部使用下划线命名
-dbnexus-postgres = ["dep:dbnexus", "dep:sea_orm"]
-dbnexus-sqlite = ["dep:dbnexus", "dep:sea_orm"]
+dbnexus-postgres = ["dep:dbnexus", "dep:sea_orm", "dbnexus/postgres"]
+dbnexus-sqlite = ["dep:dbnexus", "dep:sea_orm", "dbnexus/sqlite"]
 
 # --- 配置管理特性 ---
 config = ["dep:confers"]

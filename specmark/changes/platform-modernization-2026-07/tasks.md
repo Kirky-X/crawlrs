@@ -27,7 +27,7 @@
 - [x] [T018] [P1] 逐个验证候选函数：读源码确认 + gitnexus context 查 360° 引用 + Grep 搜索字符串引用，确认 0 引用后移除死代码（src/ 下各模块）
 
 ## Phase 5: 命名修复（gitnexus 分析）
-- [ ] [T019] [P1] 用 gitnexus query 搜索可能的旧名调用（如 governor→limiteron、sea-orm 旧 API、db-postgres→dbnexus-postgres），修复 src/ 下所有过时命名引用
+- [x] [T019] [P1] 用 gitnexus query 搜索可能的旧名调用（如 governor→limiteron、sea-orm 旧 API、db-postgres→dbnexus-postgres），修复 src/ 下所有过时命名引用
 
 ## Phase 6: 特性门禁完善
 - [ ] [T020] [P0] 检查 Cargo.toml 所有非 optional 依赖，确认哪些应设为 optional + feature 门禁（特别是 scraper/chardetng/encoding_rs 等可按需启用的），更新 Cargo.toml

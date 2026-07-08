@@ -17,7 +17,7 @@ use crate::domain::search::engine::SearchEngine;
 use crate::domain::search::engine::SearchError;
 use html_escape;
 use tokio::time::Duration;
-use tracing::{error, info};
+use log::{error, info};
 
 pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
 pub const DEFAULT_KEYWORD: &str = "gemini-3-pro";

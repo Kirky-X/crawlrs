@@ -177,19 +177,33 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
 }
 
 #[cfg(test)]
-#[cfg(feature = "db-sqlite")]
+#[cfg(feature = "dbnexus-sqlite")]
 mod tests {
     use super::*;
     use crate::infrastructure::database::entities::team;
-    use sea_orm::{
-        ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, Set, Statement,
-    };
+    use dbnexus::{DbConfig, DbPool};
+    use sea_orm::{ActiveModelTrait, ConnectionTrait, Set, Statement};
 
-    async fn setup_db() -> Arc<DatabaseConnection> {
-        let db = Database::connect("sqlite::memory:").await.unwrap();
-        let db = Arc::new(db);
+    async fn setup_db() -> Arc<DbPool> {
+        // SQLite in-memory 必须共享同一连接，否则每个连接有独立的数据库
+        let config = DbConfig {
+            url: "sqlite::memory:".to_string(),
+            max_connections: 1,
+            min_connections: 0,
+            ..Default::default()
+        };
+        let pool = DbPool::with_config(config)
+            .await
+            .expect("Failed to create DbPool");
+        let pool = Arc::new(pool);
+        let session = pool
+            .get_session("admin")
+            .await
+            .expect("Failed to get session");
+        let conn = session
+            .connection()
+            .expect("Failed to get connection");
 
-        // Create teams table manually
         let create_teams_sql = r#"
             CREATE TABLE IF NOT EXISTS teams (
                 id TEXT PRIMARY KEY,
@@ -203,14 +217,13 @@ mod tests {
                 updated_at TEXT NOT NULL
             );
         "#;
-        db.execute(Statement::from_string(
+        conn.execute_raw(Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             create_teams_sql.to_string(),
         ))
         .await
-        .unwrap();
+        .expect("Failed to create teams table");
 
-        // Create geo_restriction_logs table for log_geo_restriction_action test
         let create_logs_sql = r#"
             CREATE TABLE IF NOT EXISTS geo_restriction_logs (
                 id TEXT PRIMARY KEY,
@@ -223,18 +236,21 @@ mod tests {
                 created_at TEXT NOT NULL
             );
         "#;
-        db.execute(Statement::from_string(
+        conn.execute_raw(Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             create_logs_sql.to_string(),
         ))
         .await
-        .unwrap();
+        .expect("Failed to create geo_restriction_logs table");
 
-        db
+        drop(session);
+        pool
     }
 
-    async fn create_team(db: &DatabaseConnection) -> Uuid {
+    async fn create_team(db: &DbPool) -> Uuid {
         let team_id = Uuid::new_v4();
+        let session = db.get_session("admin").await.expect("Failed to get session");
+        let conn = session.connection().expect("Failed to get connection");
         let team = team::ActiveModel {
             id: Set(team_id),
             name: Set("Test Team".to_string()),
@@ -243,7 +259,7 @@ mod tests {
             updated_at: Set(chrono::Utc::now().into()),
             ..Default::default()
         };
-        team.insert(db).await.unwrap();
+        team.insert(conn).await.expect("Failed to insert team");
         team_id
     }
 

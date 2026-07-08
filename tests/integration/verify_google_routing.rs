@@ -10,21 +10,12 @@ use crawlrs::utils::http_client::create_http_client;
 use testcontainers::core::{ContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::GenericImage;
-use tracing::{info, Level};
-use tracing_subscriber::fmt::format::FmtSpan;
+use log::info;
 
 #[tokio::test]
 #[ignore]
 async fn verify_google_uses_fire_engine_cdp() {
-    // 1. Setup logging to capture stdout
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .with_span_events(FmtSpan::CLOSE)
-        .with_test_writer()
-        .finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
-
-    // 2. Determine Fire Engine URL (use existing or start container)
+    // 1. Determine Fire Engine URL (use existing or start container)
     let base_url = if let Ok(url) = std::env::var("TEST_FIRE_ENGINE_CDP_URL") {
         info!("Using provided Fire Engine URL: {}", url);
         url

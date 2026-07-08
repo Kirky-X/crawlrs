@@ -11,9 +11,6 @@ use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-    
     println!("Adding credits to default team...");
     
     // Get database connection

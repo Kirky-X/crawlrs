@@ -85,9 +85,6 @@ macro_rules! skip_if_s3_unavailable {
 async fn test_s3_storage_save_and_get() {
     skip_if_s3_unavailable!();
 
-    // 初始化日志
-    let _ = tracing_subscriber::fmt::try_init();
-
     // 使用辅助函数创建存储实例
     let storage = create_s3_storage()
         .await
@@ -119,7 +116,6 @@ async fn test_s3_storage_save_and_get() {
 #[tokio::test]
 async fn test_s3_storage_exists() {
     skip_if_s3_unavailable!();
-    let _ = tracing_subscriber::fmt::try_init();
 
     let storage = create_s3_storage()
         .await
@@ -162,7 +158,6 @@ async fn test_s3_storage_exists() {
 #[tokio::test]
 async fn test_s3_storage_delete() {
     skip_if_s3_unavailable!();
-    let _ = tracing_subscriber::fmt::try_init();
 
     let storage = create_s3_storage()
         .await
@@ -194,7 +189,6 @@ async fn test_s3_storage_delete() {
 #[tokio::test]
 async fn test_s3_storage_large_file() {
     skip_if_s3_unavailable!();
-    let _ = tracing_subscriber::fmt::try_init();
 
     let storage = create_s3_storage()
         .await
@@ -230,7 +224,6 @@ async fn test_s3_storage_large_file() {
 #[tokio::test]
 async fn test_create_storage_repository_s3() {
     skip_if_s3_unavailable!();
-    let _ = tracing_subscriber::fmt::try_init();
 
     let (access_key, secret_key, endpoint) = get_s3_credentials();
     let settings = StorageSettings::s3(
@@ -264,7 +257,6 @@ async fn test_create_storage_repository_s3() {
 
 #[tokio::test]
 async fn test_create_storage_repository_missing_config() {
-    let _ = tracing_subscriber::fmt::try_init();
 
     // 测试缺少 s3_region
     let (access_key, secret_key, endpoint) = get_s3_credentials();
@@ -295,7 +287,6 @@ async fn test_create_storage_repository_missing_config() {
 
 #[tokio::test]
 async fn test_create_storage_repository_unsupported_type() {
-    let _ = tracing_subscriber::fmt::try_init();
 
     let settings = StorageSettings {
         storage_type: "invalid_type".to_string(),

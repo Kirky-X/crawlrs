@@ -4,27 +4,38 @@
 // See LICENSE file in the project root for full license information.
 
 #[cfg(test)]
-#[cfg(feature = "db-sqlite")]
+#[cfg(feature = "dbnexus-sqlite")]
 mod expiration_worker_tests {
     use crate::domain::models::{TaskStatus, TaskType};
     use crate::infrastructure::database::entities::{task, team};
     use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
     use crate::workers::expiration_worker::ExpirationWorker;
     use chrono::Utc;
-    use sea_orm::{
-        ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, EntityTrait, Set,
-        Statement,
-    };
+    use dbnexus::{DbConfig, DbPool};
+    use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, Set, Statement};
     use std::sync::Arc;
     use uuid::Uuid;
 
-    async fn setup_db() -> Arc<DatabaseConnection> {
-        let db = Database::connect("sqlite::memory:")
+    async fn setup_db() -> Arc<DbPool> {
+        // SQLite in-memory 必须共享同一连接，否则每个连接有独立的数据库
+        let config = DbConfig {
+            url: "sqlite::memory:".to_string(),
+            max_connections: 1,
+            min_connections: 0,
+            ..Default::default()
+        };
+        let pool = DbPool::with_config(config)
             .await
-            .expect("Failed to connect to in-memory database");
-        let db = Arc::new(db);
+            .expect("Failed to create DbPool");
+        let pool = Arc::new(pool);
+        let session = pool
+            .get_session("admin")
+            .await
+            .expect("Failed to get session");
+        let conn = session
+            .connection()
+            .expect("Failed to get connection");
 
-        // Create teams table
         let create_teams_sql = r#"
             CREATE TABLE IF NOT EXISTS teams (
                 id TEXT PRIMARY KEY,
@@ -38,14 +49,13 @@ mod expiration_worker_tests {
                 updated_at TEXT NOT NULL
             );
         "#;
-        db.execute(Statement::from_string(
+        conn.execute_raw(Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             create_teams_sql.to_string(),
         ))
         .await
-        .expect("Failed to execute SQL statement for creating teams table");
+        .expect("Failed to create teams table");
 
-        // Create tasks table with all required columns matching Task Entity
         let create_tasks_sql = r#"
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
@@ -70,35 +80,13 @@ mod expiration_worker_tests {
                 updated_at TEXT NOT NULL
             );
         "#;
-        db.execute(Statement::from_string(
+        conn.execute_raw(Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             create_tasks_sql.to_string(),
         ))
         .await
-        .expect("Failed to execute SQL statement for creating tasks table");
+        .expect("Failed to create tasks table");
 
-        db
-    }
-
-    async fn create_team(db: &DatabaseConnection) -> Uuid {
-        let team_id = Uuid::new_v4();
-        let team = team::ActiveModel {
-            id: Set(team_id),
-            name: Set("Test Team".to_string()),
-            created_at: Set(Utc::now().into()),
-            updated_at: Set(Utc::now().into()),
-            enable_geo_restrictions: Set(false),
-            ..Default::default()
-        };
-        team.insert(db)
-            .await
-            .expect("Failed to insert team into database");
-        team_id
-    }
-
-    async fn create_api_key(db: &DatabaseConnection, team_id: Uuid) -> Uuid {
-        let api_key_id = Uuid::new_v4();
-        // Create api_keys table if not exists
         let create_api_keys_sql = r#"
             CREATE TABLE IF NOT EXISTS api_keys (
                 id TEXT PRIMARY KEY,
@@ -115,12 +103,39 @@ mod expiration_worker_tests {
                 updated_at TEXT NOT NULL
             );
         "#;
-        db.execute(Statement::from_string(
+        conn.execute_raw(Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             create_api_keys_sql.to_string(),
         ))
         .await
-        .expect("Failed to execute SQL statement for creating api_keys table");
+        .expect("Failed to create api_keys table");
+
+        drop(session);
+        pool
+    }
+
+    async fn create_team(db: &DbPool) -> Uuid {
+        let team_id = Uuid::new_v4();
+        let session = db.get_session("admin").await.expect("Failed to get session");
+        let conn = session.connection().expect("Failed to get connection");
+        let team = team::ActiveModel {
+            id: Set(team_id),
+            name: Set("Test Team".to_string()),
+            created_at: Set(Utc::now().into()),
+            updated_at: Set(Utc::now().into()),
+            enable_geo_restrictions: Set(false),
+            ..Default::default()
+        };
+        team.insert(conn)
+            .await
+            .expect("Failed to insert team into database");
+        team_id
+    }
+
+    async fn create_api_key(db: &DbPool, team_id: Uuid) -> Uuid {
+        let api_key_id = Uuid::new_v4();
+        let session = db.get_session("admin").await.expect("Failed to get session");
+        let conn = session.connection().expect("Failed to get connection");
 
         let insert_sql = format!(
             r#"
@@ -134,7 +149,7 @@ mod expiration_worker_tests {
             Utc::now().format("%Y-%m-%d %H:%M:%S.%f UTC"),
             Utc::now().format("%Y-%m-%d %H:%M:%S.%f UTC")
         );
-        db.execute(Statement::from_string(
+        conn.execute_raw(Statement::from_string(
             sea_orm::DatabaseBackend::Sqlite,
             insert_sql,
         ))
@@ -145,7 +160,7 @@ mod expiration_worker_tests {
     }
 
     async fn create_test_task(
-        db: &DatabaseConnection,
+        db: &DbPool,
         team_id: Uuid,
         api_key_id: Uuid,
         status: TaskStatus,
@@ -176,7 +191,9 @@ mod expiration_worker_tests {
             task.started_at = Set(Some(started_at.into()));
         }
 
-        task.insert(db)
+        let session = db.get_session("admin").await.expect("Failed to get session");
+        let conn = session.connection().expect("Failed to get connection");
+        task.insert(conn)
             .await
             .expect("Failed to insert task into database");
         task_id
@@ -212,8 +229,10 @@ mod expiration_worker_tests {
         assert_eq!(result.expect("Cleanup result should be OK"), 2);
 
         // Verify statuses in DB
+        let session = db.get_session("admin").await.expect("Failed to get session");
+        let conn = session.connection().expect("Failed to get connection");
         let tasks = task::Entity::find()
-            .all(db.as_ref())
+            .all(conn)
             .await
             .expect("Failed to fetch tasks from database");
         let failed_count = tasks
