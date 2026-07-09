@@ -290,4 +290,317 @@ mod tests {
         assert!(is_ip_in_cidr(&ip, "2001:db8::/32"));
         assert!(!is_ip_in_cidr(&ip, "2001:db9::/32"));
     }
+
+    // =========================================================================
+    // is_ip_in_cidr 边界与异常输入
+    // =========================================================================
+
+    #[test]
+    fn test_is_ip_in_cidr_no_slash_returns_false() {
+        // 无 "/" → parts.len() != 2 → false
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "192.168.1.0"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_multiple_slashes_returns_false() {
+        // 多个 "/" → parts.len() > 2 → false
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "192.168.1.0/24/16"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_non_numeric_prefix_defaults_to_zero() {
+        // 非数字 prefix_length → unwrap_or(0) → prefix_length=0 → 全匹配 true
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(is_ip_in_cidr(&ip, "192.168.1.0/abc"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_prefix_zero_matches_all_ipv4() {
+        // prefix_length = 0 → IPv4 全匹配
+        let ip: IpAddr = "203.0.113.42".parse().unwrap();
+        assert!(is_ip_in_cidr(&ip, "0.0.0.0/0"));
+        assert!(is_ip_in_cidr(&ip, "10.0.0.0/0"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_prefix_zero_matches_all_ipv6() {
+        // prefix_length = 0 → IPv6 全匹配
+        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(is_ip_in_cidr(&ip, "::/0"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_ipv4_prefix_too_large_returns_false() {
+        // prefix_length > 32 → false（通过 is_ipv4_in_cidr 内部检查）
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "192.168.1.0/33"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_ipv6_prefix_too_large_returns_false() {
+        // prefix_length > 128 → false
+        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "2001:db8::/129"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_ipv4_exact_match_prefix_32() {
+        // prefix_length = 32 → IPv4 精确匹配
+        let ip: IpAddr = "192.168.1.100".parse().unwrap();
+        assert!(is_ip_in_cidr(&ip, "192.168.1.100/32"));
+        assert!(!is_ip_in_cidr(&ip, "192.168.1.101/32"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_ipv6_exact_match_prefix_128() {
+        // prefix_length = 128 → IPv6 精确匹配
+        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(is_ip_in_cidr(&ip, "2001:db8::1/128"));
+        assert!(!is_ip_in_cidr(&ip, "2001:db8::2/128"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_ip_version_mismatch_returns_false() {
+        // IPv4 ip vs IPv6 network → false
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "::1/128"));
+        // IPv6 ip vs IPv4 network → false
+        let ip: IpAddr = "::1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "192.168.1.0/24"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_unparseable_network_returns_false() {
+        // network 部分无法解析为 IpAddr → Ok 分支不匹配 → _ => false
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "not-an-ip/24"));
+    }
+
+    // =========================================================================
+    // is_ipv4_in_cidr 边界
+    // =========================================================================
+
+    #[test]
+    fn test_is_ipv4_in_cidr_prefix_zero_always_true() {
+        // prefix_length = 0 → mask = 0 → 任何 IP 都匹配
+        let ip = Ipv4Addr::new(203, 0, 113, 42);
+        let network = Ipv4Addr::new(10, 0, 0, 1);
+        assert!(is_ipv4_in_cidr(&ip, &network, 0));
+    }
+
+    #[test]
+    fn test_is_ipv4_in_cidr_prefix_32_exact_match() {
+        let ip = Ipv4Addr::new(192, 168, 1, 100);
+        assert!(is_ipv4_in_cidr(&ip, &ip, 32));
+        let other = Ipv4Addr::new(192, 168, 1, 101);
+        assert!(!is_ipv4_in_cidr(&ip, &other, 32));
+    }
+
+    #[test]
+    fn test_is_ipv4_in_cidr_prefix_33_returns_false() {
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        let network = Ipv4Addr::new(192, 168, 1, 0);
+        assert!(!is_ipv4_in_cidr(&ip, &network, 33));
+    }
+
+    #[test]
+    fn test_is_ipv4_in_cidr_boundary_match() {
+        // /24 边界：网络部分相同，主机部分不同
+        let ip = Ipv4Addr::new(10, 20, 30, 40);
+        let network = Ipv4Addr::new(10, 20, 30, 0);
+        assert!(is_ipv4_in_cidr(&ip, &network, 24));
+        let out_ip = Ipv4Addr::new(10, 20, 31, 40);
+        assert!(!is_ipv4_in_cidr(&out_ip, &network, 24));
+    }
+
+    // =========================================================================
+    // is_ipv6_in_cidr 边界
+    // =========================================================================
+
+    #[test]
+    fn test_is_ipv6_in_cidr_prefix_zero_always_true() {
+        // prefix_length = 0 → 全匹配
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x1);
+        let network = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x1);
+        assert!(is_ipv6_in_cidr(&ip, &network, 0));
+    }
+
+    #[test]
+    fn test_is_ipv6_in_cidr_prefix_128_exact_match() {
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x1);
+        assert!(is_ipv6_in_cidr(&ip, &ip, 128));
+        let other = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x2);
+        assert!(!is_ipv6_in_cidr(&ip, &other, 128));
+    }
+
+    #[test]
+    fn test_is_ipv6_in_cidr_prefix_129_returns_false() {
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x1);
+        let network = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0);
+        assert!(!is_ipv6_in_cidr(&ip, &network, 129));
+    }
+
+    #[test]
+    fn test_is_ipv6_in_cidr_remaining_bits_zero() {
+        // prefix_length 整除 16（如 48），remaining_bits=0 分支
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0x1234, 0, 0, 0, 0x1);
+        let network = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0, 0, 0);
+        assert!(is_ipv6_in_cidr(&ip, &network, 48));
+        // 前三段不同 → false
+        let diff_network = Ipv6Addr::new(0x2001, 0x0db8, 0x85a4, 0, 0, 0, 0, 0);
+        assert!(!is_ipv6_in_cidr(&ip, &diff_network, 48));
+    }
+
+    #[test]
+    fn test_is_ipv6_in_cidr_remaining_bits_nonzero_partial_segment() {
+        // prefix_length 不整除 16（如 17），remaining_bits=1 分支
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x1);
+        // prefix 17: 第 0 段完整匹配(2001)，第 1 段前 1 位匹配(0x0db8 & 0x8000 == 0x0db8 & 0x8000)
+        // 0x0db8 的最高位是 0（0x0db8 < 0x8000），所以 network 第 1 段最高位也需为 0
+        let network = Ipv6Addr::new(0x2001, 0x0000, 0, 0, 0, 0, 0, 0);
+        assert!(is_ipv6_in_cidr(&ip, &network, 17));
+
+        // network 第 1 段最高位为 1 → 不匹配
+        let network_msb = Ipv6Addr::new(0x2001, 0x8000, 0, 0, 0, 0, 0, 0);
+        assert!(!is_ipv6_in_cidr(&ip, &network_msb, 17));
+    }
+
+    #[test]
+    fn test_is_ipv6_in_cidr_remaining_bits_partial_match_and_mismatch() {
+        // prefix 120 = 7*16 + 8，remaining_bits=8，第 7 段前 8 位
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x370, 0x7334);
+        // 第 7 段前 8 位匹配（0x7334 & 0xFF00 == 0x7300 == network & 0xFF00）
+        let network_match = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x370, 0x7300);
+        assert!(is_ipv6_in_cidr(&ip, &network_match, 120));
+        // 第 7 段前 8 位不匹配
+        let network_mismatch = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x370, 0xff34);
+        assert!(!is_ipv6_in_cidr(&ip, &network_mismatch, 120));
+    }
+
+    // =========================================================================
+    // GeoLocation::Default
+    // =========================================================================
+
+    #[test]
+    fn test_geo_location_default_fields() {
+        let geo = GeoLocation::default();
+        assert_eq!(geo.ip, "");
+        assert_eq!(geo.country_code, "UNKNOWN");
+        assert_eq!(geo.country_name, "Unknown");
+        assert!(geo.region.is_none());
+        assert!(geo.city.is_none());
+        assert!(geo.latitude.is_none());
+        assert!(geo.longitude.is_none());
+        assert!(geo.isp.is_none());
+        assert!(geo.org.is_none());
+    }
+
+    // =========================================================================
+    // GeoLocationServiceImpl 构造器
+    // =========================================================================
+
+    #[test]
+    fn test_geo_location_service_impl_new_default_endpoint() {
+        let client = Arc::new(reqwest::Client::new());
+        let svc = GeoLocationServiceImpl::new(client);
+        // api_endpoint 是私有字段，但 tests 子模块可访问父模块私有字段
+        assert_eq!(svc.api_endpoint, "https://ipapi.co");
+    }
+
+    #[test]
+    fn test_geo_location_service_impl_with_endpoint_custom() {
+        let client = Arc::new(reqwest::Client::new());
+        let svc = GeoLocationServiceImpl::with_endpoint(
+            "https://ip-api.com/json".to_string(),
+            client,
+        );
+        assert_eq!(svc.api_endpoint, "https://ip-api.com/json");
+    }
+
+    // =========================================================================
+    // IpApiResponse serde 反序列化
+    // =========================================================================
+
+    #[test]
+    fn test_ip_api_response_deserialize_full() {
+        let json = r#"{
+            "ip": "8.8.8.8",
+            "country_code": "US",
+            "country_name": "United States",
+            "region": "California",
+            "city": "Mountain View",
+            "latitude": 37.4056,
+            "longitude": -122.0775,
+            "org": "Google LLC",
+            "error": false,
+            "reason": null
+        }"#;
+        let resp: IpApiResponse = serde_json::from_str(json).expect("deserialize failed");
+        assert_eq!(resp.ip.as_deref(), Some("8.8.8.8"));
+        assert_eq!(resp.country_code.as_deref(), Some("US"));
+        assert_eq!(resp.country_name.as_deref(), Some("United States"));
+        assert_eq!(resp.region.as_deref(), Some("California"));
+        assert_eq!(resp.city.as_deref(), Some("Mountain View"));
+        assert!((resp.latitude.unwrap() - 37.4056).abs() < 1e-4);
+        assert!((resp.longitude.unwrap() - (-122.0775)).abs() < 1e-4);
+        assert_eq!(resp.org.as_deref(), Some("Google LLC"));
+        assert_eq!(resp.error, Some(false));
+        assert!(resp.reason.is_none());
+    }
+
+    #[test]
+    fn test_ip_api_response_deserialize_partial() {
+        // 缺失字段应反序列化为 None
+        let json = r#"{"ip": "1.2.3.4"}"#;
+        let resp: IpApiResponse = serde_json::from_str(json).expect("deserialize failed");
+        assert_eq!(resp.ip.as_deref(), Some("1.2.3.4"));
+        assert!(resp.country_code.is_none());
+        assert!(resp.country_name.is_none());
+        assert!(resp.region.is_none());
+        assert!(resp.city.is_none());
+        assert!(resp.latitude.is_none());
+        assert!(resp.longitude.is_none());
+        assert!(resp.org.is_none());
+        assert!(resp.error.is_none());
+        assert!(resp.reason.is_none());
+    }
+
+    #[test]
+    fn test_ip_api_response_deserialize_error_response() {
+        let json = r#"{
+            "ip": "invalid",
+            "error": true,
+            "reason": "Invalid IP address"
+        }"#;
+        let resp: IpApiResponse = serde_json::from_str(json).expect("deserialize failed");
+        assert_eq!(resp.error, Some(true));
+        assert_eq!(resp.reason.as_deref(), Some("Invalid IP address"));
+    }
+
+    #[test]
+    fn test_ip_api_response_serialize_roundtrip() {
+        let original = IpApiResponse {
+            ip: Some("8.8.4.4".to_string()),
+            country_code: Some("US".to_string()),
+            country_name: Some("United States".to_string()),
+            region: None,
+            city: Some("Mountain View".to_string()),
+            latitude: Some(37.4),
+            longitude: Some(-122.1),
+            org: Some("Google".to_string()),
+            error: Some(false),
+            reason: None,
+        };
+        let json = serde_json::to_string(&original).expect("serialize failed");
+        let decoded: IpApiResponse = serde_json::from_str(&json).expect("deserialize failed");
+        assert_eq!(decoded.ip, original.ip);
+        assert_eq!(decoded.country_code, original.country_code);
+        assert_eq!(decoded.country_name, original.country_name);
+        assert_eq!(decoded.city, original.city);
+        assert!((decoded.latitude.unwrap() - 37.4).abs() < 1e-6);
+        assert_eq!(decoded.org, original.org);
+        assert_eq!(decoded.error, original.error);
+    }
 }

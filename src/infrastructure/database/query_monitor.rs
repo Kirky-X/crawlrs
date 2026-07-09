@@ -82,6 +82,7 @@ impl Drop for QueryGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread::sleep;
 
     #[test]
     fn test_query_monitor() {
@@ -94,5 +95,56 @@ mod tests {
     fn test_query_monitor_default() {
         let monitor = QueryMonitor::new();
         assert_eq!(monitor.slow_query_threshold_ms, 1000);
+    }
+
+    #[test]
+    fn test_query_monitor_default_impl() {
+        let monitor = QueryMonitor::default();
+        assert_eq!(monitor.slow_query_threshold_ms, 1000);
+    }
+
+    #[test]
+    fn test_query_monitor_with_threshold() {
+        let monitor = QueryMonitor::with_threshold(500);
+        assert_eq!(monitor.slow_query_threshold_ms, 500);
+    }
+
+    #[test]
+    fn test_query_guard_elapsed_ms() {
+        let monitor = QueryMonitor::with_threshold(10000);
+        let guard = monitor.monitor("elapsed_test");
+        sleep(std::time::Duration::from_millis(10));
+        let elapsed = guard.elapsed_ms();
+        assert!(elapsed >= 8);
+    }
+
+    #[test]
+    fn test_query_guard_slow_query_triggers_warn() {
+        // threshold 0 means any query that takes > 0ms is "slow"
+        let monitor = QueryMonitor::with_threshold(0);
+        let guard = monitor.monitor("slow_query_test");
+        // Sleep to ensure elapsed > 0
+        sleep(std::time::Duration::from_millis(2));
+        // Dropping should trigger the warn log path since elapsed > 0
+        drop(guard);
+    }
+
+    #[test]
+    fn test_query_guard_fast_query_no_warn() {
+        // Large threshold ensures the query is not considered slow
+        let monitor = QueryMonitor::with_threshold(u64::MAX);
+        let _guard = monitor.monitor("fast_query_test");
+        // Dropping immediately should not trigger warn
+    }
+
+    #[test]
+    fn test_query_monitor_multiple_guards() {
+        let monitor = QueryMonitor::with_threshold(50);
+        let g1 = monitor.monitor("query1");
+        let g2 = monitor.monitor("query2");
+        let g3 = monitor.monitor("query3");
+        drop(g1);
+        drop(g2);
+        drop(g3);
     }
 }

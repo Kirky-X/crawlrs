@@ -240,4 +240,214 @@ mod tests {
         let limit = RedisConcurrencyController::extract_payload_limit(&task);
         assert_eq!(limit, None);
     }
+
+    #[test]
+    fn test_extract_payload_limit_crawl_task_no_max_concurrency() {
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
+                "config": {}
+            }),
+        );
+
+        let limit = RedisConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_extract_payload_limit_crawl_task_config_not_object() {
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
+                "config": "not-an-object"
+            }),
+        );
+
+        let limit = RedisConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_extract_payload_limit_crawl_task_max_concurrency_not_u64() {
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
+                "config": {
+                    "max_concurrency": "not-a-number"
+                }
+            }),
+        );
+
+        let limit = RedisConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_extract_payload_limit_crawl_task_no_payload_config_key() {
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({}),
+        );
+
+        let limit = RedisConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+
+    fn make_controller(limit: usize) -> Option<RedisConcurrencyController> {
+        let redis = RedisClient::new("redis://127.0.0.1:1/").ok()?;
+        Some(RedisConcurrencyController::new(redis, limit))
+    }
+
+    #[test]
+    fn test_new_constructor_stores_default_limit() {
+        let controller = make_controller(50);
+        assert!(controller.is_some());
+
+        // Verify default limit is used when task has no payload limit
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({}),
+        );
+
+        let controller = controller.unwrap();
+        assert_eq!(controller.get_effective_limit(&task), 50);
+    }
+
+    #[test]
+    fn test_get_effective_limit_uses_payload_limit_for_crawl() {
+        let controller = make_controller(100);
+        assert!(controller.is_some());
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
+                "config": {
+                    "max_concurrency": 25
+                }
+            }),
+        );
+
+        let controller = controller.unwrap();
+        assert_eq!(controller.get_effective_limit(&task), 25);
+    }
+
+    #[test]
+    fn test_get_effective_limit_falls_back_to_default_for_crawl_without_config() {
+        let controller = make_controller(30);
+        assert!(controller.is_some());
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({}),
+        );
+
+        let controller = controller.unwrap();
+        assert_eq!(controller.get_effective_limit(&task), 30);
+    }
+
+    #[test]
+    fn test_get_effective_limit_uses_default_for_non_crawl() {
+        let controller = make_controller(40);
+        assert!(controller.is_some());
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
+                "config": {
+                    "max_concurrency": 5
+                }
+            }),
+        );
+
+        let controller = controller.unwrap();
+        assert_eq!(controller.get_effective_limit(&task), 40);
+    }
+
+    #[tokio::test]
+    async fn test_check_team_concurrency_returns_error_without_redis() {
+        let controller = make_controller(10);
+        assert!(controller.is_some());
+        let controller = controller.unwrap();
+
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let result = controller.check_team_concurrency(team_id, task_id).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_acquire_semaphore_returns_error_without_redis() {
+        let controller = make_controller(10);
+        assert!(controller.is_some());
+        let controller = controller.unwrap();
+
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let result = controller.acquire_semaphore(team_id, task_id).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_release_semaphore_returns_error_without_redis() {
+        let controller = make_controller(10);
+        assert!(controller.is_some());
+        let controller = controller.unwrap();
+
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let result = controller.release_semaphore(team_id, task_id).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_controller_is_cloneable() {
+        let controller = make_controller(10);
+        assert!(controller.is_some());
+        let controller = controller.unwrap();
+
+        let cloned = controller.clone();
+        // Verify both controllers have the same default limit behavior
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({}),
+        );
+        assert_eq!(controller.get_effective_limit(&task), 10);
+        assert_eq!(cloned.get_effective_limit(&task), 10);
+    }
 }

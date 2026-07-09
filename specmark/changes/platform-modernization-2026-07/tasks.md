@@ -40,8 +40,8 @@
 
 ## Phase 8: 代码覆盖率提升
 - [x] [T025] [P0] 运行 cargo llvm-cov --features default 测量基线，生成覆盖率报告到 /tmp/coverage-baseline.txt
-- [ ] [T026] [P1] 为覆盖率 < 80% 的模块补充单元测试（src/domain/ 优先），目标行覆盖率 ≥ 90%
-- [ ] [T027] [P1] 为 src/application/use_cases/ 补充 TDD 单元测试（每个 use case 至少 3 个测试：成功/失败/边界）
+- [x] [T026] [P1] 为覆盖率 < 80% 的模块补充单元测试（src/domain/ 优先），目标行覆盖率 ≥ 90%
+- [x] [T027] [P1] 为 src/application/use_cases/ 补充 TDD 单元测试（每个 use case 至少 3 个测试：成功/失败/边界）
 - [ ] [T028] [P1] 为 src/infrastructure/ 补充 mock 测试，目标行覆盖率 ≥ 90%
 
 ## Phase 9: 安全审计（diting + tiangang）

@@ -407,4 +407,296 @@ mod tests {
         let ip = extractor.extract_from_forwarded_headers(&req);
         assert!(ip.is_none());
     }
+
+    #[test]
+    fn test_secure_ip_extractor_new_constructor() {
+        // 验证 SecureIpExtractor::new 构造器
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
+        let extractor = SecureIpExtractor::new(config);
+        // 无转发头、无 ConnectInfo → None
+        let req = HttpRequest::builder()
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let ip = extractor.extract_client_ip(&req);
+        assert!(ip.is_none());
+    }
+
+    #[test]
+    fn test_trusted_proxy_config_from_settings_enabled() {
+        // 验证 from_settings enabled=true + 自定义 proxies
+        let config = TrustedProxyConfig::from_settings(
+            true,
+            vec!["10.0.0.1".to_string(), "192.168.1.0/24".to_string()],
+        );
+        assert!(config.enabled);
+        assert_eq!(config.proxies.len(), 2);
+
+        // 单 IP 匹配
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(config.is_trusted(&ip));
+
+        // CIDR 匹配
+        let ip: IpAddr = "192.168.1.100".parse().unwrap();
+        assert!(config.is_trusted(&ip));
+
+        // 不匹配
+        let ip: IpAddr = "8.8.8.8".parse().unwrap();
+        assert!(!config.is_trusted(&ip));
+    }
+
+    #[test]
+    fn test_trusted_proxy_config_from_settings_disabled() {
+        // 验证 from_settings enabled=false + 空 proxies
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
+        assert!(!config.enabled);
+        assert!(config.proxies.is_empty());
+
+        // 即使 enabled=false，is_trusted 仍按 proxies 列表检查
+        let ip: IpAddr = "8.8.8.8".parse().unwrap();
+        assert!(!config.is_trusted(&ip));
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_override_disabled_uses_forwarded() {
+        // direct_ip_override=Some + enabled=false → 信任转发头，回退到 direct_ip
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
+        let extractor = SecureIpExtractor::new(config);
+
+        let direct_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "1.2.3.4")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_client_ip_with_override(&req, Some(direct_ip));
+        assert_eq!(ip, Some("1.2.3.4".to_string()));
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_override_disabled_fallback_to_direct() {
+        // direct_ip_override=Some + enabled=false + 无转发头 → 回退到 direct_ip
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
+        let extractor = SecureIpExtractor::new(config);
+
+        let direct_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let req = HttpRequest::builder()
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_client_ip_with_override(&req, Some(direct_ip));
+        assert_eq!(ip, Some("8.8.8.8".to_string()));
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_override_enabled_trusted_proxy() {
+        // direct_ip_override=Some + enabled=true + 可信代理 → 提取转发头
+        let config = TrustedProxyConfig::from_settings(true, vec!["10.0.0.1".to_string()]);
+        let extractor = SecureIpExtractor::new(config);
+
+        let direct_ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "203.0.113.1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_client_ip_with_override(&req, Some(direct_ip));
+        assert_eq!(ip, Some("203.0.113.1".to_string()));
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_override_enabled_trusted_proxy_fallback() {
+        // direct_ip_override=Some + enabled=true + 可信代理 + 无转发头 → 回退到 direct_ip
+        let config = TrustedProxyConfig::from_settings(true, vec!["10.0.0.1".to_string()]);
+        let extractor = SecureIpExtractor::new(config);
+
+        let direct_ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let req = HttpRequest::builder()
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_client_ip_with_override(&req, Some(direct_ip));
+        assert_eq!(ip, Some("10.0.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_override_enabled_non_trusted() {
+        // direct_ip_override=Some + enabled=true + 非可信 → 使用 direct_ip（忽略转发头）
+        let config = TrustedProxyConfig::from_settings(true, vec!["10.0.0.1".to_string()]);
+        let extractor = SecureIpExtractor::new(config);
+
+        let direct_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "1.2.3.4")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_client_ip_with_override(&req, Some(direct_ip));
+        assert_eq!(ip, Some("8.8.8.8".to_string()));
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_override_none_with_connect_info_trusted() {
+        // direct_ip_override=None + ConnectInfo + 可信代理 → 提取转发头
+        let config = TrustedProxyConfig::from_settings(true, vec!["127.0.0.1".to_string()]);
+        let extractor = SecureIpExtractor::new(config);
+
+        let socket_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let mut req = HttpRequest::builder()
+            .header("x-forwarded-for", "203.0.113.5")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(socket_addr));
+
+        let ip = extractor.extract_client_ip_with_override(&req, None);
+        assert_eq!(ip, Some("203.0.113.5".to_string()));
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_override_none_with_connect_info_non_trusted() {
+        // direct_ip_override=None + ConnectInfo + 非可信 → 使用 direct_ip
+        let config = TrustedProxyConfig::from_settings(true, vec!["127.0.0.1".to_string()]);
+        let extractor = SecureIpExtractor::new(config);
+
+        let socket_addr: SocketAddr = "8.8.8.8:8080".parse().unwrap();
+        let mut req = HttpRequest::builder()
+            .header("x-forwarded-for", "1.2.3.4")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(socket_addr));
+
+        let ip = extractor.extract_client_ip_with_override(&req, None);
+        assert_eq!(ip, Some("8.8.8.8".to_string()));
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_override_none_no_connect_info_enabled() {
+        // direct_ip_override=None + 无 ConnectInfo + enabled=true → None
+        let config = TrustedProxyConfig::from_settings(true, vec!["127.0.0.1".to_string()]);
+        let extractor = SecureIpExtractor::new(config);
+
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "1.2.3.4")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_client_ip_with_override(&req, None);
+        assert!(ip.is_none());
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_override_none_no_connect_info_disabled() {
+        // direct_ip_override=None + 无 ConnectInfo + enabled=false → 转发头或 None
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
+        let extractor = SecureIpExtractor::new(config);
+
+        // 有转发头 → 返回转发头 IP
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "1.2.3.4")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let ip = extractor.extract_client_ip_with_override(&req, None);
+        assert_eq!(ip, Some("1.2.3.4".to_string()));
+
+        // 无转发头 → None
+        let req = HttpRequest::builder()
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let ip = extractor.extract_client_ip_with_override(&req, None);
+        assert!(ip.is_none());
+    }
+
+    #[test]
+    fn test_extract_client_ip_delegates_to_with_override_none() {
+        // extract_client_ip 应委托给 with_override(None)
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
+        let extractor = SecureIpExtractor::new(config);
+
+        let req = HttpRequest::builder()
+            .header("x-real-ip", "203.0.113.99")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_client_ip(&req);
+        assert_eq!(ip, Some("203.0.113.99".to_string()));
+    }
+
+    #[test]
+    fn test_get_secure_client_ip_returns_ip() {
+        // get_secure_client_ip 返回 IP 字符串
+        let config = TrustedProxyConfig::from_settings(false, vec![]);
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "203.0.113.10")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = get_secure_client_ip(&req, &config);
+        assert_eq!(ip, "203.0.113.10");
+    }
+
+    #[test]
+    fn test_get_secure_client_ip_returns_unknown() {
+        // get_secure_client_ip 在无法提取时返回 "unknown"
+        let config = TrustedProxyConfig::from_settings(true, vec!["127.0.0.1".to_string()]);
+        let req = HttpRequest::builder()
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = get_secure_client_ip(&req, &config);
+        assert_eq!(ip, "unknown");
+    }
+
+    #[test]
+    fn test_extract_from_forwarded_headers_invalid_ip_falls_through_to_x_real_ip() {
+        // X-Forwarded-For 第一个 IP 无效 → 应回退到 X-Real-IP
+        let extractor = SecureIpExtractor::new(TrustedProxyConfig::default());
+
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "invalid-ip")
+            .header("x-real-ip", "203.0.113.20")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_from_forwarded_headers(&req);
+        assert_eq!(ip, Some("203.0.113.20".to_string()));
+    }
+
+    #[test]
+    fn test_extract_from_forwarded_headers_empty_x_forwarded_for() {
+        // 空 X-Forwarded-For → 应回退到 X-Real-IP 或返回 None
+        let extractor = SecureIpExtractor::new(TrustedProxyConfig::default());
+
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "")
+            .header("x-real-ip", "203.0.113.21")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_from_forwarded_headers(&req);
+        assert_eq!(ip, Some("203.0.113.21".to_string()));
+
+        // 空 X-Forwarded-For 且无 X-Real-IP → None
+        let req = HttpRequest::builder()
+            .header("x-forwarded-for", "")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_from_forwarded_headers(&req);
+        assert!(ip.is_none());
+    }
+
+    #[test]
+    fn test_extract_from_forwarded_headers_empty_x_real_ip() {
+        // 空 X-Real-IP → 返回 None
+        let extractor = SecureIpExtractor::new(TrustedProxyConfig::default());
+
+        let req = HttpRequest::builder()
+            .header("x-real-ip", "")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let ip = extractor.extract_from_forwarded_headers(&req);
+        assert!(ip.is_none());
+    }
 }

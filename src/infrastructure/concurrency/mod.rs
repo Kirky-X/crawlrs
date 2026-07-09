@@ -575,4 +575,252 @@ mod tests {
         tokio::task::yield_now().await;
         assert_eq!(controller.active_count(), 0);
     }
+
+    #[test]
+    fn test_concurrency_strategy_default() {
+        let strategy = ConcurrencyStrategy::default();
+        match strategy {
+            ConcurrencyStrategy::Global {
+                max_concurrent,
+                queue_size,
+            } => {
+                assert_eq!(max_concurrent, 100);
+                assert_eq!(queue_size, 1000);
+            }
+            _ => panic!("Default strategy should be Global"),
+        }
+    }
+
+    #[test]
+    fn test_concurrency_controller_per_team_strategy() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTeam {
+            max_per_team: 5,
+            queue_size: 100,
+        });
+
+        assert_eq!(controller.active_count(), 0);
+        assert!(!controller.is_at_limit());
+        assert_eq!(controller.utilization(), 0.0);
+        assert_eq!(controller.wait_count(), 0);
+    }
+
+    #[test]
+    fn test_concurrency_controller_per_task_type_strategy() {
+        let mut type_limits = std::collections::HashMap::new();
+        type_limits.insert("scrape".to_string(), 10u32);
+        type_limits.insert("crawl".to_string(), 5u32);
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTaskType {
+            max_per_type: 8,
+            type_limits,
+        });
+
+        assert_eq!(controller.active_count(), 0);
+        assert!(!controller.is_at_limit());
+        assert_eq!(controller.utilization(), 0.0);
+    }
+
+    #[test]
+    fn test_concurrency_controller_hierarchical_strategy() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Hierarchical {
+            global_max: 50,
+            per_team_max: 10,
+            per_task_type_max: 5,
+        });
+
+        assert_eq!(controller.active_count(), 0);
+        assert!(!controller.is_at_limit());
+        assert_eq!(controller.utilization(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_utilization_per_team_with_active() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTeam {
+            max_per_team: 4,
+            queue_size: 100,
+        });
+
+        let _permit = controller.acquire(None).await.unwrap();
+        assert_eq!(controller.active_count(), 1);
+        assert!((controller.utilization() - 0.25).abs() < 0.001);
+        assert!(!controller.is_at_limit());
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_utilization_hierarchical_with_active() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Hierarchical {
+            global_max: 10,
+            per_team_max: 5,
+            per_task_type_max: 2,
+        });
+
+        let _permit = controller.acquire(None).await.unwrap();
+        assert_eq!(controller.active_count(), 1);
+        assert!((controller.utilization() - 0.1).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_is_at_limit_hierarchical() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Hierarchical {
+            global_max: 2,
+            per_team_max: 1,
+            per_task_type_max: 1,
+        });
+
+        let _p1 = controller.acquire(None).await.unwrap();
+        let _p2 = controller.acquire(None).await.unwrap();
+        assert!(controller.is_at_limit());
+
+        // try_acquire should fail at limit
+        assert!(controller.try_acquire().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_stats_with_active_count() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 4,
+            queue_size: 100,
+        });
+
+        let _permit = controller.acquire(None).await.unwrap();
+        let stats = ConcurrencyStats::from(&controller);
+        assert_eq!(stats.active_concurrent, 1);
+        assert!((stats.utilization_percent - 25.0).abs() < 0.001);
+        assert!(!stats.is_at_limit);
+        assert!(stats.strategy.contains("Global"));
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_stats_at_limit() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 100,
+        });
+
+        let _permit = controller.acquire(None).await.unwrap();
+        let stats = ConcurrencyStats::from(&controller);
+        assert_eq!(stats.active_concurrent, 1);
+        assert!((stats.utilization_percent - 100.0).abs() < 0.001);
+        assert!(stats.is_at_limit);
+    }
+
+    #[test]
+    fn test_concurrency_stats_strategy_string_per_team() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTeam {
+            max_per_team: 5,
+            queue_size: 10,
+        });
+        let stats = ConcurrencyStats::from(&controller);
+        assert!(stats.strategy.contains("PerTeam"));
+    }
+
+    #[test]
+    fn test_concurrency_error_display_messages() {
+        let err = ConcurrencyError::LimitExceeded;
+        assert_eq!(err.to_string(), "Concurrency limit exceeded");
+
+        let err = ConcurrencyError::Timeout;
+        assert_eq!(err.to_string(), "Concurrency operation timed out");
+
+        let err = ConcurrencyError::Closed;
+        assert_eq!(err.to_string(), "Concurrency controller is closed");
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_acquire_with_timeout_succeeds() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 10,
+        });
+
+        // Should succeed immediately with a timeout since slot is available
+        let result = controller.acquire(Some(Duration::from_secs(1))).await;
+        assert!(result.is_ok());
+        assert_eq!(controller.active_count(), 1);
+    }
+
+    #[test]
+    fn test_adaptive_concurrency_controller_new() {
+        let controller = AdaptiveConcurrencyController::new(
+            1,
+            100,
+            0.7,
+            Duration::from_secs(60),
+        );
+
+        assert_eq!(controller.base().active_count(), 0);
+        assert_eq!(controller.base().wait_count(), 0);
+        assert!(!controller.base().is_at_limit());
+    }
+
+    #[test]
+    fn test_adaptive_concurrency_controller_base_acquires() {
+        let controller = AdaptiveConcurrencyController::new(
+            1,
+            10,
+            0.8,
+            Duration::from_secs(30),
+        );
+
+        let base = controller.base();
+        assert_eq!(base.active_count(), 0);
+        assert_eq!(base.utilization(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_concurrency_controller_start_adjustment() {
+        let controller = AdaptiveConcurrencyController::new(
+            1,
+            100,
+            0.7,
+            Duration::from_millis(10),
+        );
+
+        // Start the adaptive adjustment task - it spawns a background task
+        controller.start_adaptive_adjustment();
+
+        // Give it a moment to run at least one tick
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        // The base controller should still be accessible
+        assert!(controller.base().active_count() < 100);
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_permit_drop_decrements_global_counter() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 5,
+            queue_size: 10,
+        });
+
+        {
+            let _permit1 = controller.acquire(None).await.unwrap();
+            let _permit2 = controller.acquire(None).await.unwrap();
+            assert_eq!(controller.active_count(), 2);
+        }
+
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_try_acquire_then_acquire_after_drop() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 10,
+        });
+
+        // Use try_acquire first
+        let guard = controller.try_acquire();
+        assert!(guard.is_some());
+        assert_eq!(controller.active_count(), 1);
+
+        // Drop the guard
+        drop(guard);
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 0);
+
+        // Now acquire should work
+        let _permit = controller.acquire(None).await.unwrap();
+        assert_eq!(controller.active_count(), 1);
+    }
 }

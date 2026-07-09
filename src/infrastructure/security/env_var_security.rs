@@ -1020,4 +1020,334 @@ mod tests {
             panic!("TWILIO_AUTH_TOKEN 应该被识别为敏感变量");
         }
     }
+
+    #[test]
+    fn test_env_var_whitelist_default_fields() {
+        let whitelist = EnvVarWhitelist::default();
+
+        // 验证 allowed_prefixes 字段非空且包含预期前缀
+        assert!(!whitelist.allowed_prefixes.is_empty());
+        assert!(whitelist.allowed_prefixes.contains(&"CRAWLRS_"));
+        assert!(whitelist.allowed_prefixes.contains(&"APP_"));
+        assert!(whitelist.allowed_prefixes.contains(&"DATABASE_"));
+        assert!(whitelist.allowed_prefixes.contains(&"REDIS_"));
+        assert!(whitelist.allowed_prefixes.contains(&"RUST_"));
+        assert!(whitelist.allowed_prefixes.contains(&"HTTP_"));
+        assert!(whitelist.allowed_prefixes.contains(&"HTTPS_"));
+
+        // 验证 allowed_names 字段非空且包含预期项
+        assert!(!whitelist.allowed_names.is_empty());
+        assert!(whitelist.allowed_names.contains("APP_ENVIRONMENT"));
+        assert!(whitelist.allowed_names.contains("DATABASE_URL"));
+        assert!(whitelist.allowed_names.contains("SERVER_PORT"));
+        assert!(whitelist.allowed_names.contains("LLM_API_KEY"));
+
+        // 验证 sensitive_vars 字段非空且包含预期项
+        assert!(!whitelist.sensitive_vars.is_empty());
+        assert!(whitelist.sensitive_vars.contains("DB_PASSWORD"));
+        assert!(whitelist.sensitive_vars.contains("JWT_SECRET"));
+        assert!(whitelist.sensitive_vars.contains("AWS_SECRET_ACCESS_KEY"));
+        assert!(whitelist.sensitive_vars.contains("SMTP_PASSWORD"));
+
+        // 验证 forbidden_vars 字段非空且包含预期项
+        assert!(!whitelist.forbidden_vars.is_empty());
+        assert!(whitelist.forbidden_vars.contains("LD_PRELOAD"));
+        assert!(whitelist.forbidden_vars.contains("RUSTFLAGS"));
+        assert!(whitelist.forbidden_vars.contains("CARGO_INCREMENTAL"));
+        assert!(whitelist.forbidden_vars.contains("DYLD_INSERT_LIBRARIES"));
+    }
+
+    #[test]
+    fn test_env_var_security_monitor_new_constructor() {
+        let whitelist = EnvVarWhitelist::default();
+        let monitor = EnvVarSecurityMonitor::new(whitelist);
+        // 验证可以正常调用方法
+        let result = monitor.check_variable("APP_PORT", "8080");
+        assert!(matches!(result, EnvVarCheckResult::Allowed(_)));
+    }
+
+    #[test]
+    fn test_check_variable_prefix_only_match() {
+        // 测试仅通过前缀匹配的变量（不在 allowed_names 中但匹配前缀）
+        let monitor = EnvVarSecurityMonitor::default();
+        let result = monitor.check_variable("CRAWLRS_CUSTOM_FEATURE_XYZ", "enabled");
+        assert!(matches!(result, EnvVarCheckResult::Allowed(_)));
+        if let EnvVarCheckResult::Allowed(name) = result {
+            assert_eq!(name, "CRAWLRS_CUSTOM_FEATURE_XYZ");
+        }
+    }
+
+    #[test]
+    fn test_check_variable_unknown() {
+        // 测试未知变量（不匹配任何前缀或名称）
+        let monitor = EnvVarSecurityMonitor::default();
+        let result = monitor.check_variable("ZZZ_UNKNOWN_RANDOM_VAR", "value");
+        assert!(matches!(result, EnvVarCheckResult::Unknown(_)));
+        if let EnvVarCheckResult::Unknown(name) = result {
+            assert_eq!(name, "ZZZ_UNKNOWN_RANDOM_VAR");
+        }
+    }
+
+    #[test]
+    fn test_check_variable_lowercase_input_uppercased() {
+        // 验证输入会被转换为大写后再匹配
+        let monitor = EnvVarSecurityMonitor::default();
+        let result = monitor.check_variable("db_password", "mysecret");
+        assert!(matches!(result, EnvVarCheckResult::Sensitive { .. }));
+        if let EnvVarCheckResult::Sensitive { name, .. } = result {
+            assert_eq!(name, "DB_PASSWORD");
+        }
+    }
+
+    #[test]
+    fn test_mask_value_exactly_four_chars() {
+        // 4 字符边界条件（<= 4 → 返回 ****）
+        let monitor = EnvVarSecurityMonitor::default();
+        assert_eq!(monitor.mask_value("abcd"), "****");
+        assert_eq!(monitor.mask_value("ab"), "****");
+        assert_eq!(monitor.mask_value(""), "****");
+    }
+
+    #[test]
+    fn test_mask_value_long_value_capped_at_20_stars() {
+        // 长字符串验证 .min(20) 不会无限增加 *
+        // 注意：format!("{}*{}{}", ...) 中有一个字面量 *，加上 repeat 的 *，
+        // 所以最大 * 数量为 1 + 20 = 21
+        let monitor = EnvVarSecurityMonitor::default();
+        let long_value = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let masked = monitor.mask_value(long_value);
+        assert!(masked.starts_with("ab"));
+        assert!(masked.ends_with("89"));
+        // * 数量不超过 21（1 个字面量 + 最多 20 个 repeat）
+        let star_count = masked.matches('*').count();
+        assert!(star_count <= 21);
+        // 验证 .min(20) 生效：36 字符的值 masked_length=32，被截断为 20
+        // 总 * 数 = 1 + 20 = 21（若未截断则为 1 + 32 = 33）
+        assert_eq!(star_count, 21);
+    }
+
+    #[test]
+    fn test_get_masked_value_sensitive() {
+        let monitor = EnvVarSecurityMonitor::default();
+        let masked = monitor.get_masked_value("DB_PASSWORD", "mysecretpassword");
+        assert!(masked.contains('*'));
+        assert!(!masked.contains("mysecretpassword"));
+    }
+
+    #[test]
+    fn test_get_masked_value_non_sensitive() {
+        // 非敏感变量应原样返回
+        let monitor = EnvVarSecurityMonitor::default();
+        let value = monitor.get_masked_value("APP_PORT", "8080");
+        assert_eq!(value, "8080");
+    }
+
+    #[test]
+    fn test_env_var_security_report_construction() {
+        // 验证 EnvVarSecurityReport 字段可构造与访问
+        let report = EnvVarSecurityReport {
+            detected_variables: vec!["VAR1".to_string(), "VAR2".to_string()],
+            allowed_variables: vec!["VAR1".to_string()],
+            unknown_variables: vec!["VAR2".to_string()],
+            sensitive_variables: vec![],
+            forbidden_variables: vec![],
+            security_score: 85,
+            warnings: vec!["test warning".to_string()],
+        };
+        assert_eq!(report.detected_variables.len(), 2);
+        assert_eq!(report.allowed_variables.len(), 1);
+        assert_eq!(report.unknown_variables.len(), 1);
+        assert!(report.sensitive_variables.is_empty());
+        assert!(report.forbidden_variables.is_empty());
+        assert_eq!(report.security_score, 85);
+        assert_eq!(report.warnings.len(), 1);
+    }
+
+    #[test]
+    fn test_generate_security_report_structure() {
+        let monitor = EnvVarSecurityMonitor::default();
+        let report = monitor.generate_security_report();
+        // 验证返回的结构有效
+        assert!(report.security_score <= 100);
+        // 检测到的变量数应等于各类之和
+        let total_classified = report.allowed_variables.len()
+            + report.unknown_variables.len()
+            + report.sensitive_variables.len()
+            + report.forbidden_variables.len();
+        assert_eq!(report.detected_variables.len(), total_classified);
+    }
+
+    #[test]
+    fn test_log_security_warnings_does_not_panic() {
+        // 仅验证函数可正常执行不 panic
+        let monitor = EnvVarSecurityMonitor::default();
+        monitor.log_security_warnings();
+    }
+
+    #[test]
+    fn test_validate_sensitive_values_empty_in_production() {
+        // 测试生产环境中的空值检测（EmptyValue, Critical）
+        let monitor = EnvVarSecurityMonitor::default();
+        let orig = std::env::var("MAIL_PASSWORD").ok();
+        std::env::set_var("MAIL_PASSWORD", "");
+        let warnings = monitor.validate_sensitive_values("production");
+        let empty_warning = warnings.iter().find(|w| {
+            w.var_name == "MAIL_PASSWORD" && w.warning_type == SensitiveVarWarningType::EmptyValue
+        });
+        assert!(empty_warning.is_some(), "应该检测到生产环境中的空值");
+        if let Some(w) = empty_warning {
+            assert_eq!(w.severity, WarningSeverity::Critical);
+        }
+        match orig {
+            Some(v) => std::env::set_var("MAIL_PASSWORD", v),
+            None => std::env::remove_var("MAIL_PASSWORD"),
+        }
+    }
+
+    #[test]
+    fn test_validate_sensitive_values_test_value_non_production_medium() {
+        // 测试非生产环境中测试值模式 → TestValue 应为 Medium 严重程度
+        let monitor = EnvVarSecurityMonitor::default();
+        let orig = std::env::var("GITHUB_TOKEN").ok();
+        std::env::set_var("GITHUB_TOKEN", "test_gh_token_12345");
+        let warnings = monitor.validate_sensitive_values("development");
+        let test_warning = warnings.iter().find(|w| {
+            w.var_name == "GITHUB_TOKEN" && w.warning_type == SensitiveVarWarningType::TestValue
+        });
+        assert!(test_warning.is_some(), "应该检测到测试值模式");
+        if let Some(w) = test_warning {
+            assert_eq!(w.severity, WarningSeverity::Medium);
+        }
+        match orig {
+            Some(v) => std::env::set_var("GITHUB_TOKEN", v),
+            None => std::env::remove_var("GITHUB_TOKEN"),
+        }
+    }
+
+    #[test]
+    fn test_validate_logging_security_sensitive_debug_var() {
+        // 测试 SensitiveVarDebug 警告路径
+        let monitor = EnvVarSecurityMonitor::default();
+        let var_name = "OAUTH_CLIENT_SECRET_DEBUG";
+        let orig = std::env::var(var_name).ok();
+        std::env::set_var(var_name, "somevalue");
+        let warnings = monitor.validate_logging_security();
+        let debug_warning = warnings.iter().find(|w| {
+            w.warning_type == LoggingWarningType::SensitiveVarDebug
+                && w.message.contains(var_name)
+        });
+        assert!(debug_warning.is_some(), "应该检测到敏感变量的调试变体");
+        match orig {
+            Some(v) => std::env::set_var(var_name, v),
+            None => std::env::remove_var(var_name),
+        }
+    }
+
+    #[test]
+    fn test_validate_logging_security_sensitive_log_var() {
+        // 测试 SensitiveVarLogging 警告路径
+        let monitor = EnvVarSecurityMonitor::default();
+        let var_name = "TWILIO_AUTH_TOKEN_LOG";
+        let orig = std::env::var(var_name).ok();
+        std::env::set_var(var_name, "somevalue");
+        let warnings = monitor.validate_logging_security();
+        let log_warning = warnings.iter().find(|w| {
+            w.warning_type == LoggingWarningType::SensitiveVarLogging
+                && w.message.contains(var_name)
+        });
+        assert!(log_warning.is_some(), "应该检测到敏感变量的日志变体");
+        match orig {
+            Some(v) => std::env::set_var(var_name, v),
+            None => std::env::remove_var(var_name),
+        }
+    }
+
+    #[test]
+    fn test_perform_full_security_validation_fields_accessible() {
+        // 验证 perform_full_security_validation 返回的字段可访问
+        let monitor = EnvVarSecurityMonitor::default();
+        let result = monitor.perform_full_security_validation("development");
+        // 验证字段类型与可访问性
+        let _: bool = result.is_secure;
+        let _: usize = result.critical_issues_count;
+        let _: usize = result.high_issues_count;
+        let _: &Vec<SensitiveVarWarning> = &result.sensitive_var_warnings;
+        let _: &Vec<LoggingSecurityWarning> = &result.logging_warnings;
+    }
+
+    #[test]
+    fn test_env_var_validator_new_constructor() {
+        let monitor = EnvVarSecurityMonitor::default();
+        let validator = EnvVarValidator::new(monitor, vec!["SOME_REQUIRED_VAR"]);
+        // 验证可正常调用 validate_required
+        let _ = validator.validate_required();
+    }
+
+    #[test]
+    fn test_env_var_validator_validate_required_err() {
+        let monitor = EnvVarSecurityMonitor::default();
+        let validator =
+            EnvVarValidator::new(monitor, vec!["CRAWLRS_NONEXISTENT_REQUIRED_VAR_XYZ"]);
+        let result = validator.validate_required();
+        assert!(result.is_err());
+        if let Err(missing) = result {
+            assert!(missing.contains(&"CRAWLRS_NONEXISTENT_REQUIRED_VAR_XYZ".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_env_var_validator_validate_required_ok() {
+        let monitor = EnvVarSecurityMonitor::default();
+        let test_var = "CRAWLRS_TEST_REQUIRED_VAR_OK";
+        let orig = std::env::var(test_var).ok();
+        std::env::set_var(test_var, "value");
+        let validator = EnvVarValidator::new(monitor, vec![test_var]);
+        let result = validator.validate_required();
+        assert!(result.is_ok());
+        match orig {
+            Some(v) => std::env::set_var(test_var, v),
+            None => std::env::remove_var(test_var),
+        }
+    }
+
+    #[test]
+    fn test_env_var_validator_validate_missing_required() {
+        // validate() 在缺少必需变量时应返回 Err
+        let monitor = EnvVarSecurityMonitor::default();
+        let validator =
+            EnvVarValidator::new(monitor, vec!["CRAWLRS_NONEXISTENT_REQUIRED_VAR_ABC"]);
+        let result = validator.validate();
+        assert!(result.is_err());
+        if let Err(msg) = result {
+            assert!(msg.contains("Missing required environment variables"));
+        }
+    }
+
+    #[test]
+    fn test_env_var_validator_validate_forbidden_detected() {
+        // validate() 在检测到禁止变量时应返回 Err
+        let monitor = EnvVarSecurityMonitor::default();
+        let required_var = "CRAWLRS_TEST_FORBIDDEN_VALIDATE_VAR";
+        let orig_required = std::env::var(required_var).ok();
+        std::env::set_var(required_var, "value");
+
+        let orig_forbidden = std::env::var("LD_PRELOAD").ok();
+        std::env::set_var("LD_PRELOAD", "/malicious.so");
+
+        let validator = EnvVarValidator::new(monitor, vec![required_var]);
+        let result = validator.validate();
+        assert!(result.is_err());
+        if let Err(msg) = result {
+            assert!(msg.contains("Forbidden environment variables detected"));
+        }
+
+        match orig_required {
+            Some(v) => std::env::set_var(required_var, v),
+            None => std::env::remove_var(required_var),
+        }
+        match orig_forbidden {
+            Some(v) => std::env::set_var("LD_PRELOAD", v),
+            None => std::env::remove_var("LD_PRELOAD"),
+        }
+    }
 }

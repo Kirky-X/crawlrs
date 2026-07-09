@@ -164,4 +164,224 @@ mod tests {
         let key = generate_dns_key("example.com", 80);
         assert_eq!(key, "dns:example.com:80");
     }
+
+    // =========================================================================
+    // 辅助函数：构造真实 oxcache 并包装为 DnsCacheService
+    // =========================================================================
+
+    async fn make_service(ttl_seconds: u64) -> DnsCacheService {
+        let cache = Arc::new(
+            oxcache::Cache::builder()
+                .capacity(100)
+                .ttl(Duration::from_secs(ttl_seconds))
+                .build()
+                .await
+                .expect("cache build failed"),
+        );
+        DnsCacheService::new(cache, ttl_seconds)
+    }
+
+    // =========================================================================
+    // DnsCacheService::new 与 default_ttl
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_new_sets_default_ttl() {
+        let svc = make_service(300).await;
+        assert_eq!(svc.default_ttl.as_secs(), 300);
+    }
+
+    #[tokio::test]
+    async fn test_new_with_different_ttl() {
+        let svc = make_service(42).await;
+        assert_eq!(svc.default_ttl.as_secs(), 42);
+    }
+
+    // =========================================================================
+    // set + lookup_host 缓存命中（不触发真实 DNS）
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_set_then_lookup_host_cache_hit() {
+        let svc = make_service(300).await;
+
+        let ips: Vec<IpAddr> = vec!["203.0.113.5".parse().unwrap()];
+        svc.set("cache-hit.example", 443, ips.clone(), 300).await;
+
+        // lookup_host 应命中缓存，不调用真实 DNS
+        let resolved = svc.lookup_host("cache-hit.example", 443).await;
+        assert!(resolved.is_ok(), "lookup_host should hit cache");
+        let resolved = resolved.unwrap();
+        assert_eq!(resolved, ips);
+    }
+
+    #[tokio::test]
+    async fn test_set_multiple_entries_then_lookup_host() {
+        let svc = make_service(300).await;
+
+        let ips_a: Vec<IpAddr> = vec![
+            "10.0.0.1".parse().unwrap(),
+            "10.0.0.2".parse().unwrap(),
+        ];
+        let ips_b: Vec<IpAddr> = vec!["192.168.2.1".parse().unwrap()];
+
+        svc.set("host-a.example", 80, ips_a.clone(), 300).await;
+        svc.set("host-b.example", 8080, ips_b.clone(), 300).await;
+
+        let resolved_a = svc.lookup_host("host-a.example", 80).await.unwrap();
+        assert_eq!(resolved_a, ips_a);
+        let resolved_b = svc.lookup_host("host-b.example", 8080).await.unwrap();
+        assert_eq!(resolved_b, ips_b);
+    }
+
+    // =========================================================================
+    // set 后通过 cache.get 验证条目存在
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_set_writes_entry_to_cache() {
+        let svc = make_service(300).await;
+        let ips: Vec<IpAddr> = vec!["198.51.100.7".parse().unwrap()];
+        svc.set("write-test.example", 53, ips.clone(), 120).await;
+
+        let key = generate_dns_key("write-test.example", 53);
+        let got = svc.cache.get(&key).await;
+        assert!(got.is_ok(), "cache.get should succeed");
+        let entry = got.unwrap();
+        assert!(entry.is_some(), "entry should exist");
+        let entry = entry.unwrap();
+        assert_eq!(entry.ips, ips);
+        assert_eq!(entry.remaining_ttl_secs, 120);
+    }
+
+    // =========================================================================
+    // remove
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_remove_deletes_entry() {
+        let svc = make_service(300).await;
+        let ips: Vec<IpAddr> = vec!["203.0.113.9".parse().unwrap()];
+        svc.set("remove-me.example", 80, ips.clone(), 300).await;
+
+        // 确认存在
+        let key = generate_dns_key("remove-me.example", 80);
+        assert!(svc.cache.get(&key).await.unwrap().is_some());
+
+        // remove 后应不存在
+        svc.remove("remove-me.example", 80).await;
+        assert!(svc.cache.get(&key).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_remove_nonexistent_does_not_panic() {
+        let svc = make_service(300).await;
+        // 删除不存在的条目不应 panic
+        svc.remove("never-set.example", 9999).await;
+    }
+
+    // =========================================================================
+    // lookup_host 缓存命中后 remove 再 lookup_host 应走真实 DNS（会失败/Err）
+    // 这里只验证 remove 后缓存确实为空，避免真实 DNS 依赖
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_lookup_host_after_remove_cache_miss() {
+        let svc = make_service(300).await;
+        let ips: Vec<IpAddr> = vec!["203.0.113.10".parse().unwrap()];
+        svc.set("miss-after-remove.example", 80, ips, 300).await;
+
+        // 先命中缓存
+        assert!(svc.lookup_host("miss-after-remove.example", 80).await.is_ok());
+
+        // remove 后缓存为空
+        svc.remove("miss-after-remove.example", 80).await;
+        let key = generate_dns_key("miss-after-remove.example", 80);
+        assert!(svc.cache.get(&key).await.unwrap().is_none());
+    }
+
+    // =========================================================================
+    // get_stats
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_get_stats_returns_default_ttl() {
+        let svc = make_service(256).await;
+        let stats = svc.get_stats().await;
+        assert_eq!(stats.default_ttl_seconds, 256);
+    }
+
+    #[tokio::test]
+    async fn test_get_stats_fields_after_operations() {
+        let svc = make_service(300).await;
+
+        // 执行若干操作
+        let ips: Vec<IpAddr> = vec!["203.0.113.20".parse().unwrap()];
+        svc.set("stats.example", 80, ips, 300).await;
+        let _ = svc.lookup_host("stats.example", 80).await;
+
+        let stats = svc.get_stats().await;
+        // oxcache 不暴露 hit/miss 统计，这些字段固定为 0
+        assert_eq!(stats.total_entries, 0);
+        assert_eq!(stats.hit_count, 0);
+        assert_eq!(stats.miss_count, 0);
+        assert_eq!(stats.hit_rate, 0.0);
+        assert_eq!(stats.max_entries, 0);
+        assert_eq!(stats.default_ttl_seconds, 300);
+    }
+
+    // =========================================================================
+    // clear
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_clear_does_not_panic() {
+        let svc = make_service(300).await;
+        let ips: Vec<IpAddr> = vec!["203.0.113.30".parse().unwrap()];
+        svc.set("clear.example", 80, ips, 300).await;
+
+        // clear 不应 panic（oxcache 不支持 clear，仅记录日志）
+        svc.clear().await;
+    }
+
+    // =========================================================================
+    // DnsCacheStats 字段访问
+    // =========================================================================
+
+    #[test]
+    fn test_dns_cache_stats_field_access() {
+        let stats = DnsCacheStats {
+            total_entries: 10,
+            hit_count: 7,
+            miss_count: 3,
+            hit_rate: 0.7,
+            max_entries: 100,
+            default_ttl_seconds: 300,
+        };
+        assert_eq!(stats.total_entries, 10);
+        assert_eq!(stats.hit_count, 7);
+        assert_eq!(stats.miss_count, 3);
+        assert!((stats.hit_rate - 0.7).abs() < f64::EPSILON);
+        assert_eq!(stats.max_entries, 100);
+        assert_eq!(stats.default_ttl_seconds, 300);
+    }
+
+    #[test]
+    fn test_dns_cache_stats_default_zeroes() {
+        // 验证全零字段的合理性
+        let stats = DnsCacheStats {
+            total_entries: 0,
+            hit_count: 0,
+            miss_count: 0,
+            hit_rate: 0.0,
+            max_entries: 0,
+            default_ttl_seconds: 0,
+        };
+        assert_eq!(stats.total_entries, 0);
+        assert_eq!(stats.hit_count, 0);
+        assert_eq!(stats.miss_count, 0);
+        assert_eq!(stats.hit_rate, 0.0);
+        assert_eq!(stats.max_entries, 0);
+        assert_eq!(stats.default_ttl_seconds, 0);
+    }
 }

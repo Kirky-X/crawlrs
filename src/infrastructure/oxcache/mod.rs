@@ -368,4 +368,331 @@ mod tests {
         // Third should fail (_p1 和 _p2 仍存活，未释放)
         assert!(controller.try_acquire().await.is_none());
     }
+
+    // =========================================================================
+    // RateLimiter 构造器与配置
+    // =========================================================================
+
+    #[test]
+    fn test_rate_limiter_new_default_config() {
+        let limiter = RateLimiter::new_default();
+        let config = limiter.config();
+        assert_eq!(config.max_requests_per_second, 60);
+        assert_eq!(config.burst_capacity, 20);
+        assert_eq!(config.block_duration_secs, 1);
+    }
+
+    #[test]
+    fn test_rate_limiter_new_custom_config() {
+        let config = RateLimitConfig {
+            max_requests_per_second: 100,
+            burst_capacity: 50,
+            block_duration_secs: 5,
+        };
+        let limiter = RateLimiter::new(config);
+        let cfg = limiter.config();
+        assert_eq!(cfg.max_requests_per_second, 100);
+        assert_eq!(cfg.burst_capacity, 50);
+        assert_eq!(cfg.block_duration_secs, 5);
+    }
+
+    #[test]
+    fn test_rate_limiter_new_with_config_params() {
+        let limiter = RateLimiter::new_with_config(30, 10);
+        let cfg = limiter.config();
+        assert_eq!(cfg.max_requests_per_second, 30);
+        assert_eq!(cfg.burst_capacity, 10);
+        // new_with_config 固定 block_duration_secs = 1
+        assert_eq!(cfg.block_duration_secs, 1);
+    }
+
+    #[test]
+    fn test_rate_limit_config_field_access() {
+        let config = RateLimitConfig {
+            max_requests_per_second: 200,
+            burst_capacity: 80,
+            block_duration_secs: 10,
+        };
+        assert_eq!(config.max_requests_per_second, 200);
+        assert_eq!(config.burst_capacity, 80);
+        assert_eq!(config.block_duration_secs, 10);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_config_getter_returns_reference() {
+        let limiter = RateLimiter::new_with_config(42, 7);
+        let cfg = limiter.config();
+        assert_eq!(cfg.max_requests_per_second, 42);
+        assert_eq!(cfg.burst_capacity, 7);
+    }
+
+    // =========================================================================
+    // RateLimiter 批量扣减与限流触发
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_check_rate_limit_n_batch_deduction() {
+        // burst_capacity=20, 一次扣减 5 后剩 15，再扣 10 后剩 5
+        let limiter = RateLimiter::new_with_config(60, 20);
+
+        assert!(limiter.check_rate_limit_n("batch_client", 5).await.is_ok());
+        assert!(limiter
+            .check_rate_limit_n("batch_client", 10)
+            .await
+            .is_ok());
+        // 仅剩 5 个令牌，请求 10 个应失败
+        let result = limiter.check_rate_limit_n("batch_client", 10).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_n_exceeds_capacity() {
+        // burst_capacity=5，请求 10 必然失败
+        let limiter = RateLimiter::new_with_config(60, 5);
+        let result = limiter.check_rate_limit_n("big_client", 10).await;
+        assert!(result.is_err());
+        let retry_after = result.unwrap_err();
+        // needed = 10 - 5 = 5, retry_after = 5 / 60
+        assert!(retry_after.as_secs_f64() > 0.0);
+        assert!(retry_after.as_secs_f64() < 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_burst_exhaustion_returns_error() {
+        // burst_capacity=3，连续 3 次成功后第 4 次应返回 Err(Duration)
+        let limiter = RateLimiter::new_with_config(60, 3);
+
+        assert!(limiter.check_rate_limit("limit_client").await.is_ok());
+        assert!(limiter.check_rate_limit("limit_client").await.is_ok());
+        assert!(limiter.check_rate_limit("limit_client").await.is_ok());
+
+        let result = limiter.check_rate_limit("limit_client").await;
+        assert!(result.is_err());
+        let retry_after = result.unwrap_err();
+        // 令牌近乎耗尽，retry_after 应为正且小于 1 秒（refill_rate=60）
+        assert!(retry_after.as_secs_f64() > 0.0);
+        assert!(retry_after.as_secs_f64() < 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_token_refill_after_wait() {
+        // refill_rate=2/s, burst=2：耗尽后等待令牌恢复
+        let limiter = RateLimiter::new_with_config(2, 2);
+
+        // 耗尽令牌
+        assert!(limiter.check_rate_limit("refill_client").await.is_ok());
+        assert!(limiter.check_rate_limit("refill_client").await.is_ok());
+        // 立即再请求应失败
+        assert!(limiter
+            .check_rate_limit("refill_client")
+            .await
+            .is_err());
+
+        // 等待 600ms，refill_rate=2/s 应恢复约 1.2 个令牌（>=1）
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(limiter.check_rate_limit("refill_client").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_independent_clients() {
+        // 不同 client_id 应有独立的令牌桶
+        let limiter = RateLimiter::new_with_config(60, 2);
+
+        assert!(limiter.check_rate_limit("client_a").await.is_ok());
+        assert!(limiter.check_rate_limit("client_a").await.is_ok());
+        // client_a 耗尽，但 client_b 仍可用
+        assert!(limiter
+            .check_rate_limit("client_a")
+            .await
+            .is_err());
+        assert!(limiter.check_rate_limit("client_b").await.is_ok());
+    }
+
+    // =========================================================================
+    // ConcurrencyController
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_concurrency_controller_available_and_max_permits() {
+        let controller = ConcurrencyController::new(3);
+        assert_eq!(controller.max_permits(), 3);
+        assert_eq!(controller.available_permits(), 3);
+
+        let p1 = controller.try_acquire().await;
+        assert!(p1.is_some());
+        assert_eq!(controller.available_permits(), 2);
+        assert_eq!(controller.max_permits(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_controller_acquire_success() {
+        let controller = ConcurrencyController::new(1);
+        // 立即可用，acquire 应在 timeout 内成功
+        let permit = controller.acquire(Duration::from_millis(100)).await;
+        assert!(permit.is_some());
+        assert_eq!(controller.available_permits(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_controller_acquire_timeout() {
+        let controller = ConcurrencyController::new(1);
+        // 先占用唯一 permit（持有不释放）
+        let _held = controller.try_acquire().await;
+        assert_eq!(controller.available_permits(), 0);
+
+        // acquire 应超时返回 None
+        let result = controller.acquire(Duration::from_millis(50)).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_permit_drop_releases_semaphore() {
+        let controller = ConcurrencyController::new(1);
+
+        {
+            let _permit = controller.try_acquire().await;
+            assert!(_permit.is_some());
+            assert_eq!(controller.available_permits(), 0);
+        } // permit 在此 drop
+
+        assert_eq!(controller.available_permits(), 1);
+        // drop 后应能再次获取
+        let again = controller.try_acquire().await;
+        assert!(again.is_some());
+    }
+
+    // =========================================================================
+    // DnsCacheEntry serde
+    // =========================================================================
+
+    #[test]
+    fn test_dns_cache_entry_serde_roundtrip() {
+        let entry = DnsCacheEntry {
+            ips: vec![
+                "192.168.1.1".parse().unwrap(),
+                "::1".parse().unwrap(),
+            ],
+            remaining_ttl_secs: 300,
+        };
+        let json = serde_json::to_string(&entry).expect("serialize failed");
+        let decoded: DnsCacheEntry = serde_json::from_str(&json).expect("deserialize failed");
+        assert_eq!(decoded.ips, entry.ips);
+        assert_eq!(decoded.remaining_ttl_secs, 300);
+    }
+
+    #[test]
+    fn test_dns_cache_entry_serde_empty_ips() {
+        let entry = DnsCacheEntry {
+            ips: vec![],
+            remaining_ttl_secs: 0,
+        };
+        let json = serde_json::to_string(&entry).expect("serialize failed");
+        let decoded: DnsCacheEntry = serde_json::from_str(&json).expect("deserialize failed");
+        assert!(decoded.ips.is_empty());
+        assert_eq!(decoded.remaining_ttl_secs, 0);
+    }
+
+    // =========================================================================
+    // Cache 初始化函数
+    // =========================================================================
+
+    fn make_test_cache_settings() -> CacheSettings {
+        CacheSettings {
+            enabled: true,
+            memory: crate::config::settings::MemoryCacheSettings {
+                capacity: 100,
+                ttl_seconds: 60,
+            },
+            redis: crate::config::settings::RedisCacheSettings {
+                enabled: false,
+                url: "redis://localhost:6379".to_string(),
+                pool_size: 10,
+                ttl_seconds: 3600,
+            },
+            types: crate::config::settings::CacheTypeSpecificSettings {
+                search: crate::config::settings::CacheTypeSettings {
+                    ttl_seconds: 60,
+                    max_size: 100,
+                },
+                dns: crate::config::settings::CacheTypeSettings {
+                    ttl_seconds: 300,
+                    max_size: 100,
+                },
+                regex: crate::config::settings::CacheTypeSettings {
+                    ttl_seconds: 600,
+                    max_size: 50,
+                },
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_cache_ok() {
+        let settings = make_test_cache_settings();
+        let cache = create_cache(&settings).await;
+        assert!(cache.is_ok(), "create_cache should succeed: {:?}", cache.err());
+        let cache = cache.unwrap();
+        // 验证可用：set 后 get 一致
+        let key = "k1".to_string();
+        let val: Vec<SearchResult> = vec![];
+        assert!(cache.set(&key, &val).await.is_ok());
+        let got = cache.get(&key).await;
+        assert!(got.is_ok(), "get should succeed");
+        assert!(got.unwrap().is_some(), "value should be present");
+    }
+
+    #[tokio::test]
+    async fn test_create_dns_cache_ok() {
+        let cache = create_dns_cache(50, 120).await;
+        assert!(cache.is_ok(), "create_dns_cache should succeed");
+        let cache = cache.unwrap();
+        // 验证可用
+        let key = "dns:example.com:80".to_string();
+        let entry = DnsCacheEntry {
+            ips: vec!["1.2.3.4".parse().unwrap()],
+            remaining_ttl_secs: 120,
+        };
+        assert!(cache.set(&key, &entry).await.is_ok());
+        let got = cache.get(&key).await;
+        assert!(got.is_ok());
+        assert!(got.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_create_regex_cache_ok() {
+        let cache = create_regex_cache(20, 600).await;
+        assert!(cache.is_ok(), "create_regex_cache should succeed");
+        let cache = cache.unwrap();
+        let key = "regex:abc".to_string();
+        assert!(cache.set(&key, &"pattern".to_string()).await.is_ok());
+        let got = cache.get(&key).await;
+        assert!(got.is_ok());
+        assert!(got.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_create_tiered_cache_ok() {
+        // 未启用 redis-cache feature 时，create_tiered_cache 等价于 create_cache
+        let settings = make_test_cache_settings();
+        let cache = create_tiered_cache(&settings).await;
+        assert!(cache.is_ok(), "create_tiered_cache should succeed");
+        let _cache = cache.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_create_cache_uses_settings_ttl_and_capacity() {
+        // 使用不同容量/TTL 验证 settings 真正传入 builder
+        let settings = make_test_cache_settings();
+        let cache = create_cache(&settings).await.unwrap();
+        // 插入超过 capacity 数量的条目不应 panic（moka 自身做淘汰）
+        for i in 0..150 {
+            let key = format!("k{}", i);
+            let val: Vec<SearchResult> = vec![];
+            let _ = cache.set(&key, &val).await;
+        }
+        // 至少能取到最后写入的一个
+        let last_key = "k149".to_string();
+        let got = cache.get(&last_key).await;
+        assert!(got.is_ok());
+    }
 }
