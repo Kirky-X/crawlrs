@@ -42,10 +42,10 @@
 - [x] [T025] [P0] 运行 cargo llvm-cov --features default 测量基线，生成覆盖率报告到 /tmp/coverage-baseline.txt
 - [x] [T026] [P1] 为覆盖率 < 80% 的模块补充单元测试（src/domain/ 优先），目标行覆盖率 ≥ 90%
 - [x] [T027] [P1] 为 src/application/use_cases/ 补充 TDD 单元测试（每个 use case 至少 3 个测试：成功/失败/边界）
-- [ ] [T028] [P1] 为 src/infrastructure/ 补充 mock 测试，目标行覆盖率 ≥ 90%
+- [x] [T028] [P1] 为 src/infrastructure/ 补充 mock 测试，目标行覆盖率 ≥ 90%
 
 ## Phase 9: 安全审计（diting + tiangang）
-- [ ] [T029] [P1] 运行 diting skill 对 Phase 1-8 生成的代码进行代码质量审查，修复发现的问题
+- [x] [T029] [P1] 运行 diting skill 对 Phase 1-8 生成的代码进行代码质量审查，修复发现的问题（commit 92a43851：C-01 CRITICAL 安全漏洞 + C-04 LSP 违规 + C-05 双重前缀；C-02/C-03/C-06 记录为设计决策/增强项）
 - [ ] [T030] [P1] 运行 tiangang skill 对 Phase 1-8 生成的代码进行 SAST 安全扫描，修复发现的漏洞
 
 ## Phase 10: Bug 分析（kueiku）
