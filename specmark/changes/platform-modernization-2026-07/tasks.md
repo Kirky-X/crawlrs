@@ -52,9 +52,9 @@
 - [x] [T031] [P1] 运行 kueiku skill 分析项目可能存在的硬性 bug（依赖迁移/inklog 替换/sdforge 集成引入的），修复发现的 bug（Pre-mortem 分析三维度：inklog 迁移完整无残留、sdforge 4/4 handler 安全、依赖 API 编译+测试通过；0 真 bug）
 
 ## Phase 11: 文档对齐（cangjie）
-- [ ] [T032] [P1] 运行 cangjie skill 优化文档：修复 AGENTS.md 中 Sea-ORM 版本（1.1→2.0.0-rc）、默认特性名（db-postgres→dbnexus-postgres）、governor→limiteron 替换记录
-- [ ] [T033] [P1] 更新 README.md / README_zh.md 反映新增 inklog/sdforge 依赖和 api-sdk feature
-- [ ] [T034] [P1] 更新 docs/ARCHITECTURE.md 反映 sdforge 接口封装层和 inklog 日志层变更
+- [x] [T032] [P1] 运行 cangjie skill 优化文档：修复 AGENTS.md 中 Sea-ORM 版本（1.1→2.0.0-rc）、默认特性名（db-postgres→dbnexus-postgres）、governor→limiteron 替换记录（本地 gitignored 文件已更新）
+- [x] [T033] [P1] 更新 README.md / README_zh.md 反映新增 inklog/sdforge 依赖和 api-sdk feature（commit 3ce75409）
+- [x] [T034] [P1] 更新 docs/ARCHITECTURE.md 反映 sdforge 接口封装层和 inklog 日志层变更（commit 3ce75409）
 
 ## Phase 12: 最终验证
 - [ ] [T035] [P0] cargo fmt && cargo clippy -- -D warnings 全项目通过
