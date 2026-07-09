@@ -49,7 +49,7 @@
 - [x] [T030] [P1] 运行 tiangang skill 对 Phase 1-8 生成的代码进行 SAST 安全扫描，修复发现的漏洞（commit 8c7c2f1d：shell injection + 16 mutable tags pinned + 13 依赖漏洞修复；残留 3 CVE 在 rustls-webpki@0.101.7 为上游阻塞）
 
 ## Phase 10: Bug 分析（kueiku）
-- [ ] [T031] [P1] 运行 kueiku skill 分析项目可能存在的硬性 bug（依赖迁移/inklog 替换/sdforge 集成引入的），修复发现的 bug
+- [x] [T031] [P1] 运行 kueiku skill 分析项目可能存在的硬性 bug（依赖迁移/inklog 替换/sdforge 集成引入的），修复发现的 bug（Pre-mortem 分析三维度：inklog 迁移完整无残留、sdforge 4/4 handler 安全、依赖 API 编译+测试通过；0 真 bug）
 
 ## Phase 11: 文档对齐（cangjie）
 - [ ] [T032] [P1] 运行 cangjie skill 优化文档：修复 AGENTS.md 中 Sea-ORM 版本（1.1→2.0.0-rc）、默认特性名（db-postgres→dbnexus-postgres）、governor→limiteron 替换记录
