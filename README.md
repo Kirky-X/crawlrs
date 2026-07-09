@@ -160,8 +160,12 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 | `redis-cache` | Redis caching support | ✅ Yes |
 | `rate-limiting` | Rate limiting with Redis | ✅ Yes |
 | `metrics` | Prometheus metrics export | ✅ Yes |
-| `db-postgres` | PostgreSQL database support | ✅ Yes |
-| `db-sqlite` | SQLite database support | ❌ No |
+| `dbnexus-postgres` | PostgreSQL database (via dbnexus) | ✅ Yes |
+| `dbnexus-sqlite` | SQLite database (via dbnexus) | ❌ No |
+| `oxcache-cache` | oxcache multi-backend cache | ✅ Yes |
+| `logging` | inklog structured logging | ✅ Yes |
+| `config` | confers configuration management | ✅ Yes |
+| `api-sdk` | sdforge SDK interface layer | ❌ No |
 | `search-google` | Google search integration | ✅ Yes |
 | `search-bing` | Bing search integration | ✅ Yes |
 | `search-baidu` | Baidu search integration | ✅ Yes |
@@ -390,11 +394,16 @@ flowchart TD
 |-----------|------------|---------|
 | Web Framework | Axum | 0.8 |
 | Async Runtime | Tokio | 1.48 |
-| Database ORM | Sea-ORM | 1.0 |
+| Database ORM | Sea-ORM 2.0.0-rc (via dbnexus 0.2) | - |
 | Database | PostgreSQL / SQLite | 14+ / 3.x |
 | Cache | Redis | 7+ |
 | HTTP Client | Reqwest | 0.12 |
 | Browser Automation | Playwright | 0.40+ |
+| Structured Logging | inklog | 0.1.2 |
+| API SDK | sdforge | 0.3.1 |
+| Multi-backend Cache | oxcache | 0.3.3 |
+| Rate Limiting | limiteron | 0.2.1 |
+| Configuration | confers | 0.2.2 |
 
 ---
 
@@ -424,7 +433,7 @@ docker-compose up -d
 - [ ] Enable Redis for production caching
 - [ ] Set up rate limiting appropriate for your capacity
 - [ ] Configure metrics export to Prometheus
-- [ ] Enable distributed tracing
+- [ ] Enable distributed tracing (inklog HTTP sink)
 - [ ] Set up log aggregation (ELK, CloudWatch, etc.)
 - [ ] Configure webhook endpoints for task notifications
 - [ ] Review and tune concurrency settings

@@ -44,7 +44,7 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 2. **Scalability** - Horizontal scaling capabilities
 3. **Type Safety** - Leverage Rust's type system for compile-time safety
 4. **Flexibility** - Plugin-based architecture for engines and extensions
-5. **Observability** - Built-in metrics, tracing, and logging
+5. **Observability** - Built-in metrics and inklog 0.1.2 structured logging (replaces tracing; provides console, file, compression, encryption, database, and HTTP sinks; project code uses the `log::` facade which inklog installs as an adapter)
 
 ---
 
@@ -154,7 +154,7 @@ System is open for extension, closed for modification:
                │  APIs       │     │  Systems    │
                │  - Google   │     │  - Prometheus│
                │  - Bing     │     │  - Logs     │
-               │  - Baidu    │     │  - Tracing  │
+               │  - Baidu    │     │  - inklog   │
                └─────────────┘     └─────────────┘
 -->
 
@@ -225,7 +225,7 @@ flowchart TD
     EXT --> EXTBaidu[Baidu]
     MON --> MONPrometheus[Prometheus]
     MON --> MONLogs[Logs]
-    MON --> MONTracing[Tracing]
+    MON --> MONInklog[inklog]
 
     Clients -->|"HTTPS/REST API"| API
     API --> App
@@ -281,6 +281,10 @@ presentation/
 └── extractors/       # Request extractors
     └── team_id.rs
 ```
+
+**SDK Interface Layer (sdforge):**
+
+The presentation layer includes an SDK interface built on **sdforge**, which wraps domain services (`SearchService`, `TaskQueue`, `CrawlRepository`) as HTTP endpoints via sdforge's `#[service_api]` macro. This SDK layer is gated behind the `api-sdk` feature flag. All SDK handlers extract authentication context from `AuthState` (populated by `auth_middleware`), never from the request body.
 
 **Key Responsibilities:**
 
@@ -493,10 +497,13 @@ infrastructure/
 - **PostgreSQL** (default) - Production-grade RDBMS
 - **SQLite** (optional) - Embedded database for development
 
-**ORM:** Sea-ORM
-- Type-safe database access
-- Migration management
-- Query builder
+**ORM:** dbnexus 0.2 (builds on Sea-ORM 2.0.0-rc)
+
+Database access is now provided through **dbnexus 0.2**, which builds on top of Sea-ORM 2.0.0-rc. dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access, query builder, and migration management.
+
+**Feature Flags:**
+- `dbnexus-postgres` (default) - PostgreSQL backend
+- `dbnexus-sqlite` - SQLite backend
 
 **Key Tables:**
 
@@ -513,7 +520,18 @@ infrastructure/
 
 **Cache Layer:**
 
-**Technology:** Redis
+**Technology:** oxcache 0.3.3 (multi-backend)
+
+Caching is provided through **oxcache 0.3.3**, a multi-backend cache layer gated behind the `oxcache-cache` feature flag (enabled by default). oxcache supports the following features:
+- moka (in-memory)
+- Redis
+- Serialization
+- Batch-write
+- Metrics
+- Bloom-filter
+- WAL recovery
+- Rate limiting
+- Tracing
 
 **Use Cases:**
 - Rate limiting storage
@@ -1065,6 +1083,18 @@ TTL: No expiration (manual decrement)
 ---
 
 ## Rate Limiting
+
+**Technology:** limiteron 0.2.1
+
+Rate limiting is implemented using **limiteron 0.2.1**, which provides:
+- Token bucket rate limiting
+- Ban manager
+- Quota control
+- Circuit breaker
+- Telemetry
+- Monitoring
+- Parallel checker
+- Audit log
 
 ### Multi-Level Limiting
 

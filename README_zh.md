@@ -159,8 +159,12 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 | `redis-cache` | Redis 缓存支持 | ✅ 是 |
 | `rate-limiting` | 基于 Redis 的速率限制 | ✅ 是 |
 | `metrics` | Prometheus 指标导出 | ✅ 是 |
-| `db-postgres` | PostgreSQL 数据库支持 | ✅ 是 |
-| `db-sqlite` | SQLite 数据库支持 | ❌ 否 |
+| `dbnexus-postgres` | PostgreSQL 数据库（通过 dbnexus） | ✅ 是 |
+| `dbnexus-sqlite` | SQLite 数据库（通过 dbnexus） | ❌ 否 |
+| `oxcache-cache` | oxcache 多后端缓存 | ✅ 是 |
+| `logging` | inklog 结构化日志 | ✅ 是 |
+| `config` | confers 配置管理 | ✅ 是 |
+| `api-sdk` | sdforge SDK 接口层 | ❌ 否 |
 | `search-google` | Google 搜索集成 | ✅ 是 |
 | `search-bing` | Bing 搜索集成 | ✅ 是 |
 | `search-baidu` | 百度搜索集成 | ✅ 是 |
@@ -339,11 +343,16 @@ flowchart TB
 |-----------|------------|---------|
 | Web 框架 | Axum | 0.8 |
 | 异步运行时 | Tokio | 1.48 |
-| 数据库 ORM | Sea-ORM | 1.0 |
+| 数据库 ORM | Sea-ORM 2.0.0-rc（通过 dbnexus 0.2） | - |
 | 数据库 | PostgreSQL / SQLite | 14+ / 3.x |
 | 缓存 | Redis | 7+ |
 | HTTP 客户端 | Reqwest | 0.12 |
 | 浏览器自动化 | Playwright | 0.40+ |
+| 结构化日志 | inklog | 0.1.2 |
+| API SDK | sdforge | 0.3.1 |
+| 多后端缓存 | oxcache | 0.3.3 |
+| 速率限制 | limiteron | 0.2.1 |
+| 配置管理 | confers | 0.2.2 |
 
 ---
 
@@ -373,7 +382,7 @@ docker-compose up -d
 - [ ] 为生产环境启用 Redis 缓存
 - [ ] 根据容量设置适当的速率限制
 - [ ] 配置指标导出到 Prometheus
-- [ ] 启用分布式追踪
+- [ ] 启用分布式追踪（inklog HTTP sink）
 - [ ] 设置日志聚合（ELK、CloudWatch 等）
 - [ ] 配置任务通知的 Webhook 端点
 - [ ] 审查和调整并发设置
