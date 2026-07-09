@@ -363,4 +363,435 @@ mod tests {
                 > RelevanceScorer::calculate_freshness_score(old)
         );
     }
+
+    // ---- Factory methods ----
+
+    #[test]
+    fn test_new_filters_short_terms() {
+        let scorer = RelevanceScorer::new("a be the rust programming");
+        // filter is term.len() > 2, so "a" (1) and "be" (2) are filtered,
+        // but "the" (3) passes. Result: "the", "rust", "programming"
+        assert_eq!(scorer.query_terms.len(), 3);
+        assert!(scorer.query_terms.contains(&"the".to_string()));
+        assert!(scorer.query_terms.contains(&"rust".to_string()));
+        assert!(scorer.query_terms.contains(&"programming".to_string()));
+    }
+
+    #[test]
+    fn test_for_query_factory() {
+        let scorer = RelevanceScorer::for_query("rust async");
+        assert_eq!(scorer.query_terms, vec!["rust", "async"]);
+    }
+
+    #[test]
+    fn test_with_engine_factory() {
+        let scorer = RelevanceScorer::with_engine("google");
+        assert_eq!(scorer.query_terms, vec!["google"]);
+    }
+
+    #[test]
+    fn test_new_with_cache_none() {
+        let scorer = RelevanceScorer::new_with_cache("rust lang", None);
+        assert!(scorer.regex_cache.is_none());
+        assert_eq!(scorer.query_terms, vec!["rust", "lang"]);
+    }
+
+    #[test]
+    fn test_term_weights_tf_idf() {
+        // query with repeated term should yield a non-zero weight
+        let scorer = RelevanceScorer::new("rust rust programming");
+        let rust_weight = *scorer.term_weights.get("rust").expect("rust weight exists");
+        let prog_weight = *scorer
+            .term_weights
+            .get("programming")
+            .expect("programming weight exists");
+        assert!(rust_weight > 0.0);
+        assert!(prog_weight > 0.0);
+        // rust appears twice, so its tf is higher; with idf approximation it should differ
+        assert_ne!(rust_weight, prog_weight);
+    }
+
+    // ---- calculate_score ----
+
+    #[test]
+    fn test_calculate_score_empty_query_returns_zero_baseline() {
+        // All terms filtered out -> no term contributions, only length penalty / authority bonus apply
+        let scorer = RelevanceScorer::new("a"); // single short term filtered
+        let score = scorer.calculate_score("Some Title", Some("desc"), "https://example.com");
+        // No query terms means no per-term additions; only length penalty if title < 10 chars
+        // "Some Title" is 10 chars so no penalty; example.com not authoritative
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_score_title_starts_with_bonus() {
+        let scorer = RelevanceScorer::new("rust");
+        // Title starts with "rust" -> gets starts_with + contains + word boundary bonuses
+        let score_starts = scorer.calculate_score("rust language guide", None, "https://x.io");
+        // Title only contains "rust" in the middle -> no starts_with bonus
+        let score_contains = scorer.calculate_score("learn rust guide", None, "https://x.io");
+        assert!(
+            score_starts > score_contains,
+            "title starting with term should score higher"
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_description_contribution() {
+        let scorer = RelevanceScorer::new("rust");
+        let with_desc = scorer.calculate_score(
+            "Title",
+            Some("rust tutorial here"),
+            "https://x.io",
+        );
+        let without_desc = scorer.calculate_score("Title", None, "https://x.io");
+        assert!(
+            with_desc > without_desc,
+            "description match should add to score"
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_url_contribution() {
+        let scorer = RelevanceScorer::new("rust");
+        let with_url = scorer.calculate_score("Title", None, "https://rust.example.org");
+        let without_url = scorer.calculate_score("Title", None, "https://example.org");
+        assert!(with_url > without_url, "URL match should add to score");
+    }
+
+    #[test]
+    fn test_calculate_score_authoritative_domain_bonus() {
+        let scorer = RelevanceScorer::new("rust");
+        // Use a title >= 10 chars to avoid the short-title penalty (0.8 multiplier)
+        let authoritative = scorer.calculate_score("Long Title Here", None, "https://github.com/rust");
+        let plain = scorer.calculate_score("Long Title Here", None, "https://example.com/rust");
+        // Both URLs contain "rust" so url bonus is equal; difference is authority bonus
+        assert!(
+            authoritative > plain,
+            "authoritative domain (github.com) should add bonus"
+        );
+        let diff = authoritative - plain;
+        // The authority bonus is exactly 0.5 (no length penalty since title >= 10 chars)
+        assert!((diff - 0.5).abs() < 1e-9, "authority bonus should be 0.5, got diff {}", diff);
+    }
+
+    #[test]
+    fn test_calculate_score_short_title_penalty() {
+        let scorer = RelevanceScorer::new("rust");
+        // Title < 10 chars triggers 0.8 multiplier
+        let short = scorer.calculate_score("rust", None, "https://x.io");
+        let long = scorer.calculate_score("rust language tutorial", None, "https://x.io");
+        // Both contain "rust"; long title also contains it and is longer.
+        // The short title receives 0.8 penalty multiplier on the total.
+        assert!(long > short, "long title should score higher due to no penalty");
+    }
+
+    #[test]
+    fn test_calculate_score_none_description_uses_empty() {
+        let scorer = RelevanceScorer::new("rust");
+        // Should not panic with None description
+        let score = scorer.calculate_score("rust guide", None, "https://x.io");
+        assert!(score > 0.0, "title match alone should yield positive score");
+    }
+
+    // ---- has_word_boundary_match (private but exercised via calculate_score) ----
+
+    #[test]
+    fn test_word_boundary_match_with_cache() {
+        // Mock cache that successfully compiles a word-boundary regex
+        struct OkRegexCache;
+        impl RegexCacheTrait for OkRegexCache {
+            fn get_or_insert(&self, pattern: &str) -> Result<Regex, String> {
+                Regex::new(pattern).map_err(|e| e.to_string())
+            }
+            fn get_or_insert_escaped(&self, literal: &str) -> Result<Regex, String> {
+                Regex::new(&format!(r"\b{}\b", regex::escape(literal)))
+                    .map_err(|e| e.to_string())
+            }
+            fn get_or_compile(&self, pattern: &str) -> Result<Arc<Regex>, String> {
+                Ok(Arc::new(Regex::new(pattern).map_err(|e| e.to_string())?))
+            }
+        }
+
+        let cache: Arc<dyn RegexCacheTrait> = Arc::new(OkRegexCache);
+        let scorer = RelevanceScorer::new_with_cache("rust", Some(cache));
+        // "rust" appears as a word boundary in "learn rust now"
+        let score_word = scorer.calculate_score("learn rust now", None, "https://x.io");
+        // "rust" appears only inside "rusting" - no word boundary match
+        let score_substring = scorer.calculate_score("learn rusting now", None, "https://x.io");
+        assert!(
+            score_word > score_substring,
+            "word boundary match should score higher than substring-only match"
+        );
+    }
+
+    #[test]
+    fn test_word_boundary_match_cache_error_falls_back_to_contains() {
+        // Mock cache that always errors - should fall back to contains()
+        struct ErrorRegexCache;
+        impl RegexCacheTrait for ErrorRegexCache {
+            fn get_or_insert(&self, _pattern: &str) -> Result<Regex, String> {
+                Err("cache unavailable".to_string())
+            }
+            fn get_or_insert_escaped(&self, _literal: &str) -> Result<Regex, String> {
+                Err("cache unavailable".to_string())
+            }
+            fn get_or_compile(&self, _pattern: &str) -> Result<Arc<Regex>, String> {
+                Err("cache unavailable".to_string())
+            }
+        }
+
+        let cache: Arc<dyn RegexCacheTrait> = Arc::new(ErrorRegexCache);
+        let scorer = RelevanceScorer::new_with_cache("rust", Some(cache));
+        // Should not panic; falls back to contains() which matches "rusting" too
+        let score = scorer.calculate_score("rusting away", None, "https://x.io");
+        // With fallback, "rust" is contained in "rusting" so we still get word_boundary bonus
+        assert!(score > 0.0, "fallback contains() should still match");
+    }
+
+    // ---- is_authoritative_domain (exercised via calculate_score) ----
+
+    #[test]
+    fn test_authoritative_domain_various() {
+        let scorer = RelevanceScorer::new("rust");
+        // Use a title >= 10 chars to avoid the short-title penalty (0.8 multiplier)
+        // Each authoritative domain should yield 0.5 more than a plain domain
+        let plain = scorer.calculate_score("Long Title Here", None, "https://example.com/rust");
+        for url in [
+            "https://wikipedia.org/rust",
+            "https://github.com/rust",
+            "https://stackoverflow.com/rust",
+            "https://medium.com/rust",
+            "https://reddit.com/rust",
+            "https://quora.com/rust",
+            "https://example.gov/rust",
+            "https://example.edu/rust",
+            "https://example.org/rust",
+        ] {
+            let score = scorer.calculate_score("Long Title Here", None, url);
+            assert!(
+                (score - plain - 0.5).abs() < 1e-9,
+                "expected authority bonus 0.5 for {} (score={}, plain={}, diff={})",
+                url,
+                score,
+                plain,
+                score - plain
+            );
+        }
+    }
+
+    // ---- DateParserComponent ----
+
+    #[test]
+    fn test_date_parser_default_equals_new() {
+        let default = DateParserComponent::default();
+        let new = DateParserComponent::new();
+        // Both should parse the same input identically
+        let input = "2024-01-15T10:30:00Z";
+        assert_eq!(
+            default.extract_date(input).map(|d| d.timestamp()),
+            new.extract_date(input).map(|d| d.timestamp())
+        );
+    }
+
+    #[test]
+    fn test_date_parser_with_defaults_factory() {
+        let parser = DateParserComponent::with_defaults();
+        assert!(parser.extract_date("2024-01-15").is_some());
+    }
+
+    #[test]
+    fn test_extract_date_iso8601_with_millis() {
+        let parser = DateParserComponent::new();
+        assert!(parser.extract_date("2024-01-15T10:30:00.123Z").is_some());
+    }
+
+    #[test]
+    fn test_extract_date_simple_date() {
+        let parser = DateParserComponent::new();
+        let date = parser
+            .extract_date("event on 2024-03-20 happened")
+            .expect("date should parse");
+        assert_eq!(date.format("%Y-%m-%d").to_string(), "2024-03-20");
+    }
+
+    #[test]
+    fn test_extract_date_relative_time_hours() {
+        let parser = DateParserComponent::new();
+        let before = Utc::now();
+        let date = parser
+            .extract_date("posted 5 hours ago")
+            .expect("relative hours should parse");
+        let after = Utc::now();
+        // Should be roughly 5 hours before now
+        let approx = Utc::now() - Duration::hours(5);
+        assert!((date.timestamp() - approx.timestamp()).abs() < 10);
+        assert!(date >= before - Duration::hours(5) - Duration::seconds(10));
+        assert!(date <= after - Duration::hours(5) + Duration::seconds(10));
+    }
+
+    #[test]
+    fn test_extract_date_relative_time_days() {
+        let parser = DateParserComponent::new();
+        let date = parser
+            .extract_date("3 days ago")
+            .expect("relative days should parse");
+        let approx = Utc::now() - Duration::days(3);
+        assert!((date.timestamp() - approx.timestamp()).abs() < 10);
+    }
+
+    #[test]
+    fn test_extract_date_relative_time_weeks_months_years() {
+        let parser = DateParserComponent::new();
+        assert!(parser.extract_date("1 week ago").is_some());
+        assert!(parser.extract_date("2 months ago").is_some());
+        assert!(parser.extract_date("1 year ago").is_some());
+    }
+
+    #[test]
+    fn test_extract_date_month_name_format() {
+        let parser = DateParserComponent::new();
+        let date_short = parser
+            .extract_date("Jan 15, 2024")
+            .expect("short month name should parse");
+        let date_long = parser
+            .extract_date("January 15, 2024")
+            .expect("long month name should parse");
+        assert_eq!(date_short, date_long);
+        assert_eq!(date_short.format("%Y-%m-%d").to_string(), "2024-01-15");
+    }
+
+    #[test]
+    fn test_extract_date_no_match() {
+        let parser = DateParserComponent::new();
+        assert!(parser.extract_date("no date here at all").is_none());
+        assert!(parser.extract_date("").is_none());
+    }
+
+    #[test]
+    fn test_extract_date_first_matching_regex_wins() {
+        // ISO 8601 regex comes first; ensure it's preferred when both could match
+        let parser = DateParserComponent::new();
+        let text = "2024-01-15T10:30:00Z and also 2024-02-20";
+        let date = parser.extract_date(text).expect("should parse");
+        // Should be the ISO date, not the bare date
+        assert_eq!(date.format("%Y-%m-%d").to_string(), "2024-01-15");
+    }
+
+    // ---- extract_published_date_with_parser ----
+
+    #[test]
+    fn test_extract_published_date_with_parser_no_date() {
+        let parser = DateParserComponent::new();
+        let date = RelevanceScorer::extract_published_date_with_parser("no dates here", &parser);
+        assert!(date.is_none());
+    }
+
+    // ---- calculate_freshness_score buckets ----
+
+    #[test]
+    fn test_freshness_score_within_one_day() {
+        let date = Utc::now() - Duration::hours(12);
+        assert!((RelevanceScorer::calculate_freshness_score(date) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_freshness_score_within_one_week() {
+        let date = Utc::now() - Duration::days(3);
+        assert!((RelevanceScorer::calculate_freshness_score(date) - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_freshness_score_within_one_month() {
+        let date = Utc::now() - Duration::days(15);
+        assert!((RelevanceScorer::calculate_freshness_score(date) - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_freshness_score_within_six_months() {
+        let date = Utc::now() - Duration::days(90);
+        assert!((RelevanceScorer::calculate_freshness_score(date) - 0.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_freshness_score_within_one_year() {
+        let date = Utc::now() - Duration::days(200);
+        assert!((RelevanceScorer::calculate_freshness_score(date) - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_freshness_score_very_old() {
+        let date = Utc::now() - Duration::days(500);
+        assert!((RelevanceScorer::calculate_freshness_score(date) - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_freshness_score_now_is_one() {
+        let date = Utc::now();
+        assert!((RelevanceScorer::calculate_freshness_score(date) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_freshness_score_monotonic_decreasing() {
+        let now = Utc::now();
+        let scores = [
+            RelevanceScorer::calculate_freshness_score(now - Duration::hours(1)),
+            RelevanceScorer::calculate_freshness_score(now - Duration::days(3)),
+            RelevanceScorer::calculate_freshness_score(now - Duration::days(15)),
+            RelevanceScorer::calculate_freshness_score(now - Duration::days(90)),
+            RelevanceScorer::calculate_freshness_score(now - Duration::days(200)),
+            RelevanceScorer::calculate_freshness_score(now - Duration::days(500)),
+        ];
+        for w in scores.windows(2) {
+            assert!(
+                w[0] >= w[1],
+                "freshness should be non-increasing as content ages"
+            );
+        }
+    }
+
+    // ---- RelevanceScorerError From impls ----
+
+    #[test]
+    fn test_relevance_scorer_error_from_string() {
+        let err: RelevanceScorerError = "bad regex".to_string().into();
+        match err {
+            RelevanceScorerError::RegexError(msg) => assert_eq!(msg, "bad regex"),
+            other => panic!("expected RegexError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_relevance_scorer_error_from_str() {
+        let err: RelevanceScorerError = "bad regex".into();
+        match err {
+            RelevanceScorerError::RegexError(msg) => assert_eq!(msg, "bad regex"),
+            other => panic!("expected RegexError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_relevance_scorer_error_from_anyhow() {
+        let err: RelevanceScorerError = anyhow::anyhow!("anyhow failure").into();
+        match err {
+            RelevanceScorerError::RegexError(msg) => assert!(msg.contains("anyhow failure")),
+            other => panic!("expected RegexError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_relevance_scorer_error_cache_lock_variant() {
+        let err = RelevanceScorerError::CacheLockError("locked".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("Regex cache lock error"));
+        assert!(msg.contains("locked"));
+    }
+
+    #[test]
+    fn test_relevance_scorer_error_display_regex() {
+        let err = RelevanceScorerError::RegexError("compile failed".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("Regex compilation error"));
+        assert!(msg.contains("compile failed"));
+    }
 }

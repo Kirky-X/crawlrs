@@ -319,3 +319,508 @@ pub enum ValidationError {
     #[error("速率配置不一致: {0}")]
     InconsistentRates(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== RateLimitStrategy tests ==========
+
+    #[test]
+    fn test_rate_limit_strategy_serde_all_variants() {
+        for strategy in [
+            RateLimitStrategy::TokenBucket,
+            RateLimitStrategy::LeakyBucket,
+            RateLimitStrategy::FixedWindow,
+            RateLimitStrategy::SlidingWindow,
+        ] {
+            let json = serde_json::to_string(&strategy).expect("serialize");
+            let back: RateLimitStrategy = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(strategy, back, "roundtrip should preserve: {}", json);
+        }
+    }
+
+    #[test]
+    fn test_rate_limit_strategy_equality() {
+        assert_eq!(RateLimitStrategy::TokenBucket, RateLimitStrategy::TokenBucket);
+        assert_ne!(RateLimitStrategy::TokenBucket, RateLimitStrategy::LeakyBucket);
+        assert_ne!(RateLimitStrategy::FixedWindow, RateLimitStrategy::SlidingWindow);
+    }
+
+    #[test]
+    fn test_rate_limit_strategy_clone_copy() {
+        let s1 = RateLimitStrategy::TokenBucket;
+        let s2 = s1; // Copy
+        assert_eq!(s1, s2);
+        let s3 = s1.clone();
+        assert_eq!(s1, s3);
+    }
+
+    // ========== ConcurrencyStrategy tests ==========
+
+    #[test]
+    fn test_concurrency_strategy_serde_all_variants() {
+        for strategy in [
+            ConcurrencyStrategy::DistributedSemaphore,
+            ConcurrencyStrategy::Semaphore,
+            ConcurrencyStrategy::RedisLock,
+            ConcurrencyStrategy::DatabaseLevel,
+        ] {
+            let json = serde_json::to_string(&strategy).expect("serialize");
+            let back: ConcurrencyStrategy = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(strategy, back, "roundtrip should preserve: {}", json);
+        }
+    }
+
+    #[test]
+    fn test_concurrency_strategy_equality() {
+        assert_eq!(
+            ConcurrencyStrategy::DistributedSemaphore,
+            ConcurrencyStrategy::DistributedSemaphore
+        );
+        assert_ne!(
+            ConcurrencyStrategy::DistributedSemaphore,
+            ConcurrencyStrategy::Semaphore
+        );
+        assert_ne!(ConcurrencyStrategy::RedisLock, ConcurrencyStrategy::DatabaseLevel);
+    }
+
+    // ========== RateLimitConfig::default tests ==========
+
+    #[test]
+    fn test_rate_limit_config_default_values() {
+        let config = RateLimitConfig::default();
+        assert_eq!(config.strategy, RateLimitStrategy::TokenBucket);
+        assert_eq!(config.requests_per_second, 10);
+        assert_eq!(config.requests_per_minute, 100);
+        assert_eq!(config.requests_per_hour, 1000);
+        assert_eq!(config.bucket_capacity, Some(100));
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn test_rate_limit_config_default_has_expected_values() {
+        let config = RateLimitConfig::default();
+        assert_eq!(config.strategy, RateLimitStrategy::TokenBucket);
+        assert_eq!(config.requests_per_second, 10);
+        assert_eq!(config.requests_per_minute, 100);
+        assert_eq!(config.requests_per_hour, 1000);
+        assert_eq!(config.bucket_capacity, Some(100));
+        assert!(config.enabled);
+    }
+
+    // ========== RateLimitConfig::validate tests ==========
+
+    #[test]
+    fn test_rate_limit_config_validate_success() {
+        let config = RateLimitConfig {
+            strategy: RateLimitStrategy::TokenBucket,
+            requests_per_second: 1,
+            requests_per_minute: 100,
+            requests_per_hour: 6000,
+            bucket_capacity: Some(50),
+            enabled: true,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rate_limit_config_validate_success_without_bucket_capacity() {
+        let config = RateLimitConfig {
+            strategy: RateLimitStrategy::FixedWindow,
+            requests_per_second: 1,
+            requests_per_minute: 60,
+            requests_per_hour: 3600,
+            bucket_capacity: None,
+            enabled: true,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rate_limit_config_validate_zero_requests_per_second() {
+        let mut config = RateLimitConfig::default();
+        config.requests_per_second = 0;
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::ZeroRate(_)));
+        assert!(err.to_string().contains("requests_per_second"));
+    }
+
+    #[test]
+    fn test_rate_limit_config_validate_zero_requests_per_minute() {
+        let mut config = RateLimitConfig::default();
+        config.requests_per_minute = 0;
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::ZeroRate(_)));
+        assert!(err.to_string().contains("requests_per_minute"));
+    }
+
+    #[test]
+    fn test_rate_limit_config_validate_zero_requests_per_hour() {
+        let mut config = RateLimitConfig::default();
+        config.requests_per_hour = 0;
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::ZeroRate(_)));
+        assert!(err.to_string().contains("requests_per_hour"));
+    }
+
+    #[test]
+    fn test_rate_limit_config_validate_per_second_exceeds_per_minute() {
+        // requests_per_second > requests_per_minute / 60
+        let config = RateLimitConfig {
+            strategy: RateLimitStrategy::TokenBucket,
+            requests_per_second: 5,
+            requests_per_minute: 100, // 100/60 = 1.66, 5 > 1.66
+            requests_per_hour: 6000,
+            bucket_capacity: Some(100),
+            enabled: true,
+        };
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::InconsistentRates(_)));
+        assert!(err.to_string().contains("requests_per_second exceeds requests_per_minute"));
+    }
+
+    #[test]
+    fn test_rate_limit_config_validate_per_minute_exceeds_per_hour() {
+        // requests_per_minute > requests_per_hour / 60
+        let config = RateLimitConfig {
+            strategy: RateLimitStrategy::TokenBucket,
+            requests_per_second: 1,
+            requests_per_minute: 100,
+            requests_per_hour: 6000, // 6000/60 = 100, 100 > 100 is false, need to push minute higher
+            bucket_capacity: Some(100),
+            enabled: true,
+        };
+        // The above should pass; construct one that fails
+        let config_fail = RateLimitConfig {
+            strategy: RateLimitStrategy::TokenBucket,
+            requests_per_second: 1,
+            requests_per_minute: 200,
+            requests_per_hour: 6000, // 6000/60 = 100, 200 > 100
+            bucket_capacity: Some(100),
+            enabled: true,
+        };
+        let err = config_fail.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::InconsistentRates(_)));
+        assert!(err.to_string().contains("requests_per_minute exceeds requests_per_hour"));
+        // Sanity: the valid one passes
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rate_limit_config_validate_zero_bucket_capacity() {
+        // Use consistent rates so validation reaches the bucket_capacity check
+        let mut config = RateLimitConfig {
+            strategy: RateLimitStrategy::TokenBucket,
+            requests_per_second: 1,
+            requests_per_minute: 100,
+            requests_per_hour: 6000,
+            bucket_capacity: Some(50),
+            enabled: true,
+        };
+        config.bucket_capacity = Some(0);
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::ZeroCapacity(_)));
+        assert!(err.to_string().contains("bucket_capacity cannot be zero"));
+    }
+
+    #[test]
+    fn test_rate_limit_config_serde_roundtrip() {
+        let config = RateLimitConfig::default();
+        let json = serde_json::to_string(&config).expect("serialize");
+        let back: RateLimitConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.strategy, config.strategy);
+        assert_eq!(back.requests_per_second, config.requests_per_second);
+        assert_eq!(back.requests_per_minute, config.requests_per_minute);
+        assert_eq!(back.requests_per_hour, config.requests_per_hour);
+        assert_eq!(back.bucket_capacity, config.bucket_capacity);
+        assert_eq!(back.enabled, config.enabled);
+    }
+
+    // ========== ConcurrencyConfig::default tests ==========
+
+    #[test]
+    fn test_concurrency_config_default_values() {
+        let config = ConcurrencyConfig::default();
+        assert_eq!(config.strategy, ConcurrencyStrategy::DistributedSemaphore);
+        assert_eq!(config.max_concurrent_tasks, 100);
+        assert_eq!(config.max_concurrent_per_team, 10);
+        assert_eq!(config.lock_timeout_seconds, 300);
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn test_concurrency_config_default_passes_validation() {
+        let config = ConcurrencyConfig::default();
+        assert!(
+            config.validate().is_ok(),
+            "default config should be valid"
+        );
+    }
+
+    // ========== ConcurrencyConfig::validate tests ==========
+
+    #[test]
+    fn test_concurrency_config_validate_success() {
+        let config = ConcurrencyConfig {
+            strategy: ConcurrencyStrategy::Semaphore,
+            max_concurrent_tasks: 50,
+            max_concurrent_per_team: 10,
+            lock_timeout_seconds: 120,
+            enabled: true,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_concurrency_config_validate_zero_max_concurrent_tasks() {
+        let mut config = ConcurrencyConfig::default();
+        config.max_concurrent_tasks = 0;
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::ZeroCapacity(_)));
+        assert!(err.to_string().contains("max_concurrent_tasks cannot be zero"));
+    }
+
+    #[test]
+    fn test_concurrency_config_validate_zero_max_concurrent_per_team() {
+        let mut config = ConcurrencyConfig::default();
+        config.max_concurrent_per_team = 0;
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::ZeroCapacity(_)));
+        assert!(err.to_string().contains("max_concurrent_per_team cannot be zero"));
+    }
+
+    #[test]
+    fn test_concurrency_config_validate_zero_lock_timeout() {
+        let mut config = ConcurrencyConfig::default();
+        config.lock_timeout_seconds = 0;
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::InvalidTimeout(_)));
+        assert!(err.to_string().contains("lock_timeout_seconds cannot be zero"));
+    }
+
+    #[test]
+    fn test_concurrency_config_validate_lock_timeout_below_minimum() {
+        let mut config = ConcurrencyConfig::default();
+        config.lock_timeout_seconds = 30; // < 60
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::InvalidTimeout(_)));
+        assert!(err.to_string().contains("at least 60 seconds"));
+    }
+
+    #[test]
+    fn test_concurrency_config_validate_lock_timeout_exactly_60_is_valid() {
+        let mut config = ConcurrencyConfig::default();
+        config.lock_timeout_seconds = 60; // boundary: exactly 60 should be valid
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_concurrency_config_validate_per_team_exceeds_total() {
+        let config = ConcurrencyConfig {
+            strategy: ConcurrencyStrategy::DistributedSemaphore,
+            max_concurrent_tasks: 10,
+            max_concurrent_per_team: 20, // > max_concurrent_tasks
+            lock_timeout_seconds: 120,
+            enabled: true,
+        };
+        let err = config.validate().expect_err("should fail");
+        assert!(matches!(err, ValidationError::InconsistentRates(_)));
+        assert!(err.to_string().contains("max_concurrent_per_team exceeds max_concurrent_tasks"));
+    }
+
+    #[test]
+    fn test_concurrency_config_validate_per_team_equals_total_is_valid() {
+        let config = ConcurrencyConfig {
+            strategy: ConcurrencyStrategy::DistributedSemaphore,
+            max_concurrent_tasks: 10,
+            max_concurrent_per_team: 10, // == max_concurrent_tasks is OK
+            lock_timeout_seconds: 120,
+            enabled: true,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_concurrency_config_serde_roundtrip() {
+        let config = ConcurrencyConfig::default();
+        let json = serde_json::to_string(&config).expect("serialize");
+        let back: ConcurrencyConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.strategy, config.strategy);
+        assert_eq!(back.max_concurrent_tasks, config.max_concurrent_tasks);
+        assert_eq!(back.max_concurrent_per_team, config.max_concurrent_per_team);
+        assert_eq!(back.lock_timeout_seconds, config.lock_timeout_seconds);
+        assert_eq!(back.enabled, config.enabled);
+    }
+
+    // ========== RateLimitResult tests ==========
+
+    #[test]
+    fn test_rate_limit_result_allowed_equality() {
+        assert_eq!(RateLimitResult::Allowed, RateLimitResult::Allowed);
+    }
+
+    #[test]
+    fn test_rate_limit_result_denied_carries_reason() {
+        let r = RateLimitResult::Denied {
+            reason: "too many requests".to_string(),
+        };
+        match r {
+            RateLimitResult::Denied { reason } => {
+                assert_eq!(reason, "too many requests");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_rate_limit_result_retry_after_carries_seconds() {
+        let r = RateLimitResult::RetryAfter {
+            retry_after_seconds: 30,
+        };
+        match r {
+            RateLimitResult::RetryAfter { retry_after_seconds } => {
+                assert_eq!(retry_after_seconds, 30);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_rate_limit_result_variants_not_equal() {
+        assert_ne!(
+            RateLimitResult::Allowed,
+            RateLimitResult::Denied {
+                reason: "x".to_string(),
+            }
+        );
+    }
+
+    // ========== ConcurrencyResult tests ==========
+
+    #[test]
+    fn test_concurrency_result_allowed_equality() {
+        assert_eq!(ConcurrencyResult::Allowed, ConcurrencyResult::Allowed);
+    }
+
+    #[test]
+    fn test_concurrency_result_denied_carries_reason() {
+        let r = ConcurrencyResult::Denied {
+            reason: "limit reached".to_string(),
+        };
+        match r {
+            ConcurrencyResult::Denied { reason } => {
+                assert_eq!(reason, "limit reached");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_concurrency_result_queued_carries_backlog_id() {
+        let id = Uuid::new_v4();
+        let r = ConcurrencyResult::Queued { backlog_id: id };
+        match r {
+            ConcurrencyResult::Queued { backlog_id } => {
+                assert_eq!(backlog_id, id);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_concurrency_result_variants_not_equal() {
+        assert_ne!(
+            ConcurrencyResult::Allowed,
+            ConcurrencyResult::Queued {
+                backlog_id: Uuid::new_v4(),
+            }
+        );
+    }
+
+    // ========== RateLimitingError Display tests ==========
+
+    #[test]
+    fn test_rate_limiting_error_rate_limit_exceeded_display() {
+        let err = RateLimitingError::RateLimitExceeded("100/min".to_string());
+        assert!(err.to_string().contains("限流已达到上限"));
+        assert!(err.to_string().contains("100/min"));
+    }
+
+    #[test]
+    fn test_rate_limiting_error_concurrency_limit_exceeded_display() {
+        let err = RateLimitingError::ConcurrencyLimitExceeded("5 tasks".to_string());
+        assert!(err.to_string().contains("并发限制已达到上限"));
+        assert!(err.to_string().contains("5 tasks"));
+    }
+
+    #[test]
+    fn test_rate_limiting_error_configuration_error_display() {
+        let err = RateLimitingError::ConfigurationError("bad config".to_string());
+        assert!(err.to_string().contains("配置错误"));
+        assert!(err.to_string().contains("bad config"));
+    }
+
+    #[test]
+    fn test_rate_limiting_error_database_error_display() {
+        let err = RateLimitingError::DatabaseError;
+        assert!(err.to_string().contains("数据库操作失败"));
+    }
+
+    #[test]
+    fn test_rate_limiting_error_credits_error_display() {
+        let err = RateLimitingError::CreditsError;
+        assert!(err.to_string().contains("积分系统暂时不可用"));
+    }
+
+    #[test]
+    fn test_rate_limiting_error_other_from_anyhow() {
+        let err = RateLimitingError::Other(anyhow::anyhow!("something broke"));
+        assert!(err.to_string().contains("其他错误"));
+        assert!(err.to_string().contains("something broke"));
+    }
+
+    // ========== ValidationError Display tests ==========
+
+    #[test]
+    fn test_validation_error_zero_rate_display() {
+        let err = ValidationError::ZeroRate("requests_per_second cannot be zero");
+        assert!(err.to_string().contains("速率限制不能为零"));
+        assert!(err.to_string().contains("requests_per_second cannot be zero"));
+    }
+
+    #[test]
+    fn test_validation_error_zero_capacity_display() {
+        let err = ValidationError::ZeroCapacity("bucket_capacity cannot be zero".to_string());
+        assert!(err.to_string().contains("容量不能为零"));
+        assert!(err.to_string().contains("bucket_capacity cannot be zero"));
+    }
+
+    #[test]
+    fn test_validation_error_invalid_timeout_display() {
+        let err = ValidationError::InvalidTimeout("timeout too short".to_string());
+        assert!(err.to_string().contains("超时时间无效"));
+        assert!(err.to_string().contains("timeout too short"));
+    }
+
+    #[test]
+    fn test_validation_error_inconsistent_rates_display() {
+        let err = ValidationError::InconsistentRates("mismatch".to_string());
+        assert!(err.to_string().contains("速率配置不一致"));
+        assert!(err.to_string().contains("mismatch"));
+    }
+
+    // ========== RateLimitingError From<anyhow::Error> test ==========
+
+    #[test]
+    fn test_rate_limiting_error_from_anyhow_preserves_message() {
+        let anyhow_err = anyhow::anyhow!("custom failure");
+        let err: RateLimitingError = anyhow_err.into();
+        match err {
+            RateLimitingError::Other(inner) => {
+                assert!(inner.to_string().contains("custom failure"));
+            }
+            other => panic!("expected Other variant, got {:?}", other),
+        }
+    }
+}
