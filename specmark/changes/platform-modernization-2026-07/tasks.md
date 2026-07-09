@@ -30,8 +30,8 @@
 - [x] [T019] [P1] 用 gitnexus query 搜索可能的旧名调用（如 governor→limiteron、sea-orm 旧 API、db-postgres→dbnexus-postgres），修复 src/ 下所有过时命名引用
 
 ## Phase 6: 特性门禁完善
-- [ ] [T020] [P0] 检查 Cargo.toml 所有非 optional 依赖，确认哪些应设为 optional + feature 门禁（特别是 scraper/chardetng/encoding_rs 等可按需启用的），更新 Cargo.toml
-- [ ] [T021] [P1] 验证 cargo build --no-default-features --features lite 可编译（最小二进制），cargo build --features full 可编译（全功能）
+- [x] [T020] [P0] 检查 Cargo.toml 所有非 optional 依赖，确认哪些应设为 optional + feature 门禁（特别是 scraper/chardetng/encoding_rs 等可按需启用的），更新 Cargo.toml
+- [x] [T021] [P1] 验证 cargo build --no-default-features --features lite 可编译（最小二进制），cargo build --features full 可编译（全功能）
 
 ## Phase 7: 环境配置（pangu）
 - [ ] [T022] [P1] 检查 .github/workflows/ CI 配置完整性，确保 lint/test/build/security 全覆盖，修复缺失项

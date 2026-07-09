@@ -236,7 +236,6 @@ impl TransactionManager {
         &self,
         config: TransactionConfig,
     ) -> Result<(), TransactionError> {
-        debug!("transaction_begin_with_config");
         // Check if transaction is already active (non-blocking read)
         {
             let active_tx = self.active_transaction.read();
@@ -284,7 +283,6 @@ impl TransactionManager {
     /// - Failed to commit
     #[allow(clippy::await_holding_lock)]
     pub async fn commit(&self) -> Result<(), TransactionError> {
-        debug!("transaction_commit");
         let mut active_tx = self.active_transaction.write();
 
         let tx_state = active_tx
@@ -320,7 +318,6 @@ impl TransactionManager {
     /// - Failed to rollback
     #[allow(clippy::await_holding_lock)]
     pub async fn rollback(&self) -> Result<(), TransactionError> {
-        debug!("transaction_rollback");
         let mut active_tx = self.active_transaction.write();
 
         let tx_state = active_tx
@@ -377,7 +374,6 @@ impl TransactionManager {
     /// ```
     #[allow(clippy::await_holding_lock)]
     pub async fn savepoint(&self, name: &str) -> Result<Uuid, TransactionError> {
-        debug!("transaction_savepoint: name={}", name);
         self.validate_savepoint_name(name)?;
 
         let mut active_tx = self.active_transaction.write();
@@ -437,7 +433,6 @@ impl TransactionManager {
     /// * `name` - Savepoint name to release
     #[allow(clippy::await_holding_lock)]
     pub async fn release_savepoint(&self, name: &str) -> Result<(), TransactionError> {
-        debug!("transaction_release_savepoint: name={}", name);
         self.validate_savepoint_name(name)?;
 
         let mut active_tx = self.active_transaction.write();
@@ -482,7 +477,6 @@ impl TransactionManager {
     /// * `name` - Savepoint name to rollback to
     #[allow(clippy::await_holding_lock)]
     pub async fn rollback_to_savepoint(&self, name: &str) -> Result<(), TransactionError> {
-        debug!("transaction_rollback_to_savepoint: name={}", name);
         self.validate_savepoint_name(name)?;
 
         let mut active_tx = self.active_transaction.write();

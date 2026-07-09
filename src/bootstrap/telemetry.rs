@@ -32,6 +32,7 @@ pub async fn init_telemetry(
 ///
 /// This function sets up the metrics exporter for collecting and exposing
 /// application metrics via the `/metrics` endpoint.
+#[cfg(feature = "metrics")]
 pub fn init_metrics() {
     crate::infrastructure::metrics::init_metrics();
     info!("Metrics initialized");
@@ -49,6 +50,7 @@ pub async fn init_all(
     settings: &LoggingSettings,
 ) -> Result<LoggerManager, inklog::InklogError> {
     let manager = init_telemetry(settings).await?;
+    #[cfg(feature = "metrics")]
     init_metrics();
     Ok(manager)
 }
