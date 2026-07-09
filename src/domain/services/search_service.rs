@@ -311,7 +311,6 @@ mod tests {
     use crate::domain::repositories::task_repository::{
         RepositoryError, TaskQueryParams, TaskRepository,
     };
-    use crate::engines::engine_client::EngineClient;
     use crate::search::client::{SearchClient, SearchClientTrait, SearchCommand};
     use crate::search::engine_trait::{SearchEngine, SearchRequest};
     use crate::search::error::SearchError;
@@ -1457,5 +1456,86 @@ mod tests {
         assert!(result.is_ok(), "trait should forward to success path");
         let resp = result.unwrap();
         assert_eq!(resp.results.len(), 2);
+    }
+
+    // ========== Mock stub contract tests ==========
+    //
+    // search() only exercises `create` on the task/crawl repos and
+    // `get_balance`/`deduct_credits` on the credits repo. The remaining methods
+    // are stubs that return safe defaults. Calling them here documents the stub
+    // contract and keeps coverage accounting honest for the mock implementations.
+
+    #[tokio::test]
+    async fn test_mock_credits_repo_unused_methods_return_expected_defaults() {
+        let credits = MockCreditsRepo::with_balance(10);
+        let team_id = Uuid::new_v4();
+        // add_credits returns 0 (stub does not track new balance)
+        assert_eq!(
+            credits
+                .add_credits(
+                    team_id,
+                    5,
+                    CreditsTransactionType::Search,
+                    "add".to_string(),
+                    None
+                )
+                .await
+                .unwrap(),
+            0
+        );
+        // get_transaction_history returns empty
+        assert!(credits
+            .get_transaction_history(team_id, None)
+            .await
+            .unwrap()
+            .is_empty());
+        // initialize_team_credits returns 0
+        assert_eq!(
+            credits.initialize_team_credits(team_id, 100).await.unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_task_repo_unused_methods_return_expected_defaults() {
+        let task_repo = MockTaskRepo::new();
+        let task_id = Uuid::new_v4();
+        // Read/query stubs return "not found" / empty
+        assert!(task_repo.find_by_id(task_id).await.unwrap().is_none());
+        assert!(task_repo.acquire_next(Uuid::new_v4()).await.unwrap().is_none());
+        assert!(!task_repo.exists_by_url("https://example.com").await.unwrap());
+        // State-transition stubs are no-ops returning Ok
+        task_repo.mark_completed(task_id).await.unwrap();
+        task_repo.mark_failed(task_id).await.unwrap();
+        task_repo.mark_cancelled(task_id).await.unwrap();
+        // Maintenance stubs return zero counts
+        assert_eq!(task_repo.expire_tasks().await.unwrap(), 0);
+        assert_eq!(
+            task_repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await.unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_crawl_repo_unused_methods_return_expected_defaults() {
+        let crawl_repo = MockCrawlRepo::new();
+        let crawl_id = Uuid::new_v4();
+        // find_by_id returns None (stub)
+        assert!(crawl_repo.find_by_id(crawl_id).await.unwrap().is_none());
+        // Counter/status stubs are no-ops returning Ok
+        crawl_repo.increment_completed_tasks(crawl_id).await.unwrap();
+        crawl_repo.increment_failed_tasks(crawl_id).await.unwrap();
+        crawl_repo.increment_total_tasks(crawl_id).await.unwrap();
+        crawl_repo
+            .update_status(crawl_id, CrawlStatus::Completed)
+            .await
+            .unwrap();
+        // Query stubs return empty / zero
+        assert!(crawl_repo
+            .find_by_team_id_paginated(crawl_id, 10, 0)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(crawl_repo.count_by_team_id(crawl_id).await.unwrap(), 0);
     }
 }

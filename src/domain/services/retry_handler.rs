@@ -490,4 +490,51 @@ mod tests {
             _ => panic!("wrong variant"),
         }
     }
+
+    #[tokio::test]
+    async fn test_mock_task_repository_stub_methods_return_expected_defaults() {
+        // handle_failure only exercises `update`; the remaining TaskRepository
+        // methods on MockTaskRepository are stubs. Calling them here documents
+        // their stub contract and keeps coverage accounting honest.
+        let mock = MockTaskRepository::new();
+        let task = make_task(0, 5);
+
+        // create is stubbed to return an error (not used by handle_failure)
+        assert!(mock.create(&task).await.is_err());
+
+        // Read/query stubs return "not found" / empty results
+        assert!(mock.find_by_id(task.id).await.unwrap().is_none());
+        assert!(mock.acquire_next(Uuid::new_v4()).await.unwrap().is_none());
+        assert!(!mock.exists_by_url("https://example.com").await.unwrap());
+        assert!(mock
+            .find_existing_urls(&["https://example.com".to_string()])
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(mock.find_by_crawl_id(Uuid::new_v4()).await.unwrap().is_empty());
+
+        // State-transition stubs are no-ops returning Ok
+        mock.mark_completed(task.id).await.unwrap();
+        mock.mark_failed(task.id).await.unwrap();
+        mock.mark_cancelled(task.id).await.unwrap();
+
+        // Maintenance stubs return zero counts
+        assert_eq!(
+            mock.reset_stuck_tasks(Duration::seconds(60)).await.unwrap(),
+            0
+        );
+        assert_eq!(
+            mock.cancel_tasks_by_crawl_id(Uuid::new_v4()).await.unwrap(),
+            0
+        );
+        assert_eq!(mock.expire_tasks().await.unwrap(), 0);
+
+        // batch_cancel returns empty (successful, failed) tuples
+        let (success, failed) = mock
+            .batch_cancel(vec![task.id], task.team_id, false)
+            .await
+            .unwrap();
+        assert!(success.is_empty());
+        assert!(failed.is_empty());
+    }
 }

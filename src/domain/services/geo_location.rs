@@ -196,4 +196,52 @@ mod tests {
         assert!(is_ip_in_cidr(&ip, "2001:db8::/32"));
         assert!(!is_ip_in_cidr(&ip, "2001:db9::/32"));
     }
+
+    #[test]
+    fn test_is_ip_in_cidr_invalid_format_returns_false() {
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        // No slash → parts.len() != 2
+        assert!(!is_ip_in_cidr(&ip, "192.168.1.0"));
+        // Unparseable network address → parse::<IpAddr>() fails → _ => false
+        assert!(!is_ip_in_cidr(&ip, "not-an-ip/24"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_mismatched_ip_version_returns_false() {
+        // V4 IP with V6 network → _ => false
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "::1/128"));
+        // V6 IP with V4 network → _ => false
+        let ip: IpAddr = "::1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "192.168.1.0/24"));
+    }
+
+    #[test]
+    fn test_is_ipv4_in_cidr_prefix_length_edge_cases() {
+        let ip = Ipv4Addr::new(192, 168, 1, 1);
+        let network = Ipv4Addr::new(0, 0, 0, 0);
+        // prefix_length == 0 → mask = 0, any IP matches
+        assert!(is_ipv4_in_cidr(&ip, &network, 0));
+        // prefix_length > 32 → returns false
+        assert!(!is_ipv4_in_cidr(&ip, &network, 33));
+    }
+
+    #[test]
+    fn test_is_ipv6_in_cidr_prefix_length_edge_cases() {
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x370, 0x7334);
+        let network = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0);
+        // prefix_length > 128 → returns false
+        assert!(!is_ipv6_in_cidr(&ip, &network, 129));
+
+        // remaining_bits > 0 branch: partial-segment mismatch → false
+        // prefix 120 = 7 full segments (0-6) + 8 remaining bits in segment 7.
+        // Segments 0-6 must match ip; segment 7's top 8 bits differ.
+        let network_diff = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x370, 0xff34);
+        assert!(!is_ipv6_in_cidr(&ip, &network_diff, 120));
+
+        // remaining_bits > 0 branch: partial-segment match → true
+        // Segment 7's top 8 bits (0x73) match ip (0x7334 & 0xFF00 = 0x7300).
+        let network_match = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x370, 0x7300);
+        assert!(is_ipv6_in_cidr(&ip, &network_match, 120));
+    }
 }

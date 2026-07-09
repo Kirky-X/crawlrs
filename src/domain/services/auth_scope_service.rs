@@ -418,4 +418,53 @@ mod tests {
         let result = AuthScopeService::merge_scopes(None, None);
         assert_eq!(result, ApiKeyScope::default());
     }
+
+    use crate::domain::repositories::auth_scope_repository::RepositoryError;
+
+    /// Minimal mock AuthScopeRepository for AuthScopeService construction tests.
+    struct MockAuthScopeRepo;
+
+    #[async_trait]
+    impl AuthScopeRepository for MockAuthScopeRepo {
+        async fn find_by_api_key_id(
+            &self,
+            _api_key_id: Uuid,
+        ) -> Result<Option<ApiKeyScope>, RepositoryError> {
+            Ok(None)
+        }
+        async fn find_by_api_key(
+            &self,
+            _key: &str,
+        ) -> Result<Option<ApiKeyScope>, RepositoryError> {
+            Ok(None)
+        }
+        async fn upsert(
+            &self,
+            _api_key_id: Uuid,
+            scope: ApiKeyScope,
+        ) -> Result<ApiKeyScope, RepositoryError> {
+            Ok(scope)
+        }
+        async fn delete_by_api_key_id(
+            &self,
+            _api_key_id: Uuid,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn test_auth_scope_service_new_clone_and_debug() {
+        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepo);
+        let service = AuthScopeService::new(repo);
+        // Clone impl must produce a working copy sharing the same repo Arc
+        let cloned = service.clone();
+        // Debug impl must surface the type name and repo field placeholder
+        let debug_str = format!("{:?}", service);
+        assert!(debug_str.contains("AuthScopeService"));
+        assert!(debug_str.contains("AuthScopeRepository"));
+        // Cloned instance must also be debuggable (exercises Clone path)
+        let cloned_debug = format!("{:?}", cloned);
+        assert!(cloned_debug.contains("AuthScopeService"));
+    }
 }

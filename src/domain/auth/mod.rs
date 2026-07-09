@@ -454,4 +454,67 @@ mod tests {
         assert!(display.contains("write=false"));
         assert!(display.contains("admin=false"));
     }
+
+    #[test]
+    fn test_scope_permission_from_read_conversion() {
+        let scope = ApiKeyScope::from(ScopePermission::Read);
+        assert!(scope.read);
+        assert!(!scope.write);
+        assert!(!scope.admin);
+        assert_eq!(scope.search_limit, 100);
+        assert_eq!(scope.scrape_limit, 50);
+    }
+
+    #[test]
+    fn test_scope_permission_from_write_conversion() {
+        let scope = ApiKeyScope::from(ScopePermission::Write);
+        assert!(scope.read);
+        assert!(scope.write);
+        assert!(!scope.admin);
+        assert_eq!(scope.search_limit, 100);
+        assert_eq!(scope.scrape_limit, 50);
+    }
+
+    #[test]
+    fn test_scope_permission_from_admin_conversion() {
+        let scope = ApiKeyScope::from(ScopePermission::Admin);
+        assert!(scope.read);
+        assert!(scope.write);
+        assert!(scope.admin);
+        assert_eq!(scope.search_limit, 100);
+        assert_eq!(scope.scrape_limit, 50);
+    }
+
+    #[test]
+    fn test_feature_flag_should_enable_for_key_partial_rollout_is_deterministic() {
+        // rollout_percentage between 0 and 100 exercises the hash-bucket branch
+        let api_key_id = Uuid::new_v4();
+        let flag = FeatureFlag {
+            id: Uuid::new_v4(),
+            name: "partial".to_string(),
+            description: None,
+            enabled: true,
+            rollout_percentage: 50,
+            metadata: serde_json::json!({}),
+            started_at: None,
+            stopped_at: None,
+        };
+        // Same key must always yield the same decision (deterministic hash)
+        let first = flag.should_enable_for_key(api_key_id);
+        let second = flag.should_enable_for_key(api_key_id);
+        assert_eq!(first, second);
+
+        // At 50% rollout, sweeping many keys must produce both outcomes
+        let mut enabled = 0;
+        let mut disabled = 0;
+        for _ in 0..200 {
+            if flag.should_enable_for_key(Uuid::new_v4()) {
+                enabled += 1;
+            } else {
+                disabled += 1;
+            }
+        }
+        assert!(enabled > 0, "some keys should be enabled at 50% rollout");
+        assert!(disabled > 0, "some keys should be disabled at 50% rollout");
+    }
 }
