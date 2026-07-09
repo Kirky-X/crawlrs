@@ -301,3 +301,1161 @@ impl SearchServiceTrait for SearchService {
         Self::search(self, team_id, api_key_id, query).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::models::{CrawlStatus, CreditsTransaction, CreditsTransactionType};
+    use crate::domain::repositories::crawl_repository::CrawlRepository;
+    use crate::domain::repositories::credits_repository::CreditsRepositoryError;
+    use crate::domain::repositories::task_repository::{
+        RepositoryError, TaskQueryParams, TaskRepository,
+    };
+    use crate::engines::engine_client::EngineClient;
+    use crate::search::client::{SearchClient, SearchClientTrait, SearchCommand};
+    use crate::search::engine_trait::{SearchEngine, SearchRequest};
+    use crate::search::error::SearchError;
+    use crate::search::response::{Response, ResponseItem};
+    use crate::search::types::SearchEngineType;
+    use async_trait::async_trait;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    // ========== Mocks ==========
+
+    /// Configurable mock for CreditsRepository.
+    struct MockCreditsRepo {
+        balance: i64,
+        get_balance_fails: bool,
+        deduct_fails: bool,
+        deduct_calls: Mutex<Vec<(Uuid, i64)>>,
+    }
+
+    impl MockCreditsRepo {
+        fn with_balance(balance: i64) -> Self {
+            Self {
+                balance,
+                get_balance_fails: false,
+                deduct_fails: false,
+                deduct_calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                balance: 0,
+                get_balance_fails: true,
+                deduct_fails: false,
+                deduct_calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CreditsRepository for MockCreditsRepo {
+        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+            if self.get_balance_fails {
+                return Err(CreditsRepositoryError::DatabaseError(
+                    "mock get_balance failure".to_string(),
+                ));
+            }
+            Ok(self.balance)
+        }
+
+        async fn deduct_credits(
+            &self,
+            team_id: Uuid,
+            amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), CreditsRepositoryError> {
+            if self.deduct_fails {
+                return Err(CreditsRepositoryError::DatabaseError(
+                    "mock deduct failure".to_string(),
+                ));
+            }
+            self.deduct_calls.lock().unwrap().push((team_id, amount));
+            Ok(())
+        }
+
+        async fn add_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(0)
+        }
+
+        async fn get_transaction_history(
+            &self,
+            _team_id: Uuid,
+            _limit: Option<u32>,
+        ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn initialize_team_credits(
+            &self,
+            _team_id: Uuid,
+            _initial_balance: i64,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(0)
+        }
+    }
+
+    /// Minimal mock for TaskRepository (only create is used in search_service).
+    struct MockTaskRepo {
+        create_fails: bool,
+        created: Mutex<Vec<Task>>,
+    }
+
+    impl MockTaskRepo {
+        fn new() -> Self {
+            Self {
+                create_fails: false,
+                created: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                create_fails: true,
+                created: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn created_count(&self) -> usize {
+            self.created.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait]
+    impl TaskRepository for MockTaskRepo {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            if self.create_fails {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "mock task create failure"
+                )));
+            }
+            self.created.lock().unwrap().push(task.clone());
+            Ok(task.clone())
+        }
+
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+
+        async fn acquire_next(
+            &self,
+            _worker_id: Uuid,
+        ) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: Uuid,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            Ok((vec![], 0))
+        }
+
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+    }
+
+    /// Minimal mock for CrawlRepository (only create is used in search_service).
+    struct MockCrawlRepo {
+        create_fails: bool,
+        created: Mutex<Vec<Crawl>>,
+    }
+
+    impl MockCrawlRepo {
+        fn new() -> Self {
+            Self {
+                create_fails: false,
+                created: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                create_fails: true,
+                created: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn created_count(&self) -> usize {
+            self.created.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait]
+    impl CrawlRepository for MockCrawlRepo {
+        async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            if self.create_fails {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "mock crawl create failure"
+                )));
+            }
+            self.created.lock().unwrap().push(crawl.clone());
+            Ok(crawl.clone())
+        }
+
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            Ok(crawl.clone())
+        }
+
+        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn update_status(
+            &self,
+            _id: Uuid,
+            _status: CrawlStatus,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn find_by_team_id_paginated(
+            &self,
+            _team_id: Uuid,
+            _limit: u32,
+            _offset: u32,
+        ) -> Result<Vec<Crawl>, RepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+    }
+
+    /// Mock SearchEngine that returns a preconfigured Response or error.
+    ///
+    /// Enables testing `perform_search` success paths by injecting this engine
+    /// into a `SearchClient` via `SearchClient::new_with_engines`. The engine
+    /// records the last request it saw so tests can assert forwarding behavior.
+    struct MockSearchEngine {
+        engine_type: SearchEngineType,
+        items: Vec<ResponseItem>,
+        fail: bool,
+        last_request: Mutex<Option<SearchRequest>>,
+    }
+
+    impl MockSearchEngine {
+        /// Build an engine that returns a successful response with the given items.
+        fn success_with_items(engine_type: SearchEngineType, items: Vec<ResponseItem>) -> Self {
+            Self {
+                engine_type,
+                items,
+                fail: false,
+                last_request: Mutex::new(None),
+            }
+        }
+
+        /// Build an engine that always fails with `NoEngineAvailable`.
+        fn failing(engine_type: SearchEngineType) -> Self {
+            Self {
+                engine_type,
+                items: Vec::new(),
+                fail: true,
+                last_request: Mutex::new(None),
+            }
+        }
+
+        /// Return the last SearchRequest seen by `search`, if any.
+        #[allow(dead_code)]
+        fn last_request(&self) -> Option<SearchRequest> {
+            self.last_request.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl SearchEngine for MockSearchEngine {
+        fn name(&self) -> &'static str {
+            match self.engine_type {
+                SearchEngineType::Google => "MockGoogle",
+                SearchEngineType::Bing => "MockBing",
+                SearchEngineType::Baidu => "MockBaidu",
+                SearchEngineType::Sogou => "MockSogou",
+                _ => "MockEngine",
+            }
+        }
+
+        fn engine_type(&self) -> SearchEngineType {
+            self.engine_type
+        }
+
+        fn health(&self) -> crate::search::types::EngineHealth {
+            crate::search::types::EngineHealth::Healthy
+        }
+
+        async fn search(
+            &self,
+            request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            *self.last_request.lock().unwrap() = Some(request.clone());
+            if self.fail {
+                return Err(SearchError::NoEngineAvailable);
+            }
+            let total = self.items.len() as u64;
+            Ok(Response {
+                items: self.items.clone(),
+                total_results: Some(total),
+                engine: self.engine_type,
+            })
+        }
+    }
+
+    /// Build a sample ResponseItem for tests.
+    fn make_response_item(title: &str, url: &str, engine: SearchEngineType) -> ResponseItem {
+        ResponseItem {
+            title: title.to_string(),
+            url: url.to_string(),
+            description: format!("desc for {}", title),
+            engine,
+        }
+    }
+
+    /// Mock for SearchClientTrait backed by a `SearchClient` whose engines are
+    /// `MockSearchEngine` instances. This lets `perform_search` succeed or fail
+    /// deterministically without touching the network.
+    struct MockSearchClient {
+        inner: SearchClient,
+    }
+
+    impl MockSearchClient {
+        /// Build a client whose default (Google) engine returns `items`.
+        fn new_with_items(items: Vec<ResponseItem>) -> Self {
+            let engine: Arc<dyn SearchEngine> =
+                Arc::new(MockSearchEngine::success_with_items(
+                    SearchEngineType::Google,
+                    items,
+                ));
+            Self {
+                inner: SearchClient::new_with_engines(vec![engine], SearchEngineType::Google),
+            }
+        }
+
+        /// Build a client whose default engine always fails.
+        fn failing() -> Self {
+            let engine: Arc<dyn SearchEngine> =
+                Arc::new(MockSearchEngine::failing(SearchEngineType::Google));
+            Self {
+                inner: SearchClient::new_with_engines(vec![engine], SearchEngineType::Google),
+            }
+        }
+
+        /// Default success client with two generic results (kept for
+        /// existing `make_service` callers that don't assert result shape).
+        fn new() -> Self {
+            Self::new_with_items(vec![
+                make_response_item("Result 1", "https://example.com/1", SearchEngineType::Google),
+                make_response_item("Result 2", "https://example.com/2", SearchEngineType::Google),
+            ])
+        }
+    }
+
+    #[async_trait]
+    impl SearchClientTrait for MockSearchClient {
+        async fn search(&self, query: &str) -> SearchCommand {
+            self.inner.search(query)
+        }
+
+        async fn search_with_engine(
+            &self,
+            _query: &str,
+            _engine: SearchEngineType,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            Err(SearchError::NoEngineAvailable)
+        }
+
+        fn default_engine(&self) -> SearchEngineType {
+            SearchEngineType::Google
+        }
+
+        fn register_engine(&self, _engine: Arc<dyn SearchEngine>) {
+            // no-op
+        }
+    }
+
+    // ========== Helpers ==========
+
+    fn make_service(credits: Arc<dyn CreditsRepository>) -> SearchService {
+        SearchService {
+            crawl_repo: Arc::new(MockCrawlRepo::new()),
+            task_repo: Arc::new(MockTaskRepo::new()),
+            credits_repo: credits,
+            search_client: Arc::new(MockSearchClient::new()),
+        }
+    }
+
+    fn make_query(text: &str) -> SearchQuery {
+        SearchQuery {
+            query: text.to_string(),
+            limit: None,
+            lang: None,
+            country: None,
+            engine: None,
+            sources: None,
+            crawl_results: None,
+            crawl_config: None,
+        }
+    }
+
+    /// Build a service with recording mock repos, returning the mock handles
+    /// so tests can inspect side effects (task/crawl creation, credit calls).
+    fn make_service_with_recording(
+        credits: Arc<dyn CreditsRepository>,
+        search_client: Arc<dyn SearchClientTrait>,
+    ) -> (
+        SearchService,
+        Arc<MockCrawlRepo>,
+        Arc<MockTaskRepo>,
+    ) {
+        let crawl_repo = Arc::new(MockCrawlRepo::new());
+        let task_repo = Arc::new(MockTaskRepo::new());
+        let service = SearchService {
+            crawl_repo: crawl_repo.clone(),
+            task_repo: task_repo.clone(),
+            credits_repo: credits,
+            search_client,
+        };
+        (service, crawl_repo, task_repo)
+    }
+
+    /// Build a service whose search client always fails.
+    fn make_failing_search_service(
+        credits: Arc<dyn CreditsRepository>,
+    ) -> SearchService {
+        SearchService {
+            crawl_repo: Arc::new(MockCrawlRepo::new()),
+            task_repo: Arc::new(MockTaskRepo::new()),
+            credits_repo: credits,
+            search_client: Arc::new(MockSearchClient::failing()),
+        }
+    }
+
+    // ========== SearchQuery tests ==========
+
+    #[test]
+    fn test_search_query_construction_with_all_fields() {
+        let query = SearchQuery {
+            query: "rust web scraping".to_string(),
+            limit: Some(20),
+            lang: Some("en".to_string()),
+            country: Some("us".to_string()),
+            engine: Some("google".to_string()),
+            sources: Some(vec!["google".to_string(), "bing".to_string()]),
+            crawl_results: Some(true),
+            crawl_config: Some(SearchCrawlConfig::default()),
+        };
+        assert_eq!(query.query, "rust web scraping");
+        assert_eq!(query.limit, Some(20));
+        assert_eq!(query.lang.as_deref(), Some("en"));
+        assert_eq!(query.country.as_deref(), Some("us"));
+        assert_eq!(query.engine.as_deref(), Some("google"));
+        assert_eq!(query.sources.as_ref().unwrap().len(), 2);
+        assert_eq!(query.crawl_results, Some(true));
+        assert!(query.crawl_config.is_some());
+    }
+
+    #[test]
+    fn test_search_query_with_minimal_fields() {
+        let query = make_query("test");
+        assert_eq!(query.query, "test");
+        assert!(query.limit.is_none());
+        assert!(query.lang.is_none());
+        assert!(query.crawl_results.is_none());
+    }
+
+    #[test]
+    fn test_search_query_empty_string() {
+        let query = make_query("");
+        assert!(query.query.is_empty());
+    }
+
+    // ========== SearchCrawlConfig tests ==========
+
+    #[test]
+    fn test_search_crawl_config_default_values() {
+        let config = SearchCrawlConfig::default();
+        assert_eq!(config.max_depth, 0, "default max_depth should be 0");
+        assert_eq!(config.strategy, "", "default strategy should be empty string");
+        assert_eq!(config.max_concurrency, 0, "default max_concurrency should be 0");
+        assert!(config.include_patterns.is_none());
+        assert!(config.exclude_patterns.is_none());
+        assert!(config.crawl_delay_ms.is_none());
+        assert!(config.headers.is_none());
+        assert!(config.proxy.is_none());
+        assert!(config.extraction_rules.is_none());
+    }
+
+    #[test]
+    fn test_search_crawl_config_serde_roundtrip() {
+        let config = SearchCrawlConfig {
+            max_depth: 3,
+            include_patterns: Some(vec!["*/blog/*".to_string()]),
+            exclude_patterns: Some(vec!["*/admin/*".to_string()]),
+            strategy: "bfs".to_string(),
+            crawl_delay_ms: Some(500),
+            max_concurrency: 10,
+            headers: Some(serde_json::json!({"User-Agent": "test"})),
+            proxy: Some("http://proxy:8080".to_string()),
+            extraction_rules: None,
+        };
+        let json = serde_json::to_string(&config).expect("should serialize");
+        let back: SearchCrawlConfig = serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(back.max_depth, 3);
+        assert_eq!(back.strategy, "bfs");
+        assert_eq!(back.max_concurrency, 10);
+        assert_eq!(back.crawl_delay_ms, Some(500));
+        assert_eq!(
+            back.include_patterns.as_ref().unwrap(),
+            &vec!["*/blog/*".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_search_crawl_config_serde_minimal() {
+        let config = SearchCrawlConfig::default();
+        let json = serde_json::to_string(&config).expect("should serialize");
+        let back: SearchCrawlConfig = serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(config.max_depth, back.max_depth);
+        assert_eq!(config.strategy, back.strategy);
+    }
+
+    // ========== SearchResult tests ==========
+
+    #[test]
+    fn test_search_result_construction() {
+        let result = SearchResult {
+            title: "Rust Programming".to_string(),
+            url: "https://www.rust-lang.org".to_string(),
+            description: Some("A language empowering everyone to build reliable software.".to_string()),
+            engine: "Google".to_string(),
+        };
+        assert_eq!(result.title, "Rust Programming");
+        assert_eq!(result.url, "https://www.rust-lang.org");
+        assert!(result.description.is_some());
+        assert_eq!(result.engine, "Google");
+    }
+
+    #[test]
+    fn test_search_result_with_none_description() {
+        let result = SearchResult {
+            title: "Test".to_string(),
+            url: "https://example.com".to_string(),
+            description: None,
+            engine: "Bing".to_string(),
+        };
+        assert!(result.description.is_none());
+    }
+
+    // ========== SearchResponse tests ==========
+
+    #[test]
+    fn test_search_response_construction_with_crawl() {
+        let response = SearchResponse {
+            query: "rust scraping".to_string(),
+            results: vec![SearchResult {
+                title: "Result 1".to_string(),
+                url: "https://example.com".to_string(),
+                description: None,
+                engine: "Google".to_string(),
+            }],
+            crawl_id: Some(Uuid::new_v4()),
+            credits_used: 1,
+        };
+        assert_eq!(response.query, "rust scraping");
+        assert_eq!(response.results.len(), 1);
+        assert!(response.crawl_id.is_some());
+        assert_eq!(response.credits_used, 1);
+    }
+
+    #[test]
+    fn test_search_response_construction_without_crawl() {
+        let response = SearchResponse {
+            query: "test".to_string(),
+            results: vec![],
+            crawl_id: None,
+            credits_used: 1,
+        };
+        assert!(response.results.is_empty());
+        assert!(response.crawl_id.is_none());
+    }
+
+    // ========== SearchServiceError From conversions ==========
+
+    #[test]
+    fn test_search_service_error_from_string() {
+        let err: SearchServiceError = "bad query".to_string().into();
+        match err {
+            SearchServiceError::ValidationError(msg) => {
+                assert_eq!(msg, "bad query");
+            }
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_search_service_error_from_str_ref() {
+        let err: SearchServiceError = "invalid input".into();
+        match err {
+            SearchServiceError::ValidationError(msg) => {
+                assert_eq!(msg, "invalid input");
+            }
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_search_service_error_from_anyhow_error() {
+        let err: SearchServiceError = anyhow::anyhow!("engine crashed").into();
+        match err {
+            SearchServiceError::SearchEngine(msg) => {
+                assert!(msg.contains("engine crashed"), "msg: {}", msg);
+            }
+            other => panic!("expected SearchEngine, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_search_service_error_display_validation() {
+        let err = SearchServiceError::ValidationError("missing field".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Validation failed"));
+        assert!(msg.contains("missing field"));
+    }
+
+    #[test]
+    fn test_search_service_error_display_insufficient_credits() {
+        let err = SearchServiceError::InsufficientCredits {
+            available: 0,
+            required: 1,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Insufficient credits"));
+        assert!(msg.contains("available 0"));
+        assert!(msg.contains("required 1"));
+    }
+
+    #[test]
+    fn test_search_service_error_display_search_engine() {
+        let err = SearchServiceError::SearchEngine("timeout".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Search engine error"));
+        assert!(msg.contains("timeout"));
+    }
+
+    // ========== search() pre-validation tests ==========
+
+    #[tokio::test]
+    async fn test_search_empty_query_returns_validation_error() {
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
+        let query = make_query("");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::ValidationError(msg) => {
+                assert!(
+                    msg.contains("empty"),
+                    "error should mention empty: {}",
+                    msg
+                );
+            }
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_whitespace_only_query_returns_validation_error() {
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
+        let query = make_query("   ");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err(), "whitespace-only query should fail");
+        match result.unwrap_err() {
+            SearchServiceError::ValidationError(_) => {}
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_insufficient_credits_returns_error() {
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(0)));
+        let query = make_query("rust scraping");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::InsufficientCredits { available, required } => {
+                assert_eq!(available, 0);
+                assert_eq!(required, 1);
+            }
+            other => panic!("expected InsufficientCredits, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_exact_balance_succeeds_validation() {
+        // Balance exactly equals search_cost (1) → passes credit check.
+        // perform_search succeeds with the mock engine, so we expect Ok with
+        // credits_used == 1. The key assertion is that InsufficientCredits is
+        // NOT returned.
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(1)));
+        let query = make_query("rust scraping");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(
+            result.is_ok(),
+            "should pass credit check and perform_search, got {:?}",
+            result.err()
+        );
+        let resp = result.unwrap();
+        assert_eq!(resp.credits_used, 1, "search cost is 1 credit");
+    }
+
+    // ========== engine_param branch tests ==========
+    // These tests exercise the sources/engine parameter handling logic in search().
+    // perform_search succeeds with the injected MockSearchEngine (default Google),
+    // so each test asserts Ok, proving the code reached perform_search and that the
+    // engine_param branches did not short-circuit into ValidationError/InsufficientCredits.
+
+    #[tokio::test]
+    async fn test_search_with_single_source_passes_source_as_engine() {
+        // sources.len() == 1 → engine_param = Some(sources[0]) = Some("google")
+        // MockSearchEngine (Google) handles the request successfully.
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
+        let query = SearchQuery {
+            sources: Some(vec!["google".to_string()]),
+            ..make_query("rust scraping")
+        };
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(
+            result.is_ok(),
+            "should reach perform_search and succeed, got {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_with_multiple_sources_uses_aggregator() {
+        // sources.len() > 1 → engine_param = None (aggregator)
+        // perform_search falls back to the default (Google) mock engine and succeeds.
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
+        let query = SearchQuery {
+            sources: Some(vec!["google".to_string(), "bing".to_string()]),
+            ..make_query("rust scraping")
+        };
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(
+            result.is_ok(),
+            "aggregator path should reach perform_search and succeed, got {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_with_engine_specified_passes_engine() {
+        // sources = None, engine = Some → engine_param = Some(engine)
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
+        let query = SearchQuery {
+            engine: Some("bing".to_string()),
+            ..make_query("rust scraping")
+        };
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::ValidationError(_) => {
+                panic!("should pass validation");
+            }
+            SearchServiceError::InsufficientCredits { .. } => {
+                panic!("should pass credit check");
+            }
+            _ => { /* reached perform_search — expected */ }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_with_limit_specified_passes_to_perform_search() {
+        // Exercise the query.limit.unwrap_or(10) branch with explicit limit.
+        // MockSearchClient::new() returns 2 items, so limit=5 yields 2 results.
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
+        let query = SearchQuery {
+            limit: Some(5),
+            lang: Some("en".to_string()),
+            country: Some("us".to_string()),
+            ..make_query("rust scraping")
+        };
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(
+            result.is_ok(),
+            "should reach perform_search and succeed, got {:?}",
+            result.err()
+        );
+        let resp = result.unwrap();
+        assert_eq!(resp.results.len(), 2, "mock returns 2 items, limit=5 keeps both");
+    }
+
+    #[tokio::test]
+    async fn test_search_get_balance_failure_returns_credits_error() {
+        let service = make_service(Arc::new(MockCreditsRepo::failing()));
+        let query = make_query("rust scraping");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::CreditsRepository(err) => {
+                match err {
+                    CreditsRepositoryError::DatabaseError(msg) => {
+                        assert!(msg.contains("mock get_balance failure"));
+                    }
+                    other => panic!("expected DatabaseError, got {:?}", other),
+                }
+            }
+            other => panic!("expected CreditsRepository, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_negative_balance_returns_insufficient_credits() {
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(-5)));
+        let query = make_query("rust scraping");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::InsufficientCredits { available, required } => {
+                assert_eq!(available, -5, "should report negative balance");
+                assert_eq!(required, 1);
+            }
+            other => panic!("expected InsufficientCredits, got {:?}", other),
+        }
+    }
+
+    // ========== SearchServiceTrait forwarding test ==========
+
+    #[tokio::test]
+    async fn test_search_service_trait_forwards_empty_query_error() {
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
+        let query = make_query("");
+        // Use the trait method
+        let result: Result<SearchResponse, SearchServiceError> = SearchServiceTrait::search(
+            &service,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            query,
+        )
+        .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::ValidationError(_) => {}
+            other => panic!("expected ValidationError, got {:?}", other),
+        }
+    }
+
+    // ========== perform_search success path tests ==========
+    //
+    // These tests rely on MockSearchEngine (injected via SearchClient::new_with_engines)
+    // to exercise the success branch of `perform_search` and the downstream crawl/credit
+    // flows that were previously unreachable with a real SearchClient.
+
+    #[tokio::test]
+    async fn test_search_success_returns_results() {
+        let credits = Arc::new(MockCreditsRepo::with_balance(100));
+        let (service, _, _) = make_service_with_recording(
+            credits,
+            Arc::new(MockSearchClient::new()),
+        );
+        let query = make_query("rust web scraping");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        let resp = result.unwrap();
+        assert_eq!(resp.query, "rust web scraping");
+        assert_eq!(resp.results.len(), 2, "MockSearchClient::new returns 2 items");
+        assert_eq!(resp.credits_used, 1, "search cost is 1 credit");
+        assert!(resp.crawl_id.is_none(), "crawl_results not set");
+    }
+
+    #[tokio::test]
+    async fn test_search_success_deducts_credits() {
+        let credits = Arc::new(MockCreditsRepo::with_balance(100));
+        let credits_handle: Arc<MockCreditsRepo> = credits.clone();
+        let (service, _, _) = make_service_with_recording(
+            credits,
+            Arc::new(MockSearchClient::new()),
+        );
+        let query = make_query("rust");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_ok());
+        let calls = credits_handle.deduct_calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1, "deduct_credits should be called once");
+        assert_eq!(calls[0].1, 1, "deducted amount should be 1");
+    }
+
+    #[tokio::test]
+    async fn test_search_success_with_crawl_creates_tasks_and_crawl() {
+        let (service, crawl_repo, task_repo) = make_service_with_recording(
+            Arc::new(MockCreditsRepo::with_balance(100)),
+            Arc::new(MockSearchClient::new()),
+        );
+        let query = SearchQuery {
+            crawl_results: Some(true),
+            ..make_query("rust scraping")
+        };
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert!(resp.crawl_id.is_some(), "crawl_id should be set");
+        assert_eq!(
+            crawl_repo.created_count(),
+            1,
+            "exactly one crawl record should be created"
+        );
+        assert_eq!(
+            task_repo.created_count(),
+            resp.results.len(),
+            "one task per search result should be created"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_success_with_crawl_skips_when_no_results() {
+        let credits = Arc::new(MockCreditsRepo::with_balance(100));
+        let (service, crawl_repo, task_repo) = make_service_with_recording(
+            credits,
+            Arc::new(MockSearchClient::new_with_items(vec![])),
+        );
+        let query = SearchQuery {
+            crawl_results: Some(true),
+            ..make_query("empty")
+        };
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert!(resp.crawl_id.is_none(), "no crawl when results empty");
+        assert_eq!(crawl_repo.created_count(), 0);
+        assert_eq!(task_repo.created_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_search_respects_limit_truncates_results() {
+        let credits = Arc::new(MockCreditsRepo::with_balance(100));
+        let (service, _, _) = make_service_with_recording(
+            credits,
+            Arc::new(MockSearchClient::new_with_items(vec![
+                make_response_item("a", "https://a.example", SearchEngineType::Google),
+                make_response_item("b", "https://b.example", SearchEngineType::Google),
+                make_response_item("c", "https://c.example", SearchEngineType::Google),
+                make_response_item("d", "https://d.example", SearchEngineType::Google),
+            ])),
+        );
+        let query = SearchQuery {
+            limit: Some(2),
+            ..make_query("limited")
+        };
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.results.len(), 2, "limit=2 should truncate to 2 results");
+    }
+
+    #[tokio::test]
+    async fn test_search_perform_search_failure_returns_search_engine_error() {
+        let service = make_failing_search_service(Arc::new(MockCreditsRepo::with_balance(100)));
+        let query = make_query("will fail");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::SearchEngine(msg) => {
+                assert!(!msg.is_empty(), "error message should be non-empty");
+            }
+            other => panic!("expected SearchEngine error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_crawl_repo_failure_propagates() {
+        let credits: Arc<dyn CreditsRepository> = Arc::new(MockCreditsRepo::with_balance(100));
+        let service = SearchService {
+            crawl_repo: Arc::new(MockCrawlRepo::failing()),
+            task_repo: Arc::new(MockTaskRepo::new()),
+            credits_repo: credits,
+            search_client: Arc::new(MockSearchClient::new()),
+        };
+        let query = SearchQuery {
+            crawl_results: Some(true),
+            ..make_query("crawl fails")
+        };
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::Repository(_) => { /* expected */ }
+            other => panic!("expected Repository error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_task_repo_failure_propagates() {
+        let credits: Arc<dyn CreditsRepository> = Arc::new(MockCreditsRepo::with_balance(100));
+        let service = SearchService {
+            crawl_repo: Arc::new(MockCrawlRepo::new()),
+            task_repo: Arc::new(MockTaskRepo::failing()),
+            credits_repo: credits,
+            search_client: Arc::new(MockSearchClient::new()),
+        };
+        let query = SearchQuery {
+            crawl_results: Some(true),
+            ..make_query("task fails")
+        };
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::Repository(_) => { /* expected */ }
+            other => panic!("expected Repository error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_deduct_credits_failure_propagates() {
+        let credits = Arc::new(MockCreditsRepo {
+            balance: 100,
+            get_balance_fails: false,
+            deduct_fails: true,
+            deduct_calls: Mutex::new(Vec::new()),
+        });
+        let (service, _, _) = make_service_with_recording(
+            credits,
+            Arc::new(MockSearchClient::new()),
+        );
+        let query = make_query("deduct fails");
+        let result = service
+            .search(Uuid::new_v4(), Uuid::new_v4(), query)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchServiceError::CreditsRepository(_) => { /* expected */ }
+            other => panic!("expected CreditsRepository error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_trait_delegates_to_success_path() {
+        let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
+        let query = make_query("trait delegation");
+        let result: Result<SearchResponse, SearchServiceError> = SearchServiceTrait::search(
+            &service,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            query,
+        )
+        .await;
+        assert!(result.is_ok(), "trait should forward to success path");
+        let resp = result.unwrap();
+        assert_eq!(resp.results.len(), 2);
+    }
+}

@@ -94,6 +94,25 @@ impl SearchClient {
         Arc::make_mut(&mut self.inner).engines.push(engine);
     }
 
+    /// Create a SearchClient with a custom set of engines.
+    ///
+    /// Enables test injection of mock engines and production scenarios that
+    /// need a curated engine subset. The caller is responsible for providing
+    /// at least one engine; an empty slice yields a client whose `search()`
+    /// always fails with `SearchError::NoEngineAvailable`.
+    pub fn new_with_engines(
+        engines: Vec<Arc<dyn SearchEngine>>,
+        default_engine: SearchEngineType,
+    ) -> Self {
+        let inner = SearchClientInner {
+            engines,
+            default_engine,
+        };
+        SearchClient {
+            inner: Arc::new(inner),
+        }
+    }
+
     pub fn search(&self, query: &str) -> SearchCommand {
         SearchCommand::new(self.clone(), query)
     }

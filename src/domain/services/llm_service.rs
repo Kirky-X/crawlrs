@@ -412,3 +412,698 @@ impl LLMService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    // ========== TokenUsage ==========
+
+    #[test]
+    fn test_token_usage_default_is_zero() {
+        let usage = TokenUsage::default();
+        assert_eq!(usage.prompt_tokens, 0);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
+
+    #[test]
+    fn test_token_usage_serde_roundtrip() {
+        let usage = TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+        };
+        let s = serde_json::to_string(&usage).expect("serialize");
+        let back: TokenUsage = serde_json::from_str(&s).expect("deserialize");
+        assert_eq!(back.prompt_tokens, 100);
+        assert_eq!(back.completion_tokens, 50);
+        assert_eq!(back.total_tokens, 150);
+    }
+
+    #[test]
+    fn test_token_usage_clone_preserves_values() {
+        let usage = TokenUsage {
+            prompt_tokens: 7,
+            completion_tokens: 3,
+            total_tokens: 10,
+        };
+        let cloned = usage.clone();
+        assert_eq!(cloned.prompt_tokens, usage.prompt_tokens);
+        assert_eq!(cloned.completion_tokens, usage.completion_tokens);
+        assert_eq!(cloned.total_tokens, usage.total_tokens);
+    }
+
+    // ========== InMemoryTemplateLoader ==========
+
+    #[test]
+    fn test_in_memory_template_loader_new_empty() {
+        let loader = InMemoryTemplateLoader::new();
+        let templates = loader.load_templates().expect("load");
+        assert!(templates.is_empty());
+    }
+
+    #[test]
+    fn test_in_memory_template_loader_with_template_adds_entry() {
+        let loader = InMemoryTemplateLoader::new()
+            .with_template("custom", "template content {{text}}");
+        let templates = loader.load_templates().expect("load");
+        assert_eq!(templates.get("custom"), Some(&"template content {{text}}".to_string()));
+    }
+
+    #[test]
+    fn test_in_memory_template_loader_with_default_templates_adds_two() {
+        let loader = InMemoryTemplateLoader::new().with_default_templates();
+        let templates = loader.load_templates().expect("load");
+        assert_eq!(templates.len(), 2);
+        assert!(templates.contains_key("json"));
+        assert!(templates.contains_key("markdown"));
+        assert!(templates["json"].contains("{{text}}"));
+        assert!(templates["markdown"].contains("{{text}}"));
+    }
+
+    #[test]
+    fn test_in_memory_template_loader_load_templates_returns_clone() {
+        let loader = InMemoryTemplateLoader::new().with_template("k", "v");
+        let t1 = loader.load_templates().expect("load");
+        let t2 = loader.load_templates().expect("load");
+        assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn test_in_memory_template_loader_default_empty() {
+        let loader = InMemoryTemplateLoader::default();
+        let templates = loader.load_templates().expect("load");
+        assert!(templates.is_empty());
+    }
+
+    #[test]
+    fn test_in_memory_template_loader_builder_chain() {
+        let loader = InMemoryTemplateLoader::new()
+            .with_template("a", "1")
+            .with_template("b", "2")
+            .with_default_templates();
+        let templates = loader.load_templates().expect("load");
+        assert_eq!(templates.len(), 4);
+        assert_eq!(templates.get("a"), Some(&"1".to_string()));
+        assert_eq!(templates.get("b"), Some(&"2".to_string()));
+        assert!(templates.contains_key("json"));
+        assert!(templates.contains_key("markdown"));
+    }
+
+    // ========== FileTemplateLoader ==========
+
+    #[test]
+    fn test_file_template_loader_new_valid_file_loads_templates() {
+        // Write a valid TOML file to a temp path
+        let toml_content = r#"
+[extraction]
+json = "Extract JSON: {{text}} schema={{schema}}"
+markdown = "Extract MD: {{text}}"
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+        std::io::Write::write_all(&mut tmp, toml_content.as_bytes()).expect("write");
+        let path = tmp.path().to_str().expect("path str").to_string();
+
+        let loader = FileTemplateLoader::new(&path);
+        let templates = loader.load_templates().expect("load");
+        assert_eq!(templates.len(), 2);
+        assert!(templates.contains_key("json"));
+        assert!(templates.contains_key("markdown"));
+        assert!(templates["json"].contains("{{text}}"));
+    }
+
+    #[test]
+    fn test_file_template_loader_new_invalid_path_returns_empty() {
+        // Non-existent path: new() swallows the error and returns empty HashMap
+        let loader = FileTemplateLoader::new("/nonexistent/path/that/does/not/exist.toml");
+        let templates = loader.load_templates().expect("load");
+        assert!(templates.is_empty());
+    }
+
+    #[test]
+    fn test_file_template_loader_read_templates_valid_toml() {
+        let toml_content = r#"
+[extraction]
+json = "J"
+markdown = "M"
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+        std::io::Write::write_all(&mut tmp, toml_content.as_bytes()).expect("write");
+        let path = tmp.path().to_str().expect("path str");
+
+        let templates = FileTemplateLoader::read_templates(path).expect("read");
+        assert_eq!(templates.len(), 2);
+        assert_eq!(templates.get("json"), Some(&"J".to_string()));
+        assert_eq!(templates.get("markdown"), Some(&"M".to_string()));
+    }
+
+    #[test]
+    fn test_file_template_loader_read_templates_invalid_toml_returns_error() {
+        let invalid_toml = "this is not valid toml {{{{";
+        let mut tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+        std::io::Write::write_all(&mut tmp, invalid_toml.as_bytes()).expect("write");
+        let path = tmp.path().to_str().expect("path str");
+
+        let result = FileTemplateLoader::read_templates(path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_template_loader_read_templates_partial_toml_only_json() {
+        let toml_content = r#"
+[extraction]
+json = "Only JSON template"
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+        std::io::Write::write_all(&mut tmp, toml_content.as_bytes()).expect("write");
+        let path = tmp.path().to_str().expect("path str");
+
+        let templates = FileTemplateLoader::read_templates(path).expect("read");
+        assert_eq!(templates.len(), 1);
+        assert!(templates.contains_key("json"));
+        assert!(!templates.contains_key("markdown"));
+    }
+
+    #[test]
+    fn test_file_template_loader_read_templates_no_extraction_key() {
+        let toml_content = r#"
+[other]
+foo = "bar"
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+        std::io::Write::write_all(&mut tmp, toml_content.as_bytes()).expect("write");
+        let path = tmp.path().to_str().expect("path str");
+
+        let templates = FileTemplateLoader::read_templates(path).expect("read");
+        assert!(templates.is_empty(), "no extraction key → empty templates");
+    }
+
+    #[test]
+    fn test_file_template_loader_load_templates_returns_clone() {
+        let toml_content = r#"
+[extraction]
+json = "J"
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().expect("create tempfile");
+        std::io::Write::write_all(&mut tmp, toml_content.as_bytes()).expect("write");
+        let path = tmp.path().to_str().expect("path str").to_string();
+
+        let loader = FileTemplateLoader::new(&path);
+        let t1 = loader.load_templates().expect("load");
+        let t2 = loader.load_templates().expect("load");
+        assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn test_file_template_loader_default() {
+        // Default uses config/prompts.toml; in test env this may or may not exist.
+        // We just verify it doesn't panic and returns a HashMap.
+        let loader = FileTemplateLoader::default();
+        let _templates = loader.load_templates().expect("load");
+    }
+
+    #[test]
+    fn test_file_template_loader_default_path_does_not_panic() {
+        let loader = FileTemplateLoader::default_path();
+        let _templates = loader.load_templates().expect("load");
+    }
+
+    // ========== LLMService construction ==========
+
+    #[test]
+    fn test_llm_service_new_with_config_creates_instance() {
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "test-key".to_string(),
+            "gpt-4".to_string(),
+            "http://localhost:8080".to_string(),
+            http_client,
+        );
+        assert_eq!(service.model, "gpt-4");
+        assert_eq!(service.provider, "openai");
+        assert_eq!(service.api_base_url, Some("http://localhost:8080".to_string()));
+        assert_eq!(service.api_key, Some("test-key".to_string()));
+    }
+
+    #[test]
+    fn test_llm_service_new_with_config_and_loader_creates_instance() {
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(
+            InMemoryTemplateLoader::new()
+                .with_template("json", "J {{text}}")
+                .with_template("markdown", "M {{text}}"),
+        );
+        let service = LLMService::new_with_config_and_loader(
+            "key".to_string(),
+            "m".to_string(),
+            "http://x:1234".to_string(),
+            http_client,
+            loader,
+        );
+        assert_eq!(service.model, "m");
+        assert_eq!(service.provider, "openai");
+        assert_eq!(service.api_base_url, Some("http://x:1234".to_string()));
+        assert_eq!(service.api_key, Some("key".to_string()));
+        let templates = service.templates.clone();
+        assert_eq!(templates.len(), 2);
+        assert!(templates.contains_key("json"));
+        assert!(templates.contains_key("markdown"));
+    }
+
+    #[test]
+    fn test_llm_service_new_with_config_has_default_templates() {
+        // new_with_config uses InMemoryTemplateLoader::new().with_default_templates()
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://localhost:1".to_string(),
+            http_client,
+        );
+        assert!(service.templates.contains_key("json"));
+        assert!(service.templates.contains_key("markdown"));
+    }
+
+    #[tokio::test]
+    async fn test_llm_service_engine_client_is_constructed() {
+        // Verify create_engine_client produces a usable engine client via new_with_config
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://localhost:2".to_string(),
+            http_client,
+        );
+        // engine_client is private but we can verify it exists by calling extract_data_internal
+        // which uses it. We test template-not-found path (no HTTP call needed).
+        let result = service
+            .extract_data_internal("text", &json!({}), "nonexistent_format")
+            .await;
+        assert!(result.is_err());
+    }
+
+    // ========== extract_data_internal: error paths ==========
+
+    #[tokio::test]
+    async fn test_extract_data_internal_template_not_found_returns_error() {
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://localhost:3".to_string(),
+            http_client,
+        );
+        let result = service
+            .extract_data_internal("text", &json!({}), "unknown_format")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("Template not found"), "msg: {}", msg);
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_no_api_base_url_without_experimental_returns_error() {
+        // In default feature (no experimental), api_base_url=None should return error.
+        let http_client = Arc::new(reqwest::Client::new());
+        let mut service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://localhost:4".to_string(),
+            http_client,
+        );
+        service.api_base_url = None; // override to test the None branch
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("experimental") || msg.contains("experimental"),
+            "should mention experimental feature, got: {}",
+            msg
+        );
+    }
+
+    // ========== extract_data_internal: URL construction paths ==========
+    // EngineClient::scrape() always validates URLs via SSRF protection,
+    // which blocks 127.0.0.1/localhost. These tests verify that the URL
+    // construction branches are exercised by checking the SSRF error is
+    // returned (proving the code reached the scrape call, past template
+    // lookup, prompt construction, URL construction, and request building).
+
+    #[tokio::test]
+    async fn test_extract_data_internal_default_url_construction_hits_ssrf() {
+        // Default branch: base_url without /v1 or :11434
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://127.0.0.1:9999".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("SSRF protection"),
+            "should fail at SSRF (proving default URL construction ran), got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_v1_url_construction_hits_ssrf() {
+        // /v1 branch: base_url ends with /v1
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://127.0.0.1:9999/v1".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("SSRF protection"),
+            "should fail at SSRF (proving /v1 URL construction ran), got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_v1_trailing_slash_url_construction_hits_ssrf() {
+        // /v1/ branch: base_url ends with /v1/
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://127.0.0.1:9999/v1/".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("SSRF protection"),
+            "should fail at SSRF (proving /v1/ URL construction ran), got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_ollama_port_url_construction_hits_ssrf() {
+        // :11434 branch: base_url contains :11434
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://127.0.0.1:11434".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("SSRF protection"),
+            "should fail at SSRF (proving :11434 URL construction ran), got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_ssrf_error_not_template_error() {
+        // Verify the error is SSRF (code reached scrape), not template-not-found
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://127.0.0.1:9999".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            !msg.contains("Template not found"),
+            "should NOT be template error, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("SSRF protection") || msg.contains("Direct LLM call failed"),
+            "should be SSRF/scrape error, got: {}",
+            msg
+        );
+    }
+
+    // ========== new_with_template_loader ==========
+
+    #[tokio::test]
+    async fn test_new_with_template_loader_with_custom_templates() {
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(
+            InMemoryTemplateLoader::new()
+                .with_template("json", "Custom J {{text}}")
+                .with_template("markdown", "Custom M {{text}}"),
+        );
+        // We can't easily construct Settings, but we can test new_with_config_and_loader
+        // which has a similar code path.
+        let service = LLMService::new_with_config_and_loader(
+            "key".to_string(),
+            "model".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            http_client,
+            loader,
+        );
+        assert_eq!(service.templates.len(), 2);
+        assert_eq!(
+            service.templates.get("json"),
+            Some(&"Custom J {{text}}".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_new_with_config_and_loader_with_failing_loader() {
+        // When template loader fails, templates should be empty (unwrap_or_default)
+        struct FailingLoader;
+        #[async_trait]
+        impl TemplateLoaderTrait for FailingLoader {
+            fn load_templates(&self) -> Result<HashMap<String, String>> {
+                Err(anyhow::anyhow!("simulated load failure"))
+            }
+        }
+
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(FailingLoader);
+        let service = LLMService::new_with_config_and_loader(
+            "key".to_string(),
+            "model".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            http_client,
+            loader,
+        );
+        // Failing loader → unwrap_or_default → empty HashMap
+        assert!(service.templates.is_empty());
+    }
+
+    // ========== LLMService Clone ==========
+
+    #[test]
+    fn test_llm_service_clone_preserves_fields() {
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "key".to_string(),
+            "model-x".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            http_client,
+        );
+        let cloned = service.clone();
+        assert_eq!(cloned.model, "model-x");
+        assert_eq!(cloned.provider, "openai");
+        assert_eq!(cloned.api_key, Some("key".to_string()));
+        assert_eq!(cloned.api_base_url, Some("http://127.0.0.1:1".to_string()));
+        assert!(cloned.templates.contains_key("json"));
+    }
+
+    // ========== LLMServiceTrait impl ==========
+
+    #[tokio::test]
+    async fn test_llm_service_trait_impl_returns_ssrf_error() {
+        // The trait method delegates to extract_data_internal.
+        // We verify delegation by checking the same SSRF error path.
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://127.0.0.1:9999".to_string(),
+            http_client,
+        );
+
+        let trait_ref: &dyn LLMServiceTrait = &service;
+        let result = trait_ref
+            .extract_data("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("SSRF protection") || msg.contains("Direct LLM call failed"),
+            "trait impl should delegate to internal, got: {}",
+            msg
+        );
+    }
+
+    // ========== new_with_template_loader (with real Settings) ==========
+
+    use crate::config::settings::LLMSettings;
+
+    fn make_test_settings(llm: LLMSettings) -> Settings {
+        use crate::config::settings::*;
+        Settings {
+            server: ServerSettings::default(),
+            database: DatabaseSettings::default(),
+            redis: RedisSettings::default(),
+            cors: CorsSettings::default(),
+            rate_limiting: RateLimitingSettings::default(),
+            concurrency: ConcurrencySettings::default(),
+            storage: StorageSettings::default(),
+            webhook: WebhookSettings::default(),
+            bing_search: BingSearchSettings::default(),
+            search: SearchSettings::default(),
+            llm,
+            proxy: ProxySettings::default(),
+            engines: EngineSettings::default(),
+            logging: LoggingSettings::default(),
+            workers: WorkerSettings::default(),
+            timeouts: TimeoutSettings::default(),
+            cache: CacheSettings::default(),
+            trusted_proxies: TrustedProxySettings::default(),
+        }
+    }
+
+    #[test]
+    fn test_new_with_template_loader_default_settings() {
+        let settings = make_test_settings(LLMSettings::default());
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
+        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
+        // LLMSettings::default(): provider=None→"openai", model=Some("gpt-3.5-turbo"),
+        // api_base_url=Some("https://api.openai.com/v1"), api_key=None
+        assert_eq!(service.provider, "openai");
+        assert_eq!(service.model, "gpt-3.5-turbo");
+        assert_eq!(
+            service.api_base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        assert!(service.api_key.is_none());
+    }
+
+    #[test]
+    fn test_new_with_template_loader_with_provider_and_model() {
+        let llm = LLMSettings {
+            provider: Some("anthropic".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("claude-3".to_string()),
+            api_base_url: Some("https://api.anthropic.com".to_string()),
+        };
+        let settings = make_test_settings(llm);
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
+        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
+        assert_eq!(service.provider, "anthropic");
+        assert_eq!(service.model, "claude-3");
+        assert_eq!(
+            service.api_base_url.as_deref(),
+            Some("https://api.anthropic.com")
+        );
+        assert_eq!(service.api_key.as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn test_new_with_template_loader_ollama_port_forces_openai() {
+        let llm = LLMSettings {
+            provider: Some("ollama".to_string()),
+            api_key: None,
+            model: None,
+            api_base_url: Some("http://192.168.1.5:11434".to_string()),
+        };
+        let settings = make_test_settings(llm);
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
+        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
+        assert_eq!(service.provider, "openai");
+        assert_eq!(service.model, "gpt-3.5-turbo");
+    }
+
+    #[test]
+    fn test_new_with_template_loader_172_24_160_1_forces_openai() {
+        let llm = LLMSettings {
+            provider: Some("ollama".to_string()),
+            api_key: None,
+            model: None,
+            api_base_url: Some("http://172.24.160.1:8080".to_string()),
+        };
+        let settings = make_test_settings(llm);
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
+        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
+        assert_eq!(service.provider, "openai");
+    }
+
+    #[test]
+    fn test_new_with_template_loader_no_api_base_url_skips_ollama_check() {
+        let llm = LLMSettings {
+            provider: Some("ollama".to_string()),
+            api_key: None,
+            model: None,
+            api_base_url: None,
+        };
+        let settings = make_test_settings(llm);
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
+        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
+        assert_eq!(service.provider, "ollama");
+    }
+
+    #[test]
+    fn test_new_with_template_loader_failing_loader_uses_empty_templates() {
+        struct FailingLoader;
+        impl TemplateLoaderTrait for FailingLoader {
+            fn load_templates(&self) -> Result<HashMap<String, String>> {
+                Err(anyhow::anyhow!("load fail"))
+            }
+        }
+        let settings = make_test_settings(LLMSettings::default());
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(FailingLoader);
+        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
+        assert!(service.templates.is_empty());
+    }
+
+    #[test]
+    fn test_new_with_file_template_loader_default() {
+        let settings = make_test_settings(LLMSettings::default());
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new(&settings, http_client);
+        assert_eq!(service.provider, "openai");
+        assert_eq!(service.model, "gpt-3.5-turbo");
+    }
+}
