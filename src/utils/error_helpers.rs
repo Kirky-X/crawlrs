@@ -22,7 +22,7 @@ pub fn map_to_database_error<E: Display>(error: E) -> AppError {
 
 /// 将错误转换为 AppError::Network
 pub fn map_to_network_error<E: Display>(error: E) -> AppError {
-    AppError::Network(format!("Network error: {}", error))
+    AppError::Network(error.to_string())
 }
 
 #[cfg(test)]

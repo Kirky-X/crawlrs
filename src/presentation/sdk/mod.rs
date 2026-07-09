@@ -18,17 +18,19 @@ use uuid::Uuid;
 use crate::domain::models::{Crawl, Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::services::search_service::{SearchQuery, SearchServiceTrait};
+use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 
 // ============================================================================
 // DTOs — sdk-specific simplified request/response types.
 // Decoupled from application DTOs to avoid coupling and validation complexity.
+// team_id and api_key_id are NOT accepted from the request body — they are
+// extracted from AuthState set by auth_middleware to prevent horizontal
+// privilege escalation.
 // ============================================================================
 
 #[derive(serde::Deserialize)]
 pub struct SdkSearchRequest {
-    pub team_id: Uuid,
-    pub api_key_id: Uuid,
     pub query: String,
     pub limit: Option<u32>,
 }
@@ -50,8 +52,6 @@ pub struct SdkSearchResponse {
 
 #[derive(serde::Deserialize)]
 pub struct SdkCreateTaskRequest {
-    pub team_id: Uuid,
-    pub api_key_id: Uuid,
     pub url: String,
     pub task_type: String,
 }
@@ -65,8 +65,6 @@ pub struct SdkCreateTaskResponse {
 
 #[derive(serde::Deserialize)]
 pub struct SdkScrapeRequest {
-    pub team_id: Uuid,
-    pub api_key_id: Uuid,
     pub url: String,
 }
 
@@ -78,7 +76,6 @@ pub struct SdkScrapeResponse {
 
 #[derive(serde::Deserialize)]
 pub struct SdkCreateCrawlRequest {
-    pub team_id: Uuid,
     pub name: String,
     pub url: String,
     pub seed_url: String,
@@ -107,6 +104,7 @@ pub struct SdkCrawlResponse {
 )]
 async fn sdk_search(
     #[state] search_service: Arc<dyn SearchServiceTrait>,
+    #[state] auth_state: AuthState,
     req: SdkSearchRequest,
 ) -> Result<SdkSearchResponse, ApiError> {
     if req.query.trim().is_empty() {
@@ -129,7 +127,7 @@ async fn sdk_search(
     };
 
     let resp = search_service
-        .search(req.team_id, req.api_key_id, query)
+        .search(auth_state.team_id, auth_state.api_key_id, query)
         .await
         .map_err(|e| ApiError::Internal {
             message: e.to_string(),
@@ -163,6 +161,7 @@ async fn sdk_search(
 )]
 async fn sdk_create_task(
     #[state] queue: Arc<dyn TaskQueue>,
+    #[state] auth_state: AuthState,
     req: SdkCreateTaskRequest,
 ) -> Result<SdkCreateTaskResponse, ApiError> {
     if req.url.trim().is_empty() {
@@ -191,8 +190,8 @@ async fn sdk_create_task(
         task_type,
         status: TaskStatus::Queued,
         priority: 0,
-        team_id: req.team_id,
-        api_key_id: req.api_key_id,
+        team_id: auth_state.team_id,
+        api_key_id: auth_state.api_key_id,
         url: req.url.clone(),
         payload: serde_json::json!({}),
         retry_count: 0,
@@ -232,6 +231,7 @@ async fn sdk_create_task(
 )]
 async fn sdk_scrape(
     #[state] queue: Arc<dyn TaskQueue>,
+    #[state] auth_state: AuthState,
     req: SdkScrapeRequest,
 ) -> Result<SdkScrapeResponse, ApiError> {
     if req.url.trim().is_empty() {
@@ -248,8 +248,8 @@ async fn sdk_scrape(
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
-        team_id: req.team_id,
-        api_key_id: req.api_key_id,
+        team_id: auth_state.team_id,
+        api_key_id: auth_state.api_key_id,
         url: req.url.clone(),
         payload: serde_json::json!({}),
         retry_count: 0,
@@ -288,6 +288,7 @@ async fn sdk_scrape(
 )]
 async fn sdk_create_crawl(
     #[state] crawl_repo: Arc<dyn CrawlRepository>,
+    #[state] auth_state: AuthState,
     req: SdkCreateCrawlRequest,
 ) -> Result<SdkCrawlResponse, ApiError> {
     if req.url.trim().is_empty() {
@@ -300,7 +301,7 @@ async fn sdk_create_crawl(
 
     let crawl = Crawl::new(
         Uuid::new_v4(),
-        req.team_id,
+        auth_state.team_id,
         req.name,
         req.url,
         req.seed_url,

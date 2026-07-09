@@ -135,11 +135,6 @@ impl SearchClientTrait for SearchClientComponent {
     fn default_engine(&self) -> crate::search::types::SearchEngineType {
         self.client.default_engine()
     }
-
-    fn register_engine(&self, engine: Arc<dyn crate::search::engine_trait::SearchEngine>) {
-        // This would require interior mutability, skipping for now
-        let _ = engine;
-    }
 }
 
 // Search module components - for Shaku DI

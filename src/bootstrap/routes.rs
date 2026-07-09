@@ -274,9 +274,14 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
         .merge(v2_routes);
 
     // SDK routes (only when api-sdk feature is enabled)
+    // CRITICAL: auth_middleware is mandatory — SDK handlers extract team_id/api_key_id
+    // from AuthState set by the middleware, never from the request body.
     #[cfg(feature = "api-sdk")]
     let app = app.merge(
         crate::presentation::sdk::build_sdk_router()
+            .layer(axum::middleware::from_fn(
+                crate::presentation::middleware::auth_middleware::auth_middleware(),
+            ))
             .layer(Extension(state.search_service.clone()))
             .layer(Extension(state.task_queue.clone()))
             .layer(Extension(state.crawl_repo.clone())),

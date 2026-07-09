@@ -42,9 +42,6 @@ pub trait SearchClientTrait: shaku::Interface + Send + Sync {
 
     /// Get the default engine type
     fn default_engine(&self) -> SearchEngineType;
-
-    /// Register a new search engine
-    fn register_engine(&self, engine: Arc<dyn SearchEngine>);
 }
 
 #[derive(Clone)]
@@ -162,11 +159,6 @@ impl SearchClientTrait for SearchClient {
 
     fn default_engine(&self) -> SearchEngineType {
         self.inner.default_engine
-    }
-
-    fn register_engine(&self, _engine: Arc<dyn SearchEngine>) {
-        // This is a no-op for the default implementation
-        // since engines are registered during construction
     }
 }
 

@@ -744,10 +744,6 @@ mod tests {
         fn default_engine(&self) -> SearchEngineType {
             SearchEngineType::Google
         }
-
-        fn register_engine(&self, _engine: Arc<dyn SearchEngine>) {
-            // no-op
-        }
     }
 
     // ========== Helpers ==========
