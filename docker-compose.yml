@@ -1,0 +1,94 @@
+# Copyright (c) 2025 Kirky.X
+#
+# Licensed under the Apache License, Version 2.0
+# See LICENSE file in the project root for full license information.
+
+# =============================================================================
+# crawlrs Docker Compose
+# =============================================================================
+# Usage:
+#   docker compose up -d                    # Start all services
+#   docker compose up -d crawlrs            # Start crawlrs only (needs db + redis)
+#   docker compose --profile worker up -d   # Start with separate worker process
+#
+# Feature set is controlled via BUILD_FEATURES (default: "default").
+# For minimal build:  docker compose build --build-arg BUILD_FEATURES=lite
+# For full build:     docker compose build --build-arg BUILD_FEATURES=full
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crawlrs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crawlrs}
+      POSTGRES_DB: ${POSTGRES_DB:-crawlrs}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crawlrs}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  crawlrs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_FEATURES: ${BUILD_FEATURES:-default}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      CRAWLRS__DATABASE__URL: postgresql://${POSTGRES_USER:-crawlrs}:${POSTGRES_PASSWORD:-crawlrs}@db:5432/${POSTGRES_DB:-crawlrs}
+      CRAWLRS__REDIS__URL: redis://redis:6379
+      CRAWLRS__SERVER__HOST: "0.0.0.0"
+      CRAWLRS__SERVER__PORT: "8899"
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "8899:8899"
+    volumes:
+      - ./config:/home/crawlrs/config:ro
+    restart: unless-stopped
+
+  # Separate worker process (opt-in via --profile worker)
+  worker:
+    profiles: ["worker"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_FEATURES: ${BUILD_FEATURES:-default}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      CRAWLRS__DATABASE__URL: postgresql://${POSTGRES_USER:-crawlrs}:${POSTGRES_PASSWORD:-crawlrs}@db:5432/${POSTGRES_DB:-crawlrs}
+      CRAWLRS__REDIS__URL: redis://redis:6379
+      RUST_LOG: ${RUST_LOG:-info}
+    command: ["worker"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

@@ -34,9 +34,9 @@
 - [x] [T021] [P1] 验证 cargo build --no-default-features --features lite 可编译（最小二进制），cargo build --features full 可编译（全功能）
 
 ## Phase 7: 环境配置（pangu）
-- [ ] [T022] [P1] 检查 .github/workflows/ CI 配置完整性，确保 lint/test/build/security 全覆盖，修复缺失项
-- [ ] [T023] [P1] 检查 Dockerfile / docker-compose.yml 完整性，确保多阶段构建+特性参数化，修复缺失项
-- [ ] [T024] [P1] 检查 config/ 目录和 .env.example 完整性，确保所有新增 feature 有对应配置项
+- [x] [T022] [P1] 检查 .github/workflows/ CI 配置完整性，确保 lint/test/build/security 全覆盖，修复缺失项
+- [x] [T023] [P1] 检查 Dockerfile / docker-compose.yml 完整性，确保多阶段构建+特性参数化，修复缺失项
+- [x] [T024] [P1] 检查 config/ 目录和 .env.example 完整性，确保所有新增 feature 有对应配置项
 
 ## Phase 8: 代码覆盖率提升
 - [ ] [T025] [P0] 运行 cargo llvm-cov --features default 测量基线，生成覆盖率报告到 /tmp/coverage-baseline.txt
