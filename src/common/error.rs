@@ -24,7 +24,7 @@ pub enum AppError {
 
     /// 网络错误
     #[error("Network error: {0}")]
-    Network(#[from] reqwest::Error),
+    Network(String),
 
     /// 配置错误
     #[error("Configuration error: {0}")]
@@ -243,7 +243,11 @@ fn sanitize_engine_error(error: &str) -> String {
         .to_string();
 
     // 移除公网 IP 地址（保留格式但不暴露具体 IP）
-    let public_ip_pattern = Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b")
+    // 排除 127.x.x.x（loopback 已由 internal_service_pattern 处理端口脱敏）
+    // Rust regex crate 不支持 look-ahead，用 alternation 排除首段为 127 的情况：
+    //   首段匹配 0-126 或 128-255（[0-9]{1,2}=0-99, 1[01][0-9]=100-119,
+    //   12[0-689]=120-126/128/129, 1[3-9][0-9]=130-199, 2[0-4][0-9]=200-249, 25[0-5]=250-255）
+    let public_ip_pattern = Regex::new(r"\b(?:[0-9]{1,2}|1[01][0-9]|12[0-689]|1[3-9][0-9]|2[0-4][0-9]|25[0-5])\.(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){2}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b")
         .expect("Invalid regex pattern for public IPs");
     sanitized = public_ip_pattern
         .replace_all(&sanitized, "[IP]")
@@ -375,6 +379,16 @@ impl IntoResponse for AppError {
         };
 
         (status, Json(error_response)).into_response()
+    }
+}
+
+/// 从 reqwest::Error 转换为 AppError::Network
+///
+/// 保留 `?` 操作符对 reqwest 错误的自动转换能力。
+/// 变体 `Network(String)` 不再使用 `#[from]`，因此需要手动实现。
+impl From<reqwest::Error> for AppError {
+    fn from(err: reqwest::Error) -> Self {
+        AppError::Network(err.to_string())
     }
 }
 

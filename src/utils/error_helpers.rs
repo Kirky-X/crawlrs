@@ -22,8 +22,7 @@ pub fn map_to_database_error<E: Display>(error: E) -> AppError {
 
 /// 将错误转换为 AppError::Network
 pub fn map_to_network_error<E: Display>(error: E) -> AppError {
-    // 由于 reqwest::Error 不能直接从 StatusCode 创建，我们使用其他方式
-    AppError::Other(format!("Network error: {}", error))
+    AppError::Network(format!("Network error: {}", error))
 }
 
 #[cfg(test)]
@@ -40,5 +39,11 @@ mod tests {
     fn test_map_to_database_error() {
         let error = map_to_database_error("db error");
         assert!(matches!(error, AppError::Database(_)));
+    }
+
+    #[test]
+    fn test_map_to_network_error() {
+        let error = map_to_network_error("network failure");
+        assert!(matches!(error, AppError::Network(_)));
     }
 }
