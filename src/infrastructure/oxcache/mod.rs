@@ -359,10 +359,13 @@ mod tests {
         let controller = ConcurrencyController::new(2);
 
         // Should be able to acquire 2 permits
-        assert!(controller.try_acquire().await.is_some());
-        assert!(controller.try_acquire().await.is_some());
+        // 必须持有 permit 变量，否则 permit 在语句结束时立即 drop 并释放回信号量
+        let _p1 = controller.try_acquire().await;
+        assert!(_p1.is_some());
+        let _p2 = controller.try_acquire().await;
+        assert!(_p2.is_some());
 
-        // Third should fail
+        // Third should fail (_p1 和 _p2 仍存活，未释放)
         assert!(controller.try_acquire().await.is_none());
     }
 }

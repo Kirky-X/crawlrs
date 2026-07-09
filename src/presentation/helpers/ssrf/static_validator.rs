@@ -331,8 +331,7 @@ mod tests {
         assert!(is_internal_url("http://[fe80::1]"));
         assert!(is_internal_url("http://[fe80:abcd::1]"));
         assert!(is_internal_url("http://[febf::1]"));
-        // Not link-local
-        assert!(!is_internal_url("http://[fec0::1]"));
+        // fec0:: 属于 site-local（已由 test_ipv6_site_local 覆盖），此处不重复断言
     }
 
     #[test]

@@ -156,7 +156,12 @@ impl SecureIpExtractor {
         }
 
         // 否则从请求扩展中获取
-        let direct_ip = req.extensions().get::<SocketAddr>().map(|addr| addr.ip());
+        // Axum 的 into_make_service_with_connect_info 存入的是 ConnectInfo<SocketAddr>，
+        // 不是裸 SocketAddr，需用包装类型提取
+        let direct_ip = req
+            .extensions()
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|ci| ci.0.ip());
 
         // 如果可信代理验证已禁用，直接信任转发头（不安全，仅用于开发）
         if !self.trusted_proxies.enabled {

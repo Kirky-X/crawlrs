@@ -285,6 +285,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "requires running PostgreSQL; run with: cargo test test_create_pool -- --ignored"]
     async fn test_create_pool() {
         // This test requires a running PostgreSQL instance
         // Skip in CI without database
@@ -308,6 +309,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires running PostgreSQL; run with: cargo test test_get_session -- --ignored"]
     async fn test_get_session() {
         if std::env::var("SKIP_DATABASE_TESTS").is_ok() {
             return;

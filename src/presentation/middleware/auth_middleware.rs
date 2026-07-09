@@ -26,7 +26,7 @@ use lru::LruCache;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use sha2::{Digest, Sha256};
 use std::num::NonZeroUsize;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use log::{debug, info, warn};
@@ -44,19 +44,26 @@ const DEFAULT_CACHE_TTL_SECS: u64 = 120;
 const DEFAULT_CACHE_MAX_SIZE: usize = 10000;
 
 /// Global auth cache instance for cache invalidation across the application
-static GLOBAL_AUTH_CACHE: OnceLock<Arc<RwLock<ApiKeyCache>>> = OnceLock::new();
+/// 使用 Mutex<Option<Arc<...>>> 而非 OnceLock，以支持测试中重置全局状态
+static GLOBAL_AUTH_CACHE: Mutex<Option<Arc<RwLock<ApiKeyCache>>>> = Mutex::new(None);
 
 /// Global auth state for middleware
 static GLOBAL_AUTH_STATE: OnceLock<Arc<AuthState>> = OnceLock::new();
 
 /// Get the global auth cache instance
 pub fn get_global_auth_cache() -> Option<Arc<RwLock<ApiKeyCache>>> {
-    GLOBAL_AUTH_CACHE.get().cloned()
+    GLOBAL_AUTH_CACHE.lock().unwrap().clone()
 }
 
 /// Set the global auth cache instance (called during application startup)
 pub fn set_global_auth_cache(cache: Arc<RwLock<ApiKeyCache>>) {
-    let _ = GLOBAL_AUTH_CACHE.set(cache);
+    *GLOBAL_AUTH_CACHE.lock().unwrap() = Some(cache);
+}
+
+/// Reset the global auth cache (test-only, for avoiding cross-test OnceLock pollution)
+#[cfg(test)]
+fn reset_global_auth_cache() {
+    *GLOBAL_AUTH_CACHE.lock().unwrap() = None;
 }
 
 /// Get the global auth state for middleware
@@ -1307,6 +1314,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_cache_singleton() {
+        reset_global_auth_cache();
         let cache1 = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache1.clone());
 
@@ -1322,6 +1330,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_cache_invalidate_all() {
+        reset_global_auth_cache();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache.clone());
 

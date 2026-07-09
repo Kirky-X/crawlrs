@@ -796,23 +796,33 @@ mod tests {
         let monitor = EnvVarSecurityMonitor::default();
 
         // 测试弱默认值检测
-        std::env::set_var("TEST_JWT_SECRET", "password123");
+        // 保存原始值以便恢复（避免污染其他测试）
+        let orig_jwt = std::env::var("JWT_SECRET").ok();
+        std::env::set_var("JWT_SECRET", "password123");
         let warnings = monitor.validate_sensitive_values("production");
         let weak_warning = warnings.iter().find(|w| {
-            w.var_name == "TEST_JWT_SECRET"
+            w.var_name == "JWT_SECRET"
                 && w.warning_type == SensitiveVarWarningType::WeakDefaultValue
         });
         assert!(weak_warning.is_some(), "应该检测到弱默认值");
-        std::env::remove_var("TEST_JWT_SECRET");
+        // 恢复原始值
+        match orig_jwt {
+            Some(v) => std::env::set_var("JWT_SECRET", v),
+            None => std::env::remove_var("JWT_SECRET"),
+        }
 
         // 测试测试值模式检测
-        std::env::set_var("TEST_API_KEY", "test_secret_key");
+        let orig_api = std::env::var("API_KEY").ok();
+        std::env::set_var("API_KEY", "test_secret_key");
         let warnings = monitor.validate_sensitive_values("production");
         let test_warning = warnings.iter().find(|w| {
-            w.var_name == "TEST_API_KEY" && w.warning_type == SensitiveVarWarningType::TestValue
+            w.var_name == "API_KEY" && w.warning_type == SensitiveVarWarningType::TestValue
         });
         assert!(test_warning.is_some(), "应该检测到测试值模式");
-        std::env::remove_var("TEST_API_KEY");
+        match orig_api {
+            Some(v) => std::env::set_var("API_KEY", v),
+            None => std::env::remove_var("API_KEY"),
+        }
     }
 
     #[test]
@@ -820,29 +830,38 @@ mod tests {
         let monitor = EnvVarSecurityMonitor::default();
 
         // 设置一个过短的密钥
-        std::env::set_var("TEST_ENCRYPTION_KEY", "short");
+        // 保存原始值以便恢复（避免污染其他测试）
+        let orig = std::env::var("ENCRYPTION_KEY").ok();
+        std::env::set_var("ENCRYPTION_KEY", "short");
         let warnings = monitor.validate_sensitive_values("production");
         let short_warning = warnings.iter().find(|w| {
-            w.var_name == "TEST_ENCRYPTION_KEY"
+            w.var_name == "ENCRYPTION_KEY"
                 && w.warning_type == SensitiveVarWarningType::ShortValue
         });
         assert!(short_warning.is_some(), "应该检测到过短的密钥值");
-        std::env::remove_var("TEST_ENCRYPTION_KEY");
+        match orig {
+            Some(v) => std::env::set_var("ENCRYPTION_KEY", v),
+            None => std::env::remove_var("ENCRYPTION_KEY"),
+        }
     }
 
     #[test]
     fn test_insecure_pattern_detection() {
         let monitor = EnvVarSecurityMonitor::default();
 
-        // 设置一个与变量名相同的值
-        std::env::set_var("TEST_SECRET_KEY", "test_secret_key");
+        // 设置一个与变量名相同的值（触发 InsecurePattern: lower_value == var_name.to_lowercase()）
+        let orig = std::env::var("SECRET_KEY").ok();
+        std::env::set_var("SECRET_KEY", "secret_key");
         let warnings = monitor.validate_sensitive_values("production");
         let insecure_warning = warnings.iter().find(|w| {
-            w.var_name == "TEST_SECRET_KEY"
+            w.var_name == "SECRET_KEY"
                 && w.warning_type == SensitiveVarWarningType::InsecurePattern
         });
         assert!(insecure_warning.is_some(), "应该检测到不安全模式");
-        std::env::remove_var("TEST_SECRET_KEY");
+        match orig {
+            Some(v) => std::env::set_var("SECRET_KEY", v),
+            None => std::env::remove_var("SECRET_KEY"),
+        }
     }
 
     #[test]

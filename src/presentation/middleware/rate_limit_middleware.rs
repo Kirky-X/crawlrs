@@ -93,9 +93,9 @@ impl RateLimiter {
         let mut counts = self.in_memory_counts.write();
 
         // 先检查是否存在记录
-        let should_reset = if let Some((count, last_time)) = counts.get(key) {
+        let should_reset = if let Some((_count, last_time)) = counts.get(key) {
             let elapsed = now.duration_since(*last_time);
-            elapsed >= Duration::from_secs(self.window_seconds) || *count >= self.limit
+            elapsed >= Duration::from_secs(self.window_seconds)
         } else {
             false
         };
