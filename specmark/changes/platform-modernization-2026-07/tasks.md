@@ -46,7 +46,7 @@
 
 ## Phase 9: 安全审计（diting + tiangang）
 - [x] [T029] [P1] 运行 diting skill 对 Phase 1-8 生成的代码进行代码质量审查，修复发现的问题（commit 92a43851：C-01 CRITICAL 安全漏洞 + C-04 LSP 违规 + C-05 双重前缀；C-02/C-03/C-06 记录为设计决策/增强项）
-- [ ] [T030] [P1] 运行 tiangang skill 对 Phase 1-8 生成的代码进行 SAST 安全扫描，修复发现的漏洞
+- [x] [T030] [P1] 运行 tiangang skill 对 Phase 1-8 生成的代码进行 SAST 安全扫描，修复发现的漏洞（commit 8c7c2f1d：shell injection + 16 mutable tags pinned + 13 依赖漏洞修复；残留 3 CVE 在 rustls-webpki@0.101.7 为上游阻塞）
 
 ## Phase 10: Bug 分析（kueiku）
 - [ ] [T031] [P1] 运行 kueiku skill 分析项目可能存在的硬性 bug（依赖迁移/inklog 替换/sdforge 集成引入的），修复发现的 bug
