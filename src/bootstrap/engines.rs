@@ -195,11 +195,7 @@ mod tests {
     fn test_init_engine_components_populates_all_fields() {
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let components = init_engine_components(
-            http_client,
-            "http://localhost:10808".to_string(),
-            &engine_config,
-        );
+        let components = init_engine_components(http_client, "http://localhost:10808".to_string(), &engine_config);
         assert!(
             !components.engines.is_empty(),
             "engines vec should be non-empty"
@@ -213,11 +209,7 @@ mod tests {
     fn test_init_engine_components_engines_non_empty() {
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let components = init_engine_components(
-            http_client,
-            "http://localhost:10808".to_string(),
-            &engine_config,
-        );
+        let components = init_engine_components(http_client, "http://localhost:10808".to_string(), &engine_config);
         assert!(
             !components.engines.is_empty(),
             "EngineComponents.engines should be non-empty"
@@ -228,11 +220,7 @@ mod tests {
     fn test_init_engine_components_router_created() {
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let components = init_engine_components(
-            http_client,
-            "http://localhost:10808".to_string(),
-            &engine_config,
-        );
+        let components = init_engine_components(http_client, "http://localhost:10808".to_string(), &engine_config);
         // The router should have registered engines matching the engines vec
         let registered = components.router.registered_engines();
         assert!(
@@ -245,11 +233,7 @@ mod tests {
     fn test_init_engine_components_engine_client_created() {
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let components = init_engine_components(
-            http_client,
-            "http://localhost:10808".to_string(),
-            &engine_config,
-        );
+        let components = init_engine_components(http_client, "http://localhost:10808".to_string(), &engine_config);
         // EngineClient should report at least 1 engine
         assert!(
             components.engine_client.engine_count() >= 1,
@@ -261,11 +245,7 @@ mod tests {
     fn test_init_engine_components_clone() {
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let components = init_engine_components(
-            http_client,
-            "http://localhost:10808".to_string(),
-            &engine_config,
-        );
+        let components = init_engine_components(http_client, "http://localhost:10808".to_string(), &engine_config);
         // EngineComponents derives Clone; verify clone produces equivalent field counts
         let cloned = components.clone();
         assert_eq!(components.engines.len(), cloned.engines.len());

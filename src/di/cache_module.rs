@@ -156,8 +156,7 @@ mod tests {
     fn test_redis_client_component_new_stores_client() {
         // RedisClient::new 创建连接池对象但不会立即建立连接，无需运行 Redis 服务器
         let client = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
-        let component =
-            RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
+        let component = RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
         let retrieved = component.get_client();
         assert!(Arc::ptr_eq(&retrieved, &client));
     }
@@ -165,8 +164,7 @@ mod tests {
     #[test]
     fn test_redis_client_component_get_returns_clone() {
         let client = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
-        let component =
-            RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
+        let component = RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
         let first = component.get_client();
         let second = component.get_client();
         // 多次调用应返回指向同一 RedisClient 的 Arc
@@ -177,8 +175,7 @@ mod tests {
     #[test]
     fn test_redis_client_component_as_trait_object() {
         let client = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
-        let component =
-            RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
+        let component = RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
         let trait_obj: &dyn RedisClientTrait = &component;
         let retrieved = trait_obj.get_client();
         assert!(Arc::ptr_eq(&retrieved, &client));

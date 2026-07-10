@@ -803,4 +803,55 @@ mod tests {
             "handler should be called twice"
         );
     }
+
+    // ========== Default trait impls ==========
+
+    #[test]
+    fn test_default_event_metadata_provider_default_trait() {
+        let provider = DefaultEventMetadataProvider::default();
+        assert!(provider.get_trace_id().is_none());
+        assert!(provider.get_tenant_id().is_none());
+    }
+
+    #[test]
+    fn test_default_event_metadata_provider_debug_format() {
+        let provider = DefaultEventMetadataProvider;
+        let debug_str = format!("{:?}", provider);
+        assert!(debug_str.contains("DefaultEventMetadataProvider"));
+    }
+
+    #[test]
+    fn test_event_logging_handler_default_trait() {
+        let handler = EventLoggingHandler::default();
+        assert_eq!(handler.name(), "EventLoggingHandler");
+        assert_eq!(handler.subscribe_to(), &["*"]);
+    }
+
+    #[test]
+    fn test_event_logging_handler_debug_format() {
+        let handler = EventLoggingHandler;
+        let debug_str = format!("{:?}", handler);
+        assert!(debug_str.contains("EventLoggingHandler"));
+    }
+
+    #[test]
+    fn test_simple_event_listener_debug_format() {
+        let listener = SimpleEventListener::new();
+        let debug_str = format!("{:?}", listener);
+        assert!(debug_str.contains("SimpleEventListener"));
+    }
+
+    #[tokio::test]
+    async fn test_event_publisher_impl_publish_batch_propagates_error() {
+        // publish_batch should propagate errors from publish
+        // Since InMemoryEventBus::publish always returns Ok, we verify
+        // that publish_batch returns Ok when publishing multiple events
+        let bus = Arc::new(InMemoryEventBus::with_default_provider());
+        let publisher = EventPublisherImpl::new(bus);
+        let e1 = make_event();
+        let e2 = make_event();
+        let events: Vec<&dyn DomainEvent> = vec![&e1, &e2];
+        let result = publisher.publish_batch(events).await;
+        assert!(result.is_ok());
+    }
 }

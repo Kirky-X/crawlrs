@@ -539,6 +539,14 @@ mod tests {
         fn created_count(&self) -> usize {
             self.created.lock().unwrap().len()
         }
+
+        fn last_created_config(&self) -> Option<serde_json::Value> {
+            self.created
+                .lock()
+                .unwrap()
+                .last()
+                .map(|c| c.config().clone())
+        }
     }
 
     #[async_trait]
@@ -1507,5 +1515,275 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(crawl_repo.count_by_team_id(crawl_id).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_mock_task_repo_remaining_methods_return_defaults() {
+        let task_repo = MockTaskRepo::new();
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
+        // update echoes the task back
+        let updated = task_repo.update(&task).await.unwrap();
+        assert_eq!(updated.id, task.id);
+        // find_existing_urls returns empty set
+        let existing = task_repo
+            .find_existing_urls(&["https://a.com".to_string()])
+            .await
+            .unwrap();
+        assert!(existing.is_empty());
+        // reset_stuck_tasks returns 0
+        assert_eq!(
+            task_repo
+                .reset_stuck_tasks(chrono::Duration::minutes(5))
+                .await
+                .unwrap(),
+            0
+        );
+        // find_by_crawl_id returns empty vec
+        assert!(task_repo
+            .find_by_crawl_id(Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_empty());
+        // query_tasks returns empty vec + 0 count
+        let (tasks, count) = task_repo
+            .query_tasks(crate::domain::repositories::task_repository::TaskQueryParams::default())
+            .await
+            .unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(count, 0);
+        // batch_cancel returns empty tuples
+        let (cancelled, failed) = task_repo
+            .batch_cancel(vec![Uuid::new_v4()], Uuid::new_v4(), false)
+            .await
+            .unwrap();
+        assert!(cancelled.is_empty());
+        assert!(failed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_crawl_repo_update_echoes_back() {
+        let crawl_repo = MockCrawlRepo::new();
+        let crawl = Crawl::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "Test".to_string(),
+            "https://example.com".to_string(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
+        let result = crawl_repo.update(&crawl).await.unwrap();
+        assert_eq!(result.id, crawl.id);
+    }
+
+    #[test]
+    fn test_mock_search_engine_name_engine_type_health_all_variants() {
+        // Named branches in name(): Google, Bing, Baidu, Sogou
+        for engine_type in [
+            SearchEngineType::Google,
+            SearchEngineType::Bing,
+            SearchEngineType::Baidu,
+            SearchEngineType::Sogou,
+        ] {
+            let engine = MockSearchEngine::success_with_items(engine_type, vec![]);
+            assert_eq!(engine.engine_type(), engine_type);
+            let _ = engine.name();
+            assert!(matches!(
+                engine.health(),
+                crate::search::types::EngineHealth::Healthy
+            ));
+        }
+        // Catch-all branch in name(): Auto, Smart, ABTest
+        for engine_type in [
+            SearchEngineType::Auto,
+            SearchEngineType::Smart,
+            SearchEngineType::ABTest,
+        ] {
+            let engine = MockSearchEngine::success_with_items(engine_type, vec![]);
+            assert_eq!(engine.engine_type(), engine_type);
+            assert_eq!(engine.name(), "MockEngine");
+            assert!(matches!(
+                engine.health(),
+                crate::search::types::EngineHealth::Healthy
+            ));
+        }
+    }
+
+    #[test]
+    fn test_mock_search_engine_last_request_is_none_initially() {
+        let engine = MockSearchEngine::success_with_items(SearchEngineType::Google, vec![]);
+        assert!(engine.last_request().is_none());
+    }
+
+    fn make_test_settings_for_search() -> Settings {
+        use crate::config::settings::*;
+        Settings {
+            server: ServerSettings::default(),
+            database: DatabaseSettings::default(),
+            redis: RedisSettings::default(),
+            cors: CorsSettings::default(),
+            rate_limiting: RateLimitingSettings::default(),
+            concurrency: ConcurrencySettings::default(),
+            storage: StorageSettings::default(),
+            webhook: WebhookSettings::default(),
+            bing_search: BingSearchSettings::default(),
+            search: SearchSettings::default(),
+            llm: LLMSettings::default(),
+            proxy: ProxySettings::default(),
+            engines: EngineSettings::default(),
+            logging: LoggingSettings::default(),
+            workers: WorkerSettings::default(),
+            timeouts: TimeoutSettings::default(),
+            cache: CacheSettings::default(),
+            trusted_proxies: TrustedProxySettings::default(),
+        }
+    }
+
+    #[test]
+    fn test_search_service_new_constructor_assigns_dependencies() {
+        let settings = make_test_settings_for_search();
+        let service = SearchService::new(
+            Arc::new(MockCrawlRepo::new()),
+            Arc::new(MockTaskRepo::new()),
+            Arc::new(MockCreditsRepo::with_balance(10)),
+            Arc::new(settings),
+            Arc::new(MockSearchClient::new()),
+        );
+        // Verify the service is usable by performing a search that exercises
+        // the injected mocks (empty query → ValidationError before touching repos)
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(service.search(Uuid::new_v4(), Uuid::new_v4(), make_query("")))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SearchServiceError::ValidationError(ref msg) if msg.contains("empty")
+        ));
+    }
+
+    // ========== crawl_config custom path tests ==========
+
+    #[tokio::test]
+    async fn test_search_with_crawl_results_and_custom_crawl_config() {
+        // Exercises the `query.crawl_config.unwrap_or(default)` branch where
+        // crawl_config is Some(custom). Verifies the custom config values are
+        // serialized into the created Crawl record (not the defaults).
+        let credits = Arc::new(MockCreditsRepo::with_balance(100));
+        let (service, crawl_repo, task_repo) = make_service_with_recording(
+            credits,
+            Arc::new(MockSearchClient::new()),
+        );
+        let custom_config = SearchCrawlConfig {
+            max_depth: 5,
+            include_patterns: Some(vec!["*/blog/*".to_string()]),
+            exclude_patterns: Some(vec!["*/admin/*".to_string()]),
+            strategy: "dfs".to_string(),
+            crawl_delay_ms: Some(1000),
+            max_concurrency: 20,
+            headers: Some(json!({"User-Agent": "CrawlrsBot"})),
+            proxy: Some("http://proxy:8080".to_string()),
+            extraction_rules: None,
+        };
+        let query = SearchQuery {
+            crawl_results: Some(true),
+            crawl_config: Some(custom_config),
+            ..make_query("custom crawl config")
+        };
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        assert!(result.is_ok(), "expected ok, got {:?}", result.err());
+        let resp = result.unwrap();
+        assert!(resp.crawl_id.is_some(), "crawl_id should be set");
+        assert_eq!(crawl_repo.created_count(), 1, "one crawl record created");
+        assert_eq!(
+            task_repo.created_count(),
+            resp.results.len(),
+            "one task per result"
+        );
+        // Verify the custom config (not defaults) was serialized into the crawl
+        let config = crawl_repo
+            .last_created_config()
+            .expect("crawl record should exist");
+        assert_eq!(config["max_depth"], 5, "custom max_depth should be 5");
+        assert_eq!(config["strategy"], "dfs", "custom strategy should be dfs");
+        assert_eq!(
+            config["max_concurrency"], 20,
+            "custom max_concurrency should be 20"
+        );
+        assert_eq!(
+            config["crawl_delay_ms"], 1000,
+            "custom crawl_delay_ms should be 1000"
+        );
+        assert_eq!(
+            config["proxy"], "http://proxy:8080",
+            "custom proxy should be set"
+        );
+        assert_eq!(
+            config["include_patterns"][0], "*/blog/*",
+            "custom include_patterns should be set"
+        );
+        assert_eq!(
+            config["exclude_patterns"][0], "*/admin/*",
+            "custom exclude_patterns should be set"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_with_crawl_results_default_config_uses_bfs_strategy() {
+        // Exercises the `query.crawl_config.unwrap_or(default)` branch where
+        // crawl_config is None. Verifies the default config uses strategy="bfs"
+        // and max_depth=1, confirming the default branch is distinct from the
+        // custom config branch.
+        let credits = Arc::new(MockCreditsRepo::with_balance(100));
+        let (service, crawl_repo, _) = make_service_with_recording(
+            credits,
+            Arc::new(MockSearchClient::new()),
+        );
+        let query = SearchQuery {
+            crawl_results: Some(true),
+            crawl_config: None,
+            ..make_query("default crawl config")
+        };
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert!(resp.crawl_id.is_some());
+        let config = crawl_repo
+            .last_created_config()
+            .expect("crawl record should exist");
+        assert_eq!(config["max_depth"], 1, "default max_depth should be 1");
+        assert_eq!(
+            config["strategy"], "bfs",
+            "default strategy should be bfs"
+        );
+        assert_eq!(
+            config["max_concurrency"], 10,
+            "default max_concurrency should be 10"
+        );
+    }
+
+    // ========== SearchServiceError display tests for remaining variants ==========
+
+    #[test]
+    fn test_search_service_error_display_repository() {
+        let inner = RepositoryError::Database(anyhow::anyhow!("db connection lost"));
+        let err = SearchServiceError::Repository(inner);
+        let msg = err.to_string();
+        assert!(msg.contains("Repository error"));
+        assert!(msg.contains("db connection lost"));
+    }
+
+    #[test]
+    fn test_search_service_error_display_credits_repository() {
+        let inner = CreditsRepositoryError::DatabaseError("redis timeout".to_string());
+        let err = SearchServiceError::CreditsRepository(inner);
+        let msg = err.to_string();
+        assert!(msg.contains("Credits repository error"));
+        assert!(msg.contains("redis timeout"));
     }
 }

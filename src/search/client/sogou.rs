@@ -221,3 +221,251 @@ impl SearchEngine for SogouSearchEngine {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // Copyright (c) 2025 Kirky.X
+    // Licensed under the Apache License, Version 2.0
+    use super::*;
+
+    // 创建测试用 SogouSearchEngine
+    fn make_engine() -> SogouSearchEngine {
+        SogouSearchEngine::new(Arc::new(EngineClient::new()))
+    }
+
+    // ========== safe_parse_selector 测试 ==========
+
+    #[test]
+    fn test_safe_parse_selector_valid() {
+        let result = safe_parse_selector(".vrwrap");
+        assert!(result.is_some(), "valid CSS selector should parse");
+    }
+
+    #[test]
+    fn test_safe_parse_selector_invalid() {
+        let result = safe_parse_selector(">>>invalid<<<");
+        assert!(result.is_none(), "invalid CSS selector should return None");
+    }
+
+    // ========== resolve_url 测试 ==========
+
+    #[test]
+    fn test_resolve_url_empty() {
+        let engine = make_engine();
+        assert_eq!(engine.resolve_url(""), "");
+    }
+
+    #[test]
+    fn test_resolve_url_https() {
+        let engine = make_engine();
+        let url = "https://example.com/page";
+        assert_eq!(engine.resolve_url(url), url);
+    }
+
+    #[test]
+    fn test_resolve_url_http() {
+        let engine = make_engine();
+        let url = "http://example.com/page";
+        assert_eq!(engine.resolve_url(url), url);
+    }
+
+    #[test]
+    fn test_resolve_url_invalid_scheme_rejected() {
+        let engine = make_engine();
+        // ftp:// 开头的 URL 虽然以 http 开头匹配但会解析失败，返回空
+        assert_eq!(engine.resolve_url("ftp://example.com"), "");
+    }
+
+    #[test]
+    fn test_resolve_url_malformed_http_rejected() {
+        let engine = make_engine();
+        // "http://" 开头但无法解析的 URL 应返回空
+        assert_eq!(engine.resolve_url("http://"), "");
+    }
+
+    #[test]
+    fn test_resolve_url_sogou_link_redirect() {
+        let engine = make_engine();
+        // 搜狗中转链接，包含完整 URL
+        let url = "/link?url=https%3A%2F%2Fwww.example.com%2Fpage";
+        let resolved = engine.resolve_url(url);
+        assert_eq!(resolved, "https://www.example.com/page");
+    }
+
+    #[test]
+    fn test_resolve_url_relative_path() {
+        let engine = make_engine();
+        let url = "/web?query=test";
+        let resolved = engine.resolve_url(url);
+        assert_eq!(resolved, "https://www.sogou.com/web?query=test");
+    }
+
+    #[test]
+    fn test_resolve_url_non_http_non_relative_rejected() {
+        let engine = make_engine();
+        // 既不是 http/https 开头，也不是 / 开头，应返回空
+        assert_eq!(engine.resolve_url("just-some-text"), "");
+    }
+
+    // ========== parse_search_results 测试 ==========
+
+    #[test]
+    fn test_parse_search_results_valid_html() {
+        let engine = make_engine();
+        let html = r#"
+        <div class="vrwrap">
+            <h3><a href="https://example.com/result1">Example Result 1</a></h3>
+        </div>
+        <div class="vrwrap">
+            <h3><a href="https://example.com/result2">Example Result 2</a></h3>
+        </div>
+        "#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Example Result 1");
+        assert_eq!(results[0].url, "https://example.com/result1");
+        assert_eq!(results[0].engine, SearchEngineType::Sogou);
+        assert_eq!(results[1].title, "Example Result 2");
+    }
+
+    #[test]
+    fn test_parse_search_results_rb_class() {
+        let engine = make_engine();
+        // .rb 也是一个结果容器选择器
+        let html = r#"
+        <div class="rb">
+            <h3><a href="https://example.com/rb-result">RB Result</a></h3>
+        </div>
+        "#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "RB Result");
+    }
+
+    #[test]
+    fn test_parse_search_results_empty_html() {
+        let engine = make_engine();
+        let results = engine.parse_search_results("").unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_search_results_no_results() {
+        let engine = make_engine();
+        let html = "<html><body><p>No results here</p></body></html>";
+        let results = engine.parse_search_results(html).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_search_results_missing_title_skipped() {
+        let engine = make_engine();
+        // 没有 h3 标题的 vrwrap 应被跳过
+        let html = r#"
+        <div class="vrwrap">
+            <a href="https://example.com/no-title">No Title</a>
+        </div>
+        <div class="vrwrap">
+            <h3><a href="https://example.com/with-title">With Title</a></h3>
+        </div>
+        "#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "With Title");
+    }
+
+    #[test]
+    fn test_parse_search_results_empty_title_skipped() {
+        let engine = make_engine();
+        // 空标题应被跳过
+        let html = r#"
+        <div class="vrwrap">
+            <h3>   </h3>
+            <a href="https://example.com/empty-title">Empty Title</a>
+        </div>
+        "#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_search_results_sogou_redirect_link() {
+        let engine = make_engine();
+        // 搜狗中转链接应被正确解析
+        let html = r#"
+        <div class="vrwrap">
+            <h3><a href="/link?url=https%3A%2F%2Fwww.example.com%2Farticle">Redirect Result</a></h3>
+        </div>
+        "#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://www.example.com/article");
+    }
+
+    #[test]
+    fn test_parse_search_results_empty_url_skipped() {
+        let engine = make_engine();
+        // href 为空或 resolve_url 返回空时应跳过
+        let html = r#"
+        <div class="vrwrap">
+            <h3><a>No href</a></h3>
+        </div>
+        "#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_search_results_description_is_empty() {
+        let engine = make_engine();
+        let html = r#"
+        <div class="vrwrap">
+            <h3><a href="https://example.com/test">Test</a></h3>
+        </div>
+        "#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].description, "");
+    }
+
+    // ========== SearchEngine trait 方法测试 ==========
+
+    #[test]
+    fn test_name() {
+        let engine = make_engine();
+        assert_eq!(engine.name(), "Sogou");
+    }
+
+    #[test]
+    fn test_engine_type() {
+        let engine = make_engine();
+        assert_eq!(engine.engine_type(), SearchEngineType::Sogou);
+    }
+
+    #[test]
+    fn test_health() {
+        let engine = make_engine();
+        assert_eq!(engine.health(), EngineHealth::Healthy);
+    }
+
+    // ========== search 方法测试（SOGOU_TEST_RESULTS 环境变量） ==========
+
+    #[tokio::test]
+    async fn test_search_with_test_results_env() {
+        std::env::set_var("SOGOU_TEST_RESULTS", "true");
+        let engine = make_engine();
+        let request = SearchRequest {
+            query: "test query".to_string(),
+            ..Default::default()
+        };
+        let result = engine.search(&request).await;
+        std::env::remove_var("SOGOU_TEST_RESULTS");
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.items.len(), 2);
+        assert!(response.items[0].title.contains("test query"));
+        assert_eq!(response.engine, SearchEngineType::Sogou);
+        assert_eq!(response.total_results, Some(2));
+    }
+}

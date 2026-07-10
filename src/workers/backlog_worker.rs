@@ -449,6 +449,15 @@ mod tests {
             }
         }
 
+        fn new_with_expired(expired: Vec<TasksBacklog>) -> Self {
+            Self {
+                pending: Mutex::new(vec![]),
+                expired: Mutex::new(expired),
+                updated: Mutex::new(vec![]),
+                fail_get_pending: false,
+            }
+        }
+
         fn updated(&self) -> Vec<TasksBacklog> {
             self.updated.lock().unwrap().clone()
         }
@@ -537,7 +546,6 @@ mod tests {
             self
         }
 
-        #[allow(dead_code)]
         fn updated_tasks(&self) -> Vec<Task> {
             self.updated_tasks.lock().unwrap().clone()
         }
@@ -626,12 +634,14 @@ mod tests {
 
     struct MockRateLimitingService {
         concurrency_result: Mutex<ConcurrencyResult>,
+        should_error: bool,
     }
 
     impl MockRateLimitingService {
         fn new_allowed() -> Self {
             Self {
                 concurrency_result: Mutex::new(ConcurrencyResult::Allowed),
+                should_error: false,
             }
         }
 
@@ -640,6 +650,7 @@ mod tests {
                 concurrency_result: Mutex::new(ConcurrencyResult::Denied {
                     reason: "limit reached".to_string(),
                 }),
+                should_error: false,
             }
         }
 
@@ -648,6 +659,14 @@ mod tests {
                 concurrency_result: Mutex::new(ConcurrencyResult::Queued {
                     backlog_id: Uuid::new_v4(),
                 }),
+                should_error: false,
+            }
+        }
+
+        fn new_error() -> Self {
+            Self {
+                concurrency_result: Mutex::new(ConcurrencyResult::Allowed),
+                should_error: true,
             }
         }
     }
@@ -689,6 +708,9 @@ mod tests {
             _team_id: Uuid,
             _task_id: Uuid,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
+            if self.should_error {
+                return Err(RateLimitingError::Other(anyhow::anyhow!("redis error")));
+            }
             Ok(self.concurrency_result.lock().unwrap().clone())
         }
 
@@ -774,6 +796,12 @@ mod tests {
         let mut backlog = make_backlog(team_id, task_id);
         backlog.retry_count = 3;
         backlog.max_retries = 3;
+        backlog
+    }
+
+    fn make_processing_backlog(team_id: Uuid, task_id: Uuid) -> TasksBacklog {
+        let mut backlog = make_backlog(team_id, task_id);
+        backlog.mark_processing().unwrap();
         backlog
     }
 
@@ -1099,5 +1127,232 @@ mod tests {
         let config = RedisClientConfig::default();
         // Just verify it can be constructed
         assert!(config.max_connections > 0);
+    }
+
+    // ========== cleanup_expired_tasks: process_expired_backlog with task not found ==========
+
+    #[tokio::test]
+    async fn test_cleanup_expired_backlog_task_not_found() {
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let expired_backlog = make_expired_backlog(team_id, task_id);
+        let repo = Arc::new(MockBacklogRepo::new_with_expired(vec![expired_backlog]));
+        let updated_repo = repo.clone();
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new()), // no task stored
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        // The expired backlog should be marked as Expired via update
+        let updated = updated_repo.updated();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(
+            updated[0].status,
+            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Expired
+        );
+    }
+
+    // ========== cleanup_expired_tasks: process_expired_backlog marks Queued task as Failed ==========
+
+    #[tokio::test]
+    async fn test_cleanup_expired_with_queued_task_marks_failed() {
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let expired_backlog = make_expired_backlog(team_id, task_id);
+        let task = make_task(task_id, TaskStatus::Queued);
+        let repo = Arc::new(MockBacklogRepo::new_with_expired(vec![expired_backlog]));
+        let updated_repo = repo.clone();
+        let task_repo = Arc::new(MockTaskRepo::new().with_task(task));
+        let task_repo_for_check = task_repo.clone();
+        let worker = make_worker(
+            repo,
+            task_repo,
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        // The expired backlog should be marked as Expired
+        let updated = updated_repo.updated();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(
+            updated[0].status,
+            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Expired
+        );
+        // The Queued task should have been marked as Failed
+        let updated_tasks = task_repo_for_check.updated_tasks();
+        assert_eq!(updated_tasks.len(), 1);
+        assert_eq!(updated_tasks[0].status, TaskStatus::Failed);
+    }
+
+    // ========== cleanup_expired_tasks: process_expired_backlog with non-Queued task ==========
+
+    #[tokio::test]
+    async fn test_cleanup_expired_with_non_queued_task_no_task_update() {
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let expired_backlog = make_expired_backlog(team_id, task_id);
+        // Task is already Completed, so it should NOT be marked as Failed
+        let task = make_task(task_id, TaskStatus::Completed);
+        let repo = Arc::new(MockBacklogRepo::new_with_expired(vec![expired_backlog]));
+        let updated_repo = repo.clone();
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new().with_task(task)),
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        // Only the backlog is updated (marked as Expired), no task update
+        let updated = updated_repo.updated();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(
+            updated[0].status,
+            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Expired
+        );
+    }
+
+    // ========== cleanup_expired_tasks: multiple expired backlogs ==========
+
+    #[tokio::test]
+    async fn test_cleanup_multiple_expired_backlogs() {
+        let team1 = Uuid::new_v4();
+        let team2 = Uuid::new_v4();
+        let expired1 = make_expired_backlog(team1, Uuid::new_v4());
+        let expired2 = make_expired_backlog(team2, Uuid::new_v4());
+        let repo = Arc::new(MockBacklogRepo::new_with_expired(vec![expired1, expired2]));
+        let updated_repo = repo.clone();
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new()),
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        let updated = updated_repo.updated();
+        assert_eq!(updated.len(), 2);
+        for entry in &updated {
+            assert_eq!(
+                entry.status,
+                crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Expired
+            );
+        }
+    }
+
+    // ========== process() success path: backlog in Processing, task Queued, Allowed ==========
+
+    #[tokio::test]
+    async fn test_process_success_reactivates_queued_task() {
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        // Backlog in Processing status so mark_completed succeeds
+        let backlog = make_processing_backlog(team_id, task_id);
+        let task = make_task(task_id, TaskStatus::Queued);
+        let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
+        let updated_repo = repo.clone();
+        let task_repo = Arc::new(MockTaskRepo::new().with_task(task));
+        let task_repo_for_check = task_repo.clone();
+        let worker = make_worker(
+            repo,
+            task_repo,
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        // The backlog should be marked as Completed
+        let updated = updated_repo.updated();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(
+            updated[0].status,
+            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Completed
+        );
+        // The task should have been updated (status stays Queued, updated_at refreshed)
+        let updated_tasks = task_repo_for_check.updated_tasks();
+        assert_eq!(updated_tasks.len(), 1);
+        assert_eq!(updated_tasks[0].status, TaskStatus::Queued);
+    }
+
+    // ========== process() success path: task not Queued marks backlog completed ==========
+
+    #[tokio::test]
+    async fn test_process_task_not_queued_marks_backlog_completed() {
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        // Backlog in Processing status so mark_completed succeeds
+        let backlog = make_processing_backlog(team_id, task_id);
+        // Task is already Completed (not Queued)
+        let task = make_task(task_id, TaskStatus::Completed);
+        let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
+        let updated_repo = repo.clone();
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new().with_task(task)),
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        // reactivate_task sees task.status != Queued, marks backlog as Completed
+        let updated = updated_repo.updated();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(
+            updated[0].status,
+            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Completed
+        );
+    }
+
+    // ========== process() with concurrency check error ==========
+
+    #[tokio::test]
+    async fn test_process_concurrency_check_error_returns_completed() {
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let backlog = make_backlog(team_id, task_id);
+        let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new()),
+            Arc::new(MockRateLimitingService::new_error()),
+            default_settings(),
+        );
+        // The error is caught in process_backlog's inner loop, so process() returns Completed
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+    }
+
+    // ========== process() with mixed backlogs (expired + normal) ==========
+
+    #[tokio::test]
+    async fn test_process_mixed_backlogs_expired_and_normal() {
+        let team_id = Uuid::new_v4();
+        let task_id1 = Uuid::new_v4();
+        let task_id2 = Uuid::new_v4();
+        // One expired backlog (will be marked Expired)
+        let expired = make_expired_backlog(team_id, task_id1);
+        // One normal backlog with denied concurrency (will stay as-is)
+        let normal = make_backlog(team_id, task_id2);
+        let repo = Arc::new(MockBacklogRepo::new(vec![expired, normal]));
+        let updated_repo = repo.clone();
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new()),
+            Arc::new(MockRateLimitingService::new_denied()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        // Only the expired backlog is updated (marked as Expired)
+        let updated = updated_repo.updated();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(
+            updated[0].status,
+            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Expired
+        );
     }
 }

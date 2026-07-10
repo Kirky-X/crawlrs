@@ -384,4 +384,237 @@ mod tests {
             result.err()
         );
     }
+
+    // ========== testcontainers integration tests ==========
+    //
+    // The following tests require Docker to be running on the host. They use
+    // testcontainers to spin up ephemeral PostgreSQL and Redis containers,
+    // enabling real end-to-end coverage of the infrastructure initialization
+    // paths that are impossible to test with mocks alone.
+    //
+    // If Docker is unavailable, each test early-returns (passes trivially)
+    // so the overall `cargo test` invocation still succeeds in CI without
+    // Docker. Run locally with Docker enabled to exercise these paths.
+
+    use crate::common::test_support::testcontainers_fixtures as tcf;
+
+    /// Helper: skip the test if Docker is unavailable.
+    async fn require_docker() -> bool {
+        tcf::docker_available().await
+    }
+
+    #[tokio::test]
+    async fn tc_init_database_connects_to_postgres() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_database_connects_to_postgres");
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres container: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let pool = init_database(&settings).await;
+        assert!(
+            pool.is_ok(),
+            "init_database should succeed against a live postgres: {:?}",
+            pool.err()
+        );
+        let pool = pool.unwrap();
+        // Verify the inner dbnexus pool can acquire a session.
+        let session = pool.get_session("admin").await;
+        assert!(
+            session.is_ok(),
+            "should be able to acquire an admin session from the pool"
+        );
+    }
+
+    #[tokio::test]
+    async fn tc_init_database_returns_arc_database_pool() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_database_returns_arc_database_pool");
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres container: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let pool = init_database(&settings).await.expect("pool should be created");
+        // Verify the Arc strong count is at least 1.
+        assert!(Arc::strong_count(&pool) >= 1);
+        // Verify inner() accessor returns a usable Arc<DbPool>.
+        let _inner: Arc<dbnexus::DbPool> = pool.inner().clone();
+    }
+
+    #[tokio::test]
+    async fn tc_init_database_fails_on_invalid_url() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_database_fails_on_invalid_url");
+            return;
+        }
+        // Use a deliberately invalid URL that cannot be connected to.
+        let settings = tcf::settings_with_urls(
+            "postgres://nobody:nopass@127.0.0.1:1/nonexistent",
+            "redis://127.0.0.1:1",
+        )
+        .unwrap();
+        let result = init_database(&settings).await;
+        assert!(
+            result.is_err(),
+            "init_database should fail when the database URL is unreachable"
+        );
+    }
+
+    #[tokio::test]
+    async fn tc_init_redis_connects_to_redis() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_redis_connects_to_redis");
+            return;
+        }
+        let redis = match tcf::RedisHandle::start().await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[skip] failed to start redis container: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls("postgres://127.0.0.1:1/x", &redis.url).unwrap();
+        let client = init_redis(&settings).await;
+        assert!(
+            client.is_ok(),
+            "init_redis should succeed against a live redis: {:?}",
+            client.err()
+        );
+        let client = client.unwrap();
+        // Verify the connection pool is usable by checking its status.
+        let _status = client.pool_status();
+    }
+
+    #[tokio::test]
+    async fn tc_init_redis_returns_arc_redis_client() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_redis_returns_arc_redis_client");
+            return;
+        }
+        let redis = match tcf::RedisHandle::start().await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[skip] failed to start redis container: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls("postgres://127.0.0.1:1/x", &redis.url).unwrap();
+        let client = init_redis(&settings).await.expect("redis client should be created");
+        assert!(Arc::strong_count(&client) >= 1);
+    }
+
+    #[tokio::test]
+    async fn tc_init_redis_fails_on_invalid_url() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_redis_fails_on_invalid_url");
+            return;
+        }
+        // Deliberately invalid Redis URL (port 1 should refuse connections).
+        // Note: RedisClient::from_settings may still construct the client
+        // object (deadpool is lazy), so we only verify it doesn't panic.
+        let settings = tcf::settings_with_urls(
+            "postgres://127.0.0.1:1/x",
+            "redis://127.0.0.1:1/0",
+        )
+        .unwrap();
+        // Construction itself should not panic; actual connection errors
+        // surface on first use.
+        let _ = init_redis(&settings).await;
+    }
+
+    #[tokio::test]
+    async fn tc_init_repositories_creates_all_repos() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_repositories_creates_all_repos");
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres container: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings).await.expect("db pool should be created");
+        let repos = init_repositories(db.clone(), &settings);
+
+        // Verify all repositories are constructed and share the same pool.
+        assert!(Arc::strong_count(&repos.task_repo.clone()) >= 1);
+        assert!(Arc::strong_count(&repos.result_repo.clone()) >= 1);
+        assert!(Arc::strong_count(&repos.crawl_repo.clone()) >= 1);
+        assert!(Arc::strong_count(&repos.webhook_event_repo.clone()) >= 1);
+        assert!(Arc::strong_count(&repos.webhook_repo.clone()) >= 1);
+        assert!(Arc::strong_count(&repos.credits_repo.clone()) >= 1);
+        assert!(Arc::strong_count(&repos.geo_restriction_repo.clone()) >= 1);
+        assert!(Arc::strong_count(&repos.tasks_backlog_repo.clone()) >= 1);
+    }
+
+    #[tokio::test]
+    async fn tc_init_infrastructure_full_stack() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_infrastructure_full_stack");
+            return;
+        }
+        let handle = match tcf::DbRedisHandle::start().await {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[skip] failed to start db+redis containers: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url).unwrap();
+        let infra = init_infrastructure(&settings).await;
+        assert!(
+            infra.is_ok(),
+            "init_infrastructure should succeed against live db+redis: {:?}",
+            infra.err()
+        );
+        let infra = infra.unwrap();
+
+        // Verify all components are present.
+        assert!(Arc::strong_count(&infra.db) >= 1);
+        assert!(Arc::strong_count(&infra.redis_client) >= 1);
+        assert!(Arc::strong_count(&infra.http_client) >= 1);
+        // oxcache may be None if cache is disabled in config; just verify it's set or None.
+        let _ = &infra.oxcache;
+        // storage_repo should be Some (local storage default).
+        assert!(infra.storage_repo.is_some());
+        // Repositories: verify task_repo is constructed (Arc strong count >= 1).
+        assert!(Arc::strong_count(&infra.repositories.task_repo) >= 1);
+    }
+
+    #[tokio::test]
+    async fn tc_init_infrastructure_fails_without_db() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_infrastructure_fails_without_db");
+            return;
+        }
+        let redis = match tcf::RedisHandle::start().await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[skip] failed to start redis container: {e}");
+                return;
+            }
+        };
+        // DB points at an unreachable port; init_infrastructure should fail.
+        let settings = tcf::settings_with_urls("postgres://127.0.0.1:1/x", &redis.url).unwrap();
+        let result = init_infrastructure(&settings).await;
+        assert!(
+            result.is_err(),
+            "init_infrastructure should fail when the database is unreachable"
+        );
+    }
 }

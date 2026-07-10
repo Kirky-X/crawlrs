@@ -241,3 +241,208 @@ impl SearchEngine for BaiduSearchEngine {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // Copyright (c) 2025 Kirky.X
+    // Licensed under the Apache License, Version 2.0
+    // See LICENSE file in the project root for full license information.
+
+    use super::*;
+    use crate::engines::engine_client::EngineClient;
+    use std::sync::Arc;
+
+    // 辅助函数：创建测试用的 BaiduSearchEngine 实例
+    fn create_engine() -> BaiduSearchEngine {
+        let engine_client = Arc::new(EngineClient::new());
+        BaiduSearchEngine::new(engine_client)
+    }
+
+    // ========== build_baidu_url 测试 ==========
+
+    #[test]
+    fn test_build_baidu_url_general_page1() {
+        // 测试通用搜索第一页的 URL 和参数构建
+        let engine = create_engine();
+        let (url, params) = engine.build_baidu_url("rust 语言", 1, BaiduSearchCategory::General);
+
+        assert_eq!(url, "https://www.baidu.com/s");
+        assert_eq!(params.get("wd"), Some(&"rust 语言".to_string()));
+        assert_eq!(params.get("rn"), Some(&"10".to_string()));
+        assert_eq!(params.get("pn"), Some(&"0".to_string()));
+        assert_eq!(params.get("tn"), Some(&"json".to_string()));
+    }
+
+    #[test]
+    fn test_build_baidu_url_general_page3_offset() {
+        // 测试页码对应的偏移量计算：page=3 → pn=20
+        let engine = create_engine();
+        let (_url, params) = engine.build_baidu_url("test", 3, BaiduSearchCategory::General);
+
+        assert_eq!(params.get("pn"), Some(&"20".to_string()));
+    }
+
+    #[test]
+    fn test_build_baidu_url_images_category() {
+        // 测试图片搜索分类的 URL 和参数
+        let engine = create_engine();
+        let (url, params) = engine.build_baidu_url("cat", 1, BaiduSearchCategory::Images);
+
+        assert_eq!(url, "https://image.baidu.com/search/acjson");
+        assert_eq!(params.get("word"), Some(&"cat".to_string()));
+        assert_eq!(params.get("tn"), Some(&"resultjson_com".to_string()));
+        assert_eq!(params.get("rn"), Some(&"30".to_string()));
+        assert_eq!(params.get("pn"), Some(&"0".to_string()));
+    }
+
+    #[test]
+    fn test_build_baidu_url_news_falls_back_to_general() {
+        // 测试 News 分类回退到通用搜索（仅包含 wd 参数）
+        let engine = create_engine();
+        let (url, params) = engine.build_baidu_url("news", 1, BaiduSearchCategory::News);
+
+        assert_eq!(url, "https://www.baidu.com/s");
+        assert_eq!(params.get("wd"), Some(&"news".to_string()));
+        assert!(params.get("rn").is_none(), "fallback should not set rn");
+    }
+
+    #[test]
+    fn test_build_baidu_url_empty_query() {
+        // 边界情况：空查询字符串仍然构建有效 URL
+        let engine = create_engine();
+        let (url, params) = engine.build_baidu_url("", 1, BaiduSearchCategory::General);
+
+        assert_eq!(url, "https://www.baidu.com/s");
+        assert_eq!(params.get("wd"), Some(&"".to_string()));
+    }
+
+    // ========== parse_baidu_response 测试 ==========
+
+    #[test]
+    fn test_parse_baidu_response_valid_json() {
+        // 测试有效 JSON 响应解析出多个结果
+        let engine = create_engine();
+        let json = r#"{
+            "feed": {
+                "entry": [
+                    {"title": "Result 1", "url": "https://example.com/1", "abs": "Desc 1"},
+                    {"title": "Result 2", "url": "https://example.com/2", "abs": "Desc 2"}
+                ]
+            }
+        }"#;
+
+        let results = engine.parse_baidu_response(json).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Result 1");
+        assert_eq!(results[0].url, "https://example.com/1");
+        assert_eq!(results[0].description, "Desc 1");
+        assert_eq!(results[0].engine, SearchEngineType::Baidu);
+        assert_eq!(results[1].title, "Result 2");
+    }
+
+    #[test]
+    fn test_parse_baidu_response_invalid_json() {
+        // 测试无效 JSON 返回 Parse 错误
+        let engine = create_engine();
+        let result = engine.parse_baidu_response("not a valid json {{{");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            SearchError::Parse(msg) => assert!(msg.contains("Failed to parse Baidu JSON")),
+            other => panic!("expected SearchError::Parse, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_baidu_response_skips_empty_title_or_url() {
+        // 边界情况：空 title 或空 url 的条目应被跳过
+        let engine = create_engine();
+        let json = r#"{
+            "feed": {
+                "entry": [
+                    {"title": "", "url": "https://example.com/1", "abs": "Desc 1"},
+                    {"title": "Result 2", "url": "", "abs": "Desc 2"},
+                    {"title": "Valid", "url": "https://example.com/3", "abs": "Desc 3"}
+                ]
+            }
+        }"#;
+
+        let results = engine.parse_baidu_response(json).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Valid");
+        assert_eq!(results[0].url, "https://example.com/3");
+    }
+
+    #[test]
+    fn test_parse_baidu_response_no_feed_entry() {
+        // 边界情况：JSON 不包含 feed/entry 字段时返回空结果
+        let engine = create_engine();
+        let json = r#"{"other": "data"}"#;
+        let results = engine.parse_baidu_response(json).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_baidu_response_html_entities_encoded() {
+        // 测试 HTML 实体被编码以防止 XSS
+        let engine = create_engine();
+        let json = r#"{
+            "feed": {
+                "entry": [
+                    {"title": "<script>alert(1)</script>", "url": "https://example.com", "abs": "a & b <c>"}
+                ]
+            }
+        }"#;
+
+        let results = engine.parse_baidu_response(json).unwrap();
+        assert_eq!(results.len(), 1);
+        // 编码后不应包含原始的 <script> 标签
+        assert!(!results[0].title.contains("<script>"));
+        assert!(results[0].title.contains("&lt;script&gt;"));
+        assert!(!results[0].description.contains("<c>"));
+    }
+
+    // ========== parse_search_results 测试 ==========
+
+    #[tokio::test]
+    async fn test_parse_search_results_valid_html() {
+        // 测试从有效百度 HTML 中解析搜索结果
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div class="c-container">
+                <h3><a href="https://example.com/1">First Result</a></h3>
+                <div class="c-abstract">First description</div>
+            </div>
+            <div class="c-container">
+                <h3><a href="https://example.com/2">Second Result</a></h3>
+                <div class="c-abstract">Second description</div>
+            </div>
+        </body></html>
+        "#;
+
+        let results = engine.parse_search_results(html, "test").await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "First Result");
+        assert_eq!(results[0].url, "https://example.com/1");
+        assert_eq!(results[0].engine, SearchEngineType::Baidu);
+        assert_eq!(results[1].title, "Second Result");
+    }
+
+    #[tokio::test]
+    async fn test_parse_search_results_empty_html() {
+        // 边界情况：空 HTML 返回空结果
+        let engine = create_engine();
+        let results = engine.parse_search_results("", "test").await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_parse_search_results_no_matching_selectors() {
+        // 边界情况：HTML 不包含百度结果选择器时返回空
+        let engine = create_engine();
+        let html = r#"<html><body><div>no results here</div></body></html>"#;
+        let results = engine.parse_search_results(html, "test").await.unwrap();
+        assert!(results.is_empty());
+    }
+}

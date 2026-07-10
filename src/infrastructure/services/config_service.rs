@@ -592,4 +592,210 @@ mod tests {
 
         std::env::remove_var("CRAWLRS_PROXY_URL");
     }
+
+    #[test]
+    fn test_config_service_empty_proxy_url_filtered_as_none() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CRAWLRS_PROXY_URL", "");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert_eq!(config.get_proxy_url(), None);
+
+        std::env::remove_var("CRAWLRS_PROXY_URL");
+    }
+
+    #[test]
+    fn test_config_service_empty_remote_debugging_url_filtered_as_none() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CHROMIUM_REMOTE_DEBUGGING_URL", "");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert_eq!(config.get_remote_debugging_url(), None);
+
+        std::env::remove_var("CHROMIUM_REMOTE_DEBUGGING_URL");
+    }
+
+    #[test]
+    fn test_config_service_empty_flaresolverr_url_filtered_as_none() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CRAWLRS_FLARESOLVERR_URL", "");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert_eq!(config.get_flaresolverr_url(), None);
+
+        std::env::remove_var("CRAWLRS_FLARESOLVERR_URL");
+    }
+
+    #[test]
+    fn test_config_service_crawlrs_env_takes_priority_over_app_environment() {
+        // 当 CRAWLRS_ENV 和 APP_ENVIRONMENT 都设置时，CRAWLRS_ENV 应优先
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CRAWLRS_ENV", "production");
+        std::env::set_var("APP_ENVIRONMENT", "staging");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert_eq!(
+            config.get_app_environment(),
+            "production",
+            "CRAWLRS_ENV 应优先于 APP_ENVIRONMENT"
+        );
+        assert!(config.is_production());
+        assert!(!config.is_development());
+
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::remove_var("APP_ENVIRONMENT");
+    }
+
+    #[test]
+    fn test_config_service_staging_environment_neither_prod_nor_dev() {
+        // staging 环境既不是 production 也不是 development
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CRAWLRS_ENV", "staging");
+        std::env::remove_var("APP_ENVIRONMENT");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert_eq!(config.get_app_environment(), "staging");
+        assert!(!config.is_production());
+        assert!(!config.is_development());
+
+        std::env::remove_var("CRAWLRS_ENV");
+    }
+
+    #[test]
+    fn test_config_service_development_environment_from_app_environment() {
+        // APP_ENVIRONMENT=development 应触发 is_development()
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::set_var("APP_ENVIRONMENT", "development");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert_eq!(config.get_app_environment(), "development");
+        assert!(config.is_development());
+        assert!(!config.is_production());
+
+        std::env::remove_var("APP_ENVIRONMENT");
+    }
+
+    #[test]
+    fn test_config_service_production_environment_from_app_environment() {
+        // APP_ENVIRONMENT=production 应触发 is_production()
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::set_var("APP_ENVIRONMENT", "production");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert_eq!(config.get_app_environment(), "production");
+        assert!(config.is_production());
+        assert!(!config.is_development());
+
+        std::env::remove_var("APP_ENVIRONMENT");
+    }
+
+    #[test]
+    fn test_config_service_all_optional_features_enabled() {
+        // 综合测试：所有可选功能同时启用
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "1");
+        std::env::set_var("CRAWLRS_ENABLE_NETWORK_TESTS", "1");
+        std::env::set_var("DEBUG_SAVE_HTML", "1");
+        std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert!(config.is_ssrf_protection_disabled());
+        assert!(config.is_network_tests_enabled());
+        assert!(config.is_debug_save_html_enabled());
+        assert!(config.is_test_mode());
+
+        std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
+        std::env::remove_var("CRAWLRS_ENABLE_NETWORK_TESTS");
+        std::env::remove_var("DEBUG_SAVE_HTML");
+        std::env::remove_var("CRAWLRS_TEST_NO_BROWSER_REUSE");
+    }
+
+    #[test]
+    fn test_config_service_all_optional_features_disabled() {
+        // 综合测试：所有可选功能同时禁用
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
+        std::env::remove_var("CRAWLRS_ENABLE_NETWORK_TESTS");
+        std::env::remove_var("DEBUG_SAVE_HTML");
+        std::env::remove_var("CRAWLRS_TEST_NO_BROWSER_REUSE");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert!(!config.is_ssrf_protection_disabled());
+        assert!(!config.is_network_tests_enabled());
+        assert!(!config.is_debug_save_html_enabled());
+        assert!(!config.is_test_mode());
+    }
+
+    #[test]
+    fn test_config_service_comprehensive_env_configuration() {
+        // 综合测试：同时设置多个环境变量，验证所有 getter 返回正确值
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CRAWLRS_PROXY_URL", "http://comprehensive.proxy:9090");
+        std::env::set_var("CHROMIUM_REMOTE_DEBUGGING_URL", "localhost:9222");
+        std::env::set_var("CRAWLRS_ENV", "production");
+        std::env::set_var("WEBHOOK_SECRET", "comprehensive-secret");
+        std::env::set_var("REDIS_URL", "redis://comprehensive:6380");
+        std::env::set_var("CRAWLRS_HEALTH_CHECK_URL", "http://health:8080/check");
+        std::env::set_var("CRAWLRS_FLARESOLVERR_URL", "http://flaresolverr:8191");
+
+        let config = ConfigServiceComponent::from_settings(false, "", 45, 60);
+
+        assert_eq!(
+            config.get_proxy_url(),
+            Some("http://comprehensive.proxy:9090".to_string())
+        );
+        assert_eq!(
+            config.get_remote_debugging_url(),
+            Some("localhost:9222".to_string())
+        );
+        assert_eq!(config.get_app_environment(), "production");
+        assert!(config.is_production());
+        assert_eq!(config.get_webhook_secret(), "comprehensive-secret");
+        assert_eq!(config.get_redis_url(), "redis://comprehensive:6380");
+        assert_eq!(
+            config.get_health_check_url(),
+            Some("http://health:8080/check".to_string())
+        );
+        assert_eq!(
+            config.get_flaresolverr_url(),
+            Some("http://flaresolverr:8191".to_string())
+        );
+        assert_eq!(config.get_default_timeout(), Duration::from_secs(45));
+        assert_eq!(config.get_browser_timeout(), Duration::from_secs(60));
+        assert_eq!(config.get_browser_launch_timeout(), Duration::from_secs(30));
+
+        std::env::remove_var("CRAWLRS_PROXY_URL");
+        std::env::remove_var("CHROMIUM_REMOTE_DEBUGGING_URL");
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::remove_var("WEBHOOK_SECRET");
+        std::env::remove_var("REDIS_URL");
+        std::env::remove_var("CRAWLRS_HEALTH_CHECK_URL");
+        std::env::remove_var("CRAWLRS_FLARESOLVERR_URL");
+    }
+
+    #[test]
+    fn test_browser_config_component_with_test_mode_and_proxy() {
+        // 综合测试：BrowserConfigComponent 同时设置 test_mode 和 proxy
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
+        std::env::set_var("CRAWLRS_PROXY_URL", "http://browser.proxy:1080");
+        std::env::set_var("CHROMIUM_REMOTE_DEBUGGING_URL", "localhost:9222");
+
+        let config = BrowserConfigComponent::new();
+        assert!(config.is_test_mode());
+        assert_eq!(
+            config.get_proxy_url(),
+            Some("http://browser.proxy:1080".to_string())
+        );
+        assert_eq!(
+            config.get_remote_debugging_url(),
+            Some("localhost:9222".to_string())
+        );
+
+        std::env::remove_var("CRAWLRS_TEST_NO_BROWSER_REUSE");
+        std::env::remove_var("CRAWLRS_PROXY_URL");
+        std::env::remove_var("CHROMIUM_REMOTE_DEBUGGING_URL");
+    }
 }

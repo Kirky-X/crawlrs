@@ -143,4 +143,68 @@ mod tests {
         let cloned = original.clone();
         assert_eq!(cloned.as_ref(), "clone-me");
     }
+
+    // ========== as_str() method tests ==========
+
+    #[test]
+    fn test_secret_string_as_str_returns_data() {
+        let secret = SecretString::new("my-api-key-12345");
+        assert_eq!(secret.as_str(), "my-api-key-12345");
+    }
+
+    #[test]
+    fn test_secret_string_as_str_empty() {
+        let secret = SecretString::new("");
+        assert_eq!(secret.as_str(), "");
+    }
+
+    #[test]
+    fn test_secret_string_as_str_unicode() {
+        let secret = SecretString::new("密码-🔑");
+        assert_eq!(secret.as_str(), "密码-🔑");
+    }
+
+    #[test]
+    fn test_secret_string_as_str_consistent_with_as_ref() {
+        let secret = SecretString::new("consistent-value");
+        assert_eq!(secret.as_str(), secret.as_ref());
+    }
+
+    // ========== Clearable blanket impl tests ==========
+
+    #[test]
+    fn test_clearable_blanket_impl_for_vec_u8() {
+        let mut data: Vec<u8> = vec![1, 2, 3, 4, 5];
+        Clearable::clear(&mut data);
+        // zeroize on Vec<T> zeros elements then clears the vector
+        assert!(data.is_empty(), "Vec<u8> should be cleared after zeroize");
+    }
+
+    #[test]
+    fn test_clearable_blanket_impl_for_string() {
+        let mut data: String = String::from("secret-value-to-clear");
+        Clearable::clear(&mut data);
+        assert!(
+            data.is_empty(),
+            "String should be cleared after zeroize"
+        );
+    }
+
+    #[test]
+    fn test_clearable_blanket_impl_preserves_type() {
+        // The blanket impl should work for any T: Zeroize, returning the same type
+        let mut data: Vec<u8> = vec![0xFF; 32];
+        Clearable::clear(&mut data);
+        assert!(data.is_empty());
+        // Verify we can still use the cleared value as a Vec<u8>
+        data.push(1);
+        assert_eq!(data.len(), 1);
+    }
+
+    #[test]
+    fn test_clearable_blanket_impl_empty_vec_is_noop() {
+        let mut data: Vec<u8> = vec![];
+        Clearable::clear(&mut data);
+        assert!(data.is_empty());
+    }
 }

@@ -516,3 +516,92 @@ impl QuotaService for LimiteronService {
 /// 为 LimiteronService 实现组合 trait RateLimitingService（向后兼容）
 #[async_trait]
 impl RateLimitingService for LimiteronService {}
+
+#[cfg(all(test, feature = "rate-limiting"))]
+mod tests {
+    use super::*;
+    use limiteron::config::LimiterConfig;
+
+    // ========== RateLimitingConfig::default() tests ==========
+
+    #[test]
+    fn test_rate_limiting_config_default_values() {
+        let config = RateLimitingConfig::default();
+        assert_eq!(config.redis_key_prefix, "crawlrs:ratelimit");
+        assert_eq!(config.backlog_process_interval_seconds, 30);
+        assert_eq!(config.rate_limit_ttl_seconds, 3600);
+        assert!(config.rate_limit.enabled);
+        assert!(config.concurrency.enabled);
+    }
+
+    // ========== build_flow_control_config tests ==========
+
+    #[test]
+    fn test_build_flow_control_config_default() {
+        let config = RateLimitingConfig::default();
+        let flow_config = LimiteronService::build_flow_control_config(&config).unwrap();
+
+        assert_eq!(flow_config.version, "0.1.0");
+        assert_eq!(flow_config.rules.len(), 2);
+
+        // user_rate_limit rule
+        assert_eq!(flow_config.rules[0].id, "user_rate_limit");
+        assert_eq!(flow_config.rules[0].name, "User Rate Limit");
+        assert_eq!(flow_config.rules[0].priority, 100);
+
+        // ip_rate_limit rule
+        assert_eq!(flow_config.rules[1].id, "ip_rate_limit");
+        assert_eq!(flow_config.rules[1].name, "IP Rate Limit");
+        assert_eq!(flow_config.rules[1].priority, 90);
+    }
+
+    #[test]
+    fn test_build_flow_control_config_custom_bucket_capacity() {
+        let mut config = RateLimitingConfig::default();
+        config.rate_limit.bucket_capacity = Some(200);
+        config.rate_limit.requests_per_second = 20;
+
+        let flow_config = LimiteronService::build_flow_control_config(&config).unwrap();
+
+        // With custom bucket_capacity=200, the user rule capacity should be 200
+        let user_limiter = &flow_config.rules[0].limiters[0];
+        match user_limiter {
+            LimiterConfig::TokenBucket { capacity, .. } => {
+                assert_eq!(*capacity, 200);
+            }
+            _ => panic!("Expected TokenBucket limiter for user rule"),
+        }
+    }
+
+    #[test]
+    fn test_build_flow_control_config_none_bucket_capacity_uses_defaults() {
+        let mut config = RateLimitingConfig::default();
+        config.rate_limit.bucket_capacity = None;
+
+        let flow_config = LimiteronService::build_flow_control_config(&config).unwrap();
+
+        // With None bucket_capacity, user rule defaults to 100, ip rule to 50
+        let user_limiter = &flow_config.rules[0].limiters[0];
+        match user_limiter {
+            LimiterConfig::TokenBucket { capacity, .. } => {
+                assert_eq!(*capacity, 100);
+            }
+            _ => panic!("Expected TokenBucket limiter for user rule"),
+        }
+
+        let ip_limiter = &flow_config.rules[1].limiters[0];
+        match ip_limiter {
+            LimiterConfig::TokenBucket { capacity, .. } => {
+                assert_eq!(*capacity, 50);
+            }
+            _ => panic!("Expected TokenBucket limiter for ip rule"),
+        }
+    }
+
+    // Note: build_request_context is an instance method that requires a
+    // LimiteronService instance. However, LimiteronService::new() fails due to
+    // a pre-existing bug in build_flow_control_config: it uses "*" as an IP
+    // range, which the limiteron Governor rejects as an invalid IP address.
+    // Testing build_request_context requires either fixing that bug or adding
+    // a test-only constructor, both of which are out of scope for this task.
+}

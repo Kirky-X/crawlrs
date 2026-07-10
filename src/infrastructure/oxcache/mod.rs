@@ -687,4 +687,29 @@ mod tests {
         let got = cache.get(&last_key).await;
         assert!(got.is_ok());
     }
+
+    // =========================================================================
+    // generate_search_key: None 参数路径
+    // =========================================================================
+
+    #[test]
+    fn test_generate_search_key_without_lang_and_country() {
+        // lang=None, country=None 时不应包含 lang/country 段
+        let key = generate_search_key("rust", 10, None, None);
+        assert_eq!(key, "search:rust:limit=10");
+    }
+
+    #[test]
+    fn test_generate_search_key_with_only_lang() {
+        // 仅 lang=Some 时包含 lang 段，不包含 country 段
+        let key = generate_search_key("rust", 5, Some("zh"), None);
+        assert_eq!(key, "search:rust:lang=zh:limit=5");
+    }
+
+    #[test]
+    fn test_generate_search_key_with_only_country() {
+        // 仅 country=Some 时包含 country 段，不包含 lang 段
+        let key = generate_search_key("rust", 20, None, Some("CN"));
+        assert_eq!(key, "search:rust:country=CN:limit=20");
+    }
 }

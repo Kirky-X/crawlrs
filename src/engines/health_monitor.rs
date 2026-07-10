@@ -954,6 +954,52 @@ mod tests {
 
     // === Recovery scenario test ===
 
+    // === HealthCheckConfig::default() tests ===
+
+    #[test]
+    fn test_health_check_config_default_uses_google_url() {
+        let _guard = crate::common::test_support::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_HEALTH_CHECK_URL");
+        std::env::remove_var("APP_ENVIRONMENT");
+
+        let config = HealthCheckConfig::default();
+        assert_eq!(config.check_interval, Duration::from_secs(60));
+        assert_eq!(config.timeout, Duration::from_secs(10));
+        assert_eq!(config.max_consecutive_failures, 3);
+        assert_eq!(config.degraded_threshold_ms, 2000);
+        assert_eq!(config.unhealthy_threshold_ms, 5000);
+        assert_eq!(config.target_url, "https://www.google.com");
+    }
+
+    #[test]
+    fn test_health_check_config_default_with_health_check_url_env() {
+        let _guard = crate::common::test_support::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("CRAWLRS_HEALTH_CHECK_URL", "https://health.example.com");
+
+        let config = HealthCheckConfig::default();
+        assert_eq!(config.target_url, "https://health.example.com");
+
+        std::env::remove_var("CRAWLRS_HEALTH_CHECK_URL");
+    }
+
+    #[test]
+    fn test_health_check_config_default_falls_back_to_app_environment() {
+        let _guard = crate::common::test_support::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_HEALTH_CHECK_URL");
+        std::env::set_var("APP_ENVIRONMENT", "https://staging.example.com");
+
+        let config = HealthCheckConfig::default();
+        assert_eq!(config.target_url, "https://staging.example.com");
+
+        std::env::remove_var("APP_ENVIRONMENT");
+    }
+
     #[tokio::test]
     async fn test_recovery_resets_consecutive_failures() {
         // An engine that fails first, then succeeds

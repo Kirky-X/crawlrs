@@ -27,7 +27,7 @@ pub struct SearchRequestDto {
     pub sync_wait_ms: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResponseDto {
     pub query: String,
     pub results: Vec<SearchResultDto>,

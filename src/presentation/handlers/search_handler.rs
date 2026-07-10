@@ -709,4 +709,302 @@ mod tests {
             .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32);
         assert_eq!(sync_wait_ms, 0);
     }
+
+    // ========== SearchResponseDto deserialization ==========
+
+    #[test]
+    fn test_search_response_dto_deserialization() {
+        let json = format!(
+            r#"{{"query":"test","results":[],"crawl_id":null,"credits_used":0}}"#
+        );
+        let dto: SearchResponseDto = serde_json::from_str(&json).unwrap();
+        assert_eq!(dto.query, "test");
+        assert!(dto.results.is_empty());
+        assert!(dto.crawl_id.is_none());
+        assert_eq!(dto.credits_used, 0);
+    }
+
+    #[test]
+    fn test_search_response_dto_with_crawl_id() {
+        let crawl_id = uuid::Uuid::new_v4();
+        let json = format!(
+            r#"{{"query":"test","results":[],"crawl_id":"{}","credits_used":3}}"#,
+            crawl_id
+        );
+        let dto: SearchResponseDto = serde_json::from_str(&json).unwrap();
+        assert_eq!(dto.crawl_id, Some(crawl_id));
+        assert_eq!(dto.credits_used, 3);
+    }
+
+    #[test]
+    fn test_search_response_dto_with_results_deserialization() {
+        let json = r#"{
+            "query": "rust",
+            "results": [
+                {"title":"Result 1","url":"https://1.com","description":"desc 1","engine":"google"},
+                {"title":"Result 2","url":"https://2.com","description":null,"engine":"bing"}
+            ],
+            "crawl_id": null,
+            "credits_used": 2
+        }"#;
+        let dto: SearchResponseDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.query, "rust");
+        assert_eq!(dto.results.len(), 2);
+        assert_eq!(dto.results[0].title, "Result 1");
+        assert_eq!(dto.results[1].description, None);
+    }
+
+    // ========== SearchResponseDto serialization roundtrip ==========
+
+    #[test]
+    fn test_search_response_dto_serialization_roundtrip() {
+        let original = SearchResponseDto {
+            query: "roundtrip test".to_string(),
+            results: vec![SearchResultDto {
+                title: "Title".to_string(),
+                url: "https://example.com".to_string(),
+                description: Some("Desc".to_string()),
+                engine: Some("google".to_string()),
+            }],
+            crawl_id: Some(uuid::Uuid::new_v4()),
+            credits_used: 7,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: SearchResponseDto = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.query, original.query);
+        assert_eq!(deserialized.results.len(), 1);
+        assert_eq!(deserialized.results[0].title, "Title");
+        assert_eq!(deserialized.credits_used, 7);
+    }
+
+    // ========== SearchServiceError Display trait ==========
+
+    #[test]
+    fn test_search_service_error_validation_display() {
+        let err = SearchServiceError::ValidationError("bad query".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("bad query"));
+    }
+
+    #[test]
+    fn test_search_service_error_insufficient_credits_display() {
+        let err = SearchServiceError::InsufficientCredits {
+            available: 5,
+            required: 10,
+        };
+        let display = format!("{}", err);
+        // The error message should contain information about credits
+        assert!(display.contains("5") || display.contains("10") || display.contains("credit"));
+    }
+
+    #[test]
+    fn test_search_service_error_search_engine_display() {
+        let err = SearchServiceError::SearchEngine("engine timeout".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("engine timeout"));
+    }
+
+    // ========== SearchRequestDto with empty query ==========
+
+    #[test]
+    fn test_search_request_dto_empty_query() {
+        let json = r#"{"query":""}"#;
+        let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.query, "");
+    }
+
+    #[test]
+    fn test_search_request_dto_long_query() {
+        let long_query = "a".repeat(1000);
+        let json = serde_json::json!({ "query": long_query }).to_string();
+        let dto: SearchRequestDto = serde_json::from_str(&json).unwrap();
+        assert_eq!(dto.query.len(), 1000);
+    }
+
+    // ========== SearchRequestDto with special characters ==========
+
+    #[test]
+    fn test_search_request_dto_with_unicode_query() {
+        let json = r#"{"query":"中文搜索 日本語 한국어"}"#;
+        let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
+        assert!(dto.query.contains("中文"));
+        assert!(dto.query.contains("日本語"));
+    }
+
+    #[test]
+    fn test_search_request_dto_with_special_chars_query() {
+        let json = r#"{"query":"test \"quotes\" & <html>"}"#;
+        let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
+        assert!(dto.query.contains("quotes"));
+        assert!(dto.query.contains("<html>"));
+    }
+
+    // ========== SearchRequestDto with limit edge cases ==========
+
+    #[test]
+    fn test_search_request_dto_with_limit_zero() {
+        let json = r#"{"query":"test","limit":0}"#;
+        let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.limit, Some(0));
+    }
+
+    #[test]
+    fn test_search_request_dto_with_large_limit() {
+        let json = r#"{"query":"test","limit":4294967295}"#;
+        let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.limit, Some(u32::MAX));
+    }
+
+    // ========== SearchQuery with all fields None ==========
+
+    #[test]
+    fn test_search_query_all_none() {
+        let search_query = SearchQuery {
+            query: "minimal".to_string(),
+            limit: None,
+            lang: None,
+            country: None,
+            engine: None,
+            sources: None,
+            crawl_results: None,
+            crawl_config: None,
+        };
+        assert_eq!(search_query.query, "minimal");
+        assert!(search_query.limit.is_none());
+        assert!(search_query.crawl_config.is_none());
+    }
+
+    // ========== crawl_config conversion with extraction_rules ==========
+
+    #[test]
+    fn test_search_query_from_dto_with_crawl_config_extraction_rules() {
+        let dto = SearchRequestDto {
+            query: "test".to_string(),
+            engine: None,
+            sources: None,
+            limit: None,
+            lang: None,
+            country: None,
+            crawl_config: Some(crate::application::dto::crawl_request::CrawlConfigDto {
+                max_depth: 2,
+                include_patterns: None,
+                exclude_patterns: None,
+                strategy: None,
+                crawl_delay_ms: None,
+                max_concurrency: None,
+                proxy: None,
+                headers: None,
+                extraction_rules: Some(std::collections::HashMap::new()),
+            }),
+            crawl_results: None,
+            sync_wait_ms: None,
+        };
+        let search_query = SearchQuery {
+            query: dto.query,
+            limit: dto.limit,
+            lang: dto.lang,
+            country: dto.country,
+            engine: dto.engine,
+            sources: dto.sources,
+            crawl_results: dto.crawl_results,
+            crawl_config: dto.crawl_config.map(|c| {
+                crate::domain::services::search_service::SearchCrawlConfig {
+                    max_depth: c.max_depth,
+                    include_patterns: c.include_patterns,
+                    exclude_patterns: c.exclude_patterns,
+                    strategy: c.strategy.unwrap_or_else(|| "bfs".to_string()),
+                    crawl_delay_ms: c.crawl_delay_ms,
+                    max_concurrency: c.max_concurrency.unwrap_or(10),
+                    headers: c.headers,
+                    proxy: c.proxy,
+                    extraction_rules: c.extraction_rules,
+                }
+            }),
+        };
+        let config = search_query.crawl_config.unwrap();
+        assert_eq!(config.max_depth, 2);
+        assert_eq!(config.strategy, "bfs"); // default
+        assert_eq!(config.max_concurrency, 10); // default
+        assert!(config.extraction_rules.is_some());
+    }
+
+    // ========== SearchRequestDto with multiple sources ==========
+
+    #[test]
+    fn test_search_request_dto_with_multiple_sources() {
+        let json = r#"{
+            "query": "test",
+            "sources": ["google", "bing", "baidu", "sogou"]
+        }"#;
+        let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.sources.as_ref().unwrap().len(), 4);
+    }
+
+    // ========== SearchRequestDto with crawl_results false ==========
+
+    #[test]
+    fn test_search_request_dto_crawl_results_false_no_crawl_config() {
+        let json = r#"{"query":"test","crawl_results":false}"#;
+        let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.crawl_results, Some(false));
+        assert!(dto.crawl_config.is_none());
+    }
+
+    // ========== From<SearchServiceError> with specific messages ==========
+
+    #[test]
+    fn test_validation_error_with_special_characters() {
+        let err = SearchServiceError::ValidationError("error with <>&\"".to_string());
+        let (status, msg) = <(StatusCode, String)>::from(err);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(msg.contains("<"));
+        assert!(msg.contains(">"));
+    }
+
+    #[test]
+    fn test_search_engine_error_with_url() {
+        let err = SearchServiceError::SearchEngine("failed to fetch https://google.com".to_string());
+        let (status, msg) = <(StatusCode, String)>::from(err);
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(msg.contains("https://google.com"));
+    }
+
+    // ========== SearchResponseDto with empty results ==========
+
+    #[test]
+    fn test_search_response_dto_empty_results() {
+        let response = SearchResponseDto {
+            query: "empty".to_string(),
+            results: vec![],
+            crawl_id: None,
+            credits_used: 0,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["results"].as_array().unwrap().len(), 0);
+    }
+
+    // ========== SearchRequestDto serialization ==========
+
+    #[test]
+    fn test_search_request_dto_serialization() {
+        let dto = SearchRequestDto {
+            query: "serialize test".to_string(),
+            engine: Some("google".to_string()),
+            sources: Some(vec!["google".to_string()]),
+            limit: Some(10),
+            lang: Some("en".to_string()),
+            country: Some("US".to_string()),
+            crawl_config: None,
+            crawl_results: Some(true),
+            sync_wait_ms: Some(3000),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["query"], "serialize test");
+        assert_eq!(parsed["engine"], "google");
+        assert_eq!(parsed["limit"], 10);
+        assert_eq!(parsed["crawl_results"], true);
+        assert_eq!(parsed["sync_wait_ms"], 3000);
+    }
 }

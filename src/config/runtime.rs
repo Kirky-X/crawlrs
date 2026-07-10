@@ -98,5 +98,24 @@ mod tests {
         let config = BackgroundTaskConfig::default();
         assert_eq!(config.webhook_interval(), Duration::from_secs(5));
         assert_eq!(config.backlog_interval(), Duration::from_secs(30));
+        assert_eq!(config.cache_cleanup_interval(), Duration::from_secs(60));
+        assert_eq!(config.dns_cache_ttl(), Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_worker_config_defaults() {
+        let config = WorkerConfig::default();
+        assert_eq!(config.initial_count, 5);
+        assert_eq!(config.max_count, 20);
+        assert_eq!(config.queue_size, 100);
+    }
+
+    #[test]
+    fn test_runtime_config_worker_fields() {
+        let config = RuntimeConfig::default();
+        assert_eq!(config.worker.max_count, 20);
+        assert_eq!(config.worker.queue_size, 100);
+        assert_eq!(config.background_tasks.cache_cleanup_interval_secs, 60);
+        assert_eq!(config.background_tasks.dns_cache_ttl_secs, 300);
     }
 }

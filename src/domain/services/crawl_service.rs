@@ -1831,4 +1831,87 @@ mod tests {
             "no task should have other.com URL"
         );
     }
+
+    #[test]
+    fn test_is_domain_blacklisted_url_without_domain_returns_false() {
+        let service = make_service(
+            Arc::new(MockTaskRepo::new()),
+            Arc::new(MockRobotsChecker::new_allow()),
+        );
+        // file:// URLs have no domain component
+        assert!(!service.is_domain_blacklisted("file:///path/to/file", &["anything".to_string()]));
+        // data: URLs have no domain
+        assert!(!service.is_domain_blacklisted("data:text/plain,hello", &["anything".to_string()]));
+    }
+
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn test_mock_task_repo_remaining_methods_return_defaults() {
+        use crate::domain::repositories::task_repository::TaskQueryParams;
+
+        let repo = MockTaskRepo::new();
+        let task_id = Uuid::new_v4();
+        assert!(repo.find_by_id(task_id).await.unwrap().is_none());
+        let task = Task::new(
+            task_id,
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            serde_json::json!({}),
+        );
+        let updated = repo.update(&task).await.unwrap();
+        assert_eq!(updated.id, task_id);
+        assert!(repo.acquire_next(Uuid::new_v4()).await.unwrap().is_none());
+        repo.mark_completed(task_id).await.unwrap();
+        repo.mark_failed(task_id).await.unwrap();
+        repo.mark_cancelled(task_id).await.unwrap();
+        assert!(!repo.exists_by_url("https://a.com").await.unwrap());
+        assert!(repo
+            .find_existing_urls(&["https://a.com".to_string()])
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            repo.reset_stuck_tasks(chrono::Duration::minutes(5))
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await.unwrap(), 0);
+        assert_eq!(repo.expire_tasks().await.unwrap(), 0);
+        assert!(repo
+            .find_by_crawl_id(Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_empty());
+        let (tasks, count) = repo.query_tasks(TaskQueryParams::default()).await.unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(count, 0);
+        let (cancelled, failed) = repo
+            .batch_cancel(vec![Uuid::new_v4()], Uuid::new_v4(), false)
+            .await
+            .unwrap();
+        assert!(cancelled.is_empty());
+        assert!(failed.is_empty());
+    }
+
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn test_mock_system_monitor_is_metrics_stale() {
+        use crate::infrastructure::observability::metrics::SystemMonitorTrait;
+
+        let monitor = MockSystemMonitor {
+            cpu: 0.1,
+            mem: 0.1,
+            stale: true,
+        };
+        assert!(monitor.is_metrics_stale());
+        let monitor2 = MockSystemMonitor {
+            cpu: 0.1,
+            mem: 0.1,
+            stale: false,
+        };
+        assert!(!monitor2.is_metrics_stale());
+    }
 }

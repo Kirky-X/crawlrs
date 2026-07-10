@@ -1114,4 +1114,60 @@ mod tests {
         assert_eq!(deserialized.has_next, original.has_next);
         assert_eq!(deserialized.has_previous, original.has_previous);
     }
+
+    // ========== 缺失的 error_codes 常量测试 ==========
+
+    #[test]
+    fn test_error_codes_precondition_failed() {
+        assert_eq!(error_codes::PRECONDITION_FAILED, "PRECONDITION_FAILED");
+    }
+
+    #[test]
+    fn test_error_codes_unprocessable_entity() {
+        assert_eq!(error_codes::UNPROCESSABLE_ENTITY, "UNPROCESSABLE_ENTITY");
+    }
+
+    #[test]
+    fn test_error_codes_cache_error() {
+        assert_eq!(error_codes::CACHE_ERROR, "CACHE_ERROR");
+    }
+
+    #[test]
+    fn test_error_codes_external_service_error() {
+        assert_eq!(error_codes::EXTERNAL_SERVICE_ERROR, "EXTERNAL_SERVICE_ERROR");
+    }
+
+    #[test]
+    fn test_error_codes_timeout() {
+        assert_eq!(error_codes::TIMEOUT, "TIMEOUT");
+    }
+
+    // ========== RateLimitErrorResponse 反序列化 ==========
+
+    #[test]
+    fn test_rate_limit_error_response_deserialization() {
+        let json = r#"{"success":false,"error":{"code":"RATE_LIMITED","message":"slow down"},"retry_after_seconds":45,"timestamp":"2025-01-01T00:00:00Z"}"#;
+        let resp: RateLimitErrorResponse = serde_json::from_str(json).unwrap();
+        assert!(!resp.success);
+        assert_eq!(resp.error.code, "RATE_LIMITED");
+        assert_eq!(resp.error.message, "slow down");
+        assert_eq!(resp.retry_after_seconds, 45);
+        assert!(resp.timestamp.is_some());
+    }
+
+    #[test]
+    fn test_rate_limit_error_response_skip_timestamp_when_none() {
+        // timestamp 为 None 时序列化结果不应包含 timestamp 字段
+        let resp = RateLimitErrorResponse {
+            success: false,
+            error: ApiError {
+                code: "RATE_LIMITED".to_string(),
+                message: "test".to_string(),
+            },
+            retry_after_seconds: 10,
+            timestamp: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(!json.contains("timestamp"));
+    }
 }

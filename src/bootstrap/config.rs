@@ -444,10 +444,441 @@ mod tests {
             result.err()
         );
         let (settings, port) = result.expect("load_and_configure should succeed");
-        assert!(port > 0, "Detected port should be greater than 0");
+        assert!(
+            port > 0,
+            "Detected port should be greater than 0"
+        );
         assert_eq!(
             settings.server.port, port,
             "settings.server.port should match the detected port"
+        );
+    }
+
+    // ========== validate_environment test mode detection ==========
+
+    #[test]
+    fn test_validate_environment_test_mode_skips_forbidden_check() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
+
+        std::env::set_var("APP_ENVIRONMENT", "test");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+        std::env::remove_var("CRAWLRS_ENV");
+
+        // In test mode, forbidden variables check is skipped
+        let result = validate_environment(false);
+
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+        if let Some(v) = saved_crawlrs_env {
+            std::env::set_var("CRAWLRS_ENV", v);
+        }
+
+        assert!(
+            result.is_ok(),
+            "validate_environment in test mode should succeed, got err: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_validate_environment_crawlrs_env_test_mode() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+
+        std::env::set_var("CRAWLRS_ENV", "test");
+        std::env::set_var("APP_ENVIRONMENT", "production");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::remove_var("CRAWLRS__TEST_MODE");
+
+        // CRAWLRS_ENV=test should trigger is_test=true
+        let result = validate_environment(false);
+
+        if let Some(v) = saved_crawlrs_env {
+            std::env::set_var("CRAWLRS_ENV", v);
+        } else {
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+
+        assert!(
+            result.is_ok(),
+            "validate_environment with CRAWLRS_ENV=test should succeed"
+        );
+    }
+
+    // ========== validate_security with different settings ==========
+
+    #[test]
+    fn test_validate_security_preserves_cors_settings() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        let _ = validate_security(&settings1, true);
+        assert_eq!(
+            settings1.cors.allowed_origins,
+            settings2.cors.allowed_origins
+        );
+    }
+
+    #[test]
+    fn test_validate_security_preserves_database_settings() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        let _ = validate_security(&settings1, false);
+        assert_eq!(
+            settings1.database.max_connections,
+            settings2.database.max_connections
+        );
+    }
+
+    #[test]
+    fn test_validate_security_preserves_rate_limiting_settings() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        let _ = validate_security(&settings1, true);
+        assert_eq!(
+            settings1.rate_limiting.enabled,
+            settings2.rate_limiting.enabled
+        );
+        assert_eq!(
+            settings1.rate_limiting.default_rpm,
+            settings2.rate_limiting.default_rpm
+        );
+    }
+
+    // ========== load_settings returns consistent results ==========
+
+    #[test]
+    fn test_load_settings_returns_consistent_port() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = load_settings().expect("Failed to load settings");
+        assert_eq!(settings1.server.port, settings2.server.port);
+    }
+
+    #[test]
+    fn test_load_settings_returns_consistent_host() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = load_settings().expect("Failed to load settings");
+        assert_eq!(settings1.server.host, settings2.server.host);
+    }
+
+    // ========== detect_available_port with different ports ==========
+
+    #[test]
+    fn test_detect_available_port_does_not_change_when_port_free() {
+        let mut settings = load_settings().expect("Failed to load settings");
+        settings.server.port = 49995;
+        settings.server.enable_port_detection = false;
+        let original_port = settings.server.port;
+        let _ = detect_available_port(&mut settings).expect("Should find available port");
+        assert_eq!(
+            settings.server.port, original_port,
+            "Port should not change when the configured port is free"
+        );
+    }
+
+    #[test]
+    fn test_detect_available_port_with_detection_enabled_finds_port() {
+        let mut settings = load_settings().expect("Failed to load settings");
+        settings.server.port = 49994;
+        settings.server.enable_port_detection = true;
+        let result = detect_available_port(&mut settings);
+        assert!(
+            result.is_ok(),
+            "detect_available_port with detection enabled should find a port"
+        );
+        let port = result.unwrap();
+        assert!(port > 0, "Detected port should be greater than 0");
+    }
+
+    // ========== load_and_configure returns consistent settings ==========
+
+    #[test]
+    fn test_load_and_configure_returns_valid_settings() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+
+        let result = load_and_configure(false);
+
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+
+        assert!(result.is_ok());
+        let (settings, _port) = result.unwrap();
+        assert_eq!(settings.server.host, "0.0.0.0");
+    }
+
+    // ========== validate_environment non-production with required vars ==========
+
+    #[test]
+    fn test_validate_environment_non_production_with_required_vars_succeeds() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+
+        std::env::set_var("APP_ENVIRONMENT", "development");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+
+        let result = validate_environment(false);
+
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+
+        assert!(
+            result.is_ok(),
+            "validate_environment in non-production with required vars should succeed"
+        );
+    }
+
+    // ========== Settings clone and equality ==========
+
+    #[test]
+    fn test_settings_clone_is_equal() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        assert_eq!(settings1.server.port, settings2.server.port);
+        assert_eq!(settings1.server.host, settings2.server.host);
+        assert_eq!(settings1.cors.allowed_origins, settings2.cors.allowed_origins);
+    }
+
+    // ========== load_settings server config ==========
+
+    #[test]
+    fn test_load_settings_server_enable_port_detection_exists() {
+        let settings = load_settings().expect("Failed to load settings");
+        // Just verify the field exists and is a bool
+        let _ = settings.server.enable_port_detection;
+    }
+
+    #[test]
+    fn test_load_settings_has_server_config() {
+        let settings = load_settings().expect("Failed to load settings");
+        assert!(!settings.server.host.is_empty());
+        assert!(settings.server.port > 0);
+    }
+
+    // ========== validate_environment forbidden variables path ==========
+
+    #[test]
+    fn test_validate_environment_forbidden_vars_in_non_test_mode_returns_error() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_ld_preload = std::env::var("LD_PRELOAD").ok();
+
+        // Set a forbidden env var (LD_PRELOAD is in the forbidden list)
+        std::env::set_var("LD_PRELOAD", "/tmp/fake_lib.so");
+        // Ensure we are NOT in test mode
+        std::env::set_var("APP_ENVIRONMENT", "development");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::remove_var("CRAWLRS__TEST_MODE");
+        std::env::remove_var("CRAWLRS_ENV");
+
+        let result = validate_environment(false);
+
+        // Restore saved values
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+        if let Some(v) = saved_crawlrs_env {
+            std::env::set_var("CRAWLRS_ENV", v);
+        } else {
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+        if let Some(v) = saved_ld_preload {
+            std::env::set_var("LD_PRELOAD", v);
+        } else {
+            std::env::remove_var("LD_PRELOAD");
+        }
+
+        assert!(
+            result.is_err(),
+            "validate_environment should return error when forbidden vars detected in non-test mode, got: {:?}",
+            result.ok()
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Forbidden"),
+            "Error should mention forbidden variables, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_validate_environment_forbidden_vars_in_test_mode_warns_only() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_ld_preload = std::env::var("LD_PRELOAD").ok();
+
+        // Set a forbidden env var
+        std::env::set_var("LD_PRELOAD", "/tmp/fake_lib.so");
+        // Set test mode via CRAWLRS__TEST_MODE
+        std::env::set_var("APP_ENVIRONMENT", "development");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+        std::env::remove_var("CRAWLRS_ENV");
+
+        let result = validate_environment(false);
+
+        // Restore saved values
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+        if let Some(v) = saved_crawlrs_env {
+            std::env::set_var("CRAWLRS_ENV", v);
+        } else {
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+        if let Some(v) = saved_ld_preload {
+            std::env::set_var("LD_PRELOAD", v);
+        } else {
+            std::env::remove_var("LD_PRELOAD");
+        }
+
+        assert!(
+            result.is_ok(),
+            "validate_environment in test mode should succeed even with forbidden vars (warn only), got err: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_validate_environment_crawlrs_env_test_mode_with_forbidden_vars() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_ld_preload = std::env::var("LD_PRELOAD").ok();
+
+        // Set a forbidden env var
+        std::env::set_var("LD_PRELOAD", "/tmp/fake_lib.so");
+        // CRAWLRS_ENV=test triggers is_test=true
+        std::env::set_var("CRAWLRS_ENV", "test");
+        std::env::set_var("APP_ENVIRONMENT", "development");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::remove_var("CRAWLRS__TEST_MODE");
+
+        let result = validate_environment(false);
+
+        // Restore saved values
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+        if let Some(v) = saved_crawlrs_env {
+            std::env::set_var("CRAWLRS_ENV", v);
+        } else {
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+        if let Some(v) = saved_ld_preload {
+            std::env::set_var("LD_PRELOAD", v);
+        } else {
+            std::env::remove_var("LD_PRELOAD");
+        }
+
+        assert!(
+            result.is_ok(),
+            "validate_environment with CRAWLRS_ENV=test should succeed even with forbidden vars"
         );
     }
 }

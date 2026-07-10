@@ -287,20 +287,24 @@ async fn test_schedule_in_negative_duration() {
 // === Reschedule Retry Tests ===
 
 #[tokio::test]
-#[ignore] // Skip: Test requires mock repository to contain the task before reschedule_retry
 async fn test_reschedule_retry_with_remaining_attempts() {
     let mock_repo = MockTaskRepository::new();
     let scheduler = TaskScheduler::new(Arc::new(mock_repo));
 
+    // 先创建任务到 repository 中，以便 update 能找到它
     let mut task = create_test_task();
     task.status = TaskStatus::Failed;
     task.retry_count = 1;
     task.attempt_count = 1;
     task.max_retries = 3;
+    let created = scheduler
+        .schedule_at(task.clone(), Utc::now() + Duration::seconds(60))
+        .await
+        .expect("Failed to create task");
 
     let delay = Duration::seconds(10);
 
-    let result = scheduler.reschedule_retry(task, delay).await;
+    let result = scheduler.reschedule_retry(created, delay).await;
 
     assert!(result.is_ok());
     let rescheduled = result.unwrap();
@@ -311,20 +315,24 @@ async fn test_reschedule_retry_with_remaining_attempts() {
 }
 
 #[tokio::test]
-#[ignore] // Skip: Test requires mock repository to contain the task before reschedule_retry
 async fn test_reschedule_retry_max_retries_exceeded() {
     let mock_repo = MockTaskRepository::new();
     let scheduler = TaskScheduler::new(Arc::new(mock_repo));
 
+    // 先创建任务到 repository 中
     let mut task = create_test_task();
     task.status = TaskStatus::Failed;
     task.retry_count = 3;
     task.attempt_count = 3;
     task.max_retries = 3;
+    let created = scheduler
+        .schedule_at(task.clone(), Utc::now() + Duration::seconds(60))
+        .await
+        .expect("Failed to create task");
 
     let delay = Duration::seconds(10);
 
-    let result = scheduler.reschedule_retry(task, delay).await;
+    let result = scheduler.reschedule_retry(created, delay).await;
 
     assert!(result.is_ok());
     let final_task = result.unwrap();
@@ -424,19 +432,23 @@ async fn test_schedule_task_with_zero_timestamp() {
 }
 
 #[tokio::test]
-#[ignore] // Skip: Test requires mock repository to contain the task before reschedule_retry
 async fn test_reschedule_with_zero_delay() {
     let mock_repo = MockTaskRepository::new();
     let scheduler = TaskScheduler::new(Arc::new(mock_repo));
 
+    // 先创建任务到 repository 中
     let mut task = create_test_task();
     task.status = TaskStatus::Failed;
     task.retry_count = 0;
     task.max_retries = 3;
+    let created = scheduler
+        .schedule_at(task.clone(), Utc::now() + Duration::seconds(60))
+        .await
+        .expect("Failed to create task");
 
     let delay = Duration::seconds(0);
 
-    let result = scheduler.reschedule_retry(task, delay).await;
+    let result = scheduler.reschedule_retry(created, delay).await;
 
     assert!(result.is_ok());
     let rescheduled = result.unwrap();

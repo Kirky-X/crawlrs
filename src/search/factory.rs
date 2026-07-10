@@ -892,4 +892,303 @@ mod tests {
             })
         }
     }
+
+    // ========== search method tests ==========
+
+    #[tokio::test]
+    async fn test_search_with_mock_engine_returns_results() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let items = vec![ResponseItem {
+            title: "Test Result".to_string(),
+            url: "https://example.com".to_string(),
+            description: "Test description".to_string(),
+            engine: SearchEngineType::Google,
+        }];
+        let mock = Arc::new(MockFactoryEngine::success(
+            "google",
+            SearchEngineType::Google,
+            items,
+        )) as Arc<dyn SearchEngine>;
+        factory.register_engine(mock);
+
+        let results = factory
+            .search("test query", 10, None, None, Some(SearchEngineType::Google))
+            .await
+            .expect("search should succeed with registered mock engine");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Test Result");
+        assert_eq!(results[0].url, "https://example.com");
+        assert_eq!(
+            results[0].description,
+            Some("Test description".to_string())
+        );
+        assert_eq!(results[0].engine, "Google");
+        assert!((results[0].score - 1.0).abs() < f64::EPSILON);
+        assert!(results[0].published_time.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_search_with_no_engines_returns_error() {
+        let factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let result = factory
+            .search("test query", 10, None, None, Some(SearchEngineType::Google))
+            .await;
+        assert!(
+            result.is_err(),
+            "search with no engines registered should return an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_score_single_item_is_one() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let items = vec![ResponseItem {
+            title: "Only Result".to_string(),
+            url: "https://single.com".to_string(),
+            description: "desc".to_string(),
+            engine: SearchEngineType::Google,
+        }];
+        let mock = Arc::new(MockFactoryEngine::success(
+            "google",
+            SearchEngineType::Google,
+            items,
+        )) as Arc<dyn SearchEngine>;
+        factory.register_engine(mock);
+
+        let results = factory
+            .search("query", 10, None, None, Some(SearchEngineType::Google))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(
+            (results[0].score - 1.0).abs() < f64::EPSILON,
+            "single item should have score 1.0"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_score_multiple_items_decreasing() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let items: Vec<ResponseItem> = (0..3)
+            .map(|i| ResponseItem {
+                title: format!("Result {}", i + 1),
+                url: format!("https://example.com/{}", i),
+                description: format!("Desc {}", i + 1),
+                engine: SearchEngineType::Google,
+            })
+            .collect();
+        let mock = Arc::new(MockFactoryEngine::success(
+            "google",
+            SearchEngineType::Google,
+            items,
+        )) as Arc<dyn SearchEngine>;
+        factory.register_engine(mock);
+
+        let results = factory
+            .search("query", 10, None, None, Some(SearchEngineType::Google))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        // For 3 items: scores = 1.0, 0.5, 0.0
+        assert!((results[0].score - 1.0).abs() < f64::EPSILON);
+        assert!((results[1].score - 0.5).abs() < f64::EPSILON);
+        assert!((results[2].score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_search_score_two_items_extremes() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let items = vec![
+            ResponseItem {
+                title: "First".to_string(),
+                url: "https://first.com".to_string(),
+                description: "d1".to_string(),
+                engine: SearchEngineType::Google,
+            },
+            ResponseItem {
+                title: "Second".to_string(),
+                url: "https://second.com".to_string(),
+                description: "d2".to_string(),
+                engine: SearchEngineType::Google,
+            },
+        ];
+        let mock = Arc::new(MockFactoryEngine::success(
+            "google",
+            SearchEngineType::Google,
+            items,
+        )) as Arc<dyn SearchEngine>;
+        factory.register_engine(mock);
+
+        let results = factory
+            .search("query", 10, None, None, Some(SearchEngineType::Google))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert!((results[0].score - 1.0).abs() < f64::EPSILON);
+        assert!((results[1].score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_search_with_smart_type_no_preferred_engine() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let items = vec![ResponseItem {
+            title: "Smart Result".to_string(),
+            url: "https://smart.com".to_string(),
+            description: "smart".to_string(),
+            engine: SearchEngineType::Smart,
+        }];
+        let mock = Arc::new(MockFactoryEngine::success(
+            "smart-engine",
+            SearchEngineType::Smart,
+            items,
+        )) as Arc<dyn SearchEngine>;
+        factory.register_engine(mock);
+
+        let results = factory
+            .search("query", 10, None, None, Some(SearchEngineType::Smart))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Smart Result");
+    }
+
+    #[tokio::test]
+    async fn test_search_with_auto_type_no_preferred_engine() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let items = vec![ResponseItem {
+            title: "Auto".to_string(),
+            url: "https://auto.com".to_string(),
+            description: "auto".to_string(),
+            engine: SearchEngineType::Auto,
+        }];
+        let mock = Arc::new(MockFactoryEngine::success(
+            "auto-engine",
+            SearchEngineType::Auto,
+            items,
+        )) as Arc<dyn SearchEngine>;
+        factory.register_engine(mock);
+
+        let results = factory
+            .search("query", 10, None, None, Some(SearchEngineType::Auto))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_search_with_abtest_type_no_preferred_engine() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let items = vec![ResponseItem {
+            title: "ABTest".to_string(),
+            url: "https://abtest.com".to_string(),
+            description: "ab".to_string(),
+            engine: SearchEngineType::ABTest,
+        }];
+        let mock = Arc::new(MockFactoryEngine::success(
+            "abtest-engine",
+            SearchEngineType::ABTest,
+            items,
+        )) as Arc<dyn SearchEngine>;
+        factory.register_engine(mock);
+
+        let results = factory
+            .search("query", 10, None, None, Some(SearchEngineType::ABTest))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_search_with_lang_and_country_params() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let items = vec![ResponseItem {
+            title: "Localized".to_string(),
+            url: "https://loc.com".to_string(),
+            description: "loc".to_string(),
+            engine: SearchEngineType::Google,
+        }];
+        let mock = Arc::new(MockFactoryEngine::success(
+            "google",
+            SearchEngineType::Google,
+            items,
+        )) as Arc<dyn SearchEngine>;
+        factory.register_engine(mock);
+
+        let results = factory
+            .search(
+                "query",
+                5,
+                Some("zh"),
+                Some("CN"),
+                Some(SearchEngineType::Google),
+            )
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Localized");
+    }
+
+    #[tokio::test]
+    async fn test_search_without_engine_type_uses_default() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let items = vec![ResponseItem {
+            title: "Default".to_string(),
+            url: "https://default.com".to_string(),
+            description: "def".to_string(),
+            engine: SearchEngineType::Smart,
+        }];
+        let mock = Arc::new(MockFactoryEngine::success(
+            "default-engine",
+            SearchEngineType::Smart,
+            items,
+        )) as Arc<dyn SearchEngine>;
+        factory.register_engine(mock);
+
+        // engine_type = None uses config.default_engine which is Smart by default
+        let results = factory.search("query", 10, None, None, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Default");
+    }
+
+    // ========== create_default_router_with_config tests ==========
+
+    #[tokio::test]
+    async fn test_create_default_router_with_config_returns_populated_router() {
+        let router =
+            create_default_router_with_config(make_http_client(), make_config_service())
+                .await
+                .expect("create_default_router_with_config should succeed");
+        let engines = router.registered_engines();
+        assert_eq!(engines.len(), 4, "should register exactly 4 engines");
+        assert!(engines.iter().any(|n| n == "Google"));
+        assert!(engines.iter().any(|n| n == "Bing"));
+        assert!(engines.iter().any(|n| n == "Baidu"));
+        assert!(engines.iter().any(|n| n == "sogou"));
+    }
+
+    // ========== create_smart_search tests ==========
+
+    #[test]
+    fn test_create_smart_search_returns_arc_with_engines() {
+        let mut factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        factory.register_bing_engine();
+
+        let smart = factory.create_smart_search();
+        let engines = smart.registered_engines();
+        assert!(
+            engines.iter().any(|n| n == "Bing"),
+            "create_smart_search should return router with registered engines"
+        );
+    }
+
+    #[test]
+    fn test_create_smart_search_empty_factory() {
+        let factory = SearchEngineFactory::new(make_http_client(), make_config_service());
+        let smart = factory.create_smart_search();
+        assert!(
+            smart.registered_engines().is_empty(),
+            "smart search from empty factory should have no engines"
+        );
+    }
 }

@@ -381,4 +381,231 @@ mod tests {
         assert!(arc_id2.contains("arc_id:srp_"));
         assert_ne!(arc_id1, arc_id2);
     }
+
+    // ========== generate_random_id 补充测试 ==========
+
+    #[test]
+    fn test_generate_random_id_charset() {
+        // 测试生成的 ID 只包含合法字符（A-Z a-z 0-9 _ -）
+        let id = GoogleSearchEngine::generate_random_id();
+        let valid_chars: std::collections::HashSet<char> =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+                .chars()
+                .collect();
+        for c in id.chars() {
+            assert!(valid_chars.contains(&c), "invalid character '{}' in ID: {}", c, id);
+        }
+    }
+
+    #[test]
+    fn test_generate_random_id_multiple_calls_all_correct_length() {
+        // 测试多次调用都返回 23 字符长度的 ID
+        for _ in 0..10 {
+            let id = GoogleSearchEngine::generate_random_id();
+            assert_eq!(id.len(), 23, "every ID should be 23 characters");
+        }
+    }
+
+    // ========== escape_html 测试 ==========
+
+    #[test]
+    fn test_escape_html_plain_text_unchanged() {
+        // 测试普通文本不被修改
+        let text = "Rust Programming Language";
+        assert_eq!(
+            GoogleSearchEngine::escape_html(text),
+            "Rust Programming Language"
+        );
+    }
+
+    #[test]
+    fn test_escape_html_special_chars_encoded() {
+        // 测试 HTML 特殊字符 & < > 被编码
+        let text = "<script>alert('xss')</script> & more";
+        let escaped = GoogleSearchEngine::escape_html(text);
+        assert!(!escaped.contains('<'), "should not contain raw <");
+        assert!(!escaped.contains('>'), "should not contain raw >");
+        assert!(escaped.contains("&lt;"), "should contain &lt;");
+        assert!(escaped.contains("&gt;"), "should contain &gt;");
+        assert!(escaped.contains("&amp;"), "should contain &amp;");
+    }
+
+    #[test]
+    fn test_escape_html_empty_string() {
+        // 边界情况：空字符串返回空字符串
+        assert_eq!(GoogleSearchEngine::escape_html(""), "");
+    }
+
+    #[test]
+    fn test_escape_html_trims_whitespace() {
+        // 测试首尾空白被 trim
+        let text = "  trimmed content  ";
+        assert_eq!(GoogleSearchEngine::escape_html(text), "trimmed content");
+    }
+
+    // ========== parse_results 测试 ==========
+
+    fn create_engine() -> GoogleSearchEngine {
+        use crate::engines::engine_client::EngineClient;
+        let engine_client = Arc::new(EngineClient::new());
+        GoogleSearchEngine::new(engine_client)
+    }
+
+    #[test]
+    fn test_parse_results_empty_html() {
+        // 边界情况：空 HTML 返回 Ok 但结果为空
+        let engine = create_engine();
+        let results = engine.parse_results("").unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_results_valid_html() {
+        // 测试从有效 Google HTML 解析结果
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/1"><h3>First Result</h3></a>
+                <div data-sncf="1">First snippet</div>
+            </div>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/2"><h3>Second Result</h3></a>
+                <div data-sncf="1">Second snippet</div>
+            </div>
+        </body></html>
+        "#;
+
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "First Result");
+        assert_eq!(results[0].url, "https://example.com/1");
+        assert_eq!(results[0].description, "First snippet");
+        assert_eq!(results[0].engine, SearchEngineType::Google);
+        assert_eq!(results[1].title, "Second Result");
+    }
+
+    #[test]
+    fn test_parse_results_no_matching_selectors() {
+        // 边界情况：HTML 不包含 Google 结果选择器时返回空
+        let engine = create_engine();
+        let html = r#"<html><body><div>no results here</div></body></html>"#;
+        let results = engine.parse_results(html).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_results_url_q_format_cleaned() {
+        // 测试 /url?q= 格式的链接被正确清理
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="/url?q=https://example.com/real&sa=t"><h3>Cleaned URL</h3></a>
+            </div>
+        </body></html>
+        "#;
+
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/real");
+    }
+
+    #[test]
+    fn test_parse_results_relative_url_prefixed() {
+        // 测试相对 URL 被添加 google.com 前缀
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="/relative/path"><h3>Relative URL</h3></a>
+            </div>
+        </body></html>
+        "#;
+
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://www.google.com/relative/path");
+    }
+
+    #[test]
+    fn test_parse_results_skips_non_http_urls() {
+        // 边界情况：非 http 开头的 URL 被跳过
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="javascript:void(0)"><h3>JS Link</h3></a>
+            </div>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/valid"><h3>Valid</h3></a>
+            </div>
+        </body></html>
+        "#;
+
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/valid");
+    }
+
+    #[test]
+    fn test_parse_results_deduplicates_by_url() {
+        // 测试相同 URL 的结果被去重
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/dup"><h3>First Title</h3></a>
+            </div>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/dup"><h3>Duplicate Title</h3></a>
+            </div>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/unique"><h3>Unique Title</h3></a>
+            </div>
+        </body></html>
+        "#;
+
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "First Title");
+        assert_eq!(results[1].title, "Unique Title");
+    }
+
+    #[test]
+    fn test_parse_results_max_20_limit() {
+        // 测试结果数量上限为 20
+        let engine = create_engine();
+        let mut html = String::from("<html><body>");
+        for i in 0..25 {
+            html.push_str(&format!(
+                r#"<div jscontroller="SC7lYd"><a href="https://example.com/{}"><h3>Result {}</h3></a></div>"#,
+                i, i
+            ));
+        }
+        html.push_str("</body></html>");
+
+        let results = engine.parse_results(&html).unwrap();
+        assert_eq!(results.len(), 20, "should cap at 20 results");
+    }
+
+    #[test]
+    fn test_parse_results_skips_missing_title() {
+        // 边界情况：缺少 h3 标题的块被跳过
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/1"></a>
+            </div>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/2"><h3>Valid Result</h3></a>
+            </div>
+        </body></html>
+        "#;
+
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Valid Result");
+    }
 }

@@ -1445,4 +1445,240 @@ mod tests {
     // - AuthScopeRepositoryComponent::new — 需 Arc<DatabasePool>
     // - AuditLogRepositoryComponent::new — 需 Arc<DatabasePool>
     // - GeoRestrictionRepositoryComponent::new — 需 Arc<DbPool>
+
+    // ========== testcontainers integration tests ==========
+    //
+    // These tests exercise repository components that require a real
+    // `Arc<DatabasePool>` (PostgreSQL). They early-return if Docker is
+    // unavailable.
+
+    use crate::bootstrap::infrastructure::init_database;
+    use crate::common::test_support::testcontainers_fixtures as tcf;
+
+    async fn require_docker() -> bool {
+        tcf::docker_available().await
+    }
+
+    #[tokio::test]
+    async fn tc_task_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_task_repository_component_new_and_deref");
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
+
+        let component = TaskRepositoryComponent::new(db.clone(), 300);
+        // Deref should give us a &TaskRepositoryImpl without panicking.
+        let _impl: &TaskRepositoryImpl = &component;
+        // Verify the component can be created with with_pool too.
+        let component2 = TaskRepositoryComponent::with_pool(db);
+        let _impl2: &TaskRepositoryImpl = &component2;
+    }
+
+    #[tokio::test]
+    async fn tc_task_repository_component_get_repo_caches_instance() {
+        if !require_docker().await {
+            eprintln!(
+                "[skip] Docker unavailable — tc_task_repository_component_get_repo_caches_instance"
+            );
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
+
+        let component = TaskRepositoryComponent::new(db, 300);
+        // Accessing deref twice should return the same cached instance
+        // (OnceLock guarantees single initialization).
+        // Using &*component for raw pointer coercion; auto-deref doesn't
+        // apply here, so we allow the clippy lint.
+        #[allow(clippy::explicit_auto_deref)]
+        let ptr1: *const TaskRepositoryImpl = &*component;
+        #[allow(clippy::explicit_auto_deref)]
+        let ptr2: *const TaskRepositoryImpl = &*component;
+        assert_eq!(ptr1, ptr2, "get_repo should cache the repository instance");
+    }
+
+    #[tokio::test]
+    async fn tc_credits_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_credits_repository_component_new_and_deref");
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
+
+        let component = CreditsRepositoryComponent::new(db);
+        let _impl: &CreditsRepositoryImpl = &component;
+    }
+
+    #[tokio::test]
+    async fn tc_crawl_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_crawl_repository_component_new_and_deref");
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
+
+        let component = CrawlRepositoryComponent::new(db);
+        let _impl: &CrawlRepositoryImpl = &component;
+    }
+
+    #[tokio::test]
+    async fn tc_scrape_result_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!(
+                "[skip] Docker unavailable — tc_scrape_result_repository_component_new_and_deref"
+            );
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
+
+        let component = ScrapeResultRepositoryComponent::new(db);
+        let _impl: &ScrapeResultRepositoryImpl = &component;
+    }
+
+    #[tokio::test]
+    async fn tc_webhook_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_webhook_repository_component_new_and_deref");
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
+
+        let component = WebhookRepositoryComponent::new(db);
+        let _impl: &WebhookRepoImpl = &component;
+    }
+
+    #[tokio::test]
+    async fn tc_webhook_event_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!(
+                "[skip] Docker unavailable — tc_webhook_event_repository_component_new_and_deref"
+            );
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
+
+        let component = WebhookEventRepositoryComponent::new(db);
+        let _impl: &WebhookEventRepoImpl = &component;
+    }
+
+    #[tokio::test]
+    async fn tc_tasks_backlog_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!(
+                "[skip] Docker unavailable — tc_tasks_backlog_repository_component_new_and_deref"
+            );
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
+
+        let component = TasksBacklogRepositoryComponent::new(db);
+        let _impl: &TasksBacklogRepositoryImpl = &component;
+    }
+
+    #[tokio::test]
+    async fn tc_geo_restriction_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!(
+                "[skip] Docker unavailable — tc_geo_restriction_repository_component_new_and_deref"
+            );
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
+
+        // GeoRestrictionRepositoryComponent uses Arc<DbPool> directly and
+        // implements GeoRestrictionRepository trait (no Deref).
+        let component = GeoRestrictionRepositoryComponent::new(db.inner().clone());
+        // Verify it can be used as a trait object.
+        let _trait_obj: &dyn GeoRestrictionRepository = &component;
+    }
 }

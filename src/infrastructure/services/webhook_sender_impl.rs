@@ -248,4 +248,98 @@ mod tests {
 
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_is_success_status_2xx_range() {
+        assert!(WebhookSenderImpl::is_success_status(200));
+        assert!(WebhookSenderImpl::is_success_status(201));
+        assert!(WebhookSenderImpl::is_success_status(204));
+        assert!(WebhookSenderImpl::is_success_status(299));
+    }
+
+    #[test]
+    fn test_is_success_status_non_2xx() {
+        assert!(!WebhookSenderImpl::is_success_status(199));
+        assert!(!WebhookSenderImpl::is_success_status(300));
+        assert!(!WebhookSenderImpl::is_success_status(301));
+        assert!(!WebhookSenderImpl::is_success_status(404));
+        assert!(!WebhookSenderImpl::is_success_status(500));
+        assert!(!WebhookSenderImpl::is_success_status(503));
+    }
+
+    #[test]
+    fn test_with_default_config_creates_sender() {
+        let sender = WebhookSenderImpl::with_default_config();
+        assert_eq!(sender.timeout, Duration::from_secs(WEBHOOK_TIMEOUT_SECS));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_invalid_header_value_still_succeeds() {
+        let mock_server = MockServer::start().await;
+
+        // Invalid header value: newline character is not allowed in HTTP headers
+        // The build_request method should warn and skip the invalid header,
+        // but still send the request with the default Content-Type header.
+        Mock::given(method("POST"))
+            .and(path("/webhook"))
+            .and(header("Content-Type", "application/json"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let client = Arc::new(
+            Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
+        );
+        let sender = WebhookSenderImpl::new(client, Duration::from_secs(5));
+
+        let payload = json!({"test": "data"});
+        let mut headers = HashMap::new();
+        // Insert a header with an invalid value (contains newline)
+        headers.insert("X-Invalid".to_string(), "bad\nvalue".to_string());
+
+        let webhook_url = format!("{}/webhook", mock_server.uri());
+        let result = sender.send(&webhook_url, &payload, Some(&headers)).await;
+
+        // Request should still succeed because invalid headers are skipped
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_truncates_long_response_body() {
+        let mock_server = MockServer::start().await;
+
+        // Create a response body longer than 200 characters
+        let long_body = "x".repeat(300);
+
+        Mock::given(method("POST"))
+            .and(path("/webhook"))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_string(long_body.clone()),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = Arc::new(
+            Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
+        );
+        let sender = WebhookSenderImpl::new(client, Duration::from_secs(5));
+
+        let payload = json!({"test": "data"});
+        let webhook_url = format!("{}/webhook", mock_server.uri());
+        let result = sender.send(&webhook_url, &payload, None).await;
+
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        // Verify the body was truncated
+        assert!(error_msg.contains("... (truncated)"), "Error should contain truncated marker");
+        // Verify the error contains the status code
+        assert!(error_msg.contains("500"));
+    }
 }

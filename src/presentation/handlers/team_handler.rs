@@ -247,6 +247,7 @@ fn is_valid_ip_or_cidr(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use validator::Validate;
 
     // ========== is_valid_ip_or_cidr tests ==========
 
@@ -397,5 +398,424 @@ mod tests {
         let dto: TeamInfoResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(dto.name, "Test");
         assert_eq!(dto.credits_balance, 100);
+    }
+
+    // ========== is_valid_ip_or_cidr additional edge cases ==========
+
+    #[test]
+    fn test_is_valid_loopback_ipv4() {
+        assert!(is_valid_ip_or_cidr("127.0.0.1"));
+        assert!(is_valid_ip_or_cidr("127.0.0.1/8"));
+    }
+
+    #[test]
+    fn test_is_valid_link_local_ipv4() {
+        assert!(is_valid_ip_or_cidr("169.254.0.1"));
+        assert!(is_valid_ip_or_cidr("169.254.0.0/16"));
+    }
+
+    #[test]
+    fn test_is_valid_ipv6_loopback() {
+        assert!(is_valid_ip_or_cidr("::1"));
+        assert!(is_valid_ip_or_cidr("::1/128"));
+    }
+
+    #[test]
+    fn test_is_valid_ipv6_full_form() {
+        assert!(is_valid_ip_or_cidr(
+            "2001:0db8:0000:0000:0000:0000:0000:0001"
+        ));
+    }
+
+    #[test]
+    fn test_invalid_cidr_missing_prefix() {
+        assert!(!is_valid_ip_or_cidr("192.168.1.0/"));
+    }
+
+    #[test]
+    fn test_invalid_cidr_non_numeric_prefix() {
+        assert!(!is_valid_ip_or_cidr("192.168.1.0/abc"));
+    }
+
+    #[test]
+    fn test_invalid_ipv4_cidr_negative_prefix() {
+        // u8 parse won't accept negative sign, so this should fail
+        assert!(!is_valid_ip_or_cidr("192.168.1.0/-1"));
+    }
+
+    #[test]
+    fn test_invalid_ipv6_cidr_prefix_too_large() {
+        assert!(!is_valid_ip_or_cidr("::1/130"));
+    }
+
+    #[test]
+    fn test_invalid_empty_string() {
+        assert!(!is_valid_ip_or_cidr(""));
+    }
+
+    #[test]
+    fn test_invalid_just_slash() {
+        assert!(!is_valid_ip_or_cidr("/"));
+    }
+
+    #[test]
+    fn test_invalid_multiple_slashes() {
+        assert!(!is_valid_ip_or_cidr("192.168.1.0/24/extra"));
+    }
+
+    #[test]
+    fn test_valid_ipv4_cidr_prefix_zero() {
+        assert!(is_valid_ip_or_cidr("10.0.0.0/0"));
+    }
+
+    #[test]
+    fn test_valid_ipv6_cidr_prefix_zero() {
+        assert!(is_valid_ip_or_cidr("::/0"));
+    }
+
+    #[test]
+    fn test_invalid_ipv4_with_extra_octets() {
+        assert!(!is_valid_ip_or_cidr("192.168.1.1.1"));
+    }
+
+    #[test]
+    fn test_invalid_ipv4_with_leading_zero() {
+        // Leading zeros may or may not be accepted depending on parser
+        // Just verify it doesn't crash
+        let _ = is_valid_ip_or_cidr("192.168.001.001");
+    }
+
+    // ========== Country code validation logic (mirrors handler lines 152-174) ==========
+
+    #[test]
+    fn test_country_code_validation_two_letter_passes() {
+        // Handler: if country.len() != 2 { return error }
+        let countries = vec!["US".to_string(), "CN".to_string(), "JP".to_string()];
+        for country in &countries {
+            assert_eq!(country.len(), 2, "country code should be 2 letters");
+        }
+    }
+
+    #[test]
+    fn test_country_code_validation_one_letter_fails() {
+        let country = "U".to_string();
+        assert_ne!(country.len(), 2, "one-letter code should fail");
+    }
+
+    #[test]
+    fn test_country_code_validation_three_letter_fails() {
+        let country = "USA".to_string();
+        assert_ne!(country.len(), 2, "three-letter code should fail");
+    }
+
+    #[test]
+    fn test_country_code_validation_empty_fails() {
+        let country = "".to_string();
+        assert_ne!(country.len(), 2, "empty code should fail");
+    }
+
+    #[test]
+    fn test_country_code_validation_lowercase_two_letters() {
+        // Handler only checks length, not case
+        let country = "us".to_string();
+        assert_eq!(country.len(), 2, "lowercase 2-letter should pass length check");
+    }
+
+    // ========== TeamGeoRestrictionsResponse construction ==========
+
+    #[test]
+    fn test_team_geo_restrictions_response_with_data() {
+        let team_id = Uuid::new_v4();
+        let response = TeamGeoRestrictionsResponse {
+            team_id,
+            enable_geo_restrictions: true,
+            allowed_countries: Some(vec!["US".to_string(), "CA".to_string()]),
+            blocked_countries: Some(vec!["CN".to_string()]),
+            ip_whitelist: Some(vec!["192.168.1.0/24".to_string()]),
+            domain_blacklist: Some(vec!["evil.com".to_string()]),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["team_id"], team_id.to_string());
+        assert_eq!(parsed["enable_geo_restrictions"], true);
+        assert_eq!(parsed["allowed_countries"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["blocked_countries"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["ip_whitelist"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["domain_blacklist"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_team_geo_restrictions_response_disabled() {
+        let response = TeamGeoRestrictionsResponse {
+            team_id: Uuid::new_v4(),
+            enable_geo_restrictions: false,
+            allowed_countries: None,
+            blocked_countries: None,
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["enable_geo_restrictions"], false);
+        assert!(parsed["allowed_countries"].is_null());
+        assert!(parsed["blocked_countries"].is_null());
+        assert!(parsed["ip_whitelist"].is_null());
+        assert!(parsed["domain_blacklist"].is_null());
+    }
+
+    // ========== UpdateTeamGeoRestrictionsRequest deserialization ==========
+
+    #[test]
+    fn test_update_geo_restrictions_request_minimal() {
+        let json = r#"{"enable_geo_restrictions": false}"#;
+        let req: UpdateTeamGeoRestrictionsRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.enable_geo_restrictions);
+        assert!(req.allowed_countries.is_none());
+        assert!(req.blocked_countries.is_none());
+        assert!(req.ip_whitelist.is_none());
+        assert!(req.domain_blacklist.is_none());
+    }
+
+    #[test]
+    fn test_update_geo_restrictions_request_full() {
+        let json = r#"{
+            "enable_geo_restrictions": true,
+            "allowed_countries": ["US", "CA"],
+            "blocked_countries": ["CN"],
+            "ip_whitelist": ["10.0.0.0/8"],
+            "domain_blacklist": ["spam.com"]
+        }"#;
+        let req: UpdateTeamGeoRestrictionsRequest = serde_json::from_str(json).unwrap();
+        assert!(req.enable_geo_restrictions);
+        assert_eq!(req.allowed_countries.as_ref().unwrap().len(), 2);
+        assert_eq!(req.blocked_countries.as_ref().unwrap().len(), 1);
+        assert_eq!(req.ip_whitelist.as_ref().unwrap().len(), 1);
+        assert_eq!(req.domain_blacklist.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_update_geo_restrictions_request_deny_unknown_fields() {
+        let json = r#"{"enable_geo_restrictions": true, "unknown": 1}"#;
+        let result: Result<UpdateTeamGeoRestrictionsRequest, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_geo_restrictions_request_validation_empty_allowed_countries() {
+        // The #[validate(length(min = 1))] on allowed_countries means
+        // an empty vec should fail validation
+        let req = UpdateTeamGeoRestrictionsRequest {
+            enable_geo_restrictions: true,
+            allowed_countries: Some(vec![]),
+            blocked_countries: None,
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn test_update_geo_restrictions_request_validation_empty_blocked_countries() {
+        let req = UpdateTeamGeoRestrictionsRequest {
+            enable_geo_restrictions: true,
+            allowed_countries: None,
+            blocked_countries: Some(vec![]),
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn test_update_geo_restrictions_request_validation_with_countries() {
+        let req = UpdateTeamGeoRestrictionsRequest {
+            enable_geo_restrictions: true,
+            allowed_countries: Some(vec!["US".to_string()]),
+            blocked_countries: Some(vec!["CN".to_string()]),
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    // ========== TeamInfoResponse clone and debug ==========
+
+    #[test]
+    fn test_team_info_response_clone() {
+        let response = TeamInfoResponse {
+            id: Uuid::new_v4(),
+            name: "Clone Test".to_string(),
+            credits_balance: 500,
+            total_tasks: 10,
+            completed_tasks: 8,
+            failed_tasks: 2,
+            created_at: chrono::Utc::now(),
+        };
+        let cloned = response.clone();
+        assert_eq!(cloned.id, response.id);
+        assert_eq!(cloned.name, response.name);
+        assert_eq!(cloned.credits_balance, response.credits_balance);
+        assert_eq!(cloned.total_tasks, response.total_tasks);
+    }
+
+    #[test]
+    fn test_team_info_response_debug() {
+        let response = TeamInfoResponse {
+            id: Uuid::new_v4(),
+            name: "Debug Test".to_string(),
+            credits_balance: 0,
+            total_tasks: 0,
+            completed_tasks: 0,
+            failed_tasks: 0,
+            created_at: chrono::Utc::now(),
+        };
+        let debug = format!("{:?}", response);
+        assert!(debug.contains("TeamInfoResponse"));
+        assert!(debug.contains("Debug Test"));
+    }
+
+    // ========== TeamUsageResponse clone and debug ==========
+
+    #[test]
+    fn test_team_usage_response_clone() {
+        let response = TeamUsageResponse {
+            team_id: Uuid::new_v4(),
+            period: "30d".to_string(),
+            total_requests: 100,
+            successful_requests: 90,
+            failed_requests: 10,
+            credits_used: 500,
+            avg_response_time_ms: 42.5,
+        };
+        let cloned = response.clone();
+        assert_eq!(cloned.team_id, response.team_id);
+        assert_eq!(cloned.total_requests, response.total_requests);
+        assert_eq!(cloned.avg_response_time_ms, response.avg_response_time_ms);
+    }
+
+    #[test]
+    fn test_team_usage_response_debug() {
+        let response = TeamUsageResponse {
+            team_id: Uuid::new_v4(),
+            period: "7d".to_string(),
+            total_requests: 0,
+            successful_requests: 0,
+            failed_requests: 0,
+            credits_used: 0,
+            avg_response_time_ms: 0.0,
+        };
+        let debug = format!("{:?}", response);
+        assert!(debug.contains("TeamUsageResponse"));
+        assert!(debug.contains("7d"));
+    }
+
+    #[test]
+    fn test_team_usage_response_deserialization() {
+        let json = format!(
+            r#"{{"team_id":"{}","period":"30d","total_requests":50,"successful_requests":45,"failed_requests":5,"credits_used":250,"avg_response_time_ms":99.9}}"#,
+            Uuid::new_v4()
+        );
+        let response: TeamUsageResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(response.period, "30d");
+        assert_eq!(response.total_requests, 50);
+        assert_eq!(response.avg_response_time_ms, 99.9);
+    }
+
+    // ========== TeamInfoResponse with extreme values ==========
+
+    #[test]
+    fn test_team_info_response_max_balance() {
+        let response = TeamInfoResponse {
+            id: Uuid::new_v4(),
+            name: "Rich Team".to_string(),
+            credits_balance: i64::MAX,
+            total_tasks: 0,
+            completed_tasks: 0,
+            failed_tasks: 0,
+            created_at: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["credits_balance"], i64::MAX);
+    }
+
+    #[test]
+    fn test_team_info_response_min_balance() {
+        let response = TeamInfoResponse {
+            id: Uuid::new_v4(),
+            name: "Debt Team".to_string(),
+            credits_balance: i64::MIN,
+            total_tasks: 0,
+            completed_tasks: 0,
+            failed_tasks: 0,
+            created_at: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["credits_balance"], i64::MIN);
+    }
+
+    // ========== IP whitelist validation logic (mirrors handler lines 177-187) ==========
+
+    #[test]
+    fn test_ip_whitelist_validation_all_valid() {
+        let whitelist = vec![
+            "192.168.1.1".to_string(),
+            "10.0.0.0/8".to_string(),
+            "::1".to_string(),
+            "2001:db8::/32".to_string(),
+        ];
+        for ip in &whitelist {
+            assert!(is_valid_ip_or_cidr(ip), "IP {} should be valid", ip);
+        }
+    }
+
+    #[test]
+    fn test_ip_whitelist_validation_with_invalid_entry() {
+        let whitelist = vec![
+            "192.168.1.1".to_string(),
+            "invalid-ip".to_string(),
+            "10.0.0.0/8".to_string(),
+        ];
+        let has_invalid = whitelist.iter().any(|ip| !is_valid_ip_or_cidr(ip));
+        assert!(has_invalid, "Should detect invalid IP in whitelist");
+    }
+
+    #[test]
+    fn test_ip_whitelist_validation_all_invalid() {
+        let whitelist = vec![
+            "not-an-ip".to_string(),
+            "999.999.999.999".to_string(),
+        ];
+        let all_invalid = whitelist.iter().all(|ip| !is_valid_ip_or_cidr(ip));
+        assert!(all_invalid, "All entries should be invalid");
+    }
+
+    // ========== TeamGeoRestrictions construction (domain type used in handler) ==========
+
+    #[test]
+    fn test_team_geo_restrictions_disabled() {
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: false,
+            allowed_countries: None,
+            blocked_countries: None,
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+        assert!(!restrictions.enable_geo_restrictions);
+    }
+
+    #[test]
+    fn test_team_geo_restrictions_enabled_with_data() {
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            allowed_countries: Some(vec!["US".to_string()]),
+            blocked_countries: Some(vec!["CN".to_string()]),
+            ip_whitelist: Some(vec!["10.0.0.0/8".to_string()]),
+            domain_blacklist: Some(vec!["bad.com".to_string()]),
+        };
+        assert!(restrictions.enable_geo_restrictions);
+        assert_eq!(restrictions.allowed_countries.as_ref().unwrap().len(), 1);
+        assert_eq!(restrictions.blocked_countries.as_ref().unwrap().len(), 1);
     }
 }

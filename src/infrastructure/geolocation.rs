@@ -601,4 +601,256 @@ mod tests {
         assert_eq!(decoded.org, original.org);
         assert_eq!(decoded.error, original.error);
     }
+
+    // =========================================================================
+    // GeoLocationServiceImpl::get_locations with empty list
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_get_locations_empty_list_returns_empty() {
+        // 空列表应返回空 Vec，不触发任何 HTTP 请求
+        let client = Arc::new(reqwest::Client::new());
+        let svc = GeoLocationServiceImpl::new(client);
+        let ips: Vec<IpAddr> = vec![];
+        let result = svc.get_locations(&ips).await;
+        assert!(result.is_ok(), "get_locations should succeed for empty list");
+        let locations = result.unwrap();
+        assert!(locations.is_empty(), "should return empty Vec for empty input");
+    }
+
+    // =========================================================================
+    // IpApiResponse additional serde edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_ip_api_response_deserialize_empty_json() {
+        // 空 JSON 对象 → 所有 Option 字段为 None
+        let json = r#"{}"#;
+        let resp: IpApiResponse = serde_json::from_str(json).expect("deserialize failed");
+        assert!(resp.ip.is_none());
+        assert!(resp.country_code.is_none());
+        assert!(resp.country_name.is_none());
+        assert!(resp.region.is_none());
+        assert!(resp.city.is_none());
+        assert!(resp.latitude.is_none());
+        assert!(resp.longitude.is_none());
+        assert!(resp.org.is_none());
+        assert!(resp.error.is_none());
+        assert!(resp.reason.is_none());
+    }
+
+    #[test]
+    fn test_ip_api_response_deserialize_with_error_true() {
+        // error=true 且有 reason
+        let json = r#"{
+            "error": true,
+            "reason": "Rate limited"
+        }"#;
+        let resp: IpApiResponse = serde_json::from_str(json).expect("deserialize failed");
+        assert_eq!(resp.error, Some(true));
+        assert_eq!(resp.reason.as_deref(), Some("Rate limited"));
+    }
+
+    #[test]
+    fn test_ip_api_response_serialize_empty_struct() {
+        // 序列化全 None 的结构
+        let resp = IpApiResponse {
+            ip: None,
+            country_code: None,
+            country_name: None,
+            region: None,
+            city: None,
+            latitude: None,
+            longitude: None,
+            org: None,
+            error: None,
+            reason: None,
+        };
+        let json = serde_json::to_string(&resp).expect("serialize failed");
+        // 反序列化回来应一致
+        let decoded: IpApiResponse = serde_json::from_str(&json).expect("deserialize failed");
+        assert!(decoded.ip.is_none());
+        assert!(decoded.error.is_none());
+    }
+
+    // =========================================================================
+    // is_ip_in_cidr additional edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_is_ip_in_cidr_empty_cidr_returns_false() {
+        // 空 CIDR 字符串 → split 返回 1 部分 → len != 2 → false
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, ""));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_only_slash_returns_false() {
+        // 只有 "/" → parts = ["", ""] → len == 2，但 network 解析失败 → false
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(!is_ip_in_cidr(&ip, "/"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_ipv4_prefix_16_match() {
+        // /16 前缀匹配
+        let ip: IpAddr = "10.20.30.40".parse().unwrap();
+        assert!(is_ip_in_cidr(&ip, "10.20.0.0/16"));
+        assert!(!is_ip_in_cidr(&ip, "10.21.0.0/16"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_ipv4_prefix_8_match() {
+        // /8 前缀匹配
+        let ip: IpAddr = "10.20.30.40".parse().unwrap();
+        assert!(is_ip_in_cidr(&ip, "10.0.0.0/8"));
+        assert!(!is_ip_in_cidr(&ip, "11.0.0.0/8"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_ipv6_prefix_64_match() {
+        // /64 前缀匹配
+        let ip: IpAddr = "2001:db8:85a3::8a2e:370:7334".parse().unwrap();
+        assert!(is_ip_in_cidr(&ip, "2001:db8:85a3::/64"));
+        assert!(!is_ip_in_cidr(&ip, "2001:db8:85a4::/64"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_ipv6_prefix_32_match() {
+        // /32 前缀匹配
+        let ip: IpAddr = "2001:db8:85a3::8a2e:370:7334".parse().unwrap();
+        assert!(is_ip_in_cidr(&ip, "2001:db8::/32"));
+        assert!(!is_ip_in_cidr(&ip, "2001:db9::/32"));
+    }
+
+    // =========================================================================
+    // is_ipv4_in_cidr additional boundary tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_ipv4_in_cidr_prefix_1_matches() {
+        // /1 前缀：只比较最高位
+        let ip = Ipv4Addr::new(128, 0, 0, 0);
+        let network = Ipv4Addr::new(128, 0, 0, 0);
+        assert!(is_ipv4_in_cidr(&ip, &network, 1));
+        let ip2 = Ipv4Addr::new(127, 0, 0, 0);
+        assert!(!is_ipv4_in_cidr(&ip2, &network, 1));
+    }
+
+    #[test]
+    fn test_is_ipv4_in_cidr_prefix_31_boundary() {
+        // /31 前缀：比较前 31 位
+        let ip = Ipv4Addr::new(192, 168, 1, 0);
+        let network = Ipv4Addr::new(192, 168, 1, 0);
+        assert!(is_ipv4_in_cidr(&ip, &network, 31));
+        let ip2 = Ipv4Addr::new(192, 168, 1, 1);
+        assert!(is_ipv4_in_cidr(&ip2, &network, 31));
+        let ip3 = Ipv4Addr::new(192, 168, 1, 2);
+        assert!(!is_ipv4_in_cidr(&ip3, &network, 31));
+    }
+
+    // =========================================================================
+    // is_ipv6_in_cidr additional boundary tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_ipv6_in_cidr_prefix_16_exact_segment_match() {
+        // /16：只比较第 0 段
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x370, 0x7334);
+        let network = Ipv6Addr::new(0x2001, 0, 0, 0, 0, 0, 0, 0);
+        assert!(is_ipv6_in_cidr(&ip, &network, 16));
+        let network2 = Ipv6Addr::new(0x2002, 0, 0, 0, 0, 0, 0, 0);
+        assert!(!is_ipv6_in_cidr(&ip, &network2, 16));
+    }
+
+    #[test]
+    fn test_is_ipv6_in_cidr_prefix_112_partial_segment() {
+        // /112 = 7*16 + 0，remaining_bits=0，检查前 7 段完整匹配
+        let ip = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x370, 0x7334);
+        let network = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x370, 0);
+        assert!(is_ipv6_in_cidr(&ip, &network, 112));
+        let network2 = Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0, 0, 0x8a2e, 0x371, 0);
+        assert!(!is_ipv6_in_cidr(&ip, &network2, 112));
+    }
+
+    // =========================================================================
+    // GeoLocationServiceImpl additional constructor tests
+    // =========================================================================
+
+    #[test]
+    fn test_geo_location_service_impl_new_creates_engine_client() {
+        // 验证 new() 创建后 engine_client 不为空（通过可以调用方法间接验证）
+        let client = Arc::new(reqwest::Client::new());
+        let svc = GeoLocationServiceImpl::new(client);
+        // api_endpoint 应为默认值
+        assert_eq!(svc.api_endpoint, "https://ipapi.co");
+    }
+
+    #[test]
+    fn test_geo_location_service_impl_with_endpoint_empty_string() {
+        // 空字符串端点也应被接受
+        let client = Arc::new(reqwest::Client::new());
+        let svc = GeoLocationServiceImpl::with_endpoint("".to_string(), client);
+        assert_eq!(svc.api_endpoint, "");
+    }
+
+    #[test]
+    fn test_geo_location_service_impl_with_endpoint_trailing_slash() {
+        // 带尾部斜杠的端点
+        let client = Arc::new(reqwest::Client::new());
+        let svc = GeoLocationServiceImpl::with_endpoint("https://api.example.com/".to_string(), client);
+        assert_eq!(svc.api_endpoint, "https://api.example.com/");
+    }
+
+    // =========================================================================
+    // GeoLocation Debug and Clone
+    // =========================================================================
+
+    #[test]
+    fn test_geo_location_clone_preserves_fields() {
+        let geo = GeoLocation {
+            ip: "8.8.8.8".to_string(),
+            country_code: "US".to_string(),
+            country_name: "United States".to_string(),
+            region: Some("CA".to_string()),
+            city: Some("Mountain View".to_string()),
+            latitude: Some(37.4),
+            longitude: Some(-122.1),
+            isp: Some("Google".to_string()),
+            org: Some("Google LLC".to_string()),
+        };
+        let cloned = geo.clone();
+        assert_eq!(cloned.ip, geo.ip);
+        assert_eq!(cloned.country_code, geo.country_code);
+        assert_eq!(cloned.country_name, geo.country_name);
+        assert_eq!(cloned.region, geo.region);
+        assert_eq!(cloned.city, geo.city);
+        assert_eq!(cloned.latitude, geo.latitude);
+        assert_eq!(cloned.longitude, geo.longitude);
+        assert_eq!(cloned.isp, geo.isp);
+        assert_eq!(cloned.org, geo.org);
+    }
+
+    #[test]
+    fn test_geo_location_serialize_deserialize_roundtrip() {
+        let geo = GeoLocation {
+            ip: "1.2.3.4".to_string(),
+            country_code: "US".to_string(),
+            country_name: "United States".to_string(),
+            region: Some("CA".to_string()),
+            city: None,
+            latitude: Some(37.4),
+            longitude: None,
+            isp: Some("ISP".to_string()),
+            org: None,
+        };
+        let json = serde_json::to_string(&geo).expect("serialize failed");
+        let decoded: GeoLocation = serde_json::from_str(&json).expect("deserialize failed");
+        assert_eq!(decoded.ip, geo.ip);
+        assert_eq!(decoded.country_code, geo.country_code);
+        assert_eq!(decoded.region, geo.region);
+        assert_eq!(decoded.city, geo.city);
+        assert_eq!(decoded.latitude, geo.latitude);
+        assert_eq!(decoded.isp, geo.isp);
+    }
 }

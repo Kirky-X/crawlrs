@@ -145,14 +145,8 @@ mod tests {
     async fn test_acquire_within_limit_succeeds() {
         let sem = TeamSemaphore::new(2);
         let team_id = Uuid::new_v4();
-        let p1 = sem
-            .acquire(team_id)
-            .await
-            .expect("first acquire should succeed");
-        let p2 = sem
-            .acquire(team_id)
-            .await
-            .expect("second acquire should succeed");
+        let p1 = sem.acquire(team_id).await.expect("first acquire should succeed");
+        let p2 = sem.acquire(team_id).await.expect("second acquire should succeed");
         // Hold the permits; both must succeed since limit is 2
         let _ = (p1, p2);
     }
@@ -162,12 +156,13 @@ mod tests {
         let sem = TeamSemaphore::new(1);
         let team_id = Uuid::new_v4();
         // Exhaust the single permit (held until end of test)
-        let _held_permit = sem
-            .acquire(team_id)
-            .await
-            .expect("first acquire should succeed");
+        let _held_permit = sem.acquire(team_id).await.expect("first acquire should succeed");
         // Second acquire should block since the permit is held; verify via timeout
-        let result = tokio::time::timeout(Duration::from_millis(50), sem.acquire(team_id)).await;
+        let result = tokio::time::timeout(
+            Duration::from_millis(50),
+            sem.acquire(team_id),
+        )
+        .await;
         assert!(
             result.is_err(),
             "second acquire should time out when permits are exhausted"
@@ -179,18 +174,16 @@ mod tests {
         let sem = TeamSemaphore::new(1);
         let team_id = Uuid::new_v4();
         {
-            let _permit = sem
-                .acquire(team_id)
-                .await
-                .expect("first acquire should succeed");
+            let _permit = sem.acquire(team_id).await.expect("first acquire should succeed");
             // permit dropped here
         }
         // After the permit is dropped, a new acquire should succeed immediately
-        let result = tokio::time::timeout(Duration::from_millis(200), sem.acquire(team_id)).await;
-        assert!(
-            result.is_ok(),
-            "acquire should succeed after permit is dropped"
-        );
+        let result = tokio::time::timeout(
+            Duration::from_millis(200),
+            sem.acquire(team_id),
+        )
+        .await;
+        assert!(result.is_ok(), "acquire should succeed after permit is dropped");
         assert!(result.unwrap().is_ok());
     }
 
@@ -200,16 +193,14 @@ mod tests {
         let sem = TeamSemaphore::new(1);
         let team_a = Uuid::new_v4();
         let team_b = Uuid::new_v4();
-        let _held_a = sem
-            .acquire(team_a)
-            .await
-            .expect("team A acquire should succeed");
+        let _held_a = sem.acquire(team_a).await.expect("team A acquire should succeed");
         // team A is now exhausted; team B should still acquire immediately
-        let result = tokio::time::timeout(Duration::from_millis(200), sem.acquire(team_b)).await;
-        assert!(
-            result.is_ok(),
-            "team B acquire should not be blocked by team A"
-        );
+        let result = tokio::time::timeout(
+            Duration::from_millis(200),
+            sem.acquire(team_b),
+        )
+        .await;
+        assert!(result.is_ok(), "team B acquire should not be blocked by team A");
         assert!(result.unwrap().is_ok());
     }
 

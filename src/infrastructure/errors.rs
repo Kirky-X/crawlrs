@@ -132,4 +132,18 @@ mod tests {
             crate::domain::errors::DomainError::CrawlConfigError { .. }
         ));
     }
+
+    #[test]
+    fn test_conversion_to_domain_error_record_not_found() {
+        let infra_err = InfrastructureError::RecordNotFound {
+            table: "tasks".to_string(),
+            condition: "id = 1".to_string(),
+        };
+
+        let domain_err: crate::domain::errors::DomainError = infra_err.into();
+        assert!(matches!(
+            domain_err,
+            crate::domain::errors::DomainError::TaskNotFound { .. }
+        ));
+    }
 }

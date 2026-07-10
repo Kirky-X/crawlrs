@@ -258,4 +258,105 @@ mod tests {
         assert_eq!(result1, ProcessResult::Completed);
         assert_eq!(mock.expire_calls(), 1);
     }
+
+    // ========== process() with count = 1 (minimum non-zero) ==========
+
+    #[tokio::test]
+    async fn test_process_with_count_one() {
+        let mock = Arc::new(MockTaskRepository::new_with_expired_count(1));
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let worker = ExpirationWorker::new(repo);
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        assert_eq!(mock.expire_calls(), 1);
+    }
+
+    // ========== process() with large count ==========
+
+    #[tokio::test]
+    async fn test_process_with_large_count() {
+        let mock = Arc::new(MockTaskRepository::new_with_expired_count(u64::MAX));
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let worker = ExpirationWorker::new(repo);
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        assert_eq!(mock.expire_calls(), 1);
+    }
+
+    // ========== process() error then success on second call ==========
+
+    #[tokio::test]
+    async fn test_process_error_then_success_on_retry() {
+        let mock = Arc::new(MockTaskRepository::new_with_error("first call fails"));
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let worker = ExpirationWorker::new(repo);
+        // First call: error is taken from the mock, returns Error
+        let result1 = worker.process().await;
+        match result1 {
+            ProcessResult::Error(msg) => {
+                assert!(msg.contains("first call fails"));
+            }
+            _ => panic!("Expected Error on first call, got {:?}", result1),
+        }
+        assert_eq!(mock.expire_calls(), 1);
+        // Second call: error has been consumed, returns Ok(0)
+        let result2 = worker.process().await;
+        assert_eq!(result2, ProcessResult::Completed);
+        assert_eq!(mock.expire_calls(), 2);
+    }
+
+    // ========== multiple process cycles all complete ==========
+
+    #[tokio::test]
+    async fn test_process_multiple_cycles_all_complete() {
+        let mock = Arc::new(MockTaskRepository::new_with_expired_count(5));
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let worker = ExpirationWorker::new(repo);
+        // The mock returns Ok(5) on every call (error is None)
+        for i in 1..=3 {
+            let result = worker.process().await;
+            assert_eq!(result, ProcessResult::Completed, "cycle {} failed", i);
+        }
+        assert_eq!(mock.expire_calls(), 3);
+    }
+
+    // ========== cleanup_expired_tasks with zero count ==========
+
+    #[tokio::test]
+    async fn test_cleanup_expired_tasks_zero_count() {
+        let mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let worker = ExpirationWorker::new(repo);
+        let result = worker.cleanup_expired_tasks().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+        assert_eq!(mock.expire_calls(), 1);
+    }
+
+    // ========== new() returns worker with correct name ==========
+
+    #[test]
+    fn test_new_returns_worker_with_correct_name() {
+        let repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let worker = ExpirationWorker::new(repo);
+        // Verify the worker was constructed correctly by checking its name
+        assert_eq!(worker.name(), "expiration-worker");
+    }
+
+    // ========== process() preserves repository across calls ==========
+
+    #[tokio::test]
+    async fn test_process_preserves_repository_across_calls() {
+        let mock = Arc::new(MockTaskRepository::new_with_expired_count(2));
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let worker = ExpirationWorker::new(repo);
+        // First call
+        let r1 = worker.process().await;
+        assert_eq!(r1, ProcessResult::Completed);
+        // Second call uses the same repository
+        let r2 = worker.process().await;
+        assert_eq!(r2, ProcessResult::Completed);
+        // Both calls should have invoked expire_tasks
+        assert_eq!(mock.expire_calls(), 2);
+    }
 }

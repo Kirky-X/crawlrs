@@ -1377,4 +1377,104 @@ mod tests {
 
         assert_eq!(result["href"], Value::Null);
     }
+
+    // ========== extract (async) CSS selector branch coverage ==========
+
+    #[tokio::test]
+    async fn test_extract_async_array_text_extraction() {
+        let html = r#"<html><body><ul><li>Apple</li><li>Banana</li></ul></body></html>"#;
+        let mut rules = HashMap::new();
+        rules.insert("items".to_string(), rule(Some("li"), None, true));
+
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let service = ExtractionService::new(Arc::new(mock));
+        let (result, _) = service
+            .extract(html, &rules, None)
+            .await
+            .expect("extract should succeed");
+
+        let arr = result["items"].as_array().expect("should be array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], "Apple");
+        assert_eq!(arr[1], "Banana");
+    }
+
+    #[tokio::test]
+    async fn test_extract_async_array_attr_non_href_with_base() {
+        let html = r#"<html><body><a class="link-a" href="/a">A</a><a class="link-b" href="/b">B</a></body></html>"#;
+        let mut rules = HashMap::new();
+        rules.insert("classes".to_string(), rule(Some("a"), Some("class"), true));
+
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let service = ExtractionService::new(Arc::new(mock));
+        let (result, _) = service
+            .extract(html, &rules, Some("https://example.com"))
+            .await
+            .expect("extract should succeed");
+
+        let arr = result["classes"].as_array().expect("should be array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], "link-a");
+        assert_eq!(arr[1], "link-b");
+    }
+
+    #[tokio::test]
+    async fn test_extract_async_array_attr_non_href_without_base() {
+        let html = r#"<html><body><span data-id="1">A</span><span data-id="2">B</span></body></html>"#;
+        let mut rules = HashMap::new();
+        rules.insert(
+            "ids".to_string(),
+            rule(Some("span"), Some("data-id"), true),
+        );
+
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let service = ExtractionService::new(Arc::new(mock));
+        let (result, _) = service
+            .extract(html, &rules, None)
+            .await
+            .expect("extract should succeed");
+
+        let arr = result["ids"].as_array().expect("should be array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], "1");
+        assert_eq!(arr[1], "2");
+    }
+
+    #[tokio::test]
+    async fn test_extract_async_single_attr_non_href_with_base() {
+        let html = r#"<html><body><div class="content">Text</div></body></html>"#;
+        let mut rules = HashMap::new();
+        rules.insert(
+            "cls".to_string(),
+            rule(Some("div"), Some("class"), false),
+        );
+
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let service = ExtractionService::new(Arc::new(mock));
+        let (result, _) = service
+            .extract(html, &rules, Some("https://example.com"))
+            .await
+            .expect("extract should succeed");
+
+        assert_eq!(result["cls"], "content");
+    }
+
+    #[tokio::test]
+    async fn test_extract_async_single_attr_non_href_without_base() {
+        let html = r#"<html><body><div data-value="42">Text</div></body></html>"#;
+        let mut rules = HashMap::new();
+        rules.insert(
+            "val".to_string(),
+            rule(Some("div"), Some("data-value"), false),
+        );
+
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let service = ExtractionService::new(Arc::new(mock));
+        let (result, _) = service
+            .extract(html, &rules, None)
+            .await
+            .expect("extract should succeed");
+
+        assert_eq!(result["val"], "42");
+    }
 }

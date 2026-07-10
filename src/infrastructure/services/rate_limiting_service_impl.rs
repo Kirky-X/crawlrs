@@ -955,3 +955,359 @@ impl QuotaService for RateLimitingServiceImpl {
 #[async_trait]
 #[cfg(feature = "rate-limiting")]
 impl RateLimitingService for RateLimitingServiceImpl {}
+
+#[cfg(all(test, feature = "rate-limiting"))]
+mod tests {
+    use super::*;
+    use crate::domain::models::{
+        CreditsTransaction, CreditsTransactionType, Task, TaskStatus, TaskType,
+    };
+    use crate::domain::repositories::credits_repository::{
+        CreditsRepository, CreditsRepositoryError,
+    };
+    use crate::domain::repositories::task_repository::{
+        RepositoryError, TaskQueryParams, TaskRepository,
+    };
+    use crate::domain::repositories::tasks_backlog_repository::{
+        TasksBacklog, TasksBacklogRepository, TasksBacklogStatus,
+    };
+    use crate::infrastructure::cache::redis_client::RedisClient;
+    use async_trait::async_trait;
+    use std::collections::HashSet;
+
+    // ========== Mock Repositories ==========
+
+    struct MockTaskRepository;
+
+    #[async_trait]
+    impl TaskRepository for MockTaskRepository {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: Uuid,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            Ok((vec![], 0))
+        }
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+    }
+
+    struct MockBacklogRepository;
+
+    #[async_trait]
+    impl TasksBacklogRepository for MockBacklogRepository {
+        async fn create(
+            &self,
+            backlog: &TasksBacklog,
+        ) -> Result<TasksBacklog, RepositoryError> {
+            Ok(backlog.clone())
+        }
+        async fn find_by_id(
+            &self,
+            _id: Uuid,
+        ) -> Result<Option<TasksBacklog>, RepositoryError> {
+            Ok(None)
+        }
+        async fn find_by_task_id(
+            &self,
+            _task_id: Uuid,
+        ) -> Result<Option<TasksBacklog>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(
+            &self,
+            backlog: &TasksBacklog,
+        ) -> Result<TasksBacklog, RepositoryError> {
+            Ok(backlog.clone())
+        }
+        async fn delete(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn get_pending_tasks(
+            &self,
+            _team_id: Option<Uuid>,
+            _limit: Option<u64>,
+        ) -> Result<Vec<TasksBacklog>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn get_expired_tasks(
+            &self,
+            _limit: Option<u64>,
+        ) -> Result<Vec<TasksBacklog>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn count_by_status(
+            &self,
+            _team_id: Option<Uuid>,
+            _status: TasksBacklogStatus,
+        ) -> Result<i64, RepositoryError> {
+            Ok(0)
+        }
+        async fn update_status_batch(
+            &self,
+            _ids: &[Uuid],
+            _status: TasksBacklogStatus,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+    }
+
+    struct MockCreditsRepository;
+
+    #[async_trait]
+    impl CreditsRepository for MockCreditsRepository {
+        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+            Ok(100)
+        }
+        async fn deduct_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), CreditsRepositoryError> {
+            Ok(())
+        }
+        async fn add_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(100)
+        }
+        async fn get_transaction_history(
+            &self,
+            _team_id: Uuid,
+            _limit: Option<u32>,
+        ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
+            Ok(vec![])
+        }
+        async fn initialize_team_credits(
+            &self,
+            _team_id: Uuid,
+            _initial_balance: i64,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(100)
+        }
+    }
+
+    // ========== Test Helpers ==========
+
+    fn create_service(config: RateLimitingConfig) -> RateLimitingServiceImpl {
+        let redis = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let backlog_repo: Arc<dyn TasksBacklogRepository> = Arc::new(MockBacklogRepository);
+        let credits_repo: Arc<dyn CreditsRepository> = Arc::new(MockCreditsRepository);
+        RateLimitingServiceImpl::new(redis, task_repo, backlog_repo, credits_repo, config)
+    }
+
+    // ========== RateLimitingConfig::default() tests ==========
+
+    #[test]
+    fn test_rate_limiting_config_default_values() {
+        let config = RateLimitingConfig::default();
+        assert_eq!(config.redis_key_prefix, "crawlrs:ratelimit");
+        assert_eq!(config.backlog_process_interval_seconds, 30);
+        assert_eq!(config.rate_limit_ttl_seconds, 3600);
+        assert!(config.rate_limit.enabled);
+        assert!(config.concurrency.enabled);
+    }
+
+    #[test]
+    fn test_rate_limiting_config_clone_preserves_values() {
+        let config = RateLimitingConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.redis_key_prefix, cloned.redis_key_prefix);
+        assert_eq!(
+            config.backlog_process_interval_seconds,
+            cloned.backlog_process_interval_seconds
+        );
+    }
+
+    // ========== build_redis_key tests ==========
+
+    #[test]
+    fn test_build_redis_key_default_prefix() {
+        let service = create_service(RateLimitingConfig::default());
+        assert_eq!(
+            service.build_redis_key("test:suffix"),
+            "crawlrs:ratelimit:test:suffix"
+        );
+    }
+
+    #[test]
+    fn test_build_redis_key_custom_prefix() {
+        let mut config = RateLimitingConfig::default();
+        config.redis_key_prefix = "custom:prefix".to_string();
+        let service = create_service(config);
+        assert_eq!(service.build_redis_key("key"), "custom:prefix:key");
+    }
+
+    #[test]
+    fn test_build_redis_key_empty_suffix() {
+        let service = create_service(RateLimitingConfig::default());
+        assert_eq!(service.build_redis_key(""), "crawlrs:ratelimit:");
+    }
+
+    // ========== hash_api_key_for_redis tests ==========
+
+    #[test]
+    fn test_hash_api_key_deterministic() {
+        let service = create_service(RateLimitingConfig::default());
+        let hash1 = service.hash_api_key_for_redis("my-api-key");
+        let hash2 = service.hash_api_key_for_redis("my-api-key");
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_api_key_different_inputs_produce_different_hashes() {
+        let service = create_service(RateLimitingConfig::default());
+        let hash1 = service.hash_api_key_for_redis("key-one");
+        let hash2 = service.hash_api_key_for_redis("key-two");
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_api_key_known_sha256_value() {
+        // SHA256("test") = 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+        let service = create_service(RateLimitingConfig::default());
+        let hash = service.hash_api_key_for_redis("test");
+        assert_eq!(
+            hash,
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        );
+    }
+
+    #[test]
+    fn test_hash_api_key_empty_string() {
+        // SHA256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        let service = create_service(RateLimitingConfig::default());
+        let hash = service.hash_api_key_for_redis("");
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    // ========== build_api_rate_limit_key tests ==========
+
+    #[test]
+    fn test_build_api_rate_limit_key_format() {
+        let service = create_service(RateLimitingConfig::default());
+        let key = service.build_api_rate_limit_key("secret-key", "/scrape", "per_second");
+        let hashed = service.hash_api_key_for_redis("secret-key");
+        assert_eq!(
+            key,
+            format!("crawlrs:ratelimit:api:{}:/scrape:per_second", hashed)
+        );
+    }
+
+    #[test]
+    fn test_build_api_rate_limit_key_different_endpoints() {
+        let service = create_service(RateLimitingConfig::default());
+        let key1 = service.build_api_rate_limit_key("key", "/scrape", "per_second");
+        let key2 = service.build_api_rate_limit_key("key", "/crawl", "per_second");
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_build_api_rate_limit_key_different_windows() {
+        let service = create_service(RateLimitingConfig::default());
+        let key1 = service.build_api_rate_limit_key("key", "/scrape", "per_second");
+        let key2 = service.build_api_rate_limit_key("key", "/scrape", "per_minute");
+        let key3 = service.build_api_rate_limit_key("key", "/scrape", "per_hour");
+        assert_ne!(key1, key2);
+        assert_ne!(key2, key3);
+        assert_ne!(key1, key3);
+    }
+
+    // ========== build_team_semaphore_key tests ==========
+
+    #[test]
+    fn test_build_team_semaphore_key_format() {
+        let service = create_service(RateLimitingConfig::default());
+        let team_id = Uuid::new_v4();
+        let key = service.build_team_semaphore_key(team_id);
+        assert_eq!(
+            key,
+            format!("crawlrs:ratelimit:team:{}:semaphore", team_id)
+        );
+    }
+
+    #[test]
+    fn test_build_team_semaphore_key_different_teams() {
+        let service = create_service(RateLimitingConfig::default());
+        let team1 = Uuid::new_v4();
+        let team2 = Uuid::new_v4();
+        let key1 = service.build_team_semaphore_key(team1);
+        let key2 = service.build_team_semaphore_key(team2);
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_build_team_semaphore_key_custom_prefix() {
+        let mut config = RateLimitingConfig::default();
+        config.redis_key_prefix = "myapp:rl".to_string();
+        let service = create_service(config);
+        let team_id = Uuid::new_v4();
+        let key = service.build_team_semaphore_key(team_id);
+        assert_eq!(key, format!("myapp:rl:team:{}:semaphore", team_id));
+    }
+}

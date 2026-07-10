@@ -703,4 +703,36 @@ mod tests {
         assert!(rule.attr().is_none());
         assert_eq!(rule.description(), "Extract paragraph text");
     }
+
+    // ========== extract_single_value: non-href attr with base URL ==========
+
+    #[test]
+    fn test_extract_single_value_non_href_attr_with_base_url() {
+        // 非 href/src 属性 + base URL：base 应被忽略，属性值原样返回
+        let html = r#"<meta name="author" content="Kirky">"#;
+        let base_url = Url::parse("https://example.com/base").expect("valid url");
+
+        let result = ExtractionUtils::extract_single_value(
+            html,
+            "meta[name='author']",
+            Some("content"),
+            Some(&base_url),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.expect("ok"), Value::String("Kirky".to_string()));
+    }
+
+    // ========== extract_single_value: href attr without base URL ==========
+
+    #[test]
+    fn test_extract_single_value_href_without_base_returns_raw() {
+        // href 属性 + base=None：href 值应原样返回（不进行 URL 拼接）
+        let html = r#"<a href="/path/page">Link</a>"#;
+
+        let result = ExtractionUtils::extract_single_value(html, "a", Some("href"), None);
+
+        assert!(result.is_ok());
+        assert_eq!(result.expect("ok"), Value::String("/path/page".to_string()));
+    }
 }

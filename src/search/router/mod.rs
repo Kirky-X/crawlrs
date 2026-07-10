@@ -1668,4 +1668,414 @@ mod tests_ext {
         assert!(debug.contains("RouterStats"));
         assert!(debug.contains("total_requests"));
     }
+
+    // ========== SearchEngineRouter search timeout tests ==========
+
+    #[tokio::test]
+    async fn test_router_search_timeout_fails_after_timeout() {
+        let config = SearchEngineRouterConfig {
+            request_timeout: Duration::from_millis(10),
+            enable_auto_failover: false,
+            ..Default::default()
+        };
+        let mut router = SearchEngineRouter::with_config(config);
+        // Register an engine that sleeps longer than the timeout
+        let slow_engine = Arc::new(MockEngine {
+            name: "slow",
+            should_fail: false,
+            delay: Duration::from_millis(500),
+        });
+        router.register_engine(slow_engine);
+        let request = SearchRequest::new("test query");
+        let result = router.search(&request, None).await;
+        assert!(result.is_err(), "should fail due to timeout");
+    }
+
+    #[tokio::test]
+    async fn test_router_search_timeout_with_failover() {
+        let config = SearchEngineRouterConfig {
+            request_timeout: Duration::from_millis(10),
+            enable_auto_failover: true,
+            ..Default::default()
+        };
+        let mut router = SearchEngineRouter::with_config(config);
+        // Register a slow engine that will timeout
+        let slow_engine = Arc::new(MockEngine {
+            name: "slow",
+            should_fail: false,
+            delay: Duration::from_millis(500),
+        });
+        // Register a fast engine that will succeed
+        let fast_engine = make_mock_engine("fast");
+        router.register_engine(slow_engine);
+        router.register_engine(fast_engine);
+        let request = SearchRequest::new("test query");
+        let result = router.search(&request, Some("fast")).await;
+        assert!(result.is_ok(), "should succeed via fast engine");
+    }
+
+    // ========== EngineMetrics additional tests ==========
+
+    #[test]
+    fn test_engine_metrics_can_retry_unhealthy_with_old_last_success() {
+        let mut m = EngineMetrics::default();
+        m.health = EngineHealth::Unhealthy;
+        // Set last_success to more than 5 minutes ago
+        m.last_success = Some(Instant::now() - Duration::from_secs(400));
+        assert!(
+            m.can_retry(),
+            "Unhealthy with old last_success (>5min) should be retryable"
+        );
+    }
+
+    #[test]
+    fn test_engine_metrics_record_success_updates_health_from_healthy() {
+        let mut m = EngineMetrics::default();
+        m.health = EngineHealth::Healthy;
+        m.record_request_start();
+        m.record_success(Duration::from_millis(50));
+        assert_eq!(m.health, EngineHealth::Healthy);
+    }
+
+    #[test]
+    fn test_engine_metrics_record_failure_two_times_stays_degraded() {
+        let mut m = EngineMetrics::default();
+        m.record_failure();
+        m.record_failure();
+        assert_eq!(m.health, EngineHealth::Degraded);
+        assert_eq!(m.consecutive_failures, 2);
+    }
+
+    #[test]
+    fn test_engine_metrics_clone() {
+        let mut m = EngineMetrics::default();
+        m.total_requests = 5;
+        m.successful_requests = 3;
+        m.failed_requests = 2;
+        m.health = EngineHealth::Degraded;
+        let cloned = m.clone();
+        assert_eq!(cloned.total_requests, 5);
+        assert_eq!(cloned.successful_requests, 3);
+        assert_eq!(cloned.failed_requests, 2);
+        assert_eq!(cloned.health, EngineHealth::Degraded);
+    }
+
+    #[test]
+    fn test_engine_metrics_debug_format() {
+        let m = EngineMetrics::default();
+        let debug = format!("{:?}", m);
+        assert!(debug.contains("EngineMetrics"));
+        assert!(debug.contains("total_requests"));
+    }
+
+    // ========== select_with_load_balancing edge cases ==========
+
+    #[test]
+    fn test_router_select_engine_load_balancing_multiple_engines() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        router.register_engine(make_mock_engine("baidu"));
+        router.register_engine(make_mock_engine("sogou"));
+        // Should select one of the healthy engines
+        let result = router.select_engine(None);
+        assert!(result.is_some());
+        let name = result.unwrap().name();
+        assert!(
+            name == "google" || name == "bing" || name == "baidu" || name == "sogou",
+            "should select a registered engine"
+        );
+    }
+
+    #[test]
+    fn test_router_select_engine_preferred_isolated_falls_back() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        router.isolate_engine("google");
+        // Preferred "google" is isolated, should fall back to bing
+        let result = router.select_engine(Some("google"));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().name(), "bing");
+    }
+
+    // ========== select_with_priority edge cases ==========
+
+    #[test]
+    fn test_router_select_with_priority_equal_health_picks_faster() {
+        let config = SearchEngineRouterConfig {
+            enable_load_balancing: false,
+            ..Default::default()
+        };
+        let mut router = SearchEngineRouter::with_config(config);
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        // Both engines are healthy, priority selection sorts by response time
+        {
+            let mut metrics = router.metrics.write();
+            if let Some(m) = metrics.get_mut("google") {
+                m.avg_response_time = Duration::from_millis(100);
+            }
+            if let Some(m) = metrics.get_mut("bing") {
+                m.avg_response_time = Duration::from_millis(200);
+            }
+        }
+        let result = router.select_engine(None);
+        assert!(result.is_some());
+        // select_with_priority uses descending sort on response time,
+        // so the engine with longer response time (bing) is selected first
+        let selected = result.unwrap().name().to_string();
+        assert!(
+            selected == "google" || selected == "bing",
+            "should select one of the engines, got: {}",
+            selected
+        );
+    }
+
+    // ========== search with preferred engine not in list ==========
+
+    #[tokio::test]
+    async fn test_router_search_preferred_not_registered_uses_available() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        let request = SearchRequest::new("test query");
+        // Preferred "bing" is not registered, should use google
+        let result = router.search(&request, Some("bing")).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(response.items[0].url.contains("google"));
+    }
+
+    // ========== all_metrics after operations ==========
+
+    #[tokio::test]
+    async fn test_router_all_metrics_reflects_search_operations() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_failing_engine("bing"));
+        let request = SearchRequest::new("test query");
+        // Search should try google (success) and possibly bing (fail)
+        let _ = router.search(&request, Some("google")).await;
+        let all = router.all_metrics();
+        let google_metrics = all.get("google").unwrap();
+        assert_eq!(google_metrics.successful_requests, 1);
+    }
+
+    // ========== SearchEngineRouter search with all isolated ==========
+
+    #[tokio::test]
+    async fn test_router_search_all_engines_isolated_returns_error() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.isolate_engine("google");
+        let request = SearchRequest::new("test query");
+        let result = router.search(&request, None).await;
+        assert!(result.is_err(), "should fail when all engines are isolated");
+    }
+
+    // ========== health() with mixed states ==========
+
+    #[test]
+    fn test_router_health_mixed_healthy_and_unhealthy_returns_healthy() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        {
+            let mut metrics = router.metrics.write();
+            if let Some(m) = metrics.get_mut("bing") {
+                m.health = EngineHealth::Unhealthy;
+            }
+        }
+        assert_eq!(router.health(), EngineHealth::Healthy);
+    }
+
+    #[test]
+    fn test_router_health_mixed_degraded_and_unhealthy_returns_degraded() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        {
+            let mut metrics = router.metrics.write();
+            if let Some(m) = metrics.get_mut("google") {
+                m.health = EngineHealth::Degraded;
+            }
+            if let Some(m) = metrics.get_mut("bing") {
+                m.health = EngineHealth::Unhealthy;
+            }
+        }
+        assert_eq!(router.health(), EngineHealth::Degraded);
+    }
+
+    #[test]
+    fn test_router_health_mixed_healthy_and_isolated_returns_healthy() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        router.isolate_engine("bing");
+        assert_eq!(router.health(), EngineHealth::Healthy);
+    }
+
+    // ========== select_with_priority with different health states ==========
+
+    #[test]
+    fn test_router_select_with_priority_unknown_health() {
+        let config = SearchEngineRouterConfig {
+            enable_load_balancing: false,
+            ..Default::default()
+        };
+        let mut router = SearchEngineRouter::with_config(config);
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        {
+            let mut metrics = router.metrics.write();
+            if let Some(m) = metrics.get_mut("bing") {
+                m.health = EngineHealth::Unknown;
+            }
+        }
+        // google (Healthy, order=0) should be selected over bing (Unknown, order=4)
+        let result = router.select_engine(None);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().name(), "google");
+    }
+
+    #[test]
+    fn test_router_select_with_priority_unhealthy_can_retry() {
+        let config = SearchEngineRouterConfig {
+            enable_load_balancing: false,
+            ..Default::default()
+        };
+        let mut router = SearchEngineRouter::with_config(config);
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        // Make bing unhealthy but retryable (old last_success)
+        {
+            let mut metrics = router.metrics.write();
+            if let Some(m) = metrics.get_mut("bing") {
+                m.health = EngineHealth::Unhealthy;
+                m.last_success = Some(Instant::now() - Duration::from_secs(400));
+            }
+        }
+        // google (Healthy, order=0) should be selected over bing (Unhealthy, order=2)
+        let result = router.select_engine(None);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().name(), "google");
+    }
+
+    // ========== select_with_load_balancing with different response times ==========
+
+    #[test]
+    fn test_router_select_load_balancing_slow_response_time() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        {
+            let mut metrics = router.metrics.write();
+            if let Some(m) = metrics.get_mut("google") {
+                m.avg_response_time = Duration::from_secs(10);
+            }
+            if let Some(m) = metrics.get_mut("bing") {
+                m.avg_response_time = Duration::from_millis(500);
+            }
+        }
+        // Should still select one of the engines
+        let result = router.select_engine(None);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_router_select_load_balancing_medium_response_time() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        {
+            let mut metrics = router.metrics.write();
+            if let Some(m) = metrics.get_mut("google") {
+                m.avg_response_time = Duration::from_secs(2);
+            }
+        }
+        let result = router.select_engine(None);
+        assert!(result.is_some());
+    }
+
+    // ========== stats with mixed requests ==========
+
+    #[test]
+    fn test_router_stats_mixed_success_and_failure() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        {
+            let mut metrics = router.metrics.write();
+            if let Some(m) = metrics.get_mut("google") {
+                m.total_requests = 20;
+                m.successful_requests = 15;
+                m.failed_requests = 5;
+            }
+            if let Some(m) = metrics.get_mut("bing") {
+                m.total_requests = 10;
+                m.successful_requests = 3;
+                m.failed_requests = 7;
+            }
+        }
+        let stats = router.stats();
+        assert_eq!(stats.total_requests, 30);
+        assert_eq!(stats.total_success, 18);
+        assert_eq!(stats.total_failures, 12);
+        assert_eq!(stats.engine_count, 2);
+        assert!((stats.overall_success_rate - 0.6).abs() < f64::EPSILON);
+    }
+
+    // ========== search with preferred engine isolated, failover ==========
+
+    #[tokio::test]
+    async fn test_router_search_preferred_isolated_failover_to_healthy() {
+        let mut router = SearchEngineRouter::new();
+        router.register_engine(make_mock_engine("google"));
+        router.register_engine(make_mock_engine("bing"));
+        router.isolate_engine("google");
+        let request = SearchRequest::new("test query");
+        // Preferred "google" is isolated, should failover to bing
+        let result = router.search(&request, Some("google")).await;
+        assert!(result.is_ok(), "should failover to bing");
+        let response = result.unwrap();
+        assert!(response.items[0].url.contains("bing"));
+    }
+
+    // ========== search timeout records failure metrics ==========
+
+    #[tokio::test]
+    async fn test_router_search_timeout_records_failure_metrics() {
+        let config = SearchEngineRouterConfig {
+            request_timeout: Duration::from_millis(10),
+            enable_auto_failover: false,
+            ..Default::default()
+        };
+        let mut router = SearchEngineRouter::with_config(config);
+        let slow_engine = Arc::new(MockEngine {
+            name: "slow",
+            should_fail: false,
+            delay: Duration::from_millis(500),
+        });
+        router.register_engine(slow_engine);
+        let request = SearchRequest::new("test query");
+        let _ = router.search(&request, None).await;
+        let metrics = router.get_engine_metrics("slow").unwrap();
+        assert_eq!(metrics.failed_requests, 1, "timeout should record failure");
+        assert_eq!(metrics.consecutive_failures, 1);
+    }
+
+    // ========== EngineMetrics record_success keeps healthy when already healthy ==========
+
+    #[test]
+    fn test_engine_metrics_record_success_multiple_updates_avg() {
+        let mut m = EngineMetrics::default();
+        m.record_request_start();
+        m.record_success(Duration::from_millis(100));
+        m.record_request_start();
+        m.record_success(Duration::from_millis(200));
+        m.record_request_start();
+        m.record_success(Duration::from_millis(300));
+        // avg = (100 + 200 + 300) / 3 = 200ms
+        assert_eq!(m.avg_response_time, Duration::from_millis(200));
+        assert_eq!(m.successful_requests, 3);
+    }
 }

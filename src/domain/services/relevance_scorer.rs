@@ -517,7 +517,14 @@ mod tests {
         }
 
         let cache: Arc<dyn RegexCacheTrait> = Arc::new(OkRegexCache);
-        let scorer = RelevanceScorer::new_with_cache("rust", Some(cache));
+        // Exercise get_or_insert directly (not used by calculate_score)
+        assert!(cache.get_or_insert(r"\btest\b").is_ok());
+        assert!(cache.get_or_insert(r"[invalid").is_err());
+        // Exercise get_or_compile directly (not used by calculate_score)
+        assert!(cache.get_or_compile(r"\b\w+\b").is_ok());
+        assert!(cache.get_or_compile(r"(unclosed").is_err());
+
+        let scorer = RelevanceScorer::new_with_cache("rust", Some(cache.clone()));
         // "rust" appears as a word boundary in "learn rust now"
         let score_word = scorer.calculate_score("learn rust now", None, "https://x.io");
         // "rust" appears only inside "rusting" - no word boundary match
@@ -545,6 +552,10 @@ mod tests {
         }
 
         let cache: Arc<dyn RegexCacheTrait> = Arc::new(ErrorRegexCache);
+        // Exercise get_or_insert and get_or_compile directly (not used by calculate_score)
+        assert!(cache.get_or_insert(r"\btest\b").is_err());
+        assert!(cache.get_or_compile(r"\btest\b").is_err());
+
         let scorer = RelevanceScorer::new_with_cache("rust", Some(cache));
         // Should not panic; falls back to contains() which matches "rusting" too
         let score = scorer.calculate_score("rusting away", None, "https://x.io");

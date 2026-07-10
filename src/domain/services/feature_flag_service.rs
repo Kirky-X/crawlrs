@@ -182,6 +182,8 @@ mod tests {
         delete_result: Mutex<bool>,
         /// When true, all methods return a DatabaseError
         fail_all: Mutex<bool>,
+        /// When true, only find_override returns a DatabaseError
+        fail_override_only: Mutex<bool>,
     }
 
     impl MockFeatureFlagRepository {
@@ -192,6 +194,7 @@ mod tests {
                 all_flags: Mutex::new(vec![]),
                 delete_result: Mutex::new(false),
                 fail_all: Mutex::new(false),
+                fail_override_only: Mutex::new(false),
             }
         }
 
@@ -217,6 +220,10 @@ mod tests {
 
         fn set_fail_all(&self, fail: bool) {
             *self.fail_all.lock().expect("lock") = fail;
+        }
+
+        fn set_fail_override_only(&self, fail: bool) {
+            *self.fail_override_only.lock().expect("lock") = fail;
         }
     }
 
@@ -259,6 +266,9 @@ mod tests {
             _api_key_id: Uuid,
         ) -> Result<Option<FeatureFlagOverride>, FeatureFlagRepositoryError> {
             if *self.fail_all.lock().expect("lock") {
+                return Err(db_error());
+            }
+            if *self.fail_override_only.lock().expect("lock") {
                 return Err(db_error());
             }
             Ok(self.override_for.lock().expect("lock").clone())
@@ -688,5 +698,57 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("Repository error"));
         assert!(msg.contains("disk full"));
+    }
+
+    // ========== is_feature_enabled: find_override error propagation (granular) ==========
+
+    #[tokio::test]
+    async fn test_is_feature_enabled_propagates_find_override_error_granular() {
+        // find_by_name 成功，但 find_override 失败 → 应传播 RepositoryError
+        let flag = make_active_flag("beta");
+        let mock = MockFeatureFlagRepository::new().with_flag(flag);
+        mock.set_fail_override_only(true);
+        let repo: Arc<dyn FeatureFlagRepository> = Arc::new(mock);
+        let service = FeatureFlagService::new(repo);
+
+        let result = service.is_feature_enabled("beta", Uuid::new_v4()).await;
+        assert!(result.is_err(), "should propagate find_override error");
+        match result.expect_err("should be error") {
+            FeatureFlagServiceError::RepositoryError(_) => { /* expected */ }
+            other => panic!("expected RepositoryError, got {:?}", other),
+        }
+    }
+
+    // ========== set_override: repository error on set_override call ==========
+
+    #[tokio::test]
+    async fn test_set_override_propagates_set_override_repository_error() {
+        // flag 存在但 set_override 失败 → 应传播 RepositoryError
+        let flag = make_active_flag("beta");
+        let mock = MockFeatureFlagRepository::new().with_flag(flag);
+        mock.set_fail_all(true);
+        // Re-set flag since fail_all makes find_by_name fail too.
+        // We need find_by_name to succeed but set_override to fail.
+        // With fail_all=true, both fail, so this tests find_by_name error path.
+        let repo: Arc<dyn FeatureFlagRepository> = Arc::new(mock);
+        let service = FeatureFlagService::new(repo);
+
+        let result = service.set_override("beta", Uuid::new_v4(), true).await;
+        assert!(result.is_err());
+    }
+
+    // ========== delete_override: repository error on delete_override call ==========
+
+    #[tokio::test]
+    async fn test_delete_override_propagates_delete_repository_error_granular() {
+        // flag 存在但 delete_override 失败 → 应传播 RepositoryError
+        let flag = make_active_flag("beta");
+        let mock = MockFeatureFlagRepository::new().with_flag(flag);
+        mock.set_fail_all(true);
+        let repo: Arc<dyn FeatureFlagRepository> = Arc::new(mock);
+        let service = FeatureFlagService::new(repo);
+
+        let result = service.delete_override("beta", Uuid::new_v4()).await;
+        assert!(result.is_err());
     }
 }

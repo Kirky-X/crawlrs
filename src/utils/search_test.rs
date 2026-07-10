@@ -402,4 +402,254 @@ mod tests {
             "each call should produce an independent EngineClient instance"
         );
     }
+
+    // ========== run_engine_test_with_output tests (mock SearchEngine) ==========
+
+    use crate::search::{EngineHealth, Response, ResponseItem, SearchEngineType, SearchError};
+    use async_trait::async_trait;
+    use std::time::Duration;
+
+    /// Mock engine that returns an empty result set.
+    struct MockEngineEmpty;
+
+    #[async_trait]
+    impl SearchEngine for MockEngineEmpty {
+        fn name(&self) -> &'static str {
+            "MockEmpty"
+        }
+        fn engine_type(&self) -> SearchEngineType {
+            SearchEngineType::Google
+        }
+        fn health(&self) -> EngineHealth {
+            EngineHealth::Healthy
+        }
+        async fn search(
+            &self,
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            Ok(Response {
+                items: vec![],
+                total_results: Some(0),
+                engine: SearchEngineType::Google,
+            })
+        }
+    }
+
+    /// Mock engine that returns items with internal URLs (blocked by SSRF).
+    struct MockEngineWithItems {
+        item_count: usize,
+    }
+
+    #[async_trait]
+    impl SearchEngine for MockEngineWithItems {
+        fn name(&self) -> &'static str {
+            "MockWithItems"
+        }
+        fn engine_type(&self) -> SearchEngineType {
+            SearchEngineType::Google
+        }
+        fn health(&self) -> EngineHealth {
+            EngineHealth::Healthy
+        }
+        async fn search(
+            &self,
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            let items = (0..self.item_count)
+                .map(|i| ResponseItem {
+                    title: format!("Result {}", i + 1),
+                    // Use localhost URLs so SSRF validation blocks them
+                    // without making real HTTP requests.
+                    url: format!("http://127.0.0.1:1/page-{}", i + 1),
+                    description: format!("Description {}", i + 1),
+                    engine: SearchEngineType::Google,
+                })
+                .collect();
+            Ok(Response {
+                items,
+                total_results: Some(self.item_count as u64),
+                engine: SearchEngineType::Google,
+            })
+        }
+    }
+
+    /// Mock engine that always returns a search error.
+    struct MockEngineError;
+
+    #[async_trait]
+    impl SearchEngine for MockEngineError {
+        fn name(&self) -> &'static str {
+            "MockError"
+        }
+        fn engine_type(&self) -> SearchEngineType {
+            SearchEngineType::Google
+        }
+        fn health(&self) -> EngineHealth {
+            EngineHealth::Healthy
+        }
+        async fn search(
+            &self,
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            Err(SearchError::Engine("mock engine failure".to_string()))
+        }
+    }
+
+    /// Mock engine that sleeps longer than the test timeout.
+    struct MockEngineTimeout;
+
+    #[async_trait]
+    impl SearchEngine for MockEngineTimeout {
+        fn name(&self) -> &'static str {
+            "MockTimeout"
+        }
+        fn engine_type(&self) -> SearchEngineType {
+            SearchEngineType::Google
+        }
+        fn health(&self) -> EngineHealth {
+            EngineHealth::Healthy
+        }
+        async fn search(
+            &self,
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            // Sleep longer than the test timeout to trigger a timeout.
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok(Response {
+                items: vec![],
+                total_results: Some(0),
+                engine: SearchEngineType::Google,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_engine_test_success_empty_results() {
+        let result = run_engine_test_with_output(
+            "MockEmpty",
+            MockEngineEmpty,
+            Some("test query"),
+            5,
+            Some(10),
+        )
+        .await;
+
+        assert!(result.is_ok(), "empty result search should succeed");
+        let tr = result.unwrap();
+        assert_eq!(tr.total, 0, "empty result should have 0 total");
+        assert_eq!(tr.accessible, 0);
+        assert_eq!(tr.inaccessible, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_engine_test_success_with_items_all_inaccessible() {
+        let result = run_engine_test_with_output(
+            "MockWithItems",
+            MockEngineWithItems { item_count: 3 },
+            Some("test query"),
+            5,
+            Some(10),
+        )
+        .await;
+
+        assert!(result.is_ok(), "search with items should succeed");
+        let tr = result.unwrap();
+        assert_eq!(tr.total, 3, "should have 3 total results");
+        assert_eq!(tr.accessible, 0, "all localhost URLs should be inaccessible");
+        assert_eq!(tr.inaccessible, 3, "all 3 items should be inaccessible");
+    }
+
+    #[tokio::test]
+    async fn test_run_engine_test_search_error() {
+        let result = run_engine_test_with_output(
+            "MockError",
+            MockEngineError,
+            Some("test query"),
+            5,
+            Some(10),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "search error should propagate as Err"
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("mock engine failure"),
+            "error message should contain the engine error, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_engine_test_timeout() {
+        let result = run_engine_test_with_output(
+            "MockTimeout",
+            MockEngineTimeout,
+            Some("test query"),
+            1,
+            Some(10),
+        )
+        .await;
+
+        assert!(result.is_err(), "timeout should produce an error");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("timed out"),
+            "error message should mention timeout, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_engine_test_uses_default_query_when_none() {
+        // When query is None, the function should use "test query" as default.
+        let result = run_engine_test_with_output(
+            "MockEmpty",
+            MockEngineEmpty,
+            None,
+            5,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok(), "should succeed with default query and limit");
+        let tr = result.unwrap();
+        assert_eq!(tr.total, 0);
+    }
+
+    // ========== check_url_accessible tests ==========
+
+    #[tokio::test]
+    async fn test_check_url_accessible_returns_false_for_internal_url() {
+        // Internal URLs (127.0.0.1) are blocked by SSRF validation in
+        // EngineClient::scrape(), so check_url_accessible should return false.
+        let client = build_test_engine_client().expect("client should be Some");
+        let result = check_url_accessible(&client, "http://127.0.0.1:1/nonexistent").await;
+        assert!(
+            !result,
+            "internal URL should not be accessible (SSRF blocked)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_url_accessible_returns_false_for_localhost() {
+        let client = build_test_engine_client().expect("client should be Some");
+        let result = check_url_accessible(&client, "http://localhost:1/page").await;
+        assert!(
+            !result,
+            "localhost URL should not be accessible (SSRF blocked)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_url_accessible_returns_false_for_private_ip() {
+        let client = build_test_engine_client().expect("client should be Some");
+        let result = check_url_accessible(&client, "http://10.0.0.1:8080/internal").await;
+        assert!(
+            !result,
+            "private IP URL should not be accessible (SSRF blocked)"
+        );
+    }
 }

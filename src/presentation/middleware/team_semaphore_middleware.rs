@@ -51,10 +51,7 @@ mod tests {
     use uuid::Uuid;
 
     fn build_request_with_team_id(team_id: Option<Uuid>) -> Request {
-        let mut builder = Request::builder()
-            .uri("/test")
-            .body(Body::empty())
-            .expect("body should build");
+        let mut builder = Request::builder().uri("/test").body(Body::empty()).expect("body should build");
         if let Some(id) = team_id {
             builder.extensions_mut().insert(id);
         }

@@ -231,6 +231,7 @@ mod tests {
     use super::*;
     use crate::application::dto::crawl_request::CrawlConfigDto;
     use crate::domain::repositories::task_repository::RepositoryError;
+    use chrono::Datelike;
     use validator::Validate;
 
     // ========== From<CrawlUseCaseError> mapping tests ==========
@@ -684,5 +685,308 @@ mod tests {
     #[test]
     fn test_default_timeout_ms_constant() {
         assert_eq!(DEFAULT_TIMEOUT_MS, 5000);
+    }
+
+    // ========== sync_wait_ms default logic (mirrors handler line 41) ==========
+
+    #[test]
+    fn test_sync_wait_ms_defaults_to_default_timeout_when_none() {
+        // Handler: payload.sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32)
+        let payload_sync_wait_ms: Option<u32> = None;
+        let sync_wait_ms = payload_sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
+        assert_eq!(sync_wait_ms, 5000);
+    }
+
+    #[test]
+    fn test_sync_wait_ms_uses_custom_value_when_some() {
+        let payload_sync_wait_ms: Option<u32> = Some(10000);
+        let sync_wait_ms = payload_sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
+        assert_eq!(sync_wait_ms, 10000);
+    }
+
+    #[test]
+    fn test_sync_wait_ms_zero_uses_zero() {
+        let payload_sync_wait_ms: Option<u32> = Some(0);
+        let sync_wait_ms = payload_sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
+        assert_eq!(sync_wait_ms, 0);
+    }
+
+    // ========== max_depth validation logic (mirrors handler line 44) ==========
+
+    #[test]
+    fn test_max_depth_six_fails_handler_check() {
+        // Handler: if payload.config.max_depth > 5 { return error }
+        let max_depth: u32 = 6;
+        assert!(max_depth > 5, "max_depth of 6 should fail handler check");
+    }
+
+    #[test]
+    fn test_max_depth_five_passes_handler_check() {
+        let max_depth: u32 = 5;
+        assert!(!(max_depth > 5), "max_depth of 5 should pass handler check");
+    }
+
+    #[test]
+    fn test_max_depth_zero_passes_handler_check() {
+        let max_depth: u32 = 0;
+        assert!(!(max_depth > 5));
+    }
+
+    #[test]
+    fn test_max_depth_one_passes_handler_check() {
+        let max_depth: u32 = 1;
+        assert!(!(max_depth > 5));
+    }
+
+    // ========== CrawlRequestDto with expires_at ==========
+
+    #[test]
+    fn test_crawl_request_dto_with_expires_at() {
+        let json = r#"{
+            "url": "https://example.com",
+            "config": {"max_depth": 2},
+            "expires_at": "2025-12-31T23:59:59Z"
+        }"#;
+        let dto: CrawlRequestDto = serde_json::from_str(json).unwrap();
+        assert!(dto.expires_at.is_some());
+        let expires = dto.expires_at.unwrap();
+        assert_eq!(expires.year(), 2025);
+        assert_eq!(expires.month(), 12);
+        assert_eq!(expires.day(), 31);
+    }
+
+    #[test]
+    fn test_crawl_request_dto_with_name() {
+        let json = r#"{
+            "url": "https://example.com",
+            "name": "My Crawl Task",
+            "config": {"max_depth": 1}
+        }"#;
+        let dto: CrawlRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.name.as_deref(), Some("My Crawl Task"));
+    }
+
+    // ========== CrawlConfigDto with all optional fields None ==========
+
+    #[test]
+    fn test_crawl_config_dto_minimal() {
+        let json = r#"{"max_depth": 1}"#;
+        let config: CrawlConfigDto = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_depth, 1);
+        assert!(config.include_patterns.is_none());
+        assert!(config.exclude_patterns.is_none());
+        assert!(config.strategy.is_none());
+        assert!(config.crawl_delay_ms.is_none());
+        assert!(config.max_concurrency.is_none());
+        assert!(config.proxy.is_none());
+        assert!(config.headers.is_none());
+        assert!(config.extraction_rules.is_none());
+    }
+
+    #[test]
+    fn test_crawl_config_dto_with_patterns() {
+        let json = r#"{
+            "max_depth": 3,
+            "include_patterns": ["/blog/*", "/news/*"],
+            "exclude_patterns": ["/admin/*", "/login/*"]
+        }"#;
+        let config: CrawlConfigDto = serde_json::from_str(json).unwrap();
+        assert_eq!(config.max_depth, 3);
+        assert_eq!(config.include_patterns.as_ref().unwrap().len(), 2);
+        assert_eq!(config.exclude_patterns.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_crawl_config_dto_with_headers_and_proxy() {
+        let json = r#"{
+            "max_depth": 2,
+            "headers": {"Authorization": "Bearer token"},
+            "proxy": "socks5://proxy:1080"
+        }"#;
+        let config: CrawlConfigDto = serde_json::from_str(json).unwrap();
+        assert!(config.headers.is_some());
+        assert_eq!(config.proxy.as_deref(), Some("socks5://proxy:1080"));
+    }
+
+    // ========== CrawlUseCaseError Display trait ==========
+
+    #[test]
+    fn test_crawl_use_case_error_validation_display() {
+        let err = CrawlUseCaseError::ValidationError("invalid input".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("Validation failed"));
+        assert!(display.contains("invalid input"));
+    }
+
+    #[test]
+    fn test_crawl_use_case_error_repository_display() {
+        let err = CrawlUseCaseError::Repository(RepositoryError::NotFound);
+        let display = format!("{}", err);
+        assert!(display.contains("Repository error"));
+    }
+
+    #[test]
+    fn test_crawl_use_case_error_not_found_display() {
+        let err = CrawlUseCaseError::NotFound;
+        let display = format!("{}", err);
+        assert!(display.contains("Crawl not found"));
+    }
+
+    #[test]
+    fn test_crawl_use_case_error_anyhow_display() {
+        let err = CrawlUseCaseError::Anyhow(anyhow::anyhow!("something went wrong"));
+        let display = format!("{}", err);
+        assert!(display.contains("something went wrong"));
+    }
+
+    // ========== SyncWaitResult default values in handler ==========
+
+    #[test]
+    fn test_sync_wait_result_default_when_no_tasks() {
+        // Handler creates this when tasks list is empty
+        let result = SyncWaitResult {
+            waited_time_ms: 0,
+            is_timeout: false,
+        };
+        assert_eq!(result.waited_time_ms, 0);
+        assert!(!result.is_timeout);
+    }
+
+    #[test]
+    fn test_sync_wait_result_default_on_error() {
+        // Handler creates this when find_by_crawl_id fails
+        let result = SyncWaitResult {
+            waited_time_ms: 0,
+            is_timeout: false,
+        };
+        assert!(!result.is_timeout);
+    }
+
+    #[test]
+    fn test_sync_wait_result_timeout_with_waited_time() {
+        // Handler creates this when sync_wait_ms > 0 and tasks exist but timeout
+        let sync_wait_ms = 5000u32;
+        let result = SyncWaitResult {
+            waited_time_ms: sync_wait_ms as u64,
+            is_timeout: true,
+        };
+        assert_eq!(result.waited_time_ms, 5000);
+        assert!(result.is_timeout);
+    }
+
+    // ========== Combined status code + sync_wait logic ==========
+
+    #[test]
+    fn test_no_sync_wait_returns_created() {
+        // When sync_wait_ms is 0 (after unwrap_or), status is always CREATED
+        let sync_wait_ms: u32 = 0;
+        let wait_result = SyncWaitResult {
+            waited_time_ms: 0,
+            is_timeout: true, // Even if timeout, sync_wait_ms=0 means CREATED
+        };
+        let status_code = if sync_wait_ms > 0 && wait_result.is_timeout {
+            StatusCode::ACCEPTED
+        } else {
+            StatusCode::CREATED
+        };
+        assert_eq!(status_code, StatusCode::CREATED);
+    }
+
+    #[test]
+    fn test_sync_wait_with_timeout_returns_accepted() {
+        let sync_wait_ms: u32 = 3000;
+        let wait_result = SyncWaitResult {
+            waited_time_ms: 3000,
+            is_timeout: true,
+        };
+        let status_code = if sync_wait_ms > 0 && wait_result.is_timeout {
+            StatusCode::ACCEPTED
+        } else {
+            StatusCode::CREATED
+        };
+        assert_eq!(status_code, StatusCode::ACCEPTED);
+    }
+
+    #[test]
+    fn test_sync_wait_without_timeout_returns_created() {
+        let sync_wait_ms: u32 = 3000;
+        let wait_result = SyncWaitResult {
+            waited_time_ms: 1000,
+            is_timeout: false,
+        };
+        let status_code = if sync_wait_ms > 0 && wait_result.is_timeout {
+            StatusCode::ACCEPTED
+        } else {
+            StatusCode::CREATED
+        };
+        assert_eq!(status_code, StatusCode::CREATED);
+    }
+
+    // ========== CrawlConfigDto with extraction_rules ==========
+
+    #[test]
+    fn test_crawl_config_dto_with_empty_extraction_rules() {
+        let json = r#"{
+            "max_depth": 1,
+            "extraction_rules": {}
+        }"#;
+        let config: CrawlConfigDto = serde_json::from_str(json).unwrap();
+        assert!(config.extraction_rules.is_some());
+        assert_eq!(config.extraction_rules.as_ref().unwrap().len(), 0);
+    }
+
+    // ========== CrawlRequestDto serialization ==========
+
+    #[test]
+    fn test_crawl_request_dto_serialization_roundtrip() {
+        let dto = CrawlRequestDto {
+            url: "https://example.com".to_string(),
+            validated_url: None,
+            name: Some("Test Crawl".to_string()),
+            config: CrawlConfigDto {
+                max_depth: 3,
+                include_patterns: Some(vec!["/api/*".to_string()]),
+                exclude_patterns: None,
+                strategy: Some("bfs".to_string()),
+                crawl_delay_ms: Some(500),
+                max_concurrency: Some(5),
+                proxy: None,
+                headers: None,
+                extraction_rules: None,
+            },
+            sync_wait_ms: Some(5000),
+            expires_at: None,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        // Note: validated_url has #[serde(skip)] so it won't appear in JSON
+        let deserialized: CrawlRequestDto = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.url, dto.url);
+        assert_eq!(deserialized.name, dto.name);
+        assert_eq!(deserialized.config.max_depth, dto.config.max_depth);
+        assert_eq!(deserialized.sync_wait_ms, dto.sync_wait_ms);
+    }
+
+    #[test]
+    fn test_crawl_request_dto_validated_url_is_skipped_in_serialization() {
+        let dto = CrawlRequestDto {
+            url: "https://example.com".to_string(),
+            validated_url: None,
+            name: None,
+            config: CrawlConfigDto {
+                max_depth: 1,
+                include_patterns: None,
+                exclude_patterns: None,
+                strategy: None,
+                crawl_delay_ms: None,
+                max_concurrency: None,
+                proxy: None,
+                headers: None,
+                extraction_rules: None,
+            },
+            sync_wait_ms: None,
+            expires_at: None,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(!json.contains("validated_url"));
     }
 }

@@ -1232,4 +1232,189 @@ mod tests {
         assert_eq!(result.waited_time_ms, 0);
         assert!(!result.is_timeout);
     }
+
+    // ========== build_scrape_result_json tests ==========
+
+    // 构造测试用 ScrapeResult
+    fn make_test_scrape_result(task_id: Uuid) -> crate::domain::models::scrape_result::ScrapeResult {
+        crate::domain::models::scrape_result_entity::Model {
+            id: Uuid::new_v4(),
+            task_id,
+            url: "https://example.com".to_string(),
+            status_code: 200,
+            content: "<html><body>Hello</body></html>".to_string(),
+            content_type: "text/html".to_string(),
+            headers: serde_json::json!({"content-length": "100"}),
+            meta_data: serde_json::json!({"key": "value"}),
+            screenshot: None,
+            response_time_ms: 150,
+            created_at: chrono::Utc::now().naive_utc(),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_result_json_maps_basic_fields() {
+        let task_id = Uuid::new_v4();
+        let result = make_test_scrape_result(task_id);
+        let dto = build_scrape_result_json(&result);
+
+        assert_eq!(dto.id, result.id);
+        assert_eq!(dto.status_code, 200);
+        // content 经过 html_escape::encode_text 转义
+        assert_eq!(dto.content, "&lt;html&gt;&lt;body&gt;Hello&lt;/body&gt;&lt;/html&gt;");
+    }
+
+    #[test]
+    fn test_build_scrape_result_json_escapes_html_special_chars() {
+        // html_escape::encode_text 应转义 < > & ' "
+        let task_id = Uuid::new_v4();
+        let mut result = make_test_scrape_result(task_id);
+        result.content = "<script>alert('xss')</script>".to_string();
+        let dto = build_scrape_result_json(&result);
+
+        assert!(dto.content.contains("&lt;script&gt;"));
+        assert!(!dto.content.contains("<script>"));
+    }
+
+    #[test]
+    fn test_build_scrape_result_json_escapes_ampersand() {
+        let task_id = Uuid::new_v4();
+        let mut result = make_test_scrape_result(task_id);
+        result.content = "Tom & Jerry".to_string();
+        let dto = build_scrape_result_json(&result);
+
+        assert!(dto.content.contains("&amp;"));
+        assert!(!dto.content.contains(" & "));
+    }
+
+    #[test]
+    fn test_build_scrape_result_json_clones_metadata() {
+        let task_id = Uuid::new_v4();
+        let result = make_test_scrape_result(task_id);
+        let dto = build_scrape_result_json(&result);
+
+        assert!(dto.metadata.is_some());
+        let metadata = dto.metadata.unwrap();
+        assert_eq!(metadata["key"], "value");
+    }
+
+    #[test]
+    fn test_build_scrape_result_json_status_code_404() {
+        let task_id = Uuid::new_v4();
+        let mut result = make_test_scrape_result(task_id);
+        result.status_code = 404;
+        let dto = build_scrape_result_json(&result);
+
+        assert_eq!(dto.status_code, 404);
+    }
+
+    #[test]
+    fn test_build_scrape_result_json_empty_content() {
+        let task_id = Uuid::new_v4();
+        let mut result = make_test_scrape_result(task_id);
+        result.content = String::new();
+        let dto = build_scrape_result_json(&result);
+
+        assert!(dto.content.is_empty());
+    }
+
+    #[test]
+    fn test_build_scrape_result_json_null_metadata() {
+        let task_id = Uuid::new_v4();
+        let mut result = make_test_scrape_result(task_id);
+        result.meta_data = serde_json::Value::Null;
+        let dto = build_scrape_result_json(&result);
+
+        assert!(dto.metadata.is_some());
+        assert!(dto.metadata.unwrap().is_null());
+    }
+
+    // ========== build_task_infos with results_map tests ==========
+
+    #[test]
+    fn test_build_task_infos_with_matching_result() {
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let scrape_result = make_test_scrape_result(task_id);
+        let mut results_map = std::collections::HashMap::new();
+        results_map.insert(task_id, scrape_result.clone());
+
+        let infos = build_task_infos(&[task], Some(&results_map));
+
+        assert_eq!(infos.len(), 1);
+        assert!(infos[0].result.is_some());
+        let result_dto = infos[0].result.as_ref().unwrap();
+        assert_eq!(result_dto.id, scrape_result.id);
+        assert_eq!(result_dto.status_code, 200);
+    }
+
+    #[test]
+    fn test_build_task_infos_with_results_map_no_match() {
+        // Task has no corresponding result in the map
+        let task_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let scrape_result = make_test_scrape_result(other_id);
+        let mut results_map = std::collections::HashMap::new();
+        results_map.insert(other_id, scrape_result);
+
+        let infos = build_task_infos(&[task], Some(&results_map));
+
+        assert_eq!(infos.len(), 1);
+        assert!(infos[0].result.is_none());
+    }
+
+    #[test]
+    fn test_build_task_infos_mixed_with_and_without_results() {
+        let task1_id = Uuid::new_v4();
+        let task2_id = Uuid::new_v4();
+        let tasks = vec![
+            make_test_task(task1_id, TaskStatus::Completed),
+            make_test_task(task2_id, TaskStatus::Queued),
+        ];
+        let scrape_result = make_test_scrape_result(task1_id);
+        let mut results_map = std::collections::HashMap::new();
+        results_map.insert(task1_id, scrape_result);
+
+        let infos = build_task_infos(&tasks, Some(&results_map));
+
+        assert_eq!(infos.len(), 2);
+        assert!(infos[0].result.is_some());
+        assert!(infos[1].result.is_none());
+    }
+
+    #[test]
+    fn test_build_task_infos_empty_map_returns_none_for_all() {
+        let task1_id = Uuid::new_v4();
+        let task2_id = Uuid::new_v4();
+        let tasks = vec![
+            make_test_task(task1_id, TaskStatus::Completed),
+            make_test_task(task2_id, TaskStatus::Failed),
+        ];
+        let results_map: std::collections::HashMap<Uuid, crate::domain::models::scrape_result::ScrapeResult> =
+            std::collections::HashMap::new();
+
+        let infos = build_task_infos(&tasks, Some(&results_map));
+
+        assert_eq!(infos.len(), 2);
+        assert!(infos[0].result.is_none());
+        assert!(infos[1].result.is_none());
+    }
+
+    #[test]
+    fn test_build_task_infos_result_html_escaped_in_dto() {
+        // 验证 results_map 中的 content 经过 HTML 转义后出现在 TaskInfoDto 中
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let mut scrape_result = make_test_scrape_result(task_id);
+        scrape_result.content = "<b>bold</b>".to_string();
+        let mut results_map = std::collections::HashMap::new();
+        results_map.insert(task_id, scrape_result);
+
+        let infos = build_task_infos(&[task], Some(&results_map));
+
+        let result_dto = infos[0].result.as_ref().expect("result should exist");
+        assert!(result_dto.content.contains("&lt;b&gt;"));
+        assert!(!result_dto.content.contains("<b>"));
+    }
 }

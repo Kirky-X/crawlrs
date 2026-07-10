@@ -723,4 +723,141 @@ mod tests {
         // Both should be successfully created (verify no panic)
         let _ = &middleware;
     }
+
+    // ========== testcontainers integration tests ==========
+    //
+    // These tests exercise service initialization paths that require real
+    // PostgreSQL and/or Redis. They early-return if Docker is unavailable.
+
+    use crate::bootstrap::infrastructure::{init_database, init_infrastructure, init_redis, init_repositories};
+    use crate::common::test_support::testcontainers_fixtures as tcf;
+
+    async fn require_docker() -> bool {
+        tcf::docker_available().await
+    }
+
+    #[tokio::test]
+    async fn tc_init_rate_limiting_service_with_redis() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_rate_limiting_service_with_redis");
+            return;
+        }
+        let handle = match tcf::DbRedisHandle::start().await {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[skip] failed to start containers: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url).unwrap();
+        let db = init_database(&settings).await.expect("db pool should be created");
+        let repos = init_repositories(db.clone(), &settings);
+        let redis_client = init_redis(&settings).await.expect("redis client should be created");
+
+        let service = init_rate_limiting_service(redis_client, &repos, &settings);
+        // Verify the service is usable (Arc strong count >= 1).
+        assert!(Arc::strong_count(&service) >= 1);
+    }
+
+    #[tokio::test]
+    async fn tc_init_auth_scope_service_with_db() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_auth_scope_service_with_db");
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres container: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings).await.expect("db pool should be created");
+
+        let service = init_auth_scope_service(db.inner().clone());
+        assert!(Arc::strong_count(&service) >= 1);
+    }
+
+    #[tokio::test]
+    async fn tc_init_search_service_with_repos() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_search_service_with_repos");
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres container: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let db = init_database(&settings).await.expect("db pool should be created");
+        let repos = init_repositories(db.clone(), &settings);
+
+        // Build a search client with a dummy engine client.
+        let engine_client = Arc::new(EngineClient::new());
+        let search_client: Arc<dyn SearchClientTrait> =
+            Arc::new(crate::search::client::SearchClient::new(engine_client));
+
+        let service = init_search_service(&repos, &settings, search_client);
+        assert!(Arc::strong_count(&service) >= 1);
+    }
+
+    #[tokio::test]
+    async fn tc_init_services_full_stack() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_init_services_full_stack");
+            return;
+        }
+        let handle = match tcf::DbRedisHandle::start().await {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[skip] failed to start containers: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url).unwrap();
+        let infra = init_infrastructure(&settings)
+            .await
+            .expect("infrastructure should initialize");
+
+        // Build engine router + client.
+        let engines = crate::bootstrap::engines::init_engines(
+            infra.http_client.clone(),
+            "",
+            &settings.engines,
+        );
+        let engine_router = Arc::new(EngineRouter::new(engines.clone()));
+        let engine_client = Arc::new(EngineClient::with_router(engine_router.clone()));
+
+        let services = init_services(
+            &infra,
+            engine_router,
+            engine_client,
+            infra.http_client.clone(),
+            &settings,
+        );
+
+        // Verify all service components are constructed.
+        assert!(Arc::strong_count(&services.rate_limiting_service) >= 1);
+        assert!(Arc::strong_count(&services.team_semaphore) >= 1);
+        assert!(Arc::strong_count(&services.create_scrape_use_case) >= 1);
+        assert!(Arc::strong_count(&services.webhook_service) >= 1);
+        assert!(Arc::strong_count(&services.team_service) >= 1);
+        assert!(Arc::strong_count(&services.geo_location_service) >= 1);
+        assert!(Arc::strong_count(&services.robots_checker) >= 1);
+        assert!(Arc::strong_count(&services.search_engine_service) >= 1);
+        assert!(Arc::strong_count(&services.search_service) >= 1);
+        assert!(services.auth_scope_service.is_some());
+        assert!(Arc::strong_count(&services.queue) >= 1);
+        assert!(Arc::strong_count(&services.audit_service) >= 1);
+        assert!(Arc::strong_count(&services.llm_service) >= 1);
+        assert!(Arc::strong_count(&services.extraction_service) >= 1);
+        assert!(Arc::strong_count(&services.regex_cache) >= 1);
+        assert!(Arc::strong_count(&services.webhook_worker) >= 1);
+        assert!(Arc::strong_count(&services.backlog_worker) >= 1);
+        assert!(Arc::strong_count(&services.expiration_worker) >= 1);
+    }
 }

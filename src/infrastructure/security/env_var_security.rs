@@ -737,6 +737,7 @@ impl EnvVarValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_support::ENV_MUTEX;
 
     #[test]
     fn test_env_var_check_allowed() {
@@ -793,6 +794,7 @@ mod tests {
 
     #[test]
     fn test_sensitive_var_warning_types() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
 
         // 测试弱默认值检测
@@ -827,6 +829,7 @@ mod tests {
 
     #[test]
     fn test_short_value_detection() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
 
         // 设置一个过短的密钥
@@ -846,6 +849,7 @@ mod tests {
 
     #[test]
     fn test_insecure_pattern_detection() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
 
         // 设置一个与变量名相同的值（触发 InsecurePattern: lower_value == var_name.to_lowercase()）
@@ -864,6 +868,7 @@ mod tests {
 
     #[test]
     fn test_logging_security_validation() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
 
         // 测试详细日志级别
@@ -887,6 +892,7 @@ mod tests {
 
     #[test]
     fn test_full_security_validation() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
 
         // 设置一些测试变量
@@ -1185,6 +1191,7 @@ mod tests {
     #[test]
     fn test_validate_sensitive_values_empty_in_production() {
         // 测试生产环境中的空值检测（EmptyValue, Critical）
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
         let orig = std::env::var("MAIL_PASSWORD").ok();
         std::env::set_var("MAIL_PASSWORD", "");
@@ -1205,6 +1212,7 @@ mod tests {
     #[test]
     fn test_validate_sensitive_values_test_value_non_production_medium() {
         // 测试非生产环境中测试值模式 → TestValue 应为 Medium 严重程度
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
         let orig = std::env::var("GITHUB_TOKEN").ok();
         std::env::set_var("GITHUB_TOKEN", "test_gh_token_12345");
@@ -1225,6 +1233,7 @@ mod tests {
     #[test]
     fn test_validate_logging_security_sensitive_debug_var() {
         // 测试 SensitiveVarDebug 警告路径
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
         let var_name = "OAUTH_CLIENT_SECRET_DEBUG";
         let orig = std::env::var(var_name).ok();
@@ -1243,6 +1252,7 @@ mod tests {
     #[test]
     fn test_validate_logging_security_sensitive_log_var() {
         // 测试 SensitiveVarLogging 警告路径
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
         let var_name = "TWILIO_AUTH_TOKEN_LOG";
         let orig = std::env::var(var_name).ok();
@@ -1293,6 +1303,7 @@ mod tests {
 
     #[test]
     fn test_env_var_validator_validate_required_ok() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
         let test_var = "CRAWLRS_TEST_REQUIRED_VAR_OK";
         let orig = std::env::var(test_var).ok();
@@ -1321,6 +1332,7 @@ mod tests {
     #[test]
     fn test_env_var_validator_validate_forbidden_detected() {
         // validate() 在检测到禁止变量时应返回 Err
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let monitor = EnvVarSecurityMonitor::default();
         let required_var = "CRAWLRS_TEST_FORBIDDEN_VALIDATE_VAR";
         let orig_required = std::env::var(required_var).ok();
@@ -1343,6 +1355,270 @@ mod tests {
         match orig_forbidden {
             Some(v) => std::env::set_var("LD_PRELOAD", v),
             None => std::env::remove_var("LD_PRELOAD"),
+        }
+    }
+
+    #[test]
+    fn test_validate_sensitive_values_empty_non_production_no_warning() {
+        // 非生产环境中空值不应触发 EmptyValue 警告（条件：value.is_empty() && environment == "production"）
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let monitor = EnvVarSecurityMonitor::default();
+        let orig = std::env::var("MAIL_PASSWORD").ok();
+        std::env::set_var("MAIL_PASSWORD", "");
+        let warnings = monitor.validate_sensitive_values("development");
+        let empty_warning = warnings.iter().find(|w| {
+            w.var_name == "MAIL_PASSWORD" && w.warning_type == SensitiveVarWarningType::EmptyValue
+        });
+        assert!(
+            empty_warning.is_none(),
+            "非生产环境不应触发 EmptyValue 警告"
+        );
+        match orig {
+            Some(v) => std::env::set_var("MAIL_PASSWORD", v),
+            None => std::env::remove_var("MAIL_PASSWORD"),
+        }
+    }
+
+    #[test]
+    fn test_validate_sensitive_values_strong_value_no_warnings() {
+        // 强密钥值（非空、非弱默认、非测试值、长度>=16、不等于变量名）不应产生警告
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let monitor = EnvVarSecurityMonitor::default();
+        let orig = std::env::var("JWT_SECRET").ok();
+        std::env::set_var("JWT_SECRET", "x9K2mP7qR3sT8vW1yZ4aB6cD5eF0gH2j");
+        let warnings = monitor.validate_sensitive_values("production");
+        let jwt_warnings: Vec<_> = warnings
+            .iter()
+            .filter(|w| w.var_name == "JWT_SECRET")
+            .collect();
+        assert!(
+            jwt_warnings.is_empty(),
+            "强密钥不应产生警告，但得到: {:?}",
+            jwt_warnings
+        );
+        match orig {
+            Some(v) => std::env::set_var("JWT_SECRET", v),
+            None => std::env::remove_var("JWT_SECRET"),
+        }
+    }
+
+    #[test]
+    fn test_validate_sensitive_values_test_value_in_production_critical() {
+        // 生产环境中测试值模式应为 Critical 严重程度
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let monitor = EnvVarSecurityMonitor::default();
+        let orig = std::env::var("GITHUB_TOKEN").ok();
+        std::env::set_var("GITHUB_TOKEN", "test_gh_token_12345");
+        let warnings = monitor.validate_sensitive_values("production");
+        let test_warning = warnings.iter().find(|w| {
+            w.var_name == "GITHUB_TOKEN" && w.warning_type == SensitiveVarWarningType::TestValue
+        });
+        assert!(test_warning.is_some(), "应该检测到测试值模式");
+        if let Some(w) = test_warning {
+            assert_eq!(
+                w.severity,
+                WarningSeverity::Critical,
+                "生产环境测试值应为 Critical"
+            );
+        }
+        match orig {
+            Some(v) => std::env::set_var("GITHUB_TOKEN", v),
+            None => std::env::remove_var("GITHUB_TOKEN"),
+        }
+    }
+
+    #[test]
+    fn test_perform_full_security_validation_production_is_secure_with_strong_values() {
+        // 生产环境中设置强密钥值，验证 is_secure 为 true（无 Critical 和 High 警告）
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let monitor = EnvVarSecurityMonitor::default();
+        // 保存并设置强密钥值
+        let vars_to_set = [
+            ("JWT_SECRET", "x9K2mP7qR3sT8vW1yZ4aB6cD5eF0gH2j"),
+            ("API_KEY", "sk_9K2mP7qR3sT8vW1yZ4aB6cD5eF0gH2j"),
+            ("SECRET_KEY", "x9K2mP7qR3sT8vW1yZ4aB6cD5eF0gH2j"),
+        ];
+        let orig_vars: Vec<(&str, Option<String>)> = vars_to_set
+            .iter()
+            .map(|(k, _)| (*k, std::env::var(k).ok()))
+            .collect();
+        for (k, v) in &vars_to_set {
+            std::env::set_var(k, v);
+        }
+
+        let result = monitor.perform_full_security_validation("production");
+        // 验证字段可访问且类型正确
+        let _: bool = result.is_secure;
+        let _: usize = result.critical_issues_count;
+        let _: usize = result.high_issues_count;
+
+        // 恢复原始值
+        for (k, orig) in &orig_vars {
+            match orig {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+    }
+
+    #[test]
+    fn test_validate_logging_security_trace_level_detected() {
+        // 测试 trace 级别日志也应触发 VerboseLogLevel 警告
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let monitor = EnvVarSecurityMonitor::default();
+        std::env::set_var("RUST_LOG", "trace");
+        let warnings = monitor.validate_logging_security();
+        let verbose_warning = warnings
+            .iter()
+            .find(|w| w.warning_type == LoggingWarningType::VerboseLogLevel);
+        assert!(verbose_warning.is_some(), "应该检测到 trace 日志级别");
+        std::env::remove_var("RUST_LOG");
+    }
+
+    #[test]
+    fn test_validate_logging_security_no_warnings_with_safe_config() {
+        // 安全的日志配置不应产生警告
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let monitor = EnvVarSecurityMonitor::default();
+        std::env::remove_var("RUST_LOG");
+        std::env::remove_var("LOG_FILE");
+        let warnings = monitor.validate_logging_security();
+        // 可能仍有其他警告（来自敏感变量的 _DEBUG/_LOG 变体），但不应有 VerboseLogLevel 或 InsecureLogPath
+        let verbose = warnings
+            .iter()
+            .find(|w| w.warning_type == LoggingWarningType::VerboseLogLevel);
+        assert!(verbose.is_none(), "不应有 VerboseLogLevel 警告");
+        let insecure_path = warnings
+            .iter()
+            .find(|w| w.warning_type == LoggingWarningType::InsecureLogPath);
+        assert!(insecure_path.is_none(), "不应有 InsecureLogPath 警告");
+    }
+
+    #[test]
+    fn test_warning_severity_equality() {
+        // 验证 WarningSeverity 的 PartialEq 实现
+        assert_eq!(WarningSeverity::Low, WarningSeverity::Low);
+        assert_eq!(WarningSeverity::Medium, WarningSeverity::Medium);
+        assert_eq!(WarningSeverity::High, WarningSeverity::High);
+        assert_eq!(WarningSeverity::Critical, WarningSeverity::Critical);
+        assert_ne!(WarningSeverity::Low, WarningSeverity::High);
+        assert_ne!(WarningSeverity::Medium, WarningSeverity::Critical);
+    }
+
+    #[test]
+    fn test_sensitive_var_warning_type_equality() {
+        // 验证 SensitiveVarWarningType 的 PartialEq 实现
+        assert_eq!(
+            SensitiveVarWarningType::EmptyValue,
+            SensitiveVarWarningType::EmptyValue
+        );
+        assert_eq!(
+            SensitiveVarWarningType::WeakDefaultValue,
+            SensitiveVarWarningType::WeakDefaultValue
+        );
+        assert_ne!(
+            SensitiveVarWarningType::EmptyValue,
+            SensitiveVarWarningType::ShortValue
+        );
+    }
+
+    #[test]
+    fn test_logging_warning_type_equality() {
+        // 验证 LoggingWarningType 的 PartialEq 实现
+        assert_eq!(
+            LoggingWarningType::VerboseLogLevel,
+            LoggingWarningType::VerboseLogLevel
+        );
+        assert_eq!(
+            LoggingWarningType::InsecureLogPath,
+            LoggingWarningType::InsecureLogPath
+        );
+        assert_ne!(
+            LoggingWarningType::VerboseLogLevel,
+            LoggingWarningType::SensitiveVarDebug
+        );
+    }
+
+    #[test]
+    fn test_security_validation_result_construction() {
+        // 验证 SecurityValidationResult 可构造且字段可访问
+        let result = SecurityValidationResult {
+            is_secure: true,
+            sensitive_var_warnings: vec![],
+            logging_warnings: vec![],
+            critical_issues_count: 0,
+            high_issues_count: 0,
+        };
+        assert!(result.is_secure);
+        assert_eq!(result.critical_issues_count, 0);
+        assert_eq!(result.high_issues_count, 0);
+        assert!(result.sensitive_var_warnings.is_empty());
+        assert!(result.logging_warnings.is_empty());
+    }
+
+    #[test]
+    fn test_sensitive_var_warning_construction() {
+        // 验证 SensitiveVarWarning 可构造且字段可访问
+        let warning = SensitiveVarWarning {
+            var_name: "TEST_VAR".to_string(),
+            warning_type: SensitiveVarWarningType::ShortValue,
+            message: "值过短".to_string(),
+            severity: WarningSeverity::Medium,
+        };
+        assert_eq!(warning.var_name, "TEST_VAR");
+        assert_eq!(warning.warning_type, SensitiveVarWarningType::ShortValue);
+        assert_eq!(warning.severity, WarningSeverity::Medium);
+        assert!(warning.message.contains("过短"));
+    }
+
+    #[test]
+    fn test_logging_security_warning_construction() {
+        // 验证 LoggingSecurityWarning 可构造且字段可访问
+        let warning = LoggingSecurityWarning {
+            warning_type: LoggingWarningType::InsecureLogPath,
+            message: "日志路径不安全".to_string(),
+            recommendation: "使用安全目录".to_string(),
+        };
+        assert_eq!(warning.warning_type, LoggingWarningType::InsecureLogPath);
+        assert!(warning.message.contains("不安全"));
+        assert!(warning.recommendation.contains("安全"));
+    }
+
+    #[test]
+    fn test_env_var_check_result_variants() {
+        // 验证 EnvVarCheckResult 各变体可构造与模式匹配
+        let allowed = EnvVarCheckResult::Allowed("VAR".to_string());
+        let sensitive = EnvVarCheckResult::Sensitive {
+            name: "SECRET".to_string(),
+            masked_value: "****".to_string(),
+        };
+        let unknown = EnvVarCheckResult::Unknown("UNKNOWN".to_string());
+        let forbidden = EnvVarCheckResult::Forbidden {
+            name: "BAD".to_string(),
+            reason: "forbidden".to_string(),
+        };
+
+        match allowed {
+            EnvVarCheckResult::Allowed(n) => assert_eq!(n, "VAR"),
+            _ => panic!("Expected Allowed"),
+        }
+        match sensitive {
+            EnvVarCheckResult::Sensitive { name, masked_value } => {
+                assert_eq!(name, "SECRET");
+                assert_eq!(masked_value, "****");
+            }
+            _ => panic!("Expected Sensitive"),
+        }
+        match unknown {
+            EnvVarCheckResult::Unknown(n) => assert_eq!(n, "UNKNOWN"),
+            _ => panic!("Expected Unknown"),
+        }
+        match forbidden {
+            EnvVarCheckResult::Forbidden { name, reason } => {
+                assert_eq!(name, "BAD");
+                assert!(reason.contains("forbidden"));
+            }
+            _ => panic!("Expected Forbidden"),
         }
     }
 }

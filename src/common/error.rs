@@ -435,6 +435,7 @@ mod tests {
     use super::*;
     use crate::common::test_support::ENV_MUTEX;
     use axum::http::StatusCode;
+    use std::time::Duration;
 
     #[test]
     fn test_error_display() {
@@ -703,5 +704,401 @@ mod tests {
         let sanitized = sanitize_error_message(&msg);
         // 应该仍然处理长输入
         assert!(sanitized.contains('A'));
+    }
+
+    // =============================================================================
+    // 完整的状态码映射测试 - 覆盖所有变体
+    // =============================================================================
+
+    #[test]
+    fn test_status_code_all_variants() {
+        // 测试所有错误变体的状态码映射
+        assert_eq!(
+            AppError::Network("conn refused".to_string()).status_code(),
+            StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            AppError::Config("missing key".to_string()).status_code(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            AppError::Timeout("timed out".to_string()).status_code(),
+            StatusCode::GATEWAY_TIMEOUT
+        );
+        assert_eq!(
+            AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "io fail")).status_code(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            AppError::Json(serde_json::from_str::<serde_json::Value>("bad").unwrap_err())
+                .status_code(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            AppError::Engine("engine fail".to_string()).status_code(),
+            StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            AppError::Cache("cache down".to_string()).status_code(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            AppError::Task("task error".to_string()).status_code(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            AppError::Other("unknown".to_string()).status_code(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        // Database also maps to INTERNAL_SERVER_ERROR
+        assert_eq!(
+            AppError::Database(sea_orm::DbErr::Custom("db down".to_string())).status_code(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    // =============================================================================
+    // 完整的错误代码映射测试 - 覆盖所有变体
+    // =============================================================================
+
+    #[test]
+    fn test_error_code_all_variants() {
+        assert_eq!(
+            AppError::Network("test".to_string()).error_code(),
+            "EXTERNAL_SERVICE_ERROR"
+        );
+        assert_eq!(
+            AppError::Config("test".to_string()).error_code(),
+            "CONFIGURATION_ERROR"
+        );
+        assert_eq!(
+            AppError::PermissionDenied("test".to_string()).error_code(),
+            "FORBIDDEN"
+        );
+        assert_eq!(
+            AppError::Timeout("test".to_string()).error_code(),
+            "TIMEOUT"
+        );
+        assert_eq!(
+            AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")).error_code(),
+            "IO_ERROR"
+        );
+        assert_eq!(
+            AppError::Json(serde_json::from_str::<serde_json::Value>("x").unwrap_err())
+                .error_code(),
+            "JSON_ERROR"
+        );
+        assert_eq!(
+            AppError::Engine("test".to_string()).error_code(),
+            "ENGINE_ERROR"
+        );
+        assert_eq!(
+            AppError::Cache("test".to_string()).error_code(),
+            "CACHE_ERROR"
+        );
+        assert_eq!(
+            AppError::Task("test".to_string()).error_code(),
+            "TASK_ERROR"
+        );
+        assert_eq!(
+            AppError::Other("test".to_string()).error_code(),
+            "INTERNAL_ERROR"
+        );
+        assert_eq!(
+            AppError::RateLimit("test".to_string()).error_code(),
+            "RATE_LIMITED"
+        );
+    }
+
+    // =============================================================================
+    // 完整的 user_message 测试 - 覆盖所有变体
+    // =============================================================================
+
+    #[test]
+    fn test_user_message_all_variants() {
+        // 数据库、网络、配置等通用错误返回固定消息
+        assert_eq!(
+            AppError::Network("http://10.0.0.1".to_string()).user_message(),
+            "External service unavailable. Please try again later."
+        );
+        assert_eq!(
+            AppError::Config("/etc/crawlrs/config.toml".to_string()).user_message(),
+            "Configuration error. Please contact support."
+        );
+        assert_eq!(
+            AppError::Timeout("30s".to_string()).user_message(),
+            "Request timed out. Please try again later."
+        );
+        assert_eq!(
+            AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")).user_message(),
+            "Internal I/O error. Please try again later."
+        );
+        assert_eq!(
+            AppError::Json(serde_json::from_str::<serde_json::Value>("x").unwrap_err())
+                .user_message(),
+            "Invalid JSON format. Please check your request."
+        );
+        assert_eq!(
+            AppError::Cache("redis down".to_string()).user_message(),
+            "Cache service unavailable. Please try again later."
+        );
+        assert_eq!(
+            AppError::Task("task failed".to_string()).user_message(),
+            "Task processing error. Please try again later."
+        );
+        assert_eq!(
+            AppError::RateLimit("too fast".to_string()).user_message(),
+            "Rate limit exceeded. Please slow down your requests."
+        );
+        assert_eq!(
+            AppError::Other("unknown".to_string()).user_message(),
+            "Internal server error. Please try again later."
+        );
+
+        // 携带上下文的错误保留原始信息
+        let not_found = AppError::NotFound("user 42".to_string());
+        assert!(not_found.user_message().contains("user 42"));
+
+        let perm = AppError::PermissionDenied("insufficient scope".to_string());
+        assert!(perm.user_message().contains("insufficient scope"));
+
+        // 引擎错误经过脱敏处理
+        let engine_err = AppError::Engine(
+            "Failed at /home/dev/src/main.rs:42 with api_key=secret".to_string(),
+        );
+        let msg = engine_err.user_message();
+        assert!(!msg.contains("secret"));
+        assert!(!msg.contains("/home/dev/"));
+    }
+
+    // =============================================================================
+    // From<AppError> for ApiErrorResponse 测试
+    // =============================================================================
+
+    #[test]
+    fn test_from_app_error_to_api_error_response() {
+        let err = AppError::Validation("field required".to_string());
+        let response: ApiErrorResponse = err.into();
+        assert_eq!(response.code, "VALIDATION_ERROR");
+        assert_eq!(response.message, "Validation error: field required");
+    }
+
+    #[test]
+    fn test_from_app_error_network_to_api_error_response() {
+        let err = AppError::Network("timeout".to_string());
+        let response: ApiErrorResponse = err.into();
+        assert_eq!(response.code, "EXTERNAL_SERVICE_ERROR");
+        assert!(response.message.contains("timeout"));
+    }
+
+    // =============================================================================
+    // IntoResponse 测试 - 生产环境和开发环境
+    // =============================================================================
+
+    #[tokio::test]
+    async fn test_into_response_production_env() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("CRAWLRS_ENV", "production");
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("RUST_ENV");
+
+        let err = AppError::NotFound("resource 123".to_string());
+        let response = err.into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["success"], false);
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["error"]["status"], 404);
+        // 生产环境返回脱敏后的用户消息
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Resource not found")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_into_response_development_env() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("CRAWLRS_ENV", "development");
+
+        let err = AppError::Validation("bad input".to_string());
+        let response = err.into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["success"], false);
+        assert_eq!(json["error"]["code"], "VALIDATION_ERROR");
+        assert_eq!(json["error"]["status"], 400);
+        // 开发环境返回详细错误信息
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("bad input")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_into_response_rate_limit() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("CRAWLRS_ENV", "production");
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("RUST_ENV");
+
+        let err = AppError::RateLimit("too many requests".to_string());
+        let response = err.into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "RATE_LIMITED");
+        assert_eq!(json["error"]["status"], 429);
+    }
+
+    // =============================================================================
+    // From<EngineError> 测试 - 覆盖所有 EngineError 变体
+    // =============================================================================
+
+    #[test]
+    fn test_from_engine_error_request_failed() {
+        let err: AppError =
+            crate::engines::engine_client::EngineError::RequestFailed("conn refused".to_string())
+                .into();
+        match err {
+            AppError::Engine(msg) => assert!(msg.contains("conn refused")),
+            other => panic!("expected Engine variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_timeout() {
+        let err: AppError =
+            crate::engines::engine_client::EngineError::Timeout(Duration::from_secs(30)).into();
+        match err {
+            AppError::Timeout(msg) => assert!(msg.contains("30")),
+            other => panic!("expected Timeout variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_no_engines_available() {
+        let err: AppError =
+            crate::engines::engine_client::EngineError::NoEnginesAvailable.into();
+        match err {
+            AppError::Engine(msg) => assert!(msg.contains("No scraping engines available")),
+            other => panic!("expected Engine variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_invalid_url() {
+        let err: AppError =
+            crate::engines::engine_client::EngineError::InvalidUrl("bad url".to_string()).into();
+        match err {
+            AppError::Validation(msg) => assert_eq!(msg, "bad url"),
+            other => panic!("expected Validation variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_ssrf_protection() {
+        let err: AppError =
+            crate::engines::engine_client::EngineError::SsrfProtection("127.0.0.1".to_string())
+                .into();
+        match err {
+            AppError::PermissionDenied(msg) => {
+                assert!(msg.contains("SSRF protection"));
+                assert!(msg.contains("127.0.0.1"));
+            }
+            other => panic!("expected PermissionDenied variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_browser_error() {
+        let err: AppError =
+            crate::engines::engine_client::EngineError::BrowserError("crashed".to_string()).into();
+        match err {
+            AppError::Engine(msg) => {
+                assert!(msg.contains("Browser error"));
+                assert!(msg.contains("crashed"));
+            }
+            other => panic!("expected Engine variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_expired() {
+        let err: AppError = crate::engines::engine_client::EngineError::Expired.into();
+        match err {
+            AppError::Timeout(msg) => assert_eq!(msg, "Request expired"),
+            other => panic!("expected Timeout variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_all_engines_failed() {
+        let err: AppError =
+            crate::engines::engine_client::EngineError::AllEnginesFailed("all down".to_string())
+                .into();
+        match err {
+            AppError::Engine(msg) => {
+                assert!(msg.contains("All engines failed"));
+                assert!(msg.contains("all down"));
+            }
+            other => panic!("expected Engine variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_other() {
+        let err: AppError =
+            crate::engines::engine_client::EngineError::Other("misc".to_string()).into();
+        match err {
+            AppError::Engine(msg) => assert_eq!(msg, "misc"),
+            other => panic!("expected Engine variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_internal() {
+        let err: AppError =
+            crate::engines::engine_client::EngineError::Internal("internal bug".to_string())
+                .into();
+        match err {
+            AppError::Engine(msg) => assert_eq!(msg, "internal bug"),
+            other => panic!("expected Engine variant, got {:?}", other),
+        }
+    }
+
+    // =============================================================================
+    // From<reqwest::Error> 测试
+    // =============================================================================
+
+    #[test]
+    fn test_from_reqwest_error_conversion() {
+        // 使用无效证书数据触发 reqwest::Error
+        let result = reqwest::Certificate::from_pem(b"not a valid cert");
+        assert!(result.is_err());
+        let reqwest_err = result.unwrap_err();
+        let app_err: AppError = reqwest_err.into();
+        match app_err {
+            AppError::Network(msg) => assert!(!msg.is_empty()),
+            other => panic!("expected Network variant, got {:?}", other),
+        }
     }
 }

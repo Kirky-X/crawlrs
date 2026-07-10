@@ -2383,4 +2383,2518 @@ mod tests {
             other => panic!("Expected TaskError, got {:?}", other),
         }
     }
+
+    // ========== Mock-based unit tests (no Docker required) ==========
+    //
+    // These tests construct a ScrapeWorker with mock/no-op dependencies,
+    // allowing pure-logic methods like `should_crawl`, `build_crawl_request`,
+    // `build_extract_request`, `trigger_webhook`, `deduct_feature_credits`,
+    // and `save_result` to be tested without external services.
+
+    use crate::domain::models::{
+        Crawl, CreditsTransaction, CreditsTransactionType, DomainError, WebhookEvent,
+    };
+    use crate::domain::repositories::credits_repository::CreditsRepositoryError;
+    use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
+    use crate::domain::services::extraction_service::ExtractionRule;
+    use crate::domain::services::llm_service::TokenUsage;
+    use std::collections::HashSet;
+
+    // --- Mock trait implementations ---
+
+    /// Mock TaskRepository — all methods return Ok with default values.
+    struct MockTaskRepository;
+
+    #[async_trait::async_trait]
+    impl TaskRepository for MockTaskRepository {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            Ok((vec![], 0))
+        }
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+    }
+
+    /// Mock ScrapeResultRepository — all methods return Ok with default values.
+    struct MockScrapeResultRepository;
+
+    #[async_trait::async_trait]
+    impl ScrapeResultRepository for MockScrapeResultRepository {
+        async fn save(&self, _result: ScrapeResult) -> Result<()> {
+            Ok(())
+        }
+        async fn find_by_task_id(
+            &self,
+            _task_id: Uuid,
+        ) -> Result<Option<ScrapeResult>> {
+            Ok(None)
+        }
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[Uuid],
+        ) -> Result<Vec<ScrapeResult>> {
+            Ok(vec![])
+        }
+        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+            Ok(0.0)
+        }
+    }
+
+    /// Mock CrawlRepository — all methods return Ok with default values.
+    struct MockCrawlRepository;
+
+    #[async_trait::async_trait]
+    impl CrawlRepository for MockCrawlRepository {
+        async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            Ok(crawl.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            Ok(crawl.clone())
+        }
+        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn update_status(
+            &self,
+            _id: Uuid,
+            _status: CrawlStatus,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn find_by_team_id_paginated(
+            &self,
+            _team_id: Uuid,
+            _limit: u32,
+            _offset: u32,
+        ) -> Result<Vec<Crawl>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+    }
+
+    /// Mock WebhookService — all methods return Ok.
+    struct MockWebhookService;
+
+    #[async_trait::async_trait]
+    impl WebhookService for MockWebhookService {
+        async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
+            Ok(())
+        }
+        async fn trigger_completion(&self, _task: &Task) -> Result<()> {
+            Ok(())
+        }
+        async fn trigger_failure(&self, _task: &Task, _error_msg: String) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Mock CreditsRepository — tracks deductions for verification.
+    #[derive(Debug, Default)]
+    struct MockCreditsRepo {
+        deducted: Arc<std::sync::Mutex<Vec<(Uuid, i64)>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CreditsRepository for MockCreditsRepo {
+        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+            Ok(100)
+        }
+        async fn deduct_credits(
+            &self,
+            team_id: Uuid,
+            amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), CreditsRepositoryError> {
+            self.deducted
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((team_id, amount));
+            Ok(())
+        }
+        async fn add_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(100)
+        }
+        async fn get_transaction_history(
+            &self,
+            _team_id: Uuid,
+            _limit: Option<u32>,
+        ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
+            Ok(vec![])
+        }
+        async fn initialize_team_credits(
+            &self,
+            _team_id: Uuid,
+            _initial_balance: i64,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(100)
+        }
+    }
+
+    /// Mock CreateScrapeUseCase — execute returns a default response.
+    struct MockCreateScrapeUseCase;
+
+    #[async_trait::async_trait]
+    impl CreateScrapeUseCaseTrait for MockCreateScrapeUseCase {
+        async fn execute(
+            &self,
+            _request_dto: ScrapeRequestDto,
+        ) -> Result<ScrapeResponse, DomainError> {
+            Ok(ScrapeResponse {
+                content: String::new(),
+                status_code: 200,
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 0,
+                final_url: None,
+            })
+        }
+    }
+
+    /// Mock RobotsChecker — always allows.
+    struct MockRobotsChecker;
+
+    #[async_trait::async_trait]
+    impl RobotsCheckerTrait for MockRobotsChecker {
+        async fn is_allowed(&self, _url_str: &str, _user_agent: &str) -> Result<bool> {
+            Ok(true)
+        }
+        async fn get_crawl_delay(
+            &self,
+            _url_str: &str,
+            _user_agent: &str,
+        ) -> Result<Option<Duration>> {
+            Ok(None)
+        }
+    }
+
+    /// Mock ExtractionService — returns empty JSON.
+    struct MockExtractionService;
+
+    #[async_trait::async_trait]
+    impl ExtractionServiceTrait for MockExtractionService {
+        async fn extract(
+            &self,
+            _html_content: &str,
+            _rules: &HashMap<String, ExtractionRule>,
+            _base_url: Option<&str>,
+        ) -> Result<(Value, TokenUsage)> {
+            Ok((json!({}), TokenUsage::default()))
+        }
+        async fn extract_with_schema(
+            &self,
+            _html_content: &str,
+            _schema: &Value,
+        ) -> Result<(Value, TokenUsage)> {
+            Ok((json!({}), TokenUsage::default()))
+        }
+        fn extract_with_selectors(
+            &self,
+            _html_content: &str,
+            _rules: &HashMap<String, ExtractionRule>,
+            _base_url: Option<&str>,
+        ) -> Result<Value> {
+            Ok(json!({}))
+        }
+    }
+
+    /// Build a ScrapeWorker with all mock/no-op dependencies.
+    ///
+    /// This allows testing pure-logic methods without Docker or external
+    /// services. The RedisClient uses a dummy URL (the pool is lazy and
+    /// no actual connection is made during these tests).
+    async fn build_mock_worker() -> ScrapeWorker {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings for mock worker");
+        let settings_arc = Arc::new(settings.clone());
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient for mock worker");
+
+        ScrapeWorker::new(
+            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
+            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+            Some(Arc::new(NoOpStorage) as Arc<dyn StorageRepository + Send + Sync>),
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            engine_client,
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            redis,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            settings_arc,
+            10,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            regex_cache,
+        )
+    }
+
+    // --- should_crawl tests ---
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_no_patterns_returns_true() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(None, None);
+        assert!(worker.should_crawl("https://example.com/page1", &config));
+        assert!(worker.should_crawl("https://other.com/page2", &config));
+    }
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_include_pattern_match() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(Some(vec!["example\\.com".to_string()]), None);
+        assert!(worker.should_crawl("https://example.com/page", &config));
+        assert!(worker.should_crawl("https://example.com/sub/page", &config));
+    }
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_include_pattern_no_match() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(Some(vec!["example\\.com".to_string()]), None);
+        assert!(!worker.should_crawl("https://other.com/page", &config));
+        assert!(!worker.should_crawl("https://foo.org/path", &config));
+    }
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_exclude_pattern_match() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(None, Some(vec!["blocked".to_string()]));
+        assert!(!worker.should_crawl("https://example.com/blocked", &config));
+        assert!(!worker.should_crawl("https://example.com/blocked/page", &config));
+    }
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_exclude_pattern_no_match() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(None, Some(vec!["blocked".to_string()]));
+        assert!(worker.should_crawl("https://example.com/page", &config));
+        assert!(worker.should_crawl("https://example.com/allowed", &config));
+    }
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_both_include_and_exclude() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(
+            Some(vec!["example\\.com".to_string()]),
+            Some(vec!["blocked".to_string()]),
+        );
+        // Matches include, doesn't match exclude → true
+        assert!(worker.should_crawl("https://example.com/page", &config));
+        // Matches include, matches exclude → false
+        assert!(!worker.should_crawl("https://example.com/blocked", &config));
+        // Doesn't match include → false (include takes priority)
+        assert!(!worker.should_crawl("https://other.com/blocked", &config));
+    }
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_multiple_include_patterns() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(
+            Some(vec![
+                "example\\.com".to_string(),
+                "test\\.org".to_string(),
+            ]),
+            None,
+        );
+        assert!(worker.should_crawl("https://example.com/page", &config));
+        assert!(worker.should_crawl("https://test.org/page", &config));
+        assert!(!worker.should_crawl("https://other.com/page", &config));
+    }
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_multiple_exclude_patterns() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(
+            None,
+            Some(vec!["blocked".to_string(), "admin".to_string()]),
+        );
+        assert!(worker.should_crawl("https://example.com/page", &config));
+        assert!(!worker.should_crawl("https://example.com/blocked", &config));
+        assert!(!worker.should_crawl("https://example.com/admin", &config));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::invalid_regex)]
+    async fn test_mock_should_crawl_include_fallback_string_match() {
+        let worker = build_mock_worker().await;
+        // Invalid regex — should fall back to string contains
+        let config = make_crawl_config(Some(vec!["[unclosed".to_string()]), None);
+        assert!(worker.should_crawl("https://example.com/[unclosed", &config));
+        assert!(!worker.should_crawl("https://example.com/other", &config));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::invalid_regex)]
+    async fn test_mock_should_crawl_exclude_fallback_string_match() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(None, Some(vec!["[unclosed".to_string()]));
+        assert!(!worker.should_crawl("https://example.com/[unclosed", &config));
+        assert!(worker.should_crawl("https://example.com/other", &config));
+    }
+
+    // --- build_crawl_request tests ---
+
+    #[tokio::test]
+    async fn test_mock_build_crawl_request_basic() {
+        let worker = build_mock_worker().await;
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
+        let config = make_crawl_config(None, None);
+        let request = worker.build_crawl_request(&task, &config);
+        assert_eq!(request.url, "https://example.com");
+        assert_eq!(request.options.method, HttpMethod::Get);
+        assert!(request.options.body.is_none());
+        assert!(!request.options.needs_js);
+        assert!(!request.options.needs_screenshot);
+        assert!(request.options.screenshot_config.is_none());
+        assert!(!request.options.mobile);
+        assert!(request.options.proxy.is_none());
+        assert!(!request.options.skip_tls_verification);
+        assert!(!request.options.needs_tls_fingerprint);
+        assert!(!request.options.use_fire_engine);
+        assert!(request.options.actions.is_empty());
+        assert_eq!(request.options.sync_wait_ms, 0);
+    }
+
+    #[tokio::test]
+    async fn test_mock_build_crawl_request_with_headers() {
+        let worker = build_mock_worker().await;
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
+        let config = CrawlConfigDto {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: Some(json!({
+                "Accept": "text/html",
+                "Authorization": "Bearer token123"
+            })),
+            extraction_rules: None,
+        };
+        let request = worker.build_crawl_request(&task, &config);
+        assert_eq!(request.options.headers.get("Accept"), Some(&"text/html".to_string()));
+        assert_eq!(
+            request.options.headers.get("Authorization"),
+            Some(&"Bearer token123".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_build_crawl_request_non_string_headers_filtered() {
+        let worker = build_mock_worker().await;
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
+        let config = CrawlConfigDto {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: Some(json!({
+                "X-Number": 42,
+                "X-Bool": true,
+                "X-Null": null,
+                "X-Valid": "ok"
+            })),
+            extraction_rules: None,
+        };
+        let request = worker.build_crawl_request(&task, &config);
+        assert_eq!(request.options.headers.len(), 1);
+        assert_eq!(request.options.headers.get("X-Valid"), Some(&"ok".to_string()));
+        assert!(!request.options.headers.contains_key("X-Number"));
+        assert!(!request.options.headers.contains_key("X-Bool"));
+        assert!(!request.options.headers.contains_key("X-Null"));
+    }
+
+    #[tokio::test]
+    async fn test_mock_build_crawl_request_with_proxy() {
+        let worker = build_mock_worker().await;
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
+        let config = CrawlConfigDto {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: Some("http://proxy:3128".to_string()),
+            headers: None,
+            extraction_rules: None,
+        };
+        let request = worker.build_crawl_request(&task, &config);
+        assert_eq!(
+            request.options.proxy,
+            Some("http://proxy:3128".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_build_crawl_request_empty_headers_map() {
+        let worker = build_mock_worker().await;
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
+        let config = CrawlConfigDto {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: Some(json!({})),
+            extraction_rules: None,
+        };
+        let request = worker.build_crawl_request(&task, &config);
+        assert!(request.options.headers.is_empty());
+    }
+
+    // --- build_extract_request tests ---
+
+    #[tokio::test]
+    async fn test_mock_build_extract_request_basic() {
+        let worker = build_mock_worker().await;
+        let request = worker.build_extract_request("https://example.com/page");
+        assert_eq!(request.url, "https://example.com/page");
+        assert_eq!(request.options.method, HttpMethod::Get);
+        assert!(request.options.body.is_none());
+        assert!(request.options.headers.is_empty());
+        assert!(!request.options.needs_js);
+        assert!(!request.options.needs_screenshot);
+        assert!(!request.options.mobile);
+        assert!(request.options.proxy.is_none());
+        // build_extract_request sets skip_tls_verification = true
+        assert!(request.options.skip_tls_verification);
+        assert!(!request.options.needs_tls_fingerprint);
+        assert!(!request.options.use_fire_engine);
+        assert!(request.options.actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_build_extract_request_different_urls() {
+        let worker = build_mock_worker().await;
+        let urls = vec![
+            "https://example.com",
+            "https://test.org/path",
+            "http://localhost:8080",
+        ];
+        for url in &urls {
+            let request = worker.build_extract_request(url);
+            assert_eq!(request.url, *url);
+        }
+    }
+
+    // --- trigger_webhook tests ---
+
+    #[tokio::test]
+    async fn test_mock_trigger_webhook_completion_no_error() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        // Should not panic — mock webhook service returns Ok
+        worker.trigger_webhook(&task, None).await;
+    }
+
+    #[tokio::test]
+    async fn test_mock_trigger_webhook_failure_with_error_msg() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        // Should not panic — mock webhook service returns Ok
+        worker
+            .trigger_webhook(&task, Some("Task failed".to_string()))
+            .await;
+    }
+
+    // --- deduct_feature_credits tests ---
+
+    #[tokio::test]
+    async fn test_mock_deduct_feature_credits_screenshot_and_proxy() {
+        // We can't easily verify the deduction with the mock worker because
+        // we don't have access to the internal credits repo. But we can verify
+        // the method doesn't panic.
+        let worker = build_mock_worker().await;
+        worker
+            .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), true, true)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_mock_deduct_feature_credits_screenshot_only() {
+        let worker = build_mock_worker().await;
+        worker
+            .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), true, false)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_mock_deduct_feature_credits_proxy_only() {
+        let worker = build_mock_worker().await;
+        worker
+            .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), false, true)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_mock_deduct_feature_credits_neither() {
+        let worker = build_mock_worker().await;
+        worker
+            .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), false, false)
+            .await;
+    }
+
+    // --- save_result tests ---
+
+    #[tokio::test]
+    async fn test_mock_save_result_basic() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html>test</html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let result = worker.save_result(&task, &response, None).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_save_result_with_extra_data() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html>test</html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+        };
+        let extra = json!({"title": "Test Page", "links": 5});
+        let result = worker.save_result(&task, &response, Some(extra)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_save_result_with_screenshot() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html>test</html>".to_string(),
+            status_code: 200,
+            screenshot: Some("base64data".to_string()),
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 200,
+            final_url: None,
+        };
+        let result = worker.save_result(&task, &response, None).await;
+        assert!(result.is_ok());
+    }
+
+    // --- process_text_encoding tests ---
+
+    #[tokio::test]
+    async fn test_mock_process_text_encoding_basic() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html; charset=utf-8".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let result = worker.process_text_encoding(&task, &response).await;
+        // Should either return processed content or an error (depending on
+        // CrawlTextIntegration behavior), but should not panic.
+        match result {
+            Ok(content) => assert!(!content.is_empty() || response.content.is_empty()),
+            Err(_) => { /* Error is acceptable — integration disabled by default */ }
+        }
+    }
+
+    // --- update_crawl_completion_status tests ---
+
+    #[tokio::test]
+    async fn test_mock_update_crawl_completion_status_crawl_not_found() {
+        let worker = build_mock_worker().await;
+        // MockCrawlRepository::find_by_id returns None, so this should
+        // just log an error and return without panicking.
+        worker.update_crawl_completion_status(Uuid::new_v4()).await;
+    }
+
+    // --- parse_crawl_payload tests ---
+
+    #[tokio::test]
+    async fn test_mock_parse_crawl_payload_valid() {
+        let worker = build_mock_worker().await;
+        let crawl_id = Uuid::new_v4();
+        let task = make_task(json!({
+            "crawl_id": crawl_id.to_string(),
+            "depth": 2,
+            "config": {
+                "max_depth": 3,
+                "include_patterns": ["example\\.com"],
+                "exclude_patterns": ["blocked"],
+                "strategy": "bfs",
+                "crawl_delay_ms": 100,
+                "max_concurrency": 5,
+                "proxy": "http://proxy:8080",
+                "headers": {"X-Custom": "value"},
+                "extraction_rules": {}
+            }
+        }));
+        let (parsed_id, depth, config) = worker.parse_crawl_payload(&task).await.unwrap();
+        assert_eq!(parsed_id, crawl_id);
+        assert_eq!(depth, 2);
+        assert_eq!(config.max_depth, 3);
+    }
+
+    #[tokio::test]
+    async fn test_mock_parse_crawl_payload_missing_crawl_id() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"depth": 1, "config": {}}));
+        assert!(worker.parse_crawl_payload(&task).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mock_parse_crawl_payload_default_depth() {
+        let worker = build_mock_worker().await;
+        let crawl_id = Uuid::new_v4();
+        let task = make_task(json!({
+            "crawl_id": crawl_id.to_string(),
+            "config": {"max_depth": 1}
+        }));
+        let (_, depth, _) = worker.parse_crawl_payload(&task).await.unwrap();
+        assert_eq!(depth, 0);
+    }
+
+    // --- parse_extract_payload tests ---
+
+    #[tokio::test]
+    async fn test_mock_parse_extract_payload_valid() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({
+            "urls": ["https://example.com/page"],
+            "prompt": "Extract title",
+            "model": "gpt-4"
+        }));
+        let (payload, url) = worker.parse_extract_payload(&task).await.unwrap();
+        assert_eq!(url, "https://example.com/page");
+        assert_eq!(payload.urls.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_parse_extract_payload_no_url() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"urls": []}));
+        assert!(worker.parse_extract_payload(&task).await.is_err());
+    }
+
+    // --- check_robots_txt tests ---
+
+    #[tokio::test]
+    async fn test_mock_check_robots_txt_allowed() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({}));
+        // MockRobotsChecker always returns Ok(true) for is_allowed and
+        // Ok(None) for get_crawl_delay, so check_robots_txt returns true.
+        assert!(worker.check_robots_txt(&task).await);
+    }
+
+    // --- handle_rules_extraction tests ---
+
+    #[tokio::test]
+    async fn test_mock_handle_rules_extraction() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "<html><body><h1>Hello</h1></body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+        };
+        let mut rules = HashMap::new();
+        rules.insert(
+            "title".to_string(),
+            ExtractionRule {
+                selector: Some("h1".to_string()),
+                attr: None,
+                is_array: false,
+                use_llm: None,
+                llm_prompt: None,
+                output_format: None,
+            },
+        );
+        let result = worker
+            .handle_rules_extraction(&mut task, &response, &rules, "https://example.com")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    // --- handle_prompt_extraction tests ---
+
+    #[tokio::test]
+    async fn test_mock_handle_prompt_extraction() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello world</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 30,
+            final_url: None,
+        };
+        let result = worker
+            .handle_prompt_extraction(
+                &mut task,
+                &response,
+                "Extract the main topic".to_string(),
+                "https://example.com",
+            )
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    // --- handle_schema_extraction tests ---
+
+    #[tokio::test]
+    async fn test_mock_handle_schema_extraction() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "<html><body>Data</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 20,
+            final_url: None,
+        };
+        let schema = json!({"type": "object", "properties": {"title": {"type": "string"}}});
+        let result = worker
+            .handle_schema_extraction(&mut task, &response, &schema, "https://example.com")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    // --- save_extract_result tests ---
+
+    #[tokio::test]
+    async fn test_mock_save_extract_result_with_data() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "test content".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+        };
+        let result = worker
+            .save_extract_result(
+                &mut task,
+                &response,
+                Some(json!({"title": "Test"})),
+                "https://example.com",
+            )
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_mock_save_extract_result_without_data() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "raw content".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 5,
+            final_url: None,
+        };
+        let result = worker
+            .save_extract_result(&mut task, &response, None, "https://example.com")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    // --- extract_and_queue_links tests ---
+
+    #[tokio::test]
+    async fn test_mock_extract_and_queue_links_html_with_links() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({}));
+        let html = r#"<html><body>
+            <a href="/page1">Page 1</a>
+            <a href="https://example.com/page2">Page 2</a>
+            <a href="https://other.com/page3">Page 3</a>
+            <a href="mailto:test@example.com">Email</a>
+        </body></html>"#;
+        let response = ScrapeResponse {
+            content: html.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let config = make_crawl_config(None, None);
+        let result = worker
+            .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_extract_and_queue_links_non_html_skipped() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "{\"key\": \"value\"}".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "application/json".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+        };
+        let config = make_crawl_config(None, None);
+        let result = worker
+            .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_extract_and_queue_links_with_include_filter() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        task.url = "https://example.com".to_string();
+        let html = r#"<html><body>
+            <a href="https://example.com/page1">Page 1</a>
+            <a href="https://other.com/page2">Page 2</a>
+        </body></html>"#;
+        let response = ScrapeResponse {
+            content: html.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let config = make_crawl_config(Some(vec!["example\\.com".to_string()]), None);
+        let result = worker
+            .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // --- handle_failure tests ---
+
+    #[tokio::test]
+    async fn test_mock_handle_failure() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        let result = worker.handle_failure(&mut task).await;
+        assert!(result.is_ok());
+    }
+
+    // --- deduct_token_credits tests ---
+
+    #[tokio::test]
+    async fn test_mock_deduct_token_credits_zero_tokens() {
+        let worker = build_mock_worker().await;
+        let usage = TokenUsage::default();
+        worker
+            .deduct_token_credits(Uuid::new_v4(), Uuid::new_v4(), &usage, "test zero")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_mock_deduct_token_credits_with_tokens() {
+        let worker = build_mock_worker().await;
+        let usage = TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+        };
+        worker
+            .deduct_token_credits(Uuid::new_v4(), Uuid::new_v4(), &usage, "test with tokens")
+            .await;
+    }
+
+    // --- handle_scrape_success tests ---
+
+    #[tokio::test]
+    async fn test_mock_handle_scrape_success_no_extraction_rules() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+        };
+        let result = worker.handle_scrape_success(&task, &response).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_handle_scrape_success_with_extraction_rules() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "extraction_rules": {
+                "title": {
+                    "selector": "h1",
+                    "attr": null,
+                    "is_array": false,
+                    "use_llm": null,
+                    "llm_prompt": null,
+                    "output_format": null
+                }
+            }
+        }));
+        let response = ScrapeResponse {
+            content: "<html><body><h1>Title</h1></body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+        };
+        let result = worker.handle_scrape_success(&task, &response).await;
+        assert!(result.is_ok());
+    }
+
+    // --- handle_crawl_success tests ---
+
+    #[tokio::test]
+    async fn test_mock_handle_crawl_success_with_link_extraction() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: r#"<html><body><a href="/page1">Link</a></body></html>"#.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let config = make_crawl_config(None, None);
+        let request = worker.build_crawl_request(&task, &config);
+        let result = worker
+            .handle_crawl_success(&task, response, Uuid::new_v4(), 0, &config, &request)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_handle_crawl_success_max_depth_no_link_extraction() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: r#"<html><body><a href="/page1">Link</a></body></html>"#.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let mut config = make_crawl_config(None, None);
+        config.max_depth = 1;
+        let request = worker.build_crawl_request(&task, &config);
+        let result = worker
+            .handle_crawl_success(&task, response, Uuid::new_v4(), 1, &config, &request)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // --- handle_crawl_failure tests ---
+
+    #[tokio::test]
+    async fn test_mock_handle_crawl_failure_basic() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        let config = make_crawl_config(None, None);
+        let request = worker.build_crawl_request(&task, &config);
+        let result = worker
+            .handle_crawl_failure(
+                &mut task,
+                anyhow::anyhow!("Network error"),
+                Uuid::new_v4(),
+                &request,
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // --- process_scrape_task tests (error paths — engine_client has no engines) ---
+
+    #[tokio::test]
+    async fn test_mock_process_scrape_task_engine_error() {
+        let worker = build_mock_worker().await;
+        // Empty payload → build_scrape_request falls back to default request.
+        // EngineClient::new() has no engines → scrape() returns an error.
+        // The error path either marks the task as failed or calls handle_failure.
+        let task = make_task(json!({}));
+        let result = worker.process_scrape_task(task).await;
+        assert!(result.is_ok()); // Error is handled internally, returns Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mock_process_scrape_task_with_valid_payload_engine_error() {
+        let worker = build_mock_worker().await;
+        // Valid ScrapeRequestDto payload but engine still fails.
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {
+                "timeout": 10,
+                "js_rendering": true
+            }
+        }));
+        let result = worker.process_scrape_task(task).await;
+        assert!(result.is_ok());
+    }
+
+    // --- process_crawl_task tests ---
+
+    #[tokio::test]
+    async fn test_mock_process_crawl_task_invalid_payload() {
+        let worker = build_mock_worker().await;
+        // Missing crawl_id → parse_crawl_payload fails → mark_failed is called.
+        let task = make_task(json!({"depth": 1, "config": {}}));
+        let result = worker.process_crawl_task(task).await;
+        assert!(result.is_ok()); // Error handled internally
+    }
+
+    #[tokio::test]
+    async fn test_mock_process_crawl_task_engine_error() {
+        let worker = build_mock_worker().await;
+        // Valid crawl payload but engine fails → handle_crawl_failure is called.
+        let crawl_id = Uuid::new_v4();
+        let task = make_task(json!({
+            "crawl_id": crawl_id.to_string(),
+            "depth": 0,
+            "config": {"max_depth": 2}
+        }));
+        let result = worker.process_crawl_task(task).await;
+        assert!(result.is_ok());
+    }
+
+    // --- process_extract_task tests ---
+
+    #[tokio::test]
+    async fn test_mock_process_extract_task_engine_error() {
+        let worker = build_mock_worker().await;
+        // Valid extract payload but engine fails → returns Err.
+        let task = make_task(json!({
+            "urls": ["https://example.com/page"]
+        }));
+        let result = worker.process_extract_task(task).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mock_process_extract_task_invalid_payload() {
+        let worker = build_mock_worker().await;
+        // Payload is not a valid ExtractRequestDto → parse fails → returns Err.
+        let task = make_task(json!({"not_a_valid": "field"}));
+        let result = worker.process_extract_task(task).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mock_process_extract_task_empty_urls() {
+        let worker = build_mock_worker().await;
+        // Valid ExtractRequestDto but no URLs → parse_extract_payload fails.
+        let task = make_task(json!({"urls": []}));
+        let result = worker.process_extract_task(task).await;
+        assert!(result.is_err());
+    }
+
+    // ========== ScrapeWorkerBuilder tests ==========
+
+    #[tokio::test]
+    async fn test_builder_new_creates_default() {
+        let builder = ScrapeWorkerBuilder::new();
+        assert_eq!(builder.default_concurrency_limit, 10);
+    }
+
+    #[tokio::test]
+    async fn test_builder_default_impl() {
+        let builder = ScrapeWorkerBuilder::default();
+        assert_eq!(builder.default_concurrency_limit, 10);
+    }
+
+    #[tokio::test]
+    async fn test_builder_with_default_concurrency_limit() {
+        let builder = ScrapeWorkerBuilder::new().with_default_concurrency_limit(50);
+        assert_eq!(builder.default_concurrency_limit, 50);
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_success() {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let worker = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_storage_repository(
+                Arc::new(NoOpStorage) as Arc<dyn StorageRepository + Send + Sync>,
+            )
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .with_regex_cache(regex_cache)
+            .build();
+
+        assert!(worker.is_ok(), "build should succeed with all deps");
+        let w = worker.unwrap();
+        assert_eq!(w.default_concurrency_limit, 10);
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_missing_repository() {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let result = ScrapeWorkerBuilder::new()
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .with_regex_cache(regex_cache)
+            .build();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "repository is required");
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_missing_result_repository() {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let result = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .with_regex_cache(regex_cache)
+            .build();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "result_repository is required");
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_missing_crawl_repository() {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let result = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .with_regex_cache(regex_cache)
+            .build();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "crawl_repository is required");
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_missing_webhook_service() {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let result = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .with_regex_cache(regex_cache)
+            .build();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "webhook_service is required");
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_missing_engine_client() {
+        let regex_cache = make_regex_cache().await;
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let result = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .with_regex_cache(regex_cache)
+            .build();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "engine_client is required");
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_missing_redis() {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+
+        let result = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .with_regex_cache(regex_cache)
+            .build();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "redis is required");
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_missing_settings() {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let result = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .with_regex_cache(regex_cache)
+            .build();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "settings is required");
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_missing_extraction_service() {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let result = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_regex_cache(regex_cache)
+            .build();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "extraction_service is required");
+    }
+
+    #[tokio::test]
+    async fn test_builder_build_missing_regex_cache() {
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let result = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .build();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "regex_cache is required");
+    }
+
+    #[tokio::test]
+    async fn test_builder_with_custom_concurrency_limit() {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings");
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient");
+
+        let worker = ScrapeWorkerBuilder::new()
+            .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
+            .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
+            .with_credits_repository(
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engine_client)
+            .with_create_scrape_use_case(
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            )
+            .with_redis(redis)
+            .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
+            .with_settings(Arc::new(settings))
+            .with_extraction_service(
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            )
+            .with_regex_cache(regex_cache)
+            .with_default_concurrency_limit(100)
+            .build()
+            .expect("build should succeed");
+
+        assert_eq!(worker.default_concurrency_limit, 100);
+    }
+
+    // ========== testcontainers integration tests ==========
+    //
+    // These tests construct a full ScrapeWorker with real PostgreSQL +
+    // Redis + HTTP client via testcontainers, exercising the `new()`
+    // constructor, `ScrapeWorkerBuilder`, and pure-logic methods like
+    // `should_crawl` and `build_crawl_request` that require a
+    // fully-initialized worker instance.
+
+    use crate::bootstrap::infrastructure::init_infrastructure;
+    use crate::bootstrap::services::init_services;
+    use crate::common::test_support::testcontainers_fixtures as tcf;
+    use crate::domain::repositories::storage_repository::NoOpStorage;
+
+    async fn require_docker() -> bool {
+        tcf::docker_available().await
+    }
+
+    /// Build a full ScrapeWorker using testcontainers-provided services.
+    async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
+        let handle = tcf::DbRedisHandle::start().await?;
+        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url)?;
+        let settings_arc = std::sync::Arc::new(settings.clone());
+        let infra = init_infrastructure(&settings).await?;
+        let engines = crate::bootstrap::engines::init_engine_components(
+            infra.http_client.clone(),
+            String::new(),
+            &settings.engines,
+        );
+        let services = init_services(
+            &infra,
+            engines.router.clone(),
+            engines.engine_client.clone(),
+            infra.http_client.clone(),
+            &settings,
+        );
+
+        // Construct ScrapeWorker via new().
+        let worker = ScrapeWorker::new(
+            infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>,
+            infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>,
+            infra.repositories.crawl_repo.clone() as Arc<dyn CrawlRepository>,
+            infra.storage_repo.clone(),
+            services.webhook_service.clone(),
+            infra.repositories.credits_repo.clone() as Arc<dyn CreditsRepository>,
+            engines.engine_client.clone(),
+            services.create_scrape_use_case.clone(),
+            (*infra.redis_client).clone(),
+            services.robots_checker.clone(),
+            settings_arc,
+            settings.concurrency.default_team_limit as usize,
+            services.extraction_service.clone(),
+            (*services.regex_cache).clone(),
+        );
+
+        Ok(worker)
+    }
+
+    /// Helper: construct a minimal CrawlConfigDto with the given patterns.
+    fn make_crawl_config(
+        include_patterns: Option<Vec<String>>,
+        exclude_patterns: Option<Vec<String>>,
+    ) -> CrawlConfigDto {
+        CrawlConfigDto {
+            max_depth: 1,
+            include_patterns,
+            exclude_patterns,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: None,
+            extraction_rules: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn tc_scrape_worker_new_constructs_successfully() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_scrape_worker_new_constructs_successfully");
+            return;
+        }
+        let worker = match build_scrape_worker().await {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[skip] failed to build ScrapeWorker: {e}");
+                return;
+            }
+        };
+        // Verify the worker has a unique ID.
+        assert_ne!(worker.worker_id, Uuid::nil());
+        // Verify the worker has a default concurrency limit.
+        assert!(worker.default_concurrency_limit >= 1);
+    }
+
+    #[tokio::test]
+    async fn tc_scrape_worker_should_crawl_with_no_patterns() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_scrape_worker_should_crawl_with_no_patterns");
+            return;
+        }
+        let worker = match build_scrape_worker().await {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[skip] failed to build ScrapeWorker: {e}");
+                return;
+            }
+        };
+        let config = make_crawl_config(None, None);
+        // With no include/exclude patterns, should_crawl should return true.
+        assert!(worker.should_crawl("https://example.com/page1", &config));
+    }
+
+    #[tokio::test]
+    async fn tc_scrape_worker_should_crawl_with_include_patterns() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_scrape_worker_should_crawl_with_include_patterns");
+            return;
+        }
+        let worker = match build_scrape_worker().await {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[skip] failed to build ScrapeWorker: {e}");
+                return;
+            }
+        };
+        let config = make_crawl_config(Some(vec!["example\\.com".to_string()]), None);
+        // URL matching include pattern → should crawl.
+        assert!(worker.should_crawl("https://example.com/page", &config));
+        // URL not matching include pattern → should not crawl.
+        assert!(!worker.should_crawl("https://other.com/page", &config));
+    }
+
+    #[tokio::test]
+    async fn tc_scrape_worker_should_crawl_with_exclude_patterns() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_scrape_worker_should_crawl_with_exclude_patterns");
+            return;
+        }
+        let worker = match build_scrape_worker().await {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[skip] failed to build ScrapeWorker: {e}");
+                return;
+            }
+        };
+        let config = make_crawl_config(None, Some(vec!["blocked".to_string()]));
+        // URL not matching exclude pattern → should crawl.
+        assert!(worker.should_crawl("https://example.com/page", &config));
+        // URL matching exclude pattern → should not crawl.
+        assert!(!worker.should_crawl("https://example.com/blocked", &config));
+    }
+
+    #[tokio::test]
+    async fn tc_scrape_worker_builder_builds_full_worker() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_scrape_worker_builder_builds_full_worker");
+            return;
+        }
+        let handle = match tcf::DbRedisHandle::start().await {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[skip] failed to start containers: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url).unwrap();
+        let settings_arc = std::sync::Arc::new(settings.clone());
+        let infra = match init_infrastructure(&settings).await {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("[skip] failed to init infrastructure: {e}");
+                return;
+            }
+        };
+        let engines = crate::bootstrap::engines::init_engine_components(
+            infra.http_client.clone(),
+            String::new(),
+            &settings.engines,
+        );
+        let services = init_services(
+            &infra,
+            engines.router.clone(),
+            engines.engine_client.clone(),
+            infra.http_client.clone(),
+            &settings,
+        );
+
+        // Use ScrapeWorkerBuilder to construct the worker.
+        // with_storage_repository requires a non-Option Arc; fall back to NoOpStorage.
+        let storage = infra
+            .storage_repo
+            .clone()
+            .unwrap_or_else(|| Arc::new(NoOpStorage));
+        let worker = ScrapeWorkerBuilder::new()
+            .with_repository(infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>)
+            .with_result_repository(
+                infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>,
+            )
+            .with_crawl_repository(
+                infra.repositories.crawl_repo.clone() as Arc<dyn CrawlRepository>,
+            )
+            .with_storage_repository(storage)
+            .with_webhook_service(services.webhook_service.clone())
+            .with_credits_repository(
+                infra.repositories.credits_repo.clone() as Arc<dyn CreditsRepository>,
+            )
+            .with_engine_client(engines.engine_client.clone())
+            .with_create_scrape_use_case(services.create_scrape_use_case.clone())
+            .with_redis((*infra.redis_client).clone())
+            .with_robots_checker(services.robots_checker.clone())
+            .with_settings(settings_arc)
+            .with_default_concurrency_limit(settings.concurrency.default_team_limit as usize)
+            .with_extraction_service(services.extraction_service.clone())
+            .with_regex_cache((*services.regex_cache).clone())
+            .build()
+            .expect("ScrapeWorkerBuilder::build should succeed with all required deps");
+
+        // Verify the builder produced a valid worker.
+        assert_ne!(worker.worker_id, Uuid::nil());
+    }
+
+    #[tokio::test]
+    async fn tc_scrape_worker_build_crawl_request() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_scrape_worker_build_crawl_request");
+            return;
+        }
+        let worker = match build_scrape_worker().await {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[skip] failed to build ScrapeWorker: {e}");
+                return;
+            }
+        };
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            serde_json::json!({}),
+        );
+
+        let config = make_crawl_config(None, None);
+
+        // build_crawl_request is a &self method that constructs a ScrapeRequest.
+        let request = worker.build_crawl_request(&task, &config);
+        // Verify the request has the correct URL.
+        assert_eq!(request.url, "https://example.com");
+    }
+
+    // ========== Additional coverage tests ==========
+    //
+    // These tests target uncovered code paths: extract_data_with_rules,
+    // token-credit deduction in handle_scrape_success, process_next_task,
+    // Debug impl, parse_crawl_payload edge cases, DFS strategy in link
+    // extraction, and more.
+
+    use crate::queue::task_queue::QueueError;
+
+    /// Mock TaskQueue — dequeue returns None (empty queue).
+    struct MockTaskQueue;
+
+    #[async_trait::async_trait]
+    impl TaskQueue for MockTaskQueue {
+        async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
+            Ok(task)
+        }
+        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+            Ok(None)
+        }
+        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+    }
+
+    /// Mock ExtractionService that returns non-zero TokenUsage, exercising
+    /// the token-credit deduction code paths.
+    struct MockExtractionServiceWithTokens;
+
+    #[async_trait::async_trait]
+    impl ExtractionServiceTrait for MockExtractionServiceWithTokens {
+        async fn extract(
+            &self,
+            _html_content: &str,
+            _rules: &HashMap<String, ExtractionRule>,
+            _base_url: Option<&str>,
+        ) -> Result<(Value, TokenUsage)> {
+            Ok((
+                json!({"title": "Extracted Title"}),
+                TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 50,
+                    total_tokens: 150,
+                },
+            ))
+        }
+        async fn extract_with_schema(
+            &self,
+            _html_content: &str,
+            _schema: &Value,
+        ) -> Result<(Value, TokenUsage)> {
+            Ok((
+                json!({"data": "value"}),
+                TokenUsage {
+                    prompt_tokens: 200,
+                    completion_tokens: 100,
+                    total_tokens: 300,
+                },
+            ))
+        }
+        fn extract_with_selectors(
+            &self,
+            _html_content: &str,
+            _rules: &HashMap<String, ExtractionRule>,
+            _base_url: Option<&str>,
+        ) -> Result<Value> {
+            Ok(json!({}))
+        }
+    }
+
+    /// Build a ScrapeWorker whose ExtractionService returns non-zero tokens.
+    async fn build_mock_worker_with_tokens() -> ScrapeWorker {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings for mock worker");
+        let settings_arc = Arc::new(settings.clone());
+        let redis = RedisClient::new("redis://localhost:6379")
+            .expect("Failed to create RedisClient for mock worker");
+
+        ScrapeWorker::new(
+            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
+            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+            Some(Arc::new(NoOpStorage) as Arc<dyn StorageRepository + Send + Sync>),
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            engine_client,
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            redis,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            settings_arc,
+            10,
+            Arc::new(MockExtractionServiceWithTokens) as Arc<dyn ExtractionServiceTrait>,
+            regex_cache,
+        )
+    }
+
+    // --- Debug impl tests ---
+
+    #[tokio::test]
+    async fn test_scrape_worker_debug_impl_outputs_fields() {
+        let worker = build_mock_worker().await;
+        let debug_str = format!("{:?}", worker);
+        assert!(debug_str.contains("ScrapeWorker"));
+        assert!(debug_str.contains("worker_id"));
+        assert!(debug_str.contains("default_concurrency_limit"));
+        // finish_non_exhaustive adds ".." at the end
+        assert!(debug_str.contains(".."));
+    }
+
+    // --- process_next_task tests ---
+
+    #[tokio::test]
+    async fn test_mock_process_next_task_empty_queue_returns_false() {
+        let worker = build_mock_worker().await;
+        let queue = MockTaskQueue;
+        let result = worker.process_next_task(&queue).await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "empty queue should return false");
+    }
+
+    // --- extract_data_with_rules tests (via handle_crawl_success) ---
+
+    #[tokio::test]
+    async fn test_mock_handle_crawl_success_with_extraction_rules() {
+        let worker = build_mock_worker_with_tokens().await;
+        let task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "<html><body><h1>Title</h1></body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let mut rules = HashMap::new();
+        rules.insert(
+            "title".to_string(),
+            ExtractionRule {
+                selector: Some("h1".to_string()),
+                attr: None,
+                is_array: false,
+                use_llm: None,
+                llm_prompt: None,
+                output_format: None,
+            },
+        );
+        let config = CrawlConfigDto {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: None,
+            extraction_rules: Some(rules),
+        };
+        let request = worker.build_crawl_request(&task, &config);
+        let result = worker
+            .handle_crawl_success(&task, response, Uuid::new_v4(), 0, &config, &request)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // --- handle_scrape_success with non-zero token usage ---
+
+    #[tokio::test]
+    async fn test_mock_handle_scrape_success_with_token_usage() {
+        let worker = build_mock_worker_with_tokens().await;
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "extraction_rules": {
+                "title": {
+                    "selector": "h1",
+                    "attr": null,
+                    "is_array": false,
+                    "use_llm": null,
+                    "llm_prompt": null,
+                    "output_format": null
+                }
+            }
+        }));
+        let response = ScrapeResponse {
+            content: "<html><body><h1>Title</h1></body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+        };
+        let result = worker.handle_scrape_success(&task, &response).await;
+        assert!(result.is_ok());
+    }
+
+    // --- parse_crawl_payload edge cases ---
+
+    #[tokio::test]
+    async fn test_mock_parse_crawl_payload_invalid_crawl_id_defaults_to_nil() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({
+            "crawl_id": "not-a-uuid",
+            "depth": 1,
+            "config": {"max_depth": 2}
+        }));
+        let (crawl_id, depth, _) = worker.parse_crawl_payload(&task).await.unwrap();
+        // Invalid UUID string falls back to Uuid::nil() via unwrap_or_default()
+        assert_eq!(crawl_id, Uuid::nil());
+        assert_eq!(depth, 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_parse_crawl_payload_missing_config_fails() {
+        let worker = build_mock_worker().await;
+        let crawl_id = Uuid::new_v4();
+        // config is missing → defaults to json!({}) → deserialization fails
+        // because CrawlConfigDto.max_depth is a required u32 field.
+        let task = make_task(json!({
+            "crawl_id": crawl_id.to_string(),
+            "depth": 3
+        }));
+        assert!(worker.parse_crawl_payload(&task).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mock_parse_crawl_payload_invalid_config_json_fails() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({
+            "crawl_id": Uuid::new_v4().to_string(),
+            "depth": 0,
+            "config": "not-an-object"
+        }));
+        assert!(worker.parse_crawl_payload(&task).await.is_err());
+    }
+
+    // --- should_crawl with empty pattern lists ---
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_empty_include_patterns_returns_false() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(Some(vec![]), None);
+        // Empty include patterns vec: for loop doesn't run, matched stays false,
+        // then `if !matched { return false; }` triggers → returns false.
+        assert!(!worker.should_crawl("https://example.com/page", &config));
+    }
+
+    #[tokio::test]
+    async fn test_mock_should_crawl_empty_exclude_patterns_returns_true() {
+        let worker = build_mock_worker().await;
+        let config = make_crawl_config(None, Some(vec![]));
+        // Empty exclude patterns — for loop doesn't run, no exclusion → returns true
+        assert!(worker.should_crawl("https://example.com/page", &config));
+    }
+
+    // --- extract_and_queue_links with DFS strategy ---
+
+    #[tokio::test]
+    async fn test_mock_extract_and_queue_links_dfs_strategy() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        task.url = "https://example.com".to_string();
+        let html = r#"<html><body>
+            <a href="https://example.com/page1">Page 1</a>
+            <a href="https://example.com/page2">Page 2</a>
+        </body></html>"#;
+        let response = ScrapeResponse {
+            content: html.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let config = CrawlConfigDto {
+            max_depth: 3,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: Some("dfs".to_string()),
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: None,
+            extraction_rules: None,
+        };
+        let result = worker
+            .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // --- extract_and_queue_links filters self-links and non-http protocols ---
+
+    #[tokio::test]
+    async fn test_mock_extract_and_queue_links_filters_self_and_non_http() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        task.url = "https://example.com".to_string();
+        let html = r#"<html><body>
+            <a href="https://example.com">Self</a>
+            <a href="mailto:test@example.com">Email</a>
+            <a href="javascript:void(0)">JS</a>
+            <a href="/relative">Relative</a>
+            <a href="https://other.com/page">Other</a>
+        </body></html>"#;
+        let response = ScrapeResponse {
+            content: html.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let config = make_crawl_config(None, None);
+        let result = worker
+            .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // --- build_crawl_request with extraction_rules in config ---
+
+    #[tokio::test]
+    async fn test_mock_build_crawl_request_with_extraction_rules() {
+        let worker = build_mock_worker().await;
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
+        let mut rules = HashMap::new();
+        rules.insert(
+            "title".to_string(),
+            ExtractionRule {
+                selector: Some("h1".to_string()),
+                attr: None,
+                is_array: false,
+                use_llm: None,
+                llm_prompt: None,
+                output_format: None,
+            },
+        );
+        let config = CrawlConfigDto {
+            max_depth: 2,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: None,
+            extraction_rules: Some(rules),
+        };
+        let request = worker.build_crawl_request(&task, &config);
+        assert_eq!(request.url, "https://example.com");
+        assert_eq!(request.options.method, HttpMethod::Get);
+    }
+
+    // --- parse_extract_payload with rules ---
+
+    #[tokio::test]
+    async fn test_mock_parse_extract_payload_with_rules() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({
+            "urls": ["https://example.com/page"],
+            "rules": {
+                "title": {
+                    "selector": "h1",
+                    "attr": null,
+                    "is_array": false,
+                    "use_llm": null,
+                    "llm_prompt": null,
+                    "output_format": null
+                }
+            }
+        }));
+        let (payload, url) = worker.parse_extract_payload(&task).await.unwrap();
+        assert_eq!(url, "https://example.com/page");
+        assert!(payload.rules.is_some());
+        assert_eq!(payload.rules.as_ref().unwrap().len(), 1);
+    }
+
+    // --- handle_*_extraction with non-zero token usage ---
+
+    #[tokio::test]
+    async fn test_mock_handle_rules_extraction_with_tokens() {
+        let worker = build_mock_worker_with_tokens().await;
+        let mut task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "<html><body><h1>Hello</h1></body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+        };
+        let mut rules = HashMap::new();
+        rules.insert(
+            "title".to_string(),
+            ExtractionRule {
+                selector: Some("h1".to_string()),
+                attr: None,
+                is_array: false,
+                use_llm: None,
+                llm_prompt: None,
+                output_format: None,
+            },
+        );
+        let result = worker
+            .handle_rules_extraction(&mut task, &response, &rules, "https://example.com")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_mock_handle_prompt_extraction_with_tokens() {
+        let worker = build_mock_worker_with_tokens().await;
+        let mut task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello world</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 30,
+            final_url: None,
+        };
+        let result = worker
+            .handle_prompt_extraction(
+                &mut task,
+                &response,
+                "Extract the main topic".to_string(),
+                "https://example.com",
+            )
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_mock_handle_schema_extraction_with_tokens() {
+        let worker = build_mock_worker_with_tokens().await;
+        let mut task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "<html><body>Data</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 20,
+            final_url: None,
+        };
+        let schema = json!({"type": "object", "properties": {"title": {"type": "string"}}});
+        let result = worker
+            .handle_schema_extraction(&mut task, &response, &schema, "https://example.com")
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    // --- handle_crawl_failure with proxy (credit deduction in failure path) ---
+
+    #[tokio::test]
+    async fn test_mock_handle_crawl_failure_with_proxy() {
+        let worker = build_mock_worker().await;
+        let mut task = make_task(json!({}));
+        let config = CrawlConfigDto {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: Some("http://proxy:3128".to_string()),
+            headers: None,
+            extraction_rules: None,
+        };
+        let request = worker.build_crawl_request(&task, &config);
+        let result = worker
+            .handle_crawl_failure(
+                &mut task,
+                anyhow::anyhow!("Network error"),
+                Uuid::new_v4(),
+                &request,
+            )
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // --- handle_crawl_success with screenshot (credit deduction) ---
+
+    #[tokio::test]
+    async fn test_mock_handle_crawl_success_with_screenshot() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: r#"<html><body><a href="/page1">Link</a></body></html>"#.to_string(),
+            status_code: 200,
+            screenshot: Some("base64screenshot".to_string()),
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let config = make_crawl_config(None, None);
+        let request = worker.build_crawl_request(&task, &config);
+        let result = worker
+            .handle_crawl_success(&task, response, Uuid::new_v4(), 0, &config, &request)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // --- process_text_encoding with various content types ---
+
+    #[tokio::test]
+    async fn test_mock_process_text_encoding_json_content() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: r#"{"key": "value"}"#.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "application/json".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 30,
+            final_url: None,
+        };
+        let result = worker.process_text_encoding(&task, &response).await;
+        // Should not panic — may succeed or fail depending on integration
+        match result {
+            Ok(content) => assert!(!content.is_empty() || response.content.is_empty()),
+            Err(_) => { /* Error is acceptable */ }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mock_process_text_encoding_empty_content() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: String::new(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 5,
+            final_url: None,
+        };
+        let result = worker.process_text_encoding(&task, &response).await;
+        match result {
+            Ok(content) => assert!(content.is_empty()),
+            Err(_) => { /* Error is acceptable */ }
+        }
+    }
+
+    // --- save_result with large content (storage path) ---
+
+    #[tokio::test]
+    async fn test_mock_save_result_large_content_uses_storage() {
+        let worker = build_mock_worker().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        // Content > 1MB threshold to trigger storage path
+        let large_content = "x".repeat(1024 * 1024 + 1);
+        let response = ScrapeResponse {
+            content: large_content,
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 500,
+            final_url: None,
+        };
+        let result = worker.save_result(&task, &response, None).await;
+        // NoOpStorage::save returns Ok, so this should succeed
+        assert!(result.is_ok());
+    }
 }

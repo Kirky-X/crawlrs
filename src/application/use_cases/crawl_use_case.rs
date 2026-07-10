@@ -1664,4 +1664,148 @@ mod tests {
         };
         assert!(err.to_string().contains("cancel tasks down"));
     }
+
+    #[tokio::test]
+    async fn test_create_crawl_geo_denied_with_failing_log_still_returns_validation_error() {
+        // Geo denied + log failure → error is logged but ValidationError is still returned
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            ..Default::default()
+        };
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_failing_log(restrictions));
+
+        let use_case = build_use_case(
+            Arc::new(MockCrawlRepository::empty()),
+            Arc::new(MockTaskRepository::empty()),
+            Arc::new(MockScrapeResultRepository::empty()),
+            geo_repo,
+            Arc::new(MockGeoLocationService::succeeding()),
+        );
+
+        let result = use_case
+            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), make_crawl_dto(), "not-an-ip")
+            .await;
+        let err = match result {
+            Err(CrawlUseCaseError::ValidationError(msg)) => msg,
+            e => panic!("expected ValidationError, got: {:?}", e),
+        };
+        assert!(
+            err.contains("Geographic restriction check failed"),
+            "got: {}",
+            err
+        );
+    }
+
+    // ============ Mock method coverage tests ============
+
+    #[tokio::test]
+    async fn test_mock_crawl_repo_remaining_methods_return_defaults() {
+        let repo = MockCrawlRepository::empty();
+        let id = Uuid::new_v4();
+        // Counter/status stubs are no-ops returning Ok
+        repo.increment_completed_tasks(id).await.unwrap();
+        repo.increment_failed_tasks(id).await.unwrap();
+        repo.update_status(id, CrawlStatus::Completed).await.unwrap();
+        repo.increment_total_tasks(id).await.unwrap();
+        // Query stubs return empty / zero
+        assert!(repo
+            .find_by_team_id_paginated(id, 10, 0)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(repo.count_by_team_id(id).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_mock_task_repo_remaining_methods_return_defaults() {
+        let repo = MockTaskRepository::empty();
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
+        // find_by_id returns None
+        assert!(repo.find_by_id(task.id).await.unwrap().is_none());
+        // update echoes task back
+        let updated = repo.update(&task).await.unwrap();
+        assert_eq!(updated.id, task.id);
+        // acquire_next returns None
+        assert!(repo.acquire_next(Uuid::new_v4()).await.unwrap().is_none());
+        // State-transition stubs are no-ops
+        repo.mark_completed(task.id).await.unwrap();
+        repo.mark_failed(task.id).await.unwrap();
+        repo.mark_cancelled(task.id).await.unwrap();
+        // exists_by_url returns false
+        assert!(!repo.exists_by_url("https://a.com").await.unwrap());
+        // find_existing_urls returns empty
+        assert!(repo
+            .find_existing_urls(&["https://a.com".to_string()])
+            .await
+            .unwrap()
+            .is_empty());
+        // reset_stuck_tasks returns 0
+        assert_eq!(
+            repo.reset_stuck_tasks(chrono::Duration::minutes(5))
+                .await
+                .unwrap(),
+            0
+        );
+        // expire_tasks returns 0
+        assert_eq!(repo.expire_tasks().await.unwrap(), 0);
+        // query_tasks returns empty + 0
+        let (tasks, count) = repo
+            .query_tasks(
+                crate::domain::repositories::task_repository::TaskQueryParams::default(),
+            )
+            .await
+            .unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(count, 0);
+        // batch_cancel returns empty tuples
+        let (cancelled, failed) = repo
+            .batch_cancel(vec![Uuid::new_v4()], Uuid::new_v4(), false)
+            .await
+            .unwrap();
+        assert!(cancelled.is_empty());
+        assert!(failed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_webhook_repo_remaining_methods_return_defaults() {
+        let repo = MockWebhookRepository;
+        let id = Uuid::new_v4();
+        assert!(repo.find_by_id(id).await.unwrap().is_none());
+        assert!(repo.find_by_team_id(id).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_scrape_result_repo_remaining_methods_return_defaults() {
+        let repo = MockScrapeResultRepository::empty();
+        let task_id = Uuid::new_v4();
+        // save is a no-op
+        repo.save(make_scrape_result(task_id)).await.unwrap();
+        // find_by_task_id returns None
+        assert!(repo.find_by_task_id(task_id).await.unwrap().is_none());
+        // get_team_avg_response_time returns 0.0
+        assert_eq!(
+            repo.get_team_avg_response_time(Uuid::new_v4())
+                .await
+                .unwrap(),
+            0.0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_geo_restriction_repo_update_team_restrictions_succeeds() {
+        let repo = MockGeoRestrictionRepository::with_restrictions(
+            TeamGeoRestrictions::default(),
+        );
+        let result = repo
+            .update_team_restrictions(Uuid::new_v4(), &TeamGeoRestrictions::default())
+            .await;
+        assert!(result.is_ok(), "update_team_restrictions should succeed");
+    }
 }

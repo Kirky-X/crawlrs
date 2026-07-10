@@ -913,6 +913,11 @@ mod tests_ext {
         completed: Arc<StdMutex<Vec<Uuid>>>,
         failed: Arc<StdMutex<Vec<Uuid>>>,
         cancelled: Arc<StdMutex<Vec<Uuid>>>,
+        fail_enqueue_after: Option<usize>,
+        enqueue_count: Arc<StdMutex<usize>>,
+        should_fail_complete: bool,
+        should_fail_fail: bool,
+        should_fail_cancel: bool,
     }
 
     impl MockTaskQueue {
@@ -924,6 +929,11 @@ mod tests_ext {
                 completed: Arc::new(StdMutex::new(Vec::new())),
                 failed: Arc::new(StdMutex::new(Vec::new())),
                 cancelled: Arc::new(StdMutex::new(Vec::new())),
+                fail_enqueue_after: None,
+                enqueue_count: Arc::new(StdMutex::new(0)),
+                should_fail_complete: false,
+                should_fail_fail: false,
+                should_fail_cancel: false,
             }
         }
 
@@ -937,6 +947,30 @@ mod tests_ext {
         fn with_dequeue_failure() -> Self {
             let mut q = Self::new();
             q.should_fail_dequeue = true;
+            q
+        }
+
+        fn with_enqueue_failure_after(n: usize) -> Self {
+            let mut q = Self::new();
+            q.fail_enqueue_after = Some(n);
+            q
+        }
+
+        fn with_complete_failure() -> Self {
+            let mut q = Self::new();
+            q.should_fail_complete = true;
+            q
+        }
+
+        fn with_fail_failure() -> Self {
+            let mut q = Self::new();
+            q.should_fail_fail = true;
+            q
+        }
+
+        fn with_cancel_failure() -> Self {
+            let mut q = Self::new();
+            q.should_fail_cancel = true;
             q
         }
 
@@ -956,6 +990,17 @@ mod tests_ext {
                     ),
                 ));
             }
+            if let Some(n) = self.fail_enqueue_after {
+                let mut count = self.enqueue_count.lock().unwrap();
+                if *count >= n {
+                    return Err(QueueError::Repository(
+                        crate::domain::repositories::task_repository::RepositoryError::Database(
+                            anyhow::anyhow!("mock enqueue failure after {} successes", n),
+                        ),
+                    ));
+                }
+                *count += 1;
+            }
             self.tasks.lock().unwrap().push_back(task.clone());
             Ok(task)
         }
@@ -973,16 +1018,37 @@ mod tests_ext {
         }
 
         async fn complete(&self, task_id: Uuid) -> Result<(), QueueError> {
+            if self.should_fail_complete {
+                return Err(QueueError::Repository(
+                    crate::domain::repositories::task_repository::RepositoryError::Database(
+                        anyhow::anyhow!("mock complete failure"),
+                    ),
+                ));
+            }
             self.completed.lock().unwrap().push(task_id);
             Ok(())
         }
 
         async fn fail(&self, task_id: Uuid) -> Result<(), QueueError> {
+            if self.should_fail_fail {
+                return Err(QueueError::Repository(
+                    crate::domain::repositories::task_repository::RepositoryError::Database(
+                        anyhow::anyhow!("mock fail failure"),
+                    ),
+                ));
+            }
             self.failed.lock().unwrap().push(task_id);
             Ok(())
         }
 
         async fn cancel(&self, task_id: Uuid) -> Result<(), QueueError> {
+            if self.should_fail_cancel {
+                return Err(QueueError::Repository(
+                    crate::domain::repositories::task_repository::RepositoryError::Database(
+                        anyhow::anyhow!("mock cancel failure"),
+                    ),
+                ));
+            }
             self.cancelled.lock().unwrap().push(task_id);
             Ok(())
         }
@@ -1821,5 +1887,170 @@ mod tests_ext {
             let json = serde_json::to_string(op).unwrap();
             assert_eq!(json, format!("\"{}\"", expected));
         }
+    }
+
+    // ========== From<InnerQueueError> Repository branch ==========
+
+    #[test]
+    fn test_queue_client_error_from_inner_repository() {
+        let inner = InnerQueueError::Repository(
+            crate::domain::repositories::task_repository::RepositoryError::Database(
+                anyhow::anyhow!("db connection lost"),
+            ),
+        );
+        let client_err: QueueClientError = inner.into();
+        match client_err {
+            QueueClientError::Internal(msg) => {
+                assert!(msg.contains("db connection lost"), "msg: {}", msg);
+            }
+            other => panic!("expected Internal, got {:?}", other),
+        }
+    }
+
+    // ========== dequeue_batch error path ==========
+
+    #[tokio::test]
+    async fn test_client_dequeue_batch_dequeue_failure() {
+        let queue = MockTaskQueue::with_dequeue_failure();
+        let client = build_client(queue);
+
+        let result = client.dequeue_batch(Uuid::new_v4(), 5).await;
+        assert!(result.is_err(), "dequeue_batch should fail with dequeue error");
+        match result.unwrap_err() {
+            QueueClientError::Internal(msg) => {
+                assert!(msg.contains("mock dequeue failure"), "msg: {}", msg);
+            }
+            other => panic!("expected Internal, got {:?}", other),
+        }
+    }
+
+    // ========== enqueue_batch partial failure ==========
+
+    #[tokio::test]
+    async fn test_client_enqueue_batch_partial_failure() {
+        let queue = MockTaskQueue::with_enqueue_failure_after(1);
+        let client = build_client(queue);
+
+        let requests = vec![
+            make_enqueue_request("scrape"),
+            make_enqueue_request("crawl"),
+            make_enqueue_request("extract"),
+        ];
+        let result = client.enqueue_batch(&requests).await;
+        assert!(result.is_err(), "partial failure should return error");
+        match result.unwrap_err() {
+            QueueClientError::PartialBatchFailure(succeeded, failed) => {
+                assert_eq!(succeeded, 1, "first request should succeed");
+                assert_eq!(failed, 2, "remaining requests should fail");
+            }
+            other => panic!("expected PartialBatchFailure, got {:?}", other),
+        }
+    }
+
+    // ========== QueueMetricsImpl direct tests ==========
+
+    #[test]
+    fn test_queue_metrics_impl_record_batch_complete() {
+        let metrics = QueueMetricsImpl::new();
+        metrics.record(QueueOperation::BatchComplete, true);
+        let data = metrics.collect();
+        assert_eq!(data.tasks_processed, 1, "BatchComplete should increment tasks_processed");
+    }
+
+    #[test]
+    fn test_queue_metrics_impl_record_batch_fail() {
+        let metrics = QueueMetricsImpl::new();
+        metrics.record(QueueOperation::BatchFail, false);
+        let data = metrics.collect();
+        assert_eq!(data.tasks_failed, 1, "BatchFail should increment tasks_failed");
+    }
+
+    #[test]
+    fn test_queue_metrics_impl_record_other_operations_does_not_change_counts() {
+        let metrics = QueueMetricsImpl::new();
+        metrics.record(QueueOperation::Enqueue, true);
+        metrics.record(QueueOperation::Dequeue, true);
+        metrics.record(QueueOperation::Cancel, true);
+        metrics.record(QueueOperation::BatchEnqueue, true);
+        metrics.record(QueueOperation::BatchDequeue, true);
+        let data = metrics.collect();
+        assert_eq!(data.tasks_processed, 0, "non-complete/fail ops should not change processed");
+        assert_eq!(data.tasks_failed, 0, "non-complete/fail ops should not change failed");
+    }
+
+    #[test]
+    fn test_queue_metrics_impl_collect_initial_state() {
+        let metrics = QueueMetricsImpl::new();
+        let data = metrics.collect();
+        assert_eq!(data.queue_depth, 0);
+        assert_eq!(data.tasks_processed, 0);
+        assert_eq!(data.tasks_failed, 0);
+        assert_eq!(data.avg_processing_time_ms, 0.0);
+        assert!(data.operation_success_rates.is_empty());
+    }
+
+    // ========== update_status error propagation ==========
+
+    #[tokio::test]
+    async fn test_client_update_status_complete_failure() {
+        let queue = MockTaskQueue::with_complete_failure();
+        let client = build_client(queue);
+
+        let result = client
+            .update_status(StatusUpdateRequest::complete(Uuid::new_v4()))
+            .await;
+        assert!(result.is_err(), "complete failure should propagate error");
+        match result.unwrap_err() {
+            QueueClientError::Internal(msg) => {
+                assert!(msg.contains("mock complete failure"), "msg: {}", msg);
+            }
+            other => panic!("expected Internal, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_update_status_fail_failure() {
+        let queue = MockTaskQueue::with_fail_failure();
+        let client = build_client(queue);
+
+        let result = client
+            .update_status(StatusUpdateRequest::fail(Uuid::new_v4(), "error"))
+            .await;
+        assert!(result.is_err(), "fail failure should propagate error");
+        match result.unwrap_err() {
+            QueueClientError::Internal(msg) => {
+                assert!(msg.contains("mock fail failure"), "msg: {}", msg);
+            }
+            other => panic!("expected Internal, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_update_status_cancel_failure() {
+        let queue = MockTaskQueue::with_cancel_failure();
+        let client = build_client(queue);
+
+        let result = client
+            .update_status(StatusUpdateRequest::cancel(Uuid::new_v4()))
+            .await;
+        assert!(result.is_err(), "cancel failure should propagate error");
+        match result.unwrap_err() {
+            QueueClientError::Internal(msg) => {
+                assert!(msg.contains("mock cancel failure"), "msg: {}", msg);
+            }
+            other => panic!("expected Internal, got {:?}", other),
+        }
+    }
+
+    // ========== dequeue with batch_size error path ==========
+
+    #[tokio::test]
+    async fn test_client_dequeue_with_batch_size_dequeue_failure() {
+        let queue = MockTaskQueue::with_dequeue_failure();
+        let client = build_client(queue);
+
+        let request = DequeueRequest::new(Uuid::new_v4()).with_batch_size(3);
+        let result = client.dequeue(request).await;
+        assert!(result.is_err(), "dequeue with batch_size should fail on dequeue error");
     }
 }

@@ -882,4 +882,65 @@ mod tests {
         assert_eq!(stats.total_failures, 0);
         assert_eq!(stats.total_successes, 0);
     }
+
+    // === record_failure on already-open breaker ===
+
+    #[tokio::test]
+    async fn test_record_failure_on_open_breaker_is_noop_status() {
+        // When the breaker is already Open, recording another failure
+        // should not change the status (Status::Open => {} arm)
+        let cb = CircuitBreaker::with_default_config(CircuitConfig {
+            failure_threshold: 1,
+            recovery_timeout: Duration::from_secs(60),
+            failure_window: Duration::from_secs(60),
+        });
+
+        // Trip the breaker
+        cb.record_failure("engine");
+        assert!(cb.is_open("engine"));
+
+        // Record another failure on the already-open breaker
+        cb.record_failure("engine");
+        assert!(cb.is_open("engine")); // Still open
+
+        // Verify stats: total_failures = 2, total_requests = 2
+        let stats = cb.get_stats("engine").await;
+        assert!(stats.is_open);
+        assert_eq!(stats.total_failures, 2);
+        assert_eq!(stats.total_requests, 2);
+    }
+
+    // === record_success on closed breaker (no state change) ===
+
+    #[tokio::test]
+    async fn test_record_success_on_closed_breaker_does_not_change_state() {
+        // Success on a Closed breaker should just update stats, not call
+        // update_status_metric or change state
+        let cb = CircuitBreaker::new();
+
+        cb.record_success("engine");
+        cb.record_success("engine");
+
+        let stats = cb.get_stats("engine").await;
+        assert!(!stats.is_open);
+        assert_eq!(stats.total_successes, 2);
+        assert_eq!(stats.total_requests, 2);
+    }
+
+    // === CircuitBreaker Clone ===
+
+    #[tokio::test]
+    async fn test_circuit_breaker_clone_shares_state() {
+        // CircuitBreaker implements Clone; cloned instances should share state
+        // via Arc
+        let cb = CircuitBreaker::with_default_config(CircuitConfig {
+            failure_threshold: 1,
+            recovery_timeout: Duration::from_secs(60),
+            failure_window: Duration::from_secs(60),
+        });
+        let cb_clone = cb.clone();
+
+        cb.record_failure("engine");
+        assert!(cb_clone.is_open("engine")); // Clone sees the same state
+    }
 }

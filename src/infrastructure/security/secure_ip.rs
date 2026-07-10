@@ -699,4 +699,90 @@ mod tests {
         let ip = extractor.extract_from_forwarded_headers(&req);
         assert!(ip.is_none());
     }
+
+    #[test]
+    fn test_is_trusted_with_invalid_proxy_entry_skips_and_continues() {
+        // 包含无效 CIDR/IP 的条目应被跳过，继续检查后续条目
+        let config = TrustedProxyConfig::from_settings(
+            true,
+            vec![
+                "not-a-valid-cidr-or-ip".to_string(),
+                "10.0.0.1".to_string(),
+            ],
+        );
+
+        // 10.0.0.1 匹配第二个有效条目
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(config.is_trusted(&ip));
+
+        // 8.8.8.8 不匹配任何条目
+        let ip: IpAddr = "8.8.8.8".parse().unwrap();
+        assert!(!config.is_trusted(&ip));
+    }
+
+    #[test]
+    fn test_is_trusted_all_invalid_entries_returns_false() {
+        // 所有条目都无效时返回 false
+        let config = TrustedProxyConfig::from_settings(
+            true,
+            vec!["invalid1".to_string(), "invalid2".to_string()],
+        );
+
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(!config.is_trusted(&ip));
+    }
+
+    #[test]
+    fn test_extract_from_forwarded_headers_non_utf8_x_forwarded_for_falls_to_x_real_ip() {
+        // X-Forwarded-For 头包含非 ASCII 字节 → to_str() 失败 → 回退到 X-Real-IP
+        let extractor = SecureIpExtractor::new(TrustedProxyConfig::default());
+
+        let mut req = HttpRequest::builder()
+            .header("x-real-ip", "203.0.113.1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.headers_mut().insert(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_bytes(&[0x80, 0x81, 0x82]).unwrap(),
+        );
+
+        let ip = extractor.extract_from_forwarded_headers(&req);
+        assert_eq!(ip, Some("203.0.113.1".to_string()));
+    }
+
+    #[test]
+    fn test_extract_from_forwarded_headers_non_utf8_both_headers_returns_none() {
+        // 两个头都包含非 ASCII 字节 → 返回 None
+        let extractor = SecureIpExtractor::new(TrustedProxyConfig::default());
+
+        let mut req = HttpRequest::builder()
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.headers_mut().insert(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_bytes(&[0x80, 0x81]).unwrap(),
+        );
+        req.headers_mut().insert(
+            "x-real-ip",
+            axum::http::HeaderValue::from_bytes(&[0x82, 0x83]).unwrap(),
+        );
+
+        let ip = extractor.extract_from_forwarded_headers(&req);
+        assert!(ip.is_none());
+    }
+
+    #[test]
+    fn test_is_trusted_ipv6_cidr() {
+        // 测试 IPv6 CIDR 格式
+        let config = TrustedProxyConfig::from_settings(
+            true,
+            vec!["2001:db8::/32".to_string()],
+        );
+
+        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(config.is_trusted(&ip));
+
+        let ip: IpAddr = "2001:db9::1".parse().unwrap();
+        assert!(!config.is_trusted(&ip));
+    }
 }

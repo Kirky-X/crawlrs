@@ -908,16 +908,14 @@ mod tests {
     // WebhookServiceComponent 接受 Arc<dyn WebhookService>，可用 mock 实现验证
     // send_webhook/trigger_completion/trigger_failure 的委托逻辑以及 get_service 访问器。
 
-    use crate::domain::auth::{AuditDecision, AuditLogEntry};
     use crate::domain::models::{Task, TaskType, WebhookEvent, WebhookEventType};
-    use crate::domain::repositories::audit_log_repository::{
-        AuditLogRepository, AuditRepositoryError,
-    };
+    use crate::domain::services::audit_service::AuditServiceError;
+    use crate::domain::services::auth_scope_service::AuthScopeServiceError;
+    use crate::domain::auth::{AuditDecision, AuditLogEntry};
+    use crate::domain::repositories::audit_log_repository::{AuditLogRepository, AuditRepositoryError};
     use crate::domain::repositories::auth_scope_repository::{
         AuthScopeRepository, RepositoryError as AuthScopeRepoError,
     };
-    use crate::domain::services::audit_service::AuditServiceError;
-    use crate::domain::services::auth_scope_service::AuthScopeServiceError;
 
     /// Mock WebhookService 用于测试 WebhookServiceComponent 的委托逻辑。
     struct MockWebhookService {
@@ -1025,7 +1023,10 @@ mod tests {
         let event = make_test_webhook_event();
         let result = component.send_webhook(&event).await;
         assert!(result.is_ok());
-        assert_eq!(mock.send_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            mock.send_count.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[tokio::test]
@@ -1052,7 +1053,8 @@ mod tests {
             .await;
         assert!(result.is_ok());
         assert_eq!(
-            mock.failure_count.load(std::sync::atomic::Ordering::SeqCst),
+            mock.failure_count
+                .load(std::sync::atomic::Ordering::SeqCst),
             1
         );
     }
@@ -1114,11 +1116,14 @@ mod tests {
         ) -> Result<AuditLogEntry, AuditRepositoryError> {
             self.create_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            *self.last_entry.lock().expect("last_entry mutex poisoned") = Some(entry.clone());
+            *self
+                .last_entry
+                .lock()
+                .expect("last_entry mutex poisoned") = Some(entry.clone());
             if self.should_fail {
-                return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                    "create failed".to_string(),
-                )));
+                return Err(AuditRepositoryError::DatabaseError(
+                    sea_orm::DbErr::Custom("create failed".to_string()),
+                ));
             }
             Ok(entry.clone())
         }
@@ -1129,6 +1134,11 @@ mod tests {
             _limit: u64,
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+            if self.should_fail {
+                return Err(AuditRepositoryError::DatabaseError(
+                    sea_orm::DbErr::Custom("find_by_api_key_id failed".to_string()),
+                ));
+            }
             Ok(vec![])
         }
 
@@ -1138,6 +1148,11 @@ mod tests {
             _limit: u64,
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+            if self.should_fail {
+                return Err(AuditRepositoryError::DatabaseError(
+                    sea_orm::DbErr::Custom("find_by_team_id failed".to_string()),
+                ));
+            }
             Ok(vec![])
         }
 
@@ -1146,13 +1161,15 @@ mod tests {
             _api_key_id: uuid::Uuid,
             _limit: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+            if self.should_fail {
+                return Err(AuditRepositoryError::DatabaseError(
+                    sea_orm::DbErr::Custom("find_denied_for_key failed".to_string()),
+                ));
+            }
             Ok(vec![])
         }
 
-        async fn cleanup_old_logs(
-            &self,
-            _retention_days: i64,
-        ) -> Result<u64, AuditRepositoryError> {
+        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditRepositoryError> {
             Ok(0)
         }
     }
@@ -1195,7 +1212,8 @@ mod tests {
         let result = component.log(entry).await;
         assert!(result.is_ok());
         assert_eq!(
-            mock.create_count.load(std::sync::atomic::Ordering::SeqCst),
+            mock.create_count
+                .load(std::sync::atomic::Ordering::SeqCst),
             1
         );
     }
@@ -1224,10 +1242,7 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(AuditServiceError::RepositoryError(_)) => {}
-            other => panic!(
-                "Expected AuditServiceError::RepositoryError, got {:?}",
-                other
-            ),
+            other => panic!("Expected AuditServiceError::RepositoryError, got {:?}", other),
         }
     }
 
@@ -1270,7 +1285,10 @@ mod tests {
         assert_eq!(last.decision, AuditDecision::Deny);
         assert_eq!(last.api_key_id, Some(api_key_id));
         assert_eq!(last.team_id, Some(team_id));
-        assert_eq!(last.denial_reason.as_deref(), Some("insufficient scope"));
+        assert_eq!(
+            last.denial_reason.as_deref(),
+            Some("insufficient scope")
+        );
     }
 
     #[tokio::test]
@@ -1429,7 +1447,8 @@ mod tests {
 
     #[test]
     fn test_auth_scope_service_component_new_stores_repo() {
-        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::empty());
+        let repo: Arc<dyn AuthScopeRepository> =
+            Arc::new(MockAuthScopeRepository::empty());
         let component = AuthScopeServiceComponent::new(repo);
         let _trait_obj: &dyn AuthScopeServiceTrait = &component;
     }
@@ -1448,7 +1467,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_auth_scope_service_component_get_scope_for_key_uses_default_when_not_found() {
-        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::empty());
+        let repo: Arc<dyn AuthScopeRepository> =
+            Arc::new(MockAuthScopeRepository::empty());
         let component = AuthScopeServiceComponent::new(repo);
         let default_scope = ApiKeyScope::default();
         let result = component
@@ -1460,7 +1480,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_auth_scope_service_component_set_scope_delegates_to_repo() {
-        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::empty());
+        let repo: Arc<dyn AuthScopeRepository> =
+            Arc::new(MockAuthScopeRepository::empty());
         let component = AuthScopeServiceComponent::new(repo);
         let scope = ApiKeyScope::default();
         let result = component.set_scope(uuid::Uuid::new_v4(), scope).await;
@@ -1478,7 +1499,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_auth_scope_service_component_set_scope_propagates_error() {
-        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::failing());
+        let repo: Arc<dyn AuthScopeRepository> =
+            Arc::new(MockAuthScopeRepository::failing());
         let component = AuthScopeServiceComponent::new(repo);
         let result = component
             .set_scope(uuid::Uuid::new_v4(), ApiKeyScope::default())
@@ -1493,10 +1515,333 @@ mod tests {
         }
     }
 
+    // ========== TeamServiceComponent ==========
+    // TeamServiceComponent 接受 Arc<dyn GeoLocationService> 和 Arc<dyn GeoRestrictionRepository>，
+    // 可用 mock 实现验证 validate_domain_blacklist / validate_geographic_restriction /
+    // get_team_geo_restrictions 的委托逻辑。
+
+    use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError;
+    use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
+    use crate::domain::services::team_service::TeamServiceTrait;
+    use std::net::IpAddr;
+
+    /// Mock GeoLocationService 用于测试 TeamServiceComponent。
+    /// 返回可配置的国家代码。
+    struct MockGeoLocationService {
+        country_code: String,
+    }
+
+    impl MockGeoLocationService {
+        fn new(country_code: &str) -> Self {
+            Self {
+                country_code: country_code.to_string(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl GeoLocationService for MockGeoLocationService {
+        async fn get_location(&self, _ip: &IpAddr) -> anyhow::Result<GeoLocation> {
+            Ok(GeoLocation {
+                country_code: self.country_code.clone(),
+                ..Default::default()
+            })
+        }
+    }
+
+    /// Mock GeoRestrictionRepository 用于测试 TeamServiceComponent。
+    /// 返回可配置的地理限制配置。
+    struct MockGeoRestrictionRepository {
+        restrictions: Mutex<TeamGeoRestrictions>,
+    }
+
+    impl MockGeoRestrictionRepository {
+        fn with_restrictions(restrictions: TeamGeoRestrictions) -> Self {
+            Self {
+                restrictions: Mutex::new(restrictions),
+            }
+        }
+
+        fn default_restrictions() -> Self {
+            Self {
+                restrictions: Mutex::new(TeamGeoRestrictions::default()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl GeoRestrictionRepository for MockGeoRestrictionRepository {
+        async fn get_team_restrictions(
+            &self,
+            _team_id: uuid::Uuid,
+        ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
+            Ok(self
+                .restrictions
+                .lock()
+                .expect("restrictions mutex poisoned")
+                .clone())
+        }
+
+        async fn update_team_restrictions(
+            &self,
+            _team_id: uuid::Uuid,
+            _restrictions: &TeamGeoRestrictions,
+        ) -> Result<(), GeoRestrictionRepositoryError> {
+            Ok(())
+        }
+
+        async fn log_geo_restriction_action(
+            &self,
+            _team_id: uuid::Uuid,
+            _ip_address: &str,
+            _country_code: &str,
+            _action: &str,
+            _reason: &str,
+        ) -> Result<(), GeoRestrictionRepositoryError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_team_service_component_new_stores_dependencies() {
+        let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoLocationService::new("US"));
+        let geo_repo: Arc<dyn GeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::default_restrictions());
+        let component = TeamServiceComponent::new(geo_service, geo_repo);
+        let _trait_obj: &dyn TeamServiceTrait = &component;
+    }
+
+    #[test]
+    fn test_team_service_component_validate_domain_blacklist_denies_blacklisted_domain() {
+        let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoLocationService::new("US"));
+        let geo_repo: Arc<dyn GeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::default_restrictions());
+        let component = TeamServiceComponent::new(geo_service, geo_repo);
+
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            domain_blacklist: Some(vec!["malicious.com".to_string()]),
+            ..Default::default()
+        };
+
+        let result = component.validate_domain_blacklist("www.malicious.com", &restrictions);
+        assert!(matches!(result, Ok(GeoRestrictionResult::Denied(_))));
+    }
+
+    #[test]
+    fn test_team_service_component_validate_domain_blacklist_allows_safe_domain() {
+        let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoLocationService::new("US"));
+        let geo_repo: Arc<dyn GeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::default_restrictions());
+        let component = TeamServiceComponent::new(geo_service, geo_repo);
+
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            domain_blacklist: Some(vec!["malicious.com".to_string()]),
+            ..Default::default()
+        };
+
+        let result = component.validate_domain_blacklist("www.google.com", &restrictions);
+        assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+    }
+
+    #[test]
+    fn test_team_service_component_validate_domain_blacklist_disabled_allows_all() {
+        let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoLocationService::new("US"));
+        let geo_repo: Arc<dyn GeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::default_restrictions());
+        let component = TeamServiceComponent::new(geo_service, geo_repo);
+
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: false,
+            domain_blacklist: Some(vec!["malicious.com".to_string()]),
+            ..Default::default()
+        };
+
+        let result = component.validate_domain_blacklist("www.malicious.com", &restrictions);
+        assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+    }
+
+    #[tokio::test]
+    async fn test_team_service_component_validate_geographic_restriction_disabled_allows() {
+        let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoLocationService::new("US"));
+        let geo_repo: Arc<dyn GeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::default_restrictions());
+        let component = TeamServiceComponent::new(geo_service, geo_repo);
+
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: false,
+            ..Default::default()
+        };
+
+        let result = component
+            .validate_geographic_restriction(uuid::Uuid::new_v4(), "8.8.8.8", &restrictions)
+            .await;
+        assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+    }
+
+    #[tokio::test]
+    async fn test_team_service_component_validate_geographic_restriction_invalid_ip_denies() {
+        let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoLocationService::new("US"));
+        let geo_repo: Arc<dyn GeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::default_restrictions());
+        let component = TeamServiceComponent::new(geo_service, geo_repo);
+
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            ..Default::default()
+        };
+
+        let result = component
+            .validate_geographic_restriction(uuid::Uuid::new_v4(), "invalid-ip", &restrictions)
+            .await;
+        assert!(matches!(result, Ok(GeoRestrictionResult::Denied(_))));
+    }
+
+    #[tokio::test]
+    async fn test_team_service_component_validate_geographic_restriction_whitelist_allows() {
+        let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoLocationService::new("RU"));
+        let geo_repo: Arc<dyn GeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::default_restrictions());
+        let component = TeamServiceComponent::new(geo_service, geo_repo);
+
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            ip_whitelist: Some(vec!["192.168.1.0/24".to_string()]),
+            ..Default::default()
+        };
+
+        let result = component
+            .validate_geographic_restriction(uuid::Uuid::new_v4(), "192.168.1.50", &restrictions)
+            .await;
+        assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+    }
+
+    #[tokio::test]
+    async fn test_team_service_component_get_team_geo_restrictions_delegates_to_repo() {
+        let expected_restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            allowed_countries: Some(vec!["US".to_string()]),
+            ..Default::default()
+        };
+        let geo_repo: Arc<dyn GeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::with_restrictions(
+                expected_restrictions,
+            ));
+        let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoLocationService::new("US"));
+        let component = TeamServiceComponent::new(geo_service, geo_repo);
+
+        let result = component
+            .get_team_geo_restrictions(uuid::Uuid::new_v4())
+            .await;
+        assert!(result.enable_geo_restrictions);
+        assert_eq!(result.allowed_countries, Some(vec!["US".to_string()]));
+    }
+
+    // ========== 额外错误路径测试 ==========
+
+    #[tokio::test]
+    async fn test_webhook_service_component_trigger_completion_propagates_error() {
+        let mock = Arc::new(MockWebhookService::failing());
+        let component = WebhookServiceComponent::new(mock.clone() as Arc<dyn WebhookService>);
+        let task = make_test_task_for_service();
+        let result = component.trigger_completion(&task).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_webhook_service_component_trigger_failure_propagates_error() {
+        let mock = Arc::new(MockWebhookService::failing());
+        let component = WebhookServiceComponent::new(mock.clone() as Arc<dyn WebhookService>);
+        let task = make_test_task_for_service();
+        let result = component
+            .trigger_failure(&task, "timeout".to_string())
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_log_allow_propagates_error() {
+        let mock = Arc::new(MockAuditLogRepository::failing());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let result = component
+            .log_allow(
+                "scrape".to_string(),
+                uuid::Uuid::new_v4(),
+                uuid::Uuid::new_v4(),
+                crate::domain::auth::ApiKeyScope::default(),
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_log_deny_propagates_error() {
+        let mock = Arc::new(MockAuditLogRepository::failing());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let result = component
+            .log_deny(
+                "delete".to_string(),
+                Some(uuid::Uuid::new_v4()),
+                Some(uuid::Uuid::new_v4()),
+                "insufficient scope".to_string(),
+                None,
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_get_logs_for_key_propagates_error() {
+        let mock = Arc::new(MockAuditLogRepository::failing());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let result = component
+            .get_logs_for_key(uuid::Uuid::new_v4(), 10, 0)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_get_logs_for_team_propagates_error() {
+        let mock = Arc::new(MockAuditLogRepository::failing());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let result = component
+            .get_logs_for_team(uuid::Uuid::new_v4(), 10, 0)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_get_denied_requests_propagates_error() {
+        let mock = Arc::new(MockAuditLogRepository::failing());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let result = component
+            .get_denied_requests(uuid::Uuid::new_v4(), 5)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_auth_scope_service_component_get_scope_for_key_propagates_error() {
+        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::failing());
+        let component = AuthScopeServiceComponent::new(repo);
+        let result = component
+            .get_scope_for_key(uuid::Uuid::new_v4(), None)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_auth_scope_service_component_delete_scope_propagates_error() {
+        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::failing());
+        let component = AuthScopeServiceComponent::new(repo);
+        let result = component.delete_scope(uuid::Uuid::new_v4()).await;
+        assert!(result.is_err());
+    }
+
     // ========== 跳过的组件 ==========
     // 以下组件的构造器需要 mock 多个 trait 或需真实外部服务，无法在无外部依赖环境下测试：
-    // - TeamServiceComponent — 需 mock GeoLocationService + GeoRestrictionRepository
     // - SearchServiceComponent — 需 mock 多个 repository 和 SearchClient trait
     // - RateLimitingServiceComponent — feature-gated，需 RedisClient 和多个 repository
-    // - TemplateLoaderComponent — 需读取文件系统中的模板文件
+    // - TemplateLoaderComponent — 无公开构造方法，build() 需 ModuleBuildContext
 }

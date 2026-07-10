@@ -277,4 +277,258 @@ mod tests {
         assert!(!ua1.is_empty());
         assert!(!ua2.is_empty());
     }
+
+    // ========== clean_url 边界情况补充 ==========
+
+    #[test]
+    fn test_clean_url_google_url_no_extra_params() {
+        // 测试 /url?q= 后没有额外参数的情况
+        let url = "/url?q=https://example.com";
+        assert_eq!(HtmlParser::clean_url(url), "https://example.com");
+    }
+
+    #[test]
+    fn test_clean_url_protocol_relative_not_prefixed() {
+        // 测试协议相对 URL (//) 不被添加 google 前缀
+        let url = "//example.com/path";
+        assert_eq!(HtmlParser::clean_url(url), "//example.com/path");
+    }
+
+    #[test]
+    fn test_clean_url_empty_string() {
+        // 边界情况：空字符串返回空字符串
+        assert_eq!(HtmlParser::clean_url(""), "");
+    }
+
+    #[test]
+    fn test_clean_url_google_url_with_multiple_params() {
+        // 测试 /url?q= 后跟多个参数，只提取第一个
+        let url = "/url?q=https://example.com&sa=t&ved=123";
+        assert_eq!(HtmlParser::clean_url(url), "https://example.com");
+    }
+
+    // ========== escape_html 补充测试 ==========
+
+    #[test]
+    fn test_escape_html_plain_text_unchanged() {
+        // 测试普通文本不被修改
+        let text = "Hello World Rust Programming";
+        assert_eq!(HtmlParser::escape_html(text), "Hello World Rust Programming");
+    }
+
+    #[test]
+    fn test_escape_html_special_chars_encoded() {
+        // 测试 HTML 特殊字符 & < > 被编码（encode_text 不编码引号）
+        let text = "<div>a & b</div>";
+        let escaped = HtmlParser::escape_html(text);
+        assert!(!escaped.contains('<'), "should not contain raw <");
+        assert!(!escaped.contains('>'), "should not contain raw >");
+        assert!(escaped.contains("&lt;"), "should contain &lt;");
+        assert!(escaped.contains("&gt;"), "should contain &gt;");
+        assert!(escaped.contains("&amp;"), "should contain &amp;");
+        // 确保原始的 "& " (后跟空格的裸 & ) 不存在
+        assert!(!escaped.contains("& "), "should not contain raw & followed by space");
+    }
+
+    #[test]
+    fn test_escape_html_empty_string() {
+        // 边界情况：空字符串返回空字符串
+        assert_eq!(HtmlParser::escape_html(""), "");
+    }
+
+    #[test]
+    fn test_escape_html_trims_whitespace() {
+        // 测试首尾空白被 trim
+        let text = "  content with spaces  ";
+        assert_eq!(HtmlParser::escape_html(text), "content with spaces");
+    }
+
+    // ========== parse 补充测试 ==========
+
+    #[test]
+    fn test_parse_empty_html_returns_empty() {
+        // 边界情况：空 HTML 返回空结果
+        let parser = HtmlParser::for_google();
+        let results = parser.parse("", SearchEngineType::Google);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_google_valid_results() {
+        // 测试从有效 Google HTML 解析结果
+        let parser = HtmlParser::for_google();
+        let html = r#"
+        <html><body>
+            <div class="g">
+                <a href="https://example.com/1"><h3>First Result</h3></a>
+                <span class="st">First snippet text</span>
+            </div>
+            <div class="g">
+                <a href="https://example.com/2"><h3>Second Result</h3></a>
+                <span class="st">Second snippet text</span>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Google);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "First Result");
+        assert_eq!(results[0].url, "https://example.com/1");
+        assert_eq!(results[0].description, "First snippet text");
+        assert_eq!(results[0].engine, SearchEngineType::Google);
+    }
+
+    #[test]
+    fn test_parse_no_matching_selectors_returns_empty() {
+        // 边界情况：HTML 不包含匹配的选择器时返回空
+        let parser = HtmlParser::for_google();
+        let html = r#"<html><body><div>nothing here</div></body></html>"#;
+        let results = parser.parse(html, SearchEngineType::Google);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_skips_results_without_title() {
+        // 边界情况：缺少标题的结果被跳过
+        let parser = HtmlParser::for_google();
+        let html = r#"
+        <html><body>
+            <div class="g">
+                <a href="https://example.com/1"></a>
+            </div>
+            <div class="g">
+                <a href="https://example.com/2"><h3>Valid Result</h3></a>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Google);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Valid Result");
+    }
+
+    #[test]
+    fn test_parse_skips_non_http_urls() {
+        // 边界情况：非 http 开头的 URL 被跳过
+        let parser = HtmlParser::for_google();
+        let html = r#"
+        <html><body>
+            <div class="g">
+                <a href="javascript:void(0)"><h3>JS Link</h3></a>
+            </div>
+            <div class="g">
+                <a href="mailto:test@example.com"><h3>Mail Link</h3></a>
+            </div>
+            <div class="g">
+                <a href="https://example.com/valid"><h3>Valid</h3></a>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Google);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/valid");
+    }
+
+    #[test]
+    fn test_parse_deduplicates_by_url() {
+        // 测试相同 URL 的结果被去重
+        let parser = HtmlParser::for_google();
+        let html = r#"
+        <html><body>
+            <div class="g">
+                <a href="https://example.com/dup"><h3>First Title</h3></a>
+            </div>
+            <div class="g">
+                <a href="https://example.com/dup"><h3>Duplicate Title</h3></a>
+            </div>
+            <div class="g">
+                <a href="https://example.com/unique"><h3>Unique Title</h3></a>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Google);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "First Title");
+        assert_eq!(results[1].title, "Unique Title");
+    }
+
+    #[test]
+    fn test_parse_bing_results() {
+        // 测试 Bing 解析器从有效 HTML 提取结果
+        let parser = HtmlParser::for_bing();
+        let html = r#"
+        <html><body>
+            <li class="b_algo">
+                <h2><a href="https://example.com/1">Bing Result</a></h2>
+                <p>Bing snippet</p>
+            </li>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Bing);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Bing Result");
+        assert_eq!(results[0].engine, SearchEngineType::Bing);
+    }
+
+    #[test]
+    fn test_parse_baidu_results() {
+        // 测试百度解析器从有效 HTML 提取结果
+        let parser = HtmlParser::for_baidu();
+        let html = r#"
+        <html><body>
+            <div class="c-container">
+                <h3><a href="https://example.com/1">Baidu Result</a></h3>
+                <div class="c-abstract">Baidu snippet</div>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Baidu);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Baidu Result");
+        assert_eq!(results[0].engine, SearchEngineType::Baidu);
+    }
+
+    // ========== UserAgentManager 补充测试 ==========
+
+    #[test]
+    fn test_user_agent_manager_round_robin_wraps_around() {
+        // 测试轮询模式在遍历完所有 UA 后从头开始
+        let mut manager = UserAgentManager::new();
+        let ua_count = 5; // UserAgentManager::new 内置 5 个 UA
+
+        // 收集 ua_count + 1 次调用，第 ua_count+1 次应等于第一次
+        let mut uas = Vec::new();
+        for _ in 0..(ua_count + 1) {
+            uas.push(manager.get().to_string());
+        }
+
+        // 所有 UA 非空
+        for ua in &uas {
+            assert!(!ua.is_empty());
+        }
+        // 第 ua_count+1 次应等于第一次（轮询回绕）
+        assert_eq!(uas[ua_count], uas[0], "round-robin should wrap around");
+    }
+
+    #[test]
+    fn test_user_agent_manager_get_random_returns_valid_ua() {
+        // 测试 get_random 返回非空的 UA
+        let manager = UserAgentManager::new();
+        let ua = manager.get_random();
+        assert!(!ua.is_empty());
+        assert!(ua.contains("Mozilla"), "UA should look like a browser UA");
+    }
+
+    #[test]
+    fn test_user_agent_manager_default_equals_new() {
+        // 测试 Default trait 等价于 new
+        let mut m1 = UserAgentManager::new();
+        let mut m2 = UserAgentManager::default();
+        // 两者应返回相同的第一个 UA
+        assert_eq!(m1.get(), m2.get());
+    }
 }

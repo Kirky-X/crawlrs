@@ -1170,4 +1170,53 @@ mod tests {
     fn test_constant_time_eq_case_sensitive() {
         assert!(!constant_time_eq("Hello", "hello"));
     }
+
+    #[tokio::test]
+    async fn test_mock_webhook_event_repo_remaining_methods_return_defaults() {
+        let repo = MockWebhookEventRepository::default();
+        let id = Uuid::new_v4();
+        assert!(repo.find_by_id(id).await.unwrap().is_none());
+        assert!(repo.find_pending(10).await.unwrap().is_empty());
+        assert!(repo
+            .find_by_team_id_paginated(id, 10, 0)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(repo.count_by_team_id(id).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_failing_webhook_event_repo_remaining_methods_return_defaults() {
+        let repo = FailingWebhookEventRepository;
+        let id = Uuid::new_v4();
+        assert!(repo.find_by_id(id).await.unwrap().is_none());
+        assert!(repo.find_pending(10).await.unwrap().is_empty());
+        assert!(repo
+            .find_by_team_id_paginated(id, 10, 0)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(repo.count_by_team_id(id).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_mock_webhook_sender_send_with_status_returns_200() {
+        let sender = MockWebhookSender::default();
+        let payload = json!({"test": true});
+        let status = sender
+            .send_with_status("https://example.com", &payload, None)
+            .await
+            .unwrap();
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
+    async fn test_failing_webhook_sender_send_with_status_returns_error() {
+        let sender = FailingWebhookSender;
+        let payload = json!({"test": true});
+        let result = sender
+            .send_with_status("https://example.com", &payload, None)
+            .await;
+        assert!(result.is_err());
+    }
 }

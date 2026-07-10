@@ -1500,4 +1500,101 @@ mod tests {
             other => panic!("Expected Input, got {:?}", other),
         }
     }
+
+    // === is_retryable comprehensive tests ===
+
+    #[test]
+    fn test_engine_error_is_retryable_all_variants() {
+        assert!(EngineError::RequestFailed("err".to_string()).is_retryable());
+        assert!(EngineError::Timeout(Duration::from_secs(10)).is_retryable());
+        assert!(!EngineError::NoEnginesAvailable.is_retryable());
+        assert!(!EngineError::InvalidUrl("bad".to_string()).is_retryable());
+        assert!(!EngineError::SsrfProtection("blocked".to_string()).is_retryable());
+        assert!(EngineError::BrowserError("err".to_string()).is_retryable());
+        assert!(!EngineError::Internal("err".to_string()).is_retryable());
+        assert!(
+            !EngineError::AllEnginesFailed("all failed".to_string()).is_retryable()
+        );
+        assert!(!EngineError::Expired.is_retryable());
+        assert!(!EngineError::Other("err".to_string()).is_retryable());
+    }
+
+    // === to_public conversion tests ===
+
+    #[test]
+    fn test_to_public_basic_fields() {
+        let internal = InternalScrapeResponse {
+            status_code: 200,
+            content: "hello".to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: std::collections::HashMap::new(),
+            response_time_ms: 150,
+        };
+        let public = internal.to_public("https://example.com");
+        assert_eq!(public.status_code, 200);
+        assert_eq!(public.content, "hello");
+        assert!(public.screenshot.is_none());
+        assert_eq!(public.content_type, "text/html");
+        assert!(public.headers.is_empty());
+        assert_eq!(public.response_time_ms, 150);
+        assert_eq!(
+            public.final_url,
+            Some("https://example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_to_public_with_screenshot_and_headers() {
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("X-Custom".to_string(), "value".to_string());
+        let internal = InternalScrapeResponse {
+            status_code: 404,
+            content: "not found".to_string(),
+            screenshot: Some("base64data".to_string()),
+            content_type: "application/json".to_string(),
+            headers,
+            response_time_ms: 500,
+        };
+        let public = internal.to_public("https://test.com/page");
+        assert_eq!(public.status_code, 404);
+        assert_eq!(public.content, "not found");
+        assert_eq!(public.screenshot, Some("base64data".to_string()));
+        assert_eq!(public.content_type, "application/json");
+        assert_eq!(public.headers.len(), 1);
+        assert_eq!(public.response_time_ms, 500);
+        assert_eq!(public.final_url, Some("https://test.com/page".to_string()));
+    }
+
+    #[test]
+    fn test_to_public_empty_content() {
+        let internal = InternalScrapeResponse {
+            status_code: 204,
+            content: String::new(),
+            screenshot: None,
+            content_type: String::new(),
+            headers: std::collections::HashMap::new(),
+            response_time_ms: 0,
+        };
+        let public = internal.to_public("");
+        assert_eq!(public.status_code, 204);
+        assert!(public.content.is_empty());
+        assert!(public.content_type.is_empty());
+        assert_eq!(public.final_url, Some(String::new()));
+    }
+
+    // === EngineClient method tests ===
+
+    #[test]
+    fn test_engine_client_engine_count_zero() {
+        let client = EngineClient::new();
+        assert_eq!(client.engine_count(), 0);
+    }
+
+    #[test]
+    fn test_engine_client_registered_engines_empty() {
+        let client = EngineClient::new();
+        let engines = client.registered_engines();
+        assert!(engines.is_empty());
+    }
 }

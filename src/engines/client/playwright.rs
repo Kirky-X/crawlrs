@@ -634,7 +634,7 @@ mod tests {
 
     #[test]
     fn test_support_score() {
-        let engine = PlaywrightEngine;
+        let engine = PlaywrightEngine::new();
 
         // Test with JS requirement
         let request_js = InternalScrapeRequest {

@@ -219,3 +219,244 @@ impl SearchEngine for BingSearchEngine {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // Copyright (c) 2025 Kirky.X
+    // Licensed under the Apache License, Version 2.0
+    // See LICENSE file in the project root for full license information.
+
+    use super::*;
+    use crate::engines::engine_client::EngineClient;
+
+    // 辅助函数：创建测试用的 BingSearchEngine 实例
+    fn create_engine() -> BingSearchEngine {
+        let engine_client = Arc::new(EngineClient::new());
+        BingSearchEngine::new(engine_client)
+    }
+
+    // 辅助函数：构造一个 Bing 跳转链接（a1 前缀 + Base64 编码目标 URL）
+    fn build_bing_redirect_url(target_url: &str) -> String {
+        let encoded = URL_SAFE.encode(target_url);
+        format!("https://www.bing.com/ck/a?!&p=0&u=a1{}&t=1", encoded)
+    }
+
+    // ========== get_bing_cookies 测试 ==========
+
+    #[test]
+    fn test_get_bing_cookies_contains_edge_keys() {
+        // 测试返回的 cookies 包含 _EDGE_CD 和 _EDGE_S 两个键
+        let engine = create_engine();
+        let cookies = engine.get_bing_cookies("en", "US");
+
+        assert_eq!(cookies.len(), 2);
+        assert!(cookies.contains_key("_EDGE_CD"));
+        assert!(cookies.contains_key("_EDGE_S"));
+    }
+
+    #[test]
+    fn test_get_bing_cookies_embeds_lang_and_region() {
+        // 测试 cookie 值中嵌入了语言和地区参数
+        let engine = create_engine();
+        let cookies = engine.get_bing_cookies("zh", "CN");
+
+        let edge_cd = cookies.get("_EDGE_CD").unwrap();
+        assert!(edge_cd.contains("m=CN"), "_EDGE_CD should contain region");
+        assert!(edge_cd.contains("u=zh"), "_EDGE_CD should contain lang");
+
+        let edge_s = cookies.get("_EDGE_S").unwrap();
+        assert!(edge_s.contains("mkt=CN"), "_EDGE_S should contain region");
+        assert!(edge_s.contains("ui=zh"), "_EDGE_S should contain lang");
+    }
+
+    #[test]
+    fn test_get_bing_cookies_empty_values() {
+        // 边界情况：空字符串仍然生成有效 cookie 结构
+        let engine = create_engine();
+        let cookies = engine.get_bing_cookies("", "");
+
+        let edge_cd = cookies.get("_EDGE_CD").unwrap();
+        assert!(edge_cd.contains("m="));
+        assert!(edge_cd.contains("u="));
+    }
+
+    // ========== build_params 测试 ==========
+
+    #[test]
+    fn test_build_params_page1() {
+        // 测试第一页只包含 q 和 pq 参数，不包含分页参数
+        let engine = create_engine();
+        let params = engine.build_params("rust", 1);
+
+        assert_eq!(params.get("q"), Some(&"rust".to_string()));
+        assert_eq!(params.get("pq"), Some(&"rust".to_string()));
+        assert!(params.get("first").is_none(), "page 1 should not have 'first'");
+        assert!(params.get("FORM").is_none(), "page 1 should not have 'FORM'");
+    }
+
+    #[test]
+    fn test_build_params_page2_form_pere() {
+        // 测试第二页的 FORM 参数为 PERE，first=11
+        let engine = create_engine();
+        let params = engine.build_params("rust", 2);
+
+        assert_eq!(params.get("first"), Some(&"11".to_string()));
+        assert_eq!(params.get("FORM"), Some(&"PERE".to_string()));
+    }
+
+    #[test]
+    fn test_build_params_page3_form_pere1() {
+        // 测试第三页的 FORM 参数为 PERE1，first=21
+        let engine = create_engine();
+        let params = engine.build_params("rust", 3);
+
+        assert_eq!(params.get("first"), Some(&"21".to_string()));
+        assert_eq!(params.get("FORM"), Some(&"PERE1".to_string()));
+    }
+
+    #[test]
+    fn test_build_params_page5_offset_calculation() {
+        // 测试页码 5 的偏移量计算：first = (5-1)*10+1 = 41
+        let engine = create_engine();
+        let params = engine.build_params("test", 5);
+
+        assert_eq!(params.get("first"), Some(&"41".to_string()));
+        assert_eq!(params.get("FORM"), Some(&"PERE3".to_string()));
+    }
+
+    // ========== build_bing_url 测试 ==========
+
+    #[test]
+    fn test_build_bing_url_page1() {
+        // 测试第一页 URL 构建，只包含 q 和 pq
+        let engine = create_engine();
+        let url = engine.build_bing_url("rust language", 1);
+
+        assert!(url.starts_with("https://www.bing.com/search?"));
+        assert!(url.contains("q=rust+language"), "URL should contain encoded query");
+        assert!(url.contains("pq=rust+language"));
+        assert!(!url.contains("first="), "page 1 should not have 'first'");
+    }
+
+    #[test]
+    fn test_build_bing_url_page2_includes_pagination() {
+        // 测试第二页 URL 包含分页参数 first 和 FORM
+        let engine = create_engine();
+        let url = engine.build_bing_url("test", 2);
+
+        assert!(url.contains("first=11"), "page 2 should have first=11");
+        assert!(url.contains("FORM=PERE"), "page 2 should have FORM=PERE");
+    }
+
+    #[test]
+    fn test_build_bing_url_special_chars_encoded() {
+        // 测试特殊字符在 URL 中被正确编码
+        let engine = create_engine();
+        let url = engine.build_bing_url("rust & go", 1);
+
+        // serde_urlencoded 会将 & 编码为 %26
+        assert!(url.contains("q=rust+%26+go") || url.contains("q=rust+%26+go"));
+    }
+
+    // ========== decode_bing_url 测试 ==========
+
+    #[test]
+    fn test_decode_bing_url_non_bing_url_returned_as_is() {
+        // 测试非 Bing 跳转链接原样返回
+        let engine = create_engine();
+        let original = "https://example.com/page";
+        let decoded = engine.decode_bing_url(original);
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_decode_bing_url_valid_redirect_decoded() {
+        // 测试有效的 Bing 跳转链接被正确解码为目标 URL
+        let engine = create_engine();
+        let target = "https://example.com/real-target";
+        let redirect_url = build_bing_redirect_url(target);
+
+        let decoded = engine.decode_bing_url(&redirect_url);
+        assert_eq!(decoded, target);
+    }
+
+    #[test]
+    fn test_decode_bing_url_missing_u_param_returned_as_is() {
+        // 边界情况：Bing 跳转链接缺少 u 参数时原样返回
+        let engine = create_engine();
+        let url = "https://www.bing.com/ck/a?!&p=0&t=1";
+        let decoded = engine.decode_bing_url(url);
+        assert_eq!(decoded, url);
+    }
+
+    #[test]
+    fn test_decode_bing_url_invalid_base64_returned_as_is() {
+        // 边界情况：u 参数的 Base64 无效时原样返回
+        let engine = create_engine();
+        let url = "https://www.bing.com/ck/a?u=a1!!!invalid_base64!!!";
+        let decoded = engine.decode_bing_url(url);
+        assert_eq!(decoded, url);
+    }
+
+    #[test]
+    fn test_decode_bing_url_unparseable_url_returned_as_is() {
+        // 边界情况：URL 无法解析时原样返回
+        let engine = create_engine();
+        // 构造一个以 bing 开头但无法被 url crate 解析的字符串
+        let url = "https://www.bing.com/ck/a?u=a1[invalid";
+        let decoded = engine.decode_bing_url(url);
+        // 即使能解析，base64 也会失败，返回原始 URL
+        assert!(!decoded.is_empty());
+    }
+
+    // ========== parse_search_results 测试 ==========
+
+    #[tokio::test]
+    async fn test_parse_search_results_empty_html_returns_error() {
+        // 边界情况：空 HTML 返回 Parse 错误
+        let engine = create_engine();
+        let result = engine.parse_search_results("").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            SearchError::Parse(msg) => {
+                assert!(msg.contains("Empty HTML"), "error should mention empty HTML")
+            }
+            other => panic!("expected SearchError::Parse, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_search_results_valid_html() {
+        // 测试从有效 Bing HTML 中解析搜索结果
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <li class="b_algo">
+                <h2><a href="https://example.com/1">First Result</a></h2>
+                <p>First description text</p>
+            </li>
+            <li class="b_algo">
+                <h2><a href="https://example.com/2">Second Result</a></h2>
+                <p>Second description text</p>
+            </li>
+        </body></html>
+        "#;
+
+        let results = engine.parse_search_results(html).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "First Result");
+        assert_eq!(results[0].url, "https://example.com/1");
+        assert_eq!(results[0].engine, SearchEngineType::Bing);
+        assert_eq!(results[1].title, "Second Result");
+    }
+
+    #[tokio::test]
+    async fn test_parse_search_results_no_matching_selectors() {
+        // 边界情况：HTML 不包含 Bing 结果选择器时返回空
+        let engine = create_engine();
+        let html = r#"<html><body><div>no bing results here</div></body></html>"#;
+        let results = engine.parse_search_results(html).await.unwrap();
+        assert!(results.is_empty());
+    }
+}

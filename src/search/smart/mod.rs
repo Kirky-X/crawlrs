@@ -1160,7 +1160,7 @@ mod tests {
 
         #[cfg(feature = "engine-playwright")]
         {
-            let playwright_engine = Arc::new(PlaywrightEngine);
+            let playwright_engine = Arc::new(PlaywrightEngine::new());
             engines.push(playwright_engine);
         }
 
@@ -2638,5 +2638,366 @@ mod tests_ext {
         let results = engine.parse_test_data(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Title");
+    }
+
+    // === save_html_for_debug with env var set ===
+
+    #[test]
+    fn test_save_html_for_debug_writes_file_when_env_var_set() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        std::env::set_var("DEBUG_SAVE_HTML", "1");
+        // The function should write a debug file to /tmp without panicking
+        engine.save_html_for_debug("<html>debug content</html>", "test query");
+        std::env::remove_var("DEBUG_SAVE_HTML");
+    }
+
+    #[test]
+    fn test_save_html_for_debug_baidu_engine_type() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        std::env::set_var("DEBUG_SAVE_HTML", "1");
+        engine.save_html_for_debug("<html>baidu debug</html>", "baidu query");
+        std::env::remove_var("DEBUG_SAVE_HTML");
+    }
+
+    #[test]
+    fn test_save_html_for_debug_sogou_engine_type() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        std::env::set_var("DEBUG_SAVE_HTML", "1");
+        engine.save_html_for_debug("<html>sogou debug</html>", "sogou query");
+        std::env::remove_var("DEBUG_SAVE_HTML");
+    }
+
+    #[test]
+    fn test_save_html_for_debug_bing_engine_type() {
+        let engine = create_engine_with_type(SearchEngineType::Bing);
+        std::env::set_var("DEBUG_SAVE_HTML", "1");
+        engine.save_html_for_debug("<html>bing debug</html>", "bing query");
+        std::env::remove_var("DEBUG_SAVE_HTML");
+    }
+
+    #[test]
+    fn test_save_html_for_debug_auto_engine_type() {
+        let engine = create_engine_with_type(SearchEngineType::Auto);
+        std::env::set_var("DEBUG_SAVE_HTML", "1");
+        engine.save_html_for_debug("<html>auto debug</html>", "auto query");
+        std::env::remove_var("DEBUG_SAVE_HTML");
+    }
+
+    // === build_scrape_request with needs_tls_fingerprint ===
+
+    #[test]
+    fn test_build_scrape_request_with_tls_fingerprint() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let request = engine.build_scrape_request("https://example.com", true, true);
+        assert!(request.options.needs_tls_fingerprint);
+        assert!(request.options.needs_js);
+        assert!(request.options.use_fire_engine);
+    }
+
+    // === parse_search_results dispatch for non-specific engine types ===
+
+    #[test]
+    fn test_parse_search_results_dispatch_auto_falls_back_to_google() {
+        let engine = create_engine_with_type(SearchEngineType::Auto);
+        let html = r#"<html><body><div class="g"><h3>Title</h3><a href="https://example.com">Link</a></div></body></html>"#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_search_results_dispatch_smart_falls_back_to_google() {
+        let engine = create_engine_with_type(SearchEngineType::Smart);
+        let html = r#"<html><body><div class="g"><h3>Title</h3><a href="https://example.com">Link</a></div></body></html>"#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert!(!results.is_empty());
+    }
+
+    // === build_search_url for non-specific engine types ===
+
+    #[test]
+    fn test_build_search_url_auto_falls_back_to_google() {
+        let engine = create_engine_with_type(SearchEngineType::Auto);
+        let url = engine.build_search_url("test", Some("en"), Some("US"));
+        assert!(url.contains("google.com"));
+    }
+
+    // === needs_js_and_tls for non-specific engine types ===
+
+    #[test]
+    fn test_needs_js_and_tls_auto_falls_back_to_google() {
+        let engine = create_engine_with_type(SearchEngineType::Auto);
+        let (needs_js, needs_tls) = engine.needs_js_and_tls();
+        assert!(needs_js);
+        assert!(!needs_tls);
+    }
+
+    #[test]
+    fn test_needs_js_and_tls_smart_falls_back_to_google() {
+        let engine = create_engine_with_type(SearchEngineType::Smart);
+        let (needs_js, needs_tls) = engine.needs_js_and_tls();
+        assert!(needs_js);
+        assert!(!needs_tls);
+    }
+
+    // === factory config values ===
+
+    #[test]
+    fn test_google_factory_config_values() {
+        let client = create_test_client();
+        let engine = create_google_smart_search(client);
+        // Google factory uses timeout 90 and rate_limiting_enabled true
+        assert_eq!(engine.engine_type(), SearchEngineType::Google);
+        assert_eq!(engine.health(), EngineHealth::Healthy);
+    }
+
+    #[test]
+    fn test_bing_factory_config_values() {
+        let client = create_test_client();
+        let engine = create_bing_smart_search(client);
+        assert_eq!(engine.engine_type(), SearchEngineType::Bing);
+        assert_eq!(engine.health(), EngineHealth::Healthy);
+    }
+
+    #[test]
+    fn test_baidu_factory_config_values() {
+        let client = create_test_client();
+        let engine = create_baidu_smart_search(client);
+        assert_eq!(engine.engine_type(), SearchEngineType::Baidu);
+        assert_eq!(engine.health(), EngineHealth::Healthy);
+    }
+
+    // === parse_google_results with alternate selectors ===
+
+    #[test]
+    fn test_parse_google_results_with_mjjyud_container() {
+        // Exercises the div.MjjYud result selector fallback (second in the list)
+        // when div.g is absent.
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let html = r#"
+        <html><body>
+        <div class="MjjYud">
+            <h3>Alternate Container Result</h3>
+            <a href="https://example.com/alt">Link</a>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_google_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Alternate Container Result");
+        assert_eq!(results[0].url, "https://example.com/alt");
+    }
+
+    #[test]
+    fn test_parse_google_results_with_description_from_snippet_selector() {
+        // Exercises the snippet selector fallback chain in extract_google_result.
+        // Uses div.zIBAzf which is the 4th snippet selector.
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let html = r#"
+        <html><body>
+        <div class="g">
+            <h3>Result With Description</h3>
+            <a href="https://example.com">Link</a>
+            <div class="zIBAzf">This is a snippet description.</div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_google_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].description.is_some());
+        assert!(
+            results[0]
+                .description
+                .as_ref()
+                .unwrap()
+                .contains("snippet description")
+        );
+    }
+
+    #[test]
+    fn test_parse_google_results_with_data_attrid_title_selector() {
+        // Exercises the div[data-attrid='title'] title selector fallback
+        // (second in the title selector list) when h3 is absent.
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let html = r#"
+        <html><body>
+        <div class="g">
+            <div data-attrid="title">Title From Data Attr</div>
+            <a href="https://example.com/data-attr">Link</a>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_google_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Title From Data Attr");
+    }
+
+    #[test]
+    fn test_parse_google_results_extracts_from_multiple_containers() {
+        // Exercises the loop break logic: results from div.g are found,
+        // so the loop breaks and doesn't check other selectors.
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let html = r#"
+        <html><body>
+        <div class="g">
+            <h3>First Result</h3>
+            <a href="https://first.com">Link</a>
+        </div>
+        <div class="MjjYud">
+            <h3>Second Result</h3>
+            <a href="https://second.com">Link</a>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_google_results(html).unwrap();
+        // Should find 1 result from div.g and stop (break after non-empty results)
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "First Result");
+    }
+
+    // === parse_sogou_results with alternate snippet selectors ===
+
+    #[test]
+    fn test_parse_sogou_results_with_ft_snippet_fallback() {
+        // Exercises the div.ft p snippet selector fallback (second in the list)
+        // when div.text-layout p is absent.
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://example.com">Sogou Title</a></h3>
+            <div class="ft"><p>Snippet from ft div</p></div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_sogou_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Sogou Title");
+        assert!(results[0].description.as_ref().unwrap().contains("Snippet from ft"));
+    }
+
+    #[test]
+    fn test_parse_sogou_results_with_p_snippet_fallback() {
+        // Exercises the bare p snippet selector fallback (third in the list)
+        // when both div.text-layout p and div.ft p are absent.
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://example.com">Sogou P Fallback</a></h3>
+            <p>Bare paragraph snippet</p>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_sogou_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Sogou P Fallback");
+        assert!(
+            results[0]
+                .description
+                .as_ref()
+                .unwrap()
+                .contains("Bare paragraph")
+        );
+    }
+
+    #[test]
+    fn test_parse_sogou_results_skips_empty_title() {
+        // Exercises the `if title.is_empty() { continue; }` branch
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://empty-title.com"></a></h3>
+            <div class="text-layout"><p>Desc</p></div>
+        </div>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://valid.com">Valid Title</a></h3>
+            <div class="text-layout"><p>Desc</p></div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_sogou_results(html).unwrap();
+        assert_eq!(results.len(), 1, "empty title should be skipped");
+        assert_eq!(results[0].title, "Valid Title");
+    }
+
+    // === check_rate_limit with non-zero RetryAfter ===
+
+    #[tokio::test]
+    async fn test_check_rate_limit_retry_after_non_zero_sleeps() {
+        // Exercises the RetryAfter branch with a non-zero sleep duration.
+        // Uses 1 second to keep the test fast but still exercise the sleep.
+        let service = MockRateLimitingService::with_behavior(MockBehavior::RetryAfter(1));
+        let config = make_config_with_service(SearchEngineType::Google, service);
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        let result = engine.check_rate_limit().await;
+        assert!(result.is_ok(), "RetryAfter with sleep should return Ok");
+    }
+
+    // === parse_search_results_common with fallback selectors ===
+
+    #[test]
+    fn test_parse_search_results_common_uses_fallback_result_selector() {
+        // Exercises the fallback logic when the first result selector fails
+        // to PARSE (not just match) but the second one succeeds.
+        // parse_selectors returns the first parseable selector, so we need
+        // an invalid CSS selector as the first option.
+        let html = r#"
+        <html><body>
+        <div class="fallback-item">
+            <h2>Fallback Title</h2>
+            <a href="https://fallback.example.com">Link</a>
+            <p>Fallback description</p>
+        </div>
+        </body></html>
+        "#;
+        let config = SearchResultParserConfig {
+            result_selectors: vec![":::invalid:::", "div.fallback-item"],
+            title_selectors: vec!["h2"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["p"],
+            engine_name: "test",
+            url_attr: None,
+        };
+        let results = parse_search_results_common(html, config).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Fallback Title");
+        assert_eq!(results[0].url, "https://fallback.example.com");
+    }
+
+    #[test]
+    fn test_parse_search_results_common_multiple_results() {
+        // Exercises the loop that collects multiple results.
+        let html = r#"
+        <html><body>
+        <div class="item">
+            <span class="title">First</span>
+            <a href="https://first.com">1</a>
+            <div class="desc">Desc 1</div>
+        </div>
+        <div class="item">
+            <span class="title">Second</span>
+            <a href="https://second.com">2</a>
+            <div class="desc">Desc 2</div>
+        </div>
+        <div class="item">
+            <span class="title">Third</span>
+            <a href="https://third.com">3</a>
+            <div class="desc">Desc 3</div>
+        </div>
+        </body></html>
+        "#;
+        let config = SearchResultParserConfig {
+            result_selectors: vec!["div.item"],
+            title_selectors: vec!["span.title"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["div.desc"],
+            engine_name: "test",
+            url_attr: None,
+        };
+        let results = parse_search_results_common(html, config).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].title, "First");
+        assert_eq!(results[2].title, "Third");
     }
 }

@@ -1177,6 +1177,1064 @@ mod tests {
         let score = router.calculate_engine_score(1.0, &stats);
         assert!(score > 0.8 && score <= 1.0);
     }
+
+    // === Mock engine with controllable support score ===
+
+    struct MockEngine {
+        engine_name: &'static str,
+        score: u8,
+    }
+
+    #[async_trait]
+    impl ScraperEngine for MockEngine {
+        async fn scrape(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            Ok(InternalScrapeResponse {
+                status_code: 200,
+                content: "mock".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 10,
+            })
+        }
+
+        fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+            self.score
+        }
+
+        fn name(&self) -> &'static str {
+            self.engine_name
+        }
+    }
+
+    fn make_request() -> InternalScrapeRequest {
+        InternalScrapeRequest {
+            url: "http://example.com".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        }
+    }
+
+    // === should_filter_by_feature tests ===
+
+    #[test]
+    fn test_should_filter_by_feature_screenshot_low_score() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "low-score",
+            score: 30,
+        });
+        let router = EngineRouter::new(vec![]);
+        let mut request = make_request();
+        request.needs_screenshot = true;
+        let result = router.should_filter_by_feature(&request, &engine);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("screenshots"));
+    }
+
+    #[test]
+    fn test_should_filter_by_feature_screenshot_high_score() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "high-score",
+            score: 80,
+        });
+        let router = EngineRouter::new(vec![]);
+        let mut request = make_request();
+        request.needs_screenshot = true;
+        let result = router.should_filter_by_feature(&request, &engine);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_should_filter_by_feature_js_low_score() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "low-score",
+            score: 20,
+        });
+        let router = EngineRouter::new(vec![]);
+        let mut request = make_request();
+        request.needs_js = true;
+        let result = router.should_filter_by_feature(&request, &engine);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("JavaScript"));
+    }
+
+    #[test]
+    fn test_should_filter_by_feature_actions_low_score() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "low-score",
+            score: 10,
+        });
+        let router = EngineRouter::new(vec![]);
+        let mut request = make_request();
+        request.actions = vec![crate::engines::engine_client::InternalPageAction::Click {
+            selector: "#btn".to_string(),
+        }];
+        let result = router.should_filter_by_feature(&request, &engine);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("JavaScript"));
+    }
+
+    #[test]
+    fn test_should_filter_by_feature_tls_fingerprint_low_score() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "low-score",
+            score: 40,
+        });
+        let router = EngineRouter::new(vec![]);
+        let mut request = make_request();
+        request.needs_tls_fingerprint = true;
+        let result = router.should_filter_by_feature(&request, &engine);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("TLS fingerprinting"));
+    }
+
+    #[test]
+    fn test_should_filter_by_feature_tls_fingerprint_high_score() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "high-score",
+            score: 60,
+        });
+        let router = EngineRouter::new(vec![]);
+        let mut request = make_request();
+        request.needs_tls_fingerprint = true;
+        let result = router.should_filter_by_feature(&request, &engine);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_should_filter_by_feature_no_special_needs() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "any",
+            score: 10,
+        });
+        let router = EngineRouter::new(vec![]);
+        let request = make_request();
+        let result = router.should_filter_by_feature(&request, &engine);
+        assert!(result.is_none());
+    }
+
+    // === sort_candidates_by_strategy tests ===
+
+    #[test]
+    fn test_sort_round_robin_preserves_order() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e1",
+            score: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e2",
+            score: 100,
+        });
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_strategy(LoadBalancingStrategy::RoundRobin);
+        let stats = std::collections::HashMap::new();
+        let mut candidates: Vec<(f64, Arc<dyn ScraperEngine>)> = vec![
+            (1.0, router.engines[0].clone()),
+            (2.0, router.engines[1].clone()),
+        ];
+        let original_names: Vec<_> = candidates.iter().map(|(_, e)| e.name()).collect();
+        router.sort_candidates_by_strategy(&mut candidates, &stats);
+        let sorted_names: Vec<_> = candidates.iter().map(|(_, e)| e.name()).collect();
+        assert_eq!(original_names, sorted_names);
+    }
+
+    #[test]
+    fn test_sort_weighted_round_robin_by_score() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e1",
+            score: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e2",
+            score: 100,
+        });
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        let stats = std::collections::HashMap::new();
+        let mut candidates: Vec<(f64, Arc<dyn ScraperEngine>)> = vec![
+            (0.5, router.engines[0].clone()),
+            (0.9, router.engines[1].clone()),
+        ];
+        router.sort_candidates_by_strategy(&mut candidates, &stats);
+        assert_eq!(candidates[0].1.name(), "e2");
+        assert_eq!(candidates[1].1.name(), "e1");
+    }
+
+    #[test]
+    fn test_sort_least_connections_by_usage() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e1",
+            score: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e2",
+            score: 100,
+        });
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_strategy(LoadBalancingStrategy::LeastConnections);
+        let mut stats = std::collections::HashMap::new();
+        stats.insert(
+            "e1".to_string(),
+            EngineStats {
+                usage_count: 100,
+                ..Default::default()
+            },
+        );
+        stats.insert(
+            "e2".to_string(),
+            EngineStats {
+                usage_count: 5,
+                ..Default::default()
+            },
+        );
+        let mut candidates: Vec<(f64, Arc<dyn ScraperEngine>)> = vec![
+            (1.0, router.engines[0].clone()),
+            (1.0, router.engines[1].clone()),
+        ];
+        router.sort_candidates_by_strategy(&mut candidates, &stats);
+        assert_eq!(candidates[0].1.name(), "e2");
+        assert_eq!(candidates[1].1.name(), "e1");
+    }
+
+    #[test]
+    fn test_sort_fastest_response_by_time() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e1",
+            score: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e2",
+            score: 100,
+        });
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_strategy(LoadBalancingStrategy::FastestResponse);
+        let mut stats = std::collections::HashMap::new();
+        stats.insert(
+            "e1".to_string(),
+            EngineStats {
+                avg_response_time: Duration::from_millis(500),
+                ..Default::default()
+            },
+        );
+        stats.insert(
+            "e2".to_string(),
+            EngineStats {
+                avg_response_time: Duration::from_millis(100),
+                ..Default::default()
+            },
+        );
+        let mut candidates: Vec<(f64, Arc<dyn ScraperEngine>)> = vec![
+            (1.0, router.engines[0].clone()),
+            (1.0, router.engines[1].clone()),
+        ];
+        router.sort_candidates_by_strategy(&mut candidates, &stats);
+        assert_eq!(candidates[0].1.name(), "e2");
+    }
+
+    #[test]
+    fn test_sort_random_shuffles() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockEngine {
+                engine_name: "e1",
+                score: 100,
+            }),
+            Arc::new(MockEngine {
+                engine_name: "e2",
+                score: 100,
+            }),
+            Arc::new(MockEngine {
+                engine_name: "e3",
+                score: 100,
+            }),
+        ];
+        let mut router = EngineRouter::new(engines);
+        router.set_strategy(LoadBalancingStrategy::Random);
+        let stats = std::collections::HashMap::new();
+        let mut candidates: Vec<(f64, Arc<dyn ScraperEngine>)> = router
+            .engines
+            .iter()
+            .map(|e| (1.0, e.clone()))
+            .collect();
+        router.sort_candidates_by_strategy(&mut candidates, &stats);
+        // Random may or may not change order, just verify no panic
+        assert_eq!(candidates.len(), 3);
+    }
+
+    #[test]
+    fn test_sort_smart_hybrid_combined() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e1",
+            score: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e2",
+            score: 100,
+        });
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_strategy(LoadBalancingStrategy::SmartHybrid);
+        let mut stats = std::collections::HashMap::new();
+        stats.insert(
+            "e1".to_string(),
+            EngineStats {
+                success_rate: 0.5,
+                avg_response_time: Duration::from_millis(800),
+                usage_count: 50,
+                last_used: None,
+            },
+        );
+        stats.insert(
+            "e2".to_string(),
+            EngineStats {
+                success_rate: 0.95,
+                avg_response_time: Duration::from_millis(100),
+                usage_count: 5,
+                last_used: None,
+            },
+        );
+        let mut candidates: Vec<(f64, Arc<dyn ScraperEngine>)> = vec![
+            (0.6, router.engines[0].clone()),
+            (0.9, router.engines[1].clone()),
+        ];
+        router.sort_candidates_by_strategy(&mut candidates, &stats);
+        assert_eq!(candidates[0].1.name(), "e2");
+    }
+
+    // === update_engine_stats tests ===
+
+    #[test]
+    fn test_update_engine_stats_success() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "test",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![engine]);
+        router.update_engine_stats("test", true, Duration::from_millis(100));
+        let stats = router.get_engine_stats();
+        let stat = stats.get("test").unwrap();
+        assert!(stat.success_rate > 0.9);
+        assert_eq!(stat.usage_count, 1);
+        assert!(stat.last_used.is_some());
+    }
+
+    #[test]
+    fn test_update_engine_stats_failure() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "test",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![engine]);
+        router.update_engine_stats("test", false, Duration::from_millis(500));
+        let stats = router.get_engine_stats();
+        let stat = stats.get("test").unwrap();
+        assert!(stat.success_rate < 1.0);
+        assert_eq!(stat.usage_count, 1);
+    }
+
+    #[test]
+    fn test_update_engine_stats_nonexistent() {
+        let router = EngineRouter::new(vec![]);
+        router.update_engine_stats("nonexistent", true, Duration::from_millis(50));
+        // Should not panic
+    }
+
+    // === get_next_round_robin_index tests ===
+
+    #[test]
+    fn test_get_next_round_robin_index_wraps() {
+        let router = EngineRouter::new(vec![]);
+        let idx1 = router.get_next_round_robin_index(3);
+        let idx2 = router.get_next_round_robin_index(3);
+        let idx3 = router.get_next_round_robin_index(3);
+        let idx4 = router.get_next_round_robin_index(3);
+        assert_eq!(idx1, 0);
+        assert_eq!(idx2, 1);
+        assert_eq!(idx3, 2);
+        assert_eq!(idx4, 0);
+    }
+
+    #[test]
+    fn test_get_next_round_robin_index_single() {
+        let router = EngineRouter::new(vec![]);
+        let idx = router.get_next_round_robin_index(1);
+        assert_eq!(idx, 0);
+    }
+
+    // === reset_engine_stats tests ===
+
+    #[test]
+    fn test_reset_engine_stats() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "test",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![engine]);
+        router.update_engine_stats("test", false, Duration::from_millis(500));
+        let stats_before = router.get_engine_stats();
+        assert_eq!(stats_before.get("test").unwrap().usage_count, 1);
+        router.reset_engine_stats("test");
+        let stats_after = router.get_engine_stats();
+        let stat = stats_after.get("test").unwrap();
+        assert_eq!(stat.usage_count, 0);
+        assert_eq!(stat.success_rate, 1.0);
+    }
+
+    #[test]
+    fn test_reset_engine_stats_nonexistent() {
+        let router = EngineRouter::new(vec![]);
+        router.reset_engine_stats("nonexistent");
+        // Should not panic
+    }
+
+    // === register_engine tests ===
+
+    #[test]
+    fn test_register_engine() {
+        let mut router = EngineRouter::new(vec![]);
+        assert!(router.get_engine_stats().is_empty());
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "new-engine",
+            score: 100,
+        });
+        router.register_engine(engine);
+        assert!(router.get_engine_stats().contains_key("new-engine"));
+        assert_eq!(router.registered_engines(), vec!["new-engine".to_string()]);
+    }
+
+    // === RouterMetrics tests ===
+
+    #[test]
+    fn test_router_metrics_new() {
+        let metrics = RouterMetrics::new();
+        assert_eq!(metrics.total_requests.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.successful_requests.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.failed_requests.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_router_metrics_record_candidates() {
+        let metrics = RouterMetrics::new();
+        metrics.record_candidates(5);
+        metrics.record_candidates(3);
+        assert_eq!(metrics.candidate_count_total.load(Ordering::Relaxed), 8);
+    }
+
+    #[test]
+    fn test_router_metrics_record_attempt() {
+        let metrics = RouterMetrics::new();
+        metrics.record_attempt();
+        metrics.record_attempt();
+        metrics.record_attempt();
+        assert_eq!(metrics.attempt_count_total.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_router_metrics_record_engine_selection() {
+        let metrics = RouterMetrics::new();
+        metrics.record_engine_selection("engine1");
+        assert_eq!(metrics.engine_selection_total.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_router_metrics_record_engine_latency() {
+        let metrics = RouterMetrics::new();
+        metrics.record_engine_selection("engine1");
+        metrics.record_engine_latency("engine1", Duration::from_millis(100));
+        let avg = metrics.get_avg_latency_ns("engine1");
+        // avg_latency = total_ns / success_count; success_count is 0, so None or Some
+        // record_engine_selection inserts into latencies with 0, but success_count has no entry
+        // get_avg_latency_ns checks both latencies and success_count
+        // Since success_count has no entry, avg should be None
+        assert!(avg.is_none());
+    }
+
+    #[test]
+    fn test_router_metrics_record_engine_success() {
+        let metrics = RouterMetrics::new();
+        // Pre-initialize success_count entry (record_engine_success only increments existing keys)
+        metrics.engine_success_count.insert("engine1".to_string(), 0);
+        metrics.record_engine_success("engine1");
+        metrics.record_engine_success("engine1");
+        let count = metrics.engine_success_count.get("engine1").unwrap();
+        assert_eq!(*count, 2);
+    }
+
+    #[test]
+    fn test_router_metrics_record_engine_failure() {
+        let metrics = RouterMetrics::new();
+        // Pre-initialize failure_count and failure_classification entries
+        // (record_engine_failure only increments existing keys)
+        metrics.engine_failure_count.insert("engine1".to_string(), 0);
+        metrics.failure_classification.insert("timeout".to_string(), 0);
+        metrics.failure_classification.insert("network_error".to_string(), 0);
+        metrics.record_engine_failure("engine1", "timeout error");
+        metrics.record_engine_failure("engine1", "network error");
+        let count = metrics.engine_failure_count.get("engine1").unwrap();
+        assert_eq!(*count, 2);
+        let timeout_count = metrics.failure_classification.get("timeout").unwrap();
+        assert_eq!(*timeout_count, 1);
+        let network_count = metrics.failure_classification.get("network_error").unwrap();
+        assert_eq!(*network_count, 1);
+    }
+
+    #[test]
+    fn test_router_metrics_classify_error() {
+        assert_eq!(RouterMetrics::classify_error("request timeout"), "timeout");
+        assert_eq!(
+            RouterMetrics::classify_error("SSRF protection triggered"),
+            "ssrf_protection"
+        );
+        assert_eq!(
+            RouterMetrics::classify_error("network unreachable"),
+            "network_error"
+        );
+        assert_eq!(
+            RouterMetrics::classify_error("circuit breaker open"),
+            "circuit_breaker"
+        );
+        assert_eq!(
+            RouterMetrics::classify_error("browser crashed"),
+            "browser_error"
+        );
+        assert_eq!(RouterMetrics::classify_error("unknown issue"), "other");
+    }
+
+    #[test]
+    fn test_router_metrics_get_success_rate() {
+        let metrics = RouterMetrics::new();
+        assert_eq!(metrics.get_success_rate(), 1.0);
+        metrics.total_requests.store(10, Ordering::Relaxed);
+        metrics.successful_requests.store(7, Ordering::Relaxed);
+        assert_eq!(metrics.get_success_rate(), 0.7);
+    }
+
+    #[test]
+    fn test_router_metrics_get_avg_latency_ns_no_data() {
+        let metrics = RouterMetrics::new();
+        assert!(metrics.get_avg_latency_ns("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_router_metrics_get_avg_latency_ns_with_data() {
+        let metrics = RouterMetrics::new();
+        // Manually populate both latencies and success_count
+        metrics.engine_latencies.insert("engine1".to_string(), 1_000_000);
+        metrics.engine_success_count.insert("engine1".to_string(), 10);
+        let avg = metrics.get_avg_latency_ns("engine1");
+        assert_eq!(avg, Some(100_000));
+    }
+
+    #[test]
+    fn test_router_metrics_record_engine_success_no_key_is_noop() {
+        // Verify that record_engine_success is a no-op when key doesn't exist
+        let metrics = RouterMetrics::new();
+        metrics.record_engine_success("engine1");
+        assert!(metrics.engine_success_count.get("engine1").is_none());
+    }
+
+    // === calculate_engine_score edge cases ===
+
+    #[test]
+    fn test_calculate_engine_score_zero_success_rate() {
+        let router = EngineRouter::new(vec![]);
+        let stats = EngineStats {
+            success_rate: 0.0,
+            avg_response_time: Duration::from_secs(5),
+            usage_count: 500,
+            last_used: None,
+        };
+        let score = router.calculate_engine_score(1.0, &stats);
+        assert!(score < 0.5);
+    }
+
+    #[test]
+    fn test_calculate_engine_score_perfect_stats() {
+        let router = EngineRouter::new(vec![]);
+        let stats = EngineStats {
+            success_rate: 1.0,
+            avg_response_time: Duration::from_millis(10),
+            usage_count: 0,
+            last_used: None,
+        };
+        let score = router.calculate_engine_score(1.0, &stats);
+        assert!(score > 0.95);
+    }
+
+    #[test]
+    fn test_calculate_engine_score_high_usage_penalty() {
+        let router = EngineRouter::new(vec![]);
+        let stats = EngineStats {
+            success_rate: 1.0,
+            avg_response_time: Duration::from_millis(10),
+            usage_count: 2000,
+            last_used: None,
+        };
+        let score = router.calculate_engine_score(1.0, &stats);
+        let perfect_stats = EngineStats {
+            success_rate: 1.0,
+            avg_response_time: Duration::from_millis(10),
+            usage_count: 0,
+            last_used: None,
+        };
+        let perfect_score = router.calculate_engine_score(1.0, &perfect_stats);
+        assert!(score < perfect_score);
+    }
+
+    // === Setter tests ===
+
+    #[test]
+    fn test_set_max_engine_attempts() {
+        let mut router = EngineRouter::new(vec![]);
+        router.set_max_engine_attempts(5);
+        assert_eq!(router.max_engine_attempts, 5);
+    }
+
+    #[test]
+    fn test_set_max_engine_attempts_min_one() {
+        let mut router = EngineRouter::new(vec![]);
+        router.set_max_engine_attempts(0);
+        assert_eq!(router.max_engine_attempts, 1);
+    }
+
+    #[test]
+    fn test_set_max_retries() {
+        let mut router = EngineRouter::new(vec![]);
+        router.set_max_retries(10);
+        assert_eq!(router.max_retries, 10);
+    }
+
+    #[test]
+    fn test_set_max_retries_min_one() {
+        let mut router = EngineRouter::new(vec![]);
+        router.set_max_retries(0);
+        assert_eq!(router.max_retries, 1);
+    }
+
+    #[test]
+    fn test_set_feature_filter_enabled() {
+        let mut router = EngineRouter::new(vec![]);
+        router.set_feature_filter_enabled(false);
+        assert!(!router.feature_filter_enabled);
+        router.set_feature_filter_enabled(true);
+        assert!(router.feature_filter_enabled);
+    }
+
+    #[test]
+    fn test_set_race_mode_enabled() {
+        let mut router = EngineRouter::new(vec![]);
+        router.set_race_mode_enabled(true);
+        assert!(router.race_mode_enabled);
+    }
+
+    #[test]
+    fn test_set_dynamic_threshold_factor() {
+        let mut router = EngineRouter::new(vec![]);
+        router.set_dynamic_threshold_factor(1.5);
+        assert_eq!(router.dynamic_threshold_factor, 1.5);
+    }
+
+    #[test]
+    fn test_set_dynamic_threshold_factor_clamped() {
+        let mut router = EngineRouter::new(vec![]);
+        router.set_dynamic_threshold_factor(0.01);
+        assert_eq!(router.dynamic_threshold_factor, 0.1);
+        router.set_dynamic_threshold_factor(3.0);
+        assert_eq!(router.dynamic_threshold_factor, 2.0);
+    }
+
+    #[test]
+    fn test_set_strategy() {
+        let mut router = EngineRouter::new(vec![]);
+        router.set_strategy(LoadBalancingStrategy::RoundRobin);
+        assert_eq!(router.strategy, LoadBalancingStrategy::RoundRobin);
+        router.set_strategy(LoadBalancingStrategy::Random);
+        assert_eq!(router.strategy, LoadBalancingStrategy::Random);
+    }
+
+    #[test]
+    fn test_metrics_accessor() {
+        let router = EngineRouter::new(vec![]);
+        let _metrics = router.metrics();
+    }
+
+    // === with_circuit_breaker_and_strategy constructor test ===
+
+    #[test]
+    fn test_with_circuit_breaker_and_strategy() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "test",
+            score: 100,
+        });
+        let cb = Arc::new(CircuitBreaker::new());
+        let router = EngineRouter::with_circuit_breaker_and_strategy(
+            vec![engine],
+            cb,
+            LoadBalancingStrategy::LeastConnections,
+        );
+        assert_eq!(router.strategy, LoadBalancingStrategy::LeastConnections);
+        assert!(router.get_engine_stats().contains_key("test"));
+    }
+
+    // === get_engines test ===
+
+    #[test]
+    fn test_get_engines() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e1",
+            score: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "e2",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![e1, e2]);
+        let engines = router.get_engines();
+        assert_eq!(engines.len(), 2);
+        assert_eq!(engines[0].name(), "e1");
+        assert_eq!(engines[1].name(), "e2");
+    }
+
+    // === EngineStats default test ===
+
+    #[test]
+    fn test_engine_stats_default() {
+        let stats = EngineStats::default();
+        assert_eq!(stats.success_rate, 1.0);
+        assert_eq!(stats.avg_response_time, Duration::from_millis(500));
+        assert!(stats.last_used.is_none());
+        assert_eq!(stats.usage_count, 0);
+    }
+
+    // === 路由成功路径测试 ===
+
+    #[tokio::test]
+    async fn test_route_success_path() {
+        // 测试路由成功路径：MockEngine 返回成功响应
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "success-engine",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![engine]);
+        let request = make_request();
+        let result = router.route(&request).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.content, "mock");
+    }
+
+    // === SSRF 保护测试 ===
+
+    #[tokio::test]
+    async fn test_route_ssrf_protection() {
+        // 测试 SSRF 保护：使用内部 IP 地址应被拒绝
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "test",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![engine]);
+        let mut request = make_request();
+        request.url = "http://127.0.0.1".to_string();
+        let result = router.route(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, EngineError::SsrfProtection(_)));
+    }
+
+    // === 不可重试错误测试 ===
+
+    #[tokio::test]
+    async fn test_route_non_retryable_error() {
+        // 测试不可重试错误：引擎返回 InvalidUrl 时应立即失败
+        struct NonRetryableEngine;
+        #[async_trait]
+        impl ScraperEngine for NonRetryableEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Err(EngineError::InvalidUrl("bad url".to_string()))
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "non-retryable"
+            }
+        }
+        let engine: Arc<dyn ScraperEngine> = Arc::new(NonRetryableEngine);
+        let router = EngineRouter::new(vec![engine]);
+        let request = make_request();
+        let result = router.route(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, EngineError::InvalidUrl(_)));
+    }
+
+    // === 最大重试次数测试 ===
+
+    #[tokio::test]
+    async fn test_route_max_retries_reached() {
+        // 测试最大重试次数：所有引擎都返回可重试错误，应达到最大重试次数后失败
+        struct AlwaysTimeoutEngine;
+        #[async_trait]
+        impl ScraperEngine for AlwaysTimeoutEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Err(EngineError::Timeout(Duration::from_secs(10)))
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "always-timeout"
+            }
+        }
+        let engine: Arc<dyn ScraperEngine> = Arc::new(AlwaysTimeoutEngine);
+        let mut router = EngineRouter::new(vec![engine]);
+        router.set_max_retries(1);
+        let request = make_request();
+        let result = router.route(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, EngineError::Timeout(_)));
+    }
+
+    // === 竞速模式测试 ===
+
+    #[tokio::test]
+    async fn test_route_race_mode_success() {
+        // 测试竞速模式：多个引擎并发，返回最快的成功结果
+        struct FastEngine {
+            name: &'static str,
+            delay_ms: u64,
+        }
+        #[async_trait]
+        impl ScraperEngine for FastEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: format!("from-{}", self.name),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: self.delay_ms as u64,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+        let e1: Arc<dyn ScraperEngine> = Arc::new(FastEngine {
+            name: "slow",
+            delay_ms: 500,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(FastEngine {
+            name: "fast",
+            delay_ms: 10,
+        });
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_race_mode_enabled(true);
+        let request = make_request();
+        let result = router.route(&request).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(response.content.starts_with("from-"));
+    }
+
+    #[tokio::test]
+    async fn test_route_race_mode_all_fail() {
+        // 测试竞速模式：所有引擎都失败时返回错误
+        struct FailingEngine;
+        #[async_trait]
+        impl ScraperEngine for FailingEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Err(EngineError::RequestFailed("connection refused".to_string()))
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "failing"
+            }
+        }
+        let e1: Arc<dyn ScraperEngine> = Arc::new(FailingEngine);
+        let e2: Arc<dyn ScraperEngine> = Arc::new(FailingEngine);
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_race_mode_enabled(true);
+        let request = make_request();
+        let result = router.route(&request).await;
+        assert!(result.is_err());
+    }
+
+    // === 聚合测试 ===
+
+    #[tokio::test]
+    async fn test_aggregate_no_candidates() {
+        // 测试聚合：所有引擎 support_score 为 0，候选列表为空
+        struct ZeroScoreEngine;
+        #[async_trait]
+        impl ScraperEngine for ZeroScoreEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "ok".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                0
+            }
+            fn name(&self) -> &'static str {
+                "zero-score"
+            }
+        }
+        let engine: Arc<dyn ScraperEngine> = Arc::new(ZeroScoreEngine);
+        let router = EngineRouter::new(vec![engine]);
+        let request = make_request();
+        let result = router.aggregate(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, EngineError::AllEnginesFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_all_engines_fail() {
+        // 测试聚合：所有引擎都失败
+        struct FailingEngine;
+        #[async_trait]
+        impl ScraperEngine for FailingEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Err(EngineError::RequestFailed("failed".to_string()))
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "failing"
+            }
+        }
+        let e1: Arc<dyn ScraperEngine> = Arc::new(FailingEngine);
+        let e2: Arc<dyn ScraperEngine> = Arc::new(FailingEngine);
+        let router = EngineRouter::new(vec![e1, e2]);
+        let request = make_request();
+        let result = router.aggregate(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, EngineError::AllEnginesFailed(_)));
+    }
+
+    // === EngineRouterTrait 通过 trait 对象测试 ===
+
+    #[tokio::test]
+    async fn test_engine_router_trait_methods() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "trait-test",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![engine]);
+        let trait_ref: &dyn EngineRouterTrait = &router;
+
+        // 测试 registered_engines
+        let engines = trait_ref.registered_engines();
+        assert_eq!(engines, vec!["trait-test".to_string()]);
+
+        // 测试 get_engine_stats
+        let stats = trait_ref.get_engine_stats();
+        assert!(stats.contains_key("trait-test"));
+
+        // 测试 reset_engine_stats
+        trait_ref.reset_engine_stats("trait-test");
+        let stats_after = trait_ref.get_engine_stats();
+        assert_eq!(stats_after.get("trait-test").unwrap().usage_count, 0);
+
+        // 测试 route 通过 trait
+        let request = make_request();
+        let result = trait_ref.route(&request).await;
+        assert!(result.is_ok());
+    }
+
+    // === select_optimal_engines 边界情况 ===
+
+    #[tokio::test]
+    async fn test_route_no_engines_available() {
+        // 测试没有引擎时返回 AllEnginesFailed
+        let router = EngineRouter::new(vec![]);
+        let request = make_request();
+        let result = router.route(&request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, EngineError::AllEnginesFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn test_route_support_score_zero_filtered() {
+        // 测试 support_score 为 0 的引擎被过滤
+        struct ZeroScoreEngine;
+        #[async_trait]
+        impl ScraperEngine for ZeroScoreEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "ok".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                0
+            }
+            fn name(&self) -> &'static str {
+                "zero-score"
+            }
+        }
+        let engine: Arc<dyn ScraperEngine> = Arc::new(ZeroScoreEngine);
+        let router = EngineRouter::new(vec![engine]);
+        let request = make_request();
+        let result = router.route(&request).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), EngineError::AllEnginesFailed(_)));
+    }
 }
 
 #[cfg(test)]

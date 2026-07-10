@@ -688,4 +688,94 @@ mod tests {
         assert!((get_memory_usage_with_monitor(trait_ref) - 0.90).abs() < f64::EPSILON);
         assert!(is_metrics_stale_with_monitor(trait_ref));
     }
+
+    // ========== MutableSystemMonitor tests ==========
+
+    #[test]
+    fn test_mutable_system_monitor_new_does_not_panic() {
+        let _monitor = MutableSystemMonitor::new();
+    }
+
+    #[test]
+    fn test_mutable_system_monitor_refresh_does_not_panic() {
+        let mut monitor = MutableSystemMonitor::new();
+        monitor.refresh();
+    }
+
+    #[test]
+    fn test_mutable_system_monitor_cpu_usage_in_valid_range() {
+        let monitor = MutableSystemMonitor::new();
+        let cpu = monitor.cpu_usage();
+        assert!(cpu >= 0.0, "cpu should be non-negative");
+        assert!(cpu <= 1.0, "cpu should be at most 1.0, got {}", cpu);
+    }
+
+    #[test]
+    fn test_mutable_system_monitor_memory_usage_in_valid_range() {
+        let monitor = MutableSystemMonitor::new();
+        let mem = monitor.memory_usage();
+        assert!(mem >= 0.0, "memory should be non-negative");
+        assert!(mem <= 1.0, "memory should be at most 1.0, got {}", mem);
+    }
+
+    #[test]
+    fn test_mutable_system_monitor_cpu_usage_after_refresh() {
+        let mut monitor = MutableSystemMonitor::new();
+        monitor.refresh();
+        let cpu = monitor.cpu_usage();
+        assert!(cpu >= 0.0 && cpu <= 1.0);
+    }
+
+    #[test]
+    fn test_mutable_system_monitor_memory_usage_after_refresh() {
+        let mut monitor = MutableSystemMonitor::new();
+        monitor.refresh();
+        let mem = monitor.memory_usage();
+        assert!(mem >= 0.0 && mem <= 1.0);
+    }
+
+    #[test]
+    fn test_mutable_system_monitor_multiple_refresh_cycles() {
+        let mut monitor = MutableSystemMonitor::new();
+        for _ in 0..3 {
+            monitor.refresh();
+            let cpu = monitor.cpu_usage();
+            let mem = monitor.memory_usage();
+            assert!(cpu >= 0.0 && cpu <= 1.0);
+            assert!(mem >= 0.0 && mem <= 1.0);
+        }
+    }
+
+    // ========== update_system_metrics tests ==========
+
+    #[test]
+    fn test_update_system_metrics_does_not_panic() {
+        let mut monitor = MutableSystemMonitor::new();
+        update_system_metrics(&mut monitor);
+    }
+
+    #[test]
+    fn test_update_system_metrics_after_refresh() {
+        let mut monitor = MutableSystemMonitor::new();
+        monitor.refresh();
+        update_system_metrics(&mut monitor);
+        // Verify monitor is still functional after update
+        let cpu = monitor.cpu_usage();
+        let mem = monitor.memory_usage();
+        assert!(cpu >= 0.0 && cpu <= 1.0);
+        assert!(mem >= 0.0 && mem <= 1.0);
+    }
+
+    #[test]
+    fn test_update_system_metrics_multiple_calls() {
+        let mut monitor = MutableSystemMonitor::new();
+        // Calling update_system_metrics multiple times should not panic
+        for _ in 0..5 {
+            update_system_metrics(&mut monitor);
+        }
+        let cpu = monitor.cpu_usage();
+        let mem = monitor.memory_usage();
+        assert!(cpu >= 0.0 && cpu <= 1.0);
+        assert!(mem >= 0.0 && mem <= 1.0);
+    }
 }

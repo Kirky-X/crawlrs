@@ -808,4 +808,239 @@ mod tests {
         let _permit = controller.acquire(None).await.unwrap();
         assert_eq!(controller.active_count(), 1);
     }
+
+    // ========== utilization() with max=0 edge cases ==========
+
+    #[test]
+    fn test_utilization_global_max_zero_returns_zero() {
+        // max_concurrent = 0 → utilization() 的 max == 0 分支 → 返回 0.0
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 0,
+            queue_size: 10,
+        });
+        assert_eq!(controller.utilization(), 0.0);
+    }
+
+    #[test]
+    fn test_utilization_per_team_max_zero_returns_zero() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTeam {
+            max_per_team: 0,
+            queue_size: 10,
+        });
+        assert_eq!(controller.utilization(), 0.0);
+    }
+
+    #[test]
+    fn test_utilization_per_task_type_max_zero_returns_zero() {
+        let type_limits = std::collections::HashMap::new();
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTaskType {
+            max_per_type: 0,
+            type_limits,
+        });
+        assert_eq!(controller.utilization(), 0.0);
+    }
+
+    #[test]
+    fn test_utilization_hierarchical_max_zero_returns_zero() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Hierarchical {
+            global_max: 0,
+            per_team_max: 0,
+            per_task_type_max: 0,
+        });
+        assert_eq!(controller.utilization(), 0.0);
+    }
+
+    // ========== is_at_limit() with max=0 edge cases ==========
+
+    #[test]
+    fn test_is_at_limit_global_max_zero() {
+        // max_concurrent = 0 → active_count(0) >= 0 → true
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 0,
+            queue_size: 10,
+        });
+        assert!(controller.is_at_limit(), "with max=0, should be at limit");
+    }
+
+    #[test]
+    fn test_is_at_limit_per_team_max_zero() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTeam {
+            max_per_team: 0,
+            queue_size: 10,
+        });
+        assert!(controller.is_at_limit());
+    }
+
+    #[test]
+    fn test_is_at_limit_hierarchical_max_zero() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Hierarchical {
+            global_max: 0,
+            per_team_max: 0,
+            per_task_type_max: 0,
+        });
+        assert!(controller.is_at_limit());
+    }
+
+    // ========== ConcurrencyStats with max=0 ==========
+
+    #[test]
+    fn test_concurrency_stats_with_max_zero() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 0,
+            queue_size: 10,
+        });
+        let stats = ConcurrencyStats::from(&controller);
+        assert_eq!(stats.active_concurrent, 0);
+        assert_eq!(stats.utilization_percent, 0.0);
+        assert!(stats.is_at_limit);
+        assert!(stats.strategy.contains("Global"));
+    }
+
+    #[test]
+    fn test_concurrency_stats_strategy_string_per_task_type() {
+        let mut type_limits = std::collections::HashMap::new();
+        type_limits.insert("scrape".to_string(), 10u32);
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTaskType {
+            max_per_type: 8,
+            type_limits,
+        });
+        let stats = ConcurrencyStats::from(&controller);
+        assert!(stats.strategy.contains("PerTaskType"));
+    }
+
+    #[test]
+    fn test_concurrency_stats_strategy_string_hierarchical() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Hierarchical {
+            global_max: 50,
+            per_team_max: 10,
+            per_task_type_max: 5,
+        });
+        let stats = ConcurrencyStats::from(&controller);
+        assert!(stats.strategy.contains("Hierarchical"));
+    }
+
+    // ========== try_acquire with max=0 ==========
+
+    #[tokio::test]
+    async fn test_try_acquire_with_max_zero_returns_none() {
+        // max_concurrent = 0 → semaphore 有 0 个许可 → try_acquire 总是失败
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 0,
+            queue_size: 10,
+        });
+        assert!(controller.try_acquire().is_none());
+        assert_eq!(controller.active_count(), 0);
+    }
+
+    // ========== acquire with max=0 should timeout ==========
+
+    #[tokio::test]
+    async fn test_acquire_with_max_zero_times_out() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 0,
+            queue_size: 10,
+        });
+        let result = controller.acquire(Some(Duration::from_millis(50))).await;
+        assert!(
+            matches!(result, Err(ConcurrencyError::Timeout)),
+            "should timeout with max=0"
+        );
+    }
+
+    // ========== wait_count ==========
+
+    #[test]
+    fn test_wait_count_starts_zero() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 5,
+            queue_size: 10,
+        });
+        assert_eq!(controller.wait_count(), 0);
+    }
+
+    // ========== ConcurrencyPermit and ConcurrencyGuard Drop with cloned controller ==========
+
+    #[tokio::test]
+    async fn test_controller_clone_shares_state() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 2,
+            queue_size: 10,
+        });
+        let controller_clone = controller.clone();
+
+        // 使用 clone 获取 permit
+        let _permit = controller_clone.acquire(None).await.unwrap();
+        // 原始 controller 应看到 active_count = 1（共享状态）
+        assert_eq!(controller.active_count(), 1);
+        assert_eq!(controller_clone.active_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_controller_clone_try_acquire_shared() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 10,
+        });
+        let controller_clone = controller.clone();
+
+        // 原始获取 permit
+        let _permit = controller.acquire(None).await.unwrap();
+        assert_eq!(controller.active_count(), 1);
+
+        // clone 的 try_acquire 应失败（共享信号量）
+        assert!(controller_clone.try_acquire().is_none());
+    }
+
+    // ========== Multiple sequential operations ==========
+
+    #[tokio::test]
+    async fn test_sequential_acquire_release_cycles() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 10,
+        });
+
+        for _ in 0..5 {
+            {
+                let _permit = controller.acquire(None).await.unwrap();
+                assert_eq!(controller.active_count(), 1);
+                assert!(controller.is_at_limit());
+            }
+            tokio::task::yield_now().await;
+            assert_eq!(controller.active_count(), 0);
+            assert!(!controller.is_at_limit());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_try_acquire_sequential_after_each_drop() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 10,
+        });
+
+        for _ in 0..5 {
+            let guard = controller.try_acquire();
+            assert!(guard.is_some());
+            assert_eq!(controller.active_count(), 1);
+            drop(guard);
+            tokio::task::yield_now().await;
+            assert_eq!(controller.active_count(), 0);
+        }
+    }
+
+    // ========== AdaptiveConcurrencyController additional tests ==========
+
+    #[test]
+    fn test_adaptive_concurrency_controller_new_with_min_max() {
+        let controller = AdaptiveConcurrencyController::new(2, 50, 0.6, Duration::from_secs(30));
+        assert_eq!(controller.base().active_count(), 0);
+        assert!(!controller.base().is_at_limit());
+    }
+
+    #[test]
+    fn test_adaptive_concurrency_controller_base_utilization_zero() {
+        let controller = AdaptiveConcurrencyController::new(1, 100, 0.7, Duration::from_secs(60));
+        assert_eq!(controller.base().utilization(), 0.0);
+    }
 }
