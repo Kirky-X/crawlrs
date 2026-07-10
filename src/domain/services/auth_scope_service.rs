@@ -9,10 +9,10 @@ use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
 use crate::presentation::middleware::auth_middleware::invalidate_cache_by_api_key_id;
 use async_trait::async_trait;
+use log::debug;
 use shaku::Interface;
 use std::sync::Arc;
 use thiserror::Error;
-use log::debug;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
@@ -445,10 +445,7 @@ mod tests {
         ) -> Result<ApiKeyScope, RepositoryError> {
             Ok(scope)
         }
-        async fn delete_by_api_key_id(
-            &self,
-            _api_key_id: Uuid,
-        ) -> Result<bool, RepositoryError> {
+        async fn delete_by_api_key_id(&self, _api_key_id: Uuid) -> Result<bool, RepositoryError> {
             Ok(true)
         }
     }

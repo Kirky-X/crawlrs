@@ -1,7 +1,7 @@
 // Minimal test helpers for queue_client_test and task_repository_test
 // This file provides just enough functionality to run the basic tests
 
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend};
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -24,6 +24,7 @@ impl Drop for TestApp {
 }
 
 /// Create a minimal test app without starting workers
+#[allow(dead_code)]
 pub async fn create_test_app_no_worker() -> TestApp {
     let db_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
         let db_password =
@@ -46,26 +47,28 @@ pub async fn create_test_app_no_worker() -> TestApp {
     // 先在 teams 表中创建团队（因为 tasks 表有 foreign key 约束）
     let _ = db_pool
         .execute_unprepared(&format!(
-            "INSERT INTO teams (id, name) VALUES ('{}', '{}') ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO teams (id, name) VALUES ('{}', 'Test Team {}') ON CONFLICT (id) DO NOTHING",
             team_id,
-            format!("Test Team {}", team_id)
+            team_id
         ))
         .await;
 
     // 创建 API key（因为 tasks 表有外键约束）
     let _ = db_pool
         .execute_unprepared(&format!(
-            "INSERT INTO api_keys (id, key, key_hash, team_id) VALUES ('{}', '{}', '{}', '{}') ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO api_keys (id, key, key_hash, team_id) VALUES ('{}', 'test-api-key-{}', 'hash-{}', '{}') ON CONFLICT (id) DO NOTHING",
             api_key_id,
-            format!("test-api-key-{}", api_key_id),
-            format!("hash-{}", api_key_id),
+            api_key_id,
+            api_key_id,
             team_id
         ))
         .await;
 
     // 清理测试数据 - 只清理 tasks，保留 api_keys 和 teams
     let _ = db_pool.execute_unprepared("DELETE FROM tasks").await;
-    let _ = db_pool.execute_unprepared("DELETE FROM tasks_backlog").await;
+    let _ = db_pool
+        .execute_unprepared("DELETE FROM tasks_backlog")
+        .await;
 
     let redis_port = std::env::var("TEST_REDIS_PORT")
         .unwrap_or_else(|_| "6380".to_string())
@@ -97,6 +100,7 @@ pub async fn create_test_app_no_worker() -> TestApp {
 }
 
 /// Create a test app (same as no_worker for now)
+#[allow(dead_code)]
 pub async fn create_test_app() -> TestApp {
     create_test_app_no_worker().await
 }

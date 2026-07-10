@@ -16,8 +16,8 @@ use crate::presentation::handlers::response_builder::{
 };
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
-use std::sync::Arc;
 use log::error;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// 团队信息响应
@@ -242,4 +242,160 @@ fn is_valid_ip_or_cidr(input: &str) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== is_valid_ip_or_cidr tests ==========
+
+    #[test]
+    fn test_is_valid_ipv4_address() {
+        assert!(is_valid_ip_or_cidr("192.168.1.1"));
+        assert!(is_valid_ip_or_cidr("10.0.0.1"));
+        assert!(is_valid_ip_or_cidr("0.0.0.0"));
+        assert!(is_valid_ip_or_cidr("255.255.255.255"));
+    }
+
+    #[test]
+    fn test_is_valid_ipv6_address() {
+        assert!(is_valid_ip_or_cidr("::1"));
+        assert!(is_valid_ip_or_cidr("2001:db8::1"));
+        assert!(is_valid_ip_or_cidr("fe80::1"));
+    }
+
+    #[test]
+    fn test_is_valid_ipv4_cidr() {
+        assert!(is_valid_ip_or_cidr("192.168.1.0/24"));
+        assert!(is_valid_ip_or_cidr("10.0.0.0/8"));
+        assert!(is_valid_ip_or_cidr("172.16.0.0/12"));
+        assert!(is_valid_ip_or_cidr("192.168.1.1/32"));
+        assert!(is_valid_ip_or_cidr("0.0.0.0/0"));
+    }
+
+    #[test]
+    fn test_is_valid_ipv6_cidr() {
+        assert!(is_valid_ip_or_cidr("2001:db8::/32"));
+        assert!(is_valid_ip_or_cidr("fe80::/10"));
+        assert!(is_valid_ip_or_cidr("::1/128"));
+        assert!(is_valid_ip_or_cidr("::/0"));
+    }
+
+    #[test]
+    fn test_invalid_ip_address() {
+        assert!(!is_valid_ip_or_cidr("999.999.999.999"));
+        assert!(!is_valid_ip_or_cidr("not-an-ip"));
+        assert!(!is_valid_ip_or_cidr(""));
+        assert!(!is_valid_ip_or_cidr("192.168.1"));
+    }
+
+    #[test]
+    fn test_invalid_cidr_prefix() {
+        assert!(!is_valid_ip_or_cidr("192.168.1.0/33"));
+        assert!(!is_valid_ip_or_cidr("192.168.1.0/abc"));
+        assert!(!is_valid_ip_or_cidr("192.168.1.0/"));
+        assert!(!is_valid_ip_or_cidr("::1/129"));
+    }
+
+    #[test]
+    fn test_invalid_cidr_ip_part() {
+        assert!(!is_valid_ip_or_cidr("999.1.1.1/24"));
+        assert!(!is_valid_ip_or_cidr("not-ip/24"));
+    }
+
+    // ========== TeamInfoResponse serialization ==========
+
+    #[test]
+    fn test_team_info_response_serialization() {
+        let team_id = Uuid::new_v4();
+        let response = TeamInfoResponse {
+            id: team_id,
+            name: "Test Team".to_string(),
+            credits_balance: 1000,
+            total_tasks: 50,
+            completed_tasks: 45,
+            failed_tasks: 5,
+            created_at: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["id"], team_id.to_string());
+        assert_eq!(parsed["name"], "Test Team");
+        assert_eq!(parsed["credits_balance"], 1000);
+        assert_eq!(parsed["total_tasks"], 50);
+        assert_eq!(parsed["completed_tasks"], 45);
+        assert_eq!(parsed["failed_tasks"], 5);
+    }
+
+    #[test]
+    fn test_team_info_response_negative_balance() {
+        let response = TeamInfoResponse {
+            id: Uuid::new_v4(),
+            name: "Debtor Team".to_string(),
+            credits_balance: -100,
+            total_tasks: 0,
+            completed_tasks: 0,
+            failed_tasks: 0,
+            created_at: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["credits_balance"], -100);
+    }
+
+    // ========== TeamUsageResponse serialization ==========
+
+    #[test]
+    fn test_team_usage_response_serialization() {
+        let team_id = Uuid::new_v4();
+        let response = TeamUsageResponse {
+            team_id,
+            period: "30d".to_string(),
+            total_requests: 1000,
+            successful_requests: 950,
+            failed_requests: 50,
+            credits_used: 5000,
+            avg_response_time_ms: 123.45,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["team_id"], team_id.to_string());
+        assert_eq!(parsed["period"], "30d");
+        assert_eq!(parsed["total_requests"], 1000);
+        assert_eq!(parsed["successful_requests"], 950);
+        assert_eq!(parsed["failed_requests"], 50);
+        assert_eq!(parsed["credits_used"], 5000);
+        assert_eq!(parsed["avg_response_time_ms"], 123.45);
+    }
+
+    #[test]
+    fn test_team_usage_response_zero_values() {
+        let response = TeamUsageResponse {
+            team_id: Uuid::new_v4(),
+            period: "7d".to_string(),
+            total_requests: 0,
+            successful_requests: 0,
+            failed_requests: 0,
+            credits_used: 0,
+            avg_response_time_ms: 0.0,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["total_requests"], 0);
+        assert_eq!(parsed["avg_response_time_ms"], 0.0);
+    }
+
+    #[test]
+    fn test_team_info_response_deserialization() {
+        let json = format!(
+            r#"{{"id":"{}","name":"Test","credits_balance":100,"total_tasks":10,"completed_tasks":8,"failed_tasks":2,"created_at":"2025-01-01T00:00:00Z"}}"#,
+            Uuid::new_v4()
+        );
+        let dto: TeamInfoResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(dto.name, "Test");
+        assert_eq!(dto.credits_balance, 100);
+    }
 }

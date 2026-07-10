@@ -227,14 +227,23 @@ mod tests {
 
     #[test]
     fn test_task_type_from_str_valid() {
-        assert_eq!(TaskType::from_str("scrape").expect("valid"), TaskType::Scrape);
+        assert_eq!(
+            TaskType::from_str("scrape").expect("valid"),
+            TaskType::Scrape
+        );
         assert_eq!(TaskType::from_str("crawl").expect("valid"), TaskType::Crawl);
-        assert_eq!(TaskType::from_str("extract").expect("valid"), TaskType::Extract);
+        assert_eq!(
+            TaskType::from_str("extract").expect("valid"),
+            TaskType::Extract
+        );
     }
 
     #[test]
     fn test_task_type_from_str_invalid_returns_err() {
-        assert!(TaskType::from_str("unknown").is_err(), "unknown type should error");
+        assert!(
+            TaskType::from_str("unknown").is_err(),
+            "unknown type should error"
+        );
         assert!(TaskType::from_str("").is_err(), "empty string should error");
         assert!(
             TaskType::from_str("SCRAPE").is_err(),
@@ -457,7 +466,11 @@ mod tests {
         let err: DomainError = anyhow::anyhow!("connection refused").into();
         match err {
             DomainError::NetworkError(msg) => {
-                assert!(msg.contains("connection"), "should contain keyword: {}", msg);
+                assert!(
+                    msg.contains("connection"),
+                    "should contain keyword: {}",
+                    msg
+                );
             }
             other => panic!("expected NetworkError, got {:?}", other),
         }
@@ -490,7 +503,11 @@ mod tests {
         let err: DomainError = anyhow::anyhow!("validation failed").into();
         match err {
             DomainError::ValidationError(msg) => {
-                assert!(msg.contains("validation"), "should contain keyword: {}", msg);
+                assert!(
+                    msg.contains("validation"),
+                    "should contain keyword: {}",
+                    msg
+                );
             }
             other => panic!("expected ValidationError, got {:?}", other),
         }
@@ -523,7 +540,11 @@ mod tests {
         let err: DomainError = anyhow::anyhow!("permission denied").into();
         match err {
             DomainError::PermissionDenied(msg) => {
-                assert!(msg.contains("permission"), "should contain keyword: {}", msg);
+                assert!(
+                    msg.contains("permission"),
+                    "should contain keyword: {}",
+                    msg
+                );
             }
             other => panic!("expected PermissionDenied, got {:?}", other),
         }

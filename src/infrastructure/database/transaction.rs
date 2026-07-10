@@ -27,12 +27,12 @@
 //! ```
 
 use dbnexus::{DbPool, Session};
+use log::{debug, error, info, warn};
 use parking_lot::RwLock;
 use sea_orm::DbErr;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
-use log::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Transaction error types

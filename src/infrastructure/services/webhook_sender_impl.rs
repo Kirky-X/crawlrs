@@ -12,12 +12,12 @@ use crate::domain::services::webhook_sender::WebhookSender;
 use crate::utils::http_client::create_http_client;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use log::{error, warn};
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use log::{error, warn};
 
 /// Webhook 发送超时时间（秒）
 const WEBHOOK_TIMEOUT_SECS: u64 = 10;

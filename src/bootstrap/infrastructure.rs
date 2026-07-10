@@ -18,9 +18,9 @@ use crate::infrastructure::repositories::{
     webhook_event_repo_impl::WebhookEventRepoImpl, webhook_repo_impl::WebhookRepoImpl,
 };
 use anyhow::Result;
+use log::info;
 use std::sync::Arc;
 use std::time::Duration;
-use log::info;
 
 /// All repository instances used by the application.
 #[derive(Clone)]

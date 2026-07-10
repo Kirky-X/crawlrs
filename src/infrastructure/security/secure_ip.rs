@@ -23,8 +23,8 @@
 //! 3. 支持单个 IP 和 CIDR 格式的可信代理配置
 
 use axum::extract::Request;
-use std::net::{IpAddr, SocketAddr};
 use log::{debug, warn};
+use std::net::{IpAddr, SocketAddr};
 
 /// 安全的客户端 IP 提取器
 ///

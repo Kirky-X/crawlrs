@@ -353,10 +353,7 @@ mod tests {
             Uuid::new_v4(),
             "https://example.com/webhook".to_string(),
         );
-        assert!(
-            webhook.validate_url().is_ok(),
-            "https URL should be valid"
-        );
+        assert!(webhook.validate_url().is_ok(), "https URL should be valid");
     }
 
     #[test]
@@ -366,10 +363,7 @@ mod tests {
             Uuid::new_v4(),
             "http://example.com/webhook".to_string(),
         );
-        assert!(
-            webhook.validate_url().is_ok(),
-            "http URL should be valid"
-        );
+        assert!(webhook.validate_url().is_ok(), "http URL should be valid");
     }
 
     #[test]
@@ -439,7 +433,11 @@ mod tests {
         assert_eq!(event.event_type, WebhookEventType::CrawlCompleted);
         assert_eq!(event.payload, payload);
         assert_eq!(event.webhook_url, url);
-        assert_eq!(event.status, WebhookStatus::Pending, "new event should be Pending");
+        assert_eq!(
+            event.status,
+            WebhookStatus::Pending,
+            "new event should be Pending"
+        );
         assert_eq!(event.attempt_count, 0, "new event should have 0 attempts");
         assert_eq!(event.max_retries, 5, "default max_retries should be 5");
         assert!(event.response_status.is_none());
@@ -555,7 +553,11 @@ mod tests {
         event.record_attempt(true, Some(200), None);
 
         assert_eq!(event.attempt_count, 1, "attempt_count should increment");
-        assert_eq!(event.status, WebhookStatus::Delivered, "status should be Delivered");
+        assert_eq!(
+            event.status,
+            WebhookStatus::Delivered,
+            "status should be Delivered"
+        );
         assert_eq!(event.response_status, Some(200));
         assert!(
             event.delivered_at.is_some(),
@@ -574,7 +576,11 @@ mod tests {
         event.record_attempt(false, Some(500), Some("server error".to_string()));
 
         assert_eq!(event.attempt_count, 1);
-        assert_eq!(event.status, WebhookStatus::Failed, "should be Failed not Dead");
+        assert_eq!(
+            event.status,
+            WebhookStatus::Failed,
+            "should be Failed not Dead"
+        );
         assert_eq!(event.response_status, Some(500));
         assert_eq!(event.error_message, Some("server error".to_string()));
         let next = event
@@ -596,7 +602,11 @@ mod tests {
         event.record_attempt(false, None, Some("boom".to_string()));
 
         assert_eq!(event.attempt_count, 5);
-        assert_eq!(event.status, WebhookStatus::Dead, "should be Dead when max reached");
+        assert_eq!(
+            event.status,
+            WebhookStatus::Dead,
+            "should be Dead when max reached"
+        );
         assert!(
             event.next_retry_at.is_none(),
             "next_retry_at should not be set when dead"
@@ -640,7 +650,11 @@ mod tests {
 
         event.mark_failed("network error".to_string());
 
-        assert_eq!(event.status, WebhookStatus::Failed, "should be Failed when retries remain");
+        assert_eq!(
+            event.status,
+            WebhookStatus::Failed,
+            "should be Failed when retries remain"
+        );
         assert_eq!(event.error_message, Some("network error".to_string()));
     }
 
@@ -652,7 +666,11 @@ mod tests {
 
         event.mark_failed("exhausted".to_string());
 
-        assert_eq!(event.status, WebhookStatus::Dead, "should be Dead at max retries");
+        assert_eq!(
+            event.status,
+            WebhookStatus::Dead,
+            "should be Dead at max retries"
+        );
         assert_eq!(event.error_message, Some("exhausted".to_string()));
     }
 
@@ -660,9 +678,15 @@ mod tests {
 
     #[test]
     fn test_webhook_event_type_display_all_variants() {
-        assert_eq!(WebhookEventType::CrawlCompleted.to_string(), "crawl.completed");
+        assert_eq!(
+            WebhookEventType::CrawlCompleted.to_string(),
+            "crawl.completed"
+        );
         assert_eq!(WebhookEventType::CrawlFailed.to_string(), "crawl.failed");
-        assert_eq!(WebhookEventType::ScrapeCompleted.to_string(), "scrape.completed");
+        assert_eq!(
+            WebhookEventType::ScrapeCompleted.to_string(),
+            "scrape.completed"
+        );
         assert_eq!(WebhookEventType::ScrapeFailed.to_string(), "scrape.failed");
         assert_eq!(
             WebhookEventType::Custom("custom.event".to_string()).to_string(),
@@ -693,7 +717,10 @@ mod tests {
     #[test]
     fn test_webhook_event_type_from_str_unknown_becomes_custom() {
         let result = WebhookEventType::from_str("my.custom.event").expect("custom variant");
-        assert_eq!(result, WebhookEventType::Custom("my.custom.event".to_string()));
+        assert_eq!(
+            result,
+            WebhookEventType::Custom("my.custom.event".to_string())
+        );
     }
 
     #[test]
@@ -707,8 +734,7 @@ mod tests {
         ];
         for v in variants {
             let json = serde_json::to_string(&v).expect("serialize");
-            let back: WebhookEventType =
-                serde_json::from_str(&json).expect("deserialize");
+            let back: WebhookEventType = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(v, back, "roundtrip should preserve variant: {}", json);
         }
     }
@@ -745,8 +771,7 @@ mod tests {
 
     #[test]
     fn test_webhook_status_from_str_invalid_returns_error() {
-        let err = WebhookStatus::from_str("unknown")
-            .expect_err("invalid status should error");
+        let err = WebhookStatus::from_str("unknown").expect_err("invalid status should error");
         assert!(
             err.contains("Invalid webhook status"),
             "error should describe invalid status: {}",

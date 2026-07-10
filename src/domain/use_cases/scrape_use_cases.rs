@@ -392,8 +392,7 @@ mod tests {
         let task_repo = Arc::new(MockTaskRepository::default());
         let result_repo = Arc::new(MockScrapeResultRepository::with_result(None));
         let credits = make_credits_service();
-        let _use_case =
-            AsyncScrapeUseCase::new(task_repo.clone(), result_repo, credits);
+        let _use_case = AsyncScrapeUseCase::new(task_repo.clone(), result_repo, credits);
         assert_eq!(task_repo.created_count.load(Ordering::SeqCst), 0);
     }
 
@@ -553,7 +552,10 @@ mod tests {
             task.payload["formats"],
             serde_json::json!(["html", "markdown"])
         );
-        assert_eq!(task.payload["webhook"], serde_json::json!("https://hook.example.com"));
+        assert_eq!(
+            task.payload["webhook"],
+            serde_json::json!("https://hook.example.com")
+        );
     }
 
     // ============ GetScrapeResultUseCase ============

@@ -6,7 +6,7 @@
 #[cfg(test)]
 mod tests {
     use crawlrs::engines::engine_client::EngineClient;
-    use crawlrs::search::client::baidu::{BaiduSearchEngine, BaiduSearchCategory};
+    use crawlrs::search::client::baidu::{BaiduSearchCategory, BaiduSearchEngine};
     use crawlrs::search::engine_trait::SearchEngine;
     use crawlrs::search::SearchRequest;
     use std::sync::Arc;
@@ -56,7 +56,9 @@ mod tests {
             }
         }"#;
 
-        let results = engine.parse_baidu_response(json_response).expect("Failed to parse Baidu response");
+        let results = engine
+            .parse_baidu_response(json_response)
+            .expect("Failed to parse Baidu response");
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "测试标题&lt;div&gt;");
@@ -70,15 +72,21 @@ mod tests {
 
         // 测试空响应
         let empty_response = r#"{"feed": {}}"#;
-        let results = engine.parse_baidu_response(empty_response).expect("Failed to parse baidu response");
+        let results = engine
+            .parse_baidu_response(empty_response)
+            .expect("Failed to parse baidu response");
         assert_eq!(results.len(), 0);
 
         let no_feed_response = r#"{}"#;
-        let results = engine.parse_baidu_response(no_feed_response).expect("Failed to parse baidu response");
+        let results = engine
+            .parse_baidu_response(no_feed_response)
+            .expect("Failed to parse baidu response");
         assert_eq!(results.len(), 0);
 
         let no_entry_response = r#"{"feed": {"entry": null}}"#;
-        let results = engine.parse_baidu_response(no_entry_response).expect("Failed to parse baidu response");
+        let results = engine
+            .parse_baidu_response(no_entry_response)
+            .expect("Failed to parse baidu response");
         assert_eq!(results.len(), 0);
     }
 
@@ -100,7 +108,9 @@ mod tests {
             }
         }"#;
 
-        let results = engine.parse_baidu_response(incomplete_response).expect("Failed to parse baidu response");
+        let results = engine
+            .parse_baidu_response(incomplete_response)
+            .expect("Failed to parse baidu response");
         assert_eq!(results.len(), 0); // 应该过滤掉不完整的条目
     }
 
@@ -132,7 +142,14 @@ mod tests {
         for (i, result) in results.iter().enumerate() {
             println!("结果 {}: {}", i + 1, result.title);
             println!("  URL: {}", result.url);
-            println!("  描述: {}", if result.description.is_empty() { "无描述" } else { &result.description });
+            println!(
+                "  描述: {}",
+                if result.description.is_empty() {
+                    "无描述"
+                } else {
+                    &result.description
+                }
+            );
             println!("  引擎: {:?}", result.engine);
             println!();
         }
@@ -141,17 +158,20 @@ mod tests {
         assert!(!results.is_empty(), "应该找到至少一个结果");
 
         // 检查是否包含相关关键词
-        let has_hongmeng = results.iter().any(|r|
-            r.title.contains("鸿蒙") ||
-            r.description.contains("鸿蒙") ||
-            r.title.contains("星光大赏") ||
-            r.description.contains("星光大赏")
-        );
+        let has_hongmeng = results.iter().any(|r| {
+            r.title.contains("鸿蒙")
+                || r.description.contains("鸿蒙")
+                || r.title.contains("星光大赏")
+                || r.description.contains("星光大赏")
+        });
 
         if has_hongmeng {
             println!("✓ 找到包含'鸿蒙'或'星光大赏'的相关结果");
         } else {
-            println!("! 未找到直接包含关键词的结果，但找到 {} 个搜索结果", results.len());
+            println!(
+                "! 未找到直接包含关键词的结果，但找到 {} 个搜索结果",
+                results.len()
+            );
         }
     }
 }

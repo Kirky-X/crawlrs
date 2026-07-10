@@ -471,10 +471,7 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(
-            &self,
-            _worker_id: Uuid,
-        ) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -508,10 +505,7 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(
-            &self,
-            _crawl_id: Uuid,
-        ) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -519,10 +513,7 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(
-            &self,
-            crawl_id: Uuid,
-        ) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
             if self.find_by_crawl_id_should_fail.load(Ordering::SeqCst) == 1 {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "find_by_crawl_id error"
@@ -648,8 +639,16 @@ mod tests {
             .await
             .expect("execute should succeed");
 
-        assert_eq!(crawl_repo.create_count(), 1, "crawl_repo.create should be called once");
-        assert_eq!(task_repo.create_count(), 1, "task_repo.create should be called once");
+        assert_eq!(
+            crawl_repo.create_count(),
+            1,
+            "crawl_repo.create should be called once"
+        );
+        assert_eq!(
+            task_repo.create_count(),
+            1,
+            "task_repo.create should be called once"
+        );
         // depth=2 -> 1 + 10 + 100 = 111
         assert_eq!(resp.estimated_pages, 111);
         assert_ne!(resp.crawl_id, Uuid::nil());
@@ -815,7 +814,10 @@ mod tests {
 
         assert_eq!(crawl_repo.create_count(), 1);
         assert_eq!(task_repo.create_count(), 1);
-        assert_eq!(resp.total_pages, 1, "sync crawl returns 1 root task as total_pages");
+        assert_eq!(
+            resp.total_pages, 1,
+            "sync crawl returns 1 root task as total_pages"
+        );
         assert_eq!(resp.completed_pages, 0);
         assert_eq!(resp.tasks.len(), 1, "response should contain the root task");
         assert_ne!(resp.crawl_id, Uuid::nil());
@@ -882,8 +884,16 @@ mod tests {
             .expect("execute should succeed");
 
         let task = &resp.tasks[0];
-        assert_eq!(task.task_type, TaskType::Crawl, "root task should be Crawl type");
-        assert_eq!(task.status, TaskStatus::Queued, "root task should start as Queued");
+        assert_eq!(
+            task.task_type,
+            TaskType::Crawl,
+            "root task should be Crawl type"
+        );
+        assert_eq!(
+            task.status,
+            TaskStatus::Queued,
+            "root task should start as Queued"
+        );
         assert_eq!(task.priority, 0, "root task priority should be 0");
         assert_eq!(task.max_retries, 3, "root task max_retries should be 3");
         assert_eq!(task.retry_count, 0);
@@ -895,8 +905,14 @@ mod tests {
         );
         assert_eq!(task.url, "https://example.com");
         // payload should contain crawl_id and config
-        assert!(task.payload.get("crawl_id").is_some(), "payload should contain crawl_id");
-        assert!(task.payload.get("config").is_some(), "payload should contain config");
+        assert!(
+            task.payload.get("crawl_id").is_some(),
+            "payload should contain crawl_id"
+        );
+        assert!(
+            task.payload.get("config").is_some(),
+            "payload should contain config"
+        );
     }
 
     // ============ GetCrawlStatusUseCase tests ============
@@ -932,10 +948,7 @@ mod tests {
 
         let use_case = GetCrawlStatusUseCase::new(crawl_repo, task_repo);
         let resp = use_case
-            .execute(GetCrawlStatusRequest {
-                team_id,
-                crawl_id,
-            })
+            .execute(GetCrawlStatusRequest { team_id, crawl_id })
             .await
             .expect("execute should succeed");
 
@@ -944,7 +957,10 @@ mod tests {
         assert_eq!(resp.total_tasks, 4);
         assert_eq!(resp.completed_tasks, 2);
         assert_eq!(resp.failed_tasks, 1);
-        assert_eq!(resp.pending_tasks, 1, "pending = total - completed - failed = 4-2-1 = 1");
+        assert_eq!(
+            resp.pending_tasks, 1,
+            "pending = total - completed - failed = 4-2-1 = 1"
+        );
         // progress = 2/4 * 100 = 50.0
         assert!(
             (resp.progress_percentage - 50.0).abs() < f64::EPSILON,
@@ -1025,10 +1041,7 @@ mod tests {
 
         let use_case = GetCrawlStatusUseCase::new(crawl_repo, task_repo);
         let resp = use_case
-            .execute(GetCrawlStatusRequest {
-                team_id,
-                crawl_id,
-            })
+            .execute(GetCrawlStatusRequest { team_id, crawl_id })
             .await
             .expect("execute should succeed");
 
@@ -1064,10 +1077,7 @@ mod tests {
 
         let use_case = GetCrawlStatusUseCase::new(crawl_repo, task_repo);
         let resp = use_case
-            .execute(GetCrawlStatusRequest {
-                team_id,
-                crawl_id,
-            })
+            .execute(GetCrawlStatusRequest { team_id, crawl_id })
             .await
             .expect("execute should succeed");
 
@@ -1126,10 +1136,7 @@ mod tests {
         let use_case = GetCrawlStatusUseCase::new(crawl_repo, task_repo);
 
         let result = use_case
-            .execute(GetCrawlStatusRequest {
-                team_id,
-                crawl_id,
-            })
+            .execute(GetCrawlStatusRequest { team_id, crawl_id })
             .await;
 
         let err = match result {
@@ -1147,7 +1154,11 @@ mod tests {
 
     #[test]
     fn test_calculate_estimated_pages_depth_0_returns_1() {
-        assert_eq!(calculate_estimated_pages(0), 1, "depth=0 should return 1 page");
+        assert_eq!(
+            calculate_estimated_pages(0),
+            1,
+            "depth=0 should return 1 page"
+        );
     }
 
     #[test]

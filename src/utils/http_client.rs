@@ -180,4 +180,65 @@ mod tests {
         let client = create_http_client_with_redirects(30, 5);
         let _ = client.clone();
     }
+
+    #[test]
+    fn test_default_constants_values() {
+        // Verify the default configuration constants are the expected values.
+        assert_eq!(DEFAULT_TIMEOUT, 30);
+        assert_eq!(DEFAULT_POOL_MAX_IDLE_PER_HOST, 10);
+        assert_eq!(DEFAULT_POOL_IDLE_TIMEOUT, 90);
+        assert_eq!(DEFAULT_MAX_REDIRECTS, 10);
+        assert!(!DEFAULT_USER_AGENT.is_empty());
+    }
+
+    #[test]
+    fn test_create_http_client_with_zero_timeout() {
+        // A zero timeout is a valid edge case; the client must still build.
+        let client = create_http_client_with_timeout(0);
+        let _ = client.clone();
+    }
+
+    #[test]
+    fn test_create_http_client_with_large_timeout() {
+        let client = create_http_client_with_timeout(86400);
+        let _ = client.clone();
+    }
+
+    #[test]
+    fn test_create_http_client_with_zero_redirects() {
+        // max_redirects=0 should still produce a working client.
+        let client = create_http_client_with_redirects(30, 0);
+        let _ = client.clone();
+    }
+
+    #[test]
+    fn test_create_http_client_with_max_redirects() {
+        let client = create_http_client_with_redirects(30, u8::MAX);
+        let _ = client.clone();
+    }
+
+    #[test]
+    fn test_create_ssrf_safe_redirect_policy_returns_policy() {
+        // The policy factory must return a usable Policy for various limits.
+        let _policy = create_ssrf_safe_redirect_policy(5);
+        let _policy_zero = create_ssrf_safe_redirect_policy(0);
+        let _policy_max = create_ssrf_safe_redirect_policy(u8::MAX);
+    }
+
+    #[test]
+    fn test_default_http_client_is_arc_wrapped() {
+        // create_http_client returns an Arc<Client>; verify it can be shared.
+        let client = create_http_client();
+        let client2 = client.clone();
+        // Both Arcs should point to the same underlying Client.
+        assert!(std::sync::Arc::ptr_eq(&client, &client2));
+    }
+
+    #[test]
+    fn test_no_redirect_client_follows_no_redirects() {
+        // The no-redirect client must report that it won't follow redirects.
+        // We verify this indirectly by ensuring the client builds with the
+        // none() redirect policy without panicking.
+        let _client = create_http_client_no_redirects();
+    }
 }

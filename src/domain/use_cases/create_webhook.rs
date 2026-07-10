@@ -108,7 +108,11 @@ mod tests {
             webhook.created_at >= before,
             "created_at should be set to now"
         );
-        assert_eq!(repo.created_count.load(Ordering::SeqCst), 1, "repo.create called once");
+        assert_eq!(
+            repo.created_count.load(Ordering::SeqCst),
+            1,
+            "repo.create called once"
+        );
     }
 
     #[tokio::test]
@@ -117,8 +121,14 @@ mod tests {
         let use_case = CreateWebhookUseCase::new(repo);
 
         let team_id = Uuid::new_v4();
-        let w1 = use_case.execute(team_id, "https://a.com".to_string()).await.unwrap();
-        let w2 = use_case.execute(team_id, "https://b.com".to_string()).await.unwrap();
+        let w1 = use_case
+            .execute(team_id, "https://a.com".to_string())
+            .await
+            .unwrap();
+        let w2 = use_case
+            .execute(team_id, "https://b.com".to_string())
+            .await
+            .unwrap();
 
         assert_ne!(w1.id, w2.id, "each webhook should get a unique id");
         assert_ne!(w1.url, w2.url);

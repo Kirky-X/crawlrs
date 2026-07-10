@@ -200,9 +200,7 @@ mod tests {
             .get_session("admin")
             .await
             .expect("Failed to get session");
-        let conn = session
-            .connection()
-            .expect("Failed to get connection");
+        let conn = session.connection().expect("Failed to get connection");
 
         let create_teams_sql = r#"
             CREATE TABLE IF NOT EXISTS teams (
@@ -249,7 +247,10 @@ mod tests {
 
     async fn create_team(db: &DbPool) -> Uuid {
         let team_id = Uuid::new_v4();
-        let session = db.get_session("admin").await.expect("Failed to get session");
+        let session = db
+            .get_session("admin")
+            .await
+            .expect("Failed to get session");
         let conn = session.connection().expect("Failed to get connection");
         let team = team::ActiveModel {
             id: Set(team_id),

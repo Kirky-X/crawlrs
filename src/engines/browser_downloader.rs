@@ -9,11 +9,11 @@
 //!
 //! 注意：当前版本使用系统浏览器检测，chromiumoxide_fetcher 的完整支持将在后续版本中添加。
 
+use log::info;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use log::info;
 
 /// 下载状态
 #[derive(Debug, Clone, PartialEq)]
@@ -264,4 +264,407 @@ pub async fn find_system_browser() -> Option<PathBuf> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    // === DownloadStatus tests ===
+
+    #[test]
+    fn test_download_status_not_downloaded() {
+        let status = DownloadStatus::NotDownloaded;
+        assert_eq!(status, DownloadStatus::NotDownloaded);
+        assert_ne!(status, DownloadStatus::Downloading);
+    }
+
+    #[test]
+    fn test_download_status_downloading() {
+        let status = DownloadStatus::Downloading;
+        assert_eq!(status, DownloadStatus::Downloading);
+        assert_ne!(status, DownloadStatus::Downloaded);
+    }
+
+    #[test]
+    fn test_download_status_downloaded() {
+        let status = DownloadStatus::Downloaded;
+        assert_eq!(status, DownloadStatus::Downloaded);
+        assert_ne!(status, DownloadStatus::NotDownloaded);
+    }
+
+    #[test]
+    fn test_download_status_failed_with_message() {
+        let status = DownloadStatus::Failed("network error".to_string());
+        match status {
+            DownloadStatus::Failed(msg) => assert_eq!(msg, "network error"),
+            other => panic!("Expected Failed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_download_status_clone() {
+        let status = DownloadStatus::Failed("error".to_string());
+        let cloned = status.clone();
+        assert_eq!(status, cloned);
+    }
+
+    #[test]
+    fn test_download_status_debug() {
+        let status = DownloadStatus::Downloaded;
+        let debug_str = format!("{:?}", status);
+        assert_eq!(debug_str, "Downloaded");
+    }
+
+    // === BrowserDownloadError tests ===
+
+    #[test]
+    fn test_browser_download_error_download_failed() {
+        let err = BrowserDownloadError::DownloadFailed("timeout".to_string());
+        assert_eq!(err.to_string(), "下载失败: timeout");
+    }
+
+    #[test]
+    fn test_browser_download_error_directory_creation_failed() {
+        let err = BrowserDownloadError::DirectoryCreationFailed("permission denied".to_string());
+        assert_eq!(err.to_string(), "浏览器目录创建失败: permission denied");
+    }
+
+    #[test]
+    fn test_browser_download_error_executable_not_found() {
+        let path = PathBuf::from("/usr/bin/chrome");
+        let err = BrowserDownloadError::ExecutableNotFound(path.clone());
+        assert_eq!(
+            err.to_string(),
+            format!("浏览器可执行文件不存在: {}", path.display())
+        );
+    }
+
+    #[test]
+    fn test_browser_download_error_permission_denied() {
+        let err = BrowserDownloadError::PermissionDenied("/root/.cache".to_string());
+        assert_eq!(err.to_string(), "权限被拒绝: /root/.cache");
+    }
+
+    // === BrowserDownloadConfig tests ===
+
+    #[test]
+    fn test_browser_download_config_default() {
+        let config = BrowserDownloadConfig::default();
+        assert_eq!(config.timeout_seconds, 300);
+        assert!(config.auto_download);
+        // download_dir should end with .cache/crawlrs/chromium
+        assert!(config.download_dir.ends_with("chromium"));
+    }
+
+    #[test]
+    fn test_browser_download_config_custom() {
+        let config = BrowserDownloadConfig {
+            download_dir: PathBuf::from("/tmp/custom-browser"),
+            timeout_seconds: 600,
+            auto_download: false,
+        };
+        assert_eq!(config.download_dir, PathBuf::from("/tmp/custom-browser"));
+        assert_eq!(config.timeout_seconds, 600);
+        assert!(!config.auto_download);
+    }
+
+    #[test]
+    fn test_browser_download_config_clone() {
+        let config = BrowserDownloadConfig {
+            download_dir: PathBuf::from("/tmp/test"),
+            timeout_seconds: 100,
+            auto_download: true,
+        };
+        let cloned = config.clone();
+        assert_eq!(config.download_dir, cloned.download_dir);
+        assert_eq!(config.timeout_seconds, cloned.timeout_seconds);
+        assert_eq!(config.auto_download, cloned.auto_download);
+    }
+
+    // === get_browser_executable_path tests ===
+
+    #[test]
+    fn test_get_browser_executable_path_returns_path_under_cache() {
+        let cache_dir = PathBuf::from("/tmp/some-cache");
+        let exe_path = get_browser_executable_path(&cache_dir);
+
+        // The path should start with the cache directory
+        assert!(exe_path.starts_with(&cache_dir));
+
+        // Platform-specific assertions
+        #[cfg(target_os = "linux")]
+        {
+            assert!(exe_path.ends_with("chrome"));
+            assert!(exe_path.to_string_lossy().contains("chrome-linux"));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert!(exe_path.ends_with("chrome.exe"));
+            assert!(exe_path.to_string_lossy().contains("chrome-win"));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert!(exe_path.ends_with("Chromium"));
+            assert!(exe_path.to_string_lossy().contains("chrome-mac"));
+        }
+    }
+
+    #[test]
+    fn test_get_browser_executable_path_with_empty_dir() {
+        let cache_dir = PathBuf::new();
+        let exe_path = get_browser_executable_path(&cache_dir);
+        // Should still produce a valid relative path
+        #[cfg(target_os = "linux")]
+        assert!(exe_path.ends_with("chrome"));
+    }
+
+    // === BrowserDownloadManager creation tests ===
+
+    #[test]
+    fn test_browser_download_manager_new() {
+        let config = BrowserDownloadConfig {
+            download_dir: PathBuf::from("/tmp/test-browser"),
+            timeout_seconds: 60,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+        // Verify the manager is created (get_cache_dir confirms config is stored)
+        assert_eq!(manager.get_cache_dir(), &PathBuf::from("/tmp/test-browser"));
+    }
+
+    #[test]
+    fn test_browser_download_manager_with_defaults() {
+        let manager = BrowserDownloadManager::with_defaults();
+        let cache_dir = manager.get_cache_dir();
+        assert!(cache_dir.ends_with("chromium"));
+    }
+
+    // === get_status tests ===
+
+    #[tokio::test]
+    async fn test_get_status_initial_not_downloaded() {
+        let manager = BrowserDownloadManager::with_defaults();
+        let status = manager.get_status().await;
+        assert_eq!(status, DownloadStatus::NotDownloaded);
+    }
+
+    #[tokio::test]
+    async fn test_get_status_initial_after_custom_config() {
+        let config = BrowserDownloadConfig {
+            download_dir: PathBuf::from("/nonexistent/path/test"),
+            timeout_seconds: 60,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+        let status = manager.get_status().await;
+        assert_eq!(status, DownloadStatus::NotDownloaded);
+    }
+
+    // === is_browser_downloaded tests ===
+
+    #[tokio::test]
+    async fn test_is_browser_downloaded_nonexistent_path() {
+        let config = BrowserDownloadConfig {
+            download_dir: PathBuf::from("/nonexistent/path/that/does/not/exist"),
+            timeout_seconds: 60,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+        assert!(!manager.is_browser_downloaded().await);
+    }
+
+    #[tokio::test]
+    async fn test_is_browser_downloaded_temp_empty_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 60,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+        // No executable in empty temp dir
+        assert!(!manager.is_browser_downloaded().await);
+    }
+
+    // === get_cache_dir tests ===
+
+    #[test]
+    fn test_get_cache_dir_custom() {
+        let custom_path = PathBuf::from("/custom/cache/dir");
+        let config = BrowserDownloadConfig {
+            download_dir: custom_path.clone(),
+            timeout_seconds: 60,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+        assert_eq!(manager.get_cache_dir(), &custom_path);
+    }
+
+    // === cleanup tests ===
+
+    #[tokio::test]
+    async fn test_cleanup_nonexistent_dir() {
+        let config = BrowserDownloadConfig {
+            download_dir: PathBuf::from("/nonexistent/path/for/cleanup/test"),
+            timeout_seconds: 60,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+        // cleanup on nonexistent dir should succeed (no-op)
+        let result = manager.cleanup().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_existing_temp_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 60,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        // Create a file inside the dir to verify it exists
+        let test_file = temp_dir.path().join("test_file.txt");
+        tokio::fs::write(&test_file, "test").await.unwrap();
+        assert!(test_file.exists());
+
+        // Cleanup should remove the directory
+        let result = manager.cleanup().await;
+        assert!(result.is_ok());
+        assert!(!temp_dir.path().exists());
+
+        // Status should be reset to NotDownloaded
+        let status = manager.get_status().await;
+        assert_eq!(status, DownloadStatus::NotDownloaded);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_then_status_is_not_downloaded() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 60,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        manager.cleanup().await.unwrap();
+        let status = manager.get_status().await;
+        assert_eq!(status, DownloadStatus::NotDownloaded);
+    }
+
+    // === find_system_browser tests ===
+
+    #[tokio::test]
+    async fn test_find_system_browser_returns_option() {
+        let result = find_system_browser().await;
+        // We can't assert specific result since it depends on the system
+        // Just verify it doesn't panic
+        let _ = result;
+    }
+
+    // === download_browser tests (using temp dir) ===
+
+    #[tokio::test]
+    async fn test_download_browser_no_system_browser_returns_error_or_path() {
+        // Use a temp directory that definitely doesn't have a browser
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 5,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        let result = manager.download_browser().await;
+
+        // The result depends on whether a system browser is found:
+        // - If system browser found: Ok(path)
+        // - If no system browser: Err (fetcher not available without browser-download feature)
+        match result {
+            Ok(path) => {
+                // System browser was found, path should exist
+                assert!(path.exists());
+                let status = manager.get_status().await;
+                assert_eq!(status, DownloadStatus::Downloaded);
+            }
+            Err(e) => {
+                // No system browser found, fetcher not available
+                let status = manager.get_status().await;
+                match status {
+                    DownloadStatus::Failed(msg) => {
+                        assert!(!msg.is_empty());
+                    }
+                    _ => panic!("Expected Failed status, got {:?}", status),
+                }
+                // Verify the error is DownloadFailed
+                assert!(matches!(e, BrowserDownloadError::DownloadFailed(_)));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_download_browser_sets_status_downloading() {
+        // This test verifies that after calling download_browser, status is not
+        // NotDownloaded (it should be Downloaded or Failed)
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 5,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        let _ = manager.download_browser().await;
+        let status = manager.get_status().await;
+        assert_ne!(status, DownloadStatus::NotDownloaded);
+        assert_ne!(status, DownloadStatus::Downloading);
+    }
+
+    // === get_or_download_browser tests ===
+
+    #[tokio::test]
+    async fn test_get_or_download_browser_calls_download() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 5,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        let result = manager.get_or_download_browser().await;
+        // Should behave same as download_browser
+        if let Ok(path) = result {
+            assert!(path.exists());
+        }
+    }
+
+    // === Manager clone tests ===
+
+    #[test]
+    fn test_browser_download_manager_clone() {
+        let config = BrowserDownloadConfig {
+            download_dir: PathBuf::from("/tmp/clone-test"),
+            timeout_seconds: 120,
+            auto_download: true,
+        };
+        let manager = BrowserDownloadManager::new(config);
+        let cloned = manager.clone();
+
+        // Both should point to the same cache dir
+        assert_eq!(manager.get_cache_dir(), cloned.get_cache_dir());
+    }
+
+    #[test]
+    fn test_browser_download_manager_debug() {
+        let manager = BrowserDownloadManager::with_defaults();
+        let debug_str = format!("{:?}", manager);
+        // Should contain "BrowserDownloadManager"
+        assert!(debug_str.contains("BrowserDownloadManager"));
+    }
 }

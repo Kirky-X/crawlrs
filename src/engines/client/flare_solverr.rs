@@ -17,11 +17,11 @@ use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use async_trait::async_trait;
+use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use log::{debug, error, info, warn};
 
 /// FlareSolverr configuration
 #[derive(Debug, Clone)]

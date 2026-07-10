@@ -220,3 +220,408 @@ impl ScraperEngine for ReqwestEngine {
         "reqwest"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engines::engine_client::{
+        HttpMethod, InternalScrapeRequest, InternalScreenshotConfig,
+    };
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    // === Helper functions ===
+
+    fn create_test_client() -> Arc<reqwest::Client> {
+        Arc::new(
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap(),
+        )
+    }
+
+    fn create_basic_request(url: &str) -> InternalScrapeRequest {
+        InternalScrapeRequest {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        }
+    }
+
+    fn create_request_with_js(url: &str) -> InternalScrapeRequest {
+        InternalScrapeRequest {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: true,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        }
+    }
+
+    fn create_request_with_screenshot(url: &str) -> InternalScrapeRequest {
+        InternalScrapeRequest {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: true,
+            screenshot_config: Some(InternalScreenshotConfig {
+                full_page: true,
+                selector: None,
+                quality: Some(80),
+                format: Some("jpeg".to_string()),
+            }),
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        }
+    }
+
+    // === ReqwestEngine creation tests ===
+
+    #[test]
+    fn test_reqwest_engine_new() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        assert_eq!(engine.name(), "reqwest");
+    }
+
+    #[test]
+    fn test_reqwest_engine_with_proxy() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::with_proxy(client, "http://proxy.example.com:8080");
+        assert_eq!(engine.name(), "reqwest");
+    }
+
+    #[test]
+    fn test_reqwest_engine_with_empty_proxy() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::with_proxy(client, "");
+        assert_eq!(engine.name(), "reqwest");
+    }
+
+    // === name() tests ===
+
+    #[test]
+    fn test_name_returns_reqwest() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        assert_eq!(engine.name(), "reqwest");
+    }
+
+    #[test]
+    fn test_name_returns_reqwest_with_proxy() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::with_proxy(client, "http://proxy:8080");
+        assert_eq!(engine.name(), "reqwest");
+    }
+
+    // === support_score tests ===
+
+    #[test]
+    fn test_support_score_basic_get_request() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("https://example.com");
+        // Basic GET without JS/screenshot should get 100
+        assert_eq!(engine.support_score(&request), 100);
+    }
+
+    #[test]
+    fn test_support_score_basic_post_request() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = InternalScrapeRequest {
+            url: "https://example.com".to_string(),
+            method: HttpMethod::Post,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: Some("data".to_string()),
+            sync_wait_ms: 0,
+        };
+        assert_eq!(engine.support_score(&request), 100);
+    }
+
+    #[test]
+    fn test_support_score_needs_js_returns_low() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_request_with_js("https://example.com");
+        // JS requests should get low score (10) since reqwest can't render JS
+        assert_eq!(engine.support_score(&request), 10);
+    }
+
+    #[test]
+    fn test_support_score_needs_screenshot_returns_low() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_request_with_screenshot("https://example.com");
+        // Screenshot requests should get low score (10)
+        assert_eq!(engine.support_score(&request), 10);
+    }
+
+    #[test]
+    fn test_support_score_needs_js_and_screenshot_returns_low() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = InternalScrapeRequest {
+            url: "https://example.com".to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: true,
+            needs_screenshot: true,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+        assert_eq!(engine.support_score(&request), 10);
+    }
+
+    #[test]
+    fn test_support_score_mobile_without_js() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = InternalScrapeRequest {
+            url: "https://example.com".to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: true,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+        // Mobile without JS should still get 100
+        assert_eq!(engine.support_score(&request), 100);
+    }
+
+    #[test]
+    fn test_support_score_with_proxy() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::with_proxy(client, "http://proxy:8080");
+        let request = create_basic_request("https://example.com");
+        // Proxy shouldn't affect support score
+        assert_eq!(engine.support_score(&request), 100);
+    }
+
+    // === scrape SSRF rejection tests ===
+
+    #[tokio::test]
+    async fn test_scrape_rejects_localhost() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("http://localhost");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::Other(msg) => {
+                assert!(msg.contains("SSRF protection"));
+            }
+            other => panic!("Expected Other with SSRF, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_scrape_rejects_127_0_0_1() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("http://127.0.0.1");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scrape_rejects_private_ip_192_168() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("http://192.168.1.1");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scrape_rejects_private_ip_10_0() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("http://10.0.0.1");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scrape_rejects_private_ip_172_16() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("http://172.16.0.1");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scrape_rejects_file_scheme() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("file:///etc/passwd");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scrape_rejects_ftp_scheme() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("ftp://example.com");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scrape_rejects_metadata_endpoint() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("http://169.254.169.254");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scrape_rejects_0000() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("http://0.0.0.0");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    // === scrape with various request configurations (SSRF rejection) ===
+
+    #[tokio::test]
+    async fn test_scrape_post_request_rejects_ssrf() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = InternalScrapeRequest {
+            url: "http://localhost".to_string(),
+            method: HttpMethod::Post,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: Some("data".to_string()),
+            sync_wait_ms: 0,
+        };
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scrape_mobile_request_rejects_ssrf() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = InternalScrapeRequest {
+            url: "http://localhost".to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: true,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    // === scrape with invalid URL format ===
+
+    #[tokio::test]
+    async fn test_scrape_invalid_url_format() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("not-a-valid-url");
+        let result = engine.scrape(&request).await;
+        // Should fail (either SSRF or request error)
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scrape_empty_url() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let request = create_basic_request("");
+        let result = engine.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    // === Default trait test for HttpMethod ===
+
+    #[test]
+    fn test_http_method_default_is_get() {
+        assert_eq!(HttpMethod::default(), HttpMethod::Get);
+    }
+}

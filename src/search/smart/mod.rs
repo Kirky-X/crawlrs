@@ -4,10 +4,10 @@
 // See LICENSE file in the project root for full license information.
 
 use async_trait::async_trait;
+use log::{error, info, warn};
 use rand::prelude::*;
 use scraper::{Html, Selector};
 use std::sync::Arc;
-use log::{error, info, warn};
 
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::services::rate_limiting_service::{
@@ -1288,5 +1288,1355 @@ mod tests {
 
         let engine = create_smart_search_engine(client, config);
         assert_eq!(engine.name(), "google");
+    }
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+mod tests_ext {
+    use super::*;
+    use crate::domain::services::rate_limiting_service::{
+        BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
+        QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
+        RateLimitingService,
+    };
+    use crate::engines::client::reqwest::ReqwestEngine;
+    use crate::engines::engine_client::ScraperEngine;
+    use crate::engines::router::EngineRouter;
+    use crate::search::engine_trait::SearchRequest;
+    use crate::utils::http_client::create_http_client;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use uuid::Uuid;
+
+    // === Mock RateLimitingService ===
+
+    enum MockBehavior {
+        Allowed,
+        Denied(String),
+        RetryAfter(u64),
+        RedisError,
+        OtherError,
+    }
+
+    struct MockRateLimitingService {
+        behavior: MockBehavior,
+    }
+
+    impl MockRateLimitingService {
+        fn with_behavior(behavior: MockBehavior) -> Arc<dyn RateLimitingService> {
+            Arc::new(Self { behavior })
+        }
+    }
+
+    #[async_trait]
+    impl RateLimitService for MockRateLimitingService {
+        async fn check_rate_limit(
+            &self,
+            _api_key: &str,
+            _endpoint: &str,
+        ) -> Result<RateLimitResult, RateLimitingError> {
+            match &self.behavior {
+                MockBehavior::Allowed => Ok(RateLimitResult::Allowed),
+                MockBehavior::Denied(reason) => Ok(RateLimitResult::Denied {
+                    reason: reason.clone(),
+                }),
+                MockBehavior::RetryAfter(secs) => Ok(RateLimitResult::RetryAfter {
+                    retry_after_seconds: *secs,
+                }),
+                MockBehavior::RedisError => Err(RateLimitingError::RedisError),
+                MockBehavior::OtherError => Err(RateLimitingError::ConfigurationError(
+                    "mock config error".to_string(),
+                )),
+            }
+        }
+
+        async fn get_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<RateLimitConfig, RateLimitingError> {
+            Ok(RateLimitConfig::default())
+        }
+
+        async fn update_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+            _config: RateLimitConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait]
+    impl ConcurrencyControlService for MockRateLimitingService {
+        async fn check_team_concurrency(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<ConcurrencyResult, RateLimitingError> {
+            Ok(ConcurrencyResult::Allowed)
+        }
+
+        async fn release_team_concurrency_slot(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn get_team_current_concurrency(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+
+        async fn get_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<ConcurrencyConfig, RateLimitingError> {
+            Ok(ConcurrencyConfig::default())
+        }
+
+        async fn update_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+            _config: ConcurrencyConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BacklogService for MockRateLimitingService {
+        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait]
+    impl QuotaService for MockRateLimitingService {
+        async fn check_and_deduct_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: crate::domain::models::CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+            Ok(1000)
+        }
+    }
+
+    #[async_trait]
+    impl RateLimitingService for MockRateLimitingService {}
+
+    // === Helpers ===
+
+    fn create_test_client() -> Arc<EngineClient> {
+        let reqwest_engine = Arc::new(ReqwestEngine::new(create_http_client()));
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![reqwest_engine];
+        let router = Arc::new(EngineRouter::new(engines));
+        Arc::new(EngineClient::with_router(router))
+    }
+
+    fn create_test_config() -> SmartSearchEngineConfig {
+        SmartSearchEngineConfig {
+            engine_type: SearchEngineType::Google,
+            rate_limiting_enabled: false,
+            rate_limiting_service: None,
+            timeout_seconds: 30,
+            test_data_enabled: false,
+            test_data_path: None,
+            max_retries: 1,
+            retry_delay_ms: 100,
+        }
+    }
+
+    fn create_engine_with_type(engine_type: SearchEngineType) -> SmartSearchEngine {
+        let client = create_test_client();
+        let mut config = create_test_config();
+        config.engine_type = engine_type;
+        SmartSearchEngine::new(client, config)
+    }
+
+    fn make_config_with_service(
+        engine_type: SearchEngineType,
+        service: Arc<dyn RateLimitingService>,
+    ) -> SmartSearchEngineConfig {
+        SmartSearchEngineConfig {
+            engine_type,
+            rate_limiting_enabled: true,
+            rate_limiting_service: Some(service),
+            timeout_seconds: 30,
+            test_data_enabled: false,
+            test_data_path: None,
+            max_retries: 1,
+            retry_delay_ms: 0,
+        }
+    }
+
+    // === safe_parse_selector ===
+
+    #[test]
+    fn test_safe_parse_selector_valid() {
+        let result = safe_parse_selector("div.g");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_safe_parse_selector_invalid() {
+        assert!(safe_parse_selector(":::invalid:::").is_none());
+    }
+
+    #[test]
+    fn test_safe_parse_selector_empty() {
+        assert!(safe_parse_selector("").is_none());
+    }
+
+    // === parse_selectors ===
+
+    #[test]
+    fn test_parse_selectors_first_valid() {
+        let result = parse_selectors("test", &["div.g", "div.fallback"], "result");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_selectors_fallback() {
+        let result = parse_selectors("test", &[":::invalid:::", "div.g"], "result");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_selectors_all_invalid() {
+        let result = parse_selectors("test", &[":::bad1:::", ":::bad2:::"], "result");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            SearchError::Parse(msg) => assert!(msg.contains("result") && msg.contains("test")),
+            _ => panic!("Expected SearchError::Parse"),
+        }
+    }
+
+    #[test]
+    fn test_parse_selectors_empty_list() {
+        let result = parse_selectors("test", &[], "result");
+        assert!(result.is_err());
+    }
+
+    // === parse_search_results_common ===
+
+    #[test]
+    fn test_parse_search_results_common_with_results() {
+        let html = r#"
+        <html><body>
+        <li class="b_algo">
+            <h2>Rust Programming Language</h2>
+            <a href="https://www.rust-lang.org">rust-lang.org</a>
+            <p>A language empowering everyone to build reliable software.</p>
+        </li>
+        </body></html>
+        "#;
+        let config = SearchResultParserConfig {
+            result_selectors: vec!["li.b_algo"],
+            title_selectors: vec!["h2"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["p"],
+            engine_name: "bing",
+            url_attr: None,
+        };
+        let results = parse_search_results_common(html, config).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Rust Programming Language");
+        assert_eq!(results[0].url, "https://www.rust-lang.org");
+        assert_eq!(results[0].engine, "bing");
+    }
+
+    #[test]
+    fn test_parse_search_results_common_empty_html() {
+        let config = SearchResultParserConfig {
+            result_selectors: vec!["li.b_algo"],
+            title_selectors: vec!["h2"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["p"],
+            engine_name: "bing",
+            url_attr: None,
+        };
+        let results = parse_search_results_common("", config).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_search_results_common_no_matching_elements() {
+        let html = "<html><body><p>No results here</p></body></html>";
+        let config = SearchResultParserConfig {
+            result_selectors: vec!["li.b_algo"],
+            title_selectors: vec!["h2"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["p"],
+            engine_name: "bing",
+            url_attr: None,
+        };
+        let results = parse_search_results_common(html, config).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_search_results_common_custom_url_attr() {
+        let html = r#"
+        <html><body>
+        <div class="item">
+            <span class="title">Test Title</span>
+            <a data-url="https://example.com">Link</a>
+            <div class="desc">Description</div>
+        </div>
+        </body></html>
+        "#;
+        let config = SearchResultParserConfig {
+            result_selectors: vec!["div.item"],
+            title_selectors: vec!["span.title"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["div.desc"],
+            engine_name: "test",
+            url_attr: Some("data-url"),
+        };
+        let results = parse_search_results_common(html, config).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com");
+    }
+
+    #[test]
+    fn test_parse_search_results_common_skips_empty_title_or_url() {
+        let html = r#"
+        <html><body>
+        <div class="item">
+            <span class="title">Has Title</span>
+            <a>No href attribute</a>
+            <div class="desc">Desc</div>
+        </div>
+        <div class="item">
+            <span class="title"></span>
+            <a href="https://example.com">Link</a>
+            <div class="desc">Desc</div>
+        </div>
+        </body></html>
+        "#;
+        let config = SearchResultParserConfig {
+            result_selectors: vec!["div.item"],
+            title_selectors: vec!["span.title"],
+            link_selectors: vec!["a"],
+            snippet_selectors: vec!["div.desc"],
+            engine_name: "test",
+            url_attr: None,
+        };
+        let results = parse_search_results_common(html, config).unwrap();
+        assert!(results.is_empty());
+    }
+
+    // === SmartSearchEngineConfig Debug ===
+
+    #[test]
+    fn test_config_debug_impl() {
+        let config = SmartSearchEngineConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("SmartSearchEngineConfig"));
+        assert!(debug_str.contains("engine_type"));
+        assert!(debug_str.contains("rate_limiting_enabled"));
+        assert!(debug_str.contains("timeout_seconds"));
+        assert!(debug_str.contains("test_data_enabled"));
+        assert!(debug_str.contains("max_retries"));
+        assert!(debug_str.contains("retry_delay_ms"));
+        // rate_limiting_service should be masked
+        assert!(debug_str.contains("Arc<dyn RateLimitingService>"));
+        assert!(!debug_str.contains("None") || debug_str.contains("rate_limiting_service"));
+    }
+
+    // === escape_html ===
+
+    #[test]
+    fn test_escape_html_plain_text() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        assert_eq!(engine.escape_html("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_escape_html_special_chars() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let escaped = engine.escape_html("<script>alert('xss')</script>");
+        assert!(!escaped.contains('<'));
+        assert!(!escaped.contains('>'));
+        assert!(escaped.contains("&lt;"));
+        assert!(escaped.contains("&gt;"));
+    }
+
+    #[test]
+    fn test_escape_html_ampersand() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let escaped = engine.escape_html("a & b");
+        assert!(escaped.contains("&amp;"));
+        assert!(!escaped.contains(" & "));
+    }
+
+    #[test]
+    fn test_escape_html_empty_string() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        assert_eq!(engine.escape_html(""), "");
+    }
+
+    // === build_search_url for Baidu and Sogou (Google/Bing covered in existing tests) ===
+
+    #[test]
+    fn test_build_search_url_baidu() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        let url = engine.build_search_url("测试查询", Some("zh"), Some("CN"));
+        assert!(url.contains("baidu.com"));
+        assert!(url.contains("wd="));
+        assert!(url.contains("cl=3"));
+    }
+
+    #[test]
+    fn test_build_search_url_sogou() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let url = engine.build_search_url("test query", Some("zh"), None);
+        assert!(url.contains("sogou.com"));
+        assert!(url.contains("query="));
+        assert!(url.contains("safp=d"));
+    }
+
+    // === build_google_search_url detailed ===
+
+    #[test]
+    fn test_build_google_url_with_dashed_lang() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let url = engine.build_google_search_url("rust", Some("en-US"), Some("US"));
+        assert!(url.contains("hl=en-US"));
+        assert!(url.contains("cr=countryUS"));
+    }
+
+    #[test]
+    fn test_build_google_url_lang_without_dash() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let url = engine.build_google_search_url("rust", Some("en"), Some("US"));
+        assert!(url.contains("hl=en-US"));
+    }
+
+    #[test]
+    fn test_build_google_url_no_lang_no_country() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let url = engine.build_google_search_url("rust", None, None);
+        assert!(url.contains("google.com/search"));
+        assert!(url.contains("q=rust"));
+        assert!(!url.contains("hl="));
+        assert!(!url.contains("cr="));
+    }
+
+    // === build_bing_search_url detailed ===
+
+    #[test]
+    fn test_build_bing_url_with_lang_and_country() {
+        let engine = create_engine_with_type(SearchEngineType::Bing);
+        let url = engine.build_bing_search_url("rust", Some("en"), Some("US"));
+        assert!(url.contains("bing.com/search"));
+        assert!(url.contains("setlang=en"));
+        assert!(url.contains("cc=US"));
+    }
+
+    #[test]
+    fn test_build_bing_url_no_lang_no_country() {
+        let engine = create_engine_with_type(SearchEngineType::Bing);
+        let url = engine.build_bing_search_url("rust", None, None);
+        assert!(url.contains("q=rust"));
+        assert!(!url.contains("setlang="));
+        assert!(!url.contains("cc="));
+    }
+
+    // === build_baidu_search_url detailed ===
+
+    #[test]
+    fn test_build_baidu_url_zh_lang() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        let url = engine.build_baidu_search_url("查询", Some("zh-CN"), None);
+        assert!(url.contains("baidu.com/s"));
+        assert!(url.contains("wd="));
+        assert!(url.contains("cl=3"));
+    }
+
+    #[test]
+    fn test_build_baidu_url_non_zh_lang() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        let url = engine.build_baidu_search_url("test", Some("en"), None);
+        assert!(url.contains("baidu.com/s"));
+        assert!(!url.contains("cl=3"));
+    }
+
+    #[test]
+    fn test_build_baidu_url_no_lang() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        let url = engine.build_baidu_search_url("test", None, None);
+        assert!(url.contains("wd=test"));
+        assert!(url.contains("ie=utf-8"));
+    }
+
+    // === build_sogou_search_url detailed ===
+
+    #[test]
+    fn test_build_sogou_url_zh_lang() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let url = engine.build_sogou_search_url("test", Some("zh"), None);
+        assert!(url.contains("sogou.com/web"));
+        assert!(url.contains("query=test"));
+        assert!(url.contains("safp=d"));
+    }
+
+    #[test]
+    fn test_build_sogou_url_no_lang() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let url = engine.build_sogou_search_url("test", None, None);
+        assert!(url.contains("query=test"));
+        assert!(!url.contains("safp="));
+    }
+
+    // === build_scrape_request ===
+
+    #[test]
+    fn test_build_scrape_request_needs_js() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let request = engine.build_scrape_request("https://example.com", true, false);
+        assert_eq!(request.url, "https://example.com");
+        assert!(request.options.needs_js);
+        assert!(!request.options.needs_tls_fingerprint);
+        assert!(request.options.use_fire_engine);
+        assert_eq!(request.options.sync_wait_ms, 10000);
+        // JS actions include scroll and wait
+        assert!(request.options.actions.len() > 1);
+    }
+
+    #[test]
+    fn test_build_scrape_request_no_js() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        let request = engine.build_scrape_request("https://example.com", false, false);
+        assert!(!request.options.needs_js);
+        assert!(!request.options.use_fire_engine);
+        assert_eq!(request.options.sync_wait_ms, 0);
+        // Non-JS still has a minimal wait action
+        assert_eq!(request.options.actions.len(), 1);
+    }
+
+    #[test]
+    fn test_build_scrape_request_headers_present() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let request = engine.build_scrape_request("https://example.com", true, false);
+        assert!(request.options.headers.contains_key("User-Agent"));
+        assert!(request.options.headers.contains_key("Accept"));
+        assert!(request.options.headers.contains_key("Accept-Language"));
+        assert!(request.options.headers.contains_key("sec-ch-ua"));
+        assert!(request.options.headers.contains_key("Referer"));
+    }
+
+    #[test]
+    fn test_build_scrape_request_engine_specific_referer() {
+        let google_engine = create_engine_with_type(SearchEngineType::Google);
+        let req = google_engine.build_scrape_request("https://example.com", false, false);
+        assert_eq!(
+            req.options.headers.get("Referer").unwrap(),
+            "https://www.google.com/"
+        );
+
+        let baidu_engine = create_engine_with_type(SearchEngineType::Baidu);
+        let req = baidu_engine.build_scrape_request("https://example.com", false, false);
+        assert_eq!(
+            req.options.headers.get("Referer").unwrap(),
+            "https://www.baidu.com/"
+        );
+        assert_eq!(
+            req.options.headers.get("Origin").unwrap(),
+            "https://www.baidu.com"
+        );
+
+        let bing_engine = create_engine_with_type(SearchEngineType::Bing);
+        let req = bing_engine.build_scrape_request("https://example.com", false, false);
+        assert_eq!(
+            req.options.headers.get("Referer").unwrap(),
+            "https://www.bing.com/"
+        );
+
+        let sogou_engine = create_engine_with_type(SearchEngineType::Sogou);
+        let req = sogou_engine.build_scrape_request("https://example.com", false, false);
+        assert_eq!(
+            req.options.headers.get("Referer").unwrap(),
+            "https://www.sogou.com/"
+        );
+    }
+
+    #[test]
+    fn test_build_scrape_request_timeout_from_config() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let request = engine.build_scrape_request("https://example.com", false, false);
+        assert_eq!(request.options.timeout, Duration::from_secs(30));
+    }
+
+    // === parse_search_results dispatch ===
+
+    #[test]
+    fn test_parse_search_results_dispatch_google() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let html = r#"<html><body><div class="g"><h3>Title</h3><a href="https://example.com">Link</a></div></body></html>"#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_search_results_dispatch_bing() {
+        let engine = create_engine_with_type(SearchEngineType::Bing);
+        let html = r#"<html><body><li class="b_algo"><h2>Title</h2><a href="https://example.com">Link</a><p>Desc</p></li></body></html>"#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_search_results_dispatch_baidu() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        let html = r#"<html><body><div class="c-container"><h3><a href="https://example.com">Title</a></h3><div class="c-abstract">Desc</div></div></body></html>"#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_search_results_dispatch_sogou() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = r#"<html><body><div class="vrwrap"><h3 class="vr-title"><a href="https://example.com">Title</a></h3><div class="text-layout"><p>Desc</p></div></div></body></html>"#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Title");
+    }
+
+    // === parse_google_results ===
+
+    #[test]
+    fn test_parse_google_results_with_html() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let html = r#"
+        <html><body>
+        <div class="g">
+            <h3>Rust Programming</h3>
+            <a href="https://www.rust-lang.org">rust-lang.org</a>
+        </div>
+        <div class="g">
+            <h3>Rust Docs</h3>
+            <a href="https://doc.rust-lang.org">doc.rust-lang.org</a>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_google_results(html).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Rust Programming");
+        assert_eq!(results[0].url, "https://www.rust-lang.org");
+    }
+
+    #[test]
+    fn test_parse_google_results_empty_html() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let results = engine.parse_google_results("").unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_google_results_no_matching() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let html = "<html><body><p>No results</p></body></html>";
+        let results = engine.parse_google_results(html).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_google_results_skips_google_links() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let html = r#"
+        <html><body>
+        <div class="g">
+            <h3>Google Link</h3>
+            <a href="https://google.com/search?q=test">google.com</a>
+        </div>
+        <div class="g">
+            <h3>External Link</h3>
+            <a href="https://example.com">example.com</a>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_google_results(html).unwrap();
+        // The first result has a google.com link which is skipped, but title exists
+        // The second result has a valid external link
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com");
+    }
+
+    // === parse_bing_results ===
+
+    #[test]
+    fn test_parse_bing_results_with_html() {
+        let engine = create_engine_with_type(SearchEngineType::Bing);
+        let html = r#"
+        <html><body>
+        <li class="b_algo">
+            <h2>Rust Language</h2>
+            <a href="https://www.rust-lang.org">Link</a>
+            <p>Empowering everyone to build reliable software.</p>
+        </li>
+        </body></html>
+        "#;
+        let results = engine.parse_bing_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Rust Language");
+        assert_eq!(results[0].engine, "bing");
+    }
+
+    #[test]
+    fn test_parse_bing_results_empty_html() {
+        let engine = create_engine_with_type(SearchEngineType::Bing);
+        let results = engine.parse_bing_results("").unwrap();
+        assert!(results.is_empty());
+    }
+
+    // === parse_baidu_results ===
+
+    #[test]
+    fn test_parse_baidu_results_with_html() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        let html = r#"
+        <html><body>
+        <div class="c-container">
+            <h3><a href="https://example.com">百度结果</a></h3>
+            <div class="c-abstract">这是描述</div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_baidu_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "百度结果");
+        assert_eq!(results[0].engine, "baidu");
+    }
+
+    #[test]
+    fn test_parse_baidu_results_empty_html() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        let results = engine.parse_baidu_results("").unwrap();
+        assert!(results.is_empty());
+    }
+
+    // === parse_sogou_results ===
+
+    #[test]
+    fn test_parse_sogou_results_with_html() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://example.com">搜狗结果</a></h3>
+            <div class="text-layout"><p>搜狗描述</p></div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_sogou_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "搜狗结果");
+        assert_eq!(results[0].url, "https://example.com");
+        assert_eq!(results[0].engine, "sogou");
+    }
+
+    #[test]
+    fn test_parse_sogou_results_captcha() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = "<html><body>请输入验证码 seccode verify</body></html>";
+        let result = engine.parse_sogou_results(html);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::Engine(msg) => assert!(msg.contains("CAPTCHA")),
+            _ => panic!("Expected SearchError::Engine with CAPTCHA"),
+        }
+    }
+
+    #[test]
+    fn test_parse_sogou_results_redirect_link() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="/link?url=abc123">Redirect Link</a></h3>
+            <div class="text-layout"><p>Desc</p></div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_sogou_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0]
+            .url
+            .starts_with("https://www.sogou.com/link?url="));
+    }
+
+    #[test]
+    fn test_parse_sogou_results_empty_html() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let results = engine.parse_sogou_results("").unwrap();
+        assert!(results.is_empty());
+    }
+
+    // === apply_scoring ===
+
+    #[test]
+    fn test_apply_scoring_empty_results() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let mut results: Vec<SearchResult> = vec![];
+        engine.apply_scoring(&mut results, "test");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_apply_scoring_assigns_scores() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let mut results = vec![
+            SearchResult::new(
+                "Rust Programming".to_string(),
+                "https://rust-lang.org".to_string(),
+                Some("Rust programming language".to_string()),
+                "google".to_string(),
+            ),
+            SearchResult::new(
+                "Other Result".to_string(),
+                "https://example.com".to_string(),
+                Some("Unrelated content".to_string()),
+                "google".to_string(),
+            ),
+        ];
+        engine.apply_scoring(&mut results, "rust programming");
+        // All results should have non-zero scores
+        for r in &results {
+            assert!(r.score >= 0.0);
+        }
+    }
+
+    #[test]
+    fn test_apply_scoring_sorts_by_score_descending() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let mut results = vec![
+            SearchResult::new(
+                "Unrelated".to_string(),
+                "https://example.com".to_string(),
+                Some("Completely different content".to_string()),
+                "google".to_string(),
+            ),
+            SearchResult::new(
+                "Rust Programming Language".to_string(),
+                "https://rust-lang.org".to_string(),
+                Some("Rust is a programming language".to_string()),
+                "google".to_string(),
+            ),
+        ];
+        engine.apply_scoring(&mut results, "rust programming");
+        // The result more relevant to "rust programming" should be first
+        assert!(results[0].score >= results[1].score);
+        assert!(results[0].title.contains("Rust"));
+    }
+
+    #[test]
+    fn test_apply_scoring_extracts_published_date() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let mut results = vec![SearchResult::new(
+            "Test".to_string(),
+            "https://example.com".to_string(),
+            Some("Published on 2024-01-15 this article".to_string()),
+            "google".to_string(),
+        )];
+        engine.apply_scoring(&mut results, "test");
+        // Date extraction may or may not find a date depending on the parser,
+        // but the function should not panic
+        assert_eq!(results.len(), 1);
+    }
+
+    // === engine_name and get_engine_name ===
+
+    #[test]
+    fn test_engine_name_all_types() {
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Google).engine_name(),
+            "Google"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Bing).engine_name(),
+            "Bing"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Baidu).engine_name(),
+            "Baidu"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Sogou).engine_name(),
+            "Sogou"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Auto).engine_name(),
+            "Auto"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Smart).engine_name(),
+            "Smart"
+        );
+    }
+
+    #[test]
+    fn test_get_engine_name_all_types() {
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Google).get_engine_name(),
+            "Google"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Bing).get_engine_name(),
+            "Bing"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Baidu).get_engine_name(),
+            "Baidu"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Sogou).get_engine_name(),
+            "Sogou"
+        );
+    }
+
+    // === should_retry ===
+
+    #[test]
+    fn test_should_retry_retryable_errors() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        assert!(engine.should_retry(&EngineError::RequestFailed("fail".to_string())));
+        assert!(engine.should_retry(&EngineError::Timeout(Duration::from_secs(10))));
+        assert!(engine.should_retry(&EngineError::BrowserError("browser crash".to_string())));
+    }
+
+    #[test]
+    fn test_should_retry_non_retryable_errors() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        assert!(!engine.should_retry(&EngineError::NoEnginesAvailable));
+        assert!(!engine.should_retry(&EngineError::InvalidUrl("bad".to_string())));
+        assert!(!engine.should_retry(&EngineError::SsrfProtection("blocked".to_string())));
+        assert!(!engine.should_retry(&EngineError::Internal("err".to_string())));
+        assert!(!engine.should_retry(&EngineError::AllEnginesFailed("all".to_string())));
+        assert!(!engine.should_retry(&EngineError::Expired));
+        assert!(!engine.should_retry(&EngineError::Other("other".to_string())));
+    }
+
+    // === handle_retry ===
+
+    #[tokio::test]
+    async fn test_handle_retry_with_delay() {
+        let mut config = create_test_config();
+        config.retry_delay_ms = 10;
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        // Should complete without panicking
+        engine.handle_retry().await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_retry_no_delay() {
+        let mut config = create_test_config();
+        config.retry_delay_ms = 0;
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        // Should complete immediately
+        engine.handle_retry().await;
+    }
+
+    // === check_rate_limit ===
+
+    #[tokio::test]
+    async fn test_check_rate_limit_disabled() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        assert!(engine.check_rate_limit().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_enabled_no_service() {
+        let mut config = create_test_config();
+        config.rate_limiting_enabled = true;
+        config.rate_limiting_service = None;
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        assert!(engine.check_rate_limit().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_allowed() {
+        let service = MockRateLimitingService::with_behavior(MockBehavior::Allowed);
+        let config = make_config_with_service(SearchEngineType::Google, service);
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        assert!(engine.check_rate_limit().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_denied() {
+        let service = MockRateLimitingService::with_behavior(MockBehavior::Denied(
+            "too many requests".to_string(),
+        ));
+        let config = make_config_with_service(SearchEngineType::Google, service);
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        let result = engine.check_rate_limit().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::Engine(msg) => assert!(msg.contains("Rate limit exceeded")),
+            _ => panic!("Expected SearchError::Engine"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_retry_after() {
+        let service = MockRateLimitingService::with_behavior(MockBehavior::RetryAfter(0));
+        let config = make_config_with_service(SearchEngineType::Google, service);
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        // With 0 seconds wait, should return Ok
+        assert!(engine.check_rate_limit().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_redis_error_degrades_gracefully() {
+        let service = MockRateLimitingService::with_behavior(MockBehavior::RedisError);
+        let config = make_config_with_service(SearchEngineType::Google, service);
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        // Redis errors should degrade gracefully to Ok
+        assert!(engine.check_rate_limit().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_other_error_degrades_gracefully() {
+        let service = MockRateLimitingService::with_behavior(MockBehavior::OtherError);
+        let config = make_config_with_service(SearchEngineType::Google, service);
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        // Other errors should also degrade gracefully
+        assert!(engine.check_rate_limit().await.is_ok());
+    }
+
+    // === load_test_data ===
+
+    #[test]
+    fn test_load_test_data_disabled() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        assert!(engine.load_test_data("query").is_none());
+    }
+
+    #[test]
+    fn test_load_test_data_enabled_no_path() {
+        let mut config = create_test_config();
+        config.test_data_enabled = true;
+        config.test_data_path = None;
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        assert!(engine.load_test_data("query").is_none());
+    }
+
+    #[test]
+    fn test_load_test_data_nonexistent_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config = create_test_config();
+        config.test_data_enabled = true;
+        config.test_data_path = Some(temp_dir.path().to_path_buf());
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        assert!(engine.load_test_data("nonexistent_query").is_none());
+    }
+
+    #[test]
+    fn test_load_test_data_matching_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let query = "rust";
+        let file_name = format!("test_data_{}.html", query);
+        let file_path = temp_dir.path().join(&file_name);
+        std::fs::write(&file_path, "<html>test content</html>").unwrap();
+
+        let mut config = create_test_config();
+        config.test_data_enabled = true;
+        config.test_data_path = Some(temp_dir.path().to_path_buf());
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        let data = engine.load_test_data(query);
+        assert!(data.is_some());
+        assert_eq!(data.unwrap(), "<html>test content</html>");
+    }
+
+    #[test]
+    fn test_load_test_data_generic_fallback() {
+        let temp_dir = TempDir::new().unwrap();
+        let generic_path = temp_dir.path().join("generic_search_results.html");
+        std::fs::write(&generic_path, "<html>generic content</html>").unwrap();
+
+        let mut config = create_test_config();
+        config.test_data_enabled = true;
+        config.test_data_path = Some(temp_dir.path().to_path_buf());
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        let data = engine.load_test_data("no_matching_file");
+        assert!(data.is_some());
+        assert_eq!(data.unwrap(), "<html>generic content</html>");
+    }
+
+    #[test]
+    fn test_load_test_data_query_with_spaces() {
+        let temp_dir = TempDir::new().unwrap();
+        let query = "rust programming";
+        let file_name = format!("test_data_{}.html", query.replace(" ", "_").to_lowercase());
+        let file_path = temp_dir.path().join(&file_name);
+        std::fs::write(&file_path, "<html>spaced content</html>").unwrap();
+
+        let mut config = create_test_config();
+        config.test_data_enabled = true;
+        config.test_data_path = Some(temp_dir.path().to_path_buf());
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+        let data = engine.load_test_data(query);
+        assert!(data.is_some());
+        assert_eq!(data.unwrap(), "<html>spaced content</html>");
+    }
+
+    // === save_html_for_debug ===
+
+    #[test]
+    fn test_save_html_for_debug_without_env_var() {
+        // Ensure env var is not set
+        std::env::remove_var("DEBUG_SAVE_HTML");
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        // Should do nothing without panicking
+        engine.save_html_for_debug("<html>test</html>", "test query");
+    }
+
+    // === SearchEngine trait impl ===
+
+    #[test]
+    fn test_search_engine_name_all_types() {
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Google).name(),
+            "google"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Bing).name(),
+            "bing"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Baidu).name(),
+            "baidu"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Sogou).name(),
+            "sogou"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Auto).name(),
+            "smart_search"
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Smart).name(),
+            "smart_search"
+        );
+    }
+
+    #[test]
+    fn test_search_engine_engine_type() {
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Google).engine_type(),
+            SearchEngineType::Google
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Bing).engine_type(),
+            SearchEngineType::Bing
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Baidu).engine_type(),
+            SearchEngineType::Baidu
+        );
+        assert_eq!(
+            create_engine_with_type(SearchEngineType::Sogou).engine_type(),
+            SearchEngineType::Sogou
+        );
+    }
+
+    #[test]
+    fn test_search_engine_health() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        assert_eq!(engine.health(), EngineHealth::Healthy);
+    }
+
+    // === Factory functions ===
+
+    #[test]
+    fn test_create_sogou_smart_search() {
+        let client = create_test_client();
+        let engine = create_sogou_smart_search(client);
+        assert_eq!(engine.name(), "sogou");
+        assert_eq!(engine.engine_type(), SearchEngineType::Sogou);
+    }
+
+    #[test]
+    fn test_all_factory_functions() {
+        let client = create_test_client();
+        let google = create_google_smart_search(client.clone());
+        assert_eq!(google.name(), "google");
+        assert_eq!(google.engine_type(), SearchEngineType::Google);
+
+        let bing = create_bing_smart_search(client.clone());
+        assert_eq!(bing.name(), "bing");
+        assert_eq!(bing.engine_type(), SearchEngineType::Bing);
+
+        let baidu = create_baidu_smart_search(client.clone());
+        assert_eq!(baidu.name(), "baidu");
+        assert_eq!(baidu.engine_type(), SearchEngineType::Baidu);
+
+        let sogou = create_sogou_smart_search(client);
+        assert_eq!(sogou.name(), "sogou");
+        assert_eq!(sogou.engine_type(), SearchEngineType::Sogou);
+    }
+
+    #[test]
+    fn test_factory_config_values() {
+        let client = create_test_client();
+
+        // Google factory uses timeout 90
+        let google = create_google_smart_search(client.clone());
+        // Bing factory uses timeout 90
+        let bing = create_bing_smart_search(client.clone());
+        // Baidu factory uses timeout 60
+        let baidu = create_baidu_smart_search(client.clone());
+        // Sogou factory uses timeout 60
+        let sogou = create_sogou_smart_search(client);
+
+        // All should be healthy
+        assert_eq!(google.health(), EngineHealth::Healthy);
+        assert_eq!(bing.health(), EngineHealth::Healthy);
+        assert_eq!(baidu.health(), EngineHealth::Healthy);
+        assert_eq!(sogou.health(), EngineHealth::Healthy);
+    }
+
+    // === search() with test data ===
+
+    #[tokio::test]
+    async fn test_search_with_test_data_google() {
+        let temp_dir = TempDir::new().unwrap();
+        let html = r#"
+        <html><body>
+        <div class="g">
+            <h3>Rust Programming Language</h3>
+            <a href="https://www.rust-lang.org">Link</a>
+        </div>
+        <div class="g">
+            <h3>Rust Documentation</h3>
+            <a href="https://doc.rust-lang.org">Docs</a>
+        </div>
+        </body></html>
+        "#;
+        let file_path = temp_dir.path().join("test_data_rust.html");
+        std::fs::write(&file_path, html).unwrap();
+
+        let mut config = create_test_config();
+        config.test_data_enabled = true;
+        config.test_data_path = Some(temp_dir.path().to_path_buf());
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+
+        let request = SearchRequest::new("rust");
+        let response = engine.search(&request).await.unwrap();
+        assert_eq!(response.engine, SearchEngineType::Google);
+        assert_eq!(response.items.len(), 2);
+        assert!(response.items.iter().any(|i| i.title.contains("Rust")));
+    }
+
+    #[tokio::test]
+    async fn test_search_with_test_data_truncates_to_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let html = r#"
+        <html><body>
+        <div class="g"><h3>Result 1</h3><a href="https://example1.com">1</a></div>
+        <div class="g"><h3>Result 2</h3><a href="https://example2.com">2</a></div>
+        <div class="g"><h3>Result 3</h3><a href="https://example3.com">3</a></div>
+        <div class="g"><h3>Result 4</h3><a href="https://example4.com">4</a></div>
+        <div class="g"><h3>Result 5</h3><a href="https://example5.com">5</a></div>
+        </body></html>
+        "#;
+        let file_path = temp_dir.path().join("generic_search_results.html");
+        std::fs::write(&file_path, html).unwrap();
+
+        let mut config = create_test_config();
+        config.test_data_enabled = true;
+        config.test_data_path = Some(temp_dir.path().to_path_buf());
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+
+        let mut request = SearchRequest::new("anything");
+        request.limit = 3;
+        let response = engine.search(&request).await.unwrap();
+        assert_eq!(response.items.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_search_with_test_data_bing() {
+        let temp_dir = TempDir::new().unwrap();
+        let html = r#"
+        <html><body>
+        <li class="b_algo">
+            <h2>Bing Result</h2>
+            <a href="https://example.com">Link</a>
+            <p>Description</p>
+        </li>
+        </body></html>
+        "#;
+        let file_path = temp_dir.path().join("test_data_test.html");
+        std::fs::write(&file_path, html).unwrap();
+
+        let mut config = create_test_config();
+        config.engine_type = SearchEngineType::Bing;
+        config.test_data_enabled = true;
+        config.test_data_path = Some(temp_dir.path().to_path_buf());
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+
+        let request = SearchRequest::new("test");
+        let response = engine.search(&request).await.unwrap();
+        assert_eq!(response.engine, SearchEngineType::Bing);
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].title, "Bing Result");
+    }
+
+    #[tokio::test]
+    async fn test_search_with_test_data_applies_scoring() {
+        let temp_dir = TempDir::new().unwrap();
+        let html = r#"
+        <html><body>
+        <div class="g">
+            <h3>Unrelated Topic</h3>
+            <a href="https://unrelated.com">Link</a>
+        </div>
+        <div class="g">
+            <h3>Rust Programming Guide</h3>
+            <a href="https://rust-lang.org">Link</a>
+        </div>
+        </body></html>
+        "#;
+        let file_path = temp_dir.path().join("test_data_rust.html");
+        std::fs::write(&file_path, html).unwrap();
+
+        let mut config = create_test_config();
+        config.test_data_enabled = true;
+        config.test_data_path = Some(temp_dir.path().to_path_buf());
+        let engine = SmartSearchEngine::new(create_test_client(), config);
+
+        let request = SearchRequest::new("rust");
+        let response = engine.search(&request).await.unwrap();
+        // Results should be sorted by relevance; "Rust Programming Guide" should be first
+        assert!(response.items[0].title.contains("Rust"));
+    }
+
+    // === parse_test_data ===
+
+    #[test]
+    fn test_parse_test_data_delegates_to_parse_search_results() {
+        let engine = create_engine_with_type(SearchEngineType::Bing);
+        let html = r#"<html><body><li class="b_algo"><h2>Title</h2><a href="https://example.com">L</a><p>Desc</p></li></body></html>"#;
+        let results = engine.parse_test_data(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Title");
     }
 }

@@ -17,11 +17,11 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
+use log::{error, info};
 use serde_json::json;
 use sha2::Sha256;
 use shaku::{Component, Interface};
 use std::sync::Arc;
-use log::{error, info};
 use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -519,7 +519,10 @@ mod tests {
         );
         let mut task = create_test_task();
         task.task_type = crate::domain::models::TaskType::Scrape;
-        assert_eq!(service.get_event_type(&task), WebhookEventType::ScrapeCompleted);
+        assert_eq!(
+            service.get_event_type(&task),
+            WebhookEventType::ScrapeCompleted
+        );
     }
 
     #[test]
@@ -531,7 +534,10 @@ mod tests {
         );
         let mut task = create_test_task();
         task.task_type = crate::domain::models::TaskType::Crawl;
-        assert_eq!(service.get_event_type(&task), WebhookEventType::CrawlCompleted);
+        assert_eq!(
+            service.get_event_type(&task),
+            WebhookEventType::CrawlCompleted
+        );
     }
 
     #[test]
@@ -680,7 +686,10 @@ mod tests {
         let result = service.send_webhook(&event).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("send failed"), "error should propagate sender msg");
+        assert!(
+            err.contains("send failed"),
+            "error should propagate sender msg"
+        );
     }
 
     #[tokio::test]
@@ -723,10 +732,18 @@ mod tests {
 
         service.send_webhook(&event).await.expect("send ok");
 
-        let captured = sender.captured.lock().unwrap().clone().expect("headers captured");
-        assert_eq!(captured.get("Content-Type").map(|s| s.as_str()), Some("application/json"));
-        assert!(captured.get("X-Crawlrs-Signature").is_some());
-        assert!(captured.get("X-Crawlrs-Timestamp").is_some());
+        let captured = sender
+            .captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("headers captured");
+        assert_eq!(
+            captured.get("Content-Type").map(|s| s.as_str()),
+            Some("application/json")
+        );
+        assert!(captured.contains_key("X-Crawlrs-Signature"));
+        assert!(captured.contains_key("X-Crawlrs-Timestamp"));
         assert_eq!(
             captured.get("X-Crawlrs-Event-ID").map(|s| s.as_str()),
             Some(event.id.to_string().as_str())
@@ -810,7 +827,9 @@ mod tests {
         let service = make_service(sender.clone(), repo.clone(), "secret");
 
         let task = create_test_task();
-        let result = service.trigger_failure(&task, "task failed".to_string()).await;
+        let result = service
+            .trigger_failure(&task, "task failed".to_string())
+            .await;
         assert!(result.is_ok());
         assert_eq!(sender.sent_count.load(Ordering::SeqCst), 1);
         assert_eq!(repo.created_count.load(Ordering::SeqCst), 1);
@@ -824,7 +843,9 @@ mod tests {
 
         let mut task = create_test_task();
         task.task_type = crate::domain::models::TaskType::Crawl;
-        let result = service.trigger_failure(&task, "crawl error".to_string()).await;
+        let result = service
+            .trigger_failure(&task, "crawl error".to_string())
+            .await;
         assert!(result.is_ok());
         assert_eq!(sender.sent_count.load(Ordering::SeqCst), 1);
     }
@@ -837,7 +858,9 @@ mod tests {
 
         let mut task = create_test_task();
         task.task_type = crate::domain::models::TaskType::Extract;
-        let result = service.trigger_failure(&task, "extract error".to_string()).await;
+        let result = service
+            .trigger_failure(&task, "extract error".to_string())
+            .await;
         assert!(result.is_ok());
         assert_eq!(sender.sent_count.load(Ordering::SeqCst), 1);
     }
@@ -920,7 +943,12 @@ mod tests {
             .await
             .expect("trigger should succeed");
 
-        let payload = sender.captured.lock().unwrap().clone().expect("payload captured");
+        let payload = sender
+            .captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("payload captured");
         assert_eq!(payload["status"], json!("failed"));
         assert_eq!(payload["error"], json!(err_msg));
         assert_eq!(payload["task_id"], json!(task.id));
@@ -966,7 +994,12 @@ mod tests {
         let task = create_test_task();
         service.trigger_completion(&task).await.expect("trigger ok");
 
-        let payload = sender.captured.lock().unwrap().clone().expect("payload captured");
+        let payload = sender
+            .captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("payload captured");
         assert_eq!(payload["status"], json!("completed"));
         // No error field for completion
         assert!(payload.get("error").is_none() || payload["error"].is_null());
@@ -1034,7 +1067,9 @@ mod tests {
         let payload = r#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp();
         let signature = generate_signature(secret, payload, timestamp);
-        assert!(verify_webhook_signature(secret, payload, timestamp, &signature));
+        assert!(verify_webhook_signature(
+            secret, payload, timestamp, &signature
+        ));
     }
 
     #[test]
@@ -1043,7 +1078,9 @@ mod tests {
         let payload = r#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp();
         // Wrong signature
-        assert!(!verify_webhook_signature(secret, payload, timestamp, "deadbeef"));
+        assert!(!verify_webhook_signature(
+            secret, payload, timestamp, "deadbeef"
+        ));
     }
 
     #[test]
@@ -1051,7 +1088,12 @@ mod tests {
         let payload = r#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp();
         let signature = generate_signature("real-secret", payload, timestamp);
-        assert!(!verify_webhook_signature("wrong-secret", payload, timestamp, &signature));
+        assert!(!verify_webhook_signature(
+            "wrong-secret",
+            payload,
+            timestamp,
+            &signature
+        ));
     }
 
     #[test]
@@ -1059,7 +1101,12 @@ mod tests {
         let secret = "mysecret";
         let timestamp = Utc::now().timestamp();
         let signature = generate_signature(secret, r#"{"a":1}"#, timestamp);
-        assert!(!verify_webhook_signature(secret, r#"{"a":2}"#, timestamp, &signature));
+        assert!(!verify_webhook_signature(
+            secret,
+            r#"{"a":2}"#,
+            timestamp,
+            &signature
+        ));
     }
 
     #[test]
@@ -1069,7 +1116,9 @@ mod tests {
         let timestamp = Utc::now().timestamp() - 86_400; // 1 day ago, outside window
         let signature = generate_signature(secret, payload, timestamp);
         // Even with correct signature, old timestamp should be rejected
-        assert!(!verify_webhook_signature(secret, payload, timestamp, &signature));
+        assert!(!verify_webhook_signature(
+            secret, payload, timestamp, &signature
+        ));
     }
 
     #[test]
@@ -1078,7 +1127,9 @@ mod tests {
         let payload = r#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp() + 86_400; // 1 day in future
         let signature = generate_signature(secret, payload, timestamp);
-        assert!(!verify_webhook_signature(secret, payload, timestamp, &signature));
+        assert!(!verify_webhook_signature(
+            secret, payload, timestamp, &signature
+        ));
     }
 
     #[test]
@@ -1088,7 +1139,9 @@ mod tests {
         let now = Utc::now().timestamp();
         let timestamp = now - MAX_TIMESTAMP_AGE; // exactly at boundary - should be valid (<=)
         let signature = generate_signature(secret, payload, timestamp);
-        assert!(verify_webhook_signature(secret, payload, timestamp, &signature));
+        assert!(verify_webhook_signature(
+            secret, payload, timestamp, &signature
+        ));
     }
 
     // ---- constant_time_eq ----

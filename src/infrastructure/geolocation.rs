@@ -14,10 +14,10 @@ use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use anyhow::Result;
+use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
-use log::{debug, error, warn};
 
 /// IP地理定位服务实现
 pub struct GeoLocationServiceImpl {
@@ -512,10 +512,8 @@ mod tests {
     #[test]
     fn test_geo_location_service_impl_with_endpoint_custom() {
         let client = Arc::new(reqwest::Client::new());
-        let svc = GeoLocationServiceImpl::with_endpoint(
-            "https://ip-api.com/json".to_string(),
-            client,
-        );
+        let svc =
+            GeoLocationServiceImpl::with_endpoint("https://ip-api.com/json".to_string(), client);
         assert_eq!(svc.api_endpoint, "https://ip-api.com/json");
     }
 

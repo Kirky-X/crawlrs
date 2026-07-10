@@ -183,3 +183,174 @@ pub async fn limiteron_rate_limit_middleware(
 /// Controls what happens when the rate limiting service encounters an error.
 /// Can be overridden via environment variable.
 const RATE_LIMIT_FAIL_OPEN: bool = true;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    fn build_request() -> Request {
+        Request::builder()
+            .uri("/test")
+            .body(Body::empty())
+            .expect("body should build")
+    }
+
+    fn build_request_with_forwarded(forwarded_for: Option<&str>, real_ip: Option<&str>) -> Request {
+        let mut builder = Request::builder().uri("/test");
+        if let Some(xff) = forwarded_for {
+            builder = builder.header("x-forwarded-for", xff);
+        }
+        if let Some(xri) = real_ip {
+            builder = builder.header("x-real-ip", xri);
+        }
+        builder.body(Body::empty()).expect("body should build")
+    }
+
+    fn socket_addr(ip: &str, port: u16) -> SocketAddr {
+        SocketAddr::new(
+            IpAddr::V4(ip.parse::<Ipv4Addr>().expect("valid ipv4")),
+            port,
+        )
+    }
+
+    #[test]
+    fn test_extract_client_ip_none_without_remote_addr() {
+        // No remote_addr and no ConnectInfo extension → cannot determine IP
+        let request = build_request();
+        assert_eq!(extract_client_ip(&request, None), None);
+    }
+
+    #[test]
+    fn test_extract_client_ip_uses_direct_public_ip() {
+        // A public (non-trusted) remote address should be used directly
+        let request = build_request();
+        let remote = socket_addr("8.8.8.8", 443);
+        assert_eq!(
+            extract_client_ip(&request, Some(remote)),
+            Some("8.8.8.8".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_client_ip_ignores_forwarded_from_untrusted() {
+        // Security: X-Forwarded-For must be ignored when the direct connection
+        // is NOT from a trusted proxy.
+        let request = build_request_with_forwarded(Some("203.0.113.5"), None);
+        let remote = socket_addr("8.8.8.8", 443);
+        assert_eq!(
+            extract_client_ip(&request, Some(remote)),
+            Some("8.8.8.8".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_client_ip_trusted_proxy_falls_back_to_direct() {
+        // 127.0.0.1 is a trusted proxy; with no forwarded headers it falls
+        // back to the direct IP.
+        let request = build_request();
+        let remote = socket_addr("127.0.0.1", 8080);
+        assert_eq!(
+            extract_client_ip(&request, Some(remote)),
+            Some("127.0.0.1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_client_ip_trusted_proxy_uses_x_forwarded_for() {
+        // From a trusted proxy, X-Forwarded-For should be honored.
+        let request = build_request_with_forwarded(Some("203.0.113.5"), None);
+        let remote = socket_addr("127.0.0.1", 8080);
+        assert_eq!(
+            extract_client_ip(&request, Some(remote)),
+            Some("203.0.113.5".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_client_ip_trusted_proxy_uses_x_real_ip() {
+        // From a trusted proxy, X-Real-IP should be honored as a fallback.
+        let request = build_request_with_forwarded(None, Some("203.0.113.9"));
+        let remote = socket_addr("127.0.0.1", 8080);
+        assert_eq!(
+            extract_client_ip(&request, Some(remote)),
+            Some("203.0.113.9".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_client_ip_x_forwarded_for_takes_first_ip() {
+        // X-Forwarded-For: client, proxy1, proxy2 → first IP (client) wins.
+        let request = build_request_with_forwarded(Some("203.0.113.5, 10.0.0.1, 10.0.0.2"), None);
+        let remote = socket_addr("127.0.0.1", 8080);
+        assert_eq!(
+            extract_client_ip(&request, Some(remote)),
+            Some("203.0.113.5".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_client_ip_trusted_proxy_10_x() {
+        // 10.x.x.x is a trusted proxy range by default.
+        let request = build_request_with_forwarded(Some("198.51.100.7"), None);
+        let remote = socket_addr("10.0.0.1", 8080);
+        assert_eq!(
+            extract_client_ip(&request, Some(remote)),
+            Some("198.51.100.7".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rate_limit_fail_open_constant() {
+        // The fail-open default must be true (availability over strictness).
+        assert!(RATE_LIMIT_FAIL_OPEN);
+    }
+
+    #[tokio::test]
+    async fn test_limiteron_middleware_state_clone_preserves_governor() {
+        // Clone must share the same Governor Arc.
+        use limiteron::config::{Action, ActionConfig, GlobalConfig, LimiterConfig, Matcher, Rule};
+
+        let storage: Arc<dyn limiteron::storage::Storage> =
+            Arc::new(limiteron::storage::MemoryStorage::new());
+        let ban_storage: Arc<dyn limiteron::storage::BanStorage> =
+            Arc::new(limiteron::storage::MemoryBanStorage::new());
+
+        let flow_config = limiteron::prelude::FlowControlConfig {
+            version: "0.1.0".to_string(),
+            global: GlobalConfig::default(),
+            rules: vec![Rule {
+                id: "test_clone_rule".to_string(),
+                name: "Test Clone Rule".to_string(),
+                priority: 100,
+                matchers: vec![Matcher::User {
+                    user_ids: vec!["*".to_string()],
+                }],
+                limiters: vec![LimiterConfig::TokenBucket {
+                    capacity: 10,
+                    refill_rate: 1,
+                }],
+                action: ActionConfig {
+                    on_exceed: Action::Reject,
+                    ban: None,
+                },
+            }],
+        };
+
+        let governor = Governor::builder()
+            .with_config(flow_config)
+            .with_storage(storage)
+            .with_ban_storage(ban_storage)
+            .with_l1_cache_enabled(false)
+            .build()
+            .await
+            .expect("governor should build");
+        let governor = Arc::new(governor);
+        let state = LimiteronMiddlewareState {
+            governor: governor.clone(),
+        };
+        let cloned = state.clone();
+        assert!(Arc::ptr_eq(&state.governor, &cloned.governor));
+    }
+}

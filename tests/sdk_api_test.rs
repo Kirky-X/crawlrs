@@ -101,11 +101,7 @@ impl CrawlRepository for MockCrawlRepository {
     async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn update_status(
-        &self,
-        _id: Uuid,
-        _status: CrawlStatus,
-    ) -> Result<(), RepositoryError> {
+    async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<(), RepositoryError> {
         Ok(())
     }
     async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
@@ -127,9 +123,13 @@ impl CrawlRepository for MockCrawlRepository {
 /// Build a TestServer with mock services injected via Extension layers.
 fn make_server() -> TestServer {
     let app = build_sdk_router()
-        .layer(Extension(Arc::new(MockSearchService) as Arc<dyn SearchServiceTrait>))
+        .layer(Extension(
+            Arc::new(MockSearchService) as Arc<dyn SearchServiceTrait>
+        ))
         .layer(Extension(Arc::new(MockTaskQueue) as Arc<dyn TaskQueue>))
-        .layer(Extension(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>));
+        .layer(Extension(
+            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
+        ));
     TestServer::new(app).expect("failed to build TestServer")
 }
 

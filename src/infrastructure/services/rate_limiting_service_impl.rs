@@ -8,10 +8,10 @@ use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use log::debug;
 #[cfg(feature = "rate-limiting")]
 use redis::AsyncCommands;
 use sha2::{Digest, Sha256};
-use log::debug;
 use uuid::Uuid;
 
 use crate::domain::repositories::{
@@ -626,7 +626,10 @@ impl RateLimitService for RateLimitingServiceImpl {
             }
         };
 
-        debug!("{:?} rpm={:?} rph={:?}", bucket_capacity, requests_per_minute, requests_per_hour);
+        debug!(
+            "{:?} rpm={:?} rph={:?}",
+            bucket_capacity, requests_per_minute, requests_per_hour
+        );
 
         // 使用优化的合并限流检查
         // 一次性检查每秒、每分钟、每小时的限流，减少网络往返次数

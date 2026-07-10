@@ -9,9 +9,9 @@
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
+use log::error;
 use regex::Regex;
 use serde::Serialize;
-use log::error;
 
 /// 应用程序错误类型
 ///
@@ -351,8 +351,12 @@ impl IntoResponse for AppError {
         let detailed_msg = self.detailed_message();
 
         // 记录详细错误到服务器日志
-        error!("Request error occurred error_code={:?} status_code={} error_details={}",
-            error_code, status.as_u16(), detailed_msg);
+        error!(
+            "Request error occurred error_code={:?} status_code={} error_details={}",
+            error_code,
+            status.as_u16(),
+            detailed_msg
+        );
 
         // 根据环境决定返回给客户端的错误信息
         let error_response = if should_show_detailed_errors() {
@@ -429,6 +433,7 @@ impl From<crate::engines::engine_client::EngineError> for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_support::ENV_MUTEX;
     use axum::http::StatusCode;
 
     #[test]
@@ -629,6 +634,7 @@ mod tests {
 
     #[test]
     fn test_should_show_detailed_errors_in_dev() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("CRAWLRS_ENV", "development");
         assert!(should_show_detailed_errors());
         std::env::remove_var("CRAWLRS_ENV");
@@ -636,6 +642,7 @@ mod tests {
 
     #[test]
     fn test_should_show_detailed_errors_in_local() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("APP_ENVIRONMENT", "local");
         assert!(should_show_detailed_errors());
         std::env::remove_var("APP_ENVIRONMENT");
@@ -643,6 +650,7 @@ mod tests {
 
     #[test]
     fn test_should_hide_detailed_errors_in_prod() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("CRAWLRS_ENV", "production");
         assert!(!should_show_detailed_errors());
         std::env::remove_var("CRAWLRS_ENV");
@@ -650,6 +658,7 @@ mod tests {
 
     #[test]
     fn test_should_hide_detailed_errors_by_default() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         // 默认应该是生产环境模式（安全优先）
         std::env::remove_var("CRAWLRS_ENV");
         std::env::remove_var("APP_ENVIRONMENT");

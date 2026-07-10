@@ -86,9 +86,9 @@ impl CreditsTransactionMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::time_utils::to_db_datetime;
     use chrono::Utc;
     use uuid::Uuid;
-    use crate::common::time_utils::to_db_datetime;
 
     #[test]
     fn test_credits_mapper_roundtrip() {
@@ -182,7 +182,10 @@ mod tests {
 
         let domains = CreditsTransactionMapper::to_domain_list(entities);
         assert_eq!(domains.len(), 2);
-        assert_eq!(domains[0].transaction_type, CreditsTransactionType::Subscription);
+        assert_eq!(
+            domains[0].transaction_type,
+            CreditsTransactionType::Subscription
+        );
         assert_eq!(domains[0].amount, 50);
         assert_eq!(domains[1].transaction_type, CreditsTransactionType::Scrape);
         assert_eq!(domains[1].amount, -10);
@@ -208,7 +211,10 @@ mod tests {
         };
 
         let domain = CreditsTransactionMapper::to_domain(entity);
-        assert_eq!(domain.transaction_type, CreditsTransactionType::ManualAdjustment);
+        assert_eq!(
+            domain.transaction_type,
+            CreditsTransactionType::ManualAdjustment
+        );
     }
 
     #[test]

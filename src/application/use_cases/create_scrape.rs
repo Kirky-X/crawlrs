@@ -341,12 +341,14 @@ mod tests {
                 timeout: None,
                 js_rendering: None,
                 screenshot: None,
-                screenshot_options: Some(crate::application::dto::scrape_request::ScreenshotOptionsDto {
-                    full_page: Some(true),
-                    selector: Some("#content".to_string()),
-                    quality: Some(80),
-                    format: Some("png".to_string()),
-                }),
+                screenshot_options: Some(
+                    crate::application::dto::scrape_request::ScreenshotOptionsDto {
+                        full_page: Some(true),
+                        selector: Some("#content".to_string()),
+                        quality: Some(80),
+                        format: Some("png".to_string()),
+                    },
+                ),
                 mobile: None,
                 proxy: None,
                 skip_tls_verification: None,
@@ -389,12 +391,14 @@ mod tests {
                 timeout: None,
                 js_rendering: None,
                 screenshot: None,
-                screenshot_options: Some(crate::application::dto::scrape_request::ScreenshotOptionsDto {
-                    full_page: None,
-                    selector: None,
-                    quality: None,
-                    format: None,
-                }),
+                screenshot_options: Some(
+                    crate::application::dto::scrape_request::ScreenshotOptionsDto {
+                        full_page: None,
+                        selector: None,
+                        quality: None,
+                        format: None,
+                    },
+                ),
                 mobile: None,
                 proxy: None,
                 skip_tls_verification: None,
@@ -472,19 +476,27 @@ mod tests {
         ));
         assert!(matches!(
             &actions[2],
-            PageAction::Scroll { direction: ScrollDirection::Up }
+            PageAction::Scroll {
+                direction: ScrollDirection::Up
+            }
         ));
         assert!(matches!(
             &actions[3],
-            PageAction::Scroll { direction: ScrollDirection::Down }
+            PageAction::Scroll {
+                direction: ScrollDirection::Down
+            }
         ));
         assert!(matches!(
             &actions[4],
-            PageAction::Scroll { direction: ScrollDirection::Top }
+            PageAction::Scroll {
+                direction: ScrollDirection::Top
+            }
         ));
         assert!(matches!(
             &actions[5],
-            PageAction::Scroll { direction: ScrollDirection::Bottom }
+            PageAction::Scroll {
+                direction: ScrollDirection::Bottom
+            }
         ));
         assert!(matches!(
             &actions[6],
@@ -503,7 +515,9 @@ mod tests {
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             &actions[0],
-            PageAction::Scroll { direction: ScrollDirection::Down }
+            PageAction::Scroll {
+                direction: ScrollDirection::Down
+            }
         ));
     }
 
@@ -511,12 +525,17 @@ mod tests {
     fn test_parse_actions_screenshot_is_filtered_out() {
         let use_case = CreateScrapeUseCase::new(make_engine_client());
         let dto_actions = vec![
-            ScrapeActionDto::Screenshot { full_page: Some(true) },
+            ScrapeActionDto::Screenshot {
+                full_page: Some(true),
+            },
             ScrapeActionDto::Screenshot { full_page: None },
         ];
 
         let actions = use_case.parse_actions(Some(dto_actions));
-        assert!(actions.is_empty(), "screenshot actions should be filtered out");
+        assert!(
+            actions.is_empty(),
+            "screenshot actions should be filtered out"
+        );
     }
 
     // ============ parse_headers ============
@@ -533,12 +552,16 @@ mod tests {
     #[test]
     fn test_parse_headers_object_with_string_values() {
         let use_case = CreateScrapeUseCase::new(make_engine_client());
-        let value = serde_json::json!({"Authorization": "Bearer token", "Accept": "application/json"});
+        let value =
+            serde_json::json!({"Authorization": "Bearer token", "Accept": "application/json"});
         let headers = use_case
             .parse_headers(Some(value))
             .expect("object headers should succeed");
         assert_eq!(headers.len(), 2);
-        assert_eq!(headers.get("Authorization").map(|v| v.as_str()), Some("Bearer token"));
+        assert_eq!(
+            headers.get("Authorization").map(|v| v.as_str()),
+            Some("Bearer token")
+        );
         assert_eq!(
             headers.get("Accept").map(|v| v.as_str()),
             Some("application/json")
@@ -670,7 +693,11 @@ mod tests {
         let err = map_engine_error(EngineError::Expired);
         match err {
             DomainError::EngineError(msg) => {
-                assert!(msg.contains("expired"), "should mention expired, got: {}", msg)
+                assert!(
+                    msg.contains("expired"),
+                    "should mention expired, got: {}",
+                    msg
+                )
             }
             e => panic!("expected EngineError, got: {:?}", e),
         }

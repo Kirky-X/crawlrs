@@ -410,4 +410,708 @@ mod tests {
         let diff = (now.timestamp() - parsed.timestamp()).abs();
         assert!(diff < 2);
     }
+
+    // ========== PaginationMeta tests ==========
+
+    #[test]
+    fn test_pagination_meta_new_with_zero_items() {
+        let meta = PaginationMeta::new(1, 10, 0);
+        assert_eq!(meta.page, 1);
+        assert_eq!(meta.per_page, 10);
+        assert_eq!(meta.total_items, 0);
+        assert_eq!(meta.total_pages, 0);
+        assert!(!meta.has_next);
+        assert!(!meta.has_previous);
+    }
+
+    #[test]
+    fn test_pagination_meta_new_exact_pages() {
+        // 100 items, 10 per page -> 10 pages
+        let meta = PaginationMeta::new(1, 10, 100);
+        assert_eq!(meta.total_pages, 10);
+        assert!(meta.has_next);
+        assert!(!meta.has_previous);
+    }
+
+    #[test]
+    fn test_pagination_meta_new_partial_last_page() {
+        // 95 items, 10 per page -> 10 pages (95/10 = 9.5, ceil = 10)
+        let meta = PaginationMeta::new(1, 10, 95);
+        assert_eq!(meta.total_pages, 10);
+    }
+
+    #[test]
+    fn test_pagination_meta_has_next_false_on_last_page() {
+        let meta = PaginationMeta::new(10, 10, 100);
+        assert_eq!(meta.total_pages, 10);
+        assert!(!meta.has_next);
+        assert!(meta.has_previous);
+    }
+
+    #[test]
+    fn test_pagination_meta_has_previous_false_on_first_page() {
+        let meta = PaginationMeta::new(1, 10, 100);
+        assert!(!meta.has_previous);
+    }
+
+    #[test]
+    fn test_pagination_meta_has_previous_true_on_page_two() {
+        let meta = PaginationMeta::new(2, 10, 100);
+        assert!(meta.has_previous);
+    }
+
+    #[test]
+    fn test_pagination_meta_offset_first_page() {
+        let meta = PaginationMeta::new(1, 10, 100);
+        assert_eq!(meta.offset(), 0);
+    }
+
+    #[test]
+    fn test_pagination_meta_offset_second_page() {
+        let meta = PaginationMeta::new(2, 10, 100);
+        assert_eq!(meta.offset(), 10);
+    }
+
+    #[test]
+    fn test_pagination_meta_offset_third_page() {
+        let meta = PaginationMeta::new(3, 20, 100);
+        assert_eq!(meta.offset(), 40);
+    }
+
+    #[test]
+    fn test_pagination_meta_limit_equals_per_page() {
+        let meta = PaginationMeta::new(1, 25, 100);
+        assert_eq!(meta.limit(), 25);
+    }
+
+    #[test]
+    fn test_pagination_meta_div_ceil_one_item_one_per_page() {
+        let meta = PaginationMeta::new(1, 1, 1);
+        assert_eq!(meta.total_pages, 1);
+        assert!(!meta.has_next);
+    }
+
+    // ========== IntoResponse status code mapping ==========
+
+    #[tokio::test]
+    async fn test_into_response_success_returns_200() {
+        let response = ApiResponse::success("data");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_validation_error_returns_400() {
+        let response: ApiResponse<()> = ApiResponse::error("VALIDATION_ERROR", "bad input");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_not_found_returns_404() {
+        let response: ApiResponse<()> = ApiResponse::error("NOT_FOUND", "missing");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_unauthorized_returns_401() {
+        let response: ApiResponse<()> = ApiResponse::error("UNAUTHORIZED", "no auth");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_forbidden_returns_403() {
+        let response: ApiResponse<()> = ApiResponse::error("FORBIDDEN", "denied");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_rate_limited_returns_429() {
+        let response: ApiResponse<()> = ApiResponse::error("RATE_LIMITED", "slow down");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_conflict_returns_409() {
+        let response: ApiResponse<()> = ApiResponse::error("CONFLICT", "dup");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_precondition_failed_returns_412() {
+        let response: ApiResponse<()> = ApiResponse::error("PRECONDITION_FAILED", "precond");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::PRECONDITION_FAILED);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_unprocessable_entity_returns_422() {
+        let response: ApiResponse<()> = ApiResponse::error("UNPROCESSABLE_ENTITY", "unprocessable");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_unknown_code_returns_500() {
+        let response: ApiResponse<()> = ApiResponse::error("UNKNOWN_CODE", "oops");
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_into_response_error_no_error_field_returns_500() {
+        // Manually construct a response with success=false but no error
+        let response: ApiResponse<()> = ApiResponse {
+            success: false,
+            data: None,
+            error: None,
+            meta: None,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        };
+        let http_response = response.into_response();
+        assert_eq!(http_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // ========== JSON serialization structure ==========
+
+    #[tokio::test]
+    async fn test_success_response_json_structure() {
+        let response = ApiResponse::success("hello");
+        let http_response = response.into_response();
+        let bytes = axum::body::to_bytes(http_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], serde_json::Value::Bool(true));
+        assert_eq!(json["data"], serde_json::Value::String("hello".to_string()));
+        assert!(json.get("error").is_none() || json["error"].is_null());
+        assert!(json.get("meta").is_none() || json["meta"].is_null());
+        assert!(json["timestamp"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_error_response_json_structure() {
+        let response: ApiResponse<()> = ApiResponse::error("NOT_FOUND", "not here");
+        let http_response = response.into_response();
+        let bytes = axum::body::to_bytes(http_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], serde_json::Value::Bool(false));
+        assert!(json.get("data").is_none() || json["data"].is_null());
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["error"]["message"], "not here");
+    }
+
+    #[tokio::test]
+    async fn test_success_with_meta_json_includes_meta() {
+        let meta = PaginationMeta::new(2, 10, 55);
+        let response = ApiResponse::success_with_meta(vec!["a", "b"], meta);
+        let http_response = response.into_response();
+        let bytes = axum::body::to_bytes(http_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["meta"]["page"], 2);
+        assert_eq!(json["meta"]["per_page"], 10);
+        assert_eq!(json["meta"]["total_items"], 55);
+        assert_eq!(json["meta"]["total_pages"], 6);
+        assert_eq!(json["meta"]["has_next"], true);
+        assert_eq!(json["meta"]["has_previous"], true);
+    }
+
+    // ========== error_response function ==========
+
+    #[tokio::test]
+    async fn test_error_response_bad_request() {
+        let response = error_response(StatusCode::BAD_REQUEST, "bad data");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], false);
+        assert_eq!(json["error"]["code"], "VALIDATION_ERROR");
+        assert_eq!(json["error"]["message"], "bad data");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_not_found() {
+        let response = error_response(StatusCode::NOT_FOUND, "missing");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_unauthorized() {
+        let response = error_response(StatusCode::UNAUTHORIZED, "no token");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_forbidden() {
+        let response = error_response(StatusCode::FORBIDDEN, "denied");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_too_many_requests() {
+        let response = error_response(StatusCode::TOO_MANY_REQUESTS, "slow");
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "RATE_LIMITED");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_conflict() {
+        let response = error_response(StatusCode::CONFLICT, "dup");
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "CONFLICT");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_precondition_failed() {
+        let response = error_response(StatusCode::PRECONDITION_FAILED, "precond");
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "PRECONDITION_FAILED");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_unprocessable_entity() {
+        let response = error_response(StatusCode::UNPROCESSABLE_ENTITY, "unprocessable");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "UNPROCESSABLE_ENTITY");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_service_unavailable() {
+        let response = error_response(StatusCode::SERVICE_UNAVAILABLE, "down");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "SERVICE_UNAVAILABLE");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_payment_required() {
+        let response = error_response(StatusCode::PAYMENT_REQUIRED, "pay up");
+        assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "QUOTA_EXCEEDED");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_internal_error_default() {
+        let response = error_response(StatusCode::INTERNAL_SERVER_ERROR, "boom");
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "INTERNAL_ERROR");
+    }
+
+    // ========== error_response_with_code function ==========
+
+    #[tokio::test]
+    async fn test_error_response_with_code_custom() {
+        let response =
+            error_response_with_code(StatusCode::BAD_REQUEST, "CUSTOM_CODE", "custom msg");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "CUSTOM_CODE");
+        assert_eq!(json["error"]["message"], "custom msg");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_with_code_preserves_status() {
+        let response =
+            error_response_with_code(StatusCode::NOT_FOUND, "CUSTOM_404", "not found custom");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ========== success_response function ==========
+
+    #[tokio::test]
+    async fn test_success_response_with_data() {
+        let response = success_response(StatusCode::OK, vec!["a", "b"]);
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], true);
+        assert_eq!(json["data"], serde_json::json!(["a", "b"]));
+    }
+
+    #[tokio::test]
+    async fn test_success_response_with_created_status() {
+        let response = success_response(StatusCode::CREATED, "created");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["data"], "created");
+    }
+
+    // ========== success_response_with_meta function ==========
+
+    #[tokio::test]
+    async fn test_success_response_with_meta_includes_pagination() {
+        let meta = PaginationMeta::new(1, 5, 12);
+        let response = success_response_with_meta(StatusCode::OK, vec![1, 2, 3, 4, 5], meta);
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["meta"]["total_pages"], 3);
+        assert_eq!(json["meta"]["has_next"], true);
+        assert_eq!(json["data"], serde_json::json!([1, 2, 3, 4, 5]));
+    }
+
+    // ========== errors module ==========
+
+    #[tokio::test]
+    async fn test_errors_internal_server_error() {
+        let response = errors::internal_server_error("internal");
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "INTERNAL_ERROR");
+        assert_eq!(json["error"]["message"], "internal");
+    }
+
+    #[tokio::test]
+    async fn test_errors_bad_request() {
+        let response = errors::bad_request("bad");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "VALIDATION_ERROR");
+    }
+
+    #[tokio::test]
+    async fn test_errors_not_found() {
+        let response = errors::not_found("absent");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["error"]["message"], "absent");
+    }
+
+    #[tokio::test]
+    async fn test_errors_forbidden() {
+        let response = errors::forbidden("no access");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn test_errors_unauthorized() {
+        let response = errors::unauthorized("no auth");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn test_errors_too_many_requests() {
+        let response = errors::too_many_requests("slow down");
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "RATE_LIMITED");
+    }
+
+    #[tokio::test]
+    async fn test_errors_too_many_requests_with_retry() {
+        let response = errors::too_many_requests_with_retry("rate limited", 60);
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], false);
+        assert_eq!(json["error"]["code"], "RATE_LIMITED");
+        assert_eq!(json["error"]["message"], "rate limited");
+        assert_eq!(json["retry_after_seconds"], 60);
+        assert!(json["timestamp"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_errors_unprocessable_entity() {
+        let response = errors::unprocessable_entity("cannot process");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "UNPROCESSABLE_ENTITY");
+    }
+
+    #[tokio::test]
+    async fn test_errors_payment_required() {
+        let response = errors::payment_required("pay up");
+        assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "QUOTA_EXCEEDED");
+    }
+
+    // ========== validation_error & resource_not_found & access_denied ==========
+
+    #[tokio::test]
+    async fn test_validation_error_prepends_prefix() {
+        let response = validation_error("field required");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "VALIDATION_ERROR");
+        assert_eq!(json["error"]["message"], "Validation error: field required");
+    }
+
+    #[tokio::test]
+    async fn test_resource_not_found_appends_suffix() {
+        let response = resource_not_found("Task");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["error"]["message"], "Task not found");
+    }
+
+    #[tokio::test]
+    async fn test_access_denied_returns_forbidden() {
+        let response = access_denied();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"]["code"], "FORBIDDEN");
+        assert_eq!(json["error"]["message"], "Access denied");
+    }
+
+    // ========== RateLimitErrorResponse ==========
+
+    #[test]
+    fn test_rate_limit_error_response_fields() {
+        let resp = RateLimitErrorResponse::new("too many", 30);
+        assert!(!resp.success);
+        assert_eq!(resp.error.code, "RATE_LIMITED");
+        assert_eq!(resp.error.message, "too many");
+        assert_eq!(resp.retry_after_seconds, 30);
+        assert!(resp.timestamp.is_some());
+    }
+
+    #[test]
+    fn test_rate_limit_error_response_timestamp_is_rfc3339() {
+        let resp = RateLimitErrorResponse::new("slow", 10);
+        let ts = resp.timestamp.unwrap();
+        assert!(ChronoDateTime::parse_from_rfc3339(&ts).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_error_response_serialization() {
+        let resp = RateLimitErrorResponse::new("limited", 120);
+        let json_str = serde_json::to_string(&resp).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(json["success"], false);
+        assert_eq!(json["error"]["code"], "RATE_LIMITED");
+        assert_eq!(json["retry_after_seconds"], 120);
+    }
+
+    // ========== ApiError struct ==========
+
+    #[test]
+    fn test_api_error_serialization() {
+        let err = ApiError {
+            code: "TEST_CODE".to_string(),
+            message: "test message".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("TEST_CODE"));
+        assert!(json.contains("test message"));
+    }
+
+    #[test]
+    fn test_api_error_deserialization() {
+        let json = r#"{"code":"ERR","message":"msg"}"#;
+        let err: ApiError = serde_json::from_str(json).unwrap();
+        assert_eq!(err.code, "ERR");
+        assert_eq!(err.message, "msg");
+    }
+
+    // ========== error_codes module constants ==========
+
+    #[test]
+    fn test_error_codes_validation_error() {
+        assert_eq!(error_codes::VALIDATION_ERROR, "VALIDATION_ERROR");
+    }
+
+    #[test]
+    fn test_error_codes_not_found() {
+        assert_eq!(error_codes::NOT_FOUND, "NOT_FOUND");
+    }
+
+    #[test]
+    fn test_error_codes_unauthorized() {
+        assert_eq!(error_codes::UNAUTHORIZED, "UNAUTHORIZED");
+    }
+
+    #[test]
+    fn test_error_codes_forbidden() {
+        assert_eq!(error_codes::FORBIDDEN, "FORBIDDEN");
+    }
+
+    #[test]
+    fn test_error_codes_rate_limited() {
+        assert_eq!(error_codes::RATE_LIMITED, "RATE_LIMITED");
+    }
+
+    #[test]
+    fn test_error_codes_conflict() {
+        assert_eq!(error_codes::CONFLICT, "CONFLICT");
+    }
+
+    #[test]
+    fn test_error_codes_internal_error() {
+        assert_eq!(error_codes::INTERNAL_ERROR, "INTERNAL_ERROR");
+    }
+
+    #[test]
+    fn test_error_codes_service_unavailable() {
+        assert_eq!(error_codes::SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE");
+    }
+
+    #[test]
+    fn test_error_codes_quota_exceeded() {
+        assert_eq!(error_codes::QUOTA_EXCEEDED, "QUOTA_EXCEEDED");
+    }
+
+    #[test]
+    fn test_error_codes_database_error() {
+        assert_eq!(error_codes::DATABASE_ERROR, "DATABASE_ERROR");
+    }
+
+    #[test]
+    fn test_error_codes_feature_disabled() {
+        assert_eq!(error_codes::FEATURE_DISABLED, "FEATURE_DISABLED");
+    }
+
+    // ========== ApiResponse skip_serializing_if ==========
+
+    #[test]
+    fn test_api_response_error_field_skipped_when_none() {
+        let response = ApiResponse::success("data");
+        let json = serde_json::to_string(&response).unwrap();
+        // error field should be skipped because it's None
+        assert!(!json.contains("\"error\""));
+    }
+
+    #[test]
+    fn test_api_response_meta_field_skipped_when_none() {
+        let response: ApiResponse<()> = ApiResponse::error("ERR", "msg");
+        let json = serde_json::to_string(&response).unwrap();
+        // meta field should be skipped because it's None
+        assert!(!json.contains("\"meta\""));
+    }
+
+    #[test]
+    fn test_api_response_meta_present_when_some() {
+        let meta = PaginationMeta::new(1, 10, 50);
+        let response = ApiResponse::success_with_meta("data", meta);
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"meta\""));
+    }
+
+    // ========== ApiResponse round-trip deserialization ==========
+
+    #[test]
+    fn test_api_response_round_trip_success() {
+        let original = ApiResponse::success(vec![1, 2, 3]);
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: ApiResponse<Vec<i32>> = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.success);
+        assert_eq!(deserialized.data, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn test_pagination_meta_round_trip() {
+        let original = PaginationMeta::new(3, 15, 42);
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: PaginationMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.page, original.page);
+        assert_eq!(deserialized.per_page, original.per_page);
+        assert_eq!(deserialized.total_items, original.total_items);
+        assert_eq!(deserialized.total_pages, original.total_pages);
+        assert_eq!(deserialized.has_next, original.has_next);
+        assert_eq!(deserialized.has_previous, original.has_previous);
+    }
 }

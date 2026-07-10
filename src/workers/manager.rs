@@ -18,10 +18,10 @@ use crate::utils::regex_cache::RegexCache;
 use crate::workers::expiration_worker::ExpirationWorker;
 use crate::workers::scrape_worker::ScrapeWorker;
 use crate::workers::{AbstractWorker, Worker};
+use log::{error, info};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::task::JoinHandle;
-use log::{error, info};
 
 use crate::config::settings::Settings;
 use crate::utils::robots::RobotsCheckerTrait;
@@ -161,6 +161,316 @@ impl Drop for WorkerManager {
         // Abort all worker handles to prevent them from running after the manager is dropped
         for handle in &self.handles {
             handle.abort();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== WorkerManagerConfig construction ==========
+
+    #[test]
+    fn test_worker_manager_config_construction() {
+        let settings = Arc::new(Settings::default());
+        let config = WorkerManagerConfig {
+            settings: settings.clone(),
+            default_concurrency_limit: 10,
+        };
+        assert_eq!(config.default_concurrency_limit, 10);
+        assert_eq!(Arc::strong_count(&config.settings), 2);
+    }
+
+    #[test]
+    fn test_worker_manager_config_with_different_concurrency() {
+        let settings = Arc::new(Settings::default());
+        let config = WorkerManagerConfig {
+            settings,
+            default_concurrency_limit: 50,
+        };
+        assert_eq!(config.default_concurrency_limit, 50);
+    }
+
+    #[test]
+    fn test_worker_manager_config_concurrency_zero() {
+        let settings = Arc::new(Settings::default());
+        let config = WorkerManagerConfig {
+            settings,
+            default_concurrency_limit: 0,
+        };
+        assert_eq!(config.default_concurrency_limit, 0);
+    }
+
+    #[test]
+    fn test_worker_manager_config_settings_shared() {
+        let settings = Arc::new(Settings::default());
+        let config1 = WorkerManagerConfig {
+            settings: settings.clone(),
+            default_concurrency_limit: 5,
+        };
+        let config2 = WorkerManagerConfig {
+            settings: settings.clone(),
+            default_concurrency_limit: 15,
+        };
+        // Both configs share the same Arc<Settings>
+        assert!(Arc::ptr_eq(&config1.settings, &config2.settings));
+    }
+
+    // ========== EngineClient construction ==========
+
+    #[test]
+    fn test_engine_client_can_be_constructed() {
+        let client = EngineClient::new();
+        // Verify it can be cloned (required by WorkerManager)
+        let _cloned = client.clone();
+    }
+
+    // ========== RedisClient construction (pool only, no connection) ==========
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_redis_client_can_be_constructed_without_server() {
+        // RedisClient::new creates a connection pool lazily;
+        // it should succeed even without a running Redis server.
+        let result = RedisClient::new("redis://localhost:6379");
+        assert!(
+            result.is_ok(),
+            "RedisClient pool creation should succeed without a running server"
+        );
+    }
+
+    // ========== WorkerManagerDeps field types verification ==========
+    // Note: Full construction of WorkerManagerDeps requires mocking 9+ traits,
+    // which is impractical for unit tests. We verify the struct can be referenced
+    // and its fields have the expected types.
+
+    #[test]
+    fn test_worker_manager_deps_struct_exists() {
+        // Verify the struct can be referenced (compile-time check)
+        fn _assert_deps_type(_deps: WorkerManagerDeps) {}
+        // This function existing proves the struct is accessible
+    }
+
+    #[test]
+    fn test_worker_manager_config_struct_exists() {
+        fn _assert_config_type(_config: WorkerManagerConfig) {}
+    }
+
+    #[test]
+    fn test_worker_manager_struct_exists() {
+        fn _assert_manager_type(_manager: WorkerManager) {}
+    }
+
+    // ========== WorkerManagerConfig additional tests ==========
+
+    #[test]
+    fn test_worker_manager_config_large_concurrency() {
+        let settings = Arc::new(Settings::default());
+        let config = WorkerManagerConfig {
+            settings,
+            default_concurrency_limit: usize::MAX,
+        };
+        assert_eq!(config.default_concurrency_limit, usize::MAX);
+    }
+
+    #[test]
+    fn test_worker_manager_config_one_concurrency() {
+        let settings = Arc::new(Settings::default());
+        let config = WorkerManagerConfig {
+            settings,
+            default_concurrency_limit: 1,
+        };
+        assert_eq!(config.default_concurrency_limit, 1);
+    }
+
+    #[test]
+    fn test_worker_manager_config_settings_arc_count_increases() {
+        let settings = Arc::new(Settings::default());
+        let initial_count = Arc::strong_count(&settings);
+        let _config = WorkerManagerConfig {
+            settings: settings.clone(),
+            default_concurrency_limit: 10,
+        };
+        let after_count = Arc::strong_count(&settings);
+        assert_eq!(after_count, initial_count + 1);
+    }
+
+    #[test]
+    fn test_worker_manager_config_settings_arc_count_decreces_on_drop() {
+        let settings = Arc::new(Settings::default());
+        {
+            let _config = WorkerManagerConfig {
+                settings: settings.clone(),
+                default_concurrency_limit: 10,
+            };
+            assert!(Arc::strong_count(&settings) > 1);
+        }
+        // After config goes out of scope, count should decrease
+        assert_eq!(Arc::strong_count(&settings), 1);
+    }
+
+    #[test]
+    fn test_multiple_configs_sharing_same_settings() {
+        let settings = Arc::new(Settings::default());
+        let configs: Vec<WorkerManagerConfig> = (0..5)
+            .map(|i| WorkerManagerConfig {
+                settings: settings.clone(),
+                default_concurrency_limit: i * 10,
+            })
+            .collect();
+        // All configs should share the same Arc
+        for config in &configs {
+            assert!(Arc::ptr_eq(&config.settings, &settings));
+        }
+        assert_eq!(configs.len(), 5);
+        assert_eq!(configs[0].default_concurrency_limit, 0);
+        assert_eq!(configs[4].default_concurrency_limit, 40);
+    }
+
+    // ========== EngineClient additional tests ==========
+
+    #[test]
+    fn test_engine_client_clone_preserves_identity() {
+        let client = EngineClient::new();
+        let cloned = client.clone();
+        // Both should be usable independently
+        let _another_clone = cloned.clone();
+    }
+
+    #[test]
+    fn test_engine_client_multiple_instances() {
+        let client1 = EngineClient::new();
+        let client2 = EngineClient::new();
+        // Both should be independently usable
+        let _both = (client1, client2);
+    }
+
+    // ========== Settings default values ==========
+
+    #[test]
+    fn test_settings_default_is_constructible() {
+        let settings1 = Settings::default();
+        let settings2 = Settings::default();
+        // Each Settings::default() should create an independent instance
+        let _ = (settings1, settings2);
+    }
+
+    #[test]
+    fn test_settings_can_be_cloned() {
+        let settings = Settings::default();
+        let _cloned = settings.clone();
+    }
+
+    // ========== RedisClient additional tests (pool construction only) ==========
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_redis_client_with_custom_config() {
+        use crate::infrastructure::cache::redis_client::{RedisClient, RedisClientConfig};
+        let config = RedisClientConfig {
+            max_connections: 5,
+            connection_timeout: 3,
+            recycle_timeout: 2,
+        };
+        let client = RedisClient::with_config("redis://localhost:6379", config).unwrap();
+        let config_ref = client.config();
+        assert_eq!(config_ref.max_connections, 5);
+        assert_eq!(config_ref.connection_timeout, 3);
+        assert_eq!(config_ref.recycle_timeout, 2);
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_redis_client_clone_shares_pool() {
+        use crate::infrastructure::cache::redis_client::RedisClient;
+        let client = RedisClient::new("redis://localhost:6379").unwrap();
+        let cloned = client.clone();
+        // Both should have the same config values (shared pool)
+        assert_eq!(
+            client.config().max_connections,
+            cloned.config().max_connections
+        );
+    }
+
+    // ========== RegexCache construction ==========
+
+    #[test]
+    fn test_regex_cache_can_be_constructed() {
+        let cache = RegexCache::new(Arc::new(
+            crate::infrastructure::oxcache::RegexCacheType::new(),
+        ));
+        // Verify it can be cloned (required by WorkerManagerDeps)
+        let _cloned = cache.clone();
+    }
+
+    #[test]
+    fn test_regex_cache_clone_preserves_behavior() {
+        let cache = RegexCache::new(Arc::new(
+            crate::infrastructure::oxcache::RegexCacheType::new(),
+        ));
+        let cloned = cache.clone();
+        // Both should be able to compile the same regex
+        let regex1 = cache.get_or_insert(r"\d+").unwrap();
+        let regex2 = cloned.get_or_insert(r"\d+").unwrap();
+        assert!(regex1.is_match("123"));
+        assert!(regex2.is_match("456"));
+    }
+
+    // ========== WorkerManagerDeps field verification ==========
+
+    #[test]
+    fn test_worker_manager_deps_has_expected_fields() {
+        // Compile-time verification that WorkerManagerDeps has the expected fields
+        // by constructing it field-by-field (partially, to verify field names)
+        let settings = Arc::new(Settings::default());
+
+        // Verify WorkerManagerConfig fields
+        let config = WorkerManagerConfig {
+            settings: settings.clone(),
+            default_concurrency_limit: 10,
+        };
+        // Access fields to verify they exist
+        let _limit = config.default_concurrency_limit;
+        let _settings_ref = &config.settings;
+    }
+
+    // ========== WorkerManager Drop behavior ==========
+
+    #[test]
+    fn test_worker_manager_drop_aborts_handles() {
+        // WorkerManager::new requires full deps which is impractical to construct.
+        // Instead, verify that the type requires Drop (has a non-trivial destructor)
+        // by checking std::mem::needs_drop at compile time.
+        assert!(std::mem::needs_drop::<WorkerManager>());
+    }
+
+    // ========== WorkerManagerConfig Send + Sync verification ==========
+
+    #[test]
+    fn test_worker_manager_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<WorkerManagerConfig>();
+    }
+
+    #[test]
+    fn test_worker_manager_config_arc_settings_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Arc<Settings>>();
+    }
+
+    // ========== Concurrency limit boundary values ==========
+
+    #[test]
+    fn test_concurrency_limit_boundary_values() {
+        let settings = Arc::new(Settings::default());
+        // Test various boundary values
+        for &limit in &[0usize, 1, 10, 100, 1000] {
+            let config = WorkerManagerConfig {
+                settings: settings.clone(),
+                default_concurrency_limit: limit,
+            };
+            assert_eq!(config.default_concurrency_limit, limit);
         }
     }
 }

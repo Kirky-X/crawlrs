@@ -288,11 +288,11 @@ mod tests {
             max_retries: 3,
             scheduled_at: None,
             expires_at: None,
-            created_at: Utc::now().into(),
+            created_at: Utc::now(),
             started_at: None,
             completed_at: None,
             crawl_id: None,
-            updated_at: Utc::now().into(),
+            updated_at: Utc::now(),
             lock_token: None,
             lock_expires_at: None,
         }

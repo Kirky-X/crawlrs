@@ -537,3 +537,699 @@ pub async fn cancel_tasks<T: TaskRepository>(
         total_failed,
     })))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::models::{Task, TaskStatus, TaskType};
+    use uuid::Uuid;
+
+    // ========== Helper to create test Task ==========
+
+    fn make_test_task(id: Uuid, status: TaskStatus) -> Task {
+        let now = chrono::Utc::now();
+        Task {
+            id,
+            task_type: TaskType::Scrape,
+            status,
+            priority: 0,
+            team_id: Uuid::new_v4(),
+            api_key_id: Uuid::new_v4(),
+            url: "https://example.com".to_string(),
+            payload: serde_json::json!({}),
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: now,
+            lock_token: None,
+            lock_expires_at: None,
+        }
+    }
+
+    // ========== poll_count_exceeded tests ==========
+
+    #[test]
+    fn test_poll_count_exceeded_true_when_count_equals_max() {
+        assert!(poll_count_exceeded(60, 60));
+    }
+
+    #[test]
+    fn test_poll_count_exceeded_true_when_count_exceeds_max() {
+        assert!(poll_count_exceeded(100, 60));
+    }
+
+    #[test]
+    fn test_poll_count_exceeded_false_when_count_below_max() {
+        assert!(!poll_count_exceeded(59, 60));
+    }
+
+    #[test]
+    fn test_poll_count_exceeded_false_when_count_zero() {
+        assert!(!poll_count_exceeded(0, 60));
+    }
+
+    #[test]
+    fn test_poll_count_exceeded_with_max_one() {
+        assert!(poll_count_exceeded(1, 1));
+        assert!(!poll_count_exceeded(0, 1));
+    }
+
+    // ========== calculate_completion_rate tests ==========
+
+    #[test]
+    fn test_completion_rate_empty_task_ids_returns_one() {
+        let tasks = vec![];
+        let task_ids: Vec<Uuid> = vec![];
+        assert_eq!(calculate_completion_rate(&tasks, &task_ids), 1.0);
+    }
+
+    #[test]
+    fn test_completion_rate_all_completed() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let tasks = vec![
+            make_test_task(id1, TaskStatus::Completed),
+            make_test_task(id2, TaskStatus::Completed),
+        ];
+        let task_ids = vec![id1, id2];
+        assert_eq!(calculate_completion_rate(&tasks, &task_ids), 1.0);
+    }
+
+    #[test]
+    fn test_completion_rate_none_completed() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let tasks = vec![
+            make_test_task(id1, TaskStatus::Queued),
+            make_test_task(id2, TaskStatus::Active),
+        ];
+        let task_ids = vec![id1, id2];
+        assert_eq!(calculate_completion_rate(&tasks, &task_ids), 0.0);
+    }
+
+    #[test]
+    fn test_completion_rate_half_completed() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let tasks = vec![
+            make_test_task(id1, TaskStatus::Completed),
+            make_test_task(id2, TaskStatus::Active),
+        ];
+        let task_ids = vec![id1, id2];
+        assert_eq!(calculate_completion_rate(&tasks, &task_ids), 0.5);
+    }
+
+    #[test]
+    fn test_completion_rate_counts_failed_as_completed() {
+        let id1 = Uuid::new_v4();
+        let tasks = vec![make_test_task(id1, TaskStatus::Failed)];
+        let task_ids = vec![id1];
+        assert_eq!(calculate_completion_rate(&tasks, &task_ids), 1.0);
+    }
+
+    #[test]
+    fn test_completion_rate_counts_cancelled_as_completed() {
+        let id1 = Uuid::new_v4();
+        let tasks = vec![make_test_task(id1, TaskStatus::Cancelled)];
+        let task_ids = vec![id1];
+        assert_eq!(calculate_completion_rate(&tasks, &task_ids), 1.0);
+    }
+
+    #[test]
+    fn test_completion_rate_mixed_statuses() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+        let id4 = Uuid::new_v4();
+        let tasks = vec![
+            make_test_task(id1, TaskStatus::Completed),
+            make_test_task(id2, TaskStatus::Failed),
+            make_test_task(id3, TaskStatus::Cancelled),
+            make_test_task(id4, TaskStatus::Active),
+        ];
+        let task_ids = vec![id1, id2, id3, id4];
+        assert_eq!(calculate_completion_rate(&tasks, &task_ids), 0.75);
+    }
+
+    // ========== calculate_next_interval tests ==========
+
+    #[test]
+    fn test_next_interval_no_progress_uses_rate_based() {
+        let interval = calculate_next_interval(0.5, 0.5, 1000, 500, 2000);
+        // rate_based = 500 + (1500 * 0.5) = 1250
+        assert_eq!(interval, 1250);
+    }
+
+    #[test]
+    fn test_next_interval_positive_progress_increases() {
+        let interval = calculate_next_interval(0.6, 0.5, 1000, 500, 2000);
+        // progress > 0: max(1000 * 1.2, rate_based) = max(1200, 500 + 1500*0.6) = max(1200, 1400) = 1400
+        assert!(interval >= 1000);
+        assert!(interval <= 2000);
+    }
+
+    #[test]
+    fn test_next_interval_negative_progress_decreases() {
+        let interval = calculate_next_interval(0.4, 0.5, 1500, 500, 2000);
+        // progress < 0: min(1500 * 0.8, rate_based) = min(1200, 500 + 1500*0.4) = min(1200, 1100) = 1100
+        assert!(interval <= 1500);
+        assert!(interval >= 500);
+    }
+
+    #[test]
+    fn test_next_interval_clamped_to_min() {
+        let interval = calculate_next_interval(0.0, 0.0, 500, 500, 2000);
+        assert!(interval >= 500);
+    }
+
+    #[test]
+    fn test_next_interval_clamped_to_max() {
+        let interval = calculate_next_interval(1.0, 1.0, 2000, 500, 2000);
+        assert!(interval <= 2000);
+    }
+
+    #[test]
+    fn test_next_interval_full_completion() {
+        let interval = calculate_next_interval(1.0, 0.0, 500, 500, 2000);
+        // rate_based = 500 + 1500*1.0 = 2000
+        assert_eq!(interval, 2000);
+    }
+
+    // ========== apply_defaults tests ==========
+
+    #[test]
+    fn test_apply_defaults_all_none() {
+        let request = TaskQueryRequestDto {
+            task_ids: None,
+            team_id: Uuid::nil(),
+            task_types: None,
+            statuses: None,
+            created_after: None,
+            created_before: None,
+            crawl_id: None,
+            limit: None,
+            offset: None,
+            include_results: None,
+            sync_wait_ms: None,
+        };
+        let (limit, offset, include_results, sync_wait_ms) = apply_defaults(&request);
+        assert_eq!(limit, server_config::DEFAULT_PAGE_LIMIT);
+        assert_eq!(offset, 0);
+        assert!(!include_results);
+        assert_eq!(sync_wait_ms, crawl_task::DEFAULT_TIMEOUT_MS as u32);
+    }
+
+    #[test]
+    fn test_apply_defaults_with_values() {
+        let request = TaskQueryRequestDto {
+            task_ids: None,
+            team_id: Uuid::nil(),
+            task_types: None,
+            statuses: None,
+            created_after: None,
+            created_before: None,
+            crawl_id: None,
+            limit: Some(50),
+            offset: Some(100),
+            include_results: Some(true),
+            sync_wait_ms: Some(10000),
+        };
+        let (limit, offset, include_results, sync_wait_ms) = apply_defaults(&request);
+        assert_eq!(limit, 50);
+        assert_eq!(offset, 100);
+        assert!(include_results);
+        assert_eq!(sync_wait_ms, 10000);
+    }
+
+    #[test]
+    fn test_apply_defaults_limit_capped_at_max() {
+        let request = TaskQueryRequestDto {
+            task_ids: None,
+            team_id: Uuid::nil(),
+            task_types: None,
+            statuses: None,
+            created_after: None,
+            created_before: None,
+            crawl_id: None,
+            limit: Some(5000),
+            offset: None,
+            include_results: None,
+            sync_wait_ms: None,
+        };
+        let (limit, _, _, _) = apply_defaults(&request);
+        assert_eq!(limit, server_config::MAX_PAGE_LIMIT);
+    }
+
+    // ========== determine_sync_status tests ==========
+
+    #[test]
+    fn test_determine_sync_status_async_mode() {
+        assert_eq!(determine_sync_status(false, 0, 5000), "async");
+        assert_eq!(determine_sync_status(false, 100, 5000), "async");
+    }
+
+    #[test]
+    fn test_determine_sync_status_timeout() {
+        assert_eq!(determine_sync_status(true, 5000, 5000), "sync_timeout");
+        assert_eq!(determine_sync_status(true, 6000, 5000), "sync_timeout");
+    }
+
+    #[test]
+    fn test_determine_sync_status_completed() {
+        assert_eq!(determine_sync_status(true, 3000, 5000), "sync_completed");
+        assert_eq!(determine_sync_status(true, 0, 5000), "sync_completed");
+        assert_eq!(determine_sync_status(true, 4999, 5000), "sync_completed");
+    }
+
+    // ========== build_task_infos tests ==========
+
+    #[test]
+    fn test_build_task_infos_empty() {
+        let tasks: Vec<Task> = vec![];
+        let result = build_task_infos(&tasks, None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_build_task_infos_single_task_no_results() {
+        let id = Uuid::new_v4();
+        let tasks = vec![make_test_task(id, TaskStatus::Completed)];
+        let result = build_task_infos(&tasks, None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, id);
+        assert_eq!(result[0].status, TaskStatus::Completed);
+        assert_eq!(result[0].url, "https://example.com");
+        assert!(result[0].result.is_none());
+    }
+
+    #[test]
+    fn test_build_task_infos_multiple_tasks() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let tasks = vec![
+            make_test_task(id1, TaskStatus::Queued),
+            make_test_task(id2, TaskStatus::Failed),
+        ];
+        let result = build_task_infos(&tasks, None);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, id1);
+        assert_eq!(result[1].id, id2);
+    }
+
+    #[test]
+    fn test_build_task_infos_preserves_task_type() {
+        let id = Uuid::new_v4();
+        let mut task = make_test_task(id, TaskStatus::Queued);
+        task.task_type = TaskType::Crawl;
+        let result = build_task_infos(&[task], None);
+        assert_eq!(result[0].task_type, TaskType::Crawl);
+    }
+
+    // ========== SyncWaitResult struct tests ==========
+
+    #[test]
+    fn test_sync_wait_result_no_wait() {
+        let result = SyncWaitResult {
+            waited_time_ms: 0,
+            is_timeout: false,
+        };
+        assert_eq!(result.waited_time_ms, 0);
+        assert!(!result.is_timeout);
+    }
+
+    #[test]
+    fn test_sync_wait_result_timeout() {
+        let result = SyncWaitResult {
+            waited_time_ms: 5000,
+            is_timeout: true,
+        };
+        assert_eq!(result.waited_time_ms, 5000);
+        assert!(result.is_timeout);
+    }
+
+    #[test]
+    fn test_sync_wait_result_completed_before_timeout() {
+        let result = SyncWaitResult {
+            waited_time_ms: 3000,
+            is_timeout: false,
+        };
+        assert_eq!(result.waited_time_ms, 3000);
+        assert!(!result.is_timeout);
+    }
+
+    // ========== TaskQueryResponseMeta serialization ==========
+
+    #[test]
+    fn test_task_query_response_meta_serialization() {
+        let meta = TaskQueryResponseMeta {
+            status: "sync_completed".to_string(),
+            credits_used: 5,
+            response_time_ms: 1234,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["status"], "sync_completed");
+        assert_eq!(parsed["credits_used"], 5);
+        assert_eq!(parsed["response_time_ms"], 1234);
+    }
+
+    #[test]
+    fn test_task_query_response_meta_async_status() {
+        let meta = TaskQueryResponseMeta {
+            status: "async".to_string(),
+            credits_used: 0,
+            response_time_ms: 0,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["status"], "async");
+    }
+
+    #[test]
+    fn test_task_query_response_meta_timeout_status() {
+        let meta = TaskQueryResponseMeta {
+            status: "sync_timeout".to_string(),
+            credits_used: 10,
+            response_time_ms: 30000,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["status"], "sync_timeout");
+    }
+
+    // ========== validate_request tests ==========
+
+    #[test]
+    fn test_validate_request_valid() {
+        let request = TaskQueryRequestDto::default();
+        assert!(validate_request(&request).is_ok());
+    }
+
+    #[test]
+    fn test_validate_request_limit_too_small() {
+        let request = TaskQueryRequestDto {
+            limit: Some(0),
+            ..TaskQueryRequestDto::default()
+        };
+        assert!(validate_request(&request).is_err());
+    }
+
+    #[test]
+    fn test_validate_request_limit_too_large() {
+        let request = TaskQueryRequestDto {
+            limit: Some(1001),
+            ..TaskQueryRequestDto::default()
+        };
+        assert!(validate_request(&request).is_err());
+    }
+
+    #[test]
+    fn test_validate_request_sync_wait_ms_exceeds_max() {
+        let request = TaskQueryRequestDto {
+            sync_wait_ms: Some(30001),
+            ..TaskQueryRequestDto::default()
+        };
+        assert!(validate_request(&request).is_err());
+    }
+
+    #[test]
+    fn test_validate_request_sync_wait_ms_zero_ok() {
+        let request = TaskQueryRequestDto {
+            sync_wait_ms: Some(0),
+            ..TaskQueryRequestDto::default()
+        };
+        assert!(validate_request(&request).is_ok());
+    }
+
+    #[test]
+    fn test_validate_request_sync_wait_ms_at_max_ok() {
+        let request = TaskQueryRequestDto {
+            sync_wait_ms: Some(30000),
+            ..TaskQueryRequestDto::default()
+        };
+        assert!(validate_request(&request).is_ok());
+    }
+
+    // ========== handle_sync_wait_and_get_status edge cases ==========
+
+    #[tokio::test]
+    async fn test_handle_sync_wait_zero_ms_returns_immediately() {
+        // This test verifies that sync_wait_ms=0 returns immediately without calling the repo
+        // We use a dummy that would fail if called, but since sync_wait_ms=0, it won't be called
+        struct DummyRepo;
+        #[async_trait::async_trait]
+        impl TaskRepository for DummyRepo {
+            async fn create(
+                &self,
+                _task: &Task,
+            ) -> Result<Task, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn find_by_id(
+                &self,
+                _id: Uuid,
+            ) -> Result<Option<Task>, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn update(
+                &self,
+                _task: &Task,
+            ) -> Result<Task, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn acquire_next(
+                &self,
+                _worker_id: Uuid,
+            ) -> Result<Option<Task>, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn mark_completed(
+                &self,
+                _id: Uuid,
+            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn mark_failed(
+                &self,
+                _id: Uuid,
+            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn mark_cancelled(
+                &self,
+                _id: Uuid,
+            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn exists_by_url(
+                &self,
+                _url: &str,
+            ) -> Result<bool, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn find_existing_urls(
+                &self,
+                _urls: &[String],
+            ) -> Result<
+                std::collections::HashSet<String>,
+                crate::domain::repositories::task_repository::RepositoryError,
+            > {
+                unreachable!("should not be called")
+            }
+            async fn reset_stuck_tasks(
+                &self,
+                _timeout: chrono::Duration,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn cancel_tasks_by_crawl_id(
+                &self,
+                _crawl_id: Uuid,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn expire_tasks(
+                &self,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn find_by_crawl_id(
+                &self,
+                _crawl_id: Uuid,
+            ) -> Result<Vec<Task>, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn query_tasks(
+                &self,
+                _params: crate::domain::repositories::task_repository::TaskQueryParams,
+            ) -> Result<
+                (Vec<Task>, u64),
+                crate::domain::repositories::task_repository::RepositoryError,
+            > {
+                unreachable!("should not be called")
+            }
+            async fn batch_cancel(
+                &self,
+                _task_ids: Vec<Uuid>,
+                _team_id: Uuid,
+                _force: bool,
+            ) -> Result<
+                (Vec<Uuid>, Vec<(Uuid, String)>),
+                crate::domain::repositories::task_repository::RepositoryError,
+            > {
+                unreachable!("should not be called")
+            }
+        }
+
+        let result = handle_sync_wait_and_get_status(&DummyRepo, &[], Uuid::nil(), 0).await;
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result.waited_time_ms, 0);
+        assert!(!result.is_timeout);
+    }
+
+    #[tokio::test]
+    async fn test_handle_sync_wait_empty_task_ids_returns_immediately() {
+        // Even with sync_wait_ms > 0, empty task_ids should return immediately
+        struct DummyRepo;
+        #[async_trait::async_trait]
+        impl TaskRepository for DummyRepo {
+            async fn create(
+                &self,
+                _task: &Task,
+            ) -> Result<Task, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn find_by_id(
+                &self,
+                _id: Uuid,
+            ) -> Result<Option<Task>, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn update(
+                &self,
+                _task: &Task,
+            ) -> Result<Task, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn acquire_next(
+                &self,
+                _worker_id: Uuid,
+            ) -> Result<Option<Task>, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn mark_completed(
+                &self,
+                _id: Uuid,
+            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn mark_failed(
+                &self,
+                _id: Uuid,
+            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn mark_cancelled(
+                &self,
+                _id: Uuid,
+            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn exists_by_url(
+                &self,
+                _url: &str,
+            ) -> Result<bool, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn find_existing_urls(
+                &self,
+                _urls: &[String],
+            ) -> Result<
+                std::collections::HashSet<String>,
+                crate::domain::repositories::task_repository::RepositoryError,
+            > {
+                unreachable!("should not be called")
+            }
+            async fn reset_stuck_tasks(
+                &self,
+                _timeout: chrono::Duration,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn cancel_tasks_by_crawl_id(
+                &self,
+                _crawl_id: Uuid,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn expire_tasks(
+                &self,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn find_by_crawl_id(
+                &self,
+                _crawl_id: Uuid,
+            ) -> Result<Vec<Task>, crate::domain::repositories::task_repository::RepositoryError>
+            {
+                unreachable!("should not be called")
+            }
+            async fn query_tasks(
+                &self,
+                _params: crate::domain::repositories::task_repository::TaskQueryParams,
+            ) -> Result<
+                (Vec<Task>, u64),
+                crate::domain::repositories::task_repository::RepositoryError,
+            > {
+                unreachable!("should not be called")
+            }
+            async fn batch_cancel(
+                &self,
+                _task_ids: Vec<Uuid>,
+                _team_id: Uuid,
+                _force: bool,
+            ) -> Result<
+                (Vec<Uuid>, Vec<(Uuid, String)>),
+                crate::domain::repositories::task_repository::RepositoryError,
+            > {
+                unreachable!("should not be called")
+            }
+        }
+
+        let result = handle_sync_wait_and_get_status(&DummyRepo, &[], Uuid::nil(), 5000).await;
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result.waited_time_ms, 0);
+        assert!(!result.is_timeout);
+    }
+}

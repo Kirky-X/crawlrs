@@ -7,11 +7,11 @@
 //!
 //! 提供细粒度的并发控制，支持不同级别的限制策略
 
+use log::{debug, warn};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use log::{debug, warn};
 
 /// 并发控制策略
 #[derive(Debug, Clone)]
@@ -740,12 +740,7 @@ mod tests {
 
     #[test]
     fn test_adaptive_concurrency_controller_new() {
-        let controller = AdaptiveConcurrencyController::new(
-            1,
-            100,
-            0.7,
-            Duration::from_secs(60),
-        );
+        let controller = AdaptiveConcurrencyController::new(1, 100, 0.7, Duration::from_secs(60));
 
         assert_eq!(controller.base().active_count(), 0);
         assert_eq!(controller.base().wait_count(), 0);
@@ -754,12 +749,7 @@ mod tests {
 
     #[test]
     fn test_adaptive_concurrency_controller_base_acquires() {
-        let controller = AdaptiveConcurrencyController::new(
-            1,
-            10,
-            0.8,
-            Duration::from_secs(30),
-        );
+        let controller = AdaptiveConcurrencyController::new(1, 10, 0.8, Duration::from_secs(30));
 
         let base = controller.base();
         assert_eq!(base.active_count(), 0);
@@ -768,12 +758,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adaptive_concurrency_controller_start_adjustment() {
-        let controller = AdaptiveConcurrencyController::new(
-            1,
-            100,
-            0.7,
-            Duration::from_millis(10),
-        );
+        let controller = AdaptiveConcurrencyController::new(1, 100, 0.7, Duration::from_millis(10));
 
         // Start the adaptive adjustment task - it spawns a background task
         controller.start_adaptive_adjustment();

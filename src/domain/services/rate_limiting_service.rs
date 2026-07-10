@@ -342,9 +342,18 @@ mod tests {
 
     #[test]
     fn test_rate_limit_strategy_equality() {
-        assert_eq!(RateLimitStrategy::TokenBucket, RateLimitStrategy::TokenBucket);
-        assert_ne!(RateLimitStrategy::TokenBucket, RateLimitStrategy::LeakyBucket);
-        assert_ne!(RateLimitStrategy::FixedWindow, RateLimitStrategy::SlidingWindow);
+        assert_eq!(
+            RateLimitStrategy::TokenBucket,
+            RateLimitStrategy::TokenBucket
+        );
+        assert_ne!(
+            RateLimitStrategy::TokenBucket,
+            RateLimitStrategy::LeakyBucket
+        );
+        assert_ne!(
+            RateLimitStrategy::FixedWindow,
+            RateLimitStrategy::SlidingWindow
+        );
     }
 
     #[test]
@@ -352,7 +361,7 @@ mod tests {
         let s1 = RateLimitStrategy::TokenBucket;
         let s2 = s1; // Copy
         assert_eq!(s1, s2);
-        let s3 = s1.clone();
+        let s3 = s1;
         assert_eq!(s1, s3);
     }
 
@@ -382,7 +391,10 @@ mod tests {
             ConcurrencyStrategy::DistributedSemaphore,
             ConcurrencyStrategy::Semaphore
         );
-        assert_ne!(ConcurrencyStrategy::RedisLock, ConcurrencyStrategy::DatabaseLevel);
+        assert_ne!(
+            ConcurrencyStrategy::RedisLock,
+            ConcurrencyStrategy::DatabaseLevel
+        );
     }
 
     // ========== RateLimitConfig::default tests ==========
@@ -439,8 +451,10 @@ mod tests {
 
     #[test]
     fn test_rate_limit_config_validate_zero_requests_per_second() {
-        let mut config = RateLimitConfig::default();
-        config.requests_per_second = 0;
+        let config = RateLimitConfig {
+            requests_per_second: 0,
+            ..Default::default()
+        };
         let err = config.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::ZeroRate(_)));
         assert!(err.to_string().contains("requests_per_second"));
@@ -448,8 +462,10 @@ mod tests {
 
     #[test]
     fn test_rate_limit_config_validate_zero_requests_per_minute() {
-        let mut config = RateLimitConfig::default();
-        config.requests_per_minute = 0;
+        let config = RateLimitConfig {
+            requests_per_minute: 0,
+            ..Default::default()
+        };
         let err = config.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::ZeroRate(_)));
         assert!(err.to_string().contains("requests_per_minute"));
@@ -457,8 +473,10 @@ mod tests {
 
     #[test]
     fn test_rate_limit_config_validate_zero_requests_per_hour() {
-        let mut config = RateLimitConfig::default();
-        config.requests_per_hour = 0;
+        let config = RateLimitConfig {
+            requests_per_hour: 0,
+            ..Default::default()
+        };
         let err = config.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::ZeroRate(_)));
         assert!(err.to_string().contains("requests_per_hour"));
@@ -477,7 +495,9 @@ mod tests {
         };
         let err = config.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::InconsistentRates(_)));
-        assert!(err.to_string().contains("requests_per_second exceeds requests_per_minute"));
+        assert!(err
+            .to_string()
+            .contains("requests_per_second exceeds requests_per_minute"));
     }
 
     #[test]
@@ -502,7 +522,9 @@ mod tests {
         };
         let err = config_fail.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::InconsistentRates(_)));
-        assert!(err.to_string().contains("requests_per_minute exceeds requests_per_hour"));
+        assert!(err
+            .to_string()
+            .contains("requests_per_minute exceeds requests_per_hour"));
         // Sanity: the valid one passes
         assert!(config.validate().is_ok());
     }
@@ -552,10 +574,7 @@ mod tests {
     #[test]
     fn test_concurrency_config_default_passes_validation() {
         let config = ConcurrencyConfig::default();
-        assert!(
-            config.validate().is_ok(),
-            "default config should be valid"
-        );
+        assert!(config.validate().is_ok(), "default config should be valid");
     }
 
     // ========== ConcurrencyConfig::validate tests ==========
@@ -574,35 +593,49 @@ mod tests {
 
     #[test]
     fn test_concurrency_config_validate_zero_max_concurrent_tasks() {
-        let mut config = ConcurrencyConfig::default();
-        config.max_concurrent_tasks = 0;
+        let config = ConcurrencyConfig {
+            max_concurrent_tasks: 0,
+            ..Default::default()
+        };
         let err = config.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::ZeroCapacity(_)));
-        assert!(err.to_string().contains("max_concurrent_tasks cannot be zero"));
+        assert!(err
+            .to_string()
+            .contains("max_concurrent_tasks cannot be zero"));
     }
 
     #[test]
     fn test_concurrency_config_validate_zero_max_concurrent_per_team() {
-        let mut config = ConcurrencyConfig::default();
-        config.max_concurrent_per_team = 0;
+        let config = ConcurrencyConfig {
+            max_concurrent_per_team: 0,
+            ..Default::default()
+        };
         let err = config.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::ZeroCapacity(_)));
-        assert!(err.to_string().contains("max_concurrent_per_team cannot be zero"));
+        assert!(err
+            .to_string()
+            .contains("max_concurrent_per_team cannot be zero"));
     }
 
     #[test]
     fn test_concurrency_config_validate_zero_lock_timeout() {
-        let mut config = ConcurrencyConfig::default();
-        config.lock_timeout_seconds = 0;
+        let config = ConcurrencyConfig {
+            lock_timeout_seconds: 0,
+            ..Default::default()
+        };
         let err = config.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::InvalidTimeout(_)));
-        assert!(err.to_string().contains("lock_timeout_seconds cannot be zero"));
+        assert!(err
+            .to_string()
+            .contains("lock_timeout_seconds cannot be zero"));
     }
 
     #[test]
     fn test_concurrency_config_validate_lock_timeout_below_minimum() {
-        let mut config = ConcurrencyConfig::default();
-        config.lock_timeout_seconds = 30; // < 60
+        let config = ConcurrencyConfig {
+            lock_timeout_seconds: 30,
+            ..Default::default()
+        };
         let err = config.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::InvalidTimeout(_)));
         assert!(err.to_string().contains("at least 60 seconds"));
@@ -610,8 +643,10 @@ mod tests {
 
     #[test]
     fn test_concurrency_config_validate_lock_timeout_exactly_60_is_valid() {
-        let mut config = ConcurrencyConfig::default();
-        config.lock_timeout_seconds = 60; // boundary: exactly 60 should be valid
+        let config = ConcurrencyConfig {
+            lock_timeout_seconds: 60,
+            ..Default::default()
+        };
         assert!(config.validate().is_ok());
     }
 
@@ -626,7 +661,9 @@ mod tests {
         };
         let err = config.validate().expect_err("should fail");
         assert!(matches!(err, ValidationError::InconsistentRates(_)));
-        assert!(err.to_string().contains("max_concurrent_per_team exceeds max_concurrent_tasks"));
+        assert!(err
+            .to_string()
+            .contains("max_concurrent_per_team exceeds max_concurrent_tasks"));
     }
 
     #[test]
@@ -679,7 +716,9 @@ mod tests {
             retry_after_seconds: 30,
         };
         match r {
-            RateLimitResult::RetryAfter { retry_after_seconds } => {
+            RateLimitResult::RetryAfter {
+                retry_after_seconds,
+            } => {
                 assert_eq!(retry_after_seconds, 30);
             }
             _ => panic!("wrong variant"),
@@ -786,7 +825,9 @@ mod tests {
     fn test_validation_error_zero_rate_display() {
         let err = ValidationError::ZeroRate("requests_per_second cannot be zero");
         assert!(err.to_string().contains("速率限制不能为零"));
-        assert!(err.to_string().contains("requests_per_second cannot be zero"));
+        assert!(err
+            .to_string()
+            .contains("requests_per_second cannot be zero"));
     }
 
     #[test]

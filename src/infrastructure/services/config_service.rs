@@ -280,9 +280,11 @@ impl ConfigServiceTrait for ConfigServiceComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_support::ENV_MUTEX;
 
     #[test]
     fn test_config_service_proxy_url_from_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // 设置环境变量
         std::env::set_var("CRAWLRS_PROXY_URL", "http://test.proxy:8080");
 
@@ -298,6 +300,7 @@ mod tests {
 
     #[test]
     fn test_config_service_proxy_from_settings() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_PROXY_URL");
 
         let config =
@@ -310,6 +313,7 @@ mod tests {
 
     #[test]
     fn test_config_service_test_mode() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
 
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
@@ -320,6 +324,7 @@ mod tests {
 
     #[test]
     fn test_browser_config_component() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CHROMIUM_REMOTE_DEBUGGING_URL", "localhost:9222");
         std::env::set_var("CRAWLRS_PROXY_URL", "http://localhost:1080");
 
@@ -339,6 +344,7 @@ mod tests {
 
     #[test]
     fn test_browser_config_component_default_impl() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_PROXY_URL");
         std::env::remove_var("CHROMIUM_REMOTE_DEBUGGING_URL");
         std::env::remove_var("CRAWLRS_TEST_NO_BROWSER_REUSE");
@@ -351,6 +357,7 @@ mod tests {
 
     #[test]
     fn test_browser_config_component_empty_env_vars_filtered() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_PROXY_URL", "");
         std::env::set_var("CHROMIUM_REMOTE_DEBUGGING_URL", "");
 
@@ -364,6 +371,7 @@ mod tests {
 
     #[test]
     fn test_browser_config_component_test_mode() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_TEST_NO_BROWSER_REUSE", "1");
 
         let config = BrowserConfigComponent::new();
@@ -374,14 +382,17 @@ mod tests {
 
     #[test]
     fn test_config_service_proxy_disabled_no_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_PROXY_URL");
 
-        let config = ConfigServiceComponent::from_settings(false, "http://ignored.proxy:8080", 30, 30);
+        let config =
+            ConfigServiceComponent::from_settings(false, "http://ignored.proxy:8080", 30, 30);
         assert_eq!(config.get_proxy_url(), None);
     }
 
     #[test]
     fn test_config_service_default_timeout_values() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_PROXY_URL");
 
         let config = ConfigServiceComponent::from_settings(false, "", 45, 60);
@@ -392,6 +403,7 @@ mod tests {
 
     #[test]
     fn test_config_service_app_environment_default() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_ENV");
         std::env::remove_var("APP_ENVIRONMENT");
 
@@ -403,6 +415,7 @@ mod tests {
 
     #[test]
     fn test_config_service_app_environment_from_crawlrs_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_ENV", "production");
         std::env::remove_var("APP_ENVIRONMENT");
 
@@ -416,6 +429,7 @@ mod tests {
 
     #[test]
     fn test_config_service_app_environment_from_app_env_fallback() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_ENV");
         std::env::set_var("APP_ENVIRONMENT", "staging");
 
@@ -429,6 +443,7 @@ mod tests {
 
     #[test]
     fn test_config_service_webhook_secret_default() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("WEBHOOK_SECRET");
 
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
@@ -437,6 +452,7 @@ mod tests {
 
     #[test]
     fn test_config_service_webhook_secret_from_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("WEBHOOK_SECRET", "my-secret-key");
 
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
@@ -447,6 +463,7 @@ mod tests {
 
     #[test]
     fn test_config_service_redis_url_default() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("REDIS_URL");
 
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
@@ -455,6 +472,7 @@ mod tests {
 
     #[test]
     fn test_config_service_redis_url_from_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("REDIS_URL", "redis://custom:6380");
 
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
@@ -465,6 +483,7 @@ mod tests {
 
     #[test]
     fn test_config_service_health_check_url() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_HEALTH_CHECK_URL");
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
         assert_eq!(config.get_health_check_url(), None);
@@ -481,6 +500,7 @@ mod tests {
 
     #[test]
     fn test_config_service_ssrf_protection_disabled() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
         assert!(!config.is_ssrf_protection_disabled());
@@ -494,6 +514,7 @@ mod tests {
 
     #[test]
     fn test_config_service_network_tests_enabled() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_ENABLE_NETWORK_TESTS");
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
         assert!(!config.is_network_tests_enabled());
@@ -507,6 +528,7 @@ mod tests {
 
     #[test]
     fn test_config_service_debug_save_html_enabled() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("DEBUG_SAVE_HTML");
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
         assert!(!config.is_debug_save_html_enabled());
@@ -520,6 +542,7 @@ mod tests {
 
     #[test]
     fn test_config_service_flaresolverr_url() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_FLARESOLVERR_URL");
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
         assert_eq!(config.get_flaresolverr_url(), None);
@@ -540,6 +563,7 @@ mod tests {
 
     #[test]
     fn test_config_service_remote_debugging_url() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CHROMIUM_REMOTE_DEBUGGING_URL");
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
         assert_eq!(config.get_remote_debugging_url(), None);
@@ -556,9 +580,11 @@ mod tests {
 
     #[test]
     fn test_config_service_proxy_url_env_overrides_settings() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_PROXY_URL", "http://env.proxy:9090");
 
-        let config = ConfigServiceComponent::from_settings(true, "http://settings.proxy:8080", 30, 30);
+        let config =
+            ConfigServiceComponent::from_settings(true, "http://settings.proxy:8080", 30, 30);
         assert_eq!(
             config.get_proxy_url(),
             Some("http://env.proxy:9090".to_string())

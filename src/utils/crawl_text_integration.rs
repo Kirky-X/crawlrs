@@ -4,9 +4,9 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::utils::text_processing::processor::{CrawlProcessingError, CrawlTextProcessor};
+use log::{debug, error, info, warn};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use log::{debug, error, info, warn};
 
 pub struct CrawlTextIntegration {
     processor: Arc<RwLock<CrawlTextProcessor>>,
@@ -144,7 +144,7 @@ impl CrawlTextIntegration {
 
         batch_results
             .into_iter()
-            .zip(responses.into_iter())
+            .zip(responses)
             .map(|(result, response)| match result {
                 Ok(processed_content) => Ok(ProcessedScrapeResponse {
                     original_content: processed_content.processed_content.original_content.clone(),
@@ -258,5 +258,158 @@ mod tests {
         assert!(result.processed_content.contains("测试页面"));
         assert!(result.processed_content.contains("中文和English内容"));
         assert!(result.is_html);
+    }
+
+    #[tokio::test]
+    async fn test_batch_disabled() {
+        let integration = CrawlTextIntegration::new(false);
+        let responses = vec![
+            ScrapeResponseInput {
+                content: b"Hello".to_vec(),
+                url: "http://example.com/1".to_string(),
+                content_type: Some("text/plain".to_string()),
+                status_code: 200,
+            },
+            ScrapeResponseInput {
+                content: b"World".to_vec(),
+                url: "http://example.com/2".to_string(),
+                content_type: None,
+                status_code: 200,
+            },
+        ];
+        let results = integration.process_batch_scrape_responses(responses).await;
+        assert_eq!(results.len(), 2);
+        for result in &results {
+            assert!(result.is_ok());
+            assert!(!result.as_ref().unwrap().processing_success);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_batch_enabled() {
+        let integration = CrawlTextIntegration::new(true);
+        let html = b"<html><body><p>Test content</p></body></html>";
+        let responses = vec![ScrapeResponseInput {
+            content: html.to_vec(),
+            url: "http://example.com".to_string(),
+            content_type: Some("text/html".to_string()),
+            status_code: 200,
+        }];
+        let results = integration.process_batch_scrape_responses(responses).await;
+        assert_eq!(results.len(), 1);
+        let result = results[0].as_ref().unwrap();
+        assert!(result.processing_success);
+        assert!(result.processed_content.contains("Test content"));
+    }
+
+    #[tokio::test]
+    async fn test_enable_method_does_not_panic() {
+        let integration = CrawlTextIntegration::new(false);
+        integration.enable().await;
+        // enable() only logs; enabled flag unchanged (still false)
+        let content = b"test";
+        let result = integration
+            .process_scrape_response(content, "http://example.com", None, 200)
+            .await
+            .unwrap();
+        assert!(!result.processing_success);
+    }
+
+    #[tokio::test]
+    async fn test_disable_method_does_not_panic() {
+        let integration = CrawlTextIntegration::new(true);
+        integration.disable().await;
+        // disable() only logs; enabled flag unchanged (still true)
+        let html = b"<html><body><p>Test</p></body></html>";
+        let result = integration
+            .process_scrape_response(html, "http://example.com", Some("text/html"), 200)
+            .await
+            .unwrap();
+        assert!(result.processing_success);
+    }
+
+    #[test]
+    fn test_create_crawl_text_integration_disabled() {
+        let integration = create_crawl_text_integration(false);
+        let _ = integration;
+    }
+
+    #[test]
+    fn test_create_crawl_text_integration_enabled() {
+        let integration = create_crawl_text_integration(true);
+        let _ = integration;
+    }
+
+    #[test]
+    fn test_content_quality_variants() {
+        let excellent = ContentQuality::Excellent;
+        let good = ContentQuality::Good;
+        let fair = ContentQuality::Fair;
+        let poor = ContentQuality::Poor("reason".to_string());
+
+        assert_eq!(excellent, ContentQuality::Excellent);
+        assert_eq!(good, ContentQuality::Good);
+        assert_eq!(fair, ContentQuality::Fair);
+        assert_eq!(poor, ContentQuality::Poor("reason".to_string()));
+    }
+
+    #[test]
+    fn test_scrape_response_input_construction() {
+        let input = ScrapeResponseInput {
+            content: vec![1, 2, 3],
+            url: "http://test.com".to_string(),
+            content_type: Some("text/html".to_string()),
+            status_code: 404,
+        };
+        assert_eq!(input.content, vec![1, 2, 3]);
+        assert_eq!(input.url, "http://test.com");
+        assert_eq!(input.content_type, Some("text/html".to_string()));
+        assert_eq!(input.status_code, 404);
+    }
+
+    #[test]
+    fn test_processed_scrape_response_construction() {
+        let response = ProcessedScrapeResponse {
+            original_content: "original".to_string(),
+            processed_content: "processed".to_string(),
+            content_type: Some("text/html".to_string()),
+            status_code: 200,
+            url: "http://test.com".to_string(),
+            encoding_detected: Some("utf-8".to_string()),
+            language_detected: Some("en".to_string()),
+            is_html: true,
+            processing_success: true,
+            processing_error: None,
+        };
+        assert_eq!(response.original_content, "original");
+        assert_eq!(response.processed_content, "processed");
+        assert!(response.is_html);
+        assert!(response.processing_success);
+    }
+
+    #[test]
+    fn test_crawl_text_integration_status_construction() {
+        let status = CrawlTextIntegrationStatus {
+            enabled: true,
+            config: CrawlTextProcessorConfig::default(),
+            uptime: std::time::Duration::from_secs(60),
+            processed_count: 100,
+            error_count: 5,
+        };
+        assert!(status.enabled);
+        assert_eq!(status.uptime, std::time::Duration::from_secs(60));
+        assert_eq!(status.processed_count, 100);
+        assert_eq!(status.error_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_response_with_invalid_utf8() {
+        let integration = CrawlTextIntegration::new(true);
+        let invalid_bytes = &[0xFF, 0xFE, 0xFD];
+        let result = integration
+            .process_scrape_response(invalid_bytes, "http://example.com", None, 500)
+            .await
+            .unwrap();
+        assert_eq!(result.status_code, 500);
     }
 }

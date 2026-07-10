@@ -8,8 +8,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use std::sync::Arc;
 use log::error;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
@@ -59,10 +59,21 @@ pub async fn create_scrape(
     // SSRF 验证 - 使用完整的异步 DNS 验证
     match validate_url(&payload.url).await {
         Ok(validated) => {
-            log::debug!("URL passed SSRF validation url={} team_id={} resolved_ips={:?}", payload.url, team_id, validated.resolved_ips);
+            log::debug!(
+                "URL passed SSRF validation url={} team_id={} resolved_ips={:?}",
+                payload.url,
+                team_id,
+                validated.resolved_ips
+            );
         }
         Err(e) => {
-            log::warn!("SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}", payload.url, team_id, auth_state.api_key_id, e);
+            log::warn!(
+                "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
+                payload.url,
+                team_id,
+                auth_state.api_key_id,
+                e
+            );
             return errors::bad_request(format!("SSRF protection: {}", e));
         }
     }
@@ -259,6 +270,279 @@ pub async fn get_scrape_status(
         Err(e) => {
             error!("Failed to get task status {}: {}", id, e);
             errors::internal_server_error("Internal server error")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::dto::scrape_request::ScrapeActionDto;
+    use chrono::NaiveDateTime;
+    use uuid::Uuid;
+    use validator::Validate;
+
+    // ========== ScrapeRequestDto validation tests ==========
+
+    #[test]
+    fn test_scrape_request_dto_minimal_valid() {
+        let json = r#"{"url":"https://example.com"}"#;
+        let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.url, "https://example.com");
+        assert!(dto.formats.is_none());
+        assert!(dto.sync_wait_ms.is_none());
+    }
+
+    #[test]
+    fn test_scrape_request_dto_with_all_fields() {
+        let json = r#"{
+            "url": "https://example.com",
+            "formats": ["html", "markdown"],
+            "include_tags": ["div", "span"],
+            "exclude_tags": ["script"],
+            "sync_wait_ms": 5000,
+            "options": {
+                "headers": {},
+                "timeout": 30,
+                "js_rendering": true
+            }
+        }"#;
+        let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.url, "https://example.com");
+        assert_eq!(dto.formats.as_ref().unwrap().len(), 2);
+        assert_eq!(dto.sync_wait_ms, Some(5000));
+        assert!(dto.options.is_some());
+    }
+
+    #[test]
+    fn test_scrape_request_dto_rejects_unknown_fields() {
+        let json = r#"{"url":"https://example.com","unknown_field":"value"}"#;
+        let result: Result<ScrapeRequestDto, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scrape_request_dto_empty_url_fails_validation() {
+        let json = r#"{"url":""}"#;
+        let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
+        let validation = dto.validate();
+        assert!(validation.is_err());
+    }
+
+    #[test]
+    fn test_scrape_request_dto_sync_wait_ms_at_max() {
+        let json = r#"{"url":"https://example.com","sync_wait_ms":30000}"#;
+        let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
+        assert!(dto.validate().is_ok());
+    }
+
+    #[test]
+    fn test_scrape_request_dto_sync_wait_ms_exceeds_max() {
+        let json = r#"{"url":"https://example.com","sync_wait_ms":30001}"#;
+        let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
+        assert!(dto.validate().is_err());
+    }
+
+    #[test]
+    fn test_scrape_request_dto_sync_wait_ms_zero_ok() {
+        let json = r#"{"url":"https://example.com","sync_wait_ms":0}"#;
+        let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
+        assert!(dto.validate().is_ok());
+    }
+
+    // ========== ScrapeResponseDto serialization ==========
+
+    #[test]
+    fn test_scrape_response_dto_serialization() {
+        let task_id = Uuid::new_v4();
+        let dto = ScrapeResponseDto {
+            id: task_id,
+            url: "https://example.com".to_string(),
+            credits_used: 1,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["id"], task_id.to_string());
+        assert_eq!(parsed["url"], "https://example.com");
+        assert_eq!(parsed["credits_used"], 1);
+    }
+
+    #[test]
+    fn test_scrape_response_dto_deserialization() {
+        let json = format!(
+            r#"{{"id":"{}","url":"https://test.com","credits_used":5}}"#,
+            Uuid::new_v4()
+        );
+        let dto: ScrapeResponseDto = serde_json::from_str(&json).unwrap();
+        assert_eq!(dto.url, "https://test.com");
+        assert_eq!(dto.credits_used, 5);
+    }
+
+    #[test]
+    fn test_scrape_response_dto_default_credits_used() {
+        let json = format!(r#"{{"id":"{}","url":"https://test.com"}}"#, Uuid::new_v4());
+        let dto: ScrapeResponseDto = serde_json::from_str(&json).unwrap();
+        assert_eq!(dto.credits_used, 0);
+    }
+
+    // ========== ScrapeResultDto serialization ==========
+
+    #[test]
+    fn test_scrape_result_dto_serialization() {
+        let dto = ScrapeResultDto {
+            content: "<html>test</html>".to_string(),
+            status_code: 200,
+            content_type: Some("text/html".to_string()),
+            response_time_ms: 150,
+            headers: Some(serde_json::json!({"content-length": "100"})),
+            meta_data: Some(serde_json::json!({"key": "value"})),
+            screenshot: None,
+            created_at: NaiveDateTime::parse_from_str("2025-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["status_code"], 200);
+        assert_eq!(parsed["content"], "<html>test</html>");
+        assert_eq!(parsed["response_time_ms"], 150);
+        assert_eq!(parsed["content_type"], "text/html");
+        assert!(parsed["screenshot"].is_null());
+    }
+
+    #[test]
+    fn test_scrape_result_dto_with_screenshot() {
+        let dto = ScrapeResultDto {
+            content: "content".to_string(),
+            status_code: 200,
+            content_type: None,
+            response_time_ms: 0,
+            headers: None,
+            meta_data: None,
+            screenshot: Some("base64data".to_string()),
+            created_at: NaiveDateTime::parse_from_str("2025-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["screenshot"], "base64data");
+    }
+
+    // ========== ScrapeStatusResponseDto serialization ==========
+
+    #[test]
+    fn test_scrape_status_response_dto_pending() {
+        let task_id = Uuid::new_v4();
+        let dto = ScrapeStatusResponseDto {
+            id: task_id,
+            status: "queued".to_string(),
+            url: "https://example.com".to_string(),
+            created_at: NaiveDateTime::parse_from_str("2025-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
+            completed_at: None,
+            result: None,
+            metadata: None,
+            error: None,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["status"], "queued");
+        assert!(parsed["completed_at"].is_null());
+        assert!(parsed["result"].is_null());
+    }
+
+    #[test]
+    fn test_scrape_status_response_dto_failed_with_error() {
+        let dto = ScrapeStatusResponseDto {
+            id: Uuid::new_v4(),
+            status: "failed".to_string(),
+            url: "https://example.com".to_string(),
+            created_at: NaiveDateTime::parse_from_str("2025-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S")
+                .unwrap(),
+            completed_at: Some(
+                NaiveDateTime::parse_from_str("2025-01-01T00:01:00", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            ),
+            result: None,
+            metadata: None,
+            error: Some("Connection timeout".to_string()),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["status"], "failed");
+        assert_eq!(parsed["error"], "Connection timeout");
+        assert!(parsed["completed_at"].is_string());
+    }
+
+    // ========== CancelScrapeResponseDto serialization ==========
+
+    #[test]
+    fn test_cancel_scrape_response_dto_serialization() {
+        let dto = CancelScrapeResponseDto {
+            message: "Scrape task cancelled".to_string(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["message"], "Scrape task cancelled");
+    }
+
+    #[test]
+    fn test_cancel_scrape_response_dto_deserialization() {
+        let json = r#"{"message":"done"}"#;
+        let dto: CancelScrapeResponseDto = serde_json::from_str(json).unwrap();
+        assert_eq!(dto.message, "done");
+    }
+
+    // ========== ScrapeActionDto tag-based deserialization ==========
+
+    #[test]
+    fn test_scrape_action_wait_deserialization() {
+        let json = r#"{"type":"wait","milliseconds":1000}"#;
+        let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
+        match action {
+            ScrapeActionDto::Wait { milliseconds } => assert_eq!(milliseconds, 1000),
+            _ => panic!("Expected Wait action"),
+        }
+    }
+
+    #[test]
+    fn test_scrape_action_click_deserialization() {
+        let json = r##"{"type":"click","selector":"#button"}"##;
+        let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
+        match action {
+            ScrapeActionDto::Click { selector } => assert_eq!(selector, "#button"),
+            _ => panic!("Expected Click action"),
+        }
+    }
+
+    #[test]
+    fn test_scrape_action_scroll_deserialization() {
+        let json = r#"{"type":"scroll","direction":"down"}"#;
+        let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
+        match action {
+            ScrapeActionDto::Scroll { direction } => assert_eq!(direction, "down"),
+            _ => panic!("Expected Scroll action"),
+        }
+    }
+
+    #[test]
+    fn test_scrape_action_screenshot_with_full_page() {
+        let json = r#"{"type":"screenshot","full_page":true}"#;
+        let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
+        match action {
+            ScrapeActionDto::Screenshot { full_page } => assert_eq!(full_page, Some(true)),
+            _ => panic!("Expected Screenshot action"),
+        }
+    }
+
+    #[test]
+    fn test_scrape_action_input_deserialization() {
+        let json = r##"{"type":"input","selector":"#search","text":"hello"}"##;
+        let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
+        match action {
+            ScrapeActionDto::Input { selector, text } => {
+                assert_eq!(selector, "#search");
+                assert_eq!(text, "hello");
+            }
+            _ => panic!("Expected Input action"),
         }
     }
 }

@@ -149,3 +149,212 @@ pub fn create_test_credits_service_with_config(
 
     (service, deducted)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_mock_repo_deduct_credits_tracks_deduction() {
+        let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+        let team_id = Uuid::new_v4();
+        repo.deduct_credits(
+            team_id,
+            50,
+            CreditsTransactionType::Scrape,
+            "test deduction".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let history = deducted.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0], (team_id, 50));
+    }
+
+    #[tokio::test]
+    async fn test_mock_repo_deduct_credits_multiple() {
+        let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+        let team1 = Uuid::new_v4();
+        let team2 = Uuid::new_v4();
+
+        repo.deduct_credits(
+            team1,
+            10,
+            CreditsTransactionType::Scrape,
+            "first".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        repo.deduct_credits(
+            team2,
+            20,
+            CreditsTransactionType::Scrape,
+            "second".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let history = deducted.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0], (team1, 10));
+        assert_eq!(history[1], (team2, 20));
+    }
+
+    #[tokio::test]
+    async fn test_mock_repo_add_credits_returns_100() {
+        let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+        let result = repo
+            .add_credits(
+                Uuid::new_v4(),
+                50,
+                CreditsTransactionType::Subscription,
+                "test".to_string(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, 100);
+    }
+
+    #[tokio::test]
+    async fn test_mock_repo_get_balance_returns_100() {
+        let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+        let balance = repo.get_balance(Uuid::new_v4()).await.unwrap();
+        assert_eq!(balance, 100);
+    }
+
+    #[tokio::test]
+    async fn test_mock_repo_get_transaction_history_returns_empty() {
+        let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+        let history = repo
+            .get_transaction_history(Uuid::new_v4(), Some(10))
+            .await
+            .unwrap();
+        assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_repo_get_transaction_history_no_limit() {
+        let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+        let history = repo
+            .get_transaction_history(Uuid::new_v4(), None)
+            .await
+            .unwrap();
+        assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_repo_initialize_team_credits_returns_100() {
+        let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+        let result = repo
+            .initialize_team_credits(Uuid::new_v4(), 200)
+            .await
+            .unwrap();
+        assert_eq!(result, 100);
+    }
+
+    #[test]
+    fn test_create_test_credits_service_returns_service() {
+        let (service, _deducted) = create_test_credits_service();
+        // The service should be usable (just verify it was created)
+        let _ = &service;
+    }
+
+    #[test]
+    fn test_create_test_credits_service_returns_empty_deduction_list() {
+        let (_service, deducted) = create_test_credits_service();
+        let history = deducted.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_create_test_credits_service_tracks_deductions() {
+        let (service, deducted) = create_test_credits_service();
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        service
+            .deduct_feature_credits(team_id, task_id, true, false)
+            .await
+            .unwrap();
+
+        let history = deducted.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].0, team_id);
+    }
+
+    #[test]
+    fn test_create_test_credits_service_with_config_custom_values() {
+        let (service, _deducted) = create_test_credits_service_with_config(5, 10, 1000);
+        let _ = &service;
+    }
+
+    #[test]
+    fn test_create_test_credits_service_with_config_empty_deductions() {
+        let (_service, deducted) = create_test_credits_service_with_config(5, 10, 1000);
+        let history = deducted.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_create_test_credits_service_with_config_tracks_deductions() {
+        let (service, deducted) = create_test_credits_service_with_config(5, 10, 1000);
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+
+        service
+            .deduct_feature_credits(team_id, task_id, true, true)
+            .await
+            .unwrap();
+
+        let history = deducted.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(history.len(), 1);
+        // screenshot_cost=5, proxy_cost=10, so total should be 15
+        assert_eq!(history[0], (team_id, 15));
+    }
+
+    #[test]
+    fn test_mock_credits_repository_debug() {
+        let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+        let debug = format!("{:?}", repo);
+        assert!(debug.contains("MockCreditsRepository"));
+    }
+
+    #[test]
+    fn test_deducted_credits_shared_between_repo_and_return() {
+        let deducted: DeductedCredits = Arc::new(Mutex::new(Vec::new()));
+        let repo = MockCreditsRepository {
+            deducted: deducted.clone(),
+        };
+        // Both should point to the same underlying data
+        assert!(Arc::ptr_eq(&repo.deducted, &deducted));
+    }
+}

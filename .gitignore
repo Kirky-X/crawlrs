@@ -80,6 +80,7 @@ tmp/
 .ruff_cache/
 .pytest_cache/
 .opencode/
+specmark/
 openspec/
 lib64/
 parts/

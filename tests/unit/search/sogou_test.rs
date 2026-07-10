@@ -173,7 +173,11 @@ mod tests {
             println!("  URL: {}", result.url);
             println!(
                 "  描述: {}",
-                if result.description.is_empty() { "无描述" } else { &result.description }
+                if result.description.is_empty() {
+                    "无描述"
+                } else {
+                    &result.description
+                }
             );
             println!("  引擎: {:?}", result.engine);
             println!();

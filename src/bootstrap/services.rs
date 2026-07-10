@@ -5,8 +5,8 @@
 
 //! Application services initialization.
 
-use std::sync::Arc;
 use log::info;
+use std::sync::Arc;
 
 use crate::application::use_cases::create_scrape::{CreateScrapeUseCase, CreateScrapeUseCaseTrait};
 use crate::bootstrap::infrastructure::InfrastructureComponents;

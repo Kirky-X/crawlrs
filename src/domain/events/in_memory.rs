@@ -8,10 +8,10 @@
 //! 提供基于内存的事件总线实现，适用于开发测试和小规模部署。
 
 use async_trait::async_trait;
+use log::{debug, error};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use log::{debug, error};
 
 use super::models::DomainEvent;
 use super::traits::{EventBus, EventHandler, EventPublisher};
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_default_metadata_provider_default_impl_returns_none() {
-        let provider = DefaultEventMetadataProvider::default();
+        let provider = DefaultEventMetadataProvider;
         assert!(provider.get_trace_id().is_none());
         assert!(provider.get_tenant_id().is_none());
     }
@@ -480,9 +480,12 @@ mod tests {
     #[tokio::test]
     async fn test_publish_sync_behaves_like_publish() {
         let bus = InMemoryEventBus::with_default_provider();
-        bus.register_handler(Box::new(MockEventHandler::new("SyncHandler", &["TaskCreated"])))
-            .await
-            .expect("register");
+        bus.register_handler(Box::new(MockEventHandler::new(
+            "SyncHandler",
+            &["TaskCreated"],
+        )))
+        .await
+        .expect("register");
 
         let event = make_event();
         let result = bus.publish_sync(&event).await;
@@ -502,9 +505,12 @@ mod tests {
     #[tokio::test]
     async fn test_unregister_handler_removes_registered_handler() {
         let bus = InMemoryEventBus::with_default_provider();
-        bus.register_handler(Box::new(MockEventHandler::new("ToRemove", &["TaskCreated"])))
-            .await
-            .expect("register");
+        bus.register_handler(Box::new(MockEventHandler::new(
+            "ToRemove",
+            &["TaskCreated"],
+        )))
+        .await
+        .expect("register");
 
         let result = bus.unregister_handler("ToRemove").await;
         assert!(result.is_ok());
@@ -561,9 +567,12 @@ mod tests {
     #[tokio::test]
     async fn test_event_publisher_impl_publish_delegates_to_bus() {
         let bus = Arc::new(InMemoryEventBus::with_default_provider());
-        bus.register_handler(Box::new(MockEventHandler::new("PubHandler", &["TaskCreated"])))
-            .await
-            .expect("register");
+        bus.register_handler(Box::new(MockEventHandler::new(
+            "PubHandler",
+            &["TaskCreated"],
+        )))
+        .await
+        .expect("register");
 
         let publisher = EventPublisherImpl::new(bus);
         let event = make_event();
@@ -574,9 +583,12 @@ mod tests {
     #[tokio::test]
     async fn test_event_publisher_impl_publish_batch_publishes_all_events() {
         let bus = Arc::new(InMemoryEventBus::with_default_provider());
-        bus.register_handler(Box::new(MockEventHandler::new("BatchHandler", &["TaskCreated"])))
-            .await
-            .expect("register");
+        bus.register_handler(Box::new(MockEventHandler::new(
+            "BatchHandler",
+            &["TaskCreated"],
+        )))
+        .await
+        .expect("register");
 
         let publisher = EventPublisherImpl::new(bus);
         let e1 = make_event();
@@ -599,15 +611,18 @@ mod tests {
     #[tokio::test]
     async fn test_event_publisher_impl_publish_batch_with_mixed_event_types() {
         let bus = Arc::new(InMemoryEventBus::with_default_provider());
-        bus.register_handler(Box::new(MockEventHandler::new("CreatedHandler", &["TaskCreated"])))
-            .await
-            .expect("register created");
+        bus.register_handler(Box::new(MockEventHandler::new(
+            "CreatedHandler",
+            &["TaskCreated"],
+        )))
+        .await
+        .expect("register created");
         bus.register_handler(Box::new(MockEventHandler::new(
             "CompletedHandler",
             &["TaskCompleted"],
         )))
         .await
-            .expect("register completed");
+        .expect("register completed");
 
         let publisher = EventPublisherImpl::new(bus);
         let created = make_event();
@@ -641,7 +656,7 @@ mod tests {
 
     #[test]
     fn test_event_logging_handler_default_impl() {
-        let handler = EventLoggingHandler::default();
+        let handler = EventLoggingHandler;
         assert_eq!(handler.name(), "EventLoggingHandler");
         assert_eq!(handler.subscribe_to(), &["*"]);
     }
@@ -674,7 +689,10 @@ mod tests {
     async fn test_simple_event_listener_handle_increments_count() {
         let listener = SimpleEventListener::new();
         let event = make_event();
-        listener.handle(&event).await.expect("handle should succeed");
+        listener
+            .handle(&event)
+            .await
+            .expect("handle should succeed");
         assert_eq!(listener.get_event_count().await, 1);
     }
 
@@ -734,7 +752,11 @@ mod tests {
         let event = make_event();
         bus.publish(&event).await.expect("publish");
 
-        assert_eq!(counter.load(Ordering::SeqCst), 1, "handler should be called once");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "handler should be called once"
+        );
     }
 
     #[tokio::test]
@@ -764,7 +786,8 @@ mod tests {
     async fn test_handler_called_once_per_publish() {
         let bus = InMemoryEventBus::with_default_provider();
         let counter = Arc::new(AtomicU64::new(0));
-        let handler = MockEventHandler::with_counter("OncePerPublish", &["TaskCreated"], counter.clone());
+        let handler =
+            MockEventHandler::with_counter("OncePerPublish", &["TaskCreated"], counter.clone());
         bus.register_handler(Box::new(handler))
             .await
             .expect("register");
@@ -774,6 +797,10 @@ mod tests {
         bus.publish(&e1).await.expect("publish e1");
         bus.publish(&e2).await.expect("publish e2");
 
-        assert_eq!(counter.load(Ordering::SeqCst), 2, "handler should be called twice");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            2,
+            "handler should be called twice"
+        );
     }
 }

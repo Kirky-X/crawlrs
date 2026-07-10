@@ -10,12 +10,13 @@
 use chrono::{Duration, Utc};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::time::sleep;
 use uuid::Uuid;
 
 use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::domain::models::task_model::Task;
-use crawlrs::domain::repositories::task_repository::{RepositoryError, TaskQueryParams, TaskRepository};
+use crawlrs::domain::repositories::task_repository::{
+    RepositoryError, TaskQueryParams, TaskRepository,
+};
 use crawlrs::queue::scheduler::TaskScheduler;
 use crawlrs::queue::task_queue::QueueError;
 
@@ -38,15 +39,18 @@ impl MockTaskRepository {
         }
     }
 
+    #[allow(dead_code)]
     fn add_task(&self, task: Task) {
         let mut tasks = self.tasks.lock().unwrap();
         tasks.push(task);
     }
 
+    #[allow(dead_code)]
     fn get_reset_count(&self) -> usize {
         self.reset_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    #[allow(dead_code)]
     fn get_expire_count(&self) -> usize {
         self.expire_count.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -61,7 +65,7 @@ impl TaskRepository for MockTaskRepository {
 
         let mut tasks = self.tasks.lock().unwrap();
         let mut new_task = task.clone();
-        new_task.created_at = Utc::now().into();
+        new_task.created_at = Utc::now();
         tasks.push(new_task.clone());
         Ok(new_task)
     }
@@ -166,11 +170,11 @@ fn create_test_task() -> Task {
         max_retries: 3,
         scheduled_at: None,
         expires_at: None,
-        created_at: Utc::now().into(),
+        created_at: Utc::now(),
         started_at: None,
         completed_at: None,
         crawl_id: None,
-        updated_at: Utc::now().into(),
+        updated_at: Utc::now(),
         lock_token: None,
         lock_expires_at: None,
     }
@@ -408,7 +412,7 @@ async fn test_schedule_task_with_zero_timestamp() {
     let scheduler = TaskScheduler::new(Arc::new(mock_repo));
 
     let mut task = create_test_task();
-    task.created_at = chrono::DateTime::from_timestamp(0, 0).unwrap().into();
+    task.created_at = chrono::DateTime::from_timestamp(0, 0).unwrap();
 
     let future_time = Utc::now() + Duration::seconds(60);
 

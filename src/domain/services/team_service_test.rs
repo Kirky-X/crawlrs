@@ -298,7 +298,9 @@ impl GeoRestrictionRepository for FailingGeoRestrictionRepository {
         &self,
         _team_id: Uuid,
     ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
-        Err(GeoRestrictionRepositoryError::Database("db down".to_string()))
+        Err(GeoRestrictionRepositoryError::Database(
+            "db down".to_string(),
+        ))
     }
 
     async fn update_team_restrictions(
@@ -306,7 +308,9 @@ impl GeoRestrictionRepository for FailingGeoRestrictionRepository {
         _team_id: Uuid,
         _restrictions: &TeamGeoRestrictions,
     ) -> Result<(), GeoRestrictionRepositoryError> {
-        Err(GeoRestrictionRepositoryError::Database("db down".to_string()))
+        Err(GeoRestrictionRepositoryError::Database(
+            "db down".to_string(),
+        ))
     }
 
     async fn log_geo_restriction_action(
@@ -317,7 +321,9 @@ impl GeoRestrictionRepository for FailingGeoRestrictionRepository {
         _action: &str,
         _reason: &str,
     ) -> Result<(), GeoRestrictionRepositoryError> {
-        Err(GeoRestrictionRepositoryError::Database("db down".to_string()))
+        Err(GeoRestrictionRepositoryError::Database(
+            "db down".to_string(),
+        ))
     }
 }
 
@@ -378,7 +384,9 @@ async fn test_get_team_geo_restrictions_success_returns_config() {
         allowed_countries: Some(vec!["US".to_string()]),
         ..Default::default()
     };
-    let geo_repo = Arc::new(ConfigurableGeoRestrictionRepository::new(restrictions.clone()));
+    let geo_repo = Arc::new(ConfigurableGeoRestrictionRepository::new(
+        restrictions.clone(),
+    ));
     let service = make_service(Arc::new(MockGeoService::new("US".to_string())), geo_repo);
 
     let result = service.get_team_geo_restrictions(Uuid::new_v4()).await;
@@ -759,7 +767,9 @@ async fn test_team_service_trait_get_team_geo_restrictions_delegates() {
         allowed_countries: Some(vec!["US".to_string()]),
         ..Default::default()
     };
-    let geo_repo = Arc::new(ConfigurableGeoRestrictionRepository::new(restrictions.clone()));
+    let geo_repo = Arc::new(ConfigurableGeoRestrictionRepository::new(
+        restrictions.clone(),
+    ));
     let service = make_service(Arc::new(MockGeoService::new("US".to_string())), geo_repo);
 
     let result = TeamServiceTrait::get_team_geo_restrictions(&service, Uuid::new_v4()).await;

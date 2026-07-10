@@ -111,3 +111,238 @@ pub async fn security_headers_middleware(req: Request<Body>, next: Next) -> Resp
 
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        routing::get,
+        Router,
+    };
+    use tower::ServiceExt;
+
+    /// Build a test router with the security headers middleware applied
+    fn test_router() -> Router {
+        Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(security_headers_middleware))
+    }
+
+    /// Helper to extract a header value as a string
+    fn header_str<'a>(response: &'a axum::http::Response<Body>, name: &str) -> &'a str {
+        response
+            .headers()
+            .get(name)
+            .expect("header should be present")
+            .to_str()
+            .expect("header value should be valid utf-8")
+    }
+
+    #[tokio::test]
+    async fn test_x_content_type_options_header_present() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(header_str(&response, "x-content-type-options"), "nosniff");
+    }
+
+    #[tokio::test]
+    async fn test_x_frame_options_header_present() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(header_str(&response, "x-frame-options"), "DENY");
+    }
+
+    #[tokio::test]
+    async fn test_x_xss_protection_header_present() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(header_str(&response, "x-xss-protection"), "1; mode=block");
+    }
+
+    #[tokio::test]
+    async fn test_content_security_policy_header_present() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let csp = header_str(&response, "content-security-policy");
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("script-src 'self'"));
+        assert!(csp.contains("object-src 'none'"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+    }
+
+    #[tokio::test]
+    async fn test_referrer_policy_header_present() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            header_str(&response, "referrer-policy"),
+            "strict-origin-when-cross-origin"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_permissions_policy_header_present() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let policy = header_str(&response, "permissions-policy");
+        assert!(policy.contains("camera=()"));
+        assert!(policy.contains("microphone=()"));
+        assert!(policy.contains("geolocation=()"));
+    }
+
+    #[tokio::test]
+    async fn test_cross_origin_opener_policy_header_present() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            header_str(&response, "cross-origin-opener-policy"),
+            "same-origin"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cross_origin_resource_policy_header_present() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            header_str(&response, "cross-origin-resource-policy"),
+            "same-origin"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hsts_header_absent_for_http() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        // HTTP request should NOT have HSTS header
+        assert!(response
+            .headers()
+            .get("strict-transport-security")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_hsts_header_present_for_https() {
+        let app = test_router();
+        // Build an HTTPS URI
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("https://example.com/test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let hsts = header_str(&response, "strict-transport-security");
+        assert!(hsts.contains("max-age=31536000"));
+        assert!(hsts.contains("includeSubDomains"));
+    }
+
+    #[tokio::test]
+    async fn test_all_security_headers_present_for_http() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let headers = response.headers();
+        // Verify all expected headers are present (except HSTS which is HTTPS-only)
+        assert!(headers.contains_key("x-content-type-options"));
+        assert!(headers.contains_key("x-frame-options"));
+        assert!(headers.contains_key("x-xss-protection"));
+        assert!(headers.contains_key("content-security-policy"));
+        assert!(headers.contains_key("referrer-policy"));
+        assert!(headers.contains_key("permissions-policy"));
+        assert!(headers.contains_key("cross-origin-opener-policy"));
+        assert!(headers.contains_key("cross-origin-resource-policy"));
+    }
+
+    #[tokio::test]
+    async fn test_all_security_headers_present_for_https() {
+        let app = test_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("https://example.com/test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let headers = response.headers();
+        // For HTTPS, HSTS should also be present
+        assert!(headers.contains_key("x-content-type-options"));
+        assert!(headers.contains_key("x-frame-options"));
+        assert!(headers.contains_key("x-xss-protection"));
+        assert!(headers.contains_key("content-security-policy"));
+        assert!(headers.contains_key("referrer-policy"));
+        assert!(headers.contains_key("permissions-policy"));
+        assert!(headers.contains_key("cross-origin-opener-policy"));
+        assert!(headers.contains_key("cross-origin-resource-policy"));
+        assert!(headers.contains_key("strict-transport-security"));
+    }
+
+    #[tokio::test]
+    async fn test_middleware_preserves_response_body() {
+        let app = test_router();
+        let response = app
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&bytes[..], b"ok");
+    }
+
+    #[tokio::test]
+    async fn test_csp_policy_constant_value() {
+        assert!(CSP_POLICY.contains("default-src 'self'"));
+        assert!(CSP_POLICY.contains("base-uri 'self'"));
+        assert!(CSP_POLICY.contains("form-action 'self'"));
+    }
+
+    #[tokio::test]
+    async fn test_permissions_policy_constant_value() {
+        assert!(PERMISSIONS_POLICY.contains("accelerometer=()"));
+        assert!(PERMISSIONS_POLICY.contains("payment=()"));
+        assert!(PERMISSIONS_POLICY.contains("usb=()"));
+    }
+
+    #[tokio::test]
+    async fn test_hsts_value_constant() {
+        assert!(HSTS_VALUE.contains("max-age=31536000"));
+        assert!(HSTS_VALUE.contains("includeSubDomains"));
+    }
+}

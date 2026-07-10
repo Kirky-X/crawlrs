@@ -224,7 +224,10 @@ mod tests {
         let mut task = make_task();
         task.retry_count = 2;
         task.max_retries = 3;
-        assert!(task.can_retry(), "should retry when retry_count < max_retries");
+        assert!(
+            task.can_retry(),
+            "should retry when retry_count < max_retries"
+        );
     }
 
     #[test]
@@ -232,7 +235,10 @@ mod tests {
         let mut task = make_task();
         task.retry_count = 3;
         task.max_retries = 3;
-        assert!(!task.can_retry(), "should not retry when retry_count == max_retries");
+        assert!(
+            !task.can_retry(),
+            "should not retry when retry_count == max_retries"
+        );
     }
 
     #[test]
@@ -240,7 +246,10 @@ mod tests {
         let mut task = make_task();
         task.retry_count = 5;
         task.max_retries = 3;
-        assert!(!task.can_retry(), "should not retry when retry_count > max_retries");
+        assert!(
+            !task.can_retry(),
+            "should not retry when retry_count > max_retries"
+        );
     }
 
     // ========== is_expired tests ==========
@@ -248,7 +257,10 @@ mod tests {
     #[test]
     fn test_is_expired_false_when_no_expiry() {
         let task = make_task();
-        assert!(!task.is_expired(), "task without expires_at should not be expired");
+        assert!(
+            !task.is_expired(),
+            "task without expires_at should not be expired"
+        );
     }
 
     #[test]
@@ -262,7 +274,10 @@ mod tests {
     fn test_is_expired_false_when_future_expiry() {
         let mut task = make_task();
         task.expires_at = Some(Utc::now() + chrono::Duration::seconds(3600));
-        assert!(!task.is_expired(), "task with future expires_at should not be expired");
+        assert!(
+            !task.is_expired(),
+            "task with future expires_at should not be expired"
+        );
     }
 
     // ========== is_locked tests ==========
@@ -270,7 +285,10 @@ mod tests {
     #[test]
     fn test_is_locked_false_when_no_lock_token() {
         let task = make_task();
-        assert!(!task.is_locked(), "task without lock_token should not be locked");
+        assert!(
+            !task.is_locked(),
+            "task without lock_token should not be locked"
+        );
     }
 
     #[test]
@@ -278,7 +296,10 @@ mod tests {
         let mut task = make_task();
         let worker = Uuid::new_v4();
         task.acquire_lock(worker, chrono::Duration::seconds(60));
-        assert!(task.is_locked(), "task with future lock expiry should be locked");
+        assert!(
+            task.is_locked(),
+            "task with future lock expiry should be locked"
+        );
     }
 
     #[test]
@@ -327,7 +348,10 @@ mod tests {
         task.fail();
 
         assert_eq!(task.status, TaskStatus::Failed);
-        assert!(task.completed_at.is_some(), "failed task should set completed_at");
+        assert!(
+            task.completed_at.is_some(),
+            "failed task should set completed_at"
+        );
         assert!(task.updated_at >= before);
     }
 
@@ -338,7 +362,10 @@ mod tests {
         task.cancel();
 
         assert_eq!(task.status, TaskStatus::Cancelled);
-        assert!(task.completed_at.is_some(), "cancelled task should set completed_at");
+        assert!(
+            task.completed_at.is_some(),
+            "cancelled task should set completed_at"
+        );
         assert!(task.updated_at >= before);
     }
 
@@ -379,10 +406,12 @@ mod tests {
 
         task.acquire_lock(worker, duration);
 
-        assert_eq!(task.lock_token, Some(worker), "lock_token should be worker id");
-        let expiry = task
-            .lock_expires_at
-            .expect("lock_expires_at should be set");
+        assert_eq!(
+            task.lock_token,
+            Some(worker),
+            "lock_token should be worker id"
+        );
+        let expiry = task.lock_expires_at.expect("lock_expires_at should be set");
         assert!(
             expiry >= before + duration,
             "lock_expires_at should be ~duration in the future"
@@ -400,7 +429,10 @@ mod tests {
         task.release_lock();
 
         assert!(task.lock_token.is_none(), "lock_token should be cleared");
-        assert!(task.lock_expires_at.is_none(), "lock_expires_at should be cleared");
+        assert!(
+            task.lock_expires_at.is_none(),
+            "lock_expires_at should be cleared"
+        );
         assert!(task.updated_at >= before);
     }
 

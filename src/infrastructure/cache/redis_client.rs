@@ -400,4 +400,323 @@ mod tests {
         assert_eq!(config.connection_timeout, 10);
         assert_eq!(config.recycle_timeout, 5);
     }
+
+    #[test]
+    fn test_redis_client_config_debug() {
+        let config = RedisClientConfig {
+            max_connections: 30,
+            connection_timeout: 15,
+            recycle_timeout: 8,
+        };
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("30"));
+        assert!(debug_str.contains("15"));
+        assert!(debug_str.contains("8"));
+    }
+
+    #[test]
+    fn test_redis_client_config_custom() {
+        let config = RedisClientConfig {
+            max_connections: 50,
+            connection_timeout: 20,
+            recycle_timeout: 10,
+        };
+        assert_eq!(config.max_connections, 50);
+        assert_eq!(config.connection_timeout, 20);
+        assert_eq!(config.recycle_timeout, 10);
+    }
+
+    #[test]
+    fn test_redis_client_new_succeeds_without_server() {
+        let client = RedisClient::new("redis://localhost:6379").unwrap();
+        let config = client.config();
+        assert_eq!(config.max_connections, 20);
+        assert_eq!(config.connection_timeout, 10);
+        assert_eq!(config.recycle_timeout, 5);
+    }
+
+    #[test]
+    fn test_redis_client_with_config_custom() {
+        let config = RedisClientConfig {
+            max_connections: 5,
+            connection_timeout: 3,
+            recycle_timeout: 2,
+        };
+        let client = RedisClient::with_config("redis://localhost:6379", config).unwrap();
+        let retrieved = client.config();
+        assert_eq!(retrieved.max_connections, 5);
+        assert_eq!(retrieved.connection_timeout, 3);
+        assert_eq!(retrieved.recycle_timeout, 2);
+    }
+
+    #[test]
+    fn test_redis_client_from_settings_with_values() {
+        let settings = crate::config::RedisSettings {
+            url: "redis://localhost:6379".to_string(),
+            max_connections: Some(15),
+            min_connections: Some(3),
+            connection_timeout: Some(7),
+            idle_timeout: Some(120),
+        };
+        let client = RedisClient::from_settings(&settings).unwrap();
+        let config = client.config();
+        assert_eq!(config.max_connections, 15);
+        assert_eq!(config.connection_timeout, 7);
+        assert_eq!(config.recycle_timeout, 120);
+    }
+
+    #[test]
+    fn test_redis_client_from_settings_with_none_defaults() {
+        let settings = crate::config::RedisSettings {
+            url: "redis://localhost:6379".to_string(),
+            max_connections: None,
+            min_connections: None,
+            connection_timeout: None,
+            idle_timeout: None,
+        };
+        let client = RedisClient::from_settings(&settings).unwrap();
+        let config = client.config();
+        assert_eq!(config.max_connections, 20);
+        assert_eq!(config.connection_timeout, 10);
+        assert_eq!(config.recycle_timeout, 300);
+    }
+
+    #[test]
+    fn test_redis_client_pool_status() {
+        let client = RedisClient::new("redis://localhost:6379").unwrap();
+        let _status = client.pool_status();
+    }
+
+    #[tokio::test]
+    async fn test_redis_client_mget_empty_keys() {
+        let client = RedisClient::new("redis://localhost:6379").unwrap();
+        let result = client.mget(&[]).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_redis_client_clone() {
+        let client = RedisClient::new("redis://localhost:6379").unwrap();
+        let cloned = client.clone();
+        assert_eq!(
+            client.config().max_connections,
+            cloned.config().max_connections
+        );
+    }
+
+    // ========== RedisClientConfig edge cases ==========
+
+    #[test]
+    fn test_redis_client_config_zero_connections() {
+        let config = RedisClientConfig {
+            max_connections: 0,
+            connection_timeout: 5,
+            recycle_timeout: 3,
+        };
+        let client = RedisClient::with_config("redis://localhost:6379", config).unwrap();
+        assert_eq!(client.config().max_connections, 0);
+    }
+
+    #[test]
+    fn test_redis_client_config_large_values() {
+        let config = RedisClientConfig {
+            max_connections: 10000,
+            connection_timeout: 3600,
+            recycle_timeout: 1800,
+        };
+        let client = RedisClient::with_config("redis://localhost:6379", config).unwrap();
+        let retrieved = client.config();
+        assert_eq!(retrieved.max_connections, 10000);
+        assert_eq!(retrieved.connection_timeout, 3600);
+        assert_eq!(retrieved.recycle_timeout, 1800);
+    }
+
+    #[test]
+    fn test_redis_client_config_one_connection() {
+        let config = RedisClientConfig {
+            max_connections: 1,
+            connection_timeout: 1,
+            recycle_timeout: 1,
+        };
+        let client = RedisClient::with_config("redis://localhost:6379", config).unwrap();
+        assert_eq!(client.config().max_connections, 1);
+        assert_eq!(client.config().connection_timeout, 1);
+        assert_eq!(client.config().recycle_timeout, 1);
+    }
+
+    #[test]
+    fn test_redis_client_config_clone_preserves_values() {
+        let config = RedisClientConfig {
+            max_connections: 42,
+            connection_timeout: 99,
+            recycle_timeout: 77,
+        };
+        let cloned = config.clone();
+        assert_eq!(cloned.max_connections, 42);
+        assert_eq!(cloned.connection_timeout, 99);
+        assert_eq!(cloned.recycle_timeout, 77);
+    }
+
+    // ========== RedisClient with different URLs ==========
+
+    #[test]
+    fn test_redis_client_with_rediss_url() {
+        // rediss:// is Redis over TLS; without TLS feature enabled, builder returns error
+        let result = RedisClient::new("rediss://localhost:6379");
+        assert!(result.is_err(), "rediss:// should fail without TLS feature");
+    }
+
+    #[test]
+    fn test_redis_client_with_unix_socket_url() {
+        // Unix socket URL should create a pool successfully (lazy connection)
+        let client = RedisClient::new("redis+unix:///tmp/redis.sock").unwrap();
+        assert_eq!(client.config().max_connections, 20);
+    }
+
+    #[test]
+    fn test_redis_client_with_password_url() {
+        // URL with credentials should work
+        let client = RedisClient::new("redis://:password@localhost:6379").unwrap();
+        let config = client.config();
+        assert_eq!(config.connection_timeout, 10);
+    }
+
+    #[test]
+    fn test_redis_client_with_db_index_url() {
+        // URL with database index
+        let client = RedisClient::new("redis://localhost:6379/3").unwrap();
+        assert_eq!(client.config().max_connections, 20);
+    }
+
+    #[test]
+    fn test_redis_client_with_custom_config_and_rediss() {
+        let config = RedisClientConfig {
+            max_connections: 8,
+            connection_timeout: 4,
+            recycle_timeout: 2,
+        };
+        // rediss:// requires TLS feature which is not enabled; builder returns error
+        let result = RedisClient::with_config("rediss://secure-redis:6380", config);
+        assert!(result.is_err(), "rediss:// should fail without TLS feature");
+    }
+
+    // ========== from_settings with various configurations ==========
+
+    #[test]
+    fn test_from_settings_minimal_config() {
+        let settings = crate::config::RedisSettings {
+            url: "redis://localhost:6379".to_string(),
+            max_connections: Some(1),
+            min_connections: Some(0),
+            connection_timeout: Some(1),
+            idle_timeout: Some(1),
+        };
+        let client = RedisClient::from_settings(&settings).unwrap();
+        let config = client.config();
+        assert_eq!(config.max_connections, 1);
+        assert_eq!(config.connection_timeout, 1);
+        assert_eq!(config.recycle_timeout, 1);
+    }
+
+    #[test]
+    fn test_from_settings_partial_none() {
+        let settings = crate::config::RedisSettings {
+            url: "redis://localhost:6379".to_string(),
+            max_connections: Some(25),
+            min_connections: None,
+            connection_timeout: None,
+            idle_timeout: Some(60),
+        };
+        let client = RedisClient::from_settings(&settings).unwrap();
+        let config = client.config();
+        // max_connections from setting, connection_timeout and recycle_timeout from defaults
+        assert_eq!(config.max_connections, 25);
+        assert_eq!(config.connection_timeout, 10); // default
+        assert_eq!(config.recycle_timeout, 60); // from idle_timeout
+    }
+
+    #[test]
+    fn test_from_settings_url_accessed_correctly() {
+        let test_url = "redis://myhost:6380/5".to_string();
+        let settings = crate::config::RedisSettings {
+            url: test_url.clone(),
+            max_connections: None,
+            min_connections: None,
+            connection_timeout: None,
+            idle_timeout: None,
+        };
+        // Verify the URL is accessible via settings.url()
+        assert_eq!(settings.url(), test_url);
+        let client = RedisClient::from_settings(&settings).unwrap();
+        // The client should be created successfully with the given URL
+        let config = client.config();
+        assert_eq!(config.max_connections, 20); // default
+    }
+
+    // ========== pool_status ==========
+
+    #[test]
+    fn test_pool_status_available_size() {
+        let client = RedisClient::new("redis://localhost:6379").unwrap();
+        let status = client.pool_status();
+        // A freshly created pool with lazy connections has max_size set but
+        // no actual connections created yet (available=0, size=0)
+        assert_eq!(status.max_size, 20);
+        assert_eq!(status.size, 0);
+        assert_eq!(status.available, 0);
+        assert_eq!(status.waiting, 0);
+    }
+
+    #[test]
+    fn test_pool_status_after_clone() {
+        let client = RedisClient::new("redis://localhost:6379").unwrap();
+        let cloned = client.clone();
+        let status = cloned.pool_status();
+        // Clone shares the same pool, so max_size is preserved
+        assert_eq!(status.max_size, 20);
+        assert_eq!(status.size, 0);
+    }
+
+    // ========== config() accessor ==========
+
+    #[test]
+    fn test_config_accessor_returns_reference() {
+        let config = RedisClientConfig {
+            max_connections: 7,
+            connection_timeout: 12,
+            recycle_timeout: 8,
+        };
+        let client = RedisClient::with_config("redis://localhost:6379", config).unwrap();
+        let config_ref = client.config();
+        assert_eq!(config_ref.max_connections, 7);
+        assert_eq!(config_ref.connection_timeout, 12);
+        assert_eq!(config_ref.recycle_timeout, 8);
+    }
+
+    // ========== Default config verification ==========
+
+    #[test]
+    fn test_default_config_constants_match_documentation() {
+        let config = RedisClientConfig::default();
+        // Verify default values match the documented defaults
+        assert_eq!(config.max_connections, 20);
+        assert_eq!(config.connection_timeout, 10);
+        assert_eq!(config.recycle_timeout, 5);
+    }
+
+    #[test]
+    fn test_config_debug_format_contains_all_fields() {
+        let config = RedisClientConfig {
+            max_connections: 100,
+            connection_timeout: 30,
+            recycle_timeout: 15,
+        };
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("max_connections"));
+        assert!(debug.contains("100"));
+        assert!(debug.contains("connection_timeout"));
+        assert!(debug.contains("30"));
+        assert!(debug.contains("recycle_timeout"));
+        assert!(debug.contains("15"));
+    }
 }

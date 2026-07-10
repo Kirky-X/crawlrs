@@ -4,9 +4,9 @@
 // See LICENSE file in the project root for full license information.
 
 use async_trait::async_trait;
+use log::info;
 use rand::Rng;
 use std::sync::Arc;
-use log::info;
 
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;

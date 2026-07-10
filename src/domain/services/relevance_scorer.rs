@@ -439,11 +439,7 @@ mod tests {
     #[test]
     fn test_calculate_score_description_contribution() {
         let scorer = RelevanceScorer::new("rust");
-        let with_desc = scorer.calculate_score(
-            "Title",
-            Some("rust tutorial here"),
-            "https://x.io",
-        );
+        let with_desc = scorer.calculate_score("Title", Some("rust tutorial here"), "https://x.io");
         let without_desc = scorer.calculate_score("Title", None, "https://x.io");
         assert!(
             with_desc > without_desc,
@@ -463,7 +459,8 @@ mod tests {
     fn test_calculate_score_authoritative_domain_bonus() {
         let scorer = RelevanceScorer::new("rust");
         // Use a title >= 10 chars to avoid the short-title penalty (0.8 multiplier)
-        let authoritative = scorer.calculate_score("Long Title Here", None, "https://github.com/rust");
+        let authoritative =
+            scorer.calculate_score("Long Title Here", None, "https://github.com/rust");
         let plain = scorer.calculate_score("Long Title Here", None, "https://example.com/rust");
         // Both URLs contain "rust" so url bonus is equal; difference is authority bonus
         assert!(
@@ -472,7 +469,11 @@ mod tests {
         );
         let diff = authoritative - plain;
         // The authority bonus is exactly 0.5 (no length penalty since title >= 10 chars)
-        assert!((diff - 0.5).abs() < 1e-9, "authority bonus should be 0.5, got diff {}", diff);
+        assert!(
+            (diff - 0.5).abs() < 1e-9,
+            "authority bonus should be 0.5, got diff {}",
+            diff
+        );
     }
 
     #[test]
@@ -483,7 +484,10 @@ mod tests {
         let long = scorer.calculate_score("rust language tutorial", None, "https://x.io");
         // Both contain "rust"; long title also contains it and is longer.
         // The short title receives 0.8 penalty multiplier on the total.
-        assert!(long > short, "long title should score higher due to no penalty");
+        assert!(
+            long > short,
+            "long title should score higher due to no penalty"
+        );
     }
 
     #[test]
@@ -505,8 +509,7 @@ mod tests {
                 Regex::new(pattern).map_err(|e| e.to_string())
             }
             fn get_or_insert_escaped(&self, literal: &str) -> Result<Regex, String> {
-                Regex::new(&format!(r"\b{}\b", regex::escape(literal)))
-                    .map_err(|e| e.to_string())
+                Regex::new(&format!(r"\b{}\b", regex::escape(literal))).map_err(|e| e.to_string())
             }
             fn get_or_compile(&self, pattern: &str) -> Result<Arc<Regex>, String> {
                 Ok(Arc::new(Regex::new(pattern).map_err(|e| e.to_string())?))

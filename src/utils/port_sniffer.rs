@@ -3,10 +3,10 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use log::{info, warn};
 use std::net::TcpListener;
 use std::time::Duration;
 use thiserror::Error;
-use log::{info, warn};
 
 /// 端口嗅探错误类型
 #[derive(Error, Debug)]

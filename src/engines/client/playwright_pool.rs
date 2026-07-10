@@ -21,6 +21,7 @@ use crate::engines::engine_client::EngineError;
 use crate::infrastructure::services::config_service::BrowserConfigTrait;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -28,7 +29,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::task::JoinHandle;
-use log::{debug, error, info, warn};
 
 /// 浏览器实例池配置
 #[derive(Debug, Clone)]

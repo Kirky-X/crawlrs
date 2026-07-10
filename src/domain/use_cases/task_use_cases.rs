@@ -238,7 +238,7 @@ mod tests {
     use chrono::{FixedOffset, Utc};
     use std::collections::HashMap;
     use std::collections::HashSet;
-    use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
     use std::sync::{Arc, Mutex};
 
     // ============ Configurable Mock TaskRepository ============
@@ -274,10 +274,7 @@ mod tests {
         }
 
         fn with_tasks(task_list: Vec<Task>) -> Self {
-            let tasks: HashMap<Uuid, Task> = task_list
-                .into_iter()
-                .map(|t| (t.id, t))
-                .collect();
+            let tasks: HashMap<Uuid, Task> = task_list.into_iter().map(|t| (t.id, t)).collect();
             Self {
                 tasks: Mutex::new(tasks),
                 ..Default::default()
@@ -325,7 +322,9 @@ mod tests {
 
         async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
             if self.find_should_error.load(Ordering::SeqCst) == 1 {
-                return Err(RepositoryError::Database(anyhow::anyhow!("find_by_id error")));
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "find_by_id error"
+                )));
             }
             Ok(self.tasks.lock().unwrap().get(&id).cloned())
         }
@@ -381,7 +380,13 @@ mod tests {
         }
 
         async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
-            Ok(self.crawl_tasks.lock().unwrap().get(&crawl_id).cloned().unwrap_or_default())
+            Ok(self
+                .crawl_tasks
+                .lock()
+                .unwrap()
+                .get(&crawl_id)
+                .cloned()
+                .unwrap_or_default())
         }
 
         async fn query_tasks(
@@ -462,13 +467,22 @@ mod tests {
             expires_at: Some(expires),
         };
 
-        let resp = use_case.execute(request).await.expect("execute should succeed");
+        let resp = use_case
+            .execute(request)
+            .await
+            .expect("execute should succeed");
 
         assert_eq!(repo.create_count(), 1);
         assert_eq!(resp.task.team_id, team_id);
         assert_eq!(resp.task.task_type, TaskType::Crawl);
-        assert_eq!(resp.task.priority, 10, "priority should be set from request");
-        assert_eq!(resp.task.max_retries, 5, "max_retries should be set from request");
+        assert_eq!(
+            resp.task.priority, 10,
+            "priority should be set from request"
+        );
+        assert_eq!(
+            resp.task.max_retries, 5,
+            "max_retries should be set from request"
+        );
         assert_eq!(resp.task.expires_at, Some(expires));
         assert_eq!(resp.task.payload, serde_json::json!({"key": "value"}));
     }
@@ -491,7 +505,10 @@ mod tests {
             expires_at: None,
         };
 
-        let resp = use_case.execute(request).await.expect("execute should succeed");
+        let resp = use_case
+            .execute(request)
+            .await
+            .expect("execute should succeed");
 
         // Default priority from Task::new is 0, max_retries is 3
         assert_eq!(resp.task.priority, 0);
@@ -550,7 +567,10 @@ mod tests {
             expires_at: None,
         };
 
-        let resp = use_case.execute(request).await.expect("execute should succeed");
+        let resp = use_case
+            .execute(request)
+            .await
+            .expect("execute should succeed");
         assert_eq!(resp.task.task_type, TaskType::Extract);
         assert_eq!(resp.task.payload["rules"], serde_json::json!([]));
     }
@@ -567,8 +587,22 @@ mod tests {
     async fn test_query_tasks_execute_success_no_more() {
         let repo = Arc::new(MockTaskRepository::default());
         let tasks = vec![
-            Task::new(Uuid::new_v4(), TaskType::Scrape, Uuid::new_v4(), Uuid::new_v4(), "u1".into(), serde_json::json!({})),
-            Task::new(Uuid::new_v4(), TaskType::Crawl, Uuid::new_v4(), Uuid::new_v4(), "u2".into(), serde_json::json!({})),
+            Task::new(
+                Uuid::new_v4(),
+                TaskType::Scrape,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "u1".into(),
+                serde_json::json!({}),
+            ),
+            Task::new(
+                Uuid::new_v4(),
+                TaskType::Crawl,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                "u2".into(),
+                serde_json::json!({}),
+            ),
         ];
         repo.set_query_result(tasks.clone(), 2);
 
@@ -596,9 +630,14 @@ mod tests {
     #[tokio::test]
     async fn test_query_tasks_execute_has_more_true() {
         let repo = Arc::new(MockTaskRepository::default());
-        let tasks = vec![
-            Task::new(Uuid::new_v4(), TaskType::Scrape, Uuid::new_v4(), Uuid::new_v4(), "u1".into(), serde_json::json!({})),
-        ];
+        let tasks = vec![Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "u1".into(),
+            serde_json::json!({}),
+        )];
         // total=10, offset=0, len=1 -> has_more = (0+1) < 10 = true
         repo.set_query_result(tasks, 10);
 
@@ -626,9 +665,14 @@ mod tests {
     #[tokio::test]
     async fn test_query_tasks_execute_has_more_boundary_exact_match() {
         let repo = Arc::new(MockTaskRepository::default());
-        let tasks = vec![
-            Task::new(Uuid::new_v4(), TaskType::Scrape, Uuid::new_v4(), Uuid::new_v4(), "u1".into(), serde_json::json!({})),
-        ];
+        let tasks = vec![Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "u1".into(),
+            serde_json::json!({}),
+        )];
         // total=5, offset=4, len=1 -> has_more = (4+1) < 5 = false
         repo.set_query_result(tasks, 5);
 
@@ -680,7 +724,14 @@ mod tests {
     #[tokio::test]
     async fn test_query_tasks_execute_with_all_filters() {
         let repo = Arc::new(MockTaskRepository::default());
-        let task = Task::new(Uuid::new_v4(), TaskType::Scrape, Uuid::new_v4(), Uuid::new_v4(), "u".into(), serde_json::json!({}));
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "u".into(),
+            serde_json::json!({}),
+        );
         repo.set_query_result(vec![task], 1);
 
         let use_case = QueryTasksUseCase::new(repo);
@@ -1040,7 +1091,9 @@ mod tests {
         // Verify failure reasons
         let reasons: Vec<String> = resp.failed.iter().map(|(_, r)| r.clone()).collect();
         assert!(reasons.iter().any(|r| r.contains("use force=true")));
-        assert!(reasons.iter().any(|r| r.contains("Cannot cancel task in status")));
+        assert!(reasons
+            .iter()
+            .any(|r| r.contains("Cannot cancel task in status")));
         assert!(reasons.iter().any(|r| r.contains("Task not found")));
     }
 }

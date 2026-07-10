@@ -8,10 +8,10 @@
 use crate::common::error::AppError;
 use crate::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
 use crate::domain::repositories::audit_log_repository::{AuditLogRepository, AuditRepositoryError};
+use log::debug;
 use shaku::Interface;
 use std::sync::Arc;
 use thiserror::Error;
-use log::debug;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
@@ -392,7 +392,10 @@ mod tests {
                     "mock create failure".to_string(),
                 )));
             }
-            self.created.lock().expect("created lock").push(entry.clone());
+            self.created
+                .lock()
+                .expect("created lock")
+                .push(entry.clone());
             Ok(entry.clone())
         }
 
@@ -437,7 +440,10 @@ mod tests {
             Ok(self.find_results.lock().expect("find lock").clone())
         }
 
-        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditRepositoryError> {
+        async fn cleanup_old_logs(
+            &self,
+            _retention_days: i64,
+        ) -> Result<u64, AuditRepositoryError> {
             if self.fail_all {
                 return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
                     "mock cleanup failure".to_string(),
@@ -555,7 +561,10 @@ mod tests {
         assert_eq!(created[0].decision, AuditDecision::Deny);
         assert_eq!(created[0].api_key_id, Some(api_key_id));
         assert_eq!(created[0].team_id, Some(team_id));
-        assert_eq!(created[0].denial_reason.as_deref(), Some("insufficient scope"));
+        assert_eq!(
+            created[0].denial_reason.as_deref(),
+            Some("insufficient scope")
+        );
         assert_eq!(created[0].scope_used, Some(scope));
     }
 
@@ -634,7 +643,9 @@ mod tests {
     #[tokio::test]
     async fn test_audit_service_get_logs_for_team_returns_results() {
         let entry = sample_entry("team_action", AuditDecision::Allow);
-        let repo = Arc::new(MockAuditLogRepository::with_find_results(vec![entry.clone()]));
+        let repo = Arc::new(MockAuditLogRepository::with_find_results(vec![
+            entry.clone()
+        ]));
         let service = AuditService::new(repo);
 
         let results = service
@@ -710,10 +721,7 @@ mod tests {
     async fn test_audit_service_cleanup_old_logs_zero() {
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo);
-        let count = service
-            .cleanup_old_logs(30)
-            .await
-            .expect("should succeed");
+        let count = service.cleanup_old_logs(30).await.expect("should succeed");
         assert_eq!(count, 0);
     }
 

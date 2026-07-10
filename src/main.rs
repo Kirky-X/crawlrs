@@ -7,10 +7,10 @@ use crawlrs::bootstrap::routes::build_api_app_with_state;
 use crawlrs::di::{AppState, AppStateExt};
 use crawlrs::workers::manager::{WorkerManager, WorkerManagerConfig};
 use crawlrs::workers::{AbstractWorker, Worker};
+use log::error;
 use std::sync::Arc;
 use std::{env, process};
 use tokio::net::TcpListener;
-use log::error;
 
 /// Service type enumeration.
 enum ServiceType {

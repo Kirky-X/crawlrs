@@ -17,12 +17,12 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::utils::robots::RobotsCheckerTrait;
 use anyhow::Result;
 use chrono::Utc;
+use log::debug;
 use regex::Regex;
 use scraper::{Html, Selector};
 use shaku::{Component, Interface};
 use std::collections::HashSet;
 use std::sync::Arc;
-use log::debug;
 use url::Url;
 use uuid::Uuid;
 
@@ -447,8 +447,12 @@ impl LinkDiscoverer {
         include_patterns: &[String],
         exclude_patterns: &[String],
     ) -> HashSet<String> {
-        debug!("total_links={:?} include_patterns={:?} exclude_patterns={:?}",
-            links.len(), include_patterns, exclude_patterns);
+        debug!(
+            "total_links={:?} include_patterns={:?} exclude_patterns={:?}",
+            links.len(),
+            include_patterns,
+            exclude_patterns
+        );
 
         // Convert glob patterns to regex patterns
         let include_regexes: Vec<Regex> = include_patterns
@@ -472,7 +476,12 @@ impl LinkDiscoverer {
                 } else {
                     let matched = include_regexes.iter().any(|regex| {
                         let matches = regex.is_match(link);
-                        debug!("{:?} pattern={:?} matches={}", link, regex.as_str(), matches);
+                        debug!(
+                            "{:?} pattern={:?} matches={}",
+                            link,
+                            regex.as_str(),
+                            matches
+                        );
                         matches
                     });
                     debug!("matches_include={:?}", matched);
@@ -482,7 +491,12 @@ impl LinkDiscoverer {
                 // Link must NOT match any exclude pattern
                 let matches_exclude = exclude_regexes.iter().any(|regex| {
                     let matches = regex.is_match(link);
-                    debug!("{:?} pattern={:?} matches={}", link, regex.as_str(), matches);
+                    debug!(
+                        "{:?} pattern={:?} matches={}",
+                        link,
+                        regex.as_str(),
+                        matches
+                    );
                     matches
                 });
                 debug!("matches_exclude={:?}", matches_exclude);
@@ -562,10 +576,7 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(
-            &self,
-            _worker_id: Uuid,
-        ) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -608,10 +619,7 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(
-            &self,
-            _crawl_id: Uuid,
-        ) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -711,9 +719,7 @@ mod tests {
     }
 
     #[cfg(feature = "metrics")]
-    impl crate::infrastructure::observability::metrics::SystemMonitorTrait
-        for MockSystemMonitor
-    {
+    impl crate::infrastructure::observability::metrics::SystemMonitorTrait for MockSystemMonitor {
         fn cpu_usage(&self) -> f64 {
             self.cpu
         }
@@ -742,9 +748,7 @@ mod tests {
                 mem: 0.1,
                 stale: false,
             })
-                as Arc<
-                    dyn crate::infrastructure::observability::metrics::SystemMonitorTrait,
-                >,
+                as Arc<dyn crate::infrastructure::observability::metrics::SystemMonitorTrait>,
         }
     }
 
@@ -752,9 +756,7 @@ mod tests {
     fn make_service_with_monitor(
         repo: Arc<dyn TaskRepository>,
         robots: Arc<dyn RobotsCheckerTrait>,
-        monitor: Arc<
-            dyn crate::infrastructure::observability::metrics::SystemMonitorTrait,
-        >,
+        monitor: Arc<dyn crate::infrastructure::observability::metrics::SystemMonitorTrait>,
     ) -> CrawlService {
         CrawlService {
             repo,
@@ -796,8 +798,7 @@ mod tests {
     /// Build a parent Task with extra config fields (e.g. crawl_delay_ms).
     fn make_parent_task_with_config(depth: u64, max_depth: u64, config_delay_ms: u64) -> Task {
         let mut task = make_parent_task(depth, max_depth);
-        task.payload["config"] =
-            serde_json::json!({ "crawl_delay_ms": config_delay_ms });
+        task.payload["config"] = serde_json::json!({ "crawl_delay_ms": config_delay_ms });
         task
     }
 
@@ -887,7 +888,10 @@ mod tests {
     fn test_extract_links_no_anchor_tags() {
         let html = "<html><body><p>no links here</p></body></html>";
         let links = LinkDiscoverer::extract_links(html, "https://example.com/").unwrap();
-        assert!(links.is_empty(), "HTML without <a> tags should yield no links");
+        assert!(
+            links.is_empty(),
+            "HTML without <a> tags should yield no links"
+        );
     }
 
     #[test]
@@ -902,7 +906,11 @@ mod tests {
         let html = r#"<a href="https://example.com/page#section">link</a>"#;
         let links = LinkDiscoverer::extract_links(html, "https://example.com/").unwrap();
         let url = links.iter().next().expect("should have one link");
-        assert!(!url.contains("#section"), "fragment should be stripped: {}", url);
+        assert!(
+            !url.contains("#section"),
+            "fragment should be stripped: {}",
+            url
+        );
     }
 
     #[test]
@@ -950,7 +958,11 @@ mod tests {
         .collect();
         let include = vec!["example.com/page*".to_string()];
         let filtered = LinkDiscoverer::filter_links(links, &include, &[]);
-        assert_eq!(filtered.len(), 2, "only matching include pattern should remain");
+        assert_eq!(
+            filtered.len(),
+            2,
+            "only matching include pattern should remain"
+        );
         assert!(filtered.iter().all(|l| l.contains("example.com/page")));
     }
 
@@ -1014,8 +1026,14 @@ mod tests {
         // any string containing the text as a substring.
         let regex = LinkDiscoverer::glob_to_regex("hello").expect("should compile");
         assert!(regex.is_match("hello"));
-        assert!(regex.is_match("helloworld"), "unanchored: matches substring");
-        assert!(regex.is_match("worldhello"), "unanchored: matches substring");
+        assert!(
+            regex.is_match("helloworld"),
+            "unanchored: matches substring"
+        );
+        assert!(
+            regex.is_match("worldhello"),
+            "unanchored: matches substring"
+        );
         assert!(!regex.is_match("hel"), "no match when text absent");
         assert!(!regex.is_match("world"), "no match when text absent");
     }
@@ -1027,7 +1045,10 @@ mod tests {
         let regex = LinkDiscoverer::glob_to_regex("hello*").expect("should compile");
         assert!(regex.is_match("hello"));
         assert!(regex.is_match("helloworld"));
-        assert!(regex.is_match("worldhello"), "unanchored: matches substring hello");
+        assert!(
+            regex.is_match("worldhello"),
+            "unanchored: matches substring hello"
+        );
         assert!(!regex.is_match("world"), "no hello prefix");
     }
 
@@ -1043,7 +1064,10 @@ mod tests {
     fn test_glob_to_regex_escapes_special_regex_chars() {
         let regex = LinkDiscoverer::glob_to_regex("example.com").expect("should compile");
         assert!(regex.is_match("example.com"));
-        assert!(!regex.is_match("examplexcom"), "dot should be literal not any-char");
+        assert!(
+            !regex.is_match("examplexcom"),
+            "dot should be literal not any-char"
+        );
     }
 
     // ========== is_domain_blacklisted tests ==========
@@ -1054,10 +1078,7 @@ mod tests {
             Arc::new(MockTaskRepo::new()),
             Arc::new(MockRobotsChecker::new_allow()),
         );
-        assert!(service.is_domain_blacklisted(
-            "https://spam.com/page",
-            &["spam.com".to_string()]
-        ));
+        assert!(service.is_domain_blacklisted("https://spam.com/page", &["spam.com".to_string()]));
     }
 
     #[test]
@@ -1066,10 +1087,7 @@ mod tests {
             Arc::new(MockTaskRepo::new()),
             Arc::new(MockRobotsChecker::new_allow()),
         );
-        assert!(!service.is_domain_blacklisted(
-            "https://good.com/page",
-            &["spam.com".to_string()]
-        ));
+        assert!(!service.is_domain_blacklisted("https://good.com/page", &["spam.com".to_string()]));
     }
 
     #[test]
@@ -1087,10 +1105,7 @@ mod tests {
             Arc::new(MockTaskRepo::new()),
             Arc::new(MockRobotsChecker::new_allow()),
         );
-        assert!(!service.is_domain_blacklisted(
-            "not-a-url",
-            &["anything".to_string()]
-        ));
+        assert!(!service.is_domain_blacklisted("not-a-url", &["anything".to_string()]));
     }
 
     #[test]
@@ -1100,10 +1115,7 @@ mod tests {
             Arc::new(MockRobotsChecker::new_allow()),
         );
         // "spam" is a substring of "spam.example.com"
-        assert!(service.is_domain_blacklisted(
-            "https://spam.example.com/x",
-            &["spam".to_string()]
-        ));
+        assert!(service.is_domain_blacklisted("https://spam.example.com/x", &["spam".to_string()]));
     }
 
     // ========== parse_crawl_config tests ==========
@@ -1266,7 +1278,10 @@ mod tests {
         );
         // depth=5, max_depth=3 → min(3, 6) = 3
         let result = service.apply_load_degradation(5, 3);
-        assert_eq!(result, 3, "should use min(max_depth, depth+1) under high load");
+        assert_eq!(
+            result, 3,
+            "should use min(max_depth, depth+1) under high load"
+        );
     }
 
     #[cfg(feature = "metrics")]
@@ -1384,10 +1399,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_single_task_success_bfs() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
         let result = service
@@ -1410,10 +1422,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_single_task_dfs_increases_priority() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "dfs", vec![]);
         let task = service
@@ -1427,10 +1436,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_single_task_robots_blocked_returns_none() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_block()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_block()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
         let result = service
@@ -1444,10 +1450,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_single_task_robots_failure_returns_error() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_failing()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_failing()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
         let result = service
@@ -1505,10 +1508,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_single_task_config_delay_only_when_no_robots_delay() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task_with_config(0, 3, 300);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
         let task = service
@@ -1516,17 +1516,17 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(task.scheduled_at.is_some(), "config delay should set scheduled_at");
+        assert!(
+            task.scheduled_at.is_some(),
+            "config delay should set scheduled_at"
+        );
     }
 
     #[tokio::test]
     async fn test_create_single_task_create_fails_returns_error() {
         let mut repo = MockTaskRepo::new();
         repo.create_fails = true;
-        let service = make_service(
-            Arc::new(repo),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(Arc::new(repo), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
         let result = service
@@ -1538,10 +1538,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_single_task_no_delay_no_scheduled_at() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
         let task = service
@@ -1560,10 +1557,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_tasks_from_links_success() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
         let links: HashSet<String> = vec![
@@ -1583,10 +1577,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_tasks_from_links_skips_blacklisted() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec!["spam.com"]);
         let links: HashSet<String> = vec![
@@ -1608,10 +1599,7 @@ mod tests {
         let repo = Arc::new(MockTaskRepo::with_existing(vec![
             "https://example.com/existing".to_string(),
         ]));
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
         let links: HashSet<String> = vec![
@@ -1632,13 +1620,12 @@ mod tests {
     async fn test_create_tasks_from_links_find_existing_fails() {
         let mut repo = MockTaskRepo::new();
         repo.find_existing_fails = true;
-        let service = make_service(
-            Arc::new(repo),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(Arc::new(repo), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
-        let links: HashSet<String> = vec!["https://example.com/a".to_string()].into_iter().collect();
+        let links: HashSet<String> = vec!["https://example.com/a".to_string()]
+            .into_iter()
+            .collect();
         let result = service
             .create_tasks_from_links(&parent, &links, config, 3)
             .await;
@@ -1648,10 +1635,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_tasks_from_links_empty_links() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
         let tasks = service
@@ -1665,18 +1649,20 @@ mod tests {
     #[tokio::test]
     async fn test_create_tasks_from_links_robots_blocked_yields_no_task() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_block()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_block()));
         let parent = make_parent_task(0, 3);
         let config = make_config(0, 3, vec![], vec![], "bfs", vec![]);
-        let links: HashSet<String> = vec!["https://example.com/a".to_string()].into_iter().collect();
+        let links: HashSet<String> = vec!["https://example.com/a".to_string()]
+            .into_iter()
+            .collect();
         let tasks = service
             .create_tasks_from_links(&parent, &links, config, 3)
             .await
             .expect("should succeed");
-        assert!(tasks.is_empty(), "robots-blocked URL should not create a task");
+        assert!(
+            tasks.is_empty(),
+            "robots-blocked URL should not create a task"
+        );
         assert_eq!(repo.created_count(), 0);
     }
 
@@ -1685,10 +1671,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_crawl_result_depth_at_max_returns_empty() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         // depth=3, max_depth=3 → depth >= max_depth → empty
         let parent = make_parent_task(3, 3);
         let result = service
@@ -1702,10 +1685,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_crawl_result_depth_exceeds_max_returns_empty() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(5, 3);
         let result = service
             .process_crawl_result_internal(&parent, sample_html())
@@ -1717,10 +1697,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_crawl_result_success_creates_tasks() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let result = service
             .process_crawl_result_internal(&parent, sample_html())
@@ -1737,10 +1714,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_crawl_result_no_links_returns_empty() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let result = service
             .process_crawl_result_internal(&parent, "<html><body>no links</body></html>")
@@ -1753,10 +1727,7 @@ mod tests {
     async fn test_process_crawl_result_create_fails_returns_crawl_error() {
         let mut repo = MockTaskRepo::new();
         repo.create_fails = true;
-        let service = make_service(
-            Arc::new(repo),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(Arc::new(repo), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let result = service
             .process_crawl_result_internal(&parent, sample_html())
@@ -1777,10 +1748,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_crawl_result_invalid_base_url_returns_error() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let mut parent = make_parent_task(0, 3);
         parent.url = "not-a-url".to_string();
         let result = service
@@ -1824,10 +1792,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_crawl_result_trait_forwards_to_internal() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(0, 3);
         let result = service
             .process_crawl_result(&parent, sample_html())
@@ -1839,10 +1804,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_crawl_result_trait_depth_at_max() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let parent = make_parent_task(3, 3);
         let result = service
             .process_crawl_result(&parent, sample_html())
@@ -1854,10 +1816,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_crawl_result_with_blacklist_skips_domain() {
         let repo = Arc::new(MockTaskRepo::new());
-        let service = make_service(
-            repo.clone(),
-            Arc::new(MockRobotsChecker::new_allow()),
-        );
+        let service = make_service(repo.clone(), Arc::new(MockRobotsChecker::new_allow()));
         let mut parent = make_parent_task(0, 3);
         parent.payload["domain_blacklist"] = serde_json::json!(["other.com"]);
         let result = service

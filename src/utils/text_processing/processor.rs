@@ -5,13 +5,13 @@
 
 use crate::utils::text_processing::encoding::{TextEncodingError, TextEncodingProcessor};
 use async_trait::async_trait;
+use log::{debug, error, info};
 use regex::Regex;
 use shaku::{Component, Interface};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use log::{debug, error, info};
 
 /// 文本处理错误类型
 #[derive(Error, Debug)]
@@ -791,5 +791,638 @@ mod tests {
         let normal_text = "This is normal text with different words and meaningful content.";
         let ratio = processor.calculate_repetitive_ratio(normal_text);
         assert!(ratio < 0.5);
+    }
+
+    // ========== Free function tests ==========
+
+    #[test]
+    fn test_init_encoding_patterns_returns_three_patterns() {
+        let patterns = init_encoding_patterns().expect("patterns should compile");
+        assert!(patterns.contains_key(ENCODING_PATTERN_HTML_META));
+        assert!(patterns.contains_key(ENCODING_PATTERN_XML_DECLARATION));
+        assert!(patterns.contains_key(ENCODING_PATTERN_HTTP_CONTENT_TYPE));
+        assert_eq!(patterns.len(), 3);
+    }
+
+    #[test]
+    fn test_init_encoding_patterns_compiles_valid_regexes() {
+        let patterns = init_encoding_patterns().expect("patterns should compile");
+        let html_meta = patterns.get(ENCODING_PATTERN_HTML_META).unwrap();
+        assert!(html_meta.is_match(r#"<meta charset="utf-8">"#));
+        let xml_decl = patterns.get(ENCODING_PATTERN_XML_DECLARATION).unwrap();
+        assert!(xml_decl.is_match(r#"<?xml version="1.0" encoding="UTF-8"?>"#));
+    }
+
+    #[test]
+    fn test_detect_html_structure_free_function_html_tags() {
+        assert!(detect_html_structure("<html><body></body></html>"));
+        assert!(detect_html_structure("<!DOCTYPE html>"));
+        assert!(detect_html_structure("<head><title>X</title></head>"));
+        assert!(detect_html_structure("<body>content</body>"));
+        assert!(detect_html_structure("<div>content</div>"));
+        assert!(detect_html_structure("<p>paragraph</p>"));
+        assert!(detect_html_structure("<a href=\"x\">link</a>"));
+    }
+
+    #[test]
+    fn test_detect_html_structure_free_function_non_html() {
+        assert!(!detect_html_structure("plain text content"));
+        assert!(!detect_html_structure("no html here at all"));
+        assert!(!detect_html_structure(""));
+    }
+
+    // ========== TextEncodingProcessorComponent tests ==========
+
+    #[test]
+    fn test_text_encoding_processor_component_default() {
+        let component = TextEncodingProcessorComponent::default();
+        assert_eq!(component.default_encoding, "utf-8");
+        assert!(component.detect_encoding);
+    }
+
+    #[test]
+    fn test_text_encoding_processor_component_new() {
+        let component = TextEncodingProcessorComponent::new();
+        assert_eq!(component.default_encoding, "utf-8");
+        assert!(component.detect_encoding);
+    }
+
+    #[test]
+    fn test_text_encoding_processor_component_process_text_utf8() {
+        let component = TextEncodingProcessorComponent::new();
+        let result = component.process_text(b"hello world").unwrap();
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_text_encoding_processor_component_process_text_chinese() {
+        let component = TextEncodingProcessorComponent::new();
+        let input = "你好世界".as_bytes();
+        let result = component.process_text(input).unwrap();
+        assert!(result.contains("你好世界"));
+    }
+
+    #[test]
+    fn test_text_encoding_processor_component_trim_newlines() {
+        let component = TextEncodingProcessorComponent::new();
+        let result = component.trim_newlines("hello\nworld\nfoo");
+        assert_eq!(result, "hello world foo");
+    }
+
+    #[test]
+    fn test_text_encoding_processor_component_trim_newlines_single_line() {
+        let component = TextEncodingProcessorComponent::new();
+        let result = component.trim_newlines("hello");
+        assert_eq!(result, "hello");
+    }
+
+    // ========== WebContentProcessorComponent tests ==========
+
+    #[test]
+    fn test_web_content_processor_component_default() {
+        let component = WebContentProcessorComponent::default();
+        let result = component
+            .process_web_content(b"plain text", Some("text/plain"))
+            .unwrap();
+        assert!(!result.is_html);
+        assert_eq!(result.extracted_text, "plain text");
+        assert_eq!(result.content_length, 10);
+    }
+
+    #[test]
+    fn test_web_content_processor_component_process_html() {
+        let component = WebContentProcessorComponent::default();
+        let html = b"<html><body><p>Hello</p></body></html>";
+        let result = component
+            .process_web_content(html, Some("text/html"))
+            .unwrap();
+        assert!(result.is_html);
+        assert!(result.extracted_text.contains("Hello"));
+    }
+
+    #[test]
+    fn test_web_content_processor_component_process_batch() {
+        let component = WebContentProcessorComponent::default();
+        let contents = vec![
+            (b"text1".as_slice(), Some("text/plain")),
+            (b"<p>text2</p>".as_slice(), Some("text/html")),
+            (b"text3".as_slice(), None),
+        ];
+        let results = component.process_batch(contents);
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.is_ok()));
+        assert!(results[1].as_ref().unwrap().is_html);
+    }
+
+    #[test]
+    fn test_web_content_processor_component_process_batch_empty() {
+        let component = WebContentProcessorComponent::default();
+        let results = component.process_batch(vec![]);
+        assert!(results.is_empty());
+    }
+
+    // ========== WebContentProcessor tests ==========
+
+    #[test]
+    fn test_web_content_processor_default() {
+        let processor = WebContentProcessor::default();
+        let result = processor.process_web_content(b"hello", None).unwrap();
+        assert_eq!(result.extracted_text, "hello");
+    }
+
+    #[test]
+    fn test_web_content_processor_with_text_processor() {
+        let processor = WebContentProcessor::with_text_processor(TextEncodingProcessor::new());
+        let result = processor
+            .process_web_content(b"test content", Some("text/plain"))
+            .unwrap();
+        assert!(!result.is_html);
+        assert_eq!(result.extracted_text, "test content");
+    }
+
+    #[test]
+    fn test_web_content_processor_with_injected_processor() {
+        let processor =
+            WebContentProcessor::with_injected_processor(Arc::new(TextEncodingProcessor::new()));
+        let result = processor.process_web_content(b"injected", None).unwrap();
+        assert_eq!(result.extracted_text, "injected");
+    }
+
+    #[test]
+    fn test_web_content_processor_process_batch() {
+        let processor = WebContentProcessor::new();
+        let contents = vec![
+            (b"<p>html</p>".as_slice(), Some("text/html")),
+            (b"plain".as_slice(), None),
+        ];
+        let results = processor.process_batch(contents);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].as_ref().unwrap().is_html);
+        assert!(!results[1].as_ref().unwrap().is_html);
+    }
+
+    #[test]
+    fn test_web_content_processor_detect_html_structure_all_tags() {
+        let processor = WebContentProcessor::new();
+        assert!(processor.detect_html_structure("<html>"));
+        assert!(processor.detect_html_structure("<!DOCTYPE"));
+        assert!(processor.detect_html_structure("<head"));
+        assert!(processor.detect_html_structure("<body"));
+        assert!(processor.detect_html_structure("<div"));
+        assert!(processor.detect_html_structure("<p>"));
+        assert!(processor.detect_html_structure("<a "));
+        assert!(!processor.detect_html_structure("no tags here"));
+    }
+
+    #[test]
+    fn test_web_content_processor_extract_declared_encoding_xml() {
+        let processor = WebContentProcessor::new();
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><root/>";
+        let encoding = processor.extract_declared_encoding(xml);
+        assert_eq!(encoding, Some("utf-8".to_string()));
+    }
+
+    #[test]
+    fn test_web_content_processor_extract_declared_encoding_meta_uppercase() {
+        let processor = WebContentProcessor::new();
+        let html = r#"<html><head><meta charset="UTF-8"></head></html>"#;
+        let encoding = processor.extract_declared_encoding(html);
+        assert_eq!(encoding, Some("utf-8".to_string()));
+    }
+
+    #[test]
+    fn test_web_content_processor_extract_declared_encoding_none() {
+        let processor = WebContentProcessor::new();
+        let plain = "just plain text without encoding";
+        let encoding = processor.extract_declared_encoding(plain);
+        assert_eq!(encoding, None);
+    }
+
+    #[test]
+    fn test_web_content_processor_clean_text_html_entities() {
+        let processor = WebContentProcessor::new();
+        let text = "Hello &amp; goodbye &lt;world&gt;";
+        let cleaned = processor.clean_text(text);
+        assert!(cleaned.contains("Hello & goodbye"));
+        assert!(cleaned.contains("<world>"));
+    }
+
+    #[test]
+    fn test_web_content_processor_clean_text_control_chars() {
+        let processor = WebContentProcessor::new();
+        let text = "hello\x01\x02world";
+        let cleaned = processor.clean_text(text);
+        assert!(!cleaned.contains('\x01'));
+        assert!(!cleaned.contains('\x02'));
+        assert!(cleaned.contains("hello"));
+        assert!(cleaned.contains("world"));
+    }
+
+    #[test]
+    fn test_web_content_processor_detect_language_empty() {
+        let processor = WebContentProcessor::new();
+        assert_eq!(processor.detect_language(""), None);
+    }
+
+    #[test]
+    fn test_web_content_processor_detect_language_unknown() {
+        let processor = WebContentProcessor::new();
+        // Mix of non-ASCII and non-Chinese characters (Arabic/Cyrillic)
+        let text = "Привет мир مرحبا بالعالم";
+        let lang = processor.detect_language(text);
+        assert_eq!(lang, Some("unknown".to_string()));
+    }
+
+    // ========== ProcessedWebContent struct tests ==========
+
+    #[test]
+    fn test_processed_web_content_fields() {
+        let content = ProcessedWebContent {
+            original_content: "original".to_string(),
+            extracted_text: "extracted".to_string(),
+            is_html: true,
+            declared_encoding: Some("utf-8".to_string()),
+            detected_language: Some("en".to_string()),
+            content_type: Some("text/html".to_string()),
+            content_length: 100,
+        };
+        assert_eq!(content.original_content, "original");
+        assert_eq!(content.extracted_text, "extracted");
+        assert!(content.is_html);
+        assert_eq!(content.declared_encoding.as_deref(), Some("utf-8"));
+        assert_eq!(content.detected_language.as_deref(), Some("en"));
+        assert_eq!(content.content_type.as_deref(), Some("text/html"));
+        assert_eq!(content.content_length, 100);
+    }
+
+    #[test]
+    fn test_processed_web_content_clone() {
+        let content = ProcessedWebContent {
+            original_content: "orig".to_string(),
+            extracted_text: "ext".to_string(),
+            is_html: false,
+            declared_encoding: None,
+            detected_language: None,
+            content_type: None,
+            content_length: 5,
+        };
+        let cloned = content.clone();
+        assert_eq!(cloned.extracted_text, content.extracted_text);
+        assert_eq!(cloned.is_html, content.is_html);
+    }
+
+    // ========== WebContentError variants tests ==========
+
+    #[test]
+    fn test_web_content_error_display_encoding() {
+        let err =
+            WebContentError::EncodingError(TextEncodingError::DetectionFailed("test".to_string()));
+        assert!(err.to_string().contains("编码处理错误"));
+    }
+
+    #[test]
+    fn test_web_content_error_display_html_parse() {
+        let err = WebContentError::HtmlParseError("parse issue".to_string());
+        assert!(err.to_string().contains("HTML解析错误"));
+    }
+
+    #[test]
+    fn test_web_content_error_display_content_extraction() {
+        let err = WebContentError::ContentExtractionError("extract fail".to_string());
+        assert!(err.to_string().contains("内容提取错误"));
+    }
+
+    // ========== CrawlTextProcessor tests ==========
+
+    #[test]
+    fn test_crawl_text_processor_default() {
+        let processor = CrawlTextProcessor::default();
+        let config = processor.get_config();
+        assert_eq!(config.max_processing_time_secs, 30);
+        assert_eq!(config.max_content_size_mb, 10);
+    }
+
+    #[test]
+    fn test_crawl_text_processor_new() {
+        let processor = CrawlTextProcessor::new();
+        let config = processor.get_config();
+        assert_eq!(config.max_processing_time_secs, 30);
+        assert_eq!(config.max_content_size_mb, 10);
+    }
+
+    #[test]
+    fn test_crawl_text_processor_get_config() {
+        let processor = CrawlTextProcessor::new();
+        let config = processor.get_config();
+        assert_eq!(config.max_processing_time_secs, 30);
+        assert_eq!(config.max_content_size_mb, 10);
+    }
+
+    #[test]
+    fn test_crawl_text_processor_update_config() {
+        let mut processor = CrawlTextProcessor::new();
+        let new_config = CrawlProcessorConfig {
+            max_processing_time_secs: 60,
+            max_content_size_mb: 20,
+        };
+        processor.update_config(new_config);
+        let config = processor.get_config();
+        assert_eq!(config.max_processing_time_secs, 60);
+        assert_eq!(config.max_content_size_mb, 20);
+    }
+
+    #[test]
+    fn test_crawl_text_processor_process_simple_text_empty() {
+        let processor = CrawlTextProcessor::new();
+        let result = processor.process_simple_text("").unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_crawl_text_processor_process_simple_text_unicode() {
+        let processor = CrawlTextProcessor::new();
+        let text = r"Hello \u4e16\u754c";
+        let result = processor.process_simple_text(text).unwrap();
+        assert_eq!(result, "Hello 世界");
+    }
+
+    #[test]
+    fn test_crawl_text_processor_process_crawled_content_plain() {
+        let processor = CrawlTextProcessor::new();
+        let result = processor
+            .process_crawled_content(b"hello world", "http://example.com", Some("text/plain"))
+            .unwrap();
+        assert_eq!(result.url, "http://example.com");
+        assert!(!result.processed_content.is_html);
+        assert_eq!(result.processed_content.extracted_text, "hello world");
+        assert_eq!(result.original_size, 11);
+    }
+
+    #[test]
+    fn test_crawl_text_processor_process_crawled_content_html() {
+        let processor = CrawlTextProcessor::new();
+        let html = b"<html><body><p>Test content here</p></body></html>";
+        let result = processor
+            .process_crawled_content(html, "http://example.com", Some("text/html"))
+            .unwrap();
+        assert!(result.processed_content.is_html);
+        assert!(result
+            .processed_content
+            .extracted_text
+            .contains("Test content"));
+    }
+
+    #[test]
+    fn test_crawl_text_processor_process_crawled_content_too_large() {
+        let mut processor = CrawlTextProcessor::new();
+        processor.update_config(CrawlProcessorConfig {
+            max_processing_time_secs: 30,
+            max_content_size_mb: 0,
+        });
+        let content = b"this is too large";
+        let result = processor.process_crawled_content(content, "http://x.com", None);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CrawlProcessingError::ContentTooLarge { size, max_size } => {
+                assert_eq!(size, 17);
+                assert_eq!(max_size, 0);
+            }
+            other => panic!("expected ContentTooLarge, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_crawl_text_processor_process_batch() {
+        let processor = CrawlTextProcessor::new();
+        let batch = vec![
+            (b"content1".as_slice(), "http://a.com", Some("text/plain")),
+            (
+                b"<p>content2</p>".as_slice(),
+                "http://b.com",
+                Some("text/html"),
+            ),
+            (b"content3".as_slice(), "http://c.com", None),
+        ];
+        let results = processor.process_batch(batch);
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    #[test]
+    fn test_crawl_text_processor_process_batch_empty() {
+        let processor = CrawlTextProcessor::new();
+        let results = processor.process_batch(vec![]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_validate_content_quality_excellent() {
+        let processor = CrawlTextProcessor::new();
+        // 使用多样化的词汇避免重复度过高
+        let diverse_text = "The quick brown fox jumps over the lazy dog near the river bank. \
+             Birds sing loudly in the morning while cats sleep peacefully on warm rooftops. \
+             Children play games outside enjoying sunny weather with friends and neighbors.";
+        let result = processor
+            .process_crawled_content(diverse_text.as_bytes(), "http://example.com", None)
+            .unwrap();
+        let quality = processor.validate_content_quality(&result);
+        match quality {
+            ContentQuality::Excellent | ContentQuality::Good => {}
+            other => panic!("expected Excellent or Good, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_content_quality_poor_short_text() {
+        let processor = CrawlTextProcessor::new();
+        let result = processor
+            .process_crawled_content(b"hi", "http://x.com", None)
+            .unwrap();
+        let quality = processor.validate_content_quality(&result);
+        match quality {
+            ContentQuality::Poor(msg) => assert!(msg.contains("过短") || msg.contains("过少")),
+            other => panic!("expected Poor, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_content_quality_poor_repetitive() {
+        let processor = CrawlTextProcessor::new();
+        let repetitive = "word ".repeat(50);
+        let result = processor
+            .process_crawled_content(repetitive.as_bytes(), "http://x.com", None)
+            .unwrap();
+        let quality = processor.validate_content_quality(&result);
+        match quality {
+            ContentQuality::Poor(msg) => assert!(msg.contains("重复"), "got: {}", msg),
+            other => panic!("expected Poor repetitive, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_calculate_repetitive_ratio_short_text() {
+        let processor = CrawlTextProcessor::new();
+        let ratio = processor.calculate_repetitive_ratio("few words");
+        assert_eq!(ratio, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_repetitive_ratio_empty() {
+        let processor = CrawlTextProcessor::new();
+        let ratio = processor.calculate_repetitive_ratio("");
+        assert_eq!(ratio, 0.0);
+    }
+
+    // ========== CrawlProcessorConfig tests ==========
+
+    #[test]
+    fn test_crawl_processor_config_default() {
+        let config = CrawlProcessorConfig::default();
+        assert_eq!(config.max_processing_time_secs, 30);
+        assert_eq!(config.max_content_size_mb, 10);
+    }
+
+    #[test]
+    fn test_crawl_processor_config_clone() {
+        let config = CrawlProcessorConfig {
+            max_processing_time_secs: 45,
+            max_content_size_mb: 15,
+        };
+        let cloned = config.clone();
+        assert_eq!(cloned.max_processing_time_secs, 45);
+        assert_eq!(cloned.max_content_size_mb, 15);
+    }
+
+    // ========== CrawlProcessingError variants tests ==========
+
+    #[test]
+    fn test_crawl_processing_error_content_too_large_display() {
+        let err = CrawlProcessingError::ContentTooLarge {
+            size: 1000,
+            max_size: 500,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("1000"));
+        assert!(msg.contains("500"));
+    }
+
+    #[test]
+    fn test_crawl_processing_error_processing_timeout_display() {
+        let err = CrawlProcessingError::ProcessingTimeout;
+        assert_eq!(err.to_string(), "处理超时");
+    }
+
+    #[test]
+    fn test_crawl_processing_error_poor_content_quality_display() {
+        let err = CrawlProcessingError::PoorContentQuality("bad quality".to_string());
+        assert!(err.to_string().contains("bad quality"));
+    }
+
+    // ========== ContentQuality tests ==========
+
+    #[test]
+    fn test_content_quality_variants() {
+        let excellent = ContentQuality::Excellent;
+        let good = ContentQuality::Good;
+        let fair = ContentQuality::Fair;
+        let poor = ContentQuality::Poor("reason".to_string());
+
+        assert_eq!(excellent, ContentQuality::Excellent);
+        assert_eq!(good, ContentQuality::Good);
+        assert_eq!(fair, ContentQuality::Fair);
+        match poor {
+            ContentQuality::Poor(r) => assert_eq!(r, "reason"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_content_quality_clone() {
+        let poor = ContentQuality::Poor("test reason".to_string());
+        let cloned = poor.clone();
+        match cloned {
+            ContentQuality::Poor(r) => assert_eq!(r, "test reason"),
+            _ => panic!("wrong variant after clone"),
+        }
+    }
+
+    // ========== Free function tests ==========
+
+    #[test]
+    fn test_process_web_content_with_processor_fn() {
+        let processor = WebContentProcessor::new();
+        let result =
+            process_web_content_with_processor(&processor, b"<p>test</p>", Some("text/html"))
+                .unwrap();
+        assert!(result.is_html);
+        assert!(result.extracted_text.contains("test"));
+    }
+
+    #[test]
+    fn test_process_crawled_content_with_processor_fn() {
+        let processor = CrawlTextProcessor::new();
+        let result =
+            process_crawled_content_with_processor(&processor, b"hello", "http://x.com", None)
+                .unwrap();
+        assert_eq!(result.url, "http://x.com");
+        assert!(!result.processed_content.is_html);
+    }
+
+    #[test]
+    fn test_process_crawled_batch_with_processor_fn() {
+        let processor = CrawlTextProcessor::new();
+        let batch = vec![
+            (b"a".as_slice(), "http://a.com", None),
+            (b"b".as_slice(), "http://b.com", None),
+        ];
+        let results = process_crawled_batch_with_processor(&processor, batch);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    // ========== TextProcessingError tests ==========
+
+    #[test]
+    fn test_text_processing_error_regex_compilation_display() {
+        let err = TextProcessingError::RegexCompilationError("bad regex".to_string());
+        assert!(err.to_string().contains("正则表达式编译失败"));
+        assert!(err.to_string().contains("bad regex"));
+    }
+
+    #[test]
+    fn test_text_processing_error_encoding_from() {
+        let encoding_err = TextEncodingError::DetectionFailed("fail".to_string());
+        let err: TextProcessingError = encoding_err.into();
+        assert!(matches!(err, TextProcessingError::EncodingError(_)));
+    }
+
+    // ========== HtmlCleaner integration tests ==========
+
+    #[test]
+    fn test_html_cleaner_extracts_text_with_scripts_and_styles() {
+        let processor = WebContentProcessor::new();
+        let html = r#"<html><head><style>body { color: red; }</style></head><body><script>alert(1);</script><p>visible text</p></body></html>"#;
+        let result = processor.extract_text_from_html(html).unwrap();
+        assert!(result.contains("visible text"));
+        assert!(!result.contains("alert"));
+        assert!(!result.contains("color"));
+    }
+
+    #[test]
+    fn test_html_cleaner_removes_comments() {
+        let processor = WebContentProcessor::new();
+        let html = "<p>before</p><!-- this is a comment --><p>after</p>";
+        let result = processor.extract_text_from_html(html).unwrap();
+        assert!(!result.contains("comment"));
+        assert!(result.contains("before"));
+        assert!(result.contains("after"));
+    }
+
+    #[test]
+    fn test_html_cleaner_normalizes_whitespace() {
+        let processor = WebContentProcessor::new();
+        let html = "<p>hello</p>   <p>world</p>";
+        let result = processor.extract_text_from_html(html).unwrap();
+        assert!(!result.contains("   "));
     }
 }

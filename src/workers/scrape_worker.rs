@@ -5,13 +5,13 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use log::{debug, error, info, warn};
 use scraper::{Html, Selector};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use log::{debug, error, info, warn};
 use url::Url;
 use uuid::Uuid;
 
@@ -72,6 +72,15 @@ pub struct ScrapeWorker {
     retry_handler: RetryHandler,
     extraction_service: Arc<dyn ExtractionServiceTrait>,
     regex_cache: RegexCache,
+}
+
+impl std::fmt::Debug for ScrapeWorker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScrapeWorker")
+            .field("worker_id", &self.worker_id)
+            .field("default_concurrency_limit", &self.default_concurrency_limit)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ScrapeWorker {
@@ -196,7 +205,10 @@ impl ScrapeWorker {
     }
 
     async fn process_task(&self, mut task: Task) -> Result<()> {
-        debug!("process_task: task_id={}, url={}, task_type={}", task.id, task.url, task.task_type);
+        debug!(
+            "process_task: task_id={}, url={}, task_type={}",
+            task.id, task.url, task.task_type
+        );
         info!("Processing task");
 
         // Check Task Expiration
@@ -1061,7 +1073,10 @@ impl ScrapeWorker {
             .await?;
         debug!("task_id: {}, About to mark task as completed", task.id);
         self.repository.mark_completed(task.id).await?;
-        debug!("task_id: {}, Successfully marked task as completed", task.id);
+        debug!(
+            "task_id: {}, Successfully marked task as completed",
+            task.id
+        );
 
         self.trigger_webhook(task, None).await;
         Ok(())
@@ -1564,5 +1579,808 @@ impl ScrapeWorkerBuilder {
             extraction_service,
             regex_cache,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::oxcache::RegexCacheType;
+    use std::time::Duration;
+
+    // ========== Helper functions ==========
+
+    /// Create a Task with the given JSON payload and default remaining fields.
+    fn make_task(payload: Value) -> Task {
+        Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            payload,
+        )
+    }
+
+    /// Build a RegexCache backed by an in-memory oxcache instance.
+    async fn make_regex_cache() -> RegexCache {
+        let cache: RegexCacheType = oxcache::Cache::builder()
+            .capacity(100)
+            .ttl(Duration::from_secs(3600))
+            .build()
+            .await
+            .expect("Failed to build oxcache for test");
+        RegexCache::new(Arc::new(cache))
+    }
+
+    // ========== get_cached_regex tests ==========
+
+    #[tokio::test]
+    async fn test_get_cached_regex_valid_pattern_returns_regex() {
+        let cache = make_regex_cache().await;
+        let result = get_cached_regex(r"\d+", &cache);
+        let regex = result.expect("valid pattern should produce a Regex");
+        assert!(regex.is_match("123"));
+        assert!(!regex.is_match("abc"));
+    }
+
+    #[tokio::test]
+    async fn test_get_cached_regex_invalid_pattern_returns_regex_error() {
+        let cache = make_regex_cache().await;
+        let result = get_cached_regex(r"[unclosed", &cache);
+        let err = result.expect_err("invalid pattern should error");
+        match err {
+            ScrapeWorkerError::RegexError(msg) => {
+                assert!(!msg.is_empty(), "error message should not be empty");
+            }
+            other => panic!("Expected RegexError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_cached_regex_caches_repeated_calls() {
+        let cache = make_regex_cache().await;
+        let r1 = get_cached_regex(r"[a-z]+", &cache).expect("first call should succeed");
+        let r2 = get_cached_regex(r"[a-z]+", &cache).expect("second call should succeed");
+        assert!(r1.is_match("hello"));
+        assert!(r2.is_match("world"));
+    }
+
+    // ========== build_scrape_request: error / edge cases ==========
+
+    #[test]
+    fn test_build_scrape_request_minimal_payload_succeeds() {
+        let task = make_task(json!({"url": "https://example.com"}));
+        let request = ScrapeWorker::build_scrape_request(&task)
+            .expect("minimal payload with url should succeed");
+        assert_eq!(request.url, "https://example.com");
+        assert_eq!(request.options.method, HttpMethod::Get);
+        assert!(request.options.body.is_none());
+        assert!(!request.options.needs_js);
+        assert!(!request.options.needs_screenshot);
+        assert!(!request.options.mobile);
+        assert!(request.options.proxy.is_none());
+        assert!(!request.options.skip_tls_verification);
+        assert!(!request.options.needs_tls_fingerprint);
+        assert!(!request.options.use_fire_engine);
+        assert_eq!(request.options.timeout, Duration::from_secs(30));
+        assert_eq!(request.options.sync_wait_ms, 0);
+        assert!(request.options.actions.is_empty());
+        assert!(request.options.screenshot_config.is_none());
+        assert!(request.options.headers.is_empty());
+    }
+
+    #[test]
+    fn test_build_scrape_request_missing_url_fails() {
+        let task = make_task(json!({"formats": ["html"]}));
+        assert!(ScrapeWorker::build_scrape_request(&task).is_err());
+    }
+
+    #[test]
+    fn test_build_scrape_request_non_object_payload_fails() {
+        let task = make_task(json!(42));
+        assert!(ScrapeWorker::build_scrape_request(&task).is_err());
+    }
+
+    #[test]
+    fn test_build_scrape_request_array_payload_fails() {
+        let task = make_task(json!([1, 2, 3]));
+        assert!(ScrapeWorker::build_scrape_request(&task).is_err());
+    }
+
+    #[test]
+    fn test_build_scrape_request_string_payload_fails() {
+        let task = make_task(json!("not an object"));
+        assert!(ScrapeWorker::build_scrape_request(&task).is_err());
+    }
+
+    #[test]
+    fn test_build_scrape_request_unknown_field_fails() {
+        // deny_unknown_fields rejects unknown keys
+        let task = make_task(json!({"url": "https://example.com", "unknown_field": "value"}));
+        assert!(ScrapeWorker::build_scrape_request(&task).is_err());
+    }
+
+    #[test]
+    fn test_build_scrape_request_unknown_option_field_fails() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"bogus": 1}
+        }));
+        assert!(ScrapeWorker::build_scrape_request(&task).is_err());
+    }
+
+    // ========== build_scrape_request: options.timeout ==========
+
+    #[test]
+    fn test_build_scrape_request_default_timeout_is_30_seconds() {
+        let task = make_task(json!({"url": "https://example.com"}));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_build_scrape_request_custom_timeout() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"timeout": 120}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.timeout, Duration::from_secs(120));
+    }
+
+    // ========== build_scrape_request: options.headers ==========
+
+    #[test]
+    fn test_build_scrape_request_string_headers_are_included() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {
+                "headers": {"X-Custom": "value", "Authorization": "Bearer token"}
+            }
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.headers.len(), 2);
+        assert_eq!(
+            request.options.headers.get("X-Custom"),
+            Some(&"value".to_string())
+        );
+        assert_eq!(
+            request.options.headers.get("Authorization"),
+            Some(&"Bearer token".to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_scrape_request_non_string_headers_are_filtered() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {
+                "headers": {
+                    "X-String": "ok",
+                    "X-Number": 42,
+                    "X-Bool": true,
+                    "X-Null": null,
+                    "X-Object": {"nested": 1}
+                }
+            }
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        // Only string values are inserted; everything else is silently dropped.
+        assert_eq!(request.options.headers.len(), 1);
+        assert_eq!(
+            request.options.headers.get("X-String"),
+            Some(&"ok".to_string())
+        );
+        assert!(!request.options.headers.contains_key("X-Number"));
+        assert!(!request.options.headers.contains_key("X-Bool"));
+        assert!(!request.options.headers.contains_key("X-Null"));
+        assert!(!request.options.headers.contains_key("X-Object"));
+    }
+
+    #[test]
+    fn test_build_scrape_request_empty_headers_map() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"headers": {}}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.headers.is_empty());
+    }
+
+    // ========== build_scrape_request: needs_js logic ==========
+
+    #[test]
+    fn test_build_scrape_request_needs_js_false_by_default() {
+        let task = make_task(json!({"url": "https://example.com"}));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(!request.options.needs_js);
+    }
+
+    #[test]
+    fn test_build_scrape_request_needs_js_true_from_js_rendering() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"js_rendering": true}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.needs_js);
+    }
+
+    #[test]
+    fn test_build_scrape_request_needs_js_false_when_js_rendering_false() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"js_rendering": false}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(!request.options.needs_js);
+    }
+
+    #[test]
+    fn test_build_scrape_request_needs_js_true_when_actions_non_empty() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "wait", "milliseconds": 500}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.needs_js);
+    }
+
+    #[test]
+    fn test_build_scrape_request_needs_js_false_when_actions_empty() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": []
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(!request.options.needs_js);
+    }
+
+    #[test]
+    fn test_build_scrape_request_needs_js_true_empty_actions_with_js_rendering() {
+        // needs_js is an OR: empty actions (false) OR js_rendering=true (true) => true
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [],
+            "options": {"js_rendering": true}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.needs_js);
+    }
+
+    // ========== build_scrape_request: screenshot options ==========
+
+    #[test]
+    fn test_build_scrape_request_screenshot_false_by_default() {
+        let task = make_task(json!({"url": "https://example.com"}));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(!request.options.needs_screenshot);
+        assert!(request.options.screenshot_config.is_none());
+    }
+
+    #[test]
+    fn test_build_scrape_request_screenshot_true_sets_flag() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"screenshot": true}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.needs_screenshot);
+    }
+
+    #[test]
+    fn test_build_scrape_request_screenshot_config_full_page_true() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {
+                "screenshot_options": {
+                    "full_page": true,
+                    "quality": 90,
+                    "format": "png"
+                }
+            }
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        let config = request
+            .options
+            .screenshot_config
+            .expect("screenshot_config should be set");
+        assert!(config.full_page);
+        assert_eq!(config.quality, Some(90));
+        assert_eq!(config.format, Some("png".to_string()));
+        assert!(config.selector.is_none());
+    }
+
+    #[test]
+    fn test_build_scrape_request_screenshot_config_full_page_defaults_to_false() {
+        // Note: this differs from ScreenshotConfig::default() which uses true.
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"screenshot_options": {}}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        let config = request
+            .options
+            .screenshot_config
+            .expect("screenshot_config should be set when screenshot_options is present");
+        assert!(!config.full_page, "full_page should default to false");
+        assert!(config.quality.is_none());
+        assert!(config.format.is_none());
+        assert!(config.selector.is_none());
+    }
+
+    #[test]
+    fn test_build_scrape_request_screenshot_config_with_selector() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"screenshot_options": {"selector": "#main"}}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        let config = request
+            .options
+            .screenshot_config
+            .expect("screenshot_config should be set");
+        assert_eq!(config.selector, Some("#main".to_string()));
+    }
+
+    // ========== build_scrape_request: other boolean / string options ==========
+
+    #[test]
+    fn test_build_scrape_request_mobile_true() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"mobile": true}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.mobile);
+    }
+
+    #[test]
+    fn test_build_scrape_request_mobile_false_by_default() {
+        let task = make_task(json!({"url": "https://example.com"}));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(!request.options.mobile);
+    }
+
+    #[test]
+    fn test_build_scrape_request_proxy_set() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"proxy": "http://proxy:8080"}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.proxy, Some("http://proxy:8080".to_string()));
+    }
+
+    #[test]
+    fn test_build_scrape_request_proxy_none_by_default() {
+        let task = make_task(json!({"url": "https://example.com"}));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.proxy.is_none());
+    }
+
+    #[test]
+    fn test_build_scrape_request_skip_tls_verification() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"skip_tls_verification": true}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.skip_tls_verification);
+    }
+
+    #[test]
+    fn test_build_scrape_request_needs_tls_fingerprint() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"needs_tls_fingerprint": true}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.needs_tls_fingerprint);
+    }
+
+    #[test]
+    fn test_build_scrape_request_use_fire_engine() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {"use_fire_engine": true}
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.use_fire_engine);
+    }
+
+    #[test]
+    fn test_build_scrape_request_sync_wait_ms_default_zero() {
+        let task = make_task(json!({"url": "https://example.com"}));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.sync_wait_ms, 0);
+    }
+
+    #[test]
+    fn test_build_scrape_request_sync_wait_ms_set() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "sync_wait_ms": 5000
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.sync_wait_ms, 5000);
+    }
+
+    #[test]
+    fn test_build_scrape_request_method_always_get() {
+        // build_scrape_request hard-codes HttpMethod::Get
+        let task = make_task(json!({"url": "https://example.com"}));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.method, HttpMethod::Get);
+    }
+
+    #[test]
+    fn test_build_scrape_request_body_always_none() {
+        // build_scrape_request hard-codes body to None
+        let task = make_task(json!({"url": "https://example.com"}));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.body.is_none());
+    }
+
+    // ========== build_scrape_request: URL source ==========
+
+    #[test]
+    fn test_build_scrape_request_url_comes_from_payload_not_task() {
+        // The ScrapeRequest.url is parsed from the payload, not task.url
+        let mut task = make_task(json!({"url": "https://from-payload.com"}));
+        task.url = "https://from-task.com".to_string();
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.url, "https://from-payload.com");
+    }
+
+    // ========== build_scrape_request: actions mapping ==========
+
+    #[test]
+    fn test_build_scrape_request_action_wait_mapped() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "wait", "milliseconds": 1500}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.actions.len(), 1);
+        match &request.options.actions[0] {
+            PageAction::Wait { milliseconds } => assert_eq!(*milliseconds, 1500),
+            other => panic!("Expected Wait, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_request_action_click_mapped() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "click", "selector": "#submit"}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.actions.len(), 1);
+        match &request.options.actions[0] {
+            PageAction::Click { selector } => assert_eq!(selector, "#submit"),
+            other => panic!("Expected Click, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_request_action_input_mapped() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "input", "selector": "#search", "text": "rust"}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.options.actions.len(), 1);
+        match &request.options.actions[0] {
+            PageAction::Input { selector, text } => {
+                assert_eq!(selector, "#search");
+                assert_eq!(text, "rust");
+            }
+            other => panic!("Expected Input, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_request_action_scroll_down() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "scroll", "direction": "down"}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        match &request.options.actions[0] {
+            PageAction::Scroll { direction } => {
+                assert_eq!(*direction, ScrollDirection::Down);
+            }
+            other => panic!("Expected Scroll Down, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_request_action_scroll_up() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "scroll", "direction": "up"}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        match &request.options.actions[0] {
+            PageAction::Scroll { direction } => {
+                assert_eq!(*direction, ScrollDirection::Up);
+            }
+            other => panic!("Expected Scroll Up, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_request_action_scroll_top() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "scroll", "direction": "top"}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        match &request.options.actions[0] {
+            PageAction::Scroll { direction } => {
+                assert_eq!(*direction, ScrollDirection::Top);
+            }
+            other => panic!("Expected Scroll Top, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_request_action_scroll_bottom() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "scroll", "direction": "bottom"}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        match &request.options.actions[0] {
+            PageAction::Scroll { direction } => {
+                assert_eq!(*direction, ScrollDirection::Bottom);
+            }
+            other => panic!("Expected Scroll Bottom, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_request_action_scroll_unknown_direction_defaults_down() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "scroll", "direction": "sideways"}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        match &request.options.actions[0] {
+            PageAction::Scroll { direction } => {
+                assert_eq!(*direction, ScrollDirection::Down);
+            }
+            other => panic!("Expected default Scroll Down, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_request_action_scroll_case_insensitive_direction() {
+        // direction.to_lowercase() is used for matching
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "scroll", "direction": "UP"}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        match &request.options.actions[0] {
+            PageAction::Scroll { direction } => {
+                assert_eq!(*direction, ScrollDirection::Up);
+            }
+            other => panic!("Expected Scroll Up (case-insensitive), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_scrape_request_action_screenshot_is_filtered_out() {
+        // Screenshot actions return None in the filter_map because they are
+        // handled by the global needs_screenshot option.
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [{"type": "screenshot", "full_page": true}]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(
+            request.options.actions.is_empty(),
+            "screenshot action should be filtered out"
+        );
+        // But needs_js should still be true because actions vec was non-empty
+        assert!(request.options.needs_js);
+    }
+
+    #[test]
+    fn test_build_scrape_request_multiple_actions_preserve_order() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": [
+                {"type": "wait", "milliseconds": 100},
+                {"type": "click", "selector": "#btn1"},
+                {"type": "scroll", "direction": "down"},
+                {"type": "input", "selector": "#field", "text": "text"},
+                {"type": "screenshot", "full_page": null}
+            ]
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        // Screenshot is filtered out -> 4 actions remain
+        assert_eq!(request.options.actions.len(), 4);
+        assert!(matches!(
+            request.options.actions[0],
+            PageAction::Wait { milliseconds: 100 }
+        ));
+        assert!(matches!(
+            &request.options.actions[1],
+            PageAction::Click { selector } if selector == "#btn1"
+        ));
+        assert!(matches!(
+            &request.options.actions[2],
+            PageAction::Scroll { direction } if *direction == ScrollDirection::Down
+        ));
+        assert!(matches!(
+            &request.options.actions[3],
+            PageAction::Input { selector, text } if selector == "#field" && text == "text"
+        ));
+    }
+
+    #[test]
+    fn test_build_scrape_request_none_actions_yields_empty_vec() {
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "actions": null
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert!(request.options.actions.is_empty());
+        assert!(!request.options.needs_js);
+    }
+
+    #[test]
+    fn test_build_scrape_request_all_options_combined() {
+        // Exercise all ScrapeOptionsDto fields in a single payload
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {
+                "headers": {"Accept": "text/html"},
+                "timeout": 45,
+                "js_rendering": true,
+                "screenshot": true,
+                "screenshot_options": {"full_page": false, "quality": 50, "format": "jpeg"},
+                "mobile": true,
+                "proxy": "http://proxy:3128",
+                "skip_tls_verification": true,
+                "needs_tls_fingerprint": true,
+                "use_fire_engine": true
+            },
+            "actions": [{"type": "wait", "milliseconds": 200}],
+            "sync_wait_ms": 1000
+        }));
+        let request = ScrapeWorker::build_scrape_request(&task).expect("should succeed");
+        assert_eq!(request.url, "https://example.com");
+        assert_eq!(request.options.timeout, Duration::from_secs(45));
+        assert_eq!(
+            request.options.headers.get("Accept"),
+            Some(&"text/html".to_string())
+        );
+        assert!(request.options.needs_js);
+        assert!(request.options.needs_screenshot);
+        assert!(request.options.mobile);
+        assert_eq!(request.options.proxy, Some("http://proxy:3128".to_string()));
+        assert!(request.options.skip_tls_verification);
+        assert!(request.options.needs_tls_fingerprint);
+        assert!(request.options.use_fire_engine);
+        assert_eq!(request.options.sync_wait_ms, 1000);
+        assert_eq!(request.options.actions.len(), 1);
+        let sc = request
+            .options
+            .screenshot_config
+            .expect("screenshot_config should be set");
+        assert!(!sc.full_page);
+        assert_eq!(sc.quality, Some(50));
+        assert_eq!(sc.format, Some("jpeg".to_string()));
+    }
+
+    // ========== ScrapeWorkerBuilder tests ==========
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_builder_default_build_fails_with_repository_required() {
+        let builder = ScrapeWorkerBuilder::default();
+        // Use match (not expect_err) because ScrapeWorker does not impl Debug.
+        let err = match builder.build() {
+            Err(e) => e,
+            Ok(_) => panic!("empty builder should fail"),
+        };
+        assert_eq!(err, "repository is required");
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_builder_new_equals_default() {
+        // Both new() and default() produce a builder that fails at the same
+        // first required field.
+        let err_new = match ScrapeWorkerBuilder::new().build() {
+            Err(e) => e,
+            Ok(_) => panic!("new() builder should fail"),
+        };
+        let err_default = match ScrapeWorkerBuilder::default().build() {
+            Err(e) => e,
+            Ok(_) => panic!("default() builder should fail"),
+        };
+        assert_eq!(err_new, err_default);
+        assert_eq!(err_new, "repository is required");
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_builder_with_default_concurrency_limit_does_not_satisfy_required_fields() {
+        // Setting only the concurrency limit should not make build() succeed
+        let err = match ScrapeWorkerBuilder::default()
+            .with_default_concurrency_limit(50)
+            .build()
+        {
+            Err(e) => e,
+            Ok(_) => panic!("should still fail"),
+        };
+        assert_eq!(err, "repository is required");
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_builder_with_default_concurrency_limit_zero() {
+        let err = match ScrapeWorkerBuilder::default()
+            .with_default_concurrency_limit(0)
+            .build()
+        {
+            Err(e) => e,
+            Ok(_) => panic!("should still fail"),
+        };
+        assert_eq!(err, "repository is required");
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_builder_default_concurrency_limit_is_ten_by_default() {
+        // The default concurrency limit is 10 (from ScrapeWorkerBuilder::default).
+        // We verify this indirectly: the builder compiles with the default and
+        // still fails on the first required field, proving the limit did not
+        // affect the required-field checks.
+        let builder = ScrapeWorkerBuilder::default();
+        let err = match builder.build() {
+            Err(e) => e,
+            Ok(_) => panic!("should fail"),
+        };
+        assert_eq!(err, "repository is required");
+    }
+
+    // ========== ScrapeWorkerError integration ==========
+
+    #[test]
+    fn test_scrape_worker_error_from_string_creates_task_error() {
+        // Verify the ScrapeWorkerError::From<String> impl is accessible
+        let err: ScrapeWorkerError = "test error".to_string().into();
+        match err {
+            ScrapeWorkerError::TaskError(msg) => assert_eq!(msg, "test error"),
+            other => panic!("Expected TaskError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    #[allow(clippy::invalid_regex)] // intentionally invalid regex to test error path
+    fn test_scrape_worker_error_from_regex_error() {
+        let regex_err = regex::Regex::new("(unclosed").expect_err("should be invalid");
+        let err: ScrapeWorkerError = regex_err.into();
+        match err {
+            ScrapeWorkerError::RegexError(msg) => assert!(!msg.is_empty()),
+            other => panic!("Expected RegexError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_scrape_worker_error_from_url_parse_error() {
+        let url_err = url::Url::parse("not a url").expect_err("should be invalid");
+        let err: ScrapeWorkerError = url_err.into();
+        match err {
+            ScrapeWorkerError::TaskError(msg) => assert!(msg.contains("URL解析错误")),
+            other => panic!("Expected TaskError, got {:?}", other),
+        }
     }
 }

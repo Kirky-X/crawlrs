@@ -275,4 +275,145 @@ mod tests {
         let limit = ConcurrencyController::extract_payload_limit(&task);
         assert_eq!(limit, None);
     }
+
+    #[test]
+    fn test_extract_payload_limit_crawl_without_max_concurrency() {
+        use crate::domain::models::{Task, TaskType};
+        use uuid::Uuid;
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
+                "config": {}
+            }),
+        );
+
+        let limit = ConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_extract_payload_limit_crawl_non_numeric_max_concurrency() {
+        use crate::domain::models::{Task, TaskType};
+        use uuid::Uuid;
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
+                "config": {
+                    "max_concurrency": "not_a_number"
+                }
+            }),
+        );
+
+        let limit = ConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_extract_payload_limit_crawl_no_config_key() {
+        use crate::domain::models::{Task, TaskType};
+        use uuid::Uuid;
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({}),
+        );
+
+        let limit = ConcurrencyController::extract_payload_limit(&task);
+        assert_eq!(limit, None);
+    }
+
+    #[test]
+    fn test_generate_task_key_format() {
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let key = generate_task_key(team_id, task_id);
+        assert!(key.contains(&team_id.to_string()));
+        assert!(key.contains(&task_id.to_string()));
+        assert!(key.contains(':'));
+    }
+
+    #[test]
+    fn test_generate_task_key_uniqueness() {
+        let team1 = Uuid::new_v4();
+        let team2 = Uuid::new_v4();
+        let task1 = Uuid::new_v4();
+        let task2 = Uuid::new_v4();
+
+        let key1 = generate_task_key(team1, task1);
+        let key2 = generate_task_key(team2, task2);
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_get_effective_limit_uses_payload() {
+        use crate::domain::models::{Task, TaskType};
+        let redis = RedisClient::new("redis://localhost:6379").unwrap();
+        let controller = ConcurrencyController::new(redis, 10);
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
+                "config": { "max_concurrency": 5 }
+            }),
+        );
+
+        assert_eq!(controller.get_effective_limit(&task), 5);
+    }
+
+    #[test]
+    fn test_get_effective_limit_uses_default() {
+        use crate::domain::models::{Task, TaskType};
+        let redis = RedisClient::new("redis://localhost:6379").unwrap();
+        let controller = ConcurrencyController::new(redis, 15);
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Crawl,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({}),
+        );
+
+        assert_eq!(controller.get_effective_limit(&task), 15);
+    }
+
+    #[test]
+    fn test_get_effective_limit_scrape_uses_default() {
+        use crate::domain::models::{Task, TaskType};
+        let redis = RedisClient::new("redis://localhost:6379").unwrap();
+        let controller = ConcurrencyController::new(redis, 8);
+
+        let task = Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            serde_json::json!({
+                "config": { "max_concurrency": 3 }
+            }),
+        );
+
+        // Scrape tasks always use default
+        assert_eq!(controller.get_effective_limit(&task), 8);
+    }
 }

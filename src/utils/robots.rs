@@ -344,3 +344,428 @@ impl RobotsChecker {
         Arc::new(EngineClient::with_router(router))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // Copyright (c) 2025 Kirky.X
+    use super::*;
+    use crate::presentation::helpers::ssrf::SsrfError;
+
+    // ========== CacheStats tests ==========
+
+    #[test]
+    fn test_cache_stats_default_is_zero() {
+        let stats = CacheStats::default();
+        assert_eq!(stats.hits(), 0, "default hits should be 0");
+        assert_eq!(stats.misses(), 0, "default misses should be 0");
+    }
+
+    #[test]
+    fn test_cache_stats_record_hit_increments() {
+        let stats = CacheStats::default();
+        stats.record_hit();
+        assert_eq!(stats.hits(), 1);
+        assert_eq!(stats.misses(), 0);
+    }
+
+    #[test]
+    fn test_cache_stats_record_miss_increments() {
+        let stats = CacheStats::default();
+        stats.record_miss();
+        assert_eq!(stats.hits(), 0);
+        assert_eq!(stats.misses(), 1);
+    }
+
+    #[test]
+    fn test_cache_stats_multiple_hits_and_misses() {
+        let stats = CacheStats::default();
+        for _ in 0..5 {
+            stats.record_hit();
+        }
+        for _ in 0..3 {
+            stats.record_miss();
+        }
+        assert_eq!(stats.hits(), 5);
+        assert_eq!(stats.misses(), 3);
+    }
+
+    #[test]
+    fn test_cache_stats_shared_via_arc() {
+        // CacheStats uses Arc<AtomicU64>, so cloning the stats shares the same counters.
+        let stats = CacheStats::default();
+        let clone = stats.clone();
+
+        stats.record_hit();
+        clone.record_miss();
+
+        // Both references should see the same counters.
+        assert_eq!(stats.hits(), 1);
+        assert_eq!(stats.misses(), 1);
+        assert_eq!(clone.hits(), 1);
+        assert_eq!(clone.misses(), 1);
+    }
+
+    #[test]
+    fn test_cache_stats_clone_is_shallow() {
+        let stats = CacheStats::default();
+        let clone = stats.clone();
+
+        // Record on the original; the clone should reflect the change.
+        stats.record_hit();
+        stats.record_hit();
+        assert_eq!(
+            clone.hits(),
+            2,
+            "clone should share the same atomic counter"
+        );
+    }
+
+    #[test]
+    fn test_cache_stats_independent_instances() {
+        let stats_a = CacheStats::default();
+        let stats_b = CacheStats::default();
+
+        stats_a.record_hit();
+        stats_b.record_miss();
+
+        assert_eq!(stats_a.hits(), 1, "stats_a should have 1 hit");
+        assert_eq!(stats_a.misses(), 0, "stats_a should have 0 misses");
+        assert_eq!(stats_b.hits(), 0, "stats_b should have 0 hits");
+        assert_eq!(stats_b.misses(), 1, "stats_b should have 1 miss");
+    }
+
+    // ========== RobotsCheckerError Display tests ==========
+
+    #[test]
+    fn test_robots_checker_error_cache_lock_display() {
+        let err = RobotsCheckerError::CacheLockError("lock poisoned".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("缓存锁获取失败"));
+        assert!(msg.contains("lock poisoned"));
+    }
+
+    #[test]
+    fn test_robots_checker_error_url_parse_display() {
+        let err = RobotsCheckerError::UrlParseError("bad url".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("URL解析失败"));
+        assert!(msg.contains("bad url"));
+    }
+
+    #[test]
+    fn test_robots_checker_error_validation_display() {
+        let err = RobotsCheckerError::ValidationError("invalid input".to_string());
+        let msg = format!("{}", err);
+        assert!(msg.contains("验证失败"));
+        assert!(msg.contains("invalid input"));
+    }
+
+    // ========== From<SsrfError> tests ==========
+
+    #[test]
+    fn test_from_ssrf_error_converts_to_validation_error() {
+        let ssrf_err = SsrfError::InvalidScheme {
+            scheme: "ftp".to_string(),
+        };
+        let robots_err: RobotsCheckerError = ssrf_err.into();
+        match robots_err {
+            RobotsCheckerError::ValidationError(msg) => {
+                assert!(
+                    msg.contains("ftp"),
+                    "error message should contain the scheme, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected ValidationError variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_ssrf_error_blocked_hostname() {
+        let ssrf_err = SsrfError::BlockedHostname {
+            hostname: "localhost".to_string(),
+        };
+        let robots_err: RobotsCheckerError = ssrf_err.into();
+        match robots_err {
+            RobotsCheckerError::ValidationError(msg) => {
+                assert!(msg.contains("localhost"));
+            }
+            other => panic!("expected ValidationError variant, got {:?}", other),
+        }
+    }
+
+    // ========== impl_basic_error_conversions tests ==========
+
+    #[test]
+    fn test_from_string_creates_validation_error() {
+        let err: RobotsCheckerError = "something went wrong".to_string().into();
+        match err {
+            RobotsCheckerError::ValidationError(msg) => {
+                assert_eq!(msg, "something went wrong");
+            }
+            other => panic!("expected ValidationError variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_str_creates_validation_error() {
+        let err: RobotsCheckerError = "bad input".into();
+        match err {
+            RobotsCheckerError::ValidationError(msg) => {
+                assert_eq!(msg, "bad input");
+            }
+            other => panic!("expected ValidationError variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_anyhow_error_creates_validation_error() {
+        let anyhow_err = anyhow::anyhow!("anyhow failure");
+        let err: RobotsCheckerError = anyhow_err.into();
+        match err {
+            RobotsCheckerError::ValidationError(msg) => {
+                assert!(msg.contains("anyhow failure"));
+            }
+            other => panic!("expected ValidationError variant, got {:?}", other),
+        }
+    }
+
+    // ========== RobotsChecker construction & parse_crawl_delay tests ==========
+    // These tests require the `redis-cache` feature for RobotsChecker::new.
+
+    #[cfg(feature = "redis-cache")]
+    fn make_checker() -> RobotsChecker {
+        let http_client = Arc::new(reqwest::Client::new());
+        RobotsChecker::new(http_client, None, None)
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_checker_new_creates_instance_with_defaults() {
+        let checker = make_checker();
+        let (hits, misses) = checker.get_cache_stats();
+        assert_eq!(hits, 0, "new checker should have 0 cache hits");
+        assert_eq!(misses, 0, "new checker should have 0 cache misses");
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_checker_new_with_custom_cache_stats() {
+        let http_client = Arc::new(reqwest::Client::new());
+        let stats = Arc::new(CacheStats::default());
+        stats.record_hit();
+        stats.record_miss();
+
+        let checker = RobotsChecker::new(http_client, None, Some(stats));
+        let (hits, misses) = checker.get_cache_stats();
+        assert_eq!(hits, 1, "should use the provided cache stats");
+        assert_eq!(misses, 1);
+    }
+
+    // ----- parse_crawl_delay tests -----
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_wildcard_agent() {
+        let checker = make_checker();
+        let content = "User-agent: *\nCrawl-delay: 5\n";
+        let delay = checker.parse_crawl_delay(content, "MyBot/1.0");
+        assert_eq!(
+            delay,
+            Some(Duration::from_secs(5)),
+            "wildcard agent should match any user agent"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_specific_agent_match() {
+        let checker = make_checker();
+        let content = "User-agent: crawlrs-bot\nCrawl-delay: 10\n";
+        let delay = checker.parse_crawl_delay(content, "crawlrs-bot/1.0");
+        assert_eq!(
+            delay,
+            Some(Duration::from_secs(10)),
+            "specific agent should match when user_agent contains it"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_specific_agent_no_match() {
+        let checker = make_checker();
+        let content = "User-agent: otherbot\nCrawl-delay: 10\n";
+        let delay = checker.parse_crawl_delay(content, "crawlrs-bot/1.0");
+        assert_eq!(
+            delay, None,
+            "should return None when the user agent does not match"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_no_directive() {
+        let checker = make_checker();
+        let content = "User-agent: *\nDisallow: /private\n";
+        let delay = checker.parse_crawl_delay(content, "MyBot/1.0");
+        assert_eq!(
+            delay, None,
+            "should return None when no Crawl-delay is present"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_empty_content() {
+        let checker = make_checker();
+        let delay = checker.parse_crawl_delay("", "MyBot/1.0");
+        assert_eq!(delay, None, "empty content should return None");
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_specific_overrides_wildcard() {
+        // When a specific agent block appears after the wildcard block,
+        // the specific agent's delay should take precedence.
+        let checker = make_checker();
+        let content = "\
+User-agent: *
+Crawl-delay: 1
+User-agent: crawlrs-bot
+Crawl-delay: 30
+";
+        let delay = checker.parse_crawl_delay(content, "crawlrs-bot/1.0");
+        assert_eq!(
+            delay,
+            Some(Duration::from_secs(30)),
+            "specific agent delay should override wildcard delay"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_wildcard_when_no_specific_match() {
+        // When a specific agent block exists but doesn't match,
+        // the wildcard block should still apply.
+        let checker = make_checker();
+        let content = "\
+User-agent: *
+Crawl-delay: 2
+User-agent: otherbot
+Crawl-delay: 30
+";
+        let delay = checker.parse_crawl_delay(content, "crawlrs-bot/1.0");
+        assert_eq!(
+            delay,
+            Some(Duration::from_secs(2)),
+            "wildcard delay should apply when no specific agent matches"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_invalid_value_ignored() {
+        let checker = make_checker();
+        let content = "User-agent: *\nCrawl-delay: not-a-number\n";
+        let delay = checker.parse_crawl_delay(content, "MyBot/1.0");
+        assert_eq!(
+            delay, None,
+            "invalid Crawl-delay value should be ignored (return None)"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_skips_comments_and_empty_lines() {
+        let checker = make_checker();
+        let content = "\
+# This is a comment
+User-agent: *
+
+# Another comment
+Crawl-delay: 7
+";
+        let delay = checker.parse_crawl_delay(content, "MyBot/1.0");
+        assert_eq!(
+            delay,
+            Some(Duration::from_secs(7)),
+            "comments and empty lines should be skipped"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_case_insensitive_user_agent() {
+        // The matching logic uses to_lowercase() for comparison.
+        let checker = make_checker();
+        let content = "User-agent: CrawlRS-Bot\nCrawl-delay: 3\n";
+        let delay = checker.parse_crawl_delay(content, "crawlrs-bot/1.0");
+        assert_eq!(
+            delay,
+            Some(Duration::from_secs(3)),
+            "user agent matching should be case-insensitive"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_case_insensitive_directive() {
+        // The directive parsing uses to_lowercase() for the directive name.
+        let checker = make_checker();
+        let content = "user-agent: *\ncrawl-delay: 4\n";
+        let delay = checker.parse_crawl_delay(content, "MyBot/1.0");
+        assert_eq!(
+            delay,
+            Some(Duration::from_secs(4)),
+            "directive names should be case-insensitive"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_fractional_seconds() {
+        let checker = make_checker();
+        let content = "User-agent: *\nCrawl-delay: 0.5\n";
+        let delay = checker.parse_crawl_delay(content, "MyBot/1.0");
+        assert_eq!(
+            delay,
+            Some(Duration::from_secs_f64(0.5)),
+            "fractional crawl-delay should be parsed correctly"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_multiple_blocks_same_agent() {
+        // When the same agent appears in multiple blocks, the last matching
+        // Crawl-delay in the current block should be used.
+        let checker = make_checker();
+        let content = "\
+User-agent: *
+Crawl-delay: 1
+User-agent: *
+Crawl-delay: 8
+";
+        let delay = checker.parse_crawl_delay(content, "MyBot/1.0");
+        // The second block resets delay to None then sets it to 8.
+        assert_eq!(
+            delay,
+            Some(Duration::from_secs(8)),
+            "last matching Crawl-delay should be used"
+        );
+    }
+
+    #[cfg(feature = "redis-cache")]
+    #[test]
+    fn test_parse_crawl_delay_only_directive_without_agent() {
+        // Crawl-delay without a preceding User-agent directive should be ignored
+        // because current_agent_matched starts as false.
+        let checker = make_checker();
+        let content = "Crawl-delay: 5\n";
+        let delay = checker.parse_crawl_delay(content, "MyBot/1.0");
+        assert_eq!(
+            delay, None,
+            "Crawl-delay without a matching User-agent block should be ignored"
+        );
+    }
+}

@@ -502,11 +502,7 @@ mod tests {
         }
     }
 
-    fn llm_rule(
-        selector: Option<&str>,
-        prompt: Option<&str>,
-        is_array: bool,
-    ) -> ExtractionRule {
+    fn llm_rule(selector: Option<&str>, prompt: Option<&str>, is_array: bool) -> ExtractionRule {
         ExtractionRule {
             selector: selector.map(|s| s.to_string()),
             attr: None,
@@ -623,10 +619,7 @@ mod tests {
     fn test_extract_with_selectors_attribute_extraction() {
         let html = r#"<a href="https://example.com" class="link">Link</a>"#;
         let mut rules = HashMap::new();
-        rules.insert(
-            "class".to_string(),
-            rule(Some("a"), Some("class"), false),
-        );
+        rules.insert("class".to_string(), rule(Some("a"), Some("class"), false));
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let service = ExtractionService::new(Arc::new(mock));
@@ -705,7 +698,10 @@ mod tests {
     fn test_extract_with_selectors_missing_element_returns_null() {
         let html = r#"<html><body></body></html>"#;
         let mut rules = HashMap::new();
-        rules.insert("missing".to_string(), rule(Some("div.missing"), None, false));
+        rules.insert(
+            "missing".to_string(),
+            rule(Some("div.missing"), None, false),
+        );
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let service = ExtractionService::new(Arc::new(mock));
@@ -737,10 +733,7 @@ mod tests {
         let html = r#"<html><body><div>Content</div></body></html>"#;
         let mut rules = HashMap::new();
         // Invalid selector that Selector::parse will reject
-        rules.insert(
-            "bad".to_string(),
-            rule(Some("div["), None, false),
-        );
+        rules.insert("bad".to_string(), rule(Some("div["), None, false));
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let service = ExtractionService::new(Arc::new(mock));
@@ -756,7 +749,10 @@ mod tests {
     fn test_extract_with_selectors_llm_only_rule_skipped() {
         let html = r#"<html><body><div>Content</div></body></html>"#;
         let mut rules = HashMap::new();
-        rules.insert("llm_key".to_string(), llm_rule(None, Some("extract"), false));
+        rules.insert(
+            "llm_key".to_string(),
+            llm_rule(None, Some("extract"), false),
+        );
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let service = ExtractionService::new(Arc::new(mock));
@@ -814,14 +810,8 @@ mod tests {
         "#;
         let mut rules = HashMap::new();
         rules.insert("title".to_string(), rule(Some("h1"), None, false));
-        rules.insert(
-            "paras".to_string(),
-            rule(Some("p.content"), None, true),
-        );
-        rules.insert(
-            "link".to_string(),
-            rule(Some("a"), Some("href"), false),
-        );
+        rules.insert("paras".to_string(), rule(Some("p.content"), None, true));
+        rules.insert("link".to_string(), rule(Some("a"), Some("href"), false));
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let service = ExtractionService::new(Arc::new(mock));
@@ -951,10 +941,8 @@ mod tests {
             llm_rule(Some("div.content"), Some("Summarize"), false),
         );
 
-        let mock = MockLLMService::new_success(
-            json!({"summary": "Real content"}),
-            TokenUsage::default(),
-        );
+        let mock =
+            MockLLMService::new_success(json!({"summary": "Real content"}), TokenUsage::default());
         let (service, mock_arc) = make_service_with_mock(mock);
         let (_result, _usage) = service
             .extract(html, &rules, None)
@@ -1055,14 +1043,8 @@ mod tests {
     async fn test_extract_multiple_llm_rules_accumulate_usage() {
         let html = r#"<html><body>Content for two LLM calls</body></html>"#;
         let mut rules = HashMap::new();
-        rules.insert(
-            "key1".to_string(),
-            llm_rule(None, Some("Extract 1"), false),
-        );
-        rules.insert(
-            "key2".to_string(),
-            llm_rule(None, Some("Extract 2"), false),
-        );
+        rules.insert("key1".to_string(), llm_rule(None, Some("Extract 1"), false));
+        rules.insert("key2".to_string(), llm_rule(None, Some("Extract 2"), false));
 
         let mock = MockLLMService::new_success(
             json!({}),
@@ -1088,10 +1070,7 @@ mod tests {
     async fn test_extract_llm_rule_default_format_is_json() {
         let html = r#"<html><body>Text</body></html>"#;
         let mut rules = HashMap::new();
-        rules.insert(
-            "key".to_string(),
-            llm_rule(None, Some("Extract"), false),
-        );
+        rules.insert("key".to_string(), llm_rule(None, Some("Extract"), false));
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let (service, mock_arc) = make_service_with_mock(mock);
@@ -1150,10 +1129,7 @@ mod tests {
     async fn test_extract_css_array_with_attr_and_base_url() {
         let html = r#"<div><a href="/a">A</a><a href="/b">B</a></div>"#;
         let mut rules = HashMap::new();
-        rules.insert(
-            "links".to_string(),
-            rule(Some("a"), Some("href"), true),
-        );
+        rules.insert("links".to_string(), rule(Some("a"), Some("href"), true));
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let (service, _count) = make_service(mock);
@@ -1172,7 +1148,10 @@ mod tests {
     async fn test_extract_css_single_element_missing_returns_null() {
         let html = r#"<html><body></body></html>"#;
         let mut rules = HashMap::new();
-        rules.insert("missing".to_string(), rule(Some("div.missing"), None, false));
+        rules.insert(
+            "missing".to_string(),
+            rule(Some("div.missing"), None, false),
+        );
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let (service, _count) = make_service(mock);
@@ -1388,10 +1367,7 @@ mod tests {
         // When attr is Some but element doesn't have that attr → Null
         let html = r#"<div>No href</div>"#;
         let mut rules = HashMap::new();
-        rules.insert(
-            "href".to_string(),
-            rule(Some("div"), Some("href"), false),
-        );
+        rules.insert("href".to_string(), rule(Some("div"), Some("href"), false));
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let service = ExtractionService::new(Arc::new(mock));

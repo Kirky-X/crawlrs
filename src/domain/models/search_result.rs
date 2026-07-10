@@ -54,7 +54,10 @@ mod tests {
 
         assert_eq!(result.title, "", "default title should be empty string");
         assert_eq!(result.url, "", "default url should be empty string");
-        assert!(result.description.is_none(), "default description should be None");
+        assert!(
+            result.description.is_none(),
+            "default description should be None"
+        );
         assert_eq!(result.engine, "", "default engine should be empty string");
         assert_eq!(result.score, 0.0, "default score should be 0.0");
         assert!(
@@ -119,12 +122,7 @@ mod tests {
 
     #[test]
     fn test_new_with_empty_strings() {
-        let result = SearchResult::new(
-            String::new(),
-            String::new(),
-            None,
-            String::new(),
-        );
+        let result = SearchResult::new(String::new(), String::new(), None, String::new());
 
         assert_eq!(result.title, "");
         assert_eq!(result.url, "");

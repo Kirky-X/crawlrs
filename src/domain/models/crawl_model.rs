@@ -271,7 +271,11 @@ mod tests {
         assert_eq!(crawl.name, "Test Crawl");
         assert_eq!(crawl.root_url, "https://example.com");
         assert_eq!(crawl.url, "https://example.com/page");
-        assert_eq!(crawl.status, CrawlStatus::Queued, "new crawl should be Queued");
+        assert_eq!(
+            crawl.status,
+            CrawlStatus::Queued,
+            "new crawl should be Queued"
+        );
         assert_eq!(crawl.config(), &config);
         assert_eq!(crawl.total_tasks(), 0, "new crawl should have 0 tasks");
         assert_eq!(crawl.completed_tasks(), 0);
@@ -528,14 +532,16 @@ mod tests {
 
     #[test]
     fn test_crawl_status_from_str_invalid_returns_error() {
-        let err = CrawlStatus::from_str("unknown")
-            .expect_err("invalid status should error");
+        let err = CrawlStatus::from_str("unknown").expect_err("invalid status should error");
         assert!(
             err.contains("Invalid crawl status"),
             "error should describe invalid status: {}",
             err
         );
-        assert!(err.contains("unknown"), "error should include the bad value");
+        assert!(
+            err.contains("unknown"),
+            "error should include the bad value"
+        );
     }
 
     #[test]

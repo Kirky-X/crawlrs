@@ -12,18 +12,15 @@ mod tests {
     #[test]
     fn test_create_crawl_endpoint() {
         // Placeholder for crawl endpoint test
-        assert!(true);
     }
 
     #[test]
     fn test_get_crawl_endpoint() {
         // Placeholder for get crawl test
-        assert!(true);
     }
 
     #[test]
     fn test_cancel_crawl_endpoint() {
         // Placeholder for cancel crawl test
-        assert!(true);
     }
 }

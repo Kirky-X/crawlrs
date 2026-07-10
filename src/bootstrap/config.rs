@@ -209,3 +209,80 @@ pub fn load_and_configure(is_production: bool) -> Result<(Settings, u16)> {
     info!("Application configuration completed successfully");
     Ok((settings, port))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_security_returns_ok_for_non_production() {
+        let settings = load_settings().expect("Failed to load settings");
+        let result = validate_security(&settings, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_security_returns_ok_for_production() {
+        let settings = load_settings().expect("Failed to load settings");
+        let result = validate_security(&settings, true);
+        // validate_security always returns Ok(()) - it's a placeholder
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_environment_non_production_returns_ok() {
+        // In non-production mode, validate_environment should return Ok(())
+        // even if required env vars are missing (only warns)
+        let result = validate_environment(false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_load_settings_returns_valid_config() {
+        let settings = load_settings();
+        assert!(settings.is_ok());
+        let settings = settings.unwrap();
+        // Verify some default values from config/default.toml
+        assert_eq!(settings.server.port, 8899);
+        assert_eq!(settings.server.host, "0.0.0.0");
+    }
+
+    #[test]
+    fn test_load_settings_has_redis_config() {
+        let settings = load_settings().expect("Failed to load settings");
+        // Redis URL should be loaded from config or env var
+        // Just verify the field exists and is a string
+        let _url = &settings.redis.url;
+    }
+
+    #[test]
+    fn test_load_settings_has_database_config() {
+        let settings = load_settings().expect("Failed to load settings");
+        // max_connections may be overridden by env var; just verify field exists
+        let _max_conn = &settings.database.max_connections;
+    }
+
+    #[test]
+    fn test_load_settings_has_rate_limiting_config() {
+        let settings = load_settings().expect("Failed to load settings");
+        // Rate limiting config should be present (values may be overridden by env)
+        let _enabled = settings.rate_limiting.enabled;
+        let _rpm = settings.rate_limiting.default_rpm;
+    }
+
+    #[test]
+    fn test_load_settings_has_cors_config() {
+        let settings = load_settings().expect("Failed to load settings");
+        assert_eq!(settings.cors.allowed_origins, "*");
+    }
+
+    #[test]
+    fn test_validate_security_does_not_modify_settings() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        let _ = validate_security(&settings1, false);
+        // Settings should be unchanged after validation
+        assert_eq!(settings1.server.port, settings2.server.port);
+        assert_eq!(settings1.server.host, settings2.server.host);
+    }
+}

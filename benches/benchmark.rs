@@ -165,7 +165,7 @@ fn benchmark_url_parsing(c: &mut Criterion) {
         b.iter(|| {
             for url in &urls {
                 let parsed = url::Url::parse(url);
-                black_box(parsed);
+                let _ = black_box(parsed);
             }
         });
     });

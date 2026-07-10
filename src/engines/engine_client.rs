@@ -14,11 +14,11 @@
 use crate::engines::health_monitor::{AggregateHealthStatus, EngineHealthMonitor};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::engines::validators::validate_url;
+use log::warn;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use log::warn;
 
 /// Unified request structure for scraping operations.
 ///
@@ -861,5 +861,643 @@ mod tests {
         assert!(EngineError::Timeout(Duration::from_secs(30)).is_retryable());
         assert!(!EngineError::InvalidUrl("invalid".to_string()).is_retryable());
         assert!(!EngineError::SsrfProtection("blocked".to_string()).is_retryable());
+    }
+
+    // === ScrapeRequest tests ===
+
+    #[test]
+    fn test_scrape_request_new_default_options() {
+        let request = ScrapeRequest::new("https://example.com");
+        assert_eq!(request.url, "https://example.com");
+        assert!(!request.options.needs_js);
+        assert!(!request.options.needs_screenshot);
+        assert!(!request.options.mobile);
+        assert_eq!(request.options.timeout, Duration::from_secs(30));
+        assert_eq!(request.options.method, HttpMethod::Get);
+    }
+
+    #[test]
+    fn test_scrape_request_with_options() {
+        let options = ScrapeOptions::builder()
+            .needs_js(true)
+            .timeout(Duration::from_secs(120))
+            .build();
+        let request = ScrapeRequest::new("https://example.com").with_options(options);
+
+        assert!(request.options.needs_js);
+        assert_eq!(request.options.timeout, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_scrape_request_chained_builders() {
+        let request = ScrapeRequest::new("https://example.com")
+            .needs_js()
+            .needs_screenshot()
+            .mobile()
+            .timeout(Duration::from_secs(90));
+
+        assert!(request.options.needs_js);
+        assert!(request.options.needs_screenshot);
+        assert!(request.options.mobile);
+        assert_eq!(request.options.timeout, Duration::from_secs(90));
+    }
+
+    // === ScrapeOptions tests ===
+
+    #[test]
+    fn test_scrape_options_default() {
+        let options = ScrapeOptions::default();
+        assert_eq!(options.method, HttpMethod::Get);
+        assert!(!options.needs_js);
+        assert!(!options.needs_screenshot);
+        assert!(!options.mobile);
+        assert_eq!(options.timeout, Duration::from_secs(30));
+        assert!(options.body.is_none());
+        assert_eq!(options.sync_wait_ms, 0);
+        assert!(options.actions.is_empty());
+        assert!(options.screenshot_config.is_none());
+        assert!(options.proxy.is_none());
+        assert!(!options.skip_tls_verification);
+        assert!(options.headers.is_empty());
+        assert!(!options.needs_tls_fingerprint);
+        assert!(!options.use_fire_engine);
+    }
+
+    #[test]
+    fn test_scrape_options_builder_all_fields() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Custom".to_string(), "value".to_string());
+
+        let options = ScrapeOptions::builder()
+            .method(HttpMethod::Post)
+            .needs_js(true)
+            .needs_screenshot(true)
+            .mobile(true)
+            .timeout(Duration::from_secs(60))
+            .body("payload")
+            .sync_wait_ms(500)
+            .proxy("http://proxy:8080")
+            .headers(headers.clone())
+            .needs_tls_fingerprint(true)
+            .use_fire_engine(true)
+            .screenshot_config(ScreenshotConfig::default())
+            .build();
+
+        assert_eq!(options.method, HttpMethod::Post);
+        assert!(options.needs_js);
+        assert!(options.needs_screenshot);
+        assert!(options.mobile);
+        assert_eq!(options.timeout, Duration::from_secs(60));
+        assert_eq!(options.body, Some("payload".to_string()));
+        assert_eq!(options.sync_wait_ms, 500);
+        assert_eq!(options.proxy, Some("http://proxy:8080".to_string()));
+        assert_eq!(options.headers, headers);
+        assert!(options.needs_tls_fingerprint);
+        assert!(options.use_fire_engine);
+        assert!(options.screenshot_config.is_some());
+    }
+
+    #[test]
+    fn test_scrape_options_builder_skip_tls_false() {
+        // skip=false should not read env vars and just set the field
+        let options = ScrapeOptions::builder()
+            .skip_tls_verification(false)
+            .build();
+        assert!(!options.skip_tls_verification);
+    }
+
+    // === HttpMethod tests ===
+
+    #[test]
+    fn test_http_method_default() {
+        assert_eq!(HttpMethod::default(), HttpMethod::Get);
+    }
+
+    #[test]
+    fn test_http_method_equality() {
+        assert_eq!(HttpMethod::Get, HttpMethod::Get);
+        assert_eq!(HttpMethod::Post, HttpMethod::Post);
+        assert_ne!(HttpMethod::Get, HttpMethod::Post);
+    }
+
+    // === ScrollDirection tests ===
+
+    #[test]
+    fn test_scroll_direction_default() {
+        assert_eq!(ScrollDirection::default(), ScrollDirection::Down);
+    }
+
+    #[test]
+    fn test_scroll_direction_equality() {
+        assert_eq!(ScrollDirection::Down, ScrollDirection::Down);
+        assert_eq!(ScrollDirection::Up, ScrollDirection::Up);
+        assert_eq!(ScrollDirection::Bottom, ScrollDirection::Bottom);
+        assert_eq!(ScrollDirection::Top, ScrollDirection::Top);
+        assert_ne!(ScrollDirection::Down, ScrollDirection::Up);
+        assert_ne!(ScrollDirection::Bottom, ScrollDirection::Top);
+    }
+
+    // === ScreenshotConfig tests ===
+
+    #[test]
+    fn test_screenshot_config_default() {
+        let config = ScreenshotConfig::default();
+        assert!(config.full_page);
+        assert!(config.selector.is_none());
+        assert_eq!(config.quality, Some(80));
+        assert_eq!(config.format, Some("jpeg".to_string()));
+    }
+
+    #[test]
+    fn test_screenshot_config_equality() {
+        let c1 = ScreenshotConfig::default();
+        let c2 = ScreenshotConfig::default();
+        assert_eq!(c1, c2);
+
+        let c3 = ScreenshotConfig {
+            full_page: false,
+            selector: None,
+            quality: Some(90),
+            format: Some("png".to_string()),
+        };
+        assert_ne!(c1, c3);
+    }
+
+    // === ScrapeResponse tests ===
+
+    #[test]
+    fn test_scrape_response_new() {
+        let response = ScrapeResponse::new(200, "content", "application/json");
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.content, "content");
+        assert_eq!(response.content_type, "application/json");
+        assert!(response.screenshot.is_none());
+        assert!(response.headers.is_empty());
+        assert_eq!(response.response_time_ms, 0);
+        assert!(response.final_url.is_none());
+    }
+
+    #[test]
+    fn test_scrape_response_is_success_2xx() {
+        assert!(ScrapeResponse::new(200, "", "").is_success());
+        assert!(ScrapeResponse::new(201, "", "").is_success());
+        assert!(ScrapeResponse::new(204, "", "").is_success());
+        assert!(ScrapeResponse::new(299, "", "").is_success());
+    }
+
+    #[test]
+    fn test_scrape_response_is_success_non_2xx() {
+        assert!(!ScrapeResponse::new(199, "", "").is_success());
+        assert!(!ScrapeResponse::new(300, "", "").is_success());
+        assert!(!ScrapeResponse::new(404, "", "").is_success());
+        assert!(!ScrapeResponse::new(500, "", "").is_success());
+    }
+
+    // === to_internal conversion tests ===
+
+    #[test]
+    fn test_to_internal_basic_fields() {
+        let request = ScrapeRequest::new("https://example.com");
+        let internal = request.to_internal();
+
+        assert_eq!(internal.url, "https://example.com");
+        assert_eq!(internal.method, HttpMethod::Get);
+        assert!(!internal.needs_js);
+        assert!(!internal.needs_screenshot);
+        assert!(!internal.mobile);
+        assert_eq!(internal.timeout, Duration::from_secs(30));
+        assert!(internal.body.is_none());
+        assert_eq!(internal.sync_wait_ms, 0);
+        assert!(internal.proxy.is_none());
+        assert!(!internal.skip_tls_verification);
+        assert!(!internal.needs_tls_fingerprint);
+        assert!(!internal.use_fire_engine);
+        assert!(internal.actions.is_empty());
+        assert!(internal.screenshot_config.is_none());
+        assert!(internal.headers.is_empty());
+    }
+
+    #[test]
+    fn test_to_internal_all_fields() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Test".to_string(), "val".to_string());
+
+        let request = ScrapeRequest::new("https://example.com").with_options(
+            ScrapeOptions::builder()
+                .method(HttpMethod::Post)
+                .needs_js(true)
+                .needs_screenshot(true)
+                .mobile(true)
+                .timeout(Duration::from_secs(60))
+                .body("data")
+                .sync_wait_ms(1000)
+                .proxy("http://proxy:8080")
+                .headers(headers.clone())
+                .needs_tls_fingerprint(true)
+                .use_fire_engine(true)
+                .screenshot_config(ScreenshotConfig {
+                    full_page: false,
+                    selector: Some("#main".to_string()),
+                    quality: Some(90),
+                    format: Some("png".to_string()),
+                })
+                .build(),
+        );
+
+        let internal = request.to_internal();
+        assert_eq!(internal.url, "https://example.com");
+        assert_eq!(internal.method, HttpMethod::Post);
+        assert!(internal.needs_js);
+        assert!(internal.needs_screenshot);
+        assert!(internal.mobile);
+        assert_eq!(internal.timeout, Duration::from_secs(60));
+        assert_eq!(internal.body, Some("data".to_string()));
+        assert_eq!(internal.sync_wait_ms, 1000);
+        assert_eq!(internal.proxy, Some("http://proxy:8080".to_string()));
+        assert_eq!(internal.headers, headers);
+        assert!(internal.needs_tls_fingerprint);
+        assert!(internal.use_fire_engine);
+        assert!(internal.screenshot_config.is_some());
+        let sc = internal.screenshot_config.unwrap();
+        assert!(!sc.full_page);
+        assert_eq!(sc.selector, Some("#main".to_string()));
+        assert_eq!(sc.quality, Some(90));
+        assert_eq!(sc.format, Some("png".to_string()));
+    }
+
+    #[test]
+    fn test_to_internal_page_actions() {
+        let options = ScrapeOptions::builder().body("").build();
+        // Manually add actions since there's no builder method for actions
+        let mut options = options;
+        options.actions = vec![
+            PageAction::Wait { milliseconds: 500 },
+            PageAction::Click {
+                selector: "#button".to_string(),
+            },
+            PageAction::Scroll {
+                direction: ScrollDirection::Down,
+            },
+            PageAction::Scroll {
+                direction: ScrollDirection::Up,
+            },
+            PageAction::Scroll {
+                direction: ScrollDirection::Bottom,
+            },
+            PageAction::Scroll {
+                direction: ScrollDirection::Top,
+            },
+            PageAction::Input {
+                selector: "#field".to_string(),
+                text: "hello".to_string(),
+            },
+        ];
+
+        let request = ScrapeRequest::new("https://example.com").with_options(options);
+        let internal = request.to_internal();
+
+        assert_eq!(internal.actions.len(), 7);
+        // Verify Wait action
+        match &internal.actions[0] {
+            InternalPageAction::Wait { milliseconds } => assert_eq!(*milliseconds, 500),
+            other => panic!("Expected Wait, got {:?}", other),
+        }
+        // Verify Click action
+        match &internal.actions[1] {
+            InternalPageAction::Click { selector } => assert_eq!(selector, "#button"),
+            other => panic!("Expected Click, got {:?}", other),
+        }
+        // Verify Scroll directions
+        match &internal.actions[2] {
+            InternalPageAction::Scroll { direction } => assert_eq!(direction, "down"),
+            other => panic!("Expected Scroll down, got {:?}", other),
+        }
+        match &internal.actions[3] {
+            InternalPageAction::Scroll { direction } => assert_eq!(direction, "up"),
+            other => panic!("Expected Scroll up, got {:?}", other),
+        }
+        match &internal.actions[4] {
+            InternalPageAction::Scroll { direction } => assert_eq!(direction, "bottom"),
+            other => panic!("Expected Scroll bottom, got {:?}", other),
+        }
+        match &internal.actions[5] {
+            InternalPageAction::Scroll { direction } => assert_eq!(direction, "top"),
+            other => panic!("Expected Scroll top, got {:?}", other),
+        }
+        // Verify Input action
+        match &internal.actions[6] {
+            InternalPageAction::Input { selector, text } => {
+                assert_eq!(selector, "#field");
+                assert_eq!(text, "hello");
+            }
+            other => panic!("Expected Input, got {:?}", other),
+        }
+    }
+
+    // === InternalScrapeResponse::to_public tests ===
+
+    #[test]
+    fn test_internal_response_to_public() {
+        let internal = InternalScrapeResponse {
+            status_code: 200,
+            content: "body".to_string(),
+            screenshot: Some("base64data".to_string()),
+            content_type: "text/html".to_string(),
+            headers: {
+                let mut h = HashMap::new();
+                h.insert("Server".to_string(), "nginx".to_string());
+                h
+            },
+            response_time_ms: 42,
+        };
+
+        let public = internal.to_public("https://example.com/page");
+        assert_eq!(public.status_code, 200);
+        assert_eq!(public.content, "body");
+        assert_eq!(public.screenshot, Some("base64data".to_string()));
+        assert_eq!(public.content_type, "text/html");
+        assert_eq!(public.headers.len(), 1);
+        assert_eq!(public.headers.get("Server"), Some(&"nginx".to_string()));
+        assert_eq!(public.response_time_ms, 42);
+        assert_eq!(
+            public.final_url,
+            Some("https://example.com/page".to_string())
+        );
+    }
+
+    // === EngineError tests ===
+
+    #[test]
+    fn test_engine_error_all_retryable_variants() {
+        assert!(EngineError::RequestFailed("err".to_string()).is_retryable());
+        assert!(EngineError::Timeout(Duration::from_secs(10)).is_retryable());
+        assert!(EngineError::BrowserError("crash".to_string()).is_retryable());
+        assert!(!EngineError::NoEnginesAvailable.is_retryable());
+        assert!(!EngineError::InvalidUrl("bad".to_string()).is_retryable());
+        assert!(!EngineError::SsrfProtection("blocked".to_string()).is_retryable());
+        assert!(!EngineError::Internal("err".to_string()).is_retryable());
+        assert!(!EngineError::AllEnginesFailed("all".to_string()).is_retryable());
+        assert!(!EngineError::Expired.is_retryable());
+        assert!(!EngineError::Other("err".to_string()).is_retryable());
+    }
+
+    #[test]
+    fn test_engine_error_from_string() {
+        let err: EngineError = "something failed".to_string().into();
+        match err {
+            EngineError::RequestFailed(msg) => assert_eq!(msg, "something failed"),
+            other => panic!("Expected RequestFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_engine_error_from_str() {
+        let err: EngineError = "network error".into();
+        match err {
+            EngineError::RequestFailed(msg) => assert_eq!(msg, "network error"),
+            other => panic!("Expected RequestFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_engine_error_from_anyhow() {
+        let anyhow_err = anyhow::anyhow!("anyhow error");
+        let err: EngineError = anyhow_err.into();
+        match err {
+            EngineError::Internal(msg) => assert_eq!(msg, "anyhow error"),
+            other => panic!("Expected Internal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_engine_error_display() {
+        assert_eq!(
+            EngineError::Timeout(Duration::from_secs(30)).to_string(),
+            "Request timed out after 30s"
+        );
+        assert_eq!(
+            EngineError::NoEnginesAvailable.to_string(),
+            "No engines available"
+        );
+        assert_eq!(EngineError::Expired.to_string(), "Request expired");
+    }
+
+    // === EngineHealthStatus tests ===
+
+    #[test]
+    fn test_engine_health_status_default() {
+        assert_eq!(EngineHealthStatus::default(), EngineHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn test_engine_health_status_equality() {
+        let degraded1 = EngineHealthStatus::Degraded {
+            unhealthy_engines: vec!["e1".to_string()],
+            message: "msg".to_string(),
+        };
+        let degraded2 = EngineHealthStatus::Degraded {
+            unhealthy_engines: vec!["e1".to_string()],
+            message: "msg".to_string(),
+        };
+        assert_eq!(degraded1, degraded2);
+
+        let unavailable = EngineHealthStatus::Unavailable {
+            message: "all down".to_string(),
+        };
+        assert_ne!(EngineHealthStatus::Healthy, unavailable);
+    }
+
+    // === EngineClient tests ===
+
+    #[test]
+    fn test_engine_client_new() {
+        let client = EngineClient::new();
+        assert_eq!(client.engine_count(), 0);
+        assert!(client.registered_engines().is_empty());
+    }
+
+    #[test]
+    fn test_engine_client_default() {
+        let client = EngineClient::default();
+        assert_eq!(client.engine_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_engine_client_health_check_no_engines() {
+        let client = EngineClient::new();
+        let status = client.health_check().await;
+        // With no engines, aggregate status is Healthy (no unhealthy engines found)
+        assert_eq!(status, EngineHealthStatus::Healthy);
+    }
+
+    #[tokio::test]
+    async fn test_engine_client_scrape_rejects_ssrf() {
+        let client = EngineClient::new();
+        let request = ScrapeRequest::new("http://localhost");
+        let result = client.scrape(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::SsrfProtection(_) => {}
+            other => panic!("Expected SsrfProtection, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_engine_client_scrape_rejects_private_ip() {
+        let client = EngineClient::new();
+        let request = ScrapeRequest::new("http://192.168.1.1");
+        let result = client.scrape(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::SsrfProtection(_) => {}
+            other => panic!("Expected SsrfProtection, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_engine_client_scrape_rejects_invalid_scheme() {
+        let client = EngineClient::new();
+        let request = ScrapeRequest::new("file:///etc/passwd");
+        let result = client.scrape(&request).await;
+        assert!(result.is_err());
+    }
+
+    // === convert_error tests ===
+
+    #[test]
+    fn test_convert_error_request_failed() {
+        let err = convert_error(EngineError::RequestFailed("test".to_string()));
+        match err {
+            EngineError::RequestFailed(msg) => assert_eq!(msg, "test"),
+            other => panic!("Expected RequestFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_error_timeout() {
+        let duration = Duration::from_secs(15);
+        let err = convert_error(EngineError::Timeout(duration));
+        match err {
+            EngineError::Timeout(d) => assert_eq!(d, duration),
+            other => panic!("Expected Timeout, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_error_all_engines_failed_with_no_suitable() {
+        let err = convert_error(EngineError::AllEnginesFailed(
+            "No suitable engines found".to_string(),
+        ));
+        match err {
+            EngineError::NoEnginesAvailable => {}
+            other => panic!("Expected NoEnginesAvailable, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_error_all_engines_failed_generic() {
+        let err = convert_error(EngineError::AllEnginesFailed("all failed".to_string()));
+        match err {
+            EngineError::RequestFailed(msg) => assert_eq!(msg, "all failed"),
+            other => panic!("Expected RequestFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_error_ssrf_protection() {
+        let err = convert_error(EngineError::SsrfProtection("blocked".to_string()));
+        match err {
+            EngineError::SsrfProtection(msg) => assert_eq!(msg, "blocked"),
+            other => panic!("Expected SsrfProtection, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_error_browser_error() {
+        let err = convert_error(EngineError::BrowserError("crash".to_string()));
+        match err {
+            EngineError::BrowserError(msg) => assert_eq!(msg, "crash"),
+            other => panic!("Expected BrowserError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_error_expired() {
+        let err = convert_error(EngineError::Expired);
+        match err {
+            EngineError::Internal(msg) => assert_eq!(msg, "Request expired"),
+            other => panic!("Expected Internal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_error_other() {
+        let err = convert_error(EngineError::Other("misc".to_string()));
+        match err {
+            EngineError::Internal(msg) => assert_eq!(msg, "misc"),
+            other => panic!("Expected Internal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_error_no_engines_available() {
+        let err = convert_error(EngineError::NoEnginesAvailable);
+        assert!(matches!(err, EngineError::NoEnginesAvailable));
+    }
+
+    #[test]
+    fn test_convert_error_invalid_url() {
+        let err = convert_error(EngineError::InvalidUrl("bad url".to_string()));
+        match err {
+            EngineError::InvalidUrl(msg) => assert_eq!(msg, "bad url"),
+            other => panic!("Expected InvalidUrl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_error_internal() {
+        let err = convert_error(EngineError::Internal("inner".to_string()));
+        match err {
+            EngineError::Internal(msg) => assert_eq!(msg, "inner"),
+            other => panic!("Expected Internal, got {:?}", other),
+        }
+    }
+
+    // === PageAction tests ===
+
+    #[test]
+    fn test_page_action_variants() {
+        let wait = PageAction::Wait { milliseconds: 1000 };
+        let click = PageAction::Click {
+            selector: "#btn".to_string(),
+        };
+        let scroll = PageAction::Scroll {
+            direction: ScrollDirection::Down,
+        };
+        let input = PageAction::Input {
+            selector: "#field".to_string(),
+            text: "text".to_string(),
+        };
+
+        // Verify they can be cloned and match via pattern matching
+        match wait.clone() {
+            PageAction::Wait { milliseconds } => assert_eq!(milliseconds, 1000),
+            other => panic!("Expected Wait, got {:?}", other),
+        }
+        match click.clone() {
+            PageAction::Click { selector } => assert_eq!(selector, "#btn"),
+            other => panic!("Expected Click, got {:?}", other),
+        }
+        match scroll.clone() {
+            PageAction::Scroll { direction } => assert_eq!(direction, ScrollDirection::Down),
+            other => panic!("Expected Scroll, got {:?}", other),
+        }
+        match input.clone() {
+            PageAction::Input { selector, text } => {
+                assert_eq!(selector, "#field");
+                assert_eq!(text, "text");
+            }
+            other => panic!("Expected Input, got {:?}", other),
+        }
     }
 }

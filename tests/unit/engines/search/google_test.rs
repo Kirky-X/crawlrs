@@ -3,7 +3,6 @@ use crawlrs::common::constants::testing::QUICK_TEST_TIMEOUT;
 use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::search::client::google::GoogleSearchEngine;
 use std::sync::Arc;
-use std::time::Duration;
 
 fn create_test_engine() -> GoogleSearchEngine {
     GoogleSearchEngine::new(Arc::new(EngineClient::new()))

@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use thiserror::Error;
 use log::debug;
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::domain::auth::FeatureFlag;
@@ -339,8 +339,7 @@ mod tests {
 
     #[test]
     fn test_new_stores_repository() {
-        let repo: Arc<dyn FeatureFlagRepository> =
-            Arc::new(MockFeatureFlagRepository::new());
+        let repo: Arc<dyn FeatureFlagRepository> = Arc::new(MockFeatureFlagRepository::new());
         let _service = FeatureFlagService::new(repo);
     }
 
@@ -348,17 +347,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_feature_enabled_returns_false_when_flag_not_found() {
-        let repo: Arc<dyn FeatureFlagRepository> =
-            Arc::new(MockFeatureFlagRepository::new()); // no flag set
+        let repo: Arc<dyn FeatureFlagRepository> = Arc::new(MockFeatureFlagRepository::new()); // no flag set
         let service = FeatureFlagService::new(repo);
 
         let result = service
             .is_feature_enabled("missing_flag", Uuid::new_v4())
             .await;
         assert!(result.is_ok(), "should return Ok(false), not error");
-        assert_eq!(
-            result.expect("ok"),
-            false,
+        assert!(
+            !result.expect("ok"),
             "missing flag should be treated as disabled"
         );
     }
@@ -431,7 +428,10 @@ mod tests {
             .is_feature_enabled("new_ui", Uuid::new_v4())
             .await
             .expect("ok");
-        assert!(result, "active 100% rollout flag with no override should be enabled");
+        assert!(
+            result,
+            "active 100% rollout flag with no override should be enabled"
+        );
     }
 
     #[tokio::test]
@@ -446,10 +446,7 @@ mod tests {
             .is_feature_enabled("old_ui", Uuid::new_v4())
             .await
             .expect("ok");
-        assert!(
-            !result,
-            "disabled flag with no override should be disabled"
-        );
+        assert!(!result, "disabled flag with no override should be disabled");
     }
 
     #[tokio::test]
@@ -459,9 +456,7 @@ mod tests {
         let repo: Arc<dyn FeatureFlagRepository> = Arc::new(mock);
         let service = FeatureFlagService::new(repo);
 
-        let result = service
-            .is_feature_enabled("any", Uuid::new_v4())
-            .await;
+        let result = service.is_feature_enabled("any", Uuid::new_v4()).await;
         assert!(result.is_err(), "should propagate repository error");
         match result.expect_err("should be error") {
             FeatureFlagServiceError::RepositoryError(_) => { /* expected */ }
@@ -511,8 +506,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_flag_returns_none_when_not_found() {
-        let repo: Arc<dyn FeatureFlagRepository> =
-            Arc::new(MockFeatureFlagRepository::new());
+        let repo: Arc<dyn FeatureFlagRepository> = Arc::new(MockFeatureFlagRepository::new());
         let service = FeatureFlagService::new(repo);
 
         let result = service.get_flag("missing").await.expect("ok");
@@ -549,8 +543,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_flags_returns_empty_when_no_flags() {
-        let repo: Arc<dyn FeatureFlagRepository> =
-            Arc::new(MockFeatureFlagRepository::new());
+        let repo: Arc<dyn FeatureFlagRepository> = Arc::new(MockFeatureFlagRepository::new());
         let service = FeatureFlagService::new(repo);
 
         let result = service.list_flags().await.expect("ok");
@@ -572,13 +565,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_override_returns_not_found_when_flag_missing() {
-        let repo: Arc<dyn FeatureFlagRepository> =
-            Arc::new(MockFeatureFlagRepository::new()); // no flag
+        let repo: Arc<dyn FeatureFlagRepository> = Arc::new(MockFeatureFlagRepository::new()); // no flag
         let service = FeatureFlagService::new(repo);
 
-        let result = service
-            .set_override("missing", Uuid::new_v4(), true)
-            .await;
+        let result = service.set_override("missing", Uuid::new_v4(), true).await;
         assert!(result.is_err());
         match result.expect_err("should be error") {
             FeatureFlagServiceError::NotFound { name } => {
@@ -596,9 +586,7 @@ mod tests {
         let service = FeatureFlagService::new(repo);
 
         let api_key_id = Uuid::new_v4();
-        let result = service
-            .set_override("beta", api_key_id, true)
-            .await;
+        let result = service.set_override("beta", api_key_id, true).await;
         assert!(result.is_ok(), "should succeed when flag exists");
     }
 
@@ -609,9 +597,7 @@ mod tests {
         let repo: Arc<dyn FeatureFlagRepository> = Arc::new(mock);
         let service = FeatureFlagService::new(repo);
 
-        let result = service
-            .set_override("any", Uuid::new_v4(), true)
-            .await;
+        let result = service.set_override("any", Uuid::new_v4(), true).await;
         assert!(result.is_err());
     }
 
@@ -619,13 +605,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_override_returns_not_found_when_flag_missing() {
-        let repo: Arc<dyn FeatureFlagRepository> =
-            Arc::new(MockFeatureFlagRepository::new()); // no flag
+        let repo: Arc<dyn FeatureFlagRepository> = Arc::new(MockFeatureFlagRepository::new()); // no flag
         let service = FeatureFlagService::new(repo);
 
-        let result = service
-            .delete_override("missing", Uuid::new_v4())
-            .await;
+        let result = service.delete_override("missing", Uuid::new_v4()).await;
         assert!(result.is_err());
         match result.expect_err("should be error") {
             FeatureFlagServiceError::NotFound { name } => {
@@ -679,9 +662,7 @@ mod tests {
         let repo: Arc<dyn FeatureFlagRepository> = Arc::new(mock);
         let service = FeatureFlagService::new(repo);
 
-        let result = service
-            .delete_override("any", Uuid::new_v4())
-            .await;
+        let result = service.delete_override("any", Uuid::new_v4()).await;
         assert!(result.is_err());
     }
 

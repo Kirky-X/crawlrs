@@ -452,10 +452,7 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(
-            &self,
-            _worker_id: Uuid,
-        ) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -489,10 +486,7 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(
-            &self,
-            _crawl_id: Uuid,
-        ) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -698,11 +692,10 @@ mod tests {
     impl MockSearchClient {
         /// Build a client whose default (Google) engine returns `items`.
         fn new_with_items(items: Vec<ResponseItem>) -> Self {
-            let engine: Arc<dyn SearchEngine> =
-                Arc::new(MockSearchEngine::success_with_items(
-                    SearchEngineType::Google,
-                    items,
-                ));
+            let engine: Arc<dyn SearchEngine> = Arc::new(MockSearchEngine::success_with_items(
+                SearchEngineType::Google,
+                items,
+            ));
             Self {
                 inner: SearchClient::new_with_engines(vec![engine], SearchEngineType::Google),
             }
@@ -721,8 +714,16 @@ mod tests {
         /// existing `make_service` callers that don't assert result shape).
         fn new() -> Self {
             Self::new_with_items(vec![
-                make_response_item("Result 1", "https://example.com/1", SearchEngineType::Google),
-                make_response_item("Result 2", "https://example.com/2", SearchEngineType::Google),
+                make_response_item(
+                    "Result 1",
+                    "https://example.com/1",
+                    SearchEngineType::Google,
+                ),
+                make_response_item(
+                    "Result 2",
+                    "https://example.com/2",
+                    SearchEngineType::Google,
+                ),
             ])
         }
     }
@@ -775,11 +776,7 @@ mod tests {
     fn make_service_with_recording(
         credits: Arc<dyn CreditsRepository>,
         search_client: Arc<dyn SearchClientTrait>,
-    ) -> (
-        SearchService,
-        Arc<MockCrawlRepo>,
-        Arc<MockTaskRepo>,
-    ) {
+    ) -> (SearchService, Arc<MockCrawlRepo>, Arc<MockTaskRepo>) {
         let crawl_repo = Arc::new(MockCrawlRepo::new());
         let task_repo = Arc::new(MockTaskRepo::new());
         let service = SearchService {
@@ -792,9 +789,7 @@ mod tests {
     }
 
     /// Build a service whose search client always fails.
-    fn make_failing_search_service(
-        credits: Arc<dyn CreditsRepository>,
-    ) -> SearchService {
+    fn make_failing_search_service(credits: Arc<dyn CreditsRepository>) -> SearchService {
         SearchService {
             crawl_repo: Arc::new(MockCrawlRepo::new()),
             task_repo: Arc::new(MockTaskRepo::new()),
@@ -848,8 +843,14 @@ mod tests {
     fn test_search_crawl_config_default_values() {
         let config = SearchCrawlConfig::default();
         assert_eq!(config.max_depth, 0, "default max_depth should be 0");
-        assert_eq!(config.strategy, "", "default strategy should be empty string");
-        assert_eq!(config.max_concurrency, 0, "default max_concurrency should be 0");
+        assert_eq!(
+            config.strategy, "",
+            "default strategy should be empty string"
+        );
+        assert_eq!(
+            config.max_concurrency, 0,
+            "default max_concurrency should be 0"
+        );
         assert!(config.include_patterns.is_none());
         assert!(config.exclude_patterns.is_none());
         assert!(config.crawl_delay_ms.is_none());
@@ -899,7 +900,9 @@ mod tests {
         let result = SearchResult {
             title: "Rust Programming".to_string(),
             url: "https://www.rust-lang.org".to_string(),
-            description: Some("A language empowering everyone to build reliable software.".to_string()),
+            description: Some(
+                "A language empowering everyone to build reliable software.".to_string(),
+            ),
             engine: "Google".to_string(),
         };
         assert_eq!(result.title, "Rust Programming");
@@ -1021,17 +1024,11 @@ mod tests {
     async fn test_search_empty_query_returns_validation_error() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::ValidationError(msg) => {
-                assert!(
-                    msg.contains("empty"),
-                    "error should mention empty: {}",
-                    msg
-                );
+                assert!(msg.contains("empty"), "error should mention empty: {}", msg);
             }
             other => panic!("expected ValidationError, got {:?}", other),
         }
@@ -1041,9 +1038,7 @@ mod tests {
     async fn test_search_whitespace_only_query_returns_validation_error() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("   ");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err(), "whitespace-only query should fail");
         match result.unwrap_err() {
             SearchServiceError::ValidationError(_) => {}
@@ -1055,12 +1050,13 @@ mod tests {
     async fn test_search_insufficient_credits_returns_error() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(0)));
         let query = make_query("rust scraping");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchServiceError::InsufficientCredits { available, required } => {
+            SearchServiceError::InsufficientCredits {
+                available,
+                required,
+            } => {
                 assert_eq!(available, 0);
                 assert_eq!(required, 1);
             }
@@ -1076,9 +1072,7 @@ mod tests {
         // NOT returned.
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(1)));
         let query = make_query("rust scraping");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(
             result.is_ok(),
             "should pass credit check and perform_search, got {:?}",
@@ -1103,9 +1097,7 @@ mod tests {
             sources: Some(vec!["google".to_string()]),
             ..make_query("rust scraping")
         };
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(
             result.is_ok(),
             "should reach perform_search and succeed, got {:?}",
@@ -1122,9 +1114,7 @@ mod tests {
             sources: Some(vec!["google".to_string(), "bing".to_string()]),
             ..make_query("rust scraping")
         };
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(
             result.is_ok(),
             "aggregator path should reach perform_search and succeed, got {:?}",
@@ -1140,9 +1130,7 @@ mod tests {
             engine: Some("bing".to_string()),
             ..make_query("rust scraping")
         };
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::ValidationError(_) => {
@@ -1166,35 +1154,33 @@ mod tests {
             country: Some("us".to_string()),
             ..make_query("rust scraping")
         };
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(
             result.is_ok(),
             "should reach perform_search and succeed, got {:?}",
             result.err()
         );
         let resp = result.unwrap();
-        assert_eq!(resp.results.len(), 2, "mock returns 2 items, limit=5 keeps both");
+        assert_eq!(
+            resp.results.len(),
+            2,
+            "mock returns 2 items, limit=5 keeps both"
+        );
     }
 
     #[tokio::test]
     async fn test_search_get_balance_failure_returns_credits_error() {
         let service = make_service(Arc::new(MockCreditsRepo::failing()));
         let query = make_query("rust scraping");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchServiceError::CreditsRepository(err) => {
-                match err {
-                    CreditsRepositoryError::DatabaseError(msg) => {
-                        assert!(msg.contains("mock get_balance failure"));
-                    }
-                    other => panic!("expected DatabaseError, got {:?}", other),
+            SearchServiceError::CreditsRepository(err) => match err {
+                CreditsRepositoryError::DatabaseError(msg) => {
+                    assert!(msg.contains("mock get_balance failure"));
                 }
-            }
+                other => panic!("expected DatabaseError, got {:?}", other),
+            },
             other => panic!("expected CreditsRepository, got {:?}", other),
         }
     }
@@ -1203,12 +1189,13 @@ mod tests {
     async fn test_search_negative_balance_returns_insufficient_credits() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(-5)));
         let query = make_query("rust scraping");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchServiceError::InsufficientCredits { available, required } => {
+            SearchServiceError::InsufficientCredits {
+                available,
+                required,
+            } => {
                 assert_eq!(available, -5, "should report negative balance");
                 assert_eq!(required, 1);
             }
@@ -1223,13 +1210,8 @@ mod tests {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("");
         // Use the trait method
-        let result: Result<SearchResponse, SearchServiceError> = SearchServiceTrait::search(
-            &service,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            query,
-        )
-        .await;
+        let result: Result<SearchResponse, SearchServiceError> =
+            SearchServiceTrait::search(&service, Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::ValidationError(_) => {}
@@ -1246,18 +1228,18 @@ mod tests {
     #[tokio::test]
     async fn test_search_success_returns_results() {
         let credits = Arc::new(MockCreditsRepo::with_balance(100));
-        let (service, _, _) = make_service_with_recording(
-            credits,
-            Arc::new(MockSearchClient::new()),
-        );
+        let (service, _, _) =
+            make_service_with_recording(credits, Arc::new(MockSearchClient::new()));
         let query = make_query("rust web scraping");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_ok(), "expected ok, got {:?}", result.err());
         let resp = result.unwrap();
         assert_eq!(resp.query, "rust web scraping");
-        assert_eq!(resp.results.len(), 2, "MockSearchClient::new returns 2 items");
+        assert_eq!(
+            resp.results.len(),
+            2,
+            "MockSearchClient::new returns 2 items"
+        );
         assert_eq!(resp.credits_used, 1, "search cost is 1 credit");
         assert!(resp.crawl_id.is_none(), "crawl_results not set");
     }
@@ -1266,14 +1248,10 @@ mod tests {
     async fn test_search_success_deducts_credits() {
         let credits = Arc::new(MockCreditsRepo::with_balance(100));
         let credits_handle: Arc<MockCreditsRepo> = credits.clone();
-        let (service, _, _) = make_service_with_recording(
-            credits,
-            Arc::new(MockSearchClient::new()),
-        );
+        let (service, _, _) =
+            make_service_with_recording(credits, Arc::new(MockSearchClient::new()));
         let query = make_query("rust");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_ok());
         let calls = credits_handle.deduct_calls.lock().unwrap().clone();
         assert_eq!(calls.len(), 1, "deduct_credits should be called once");
@@ -1290,9 +1268,7 @@ mod tests {
             crawl_results: Some(true),
             ..make_query("rust scraping")
         };
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert!(resp.crawl_id.is_some(), "crawl_id should be set");
@@ -1319,9 +1295,7 @@ mod tests {
             crawl_results: Some(true),
             ..make_query("empty")
         };
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert!(resp.crawl_id.is_none(), "no crawl when results empty");
@@ -1345,21 +1319,21 @@ mod tests {
             limit: Some(2),
             ..make_query("limited")
         };
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
-        assert_eq!(resp.results.len(), 2, "limit=2 should truncate to 2 results");
+        assert_eq!(
+            resp.results.len(),
+            2,
+            "limit=2 should truncate to 2 results"
+        );
     }
 
     #[tokio::test]
     async fn test_search_perform_search_failure_returns_search_engine_error() {
         let service = make_failing_search_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("will fail");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::SearchEngine(msg) => {
@@ -1382,9 +1356,7 @@ mod tests {
             crawl_results: Some(true),
             ..make_query("crawl fails")
         };
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::Repository(_) => { /* expected */ }
@@ -1405,9 +1377,7 @@ mod tests {
             crawl_results: Some(true),
             ..make_query("task fails")
         };
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::Repository(_) => { /* expected */ }
@@ -1423,14 +1393,10 @@ mod tests {
             deduct_fails: true,
             deduct_calls: Mutex::new(Vec::new()),
         });
-        let (service, _, _) = make_service_with_recording(
-            credits,
-            Arc::new(MockSearchClient::new()),
-        );
+        let (service, _, _) =
+            make_service_with_recording(credits, Arc::new(MockSearchClient::new()));
         let query = make_query("deduct fails");
-        let result = service
-            .search(Uuid::new_v4(), Uuid::new_v4(), query)
-            .await;
+        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::CreditsRepository(_) => { /* expected */ }
@@ -1442,13 +1408,8 @@ mod tests {
     async fn test_search_trait_delegates_to_success_path() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("trait delegation");
-        let result: Result<SearchResponse, SearchServiceError> = SearchServiceTrait::search(
-            &service,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            query,
-        )
-        .await;
+        let result: Result<SearchResponse, SearchServiceError> =
+            SearchServiceTrait::search(&service, Uuid::new_v4(), Uuid::new_v4(), query).await;
         assert!(result.is_ok(), "trait should forward to success path");
         let resp = result.unwrap();
         assert_eq!(resp.results.len(), 2);
@@ -1498,8 +1459,15 @@ mod tests {
         let task_id = Uuid::new_v4();
         // Read/query stubs return "not found" / empty
         assert!(task_repo.find_by_id(task_id).await.unwrap().is_none());
-        assert!(task_repo.acquire_next(Uuid::new_v4()).await.unwrap().is_none());
-        assert!(!task_repo.exists_by_url("https://example.com").await.unwrap());
+        assert!(task_repo
+            .acquire_next(Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_none());
+        assert!(!task_repo
+            .exists_by_url("https://example.com")
+            .await
+            .unwrap());
         // State-transition stubs are no-ops returning Ok
         task_repo.mark_completed(task_id).await.unwrap();
         task_repo.mark_failed(task_id).await.unwrap();
@@ -1507,7 +1475,10 @@ mod tests {
         // Maintenance stubs return zero counts
         assert_eq!(task_repo.expire_tasks().await.unwrap(), 0);
         assert_eq!(
-            task_repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await.unwrap(),
+            task_repo
+                .cancel_tasks_by_crawl_id(Uuid::new_v4())
+                .await
+                .unwrap(),
             0
         );
     }
@@ -1519,7 +1490,10 @@ mod tests {
         // find_by_id returns None (stub)
         assert!(crawl_repo.find_by_id(crawl_id).await.unwrap().is_none());
         // Counter/status stubs are no-ops returning Ok
-        crawl_repo.increment_completed_tasks(crawl_id).await.unwrap();
+        crawl_repo
+            .increment_completed_tasks(crawl_id)
+            .await
+            .unwrap();
         crawl_repo.increment_failed_tasks(crawl_id).await.unwrap();
         crawl_repo.increment_total_tasks(crawl_id).await.unwrap();
         crawl_repo

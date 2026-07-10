@@ -18,10 +18,10 @@ use crate::{
     },
 };
 use chrono::Utc;
+use log::error;
 use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
-use log::error;
 use uuid::Uuid;
 
 /// 爬取用例错误类型
@@ -466,11 +466,7 @@ mod tests {
         }
 
         fn last_updated_status(&self) -> Option<CrawlStatus> {
-            self.updated_crawls
-                .lock()
-                .unwrap()
-                .last()
-                .map(|c| c.status)
+            self.updated_crawls.lock().unwrap().last().map(|c| c.status)
         }
     }
 
@@ -478,7 +474,9 @@ mod tests {
     impl CrawlRepository for MockCrawlRepository {
         async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             if self.should_fail_create {
-                return Err(RepositoryError::Database(anyhow::anyhow!("crawl repo create down")));
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "crawl repo create down"
+                )));
             }
             self.created_count.fetch_add(1, Ordering::SeqCst);
             Ok(crawl.clone())
@@ -486,14 +484,18 @@ mod tests {
 
         async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
             if self.should_fail_find {
-                return Err(RepositoryError::Database(anyhow::anyhow!("crawl repo find down")));
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "crawl repo find down"
+                )));
             }
             Ok(self.stored_crawl.lock().unwrap().clone())
         }
 
         async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             if self.should_fail_update {
-                return Err(RepositoryError::Database(anyhow::anyhow!("crawl repo update down")));
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "crawl repo update down"
+                )));
             }
             self.updated_crawls.lock().unwrap().push(crawl.clone());
             Ok(crawl.clone())
@@ -507,7 +509,11 @@ mod tests {
             Ok(())
         }
 
-        async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<(), RepositoryError> {
+        async fn update_status(
+            &self,
+            _id: Uuid,
+            _status: CrawlStatus,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
 
@@ -595,7 +601,9 @@ mod tests {
     impl TaskRepository for MockTaskRepository {
         async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
             if self.should_fail_create {
-                return Err(RepositoryError::Database(anyhow::anyhow!("task repo create down")));
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "task repo create down"
+                )));
             }
             self.created_count.fetch_add(1, Ordering::SeqCst);
             Ok(task.clone())
@@ -645,7 +653,9 @@ mod tests {
 
         async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
             if self.should_fail_cancel {
-                return Err(RepositoryError::Database(anyhow::anyhow!("cancel tasks down")));
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "cancel tasks down"
+                )));
             }
             Ok(0)
         }
@@ -656,7 +666,9 @@ mod tests {
 
         async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
             if self.should_fail_find_by_crawl {
-                return Err(RepositoryError::Database(anyhow::anyhow!("find_by_crawl_id down")));
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "find_by_crawl_id down"
+                )));
             }
             Ok(self.stored_tasks.lock().unwrap().clone())
         }
@@ -684,15 +696,24 @@ mod tests {
 
     #[async_trait]
     impl WebhookRepository for MockWebhookRepository {
-        async fn create(&self, webhook: &crate::domain::models::Webhook) -> Result<crate::domain::models::Webhook, RepositoryError> {
+        async fn create(
+            &self,
+            webhook: &crate::domain::models::Webhook,
+        ) -> Result<crate::domain::models::Webhook, RepositoryError> {
             Ok(webhook.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<crate::domain::models::Webhook>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: Uuid,
+        ) -> Result<Option<crate::domain::models::Webhook>, RepositoryError> {
             Ok(None)
         }
 
-        async fn find_by_team_id(&self, _team_id: Uuid) -> Result<Vec<crate::domain::models::Webhook>, RepositoryError> {
+        async fn find_by_team_id(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<Vec<crate::domain::models::Webhook>, RepositoryError> {
             Ok(vec![])
         }
     }
@@ -975,7 +996,14 @@ mod tests {
         let crawl_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Completed);
-        let task = Task::new(task_id, TaskType::Crawl, team_id, Uuid::nil(), "https://example.com".to_string(), json!({}));
+        let task = Task::new(
+            task_id,
+            TaskType::Crawl,
+            team_id,
+            Uuid::nil(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
         let result = make_scrape_result(task_id);
 
         let use_case = build_use_case_allowed_geo(
@@ -1000,7 +1028,9 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.get_crawl_results(Uuid::new_v4(), Uuid::new_v4()).await;
+        let result = use_case
+            .get_crawl_results(Uuid::new_v4(), Uuid::new_v4())
+            .await;
         assert!(matches!(result, Err(CrawlUseCaseError::NotFound)));
     }
 
@@ -1030,7 +1060,9 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.get_crawl_results(Uuid::new_v4(), Uuid::new_v4()).await;
+        let result = use_case
+            .get_crawl_results(Uuid::new_v4(), Uuid::new_v4())
+            .await;
         let err = match result {
             Err(CrawlUseCaseError::Repository(e)) => e,
             e => panic!("expected Repository error, got: {:?}", e),
@@ -1064,7 +1096,14 @@ mod tests {
         let crawl_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Completed);
-        let task = Task::new(task_id, TaskType::Crawl, team_id, Uuid::nil(), "https://example.com".to_string(), json!({}));
+        let task = Task::new(
+            task_id,
+            TaskType::Crawl,
+            team_id,
+            Uuid::nil(),
+            "https://example.com".to_string(),
+            json!({}),
+        );
 
         let use_case = build_use_case_allowed_geo(
             Arc::new(MockCrawlRepository::with_crawl(crawl)),
@@ -1157,7 +1196,9 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4").await;
+        let result = use_case
+            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4")
+            .await;
         let err = match result {
             Err(CrawlUseCaseError::ValidationError(msg)) => msg,
             e => panic!("expected ValidationError, got: {:?}", e),
@@ -1176,7 +1217,9 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4").await;
+        let result = use_case
+            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4")
+            .await;
         assert!(result.is_ok(), "max_depth=5 should be allowed");
     }
 
@@ -1191,7 +1234,9 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4").await;
+        let result = use_case
+            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4")
+            .await;
         let err = match result {
             Err(CrawlUseCaseError::ValidationError(msg)) => msg,
             e => panic!("expected ValidationError, got: {:?}", e),
@@ -1210,7 +1255,9 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4").await;
+        let result = use_case
+            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4")
+            .await;
         assert!(result.is_ok(), "max_concurrency=100 should be allowed");
     }
 
@@ -1226,12 +1273,19 @@ mod tests {
             Arc::new(MockCrawlRepository::empty()),
             Arc::new(MockTaskRepository::empty()),
             Arc::new(MockScrapeResultRepository::empty()),
-            Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions)),
+            Arc::new(MockGeoRestrictionRepository::with_restrictions(
+                restrictions,
+            )),
             Arc::new(MockGeoLocationService::succeeding()),
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), make_crawl_dto(), "not-an-ip")
+            .create_crawl(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                make_crawl_dto(),
+                "not-an-ip",
+            )
             .await;
         let err = match result {
             Err(CrawlUseCaseError::ValidationError(msg)) => msg,
@@ -1256,7 +1310,9 @@ mod tests {
             Arc::new(MockCrawlRepository::empty()),
             Arc::new(MockTaskRepository::empty()),
             Arc::new(MockScrapeResultRepository::empty()),
-            Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions)),
+            Arc::new(MockGeoRestrictionRepository::with_restrictions(
+                restrictions,
+            )),
             Arc::new(MockGeoLocationService::failing()),
         );
 
@@ -1316,7 +1372,10 @@ mod tests {
         let result = use_case
             .create_crawl(Uuid::new_v4(), Uuid::new_v4(), make_crawl_dto(), "1.2.3.4")
             .await;
-        assert!(result.is_ok(), "log failure should not block the allowed path");
+        assert!(
+            result.is_ok(),
+            "log failure should not block the allowed path"
+        );
     }
 
     #[tokio::test]

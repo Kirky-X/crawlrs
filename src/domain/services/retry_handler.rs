@@ -12,8 +12,8 @@ use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::utils::retry_policy::RetryPolicy;
 use chrono::{Duration, Utc};
-use std::sync::Arc;
 use log::{info, warn};
+use std::sync::Arc;
 
 /// Result of handling task failure
 pub enum HandleFailureResult {
@@ -150,7 +150,9 @@ mod tests {
     #[async_trait]
     impl TaskRepository for MockTaskRepository {
         async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
-            Err(RepositoryError::Database(anyhow::anyhow!("not implemented")))
+            Err(RepositoryError::Database(anyhow::anyhow!(
+                "not implemented"
+            )))
         }
 
         async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
@@ -271,8 +273,10 @@ mod tests {
         let mock = Arc::new(MockTaskRepository::new());
         let repo: Arc<dyn TaskRepository> = mock.clone();
         // Policy: max_retries=5, no jitter for deterministic timing
-        let mut policy = RetryPolicy::default();
-        policy.enable_jitter = false;
+        let policy = RetryPolicy {
+            enable_jitter: false,
+            ..Default::default()
+        };
         let handler = RetryHandler::new(repo, policy);
 
         let before = Utc::now();
@@ -316,8 +320,10 @@ mod tests {
     async fn test_handle_failure_retries_increments_attempt_count_correctly() {
         let mock = Arc::new(MockTaskRepository::new());
         let repo: Arc<dyn TaskRepository> = mock.clone();
-        let mut policy = RetryPolicy::default();
-        policy.enable_jitter = false;
+        let policy = RetryPolicy {
+            enable_jitter: false,
+            ..Default::default()
+        };
         let handler = RetryHandler::new(repo, policy);
 
         // Start at attempt_count=2, should retry (3 < 5)
@@ -326,7 +332,10 @@ mod tests {
 
         match result {
             HandleFailureResult::Retried { attempt_count, .. } => {
-                assert_eq!(attempt_count, 3, "attempt_count should be 3 after increment");
+                assert_eq!(
+                    attempt_count, 3,
+                    "attempt_count should be 3 after increment"
+                );
             }
             _ => panic!("expected Retried, got different variant"),
         }
@@ -341,8 +350,10 @@ mod tests {
         let mock = Arc::new(MockTaskRepository::new());
         let repo: Arc<dyn TaskRepository> = mock.clone();
         // Policy max_retries=0 means should_retry(1) = 1 < 0 = false -> immediate fail
-        let mut policy = RetryPolicy::default();
-        policy.max_retries = 0;
+        let policy = RetryPolicy {
+            max_retries: 0,
+            ..Default::default()
+        };
         let handler = RetryHandler::new(repo, policy);
 
         let before = Utc::now();
@@ -430,8 +441,10 @@ mod tests {
         mock.set_fail_update(true);
         let repo: Arc<dyn TaskRepository> = mock.clone();
         // Policy max_retries=0 -> immediate fail path
-        let mut policy = RetryPolicy::default();
-        policy.max_retries = 0;
+        let policy = RetryPolicy {
+            max_retries: 0,
+            ..Default::default()
+        };
         let handler = RetryHandler::new(repo, policy);
 
         // attempt_count=0 -> new_attempt_count=1, should_retry(1)=false (policy max_retries=0)
@@ -511,7 +524,11 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
-        assert!(mock.find_by_crawl_id(Uuid::new_v4()).await.unwrap().is_empty());
+        assert!(mock
+            .find_by_crawl_id(Uuid::new_v4())
+            .await
+            .unwrap()
+            .is_empty());
 
         // State-transition stubs are no-ops returning Ok
         mock.mark_completed(task.id).await.unwrap();

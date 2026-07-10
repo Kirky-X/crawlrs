@@ -325,9 +325,8 @@ mod tests {
             .expect("img element exists");
         let base_url = Url::parse("https://example.com/page").expect("valid url");
 
-        let result = ExtractionUtils::extract_element_value(element, "src", Some(&base_url), || {
-            None
-        });
+        let result =
+            ExtractionUtils::extract_element_value(element, "src", Some(&base_url), || None);
 
         assert_eq!(
             result,
@@ -348,12 +347,8 @@ mod tests {
             .expect("div element exists");
         let base_url = Url::parse("https://example.com/base").expect("valid url");
 
-        let result = ExtractionUtils::extract_element_value(
-            element,
-            "class",
-            Some(&base_url),
-            || None,
-        );
+        let result =
+            ExtractionUtils::extract_element_value(element, "class", Some(&base_url), || None);
 
         assert_eq!(result, Some("container main".to_string()));
     }
@@ -367,8 +362,7 @@ mod tests {
             .next()
             .expect("span element exists");
 
-        let result =
-            ExtractionUtils::extract_element_value(element, "data-id", None, || None);
+        let result = ExtractionUtils::extract_element_value(element, "data-id", None, || None);
 
         assert_eq!(result, Some("12345".to_string()));
     }
@@ -386,7 +380,10 @@ mod tests {
 
         let result = ExtractionUtils::extract_element_value(element, "href", None, || None);
 
-        assert!(result.is_none(), "should return None when attr is absent and fallback returns None");
+        assert!(
+            result.is_none(),
+            "should return None when attr is absent and fallback returns None"
+        );
     }
 
     // ========== extract_element_value: href without base URL ==========
@@ -418,9 +415,8 @@ mod tests {
             .expect("a element exists");
         let base_url = Url::parse("https://example.com").expect("valid url");
 
-        let result = ExtractionUtils::extract_element_value(element, "href", Some(&base_url), || {
-            None
-        });
+        let result =
+            ExtractionUtils::extract_element_value(element, "href", Some(&base_url), || None);
 
         // Leading '/' is stripped, then joined with base path
         assert_eq!(
@@ -444,13 +440,7 @@ mod tests {
         let elements = document.select(&selector);
 
         let results = ExtractionUtils::extract_array_values(elements, "href", None, |el| {
-            Some(
-                el.text()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .trim()
-                    .to_string(),
-            )
+            Some(el.text().collect::<Vec<_>>().join(" ").trim().to_string())
         });
 
         assert_eq!(results.len(), 2);
@@ -477,8 +467,7 @@ mod tests {
         let selector = Selector::parse("a").expect("valid selector");
         let elements = document.select(&selector);
 
-        let results =
-            ExtractionUtils::extract_array_values(elements, "href", None, |_| None);
+        let results = ExtractionUtils::extract_array_values(elements, "href", None, |_| None);
 
         // Only non-empty href values should be in the result
         assert_eq!(results.len(), 2, "empty values should be filtered out");
@@ -493,10 +482,12 @@ mod tests {
         let selector = Selector::parse("a").expect("valid selector");
         let elements = document.select(&selector);
 
-        let results =
-            ExtractionUtils::extract_array_values(elements, "href", None, |_| None);
+        let results = ExtractionUtils::extract_array_values(elements, "href", None, |_| None);
 
-        assert!(results.is_empty(), "should return empty vec when no elements match");
+        assert!(
+            results.is_empty(),
+            "should return empty vec when no elements match"
+        );
     }
 
     // ========== extract_array_values: mixed attr and fallback ==========
@@ -515,15 +506,10 @@ mod tests {
         let elements = document.select(&selector);
         let base_url = Url::parse("https://example.com").expect("valid url");
 
-        let results = ExtractionUtils::extract_array_values(elements, "href", Some(&base_url), |el| {
-            Some(
-                el.text()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .trim()
-                    .to_string(),
-            )
-        });
+        let results =
+            ExtractionUtils::extract_array_values(elements, "href", Some(&base_url), |el| {
+                Some(el.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            });
 
         assert_eq!(results.len(), 3);
         assert_eq!(
@@ -546,10 +532,7 @@ mod tests {
         let result = ExtractionUtils::extract_single_value(html, "h1", None, None);
 
         assert!(result.is_ok());
-        assert_eq!(
-            result.expect("ok"),
-            Value::String("Title Text".to_string())
-        );
+        assert_eq!(result.expect("ok"), Value::String("Title Text".to_string()));
     }
 
     #[test]
@@ -570,12 +553,8 @@ mod tests {
         let html = r#"<a href="page.html">Link</a>"#;
         let base_url = Url::parse("https://example.com/base").expect("valid url");
 
-        let result = ExtractionUtils::extract_single_value(
-            html,
-            "a",
-            Some("href"),
-            Some(&base_url),
-        );
+        let result =
+            ExtractionUtils::extract_single_value(html, "a", Some("href"), Some(&base_url));
 
         assert!(result.is_ok());
         assert_eq!(
@@ -631,10 +610,7 @@ mod tests {
         let result = ExtractionUtils::extract_single_value(html, "a", Some("href"), None);
 
         assert!(result.is_ok());
-        assert_eq!(
-            result.expect("ok"),
-            Value::String("Click here".to_string())
-        );
+        assert_eq!(result.expect("ok"), Value::String("Click here".to_string()));
     }
 
     // ========== ExtractionUtilsError Display tests ==========
@@ -655,7 +631,9 @@ mod tests {
 
     #[test]
     fn test_extraction_utils_error_url_parse_error_display() {
-        let parse_err = "http://[invalid".parse::<url::Url>().expect_err("should fail");
+        let parse_err = "http://[invalid"
+            .parse::<url::Url>()
+            .expect_err("should fail");
         let err = ExtractionUtilsError::UrlParseError(parse_err);
         assert!(err.to_string().contains("URL parsing failed"));
     }

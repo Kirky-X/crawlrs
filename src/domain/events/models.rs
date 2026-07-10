@@ -586,11 +586,11 @@ pub mod search {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::credits::*;
     use super::crawl::*;
+    use super::credits::*;
     use super::search::*;
     use super::task::*;
+    use super::*;
 
     // ========== EventMetadata tests ==========
 
@@ -643,7 +643,8 @@ mod tests {
     #[test]
     fn test_event_metadata_with_additional_data_replaces_default() {
         let data = serde_json::json!({"key": "value", "n": 42});
-        let metadata = EventMetadata::new("X", Uuid::new_v4(), "Y").with_additional_data(data.clone());
+        let metadata =
+            EventMetadata::new("X", Uuid::new_v4(), "Y").with_additional_data(data.clone());
         assert_eq!(metadata.additional_data, data);
     }
 
@@ -889,12 +890,8 @@ mod tests {
     fn test_crawl_started_event_new_populates_fields() {
         let crawl_id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
-        let event = CrawlStartedEvent::new(
-            crawl_id,
-            team_id,
-            "https://example.com".to_string(),
-            100,
-        );
+        let event =
+            CrawlStartedEvent::new(crawl_id, team_id, "https://example.com".to_string(), 100);
 
         assert_eq!(event.crawl_id, crawl_id);
         assert_eq!(event.team_id, team_id);
@@ -965,14 +962,7 @@ mod tests {
 
     #[test]
     fn test_crawl_completed_event_serde_roundtrip() {
-        let event = CrawlCompletedEvent::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            50,
-            45,
-            5,
-            30000,
-        );
+        let event = CrawlCompletedEvent::new(Uuid::new_v4(), Uuid::new_v4(), 50, 45, 5, 30000);
         let json = serde_json::to_string(&event).expect("serialize");
         let back: CrawlCompletedEvent = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.total_tasks, event.total_tasks);
@@ -1145,13 +1135,8 @@ mod tests {
         let task_id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
 
-        let created = TaskCreatedEvent::new(
-            task_id,
-            "scrape".to_string(),
-            "url".to_string(),
-            team_id,
-            1,
-        );
+        let created =
+            TaskCreatedEvent::new(task_id, "scrape".to_string(), "url".to_string(), team_id, 1);
         let completed = TaskCompletedEvent::new(
             task_id,
             "scrape".to_string(),
@@ -1159,13 +1144,8 @@ mod tests {
             100,
             serde_json::json!({}),
         );
-        let failed = TaskFailedEvent::new(
-            task_id,
-            "scrape".to_string(),
-            team_id,
-            "err".to_string(),
-            1,
-        );
+        let failed =
+            TaskFailedEvent::new(task_id, "scrape".to_string(), team_id, "err".to_string(), 1);
 
         for ev in [&created as &dyn DomainEvent, &completed, &failed] {
             assert_eq!(ev.aggregate_type(), "Task");

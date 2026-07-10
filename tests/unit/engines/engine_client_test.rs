@@ -9,7 +9,7 @@
 #[cfg(test)]
 mod engine_client_tests {
     use crate::common::constants::timeouts::{
-        API_REQUEST_TIMEOUT, DEFAULT_TEST_TIMEOUT, E2E_TEST_TIMEOUT, LONG_RUNNING_TEST_TIMEOUT,
+        DEFAULT_TEST_TIMEOUT, E2E_TEST_TIMEOUT, LONG_RUNNING_TEST_TIMEOUT,
     };
     use crawlrs::engines::engine_client::{
         EngineClient, EngineError, EngineHealthStatus, PageAction, ScrapeOptions, ScrapeRequest,

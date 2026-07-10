@@ -5,11 +5,11 @@
 
 use chardetng::EncodingDetector;
 use encoding_rs::Encoding;
+use log::{debug, warn};
 use lru::LruCache;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use thiserror::Error;
-use log::{debug, warn};
 
 /// 文本编码处理错误类型
 #[derive(Error, Debug, Clone)]
@@ -401,5 +401,176 @@ mod tests {
         assert_eq!(processor.trim_newlines(""), "");
         assert_eq!(processor.trim_newlines("\n"), "");
         assert_eq!(processor.trim_newlines("\n\n\n"), "");
+    }
+
+    #[test]
+    fn test_with_config_custom_values() {
+        let processor = TextEncodingProcessor::with_config(50, 200);
+        let stats = processor.get_stats();
+        assert_eq!(stats.short_text_threshold, 200);
+    }
+
+    #[test]
+    fn test_default_impl() {
+        let processor = TextEncodingProcessor::default();
+        let stats = processor.get_stats();
+        assert_eq!(stats.short_text_threshold, 1000);
+    }
+
+    #[test]
+    fn test_long_text_processing_utf8() {
+        let processor = TextEncodingProcessor::new();
+        let long_text = "a".repeat(1500);
+        let result = processor.process_text(long_text.as_bytes()).unwrap();
+        assert_eq!(result, long_text);
+    }
+
+    #[test]
+    fn test_long_text_caching_increases_cache_size() {
+        let processor = TextEncodingProcessor::new();
+        let long_text = "x".repeat(1500);
+
+        assert_eq!(processor.get_stats().cache_size, 0);
+
+        processor.process_text(long_text.as_bytes()).unwrap();
+        assert_eq!(processor.get_stats().cache_size, 1);
+
+        processor.process_text(long_text.as_bytes()).unwrap();
+        assert_eq!(processor.get_stats().cache_size, 1);
+    }
+
+    #[test]
+    fn test_get_stats_empty_cache() {
+        let processor = TextEncodingProcessor::new();
+        let stats = processor.get_stats();
+        assert_eq!(stats.cache_size, 0);
+        assert_eq!(stats.cache_capacity, 1000);
+        assert_eq!(stats.short_text_threshold, 1000);
+    }
+
+    #[test]
+    fn test_get_stats_after_processing() {
+        let processor = TextEncodingProcessor::new();
+        let long_text = "c".repeat(1500);
+        processor.process_text(long_text.as_bytes()).unwrap();
+        let stats = processor.get_stats();
+        assert_eq!(stats.cache_size, 1);
+    }
+
+    #[test]
+    fn test_unicode_lowercase_u_escape_sequence() {
+        let processor = TextEncodingProcessor::new();
+        let input = r"Hello \u0041 World";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "Hello A World");
+    }
+
+    #[test]
+    fn test_unicode_uppercase_u_escape_sequence() {
+        let processor = TextEncodingProcessor::new();
+        let input = r"Hello \U00000041 World";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "Hello A World");
+    }
+
+    #[test]
+    fn test_unicode_x_escape_sequence() {
+        let processor = TextEncodingProcessor::new();
+        let input = r"Hello \x41 World";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "Hello A World");
+    }
+
+    #[test]
+    fn test_unicode_escape_chinese() {
+        let processor = TextEncodingProcessor::new();
+        let input = r"Hello \u4e16界";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "Hello 世界");
+    }
+
+    #[test]
+    fn test_invalid_unicode_escape_fallback() {
+        let processor = TextEncodingProcessor::new();
+        let input = r"Hello \uGGGG World";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "Hello \\ World");
+    }
+
+    #[test]
+    fn test_backslash_without_escape() {
+        let processor = TextEncodingProcessor::new();
+        let input = r"Hello \n World";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "Hello \\n World");
+    }
+
+    #[test]
+    fn test_process_with_processor_free_function() {
+        let processor = TextEncodingProcessor::new();
+        let input = "test text";
+        let result = process_with_processor(&processor, input.as_bytes()).unwrap();
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_process_batch_with_processor_free_function() {
+        let processor = TextEncodingProcessor::new();
+        let inputs = vec!["a".as_bytes(), "b".as_bytes()];
+        let results = process_batch_with_processor(&processor, inputs);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    #[test]
+    fn test_text_encoding_error_display() {
+        let err = TextEncodingError::DetectionFailed("test reason".to_string());
+        assert_eq!(err.to_string(), "编码检测失败: test reason");
+
+        let err = TextEncodingError::ConversionFailed("conv error".to_string());
+        assert_eq!(err.to_string(), "编码转换失败: conv error");
+
+        let err = TextEncodingError::UnicodeConversionFailed("uni error".to_string());
+        assert_eq!(err.to_string(), "Unicode转换失败: uni error");
+
+        let err = TextEncodingError::InvalidEncoding("bad enc".to_string());
+        assert_eq!(err.to_string(), "无效的编码格式: bad enc");
+
+        let err = TextEncodingError::ProcessingTimeout;
+        assert_eq!(err.to_string(), "文本处理超时");
+
+        let err = TextEncodingError::CacheLockError("lock fail".to_string());
+        assert_eq!(err.to_string(), "缓存锁获取失败: lock fail");
+    }
+
+    #[test]
+    fn test_encoding_detection_struct() {
+        let detection = EncodingDetection {
+            encoding: "utf-8".to_string(),
+            confidence: 1.0,
+            is_utf8: true,
+        };
+        assert_eq!(detection.encoding, "utf-8");
+        assert_eq!(detection.confidence, 1.0);
+        assert!(detection.is_utf8);
+    }
+
+    #[test]
+    fn test_text_processor_stats_struct() {
+        let stats = TextProcessorStats {
+            cache_size: 10,
+            cache_capacity: 100,
+            short_text_threshold: 500,
+        };
+        assert_eq!(stats.cache_size, 10);
+        assert_eq!(stats.cache_capacity, 100);
+        assert_eq!(stats.short_text_threshold, 500);
+    }
+
+    #[test]
+    fn test_batch_empty_input() {
+        let processor = TextEncodingProcessor::new();
+        let results = processor.process_batch(vec![]);
+        assert_eq!(results.len(), 0);
     }
 }

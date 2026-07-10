@@ -10,8 +10,8 @@
 
 use crate::domain::models::CreditsTransactionType;
 use crate::domain::repositories::credits_repository::CreditsRepository;
-use std::sync::Arc;
 use log::info;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Configuration for credits costs

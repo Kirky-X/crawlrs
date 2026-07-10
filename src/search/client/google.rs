@@ -13,12 +13,12 @@ use crate::search::{
 };
 use async_trait::async_trait;
 use chrono::Utc;
+use log::{info, warn};
 use rand::Rng;
 use scraper::{Html, Selector};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use log::{info, warn};
 
 /// 安全解析CSS选择器，如果解析失败则返回None
 fn safe_parse_selector(selector_str: &str) -> Option<Selector> {

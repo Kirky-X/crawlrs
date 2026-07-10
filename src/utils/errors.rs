@@ -299,7 +299,8 @@ impl From<crate::utils::robots::RobotsCheckerError> for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::common::test_support::ENV_MUTEX;
+    use axum::response::IntoResponse;
     #[test]
     fn test_sanitize_error_message_removes_table_names() {
         let msg = "Database error: table: users column: email not found";
@@ -346,6 +347,7 @@ mod tests {
 
     #[test]
     fn test_should_show_detailed_errors_in_dev() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("CRAWLRS_ENV", "development");
         assert!(should_show_detailed_errors());
         std::env::remove_var("CRAWLRS_ENV");
@@ -353,6 +355,7 @@ mod tests {
 
     #[test]
     fn test_should_hide_detailed_errors_in_prod() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("CRAWLRS_ENV", "production");
         assert!(!should_show_detailed_errors());
         std::env::remove_var("CRAWLRS_ENV");
@@ -360,6 +363,7 @@ mod tests {
 
     #[test]
     fn test_should_hide_detailed_errors_by_default() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         assert!(!should_show_detailed_errors());
     }
 
@@ -384,5 +388,278 @@ mod tests {
         let sanitized = sanitize_error_message(msg);
         assert!(sanitized.contains("[REDACTED]"));
         assert!(sanitized.contains("[SQL_REDACTED]"));
+    }
+
+    // ========== WorkerError From conversions ==========
+
+    #[test]
+    fn test_worker_error_from_string() {
+        let err: WorkerError = "something failed".to_string().into();
+        assert!(matches!(err, WorkerError::InternalError(msg) if msg == "something failed"));
+    }
+
+    #[test]
+    fn test_worker_error_from_str() {
+        let err: WorkerError = "disk full".into();
+        assert!(matches!(err, WorkerError::InternalError(msg) if msg == "disk full"));
+    }
+
+    #[test]
+    fn test_worker_error_from_anyhow() {
+        let err: WorkerError = anyhow::anyhow!("network down").into();
+        assert!(matches!(err, WorkerError::InternalError(msg) if msg.contains("network down")));
+    }
+
+    // ========== AppError From conversions ==========
+
+    #[test]
+    fn test_app_error_from_string() {
+        let err: AppError = "boom".to_string().into();
+        assert!(matches!(err, AppError::Internal(msg) if msg == "boom"));
+    }
+
+    #[test]
+    fn test_app_error_from_str() {
+        let err: AppError = "crash".into();
+        assert!(matches!(err, AppError::Internal(msg) if msg == "crash"));
+    }
+
+    #[test]
+    fn test_app_error_from_anyhow() {
+        let err: AppError = anyhow::anyhow!("db timeout").into();
+        assert!(matches!(err, AppError::Internal(msg) if msg.contains("db timeout")));
+    }
+
+    // ========== From<RepositoryError> for WorkerError ==========
+
+    #[test]
+    fn test_worker_error_from_repository_database_error() {
+        let err: WorkerError = RepositoryError::DatabaseError("conn refused".to_string()).into();
+        assert!(matches!(err, WorkerError::RepositoryError(msg) if msg == "conn refused"));
+    }
+
+    #[test]
+    fn test_worker_error_from_repository_not_found() {
+        let err: WorkerError = RepositoryError::NotFound.into();
+        assert!(matches!(err, WorkerError::NotFound(msg) if msg.contains("not found")));
+    }
+
+    #[test]
+    fn test_worker_error_from_repository_already_exists() {
+        let err: WorkerError = RepositoryError::AlreadyExists.into();
+        assert!(matches!(err, WorkerError::RepositoryError(msg) if msg.contains("already exists")));
+    }
+
+    #[test]
+    fn test_worker_error_from_repository_invalid_parameter() {
+        let err: WorkerError = RepositoryError::InvalidParameter("bad uuid".to_string()).into();
+        assert!(matches!(err, WorkerError::DomainError(msg) if msg == "bad uuid"));
+    }
+
+    #[test]
+    fn test_worker_error_from_repository_internal_error() {
+        let err: WorkerError = RepositoryError::InternalError("oops".to_string()).into();
+        assert!(matches!(err, WorkerError::InternalError(msg) if msg == "oops"));
+    }
+
+    // ========== From<RepositoryError> for AppError ==========
+
+    #[test]
+    fn test_app_error_from_repository_database_error() {
+        let err: AppError = RepositoryError::DatabaseError("conn refused".to_string()).into();
+        assert!(matches!(err, AppError::Internal(msg) if msg == "conn refused"));
+    }
+
+    #[test]
+    fn test_app_error_from_repository_not_found() {
+        let err: AppError = RepositoryError::NotFound.into();
+        assert!(matches!(err, AppError::NotFound(msg) if msg.contains("not found")));
+    }
+
+    #[test]
+    fn test_app_error_from_repository_already_exists() {
+        let err: AppError = RepositoryError::AlreadyExists.into();
+        assert!(matches!(err, AppError::Validation(msg) if msg.contains("already exists")));
+    }
+
+    #[test]
+    fn test_app_error_from_repository_invalid_parameter() {
+        let err: AppError = RepositoryError::InvalidParameter("bad input".to_string()).into();
+        assert!(matches!(err, AppError::Validation(msg) if msg == "bad input"));
+    }
+
+    #[test]
+    fn test_app_error_from_repository_internal_error() {
+        let err: AppError = RepositoryError::InternalError("oops".to_string()).into();
+        assert!(matches!(err, AppError::Internal(msg) if msg == "oops"));
+    }
+
+    // ========== From<task_repository::RepositoryError> for AppError ==========
+
+    #[test]
+    fn test_app_error_from_task_repo_database_error() {
+        use crate::domain::repositories::task_repository::RepositoryError as TaskRepoError;
+        let err: AppError = TaskRepoError::Database(anyhow::anyhow!("pool exhausted")).into();
+        assert!(matches!(err, AppError::Internal(msg) if msg.contains("pool exhausted")));
+    }
+
+    #[test]
+    fn test_app_error_from_task_repo_not_found() {
+        use crate::domain::repositories::task_repository::RepositoryError as TaskRepoError;
+        let err: AppError = TaskRepoError::NotFound.into();
+        assert!(matches!(err, AppError::NotFound(msg) if msg.contains("not found")));
+    }
+
+    // ========== From<RobotsCheckerError> for AppError ==========
+
+    #[test]
+    fn test_app_error_from_robots_checker_error() {
+        let robots_err =
+            crate::utils::robots::RobotsCheckerError::ValidationError("blocked".to_string());
+        let err: AppError = robots_err.into();
+        assert!(matches!(err, AppError::Internal(msg) if msg.contains("blocked")));
+    }
+
+    // ========== RepositoryResultExt ==========
+
+    #[test]
+    fn test_repository_result_ext_ok() {
+        let result: Result<i32, &str> = Ok(42);
+        assert_eq!(result.repo_err().expect("ok should pass through"), 42);
+    }
+
+    #[test]
+    fn test_repository_result_ext_err_maps_to_worker_error() {
+        let result: Result<i32, &str> = Err("disk failure");
+        let err = result.repo_err().unwrap_err();
+        assert!(matches!(err, WorkerError::RepositoryError(msg) if msg.contains("disk failure")));
+    }
+
+    // ========== AppError::into_response status codes ==========
+
+    #[test]
+    fn test_app_error_authentication_returns_401() {
+        let response = AppError::Authentication("bad token".to_string()).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_app_error_authorization_returns_403() {
+        let response = AppError::Authorization("no scope".to_string()).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn test_app_error_validation_returns_400() {
+        let response = AppError::Validation("missing field".to_string()).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_app_error_not_found_returns_404() {
+        let response = AppError::NotFound("no such task".to_string()).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_app_error_rate_limited_returns_429() {
+        let response = AppError::RateLimited("too fast".to_string()).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn test_app_error_internal_returns_500() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_ENV");
+        let response = AppError::Internal("table: users not found".to_string()).into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn test_app_error_service_unavailable_returns_503() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_ENV");
+        let response = AppError::ServiceUnavailable("redis down".to_string()).into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    // ========== AppError Internal sanitization in production ==========
+
+    #[tokio::test]
+    async fn test_app_error_internal_sanitizes_in_production() {
+        {
+            let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("CRAWLRS_ENV", "production");
+        }
+        let response = AppError::Internal(
+            "Error: table: users column: email at /home/app/src/main.rs:42".to_string(),
+        )
+        .into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        // The response body should not contain the raw sensitive data.
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let body_str = std::str::from_utf8(&body).expect("body should be utf8");
+        assert!(
+            !body_str.contains("/home/app/src/main.rs"),
+            "file path should be redacted"
+        );
+        {
+            let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_app_error_internal_keeps_detail_in_dev() {
+        {
+            let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("CRAWLRS_ENV", "development");
+        }
+        let response = AppError::Internal("table: users".to_string()).into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let body_str = std::str::from_utf8(&body).expect("body should be utf8");
+        // In dev mode, the raw message is preserved (not sanitized).
+        assert!(
+            body_str.contains("table: users"),
+            "raw message should be preserved in dev"
+        );
+        {
+            let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+    }
+
+    // ========== AppError IntoResponse body format ==========
+
+    #[tokio::test]
+    async fn test_app_error_response_body_format() {
+        let response = AppError::Validation("invalid email".to_string()).into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("body should be valid json");
+        assert_eq!(json["success"], serde_json::Value::Bool(false));
+        assert_eq!(
+            json["error"],
+            serde_json::Value::String("invalid email".to_string())
+        );
     }
 }

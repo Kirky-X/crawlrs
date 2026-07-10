@@ -107,9 +107,7 @@ impl LimiteronService {
     fn build_flow_control_config(
         config: &RateLimitingConfig,
     ) -> Result<FlowControlConfig, RateLimitingError> {
-        use limiteron::config::{
-            Action, ActionConfig, GlobalConfig, LimiterConfig, Matcher, Rule,
-        };
+        use limiteron::config::{Action, ActionConfig, GlobalConfig, LimiterConfig, Matcher, Rule};
 
         // 构建用户限流规则（使用 User matcher 匹配 API Key）
         let user_rule = Rule {
@@ -419,10 +417,7 @@ impl BacklogService for LimiteronService {
                             Some(chrono::Utc::now() + chrono::Duration::seconds(300));
 
                         if let Err(e) = self.task_repository.update(&task).await {
-                            log::error!(
-                                "LimiteronService: Database error updating task: {:?}",
-                                e
-                            );
+                            log::error!("LimiteronService: Database error updating task: {:?}", e);
                             continue;
                         }
                     }

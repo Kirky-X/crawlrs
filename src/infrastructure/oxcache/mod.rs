@@ -436,10 +436,7 @@ mod tests {
         let limiter = RateLimiter::new_with_config(60, 20);
 
         assert!(limiter.check_rate_limit_n("batch_client", 5).await.is_ok());
-        assert!(limiter
-            .check_rate_limit_n("batch_client", 10)
-            .await
-            .is_ok());
+        assert!(limiter.check_rate_limit_n("batch_client", 10).await.is_ok());
         // 仅剩 5 个令牌，请求 10 个应失败
         let result = limiter.check_rate_limit_n("batch_client", 10).await;
         assert!(result.is_err());
@@ -483,10 +480,7 @@ mod tests {
         assert!(limiter.check_rate_limit("refill_client").await.is_ok());
         assert!(limiter.check_rate_limit("refill_client").await.is_ok());
         // 立即再请求应失败
-        assert!(limiter
-            .check_rate_limit("refill_client")
-            .await
-            .is_err());
+        assert!(limiter.check_rate_limit("refill_client").await.is_err());
 
         // 等待 600ms，refill_rate=2/s 应恢复约 1.2 个令牌（>=1）
         tokio::time::sleep(Duration::from_millis(600)).await;
@@ -501,10 +495,7 @@ mod tests {
         assert!(limiter.check_rate_limit("client_a").await.is_ok());
         assert!(limiter.check_rate_limit("client_a").await.is_ok());
         // client_a 耗尽，但 client_b 仍可用
-        assert!(limiter
-            .check_rate_limit("client_a")
-            .await
-            .is_err());
+        assert!(limiter.check_rate_limit("client_a").await.is_err());
         assert!(limiter.check_rate_limit("client_b").await.is_ok());
     }
 
@@ -568,10 +559,7 @@ mod tests {
     #[test]
     fn test_dns_cache_entry_serde_roundtrip() {
         let entry = DnsCacheEntry {
-            ips: vec![
-                "192.168.1.1".parse().unwrap(),
-                "::1".parse().unwrap(),
-            ],
+            ips: vec!["192.168.1.1".parse().unwrap(), "::1".parse().unwrap()],
             remaining_ttl_secs: 300,
         };
         let json = serde_json::to_string(&entry).expect("serialize failed");
@@ -630,7 +618,11 @@ mod tests {
     async fn test_create_cache_ok() {
         let settings = make_test_cache_settings();
         let cache = create_cache(&settings).await;
-        assert!(cache.is_ok(), "create_cache should succeed: {:?}", cache.err());
+        assert!(
+            cache.is_ok(),
+            "create_cache should succeed: {:?}",
+            cache.err()
+        );
         let cache = cache.unwrap();
         // 验证可用：set 后 get 一致
         let key = "k1".to_string();

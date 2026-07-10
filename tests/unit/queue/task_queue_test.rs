@@ -14,7 +14,9 @@ use uuid::Uuid;
 
 use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::domain::models::task_model::Task;
-use crawlrs::domain::repositories::task_repository::{RepositoryError, TaskQueryParams, TaskRepository};
+use crawlrs::domain::repositories::task_repository::{
+    RepositoryError, TaskQueryParams, TaskRepository,
+};
 use crawlrs::queue::task_queue::{PostgresTaskQueue, QueueError, TaskQueue};
 
 // === Mock Task Repository for Testing ===
@@ -34,7 +36,7 @@ impl MockTaskRepository {
     }
 
     fn with_failure() -> Self {
-        let mut repo = Self::new();
+        let repo = Self::new();
         repo.should_fail
             .store(true, std::sync::atomic::Ordering::SeqCst);
         repo
@@ -45,11 +47,13 @@ impl MockTaskRepository {
         tasks.push(task);
     }
 
+    #[allow(dead_code)]
     pub fn find_task(&self, id: Uuid) -> Option<Task> {
         let tasks = self.tasks.lock().unwrap();
         tasks.iter().find(|t| t.id == id).cloned()
     }
 
+    #[allow(dead_code)]
     pub fn task_count(&self) -> usize {
         let tasks = self.tasks.lock().unwrap();
         tasks.len()
@@ -60,19 +64,23 @@ impl MockTaskRepository {
 impl TaskRepository for MockTaskRepository {
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(RepositoryError::Database(anyhow::anyhow!("Mock database error")));
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock database error"
+            )));
         }
 
         let mut tasks = self.tasks.lock().unwrap();
         let mut new_task = task.clone();
-        new_task.created_at = Utc::now().into();
+        new_task.created_at = Utc::now();
         tasks.push(new_task.clone());
         Ok(new_task)
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(RepositoryError::Database(anyhow::anyhow!("Mock database error")));
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock database error"
+            )));
         }
 
         let tasks = self.tasks.lock().unwrap();
@@ -81,7 +89,9 @@ impl TaskRepository for MockTaskRepository {
 
     async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(RepositoryError::Database(anyhow::anyhow!("Mock database error")));
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock database error"
+            )));
         }
 
         let mut tasks = self.tasks.lock().unwrap();
@@ -95,7 +105,9 @@ impl TaskRepository for MockTaskRepository {
 
     async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(RepositoryError::Database(anyhow::anyhow!("Mock database error")));
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock database error"
+            )));
         }
 
         let mut tasks = self.tasks.lock().unwrap();
@@ -112,7 +124,9 @@ impl TaskRepository for MockTaskRepository {
 
     async fn mark_completed(&self, id: Uuid) -> Result<(), RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(RepositoryError::Database(anyhow::anyhow!("Mock database error")));
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock database error"
+            )));
         }
 
         let mut tasks = self.tasks.lock().unwrap();
@@ -127,7 +141,9 @@ impl TaskRepository for MockTaskRepository {
 
     async fn mark_failed(&self, id: Uuid) -> Result<(), RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(RepositoryError::Database(anyhow::anyhow!("Mock database error")));
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock database error"
+            )));
         }
 
         let mut tasks = self.tasks.lock().unwrap();
@@ -141,7 +157,9 @@ impl TaskRepository for MockTaskRepository {
 
     async fn mark_cancelled(&self, id: Uuid) -> Result<(), RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(RepositoryError::Database(anyhow::anyhow!("Mock database error")));
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock database error"
+            )));
         }
 
         let mut tasks = self.tasks.lock().unwrap();
@@ -178,10 +196,7 @@ impl TaskRepository for MockTaskRepository {
         Ok(vec![])
     }
 
-    async fn reset_stuck_tasks(
-        &self,
-        _timeout: chrono::Duration,
-    ) -> Result<u64, RepositoryError> {
+    async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 
@@ -218,11 +233,11 @@ fn create_test_task(status: TaskStatus) -> Task {
         max_retries: 3,
         scheduled_at: None,
         expires_at: None,
-        created_at: Utc::now().into(),
+        created_at: Utc::now(),
         started_at: None,
         completed_at: None,
         crawl_id: None,
-        updated_at: Utc::now().into(),
+        updated_at: Utc::now(),
         lock_token: None,
         lock_expires_at: None,
     }
@@ -524,7 +539,7 @@ async fn test_complete_task_lifecycle() {
     // Enqueue task
     let task = create_test_task(TaskStatus::Queued);
     let task_id = task.id;
-    let enqueued = queue.enqueue(task).await.unwrap();
+    let _enqueued = queue.enqueue(task).await.unwrap();
 
     // Dequeue task
     let worker_id = Uuid::new_v4();

@@ -57,9 +57,7 @@ async fn test_bing_search_engine_real_parsing() {
     </html>
     "#;
 
-    let result = engine
-        .parse_search_results(real_bing_html)
-        .await;
+    let result = engine.parse_search_results(real_bing_html).await;
 
     assert!(result.is_ok());
     let results = result.expect("Failed to get bing search results");
@@ -127,9 +125,7 @@ async fn test_bing_search_engine_real_malformed_html() {
     </html>
     "#;
 
-    let result = engine
-        .parse_search_results(malformed_html)
-        .await;
+    let result = engine.parse_search_results(malformed_html).await;
 
     assert!(result.is_ok());
     let results = result.expect("Failed to get bing search results");
@@ -185,9 +181,7 @@ async fn test_bing_search_engine_real_html_with_dates() {
     </html>
     "#;
 
-    let result = engine
-        .parse_search_results(html_with_dates)
-        .await;
+    let result = engine.parse_search_results(html_with_dates).await;
 
     assert!(result.is_ok());
     let results = result.expect("Failed to get bing search results");
@@ -201,16 +195,12 @@ async fn test_bing_search_engine_real_html_with_dates() {
         "Comprehensive Rust Tutorial for Beginners"
     );
     assert_eq!(results[0].url, "https://blog.example.com/rust-tutorial");
-    assert!(results[0]
-        .description
-        .contains("Published on Jan 15, 2024"));
+    assert!(results[0].description.contains("Published on Jan 15, 2024"));
 
     // Verify second result with date
     assert_eq!(results[1].title, "Advanced Rust Programming Techniques");
     assert_eq!(results[1].url, "https://tutorial.example.com/rust");
-    assert!(results[1]
-        .description
-        .contains("Last updated: March 2024"));
+    assert!(results[1].description.contains("Last updated: March 2024"));
 }
 
 /// Test BingSearchEngine with empty real HTML
@@ -233,9 +223,7 @@ async fn test_bing_search_engine_real_empty_html() {
     </html>
     "#;
 
-    let result = engine
-        .parse_search_results(empty_html)
-        .await;
+    let result = engine.parse_search_results(empty_html).await;
 
     // Should return empty results, not an error
     assert!(result.is_ok());

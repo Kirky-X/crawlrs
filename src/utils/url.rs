@@ -164,4 +164,271 @@ mod tests {
             "http://example.com/a/c"
         );
     }
+
+    // ========== SafeUrl construction tests ==========
+
+    #[test]
+    fn test_safe_url_new_https() {
+        let url = SafeUrl::new("https://example.com/path").unwrap();
+        assert_eq!(url.as_str(), "https://example.com/path");
+    }
+
+    #[test]
+    fn test_safe_url_new_http() {
+        let url = SafeUrl::new("http://example.com").unwrap();
+        assert_eq!(url.as_str(), "http://example.com/");
+    }
+
+    #[test]
+    fn test_safe_url_new_invalid_returns_error() {
+        let result = SafeUrl::new("not a valid url");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_safe_url_new_with_port() {
+        let url = SafeUrl::new("http://example.com:8080/path").unwrap();
+        assert_eq!(url.port(), Some(8080));
+    }
+
+    #[test]
+    fn test_safe_url_new_without_port() {
+        let url = SafeUrl::new("http://example.com/path").unwrap();
+        assert_eq!(url.port(), None);
+    }
+
+    #[test]
+    fn test_safe_url_as_str() {
+        let url = SafeUrl::new("https://example.com/page?q=1").unwrap();
+        assert_eq!(url.as_str(), "https://example.com/page?q=1");
+    }
+
+    #[test]
+    fn test_safe_url_inner_returns_url_ref() {
+        let url = SafeUrl::new("https://example.com").unwrap();
+        let inner = url.inner();
+        assert_eq!(inner.scheme(), "https");
+        assert_eq!(inner.host_str(), Some("example.com"));
+    }
+
+    #[test]
+    fn test_safe_url_host_with_hostname() {
+        let url = SafeUrl::new("https://example.com/path").unwrap();
+        assert_eq!(url.host(), Some("example.com"));
+    }
+
+    #[test]
+    fn test_safe_url_host_for_ip() {
+        let url = SafeUrl::new("http://127.0.0.1:8080").unwrap();
+        assert_eq!(url.host(), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn test_safe_url_path_simple() {
+        let url = SafeUrl::new("https://example.com/a/b/c").unwrap();
+        assert_eq!(url.path(), "/a/b/c");
+    }
+
+    #[test]
+    fn test_safe_url_path_root() {
+        let url = SafeUrl::new("https://example.com").unwrap();
+        assert_eq!(url.path(), "/");
+    }
+
+    #[test]
+    fn test_safe_url_is_https_true() {
+        let url = SafeUrl::new("https://example.com").unwrap();
+        assert!(url.is_https());
+    }
+
+    #[test]
+    fn test_safe_url_is_https_false() {
+        let url = SafeUrl::new("http://example.com").unwrap();
+        assert!(!url.is_https());
+    }
+
+    #[test]
+    fn test_safe_url_port_default_http() {
+        let url = SafeUrl::new("http://example.com").unwrap();
+        // Default port 80 is not returned by url crate
+        assert_eq!(url.port(), None);
+    }
+
+    #[test]
+    fn test_safe_url_port_default_https() {
+        let url = SafeUrl::new("https://example.com").unwrap();
+        assert_eq!(url.port(), None);
+    }
+
+    // ========== SafeUrl Display tests ==========
+
+    #[test]
+    fn test_safe_url_display() {
+        let url = SafeUrl::new("https://example.com/path?q=1#frag").unwrap();
+        assert_eq!(format!("{}", url), "https://example.com/path?q=1#frag");
+    }
+
+    #[test]
+    fn test_safe_url_display_matches_as_str() {
+        let url = SafeUrl::new("http://test.org:9090/x").unwrap();
+        assert_eq!(format!("{}", url), url.as_str());
+    }
+
+    // ========== SafeUrl FromStr tests ==========
+
+    #[test]
+    fn test_safe_url_from_str_valid() {
+        let url: SafeUrl = "https://example.com".parse().unwrap();
+        assert_eq!(url.as_str(), "https://example.com/");
+    }
+
+    #[test]
+    fn test_safe_url_from_str_invalid() {
+        let result: Result<SafeUrl, _> = "invalid url".parse();
+        assert!(result.is_err());
+    }
+
+    // ========== SafeUrl equality/hash tests ==========
+
+    #[test]
+    fn test_safe_url_equality() {
+        let url1 = SafeUrl::new("https://example.com/path").unwrap();
+        let url2 = SafeUrl::new("https://example.com/path").unwrap();
+        assert_eq!(url1, url2);
+    }
+
+    #[test]
+    fn test_safe_url_inequality() {
+        let url1 = SafeUrl::new("https://example.com/a").unwrap();
+        let url2 = SafeUrl::new("https://example.com/b").unwrap();
+        assert_ne!(url1, url2);
+    }
+
+    #[test]
+    fn test_safe_url_clone() {
+        let url = SafeUrl::new("https://example.com/path").unwrap();
+        let cloned = url.clone();
+        assert_eq!(url, cloned);
+    }
+
+    #[test]
+    fn test_safe_url_hash_in_hashmap() {
+        use std::collections::HashMap;
+        let url1 = SafeUrl::new("https://example.com").unwrap();
+        let url2 = SafeUrl::new("https://example.com").unwrap();
+        let mut map: HashMap<SafeUrl, i32> = HashMap::new();
+        map.insert(url1, 42);
+        assert_eq!(map.get(&url2), Some(&42));
+    }
+
+    // ========== SafeUrl serde tests ==========
+
+    #[test]
+    fn test_safe_url_serialize() {
+        let url = SafeUrl::new("https://example.com/path").unwrap();
+        let json = serde_json::to_string(&url).unwrap();
+        assert_eq!(json, "\"https://example.com/path\"");
+    }
+
+    #[test]
+    fn test_safe_url_deserialize_valid() {
+        let json = "\"https://example.com/path\"";
+        let url: SafeUrl = serde_json::from_str(json).unwrap();
+        assert_eq!(url.as_str(), "https://example.com/path");
+    }
+
+    #[test]
+    fn test_safe_url_deserialize_invalid() {
+        let json = "\"not a url\"";
+        let result: Result<SafeUrl, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_safe_url_serde_roundtrip() {
+        let url = SafeUrl::new("http://test.org:8080/path?q=1#f").unwrap();
+        let json = serde_json::to_string(&url).unwrap();
+        let back: SafeUrl = serde_json::from_str(&json).unwrap();
+        assert_eq!(url, back);
+    }
+
+    // ========== SafeUrl Debug test ==========
+
+    #[test]
+    fn test_safe_url_debug() {
+        let url = SafeUrl::new("https://example.com").unwrap();
+        let dbg = format!("{:?}", url);
+        assert!(dbg.contains("SafeUrl"));
+    }
+
+    // ========== resolve_url edge cases ==========
+
+    #[test]
+    fn test_resolve_url_with_query_string() {
+        let base = Url::parse("http://example.com/page").unwrap();
+        let path = "?q=test";
+        assert_eq!(
+            resolve_url(&base, path).unwrap().as_str(),
+            "http://example.com/page?q=test"
+        );
+    }
+
+    #[test]
+    fn test_resolve_url_with_fragment() {
+        let base = Url::parse("http://example.com/page").unwrap();
+        let path = "#section";
+        assert_eq!(
+            resolve_url(&base, path).unwrap().as_str(),
+            "http://example.com/page#section"
+        );
+    }
+
+    #[test]
+    fn test_resolve_url_empty_path() {
+        let base = Url::parse("http://example.com/page").unwrap();
+        let path = "";
+        assert_eq!(
+            resolve_url(&base, path).unwrap().as_str(),
+            "http://example.com/page"
+        );
+    }
+
+    #[test]
+    fn test_resolve_url_dot_segment() {
+        let base = Url::parse("http://example.com/a/b").unwrap();
+        let path = "./c";
+        assert_eq!(
+            resolve_url(&base, path).unwrap().as_str(),
+            "http://example.com/a/c"
+        );
+    }
+
+    #[test]
+    fn test_resolve_url_parent_segment() {
+        let base = Url::parse("http://example.com/a/b/c").unwrap();
+        let path = "../d";
+        assert_eq!(
+            resolve_url(&base, path).unwrap().as_str(),
+            "http://example.com/a/d"
+        );
+    }
+
+    #[test]
+    fn test_resolve_url_https_base() {
+        let base = Url::parse("https://secure.example.com/base").unwrap();
+        let path = "/path";
+        assert_eq!(
+            resolve_url(&base, path).unwrap().as_str(),
+            "https://secure.example.com/path"
+        );
+    }
+
+    // ========== UrlError tests ==========
+
+    #[test]
+    fn test_url_error_display() {
+        let err = UrlError::InvalidUrl("bad url".to_string());
+        assert!(err.to_string().contains("Invalid URL"));
+        assert!(err.to_string().contains("bad url"));
+    }
 }

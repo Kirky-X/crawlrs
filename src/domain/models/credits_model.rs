@@ -262,7 +262,11 @@ mod tests {
 
         assert_eq!(credits.id, id);
         assert_eq!(credits.team_id, team_id);
-        assert_eq!(credits.balance(), 1000, "balance should match initial_balance");
+        assert_eq!(
+            credits.balance(),
+            1000,
+            "balance should match initial_balance"
+        );
         assert!(
             credits.created_at >= before && credits.created_at <= after,
             "created_at should be now"
@@ -305,20 +309,32 @@ mod tests {
     #[test]
     fn test_has_sufficient_balance_true_when_enough() {
         let credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 1000);
-        assert!(credits.has_sufficient_balance(1000), "exact amount should be sufficient");
-        assert!(credits.has_sufficient_balance(500), "less than balance is sufficient");
+        assert!(
+            credits.has_sufficient_balance(1000),
+            "exact amount should be sufficient"
+        );
+        assert!(
+            credits.has_sufficient_balance(500),
+            "less than balance is sufficient"
+        );
     }
 
     #[test]
     fn test_has_sufficient_balance_false_when_insufficient() {
         let credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 100);
-        assert!(!credits.has_sufficient_balance(101), "more than balance is insufficient");
+        assert!(
+            !credits.has_sufficient_balance(101),
+            "more than balance is insufficient"
+        );
     }
 
     #[test]
     fn test_has_sufficient_balance_zero_amount_always_true() {
         let credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 0);
-        assert!(credits.has_sufficient_balance(0), "zero amount against zero balance is sufficient");
+        assert!(
+            credits.has_sufficient_balance(0),
+            "zero amount against zero balance is sufficient"
+        );
     }
 
     // ========== deduct tests ==========
@@ -328,17 +344,29 @@ mod tests {
         let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 1000);
         let before = Utc::now();
 
-        credits.deduct(300).expect("deduct should succeed with sufficient balance");
+        credits
+            .deduct(300)
+            .expect("deduct should succeed with sufficient balance");
 
-        assert_eq!(credits.balance(), 700, "balance should be reduced by deducted amount");
+        assert_eq!(
+            credits.balance(),
+            700,
+            "balance should be reduced by deducted amount"
+        );
         assert!(credits.updated_at >= before, "updated_at should advance");
     }
 
     #[test]
     fn test_deduct_exact_balance_succeeds() {
         let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 500);
-        credits.deduct(500).expect("deducting exact balance should succeed");
-        assert_eq!(credits.balance(), 0, "balance should be 0 after full deduction");
+        credits
+            .deduct(500)
+            .expect("deducting exact balance should succeed");
+        assert_eq!(
+            credits.balance(),
+            0,
+            "balance should be 0 after full deduction"
+        );
     }
 
     #[test]
@@ -355,14 +383,22 @@ mod tests {
             }
             other => panic!("expected InsufficientBalance, got {:?}", other),
         }
-        assert_eq!(credits.balance(), 100, "balance should be unchanged on error");
+        assert_eq!(
+            credits.balance(),
+            100,
+            "balance should be unchanged on error"
+        );
     }
 
     #[test]
     fn test_deduct_zero_amount_succeeds() {
         let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 100);
         credits.deduct(0).expect("deducting 0 should succeed");
-        assert_eq!(credits.balance(), 100, "balance unchanged after deducting 0");
+        assert_eq!(
+            credits.balance(),
+            100,
+            "balance unchanged after deducting 0"
+        );
     }
 
     // ========== add tests ==========
@@ -374,7 +410,11 @@ mod tests {
 
         credits.add(300);
 
-        assert_eq!(credits.balance(), 800, "balance should increase by added amount");
+        assert_eq!(
+            credits.balance(),
+            800,
+            "balance should increase by added amount"
+        );
         assert!(credits.updated_at >= before);
     }
 
@@ -386,7 +426,10 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(2));
         credits.add(0);
         assert_eq!(credits.balance(), 500);
-        assert!(credits.updated_at > old_updated, "updated_at should advance even for add(0)");
+        assert!(
+            credits.updated_at > old_updated,
+            "updated_at should advance even for add(0)"
+        );
     }
 
     // ========== set_balance tests ==========
@@ -402,7 +445,11 @@ mod tests {
     fn test_set_balance_negative_allowed() {
         let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 100);
         credits.set_balance(-10);
-        assert_eq!(credits.balance(), -10, "negative balance allowed via set_balance");
+        assert_eq!(
+            credits.balance(),
+            -10,
+            "negative balance allowed via set_balance"
+        );
     }
 
     // ========== CreditsTransaction::new tests ==========
@@ -471,7 +518,10 @@ mod tests {
         assert_eq!(txn.team_id, team_id);
         assert_eq!(txn.amount, 25);
         assert_eq!(txn.transaction_type, CreditsTransactionType::Refund);
-        assert_eq!(txn.created_at, ts, "with_timestamp should preserve custom ts");
+        assert_eq!(
+            txn.created_at, ts,
+            "with_timestamp should preserve custom ts"
+        );
     }
 
     // ========== is_deduction / is_addition tests ==========
@@ -578,7 +628,10 @@ mod tests {
             "error should describe invalid type: {}",
             err
         );
-        assert!(err.contains("unknown_type"), "error should include the bad value");
+        assert!(
+            err.contains("unknown_type"),
+            "error should include the bad value"
+        );
     }
 
     #[test]
@@ -593,8 +646,7 @@ mod tests {
             CreditsTransactionType::Refund,
         ] {
             let json = serde_json::to_string(&ty).expect("serialize");
-            let back: CreditsTransactionType =
-                serde_json::from_str(&json).expect("deserialize");
+            let back: CreditsTransactionType = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(ty, back, "roundtrip should preserve: {}", json);
         }
     }

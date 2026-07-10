@@ -7,9 +7,9 @@
 //!
 //! 提供环境变量的白名单验证、安全检查和敏感信息保护
 
+use log::{debug, error, info, warn};
 use std::collections::HashSet;
 use std::sync::Arc;
-use log::{debug, error, info, warn};
 
 /// 环境变量白名单配置
 #[derive(Debug, Clone)]
@@ -835,8 +835,7 @@ mod tests {
         std::env::set_var("ENCRYPTION_KEY", "short");
         let warnings = monitor.validate_sensitive_values("production");
         let short_warning = warnings.iter().find(|w| {
-            w.var_name == "ENCRYPTION_KEY"
-                && w.warning_type == SensitiveVarWarningType::ShortValue
+            w.var_name == "ENCRYPTION_KEY" && w.warning_type == SensitiveVarWarningType::ShortValue
         });
         assert!(short_warning.is_some(), "应该检测到过短的密钥值");
         match orig {
@@ -854,8 +853,7 @@ mod tests {
         std::env::set_var("SECRET_KEY", "secret_key");
         let warnings = monitor.validate_sensitive_values("production");
         let insecure_warning = warnings.iter().find(|w| {
-            w.var_name == "SECRET_KEY"
-                && w.warning_type == SensitiveVarWarningType::InsecurePattern
+            w.var_name == "SECRET_KEY" && w.warning_type == SensitiveVarWarningType::InsecurePattern
         });
         assert!(insecure_warning.is_some(), "应该检测到不安全模式");
         match orig {
@@ -1233,8 +1231,7 @@ mod tests {
         std::env::set_var(var_name, "somevalue");
         let warnings = monitor.validate_logging_security();
         let debug_warning = warnings.iter().find(|w| {
-            w.warning_type == LoggingWarningType::SensitiveVarDebug
-                && w.message.contains(var_name)
+            w.warning_type == LoggingWarningType::SensitiveVarDebug && w.message.contains(var_name)
         });
         assert!(debug_warning.is_some(), "应该检测到敏感变量的调试变体");
         match orig {
@@ -1286,8 +1283,7 @@ mod tests {
     #[test]
     fn test_env_var_validator_validate_required_err() {
         let monitor = EnvVarSecurityMonitor::default();
-        let validator =
-            EnvVarValidator::new(monitor, vec!["CRAWLRS_NONEXISTENT_REQUIRED_VAR_XYZ"]);
+        let validator = EnvVarValidator::new(monitor, vec!["CRAWLRS_NONEXISTENT_REQUIRED_VAR_XYZ"]);
         let result = validator.validate_required();
         assert!(result.is_err());
         if let Err(missing) = result {
@@ -1314,8 +1310,7 @@ mod tests {
     fn test_env_var_validator_validate_missing_required() {
         // validate() 在缺少必需变量时应返回 Err
         let monitor = EnvVarSecurityMonitor::default();
-        let validator =
-            EnvVarValidator::new(monitor, vec!["CRAWLRS_NONEXISTENT_REQUIRED_VAR_ABC"]);
+        let validator = EnvVarValidator::new(monitor, vec!["CRAWLRS_NONEXISTENT_REQUIRED_VAR_ABC"]);
         let result = validator.validate();
         assert!(result.is_err());
         if let Err(msg) = result {

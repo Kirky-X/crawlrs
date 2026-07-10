@@ -229,3 +229,342 @@ impl Default for DependencyStateManager {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_creates_empty_manager() {
+        let manager = DependencyStateManager::new();
+        assert!(manager.get_all_states().is_empty());
+    }
+
+    #[test]
+    fn test_default_equals_new() {
+        let new_mgr = DependencyStateManager::new();
+        let default_mgr = DependencyStateManager::default();
+        assert!(new_mgr.get_all_states().is_empty());
+        assert!(default_mgr.get_all_states().is_empty());
+    }
+
+    #[test]
+    fn test_register_component_sets_not_initialized() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("task_repo");
+
+        let state = manager.get_component_state("task_repo");
+        assert!(state.is_some());
+        let info = state.unwrap();
+        assert_eq!(info.name, "task_repo");
+        assert_eq!(info.state, ComponentState::NotInitialized);
+        assert!(info.initialized_at.is_none());
+        assert!(info.error_message.is_none());
+    }
+
+    #[test]
+    fn test_get_component_state_returns_none_for_unregistered() {
+        let manager = DependencyStateManager::new();
+        assert!(manager.get_component_state("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_register_multiple_components() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("comp_a");
+        manager.register_component("comp_b");
+        manager.register_component("comp_c");
+
+        let all = manager.get_all_states();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn test_mark_initializing_changes_state() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("redis");
+
+        manager.mark_initializing("redis");
+        let info = manager.get_component_state("redis").unwrap();
+        assert_eq!(info.state, ComponentState::Initializing);
+    }
+
+    #[test]
+    fn test_mark_initializing_unregistered_is_noop() {
+        let manager = DependencyStateManager::new();
+        manager.mark_initializing("nonexistent");
+        assert!(manager.get_component_state("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_mark_ready_sets_state_and_timestamp() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("db");
+
+        manager.mark_ready("db");
+        let info = manager.get_component_state("db").unwrap();
+        assert_eq!(info.state, ComponentState::Ready);
+        assert!(info.initialized_at.is_some());
+    }
+
+    #[test]
+    fn test_mark_ready_unregistered_is_noop() {
+        let manager = DependencyStateManager::new();
+        manager.mark_ready("nonexistent");
+        assert!(manager.get_all_states().is_empty());
+    }
+
+    #[test]
+    fn test_mark_failed_sets_error() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("queue");
+
+        let error_msg = "connection refused";
+        manager.mark_failed("queue", error_msg);
+
+        let info = manager.get_component_state("queue").unwrap();
+        assert_eq!(info.state, ComponentState::Failed(error_msg.to_string()));
+        assert_eq!(info.error_message, Some(error_msg.to_string()));
+    }
+
+    #[test]
+    fn test_mark_failed_unregistered_is_noop() {
+        let manager = DependencyStateManager::new();
+        manager.mark_failed("nonexistent", "error");
+        assert!(manager.get_all_states().is_empty());
+    }
+
+    #[test]
+    fn test_full_lifecycle_not_initialized_to_ready() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("service");
+
+        assert_eq!(
+            manager.get_component_state("service").unwrap().state,
+            ComponentState::NotInitialized
+        );
+
+        manager.mark_initializing("service");
+        assert_eq!(
+            manager.get_component_state("service").unwrap().state,
+            ComponentState::Initializing
+        );
+
+        manager.mark_ready("service");
+        assert_eq!(
+            manager.get_component_state("service").unwrap().state,
+            ComponentState::Ready
+        );
+    }
+
+    #[test]
+    fn test_full_lifecycle_to_failed() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("service");
+
+        manager.mark_initializing("service");
+        manager.mark_failed("service", "init failed");
+
+        let info = manager.get_component_state("service").unwrap();
+        assert_eq!(
+            info.state,
+            ComponentState::Failed("init failed".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_all_states_returns_all() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("a");
+        manager.register_component("b");
+
+        let all = manager.get_all_states();
+        assert_eq!(all.len(), 2);
+
+        let names: Vec<String> = all.iter().map(|i| i.name.clone()).collect();
+        assert!(names.contains(&"a".to_string()));
+        assert!(names.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn test_get_all_states_empty() {
+        let manager = DependencyStateManager::new();
+        assert!(manager.get_all_states().is_empty());
+    }
+
+    #[test]
+    fn test_get_components_by_state() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("ready_comp");
+        manager.register_component("init_comp");
+        manager.register_component("failed_comp");
+
+        manager.mark_ready("ready_comp");
+        manager.mark_initializing("init_comp");
+        manager.mark_failed("failed_comp", "error");
+
+        let ready = manager.get_components_by_state(ComponentState::Ready);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].name, "ready_comp");
+
+        let initializing = manager.get_components_by_state(ComponentState::Initializing);
+        assert_eq!(initializing.len(), 1);
+        assert_eq!(initializing[0].name, "init_comp");
+
+        let failed = manager.get_components_by_state(ComponentState::Failed("error".to_string()));
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].name, "failed_comp");
+
+        let not_init = manager.get_components_by_state(ComponentState::NotInitialized);
+        assert!(not_init.is_empty());
+    }
+
+    #[test]
+    fn test_all_ready_empty_returns_true() {
+        let manager = DependencyStateManager::new();
+        assert!(manager.all_ready());
+    }
+
+    #[test]
+    fn test_all_ready_all_ready() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("a");
+        manager.register_component("b");
+        manager.mark_ready("a");
+        manager.mark_ready("b");
+        assert!(manager.all_ready());
+    }
+
+    #[test]
+    fn test_all_ready_not_all_ready() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("a");
+        manager.register_component("b");
+        manager.mark_ready("a");
+        assert!(!manager.all_ready());
+    }
+
+    #[test]
+    fn test_count_by_state() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("a");
+        manager.register_component("b");
+        manager.register_component("c");
+
+        manager.mark_ready("a");
+        manager.mark_ready("b");
+        manager.mark_initializing("c");
+
+        assert_eq!(manager.count_by_state(&ComponentState::Ready), 2);
+        assert_eq!(manager.count_by_state(&ComponentState::Initializing), 1);
+        assert_eq!(manager.count_by_state(&ComponentState::NotInitialized), 0);
+    }
+
+    #[test]
+    fn test_count_by_state_empty() {
+        let manager = DependencyStateManager::new();
+        assert_eq!(manager.count_by_state(&ComponentState::Ready), 0);
+    }
+
+    #[test]
+    fn test_get_summary() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("a");
+        manager.register_component("b");
+        manager.register_component("c");
+
+        manager.mark_ready("a");
+        manager.mark_ready("b");
+        manager.mark_failed("c", "err");
+
+        let summary = manager.get_summary();
+        assert_eq!(summary.get(&ComponentState::Ready), Some(&2));
+        assert_eq!(
+            summary.get(&ComponentState::Failed("err".to_string())),
+            Some(&1)
+        );
+        assert_eq!(summary.get(&ComponentState::NotInitialized), None);
+    }
+
+    #[test]
+    fn test_get_summary_empty() {
+        let manager = DependencyStateManager::new();
+        let summary = manager.get_summary();
+        assert!(summary.is_empty());
+    }
+
+    #[test]
+    fn test_component_state_variants_equality() {
+        assert_ne!(ComponentState::NotInitialized, ComponentState::Initializing);
+        assert_ne!(ComponentState::NotInitialized, ComponentState::Ready);
+        assert_ne!(
+            ComponentState::NotInitialized,
+            ComponentState::Failed("x".to_string())
+        );
+        assert_eq!(
+            ComponentState::Failed("err".to_string()),
+            ComponentState::Failed("err".to_string())
+        );
+        assert_ne!(
+            ComponentState::Failed("err1".to_string()),
+            ComponentState::Failed("err2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_component_state_clone() {
+        let state = ComponentState::Failed("error msg".to_string());
+        let cloned = state.clone();
+        assert_eq!(state, cloned);
+    }
+
+    #[test]
+    fn test_component_state_info_clone() {
+        let info = ComponentStateInfo {
+            name: "test".to_string(),
+            state: ComponentState::Ready,
+            initialized_at: Some(std::time::SystemTime::now()),
+            error_message: None,
+        };
+        let cloned = info.clone();
+        assert_eq!(cloned.name, "test");
+        assert_eq!(cloned.state, ComponentState::Ready);
+        assert!(cloned.initialized_at.is_some());
+    }
+
+    #[test]
+    fn test_component_state_debug_format() {
+        let state = ComponentState::Ready;
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("Ready"));
+
+        let failed = ComponentState::Failed("boom".to_string());
+        let debug_str = format!("{:?}", failed);
+        assert!(debug_str.contains("Failed"));
+        assert!(debug_str.contains("boom"));
+    }
+
+    #[test]
+    fn test_dependency_state_error_display() {
+        let err = DependencyStateError::ComponentNotFound("missing".to_string());
+        assert!(err.to_string().contains("missing"));
+        assert!(err.to_string().contains("not found"));
+
+        let err2 = DependencyStateError::CycleDetected("a->b->a".to_string());
+        assert!(err2.to_string().contains("cycle"));
+        assert!(err2.to_string().contains("a->b->a"));
+    }
+
+    #[test]
+    fn test_re_register_overwrites_state() {
+        let manager = DependencyStateManager::new();
+        manager.register_component("comp");
+        manager.mark_ready("comp");
+
+        // Re-register should reset to NotInitialized
+        manager.register_component("comp");
+        let info = manager.get_component_state("comp").unwrap();
+        assert_eq!(info.state, ComponentState::NotInitialized);
+        assert!(info.initialized_at.is_none());
+    }
+}

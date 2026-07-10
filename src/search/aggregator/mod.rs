@@ -14,6 +14,7 @@ pub mod enhanced;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::future::join_all;
+use log::{info, warn};
 use lru::LruCache;
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -21,7 +22,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use strsim::jaro_winkler;
-use log::{info, warn};
 
 use crate::common::constants::cache_config;
 use crate::domain::models::search_result::SearchResult;
@@ -390,5 +390,783 @@ impl SearchEngine for SearchAggregator {
             let response = self.search(&request).await?;
             Ok(response.items)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Copyright (c) 2025 Kirky.X
+    use super::*;
+    use crate::search::engine_trait::SearchRequest;
+    use crate::search::response::{Response, ResponseItem};
+    use crate::search::types::{EngineHealth, SearchEngineType};
+    use async_trait::async_trait;
+    use std::sync::{Arc, Mutex};
+
+    // ========== Mock SearchEngine for aggregator tests ==========
+
+    /// Configurable mock engine that can return success, failure, or simulate a timeout.
+    struct MockAggEngine {
+        name: &'static str,
+        engine_type: SearchEngineType,
+        items: Vec<ResponseItem>,
+        health: EngineHealth,
+        /// If true, `search()` returns `SearchError::NoEngineAvailable`.
+        fail: bool,
+        /// If true, `search()` sleeps longer than the aggregator timeout.
+        slow: bool,
+        /// Records the number of times `search()` was called.
+        call_count: Mutex<u32>,
+    }
+
+    impl MockAggEngine {
+        fn healthy(
+            name: &'static str,
+            engine_type: SearchEngineType,
+            items: Vec<ResponseItem>,
+        ) -> Self {
+            Self {
+                name,
+                engine_type,
+                items,
+                health: EngineHealth::Healthy,
+                fail: false,
+                slow: false,
+                call_count: Mutex::new(0),
+            }
+        }
+
+        fn unhealthy(name: &'static str, engine_type: SearchEngineType) -> Self {
+            Self {
+                name,
+                engine_type,
+                items: Vec::new(),
+                health: EngineHealth::Unhealthy,
+                fail: false,
+                slow: false,
+                call_count: Mutex::new(0),
+            }
+        }
+
+        fn failing(name: &'static str, engine_type: SearchEngineType) -> Self {
+            Self {
+                name,
+                engine_type,
+                items: Vec::new(),
+                health: EngineHealth::Healthy,
+                fail: true,
+                slow: false,
+                call_count: Mutex::new(0),
+            }
+        }
+
+        #[allow(dead_code)]
+        fn slow(name: &'static str, engine_type: SearchEngineType) -> Self {
+            Self {
+                name,
+                engine_type,
+                items: Vec::new(),
+                health: EngineHealth::Healthy,
+                fail: false,
+                slow: true,
+                call_count: Mutex::new(0),
+            }
+        }
+
+        fn call_count(&self) -> u32 {
+            *self.call_count.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl SearchEngine for MockAggEngine {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn engine_type(&self) -> SearchEngineType {
+            self.engine_type
+        }
+
+        fn health(&self) -> EngineHealth {
+            self.health
+        }
+
+        async fn search(
+            &self,
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            {
+                let mut count = self.call_count.lock().unwrap();
+                *count += 1;
+            }
+            if self.slow {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            if self.fail {
+                return Err(SearchError::NoEngineAvailable);
+            }
+            Ok(Response {
+                items: self.items.clone(),
+                total_results: Some(self.items.len() as u64),
+                engine: self.engine_type,
+            })
+        }
+    }
+
+    fn make_item(title: &str, url: &str, engine: SearchEngineType) -> ResponseItem {
+        ResponseItem {
+            title: title.to_string(),
+            url: url.to_string(),
+            description: format!("desc for {}", title),
+            engine,
+        }
+    }
+
+    fn make_engines(engines: Vec<Arc<dyn SearchEngine>>) -> Vec<Arc<dyn SearchEngine>> {
+        engines
+    }
+
+    // ========== Construction & basic accessor tests ==========
+
+    #[test]
+    fn test_new_aggregator_with_no_engines() {
+        let agg = SearchAggregator::new(vec![], 5000);
+        assert!(agg.engine_names().is_empty());
+    }
+
+    #[test]
+    fn test_new_aggregator_preserves_engine_names() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                vec![],
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                vec![],
+            )),
+        ];
+        let agg = SearchAggregator::new(engines, 5000);
+        let names = agg.engine_names();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"google"));
+        assert!(names.contains(&"bing"));
+    }
+
+    #[test]
+    fn test_get_engine_found_case_insensitive() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            vec![],
+        ))];
+        let agg = SearchAggregator::new(engines, 5000);
+
+        assert!(
+            agg.get_engine("google").is_some(),
+            "exact match should work"
+        );
+        assert!(
+            agg.get_engine("Google").is_some(),
+            "case-insensitive match should work"
+        );
+        assert!(
+            agg.get_engine("GOOGLE").is_some(),
+            "uppercase match should work"
+        );
+    }
+
+    #[test]
+    fn test_get_engine_not_found() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            vec![],
+        ))];
+        let agg = SearchAggregator::new(engines, 5000);
+        assert!(
+            agg.get_engine("yahoo").is_none(),
+            "unknown engine should return None"
+        );
+    }
+
+    #[test]
+    fn test_get_engine_empty_aggregator() {
+        let agg = SearchAggregator::new(vec![], 5000);
+        assert!(agg.get_engine("google").is_none());
+    }
+
+    // ========== Debug impl tests ==========
+
+    #[test]
+    fn test_debug_shows_engine_count() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                vec![],
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                vec![],
+            )),
+        ];
+        let agg = SearchAggregator::new(engines, 3000);
+        let debug_str = format!("{:?}", agg);
+        assert!(debug_str.contains("engine_count"));
+        assert!(debug_str.contains("2"), "debug should show engine_count=2");
+        assert!(debug_str.contains("timeout_ms"));
+    }
+
+    #[test]
+    fn test_debug_empty_aggregator() {
+        let agg = SearchAggregator::new(vec![], 1000);
+        let debug_str = format!("{:?}", agg);
+        assert!(debug_str.contains("SearchAggregator"));
+    }
+
+    // ========== SearchEngine trait impl tests ==========
+
+    #[test]
+    fn test_aggregator_name() {
+        let agg = SearchAggregator::new(vec![], 5000);
+        assert_eq!(agg.name(), "aggregator");
+    }
+
+    #[test]
+    fn test_aggregator_engine_type_is_auto() {
+        let agg = SearchAggregator::new(vec![], 5000);
+        assert_eq!(agg.engine_type(), SearchEngineType::Auto);
+    }
+
+    // ========== health() tests ==========
+
+    #[test]
+    fn test_health_empty_engines_is_unhealthy() {
+        let agg = SearchAggregator::new(vec![], 5000);
+        assert_eq!(agg.health(), EngineHealth::Unhealthy);
+    }
+
+    #[test]
+    fn test_health_all_healthy_engines() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                vec![],
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                vec![],
+            )),
+        ];
+        let agg = SearchAggregator::new(engines, 5000);
+        assert_eq!(agg.health(), EngineHealth::Healthy);
+    }
+
+    #[test]
+    fn test_health_majority_unhealthy_is_degraded() {
+        // 2 out of 2 engines unhealthy → 100% >= 50% → Degraded
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![
+            Arc::new(MockAggEngine::unhealthy("google", SearchEngineType::Google)),
+            Arc::new(MockAggEngine::unhealthy("bing", SearchEngineType::Bing)),
+        ];
+        let agg = SearchAggregator::new(engines, 5000);
+        assert_eq!(agg.health(), EngineHealth::Degraded);
+    }
+
+    #[test]
+    fn test_health_half_unhealthy_is_degraded() {
+        // 1 out of 2 engines unhealthy → 1 >= 2/2=1 → Degraded
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                vec![],
+            )),
+            Arc::new(MockAggEngine::unhealthy("bing", SearchEngineType::Bing)),
+        ];
+        let agg = SearchAggregator::new(engines, 5000);
+        assert_eq!(agg.health(), EngineHealth::Degraded);
+    }
+
+    #[test]
+    fn test_health_minority_unhealthy_is_healthy() {
+        // 1 out of 3 engines unhealthy → 1 < 3/2=1 → Healthy (minority)
+        // Note: 3/2 = 1 in integer division, and 1 >= 1, so this is Degraded
+        // Let's use 1 out of 4 instead: 1 < 4/2=2 → Healthy
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                vec![],
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                vec![],
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "baidu",
+                SearchEngineType::Baidu,
+                vec![],
+            )),
+            Arc::new(MockAggEngine::unhealthy("sogou", SearchEngineType::Sogou)),
+        ];
+        let agg = SearchAggregator::new(engines, 5000);
+        assert_eq!(
+            agg.health(),
+            EngineHealth::Healthy,
+            "1 out of 4 unhealthy should be Healthy"
+        );
+    }
+
+    // ========== search() tests ==========
+
+    #[tokio::test]
+    async fn test_search_empty_aggregator_returns_empty() {
+        let agg = SearchAggregator::new(vec![], 5000);
+        let request = SearchRequest::new("test").with_limit(10);
+        let response = agg.search(&request).await.expect("search should succeed");
+        assert!(
+            response.items.is_empty(),
+            "empty aggregator should return no results"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_single_engine_returns_results() {
+        let items = vec![make_item(
+            "Rust Guide",
+            "https://rust-lang.org",
+            SearchEngineType::Google,
+        )];
+        let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            items,
+        ))]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("rust").with_limit(10);
+        let response = agg.search(&request).await.expect("search should succeed");
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].title, "Rust Guide");
+    }
+
+    #[tokio::test]
+    async fn test_search_deduplicates_by_url() {
+        // Two engines return the same URL → should be deduplicated to 1 result.
+        let items_a = vec![make_item(
+            "Rust Guide",
+            "https://rust-lang.org",
+            SearchEngineType::Google,
+        )];
+        let items_b = vec![make_item(
+            "Rust Guide",
+            "https://rust-lang.org",
+            SearchEngineType::Bing,
+        )];
+        let engines = make_engines(vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                items_a,
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                items_b,
+            )),
+        ]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("rust").with_limit(10);
+        let response = agg.search(&request).await.expect("search should succeed");
+        assert_eq!(
+            response.items.len(),
+            1,
+            "duplicate URLs should be deduplicated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_deduplicates_by_title_similarity() {
+        // Same title, different URLs → Jaro-Winkler > 0.9 → deduplicated.
+        let items_a = vec![make_item(
+            "Rust Programming Language Guide",
+            "https://a.com",
+            SearchEngineType::Google,
+        )];
+        let items_b = vec![make_item(
+            "Rust Programming Language Guide",
+            "https://b.com",
+            SearchEngineType::Bing,
+        )];
+        let engines = make_engines(vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                items_a,
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                items_b,
+            )),
+        ]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("rust").with_limit(10);
+        let response = agg.search(&request).await.expect("search should succeed");
+        assert_eq!(
+            response.items.len(),
+            1,
+            "highly similar titles should be deduplicated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_keeps_different_results() {
+        // Different titles and URLs → both kept.
+        let items_a = vec![make_item(
+            "Rust Guide",
+            "https://rust-lang.org",
+            SearchEngineType::Google,
+        )];
+        let items_b = vec![make_item(
+            "Python Guide",
+            "https://python.org",
+            SearchEngineType::Bing,
+        )];
+        let engines = make_engines(vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                items_a,
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                items_b,
+            )),
+        ]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("programming").with_limit(10);
+        let response = agg.search(&request).await.expect("search should succeed");
+        assert_eq!(
+            response.items.len(),
+            2,
+            "distinct results should both be kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_caches_results() {
+        // The cache key includes query, limit, offset, lang, country.
+        // A second search with the same parameters should hit the cache and
+        // NOT call the engine again.
+        let mock = Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            vec![make_item(
+                "Cached",
+                "https://cached.com",
+                SearchEngineType::Google,
+            )],
+        ));
+        let engines = make_engines(vec![mock.clone()]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("cached-query").with_limit(10);
+        let response1 = agg
+            .search(&request)
+            .await
+            .expect("first search should succeed");
+        assert_eq!(response1.items.len(), 1);
+        assert_eq!(
+            mock.call_count(),
+            1,
+            "engine should be called once on first search"
+        );
+
+        let response2 = agg
+            .search(&request)
+            .await
+            .expect("second search should succeed");
+        assert_eq!(
+            response2.items.len(),
+            1,
+            "cached search should return the same result"
+        );
+        assert_eq!(
+            mock.call_count(),
+            1,
+            "engine should NOT be called again on cached search"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_different_queries_bypass_cache() {
+        let mock = Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            vec![make_item(
+                "Result",
+                "https://r.com",
+                SearchEngineType::Google,
+            )],
+        ));
+        let engines = make_engines(vec![mock.clone()]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let req1 = SearchRequest::new("query-a").with_limit(10);
+        let req2 = SearchRequest::new("query-b").with_limit(10);
+
+        agg.search(&req1).await.unwrap();
+        assert_eq!(mock.call_count(), 1, "first query should call the engine");
+
+        agg.search(&req2).await.unwrap();
+        assert_eq!(
+            mock.call_count(),
+            2,
+            "different query should bypass cache and call the engine again"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_continues_when_engine_fails() {
+        // One engine fails, the other succeeds → results from the working engine.
+        let engines = make_engines(vec![
+            Arc::new(MockAggEngine::failing("google", SearchEngineType::Google)),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                vec![make_item(
+                    "Bing Result",
+                    "https://bing.com",
+                    SearchEngineType::Bing,
+                )],
+            )),
+        ]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("test").with_limit(10);
+        let response = agg.search(&request).await.expect("search should succeed");
+        assert_eq!(
+            response.items.len(),
+            1,
+            "should return results from the working engine"
+        );
+        assert_eq!(response.items[0].title, "Bing Result");
+    }
+
+    #[tokio::test]
+    async fn test_search_all_engines_fail_returns_empty() {
+        let engines = make_engines(vec![
+            Arc::new(MockAggEngine::failing("google", SearchEngineType::Google)),
+            Arc::new(MockAggEngine::failing("bing", SearchEngineType::Bing)),
+        ]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("test").with_limit(10);
+        let response = agg.search(&request).await.expect("search should succeed");
+        assert!(
+            response.items.is_empty(),
+            "all engines failing should yield empty results"
+        );
+    }
+
+    // ========== search_with_engine (trait method) tests ==========
+    // The inherent `search_with_engine` method shadows the trait method,
+    // so we use fully qualified syntax to call the trait method.
+
+    #[tokio::test]
+    async fn test_search_with_engine_specific_found() {
+        let google_items = vec![make_item(
+            "Google Result",
+            "https://google.com",
+            SearchEngineType::Google,
+        )];
+        let bing_items = vec![make_item(
+            "Bing Result",
+            "https://bing.com",
+            SearchEngineType::Bing,
+        )];
+        let engines = make_engines(vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                google_items,
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                bing_items,
+            )),
+        ]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let items = <SearchAggregator as SearchEngine>::search_with_engine(
+            &agg,
+            "test",
+            10,
+            None,
+            None,
+            Some("google"),
+        )
+        .await
+        .expect("should succeed with specific engine");
+
+        assert_eq!(
+            items.len(),
+            1,
+            "should return only the google engine's results"
+        );
+        assert_eq!(items[0].title, "Google Result");
+    }
+
+    #[tokio::test]
+    async fn test_search_with_engine_not_found_falls_back() {
+        let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            vec![make_item(
+                "G Result",
+                "https://g.com",
+                SearchEngineType::Google,
+            )],
+        ))]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let items = <SearchAggregator as SearchEngine>::search_with_engine(
+            &agg,
+            "test",
+            10,
+            None,
+            None,
+            Some("nonexistent"),
+        )
+        .await
+        .expect("should fall back to aggregator search");
+
+        assert_eq!(
+            items.len(),
+            1,
+            "fallback should search all engines and return their results"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_with_engine_none_searches_all() {
+        let engines = make_engines(vec![
+            Arc::new(MockAggEngine::healthy(
+                "google",
+                SearchEngineType::Google,
+                vec![make_item("A", "https://a.com", SearchEngineType::Google)],
+            )),
+            Arc::new(MockAggEngine::healthy(
+                "bing",
+                SearchEngineType::Bing,
+                vec![make_item("B", "https://b.com", SearchEngineType::Bing)],
+            )),
+        ]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let items = <SearchAggregator as SearchEngine>::search_with_engine(
+            &agg, "test", 10, None, None, None,
+        )
+        .await
+        .expect("should search all engines");
+
+        assert_eq!(
+            items.len(),
+            2,
+            "with engine=None, should search all engines"
+        );
+    }
+
+    // ========== search_with_engine (inherent method) tests ==========
+
+    #[tokio::test]
+    async fn test_inherent_search_with_engine_specific() {
+        let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            vec![make_item("G", "https://g.com", SearchEngineType::Google)],
+        ))]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("test").with_limit(10);
+        let results = agg
+            .search_with_engine(&request, Some("google"))
+            .await
+            .expect("inherent method should succeed with specific engine");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "G");
+    }
+
+    #[tokio::test]
+    async fn test_inherent_search_with_engine_none() {
+        let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            vec![make_item("G", "https://g.com", SearchEngineType::Google)],
+        ))]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("test").with_limit(10);
+        let results = agg
+            .search_with_engine(&request, None)
+            .await
+            .expect("inherent method should succeed with None engine");
+
+        assert_eq!(results.len(), 1);
+    }
+
+    // ========== Circuit breaker tests ==========
+
+    #[tokio::test]
+    async fn test_circuit_breaker_skips_after_three_failures() {
+        let mock = Arc::new(MockAggEngine::failing("google", SearchEngineType::Google));
+        let engines = make_engines(vec![mock.clone()]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        // Use different queries for each call to bypass the cache, since
+        // the first failed search caches an empty result for that query.
+        let queries = ["q1", "q2", "q3", "q4"];
+
+        // First 3 calls: engine is called and fails, incrementing failure count.
+        agg.search(&SearchRequest::new(queries[0]).with_limit(10))
+            .await
+            .unwrap();
+        assert_eq!(mock.call_count(), 1, "engine called on 1st search");
+
+        agg.search(&SearchRequest::new(queries[1]).with_limit(10))
+            .await
+            .unwrap();
+        assert_eq!(mock.call_count(), 2, "engine called on 2nd search");
+
+        agg.search(&SearchRequest::new(queries[2]).with_limit(10))
+            .await
+            .unwrap();
+        assert_eq!(mock.call_count(), 3, "engine called on 3rd search");
+
+        // 4th call: circuit breaker trips (failure count >= 3), engine is skipped.
+        agg.search(&SearchRequest::new(queries[3]).with_limit(10))
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.call_count(),
+            3,
+            "engine should NOT be called after 3 failures (circuit breaker open)"
+        );
     }
 }

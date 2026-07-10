@@ -124,9 +124,9 @@ impl WebhookEventMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::time_utils::to_db_datetime;
     use chrono::Utc;
     use uuid::Uuid;
-    use crate::common::time_utils::to_db_datetime;
 
     #[test]
     fn test_webhook_mapper_roundtrip() {
@@ -287,7 +287,10 @@ mod tests {
         };
 
         let domain = WebhookEventMapper::to_domain(entity);
-        assert_eq!(domain.event_type, WebhookEventType::Custom("custom.event.type".to_string()));
+        assert_eq!(
+            domain.event_type,
+            WebhookEventType::Custom("custom.event.type".to_string())
+        );
     }
 
     #[test]
@@ -336,7 +339,7 @@ mod tests {
             WebhookStatus::Dead,
         ];
 
-        for (sea_status, expected_status) in statuses.into_iter().zip(expected.into_iter()) {
+        for (sea_status, expected_status) in statuses.into_iter().zip(expected) {
             let entity = webhook_event::Model {
                 id: Uuid::new_v4(),
                 team_id: Uuid::new_v4(),

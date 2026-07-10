@@ -18,8 +18,8 @@
 
 use crate::utils::search_test::{run_engine_test_with_output, TestResult};
 use anyhow::Result;
-use tokio::time::{timeout, Duration};
 use log::{info, Level, Metadata, Record};
+use tokio::time::{timeout, Duration};
 
 /// 最小化的 stderr 日志实现（替代 tracing_subscriber 用于测试）
 struct StderrLogger;
@@ -63,8 +63,7 @@ impl SearchTestHarness {
     /// 初始化日志系统（使用最小化 stderr logger）
     pub fn init_logging(&self) {
         let logger = StderrLogger;
-        log::set_boxed_logger(Box::new(logger))
-            .ok();
+        log::set_boxed_logger(Box::new(logger)).ok();
         log::set_max_level(log::LevelFilter::Info);
     }
 

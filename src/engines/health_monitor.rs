@@ -5,11 +5,11 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use log::warn;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use log::warn;
 
 use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
@@ -338,5 +338,692 @@ impl ScraperEngine for EngineHealthMonitor {
 
     fn name(&self) -> &'static str {
         "health_monitor"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engines::engine_client::{
+        EngineError, HttpMethod, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+    };
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    // === Test helper: mock engines ===
+
+    /// A mock engine that always succeeds with a 200 response
+    struct MockOkEngine {
+        engine_name: &'static str,
+        status_code: u16,
+    }
+
+    impl MockOkEngine {
+        fn new(name: &'static str) -> Self {
+            Self {
+                engine_name: name,
+                status_code: 200,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ScraperEngine for MockOkEngine {
+        async fn scrape(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            Ok(InternalScrapeResponse {
+                status_code: self.status_code,
+                content: "ok".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 5,
+            })
+        }
+
+        fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+            100
+        }
+
+        fn name(&self) -> &'static str {
+            self.engine_name
+        }
+    }
+
+    /// A mock engine that always fails
+    struct MockFailEngine {
+        engine_name: &'static str,
+        error_msg: String,
+    }
+
+    impl MockFailEngine {
+        fn new(name: &'static str) -> Self {
+            Self {
+                engine_name: name,
+                error_msg: "connection refused".to_string(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ScraperEngine for MockFailEngine {
+        async fn scrape(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            Err(EngineError::RequestFailed(self.error_msg.clone()))
+        }
+
+        fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+            100
+        }
+
+        fn name(&self) -> &'static str {
+            self.engine_name
+        }
+    }
+
+    fn test_config() -> HealthCheckConfig {
+        HealthCheckConfig {
+            check_interval: Duration::from_secs(60),
+            timeout: Duration::from_secs(10),
+            max_consecutive_failures: 3,
+            degraded_threshold_ms: 2000,
+            unhealthy_threshold_ms: 5000,
+            target_url: "https://example.com".to_string(),
+        }
+    }
+
+    // === EngineHealth enum tests ===
+
+    #[test]
+    fn test_engine_health_equality() {
+        assert_eq!(EngineHealth::Healthy, EngineHealth::Healthy);
+        assert_eq!(EngineHealth::Degraded, EngineHealth::Degraded);
+        assert_eq!(EngineHealth::Unhealthy, EngineHealth::Unhealthy);
+        assert_ne!(EngineHealth::Healthy, EngineHealth::Degraded);
+        assert_ne!(EngineHealth::Degraded, EngineHealth::Unhealthy);
+        assert_ne!(EngineHealth::Healthy, EngineHealth::Unhealthy);
+    }
+
+    #[test]
+    fn test_engine_health_copy() {
+        let h1 = EngineHealth::Healthy;
+        let h2 = h1; // Copy
+        assert_eq!(h1, h2);
+    }
+
+    // === AggregateHealthStatus tests ===
+
+    #[test]
+    fn test_aggregate_health_status_default() {
+        let status = AggregateHealthStatus::default();
+        assert_eq!(status, AggregateHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn test_aggregate_health_status_equality() {
+        assert_eq!(
+            AggregateHealthStatus::Healthy,
+            AggregateHealthStatus::Healthy
+        );
+        assert_eq!(
+            AggregateHealthStatus::Unavailable,
+            AggregateHealthStatus::Unavailable
+        );
+        assert_eq!(
+            AggregateHealthStatus::Degraded(vec!["e1".to_string()]),
+            AggregateHealthStatus::Degraded(vec!["e1".to_string()])
+        );
+        assert_ne!(
+            AggregateHealthStatus::Healthy,
+            AggregateHealthStatus::Unavailable
+        );
+    }
+
+    // === HealthCheckConfig tests ===
+
+    #[test]
+    fn test_health_check_config_fields() {
+        let config = test_config();
+        assert_eq!(config.check_interval, Duration::from_secs(60));
+        assert_eq!(config.timeout, Duration::from_secs(10));
+        assert_eq!(config.max_consecutive_failures, 3);
+        assert_eq!(config.degraded_threshold_ms, 2000);
+        assert_eq!(config.unhealthy_threshold_ms, 5000);
+        assert_eq!(config.target_url, "https://example.com");
+    }
+
+    // === EngineHealthMonitor creation tests ===
+
+    #[tokio::test]
+    async fn test_monitor_new_initializes_health_status() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(MockOkEngine::new("engine_a"))];
+        let monitor = EngineHealthMonitor::new(engines);
+
+        let status = monitor.get_all_health_status().await;
+        assert_eq!(status.len(), 1);
+        assert!(status.contains_key("engine_a"));
+
+        let info = status.get("engine_a").unwrap();
+        assert_eq!(info.health, EngineHealth::Healthy);
+        assert_eq!(info.consecutive_failures, 0);
+        assert!(info.error_message.is_none());
+        assert!(info.avg_response_time_ms.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_monitor_new_with_multiple_engines() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("engine_a")),
+            Arc::new(MockOkEngine::new("engine_b")),
+            Arc::new(MockOkEngine::new("engine_c")),
+        ];
+        let monitor = EngineHealthMonitor::new(engines);
+
+        let status = monitor.get_all_health_status().await;
+        assert_eq!(status.len(), 3);
+        assert!(status.contains_key("engine_a"));
+        assert!(status.contains_key("engine_b"));
+        assert!(status.contains_key("engine_c"));
+    }
+
+    #[tokio::test]
+    async fn test_monitor_new_with_config() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(MockOkEngine::new("engine_a"))];
+        let config = test_config();
+        let monitor = EngineHealthMonitor::new_with_config(engines, config);
+
+        let status = monitor.get_all_health_status().await;
+        assert_eq!(status.len(), 1);
+        assert!(status.contains_key("engine_a"));
+    }
+
+    #[tokio::test]
+    async fn test_monitor_new_empty_engines() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![];
+        let monitor = EngineHealthMonitor::new(engines);
+
+        let status = monitor.get_all_health_status().await;
+        assert!(status.is_empty());
+    }
+
+    // === get_engine_health tests ===
+
+    #[tokio::test]
+    async fn test_get_engine_health_existing() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(MockOkEngine::new("engine_a"))];
+        let monitor = EngineHealthMonitor::new(engines);
+
+        let health = monitor.get_engine_health("engine_a").await;
+        assert!(health.is_some());
+        let info = health.unwrap();
+        assert_eq!(info.engine_name, "engine_a");
+        assert_eq!(info.health, EngineHealth::Healthy);
+    }
+
+    #[tokio::test]
+    async fn test_get_engine_health_nonexistent() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![];
+        let monitor = EngineHealthMonitor::new(engines);
+
+        let health = monitor.get_engine_health("nonexistent").await;
+        assert!(health.is_none());
+    }
+
+    // === determine_health_status tests ===
+
+    #[tokio::test]
+    async fn test_determine_health_status_healthy() {
+        let monitor = EngineHealthMonitor::new_with_config(vec![], test_config());
+
+        // Fast response, 200 status
+        assert_eq!(
+            monitor.determine_health_status(100, 200),
+            EngineHealth::Healthy
+        );
+        assert_eq!(
+            monitor.determine_health_status(0, 200),
+            EngineHealth::Healthy
+        );
+        assert_eq!(
+            monitor.determine_health_status(1999, 200),
+            EngineHealth::Healthy
+        );
+    }
+
+    #[tokio::test]
+    async fn test_determine_health_status_degraded() {
+        let monitor = EngineHealthMonitor::new_with_config(vec![], test_config());
+
+        // Response time between degraded_threshold and unhealthy_threshold
+        assert_eq!(
+            monitor.determine_health_status(2001, 200),
+            EngineHealth::Degraded
+        );
+        assert_eq!(
+            monitor.determine_health_status(3000, 200),
+            EngineHealth::Degraded
+        );
+        assert_eq!(
+            monitor.determine_health_status(4999, 200),
+            EngineHealth::Degraded
+        );
+    }
+
+    #[tokio::test]
+    async fn test_determine_health_status_unhealthy_by_response_time() {
+        let monitor = EngineHealthMonitor::new_with_config(vec![], test_config());
+
+        // Response time exceeds unhealthy_threshold
+        assert_eq!(
+            monitor.determine_health_status(5001, 200),
+            EngineHealth::Unhealthy
+        );
+        assert_eq!(
+            monitor.determine_health_status(10000, 200),
+            EngineHealth::Unhealthy
+        );
+    }
+
+    #[tokio::test]
+    async fn test_determine_health_status_unhealthy_by_status_code() {
+        let monitor = EngineHealthMonitor::new_with_config(vec![], test_config());
+
+        // 5xx status codes are unhealthy regardless of response time
+        assert_eq!(
+            monitor.determine_health_status(10, 500),
+            EngineHealth::Unhealthy
+        );
+        assert_eq!(
+            monitor.determine_health_status(10, 503),
+            EngineHealth::Unhealthy
+        );
+        assert_eq!(
+            monitor.determine_health_status(10, 599),
+            EngineHealth::Unhealthy
+        );
+    }
+
+    #[tokio::test]
+    async fn test_determine_health_status_4xx_not_unhealthy() {
+        let monitor = EngineHealthMonitor::new_with_config(vec![], test_config());
+
+        // 4xx status codes are not treated as unhealthy by this logic
+        assert_eq!(
+            monitor.determine_health_status(10, 404),
+            EngineHealth::Healthy
+        );
+        assert_eq!(
+            monitor.determine_health_status(10, 429),
+            EngineHealth::Healthy
+        );
+    }
+
+    // === perform_health_check tests ===
+
+    #[tokio::test]
+    async fn test_perform_health_check_success() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(MockOkEngine::new("engine_a"))];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        monitor.perform_health_check().await;
+
+        let health = monitor.get_engine_health("engine_a").await.unwrap();
+        assert_eq!(health.health, EngineHealth::Healthy);
+        assert_eq!(health.consecutive_failures, 0);
+        assert!(health.error_message.is_none());
+        assert!(health.avg_response_time_ms.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_perform_health_check_failure_degraded() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(MockFailEngine::new("engine_a"))];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        monitor.perform_health_check().await;
+
+        let health = monitor.get_engine_health("engine_a").await.unwrap();
+        // First failure -> Degraded (below max_consecutive_failures=3)
+        assert_eq!(health.health, EngineHealth::Degraded);
+        assert_eq!(health.consecutive_failures, 1);
+        assert!(health.error_message.is_some());
+        assert!(health.avg_response_time_ms.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_perform_health_check_failure_unhealthy_after_threshold() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(MockFailEngine::new("engine_a"))];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        // Perform health checks until consecutive_failures reaches max (3)
+        monitor.perform_health_check().await; // failures = 1 -> Degraded
+        monitor.perform_health_check().await; // failures = 2 -> Degraded
+        monitor.perform_health_check().await; // failures = 3 -> Unhealthy
+
+        let health = monitor.get_engine_health("engine_a").await.unwrap();
+        assert_eq!(health.health, EngineHealth::Unhealthy);
+        assert_eq!(health.consecutive_failures, 3);
+        assert!(health.error_message.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_perform_health_check_multiple_engines() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("healthy_engine")),
+            Arc::new(MockFailEngine::new("failing_engine")),
+        ];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        monitor.perform_health_check().await;
+
+        let healthy = monitor.get_engine_health("healthy_engine").await.unwrap();
+        assert_eq!(healthy.health, EngineHealth::Healthy);
+
+        let failing = monitor.get_engine_health("failing_engine").await.unwrap();
+        assert_eq!(failing.health, EngineHealth::Degraded);
+        assert_eq!(failing.consecutive_failures, 1);
+    }
+
+    #[tokio::test]
+    async fn test_perform_all_health_checks_alias() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(MockOkEngine::new("engine_a"))];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        // perform_all_health_checks should behave same as perform_health_check
+        monitor.perform_all_health_checks().await;
+
+        let health = monitor.get_engine_health("engine_a").await.unwrap();
+        assert_eq!(health.health, EngineHealth::Healthy);
+    }
+
+    // === get_healthy_engines tests ===
+
+    #[tokio::test]
+    async fn test_get_healthy_engines_all_healthy() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("engine_a")),
+            Arc::new(MockOkEngine::new("engine_b")),
+        ];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        let healthy = monitor.get_healthy_engines().await;
+        assert_eq!(healthy.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_healthy_engines_after_check() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("healthy_engine")),
+            Arc::new(MockFailEngine::new("failing_engine")),
+        ];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        monitor.perform_health_check().await;
+
+        let healthy = monitor.get_healthy_engines().await;
+        assert_eq!(healthy.len(), 1);
+        assert_eq!(healthy[0].name(), "healthy_engine");
+    }
+
+    #[tokio::test]
+    async fn test_get_healthy_engines_empty() {
+        let monitor = EngineHealthMonitor::new_with_config(vec![], test_config());
+        let healthy = monitor.get_healthy_engines().await;
+        assert!(healthy.is_empty());
+    }
+
+    // === get_available_engines tests ===
+
+    #[tokio::test]
+    async fn test_get_available_engines_includes_degraded() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("healthy_engine")),
+            Arc::new(MockFailEngine::new("degraded_engine")),
+        ];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        monitor.perform_health_check().await;
+
+        let available = monitor.get_available_engines().await;
+        // Both healthy and degraded engines are available
+        assert_eq!(available.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_available_engines_excludes_unhealthy() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("healthy_engine")),
+            Arc::new(MockFailEngine::new("unhealthy_engine")),
+        ];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        // Trigger enough failures to make the failing engine unhealthy
+        monitor.perform_health_check().await; // 1 failure
+        monitor.perform_health_check().await; // 2 failures
+        monitor.perform_health_check().await; // 3 failures -> Unhealthy
+
+        let available = monitor.get_available_engines().await;
+        assert_eq!(available.len(), 1);
+        assert_eq!(available[0].name(), "healthy_engine");
+    }
+
+    // === get_aggregate_status tests ===
+
+    #[tokio::test]
+    async fn test_get_aggregate_status_all_healthy() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("engine_a")),
+            Arc::new(MockOkEngine::new("engine_b")),
+        ];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        let status = monitor.get_aggregate_status().await;
+        assert_eq!(status, AggregateHealthStatus::Healthy);
+    }
+
+    #[tokio::test]
+    async fn test_get_aggregate_status_with_degraded() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("healthy_engine")),
+            Arc::new(MockFailEngine::new("degraded_engine")),
+        ];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        monitor.perform_health_check().await;
+
+        let status = monitor.get_aggregate_status().await;
+        match status {
+            AggregateHealthStatus::Degraded(engines) => {
+                assert!(engines.contains(&"degraded_engine".to_string()));
+            }
+            _ => panic!("Expected Degraded status"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_aggregate_status_all_unhealthy() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(MockFailEngine::new("engine_a"))];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        // Trigger enough failures to make engine unhealthy
+        monitor.perform_health_check().await;
+        monitor.perform_health_check().await;
+        monitor.perform_health_check().await;
+
+        let status = monitor.get_aggregate_status().await;
+        assert_eq!(status, AggregateHealthStatus::Unavailable);
+    }
+
+    #[tokio::test]
+    async fn test_get_aggregate_status_mixed_healthy_and_unhealthy() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("healthy_engine")),
+            Arc::new(MockFailEngine::new("unhealthy_engine")),
+        ];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        monitor.perform_health_check().await;
+        monitor.perform_health_check().await;
+        monitor.perform_health_check().await;
+
+        let status = monitor.get_aggregate_status().await;
+        // Has both healthy and unhealthy, so should be Degraded (not Unavailable)
+        match status {
+            AggregateHealthStatus::Degraded(engines) => {
+                assert!(engines.contains(&"unhealthy_engine".to_string()));
+            }
+            _ => panic!("Expected Degraded status"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_aggregate_status_empty_engines() {
+        let monitor = EngineHealthMonitor::new_with_config(vec![], test_config());
+        let status = monitor.get_aggregate_status().await;
+        // No engines, so healthy_count stays 0, but no unhealthy either
+        // The logic: unhealthy_count == 0 && healthy_count == 0 -> falls through to Healthy
+        assert_eq!(status, AggregateHealthStatus::Healthy);
+    }
+
+    // === ScraperEngine trait impl tests ===
+
+    #[tokio::test]
+    async fn test_health_monitor_scrape_returns_error() {
+        let monitor = EngineHealthMonitor::new(vec![]);
+        let request = InternalScrapeRequest {
+            url: "https://example.com".to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(10),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+
+        let result = monitor.scrape(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::Other(msg) => {
+                assert!(msg.contains("Health monitor cannot perform scraping"));
+            }
+            other => panic!("Expected EngineError::Other, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_health_monitor_support_score_is_zero() {
+        let monitor = EngineHealthMonitor::new(vec![]);
+        let request = InternalScrapeRequest {
+            url: "https://example.com".to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(10),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+        assert_eq!(monitor.support_score(&request), 0);
+    }
+
+    #[test]
+    fn test_health_monitor_name() {
+        let monitor = EngineHealthMonitor::new(vec![]);
+        assert_eq!(monitor.name(), "health_monitor");
+    }
+
+    // === Recovery scenario test ===
+
+    #[tokio::test]
+    async fn test_recovery_resets_consecutive_failures() {
+        // An engine that fails first, then succeeds
+        struct RecoveringEngine {
+            call_count: Arc<std::sync::atomic::AtomicU32>,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for RecoveringEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                let count = self
+                    .call_count
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if count < 2 {
+                    Err(EngineError::RequestFailed("temporary".to_string()))
+                } else {
+                    Ok(InternalScrapeResponse {
+                        status_code: 200,
+                        content: "recovered".to_string(),
+                        screenshot: None,
+                        content_type: "text/html".to_string(),
+                        headers: HashMap::new(),
+                        response_time_ms: 5,
+                    })
+                }
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                "recovering_engine"
+            }
+        }
+
+        let call_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(RecoveringEngine { call_count })];
+        let monitor = EngineHealthMonitor::new_with_config(engines, test_config());
+
+        // First check: fails -> Degraded, consecutive_failures = 1
+        monitor.perform_health_check().await;
+        let health = monitor
+            .get_engine_health("recovering_engine")
+            .await
+            .unwrap();
+        assert_eq!(health.health, EngineHealth::Degraded);
+        assert_eq!(health.consecutive_failures, 1);
+
+        // Second check: fails -> Degraded, consecutive_failures = 2
+        monitor.perform_health_check().await;
+        let health = monitor
+            .get_engine_health("recovering_engine")
+            .await
+            .unwrap();
+        assert_eq!(health.health, EngineHealth::Degraded);
+        assert_eq!(health.consecutive_failures, 2);
+
+        // Third check: succeeds -> Healthy, consecutive_failures reset to 0
+        monitor.perform_health_check().await;
+        let health = monitor
+            .get_engine_health("recovering_engine")
+            .await
+            .unwrap();
+        assert_eq!(health.health, EngineHealth::Healthy);
+        assert_eq!(health.consecutive_failures, 0);
+        assert!(health.error_message.is_none());
+        assert!(health.avg_response_time_ms.is_some());
     }
 }

@@ -46,9 +46,7 @@ pub fn init_metrics() {
 /// # Parameters
 ///
 /// * `settings` - 日志配置
-pub async fn init_all(
-    settings: &LoggingSettings,
-) -> Result<LoggerManager, inklog::InklogError> {
+pub async fn init_all(settings: &LoggingSettings) -> Result<LoggerManager, inklog::InklogError> {
     let manager = init_telemetry(settings).await?;
     #[cfg(feature = "metrics")]
     init_metrics();

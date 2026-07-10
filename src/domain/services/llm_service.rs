@@ -467,10 +467,13 @@ mod tests {
 
     #[test]
     fn test_in_memory_template_loader_with_template_adds_entry() {
-        let loader = InMemoryTemplateLoader::new()
-            .with_template("custom", "template content {{text}}");
+        let loader =
+            InMemoryTemplateLoader::new().with_template("custom", "template content {{text}}");
         let templates = loader.load_templates().expect("load");
-        assert_eq!(templates.get("custom"), Some(&"template content {{text}}".to_string()));
+        assert_eq!(
+            templates.get("custom"),
+            Some(&"template content {{text}}".to_string())
+        );
     }
 
     #[test]
@@ -644,7 +647,10 @@ json = "J"
         );
         assert_eq!(service.model, "gpt-4");
         assert_eq!(service.provider, "openai");
-        assert_eq!(service.api_base_url, Some("http://localhost:8080".to_string()));
+        assert_eq!(
+            service.api_base_url,
+            Some("http://localhost:8080".to_string())
+        );
         assert_eq!(service.api_key, Some("test-key".to_string()));
     }
 
@@ -959,9 +965,7 @@ json = "J"
         );
 
         let trait_ref: &dyn LLMServiceTrait = &service;
-        let result = trait_ref
-            .extract_data("text", &json!({}), "json")
-            .await;
+        let result = trait_ref.extract_data("text", &json!({}), "json").await;
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(

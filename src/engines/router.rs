@@ -15,11 +15,11 @@ use crate::engines::engine_client::{
 };
 use crate::engines::validators::validate_url;
 use dashmap::DashMap;
+use log::{info, warn};
 use rand::seq::SliceRandom;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use log::{info, warn};
 
 // === Section: EngineRouterTrait Definition ===
 
@@ -192,9 +192,7 @@ impl RouterMetrics {
         if let (Some(total_ns), Some(count)) =
             (latencies.get(engine_name), success_count.get(engine_name))
         {
-            if *count > 0 {
-                return Some(*total_ns / *count);
-            }
+            return total_ns.checked_div(*count);
         }
         None
     }

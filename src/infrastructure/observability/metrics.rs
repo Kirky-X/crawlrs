@@ -8,6 +8,7 @@
 //! 提供 CPU、内存等系统指标的监控功能，支持通过 DI 注入。
 
 use chrono::Utc;
+use log::{error, warn};
 use metrics::{describe_counter, describe_gauge, describe_histogram, gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use shaku::{Component, Interface};
@@ -15,7 +16,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-use log::{error, warn};
 
 /// 系统监控 trait（支持 DI）
 ///
@@ -262,9 +262,7 @@ impl MutableSystemMonitor {
         let sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                log::error!(
-                    "MutableSystemMonitor mutex poisoned, returning 0.0 for memory usage"
-                );
+                log::error!("MutableSystemMonitor mutex poisoned, returning 0.0 for memory usage");
                 return 0.0;
             }
         };
@@ -416,4 +414,278 @@ pub fn get_memory_usage_with_monitor(monitor: &dyn SystemMonitorTrait) -> f64 {
 /// This is the recommended method for DI-based usage.
 pub fn is_metrics_stale_with_monitor(monitor: &dyn SystemMonitorTrait) -> bool {
     monitor.is_metrics_stale()
+}
+
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0
+// See LICENSE file in the project root for full license information.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== Mock SystemMonitorTrait implementation ==========
+
+    struct MockSystemMonitor {
+        cpu: f64,
+        memory: f64,
+        stale: bool,
+    }
+
+    impl SystemMonitorTrait for MockSystemMonitor {
+        fn cpu_usage(&self) -> f64 {
+            self.cpu
+        }
+        fn memory_usage(&self) -> f64 {
+            self.memory
+        }
+        fn is_metrics_stale(&self) -> bool {
+            self.stale
+        }
+    }
+
+    // ========== get_cpu_usage_with_monitor tests ==========
+
+    #[test]
+    fn test_get_cpu_usage_with_monitor_returns_value() {
+        let monitor = MockSystemMonitor {
+            cpu: 0.75,
+            memory: 0.5,
+            stale: false,
+        };
+        let result = get_cpu_usage_with_monitor(&monitor);
+        assert!((result - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_get_cpu_usage_with_monitor_zero() {
+        let monitor = MockSystemMonitor {
+            cpu: 0.0,
+            memory: 0.0,
+            stale: false,
+        };
+        assert!((get_cpu_usage_with_monitor(&monitor) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_get_cpu_usage_with_monitor_full() {
+        let monitor = MockSystemMonitor {
+            cpu: 1.0,
+            memory: 0.0,
+            stale: false,
+        };
+        assert!((get_cpu_usage_with_monitor(&monitor) - 1.0).abs() < f64::EPSILON);
+    }
+
+    // ========== get_memory_usage_with_monitor tests ==========
+
+    #[test]
+    fn test_get_memory_usage_with_monitor_returns_value() {
+        let monitor = MockSystemMonitor {
+            cpu: 0.3,
+            memory: 0.65,
+            stale: false,
+        };
+        let result = get_memory_usage_with_monitor(&monitor);
+        assert!((result - 0.65).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_get_memory_usage_with_monitor_zero() {
+        let monitor = MockSystemMonitor {
+            cpu: 0.0,
+            memory: 0.0,
+            stale: false,
+        };
+        assert!((get_memory_usage_with_monitor(&monitor) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_get_memory_usage_with_monitor_full() {
+        let monitor = MockSystemMonitor {
+            cpu: 0.0,
+            memory: 1.0,
+            stale: false,
+        };
+        assert!((get_memory_usage_with_monitor(&monitor) - 1.0).abs() < f64::EPSILON);
+    }
+
+    // ========== is_metrics_stale_with_monitor tests ==========
+
+    #[test]
+    fn test_is_metrics_stale_with_monitor_true() {
+        let monitor = MockSystemMonitor {
+            cpu: 0.0,
+            memory: 0.0,
+            stale: true,
+        };
+        assert!(is_metrics_stale_with_monitor(&monitor));
+    }
+
+    #[test]
+    fn test_is_metrics_stale_with_monitor_false() {
+        let monitor = MockSystemMonitor {
+            cpu: 0.0,
+            memory: 0.0,
+            stale: false,
+        };
+        assert!(!is_metrics_stale_with_monitor(&monitor));
+    }
+
+    // ========== SystemMonitorComponent tests ==========
+
+    #[test]
+    fn test_system_monitor_component_new_initializes_zero() {
+        let component = SystemMonitorComponent::new();
+        // Before refresh, cpu and memory should be 0
+        assert!((component.cpu_usage() - 0.0).abs() < f64::EPSILON);
+        assert!((component.memory_usage() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_system_monitor_component_default_equals_new() {
+        let component = SystemMonitorComponent::default();
+        assert!((component.cpu_usage() - 0.0).abs() < f64::EPSILON);
+        assert!((component.memory_usage() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_system_monitor_component_is_stale_before_refresh() {
+        let component = SystemMonitorComponent::new();
+        // last_update is 0 before refresh, so metrics should be stale
+        assert!(
+            component.is_metrics_stale(),
+            "metrics should be stale before refresh"
+        );
+    }
+
+    #[test]
+    fn test_system_monitor_component_refresh_updates_timestamp() {
+        let mut component = SystemMonitorComponent::new();
+        assert!(component.is_metrics_stale());
+        component.refresh();
+        // After refresh, last_update is set to current time, so should not be stale
+        assert!(
+            !component.is_metrics_stale(),
+            "metrics should not be stale immediately after refresh"
+        );
+    }
+
+    #[test]
+    fn test_system_monitor_component_refresh_updates_cpu_and_memory() {
+        let mut component = SystemMonitorComponent::new();
+        // Before refresh, values are 0
+        assert!((component.cpu_usage() - 0.0).abs() < f64::EPSILON);
+        assert!((component.memory_usage() - 0.0).abs() < f64::EPSILON);
+
+        component.refresh();
+
+        // After refresh, values should be in valid range [0.0, 1.0]
+        let cpu = component.cpu_usage();
+        let mem = component.memory_usage();
+        assert!(
+            cpu >= 0.0 && cpu <= 1.0,
+            "cpu usage should be in [0, 1], got {}",
+            cpu
+        );
+        assert!(
+            mem >= 0.0 && mem <= 1.0,
+            "memory usage should be in [0, 1], got {}",
+            mem
+        );
+    }
+
+    #[test]
+    fn test_system_monitor_component_cpu_usage_divides_by_100() {
+        // cpu_usage() returns stored_value / 100.0
+        // After refresh, the stored value is the raw CPU percentage (0-100)
+        // So cpu_usage() should return a value in [0, 1]
+        let mut component = SystemMonitorComponent::new();
+        component.refresh();
+        let cpu = component.cpu_usage();
+        assert!(cpu >= 0.0, "cpu should be non-negative");
+        assert!(cpu <= 1.0, "cpu should be at most 1.0, got {}", cpu);
+    }
+
+    // ========== SystemMonitor tests ==========
+
+    #[test]
+    fn test_system_monitor_new_does_not_panic() {
+        let _monitor = SystemMonitor::new();
+    }
+
+    #[test]
+    fn test_system_monitor_default_equals_new() {
+        let _monitor = SystemMonitor::default();
+    }
+
+    #[test]
+    fn test_system_monitor_cpu_usage_in_valid_range() {
+        let mut monitor = SystemMonitor::new();
+        let cpu = monitor.cpu_usage();
+        assert!(cpu >= 0.0, "cpu should be non-negative");
+        assert!(cpu <= 1.0, "cpu should be at most 1.0, got {}", cpu);
+    }
+
+    #[test]
+    fn test_system_monitor_memory_usage_in_valid_range() {
+        let mut monitor = SystemMonitor::new();
+        let mem = monitor.memory_usage();
+        assert!(mem >= 0.0, "memory should be non-negative");
+        assert!(mem <= 1.0, "memory should be at most 1.0, got {}", mem);
+    }
+
+    #[test]
+    fn test_system_monitor_clone() {
+        let monitor = SystemMonitor::new();
+        let _cloned = monitor.clone();
+    }
+
+    #[test]
+    fn test_system_monitor_multiple_cpu_reads() {
+        let mut monitor = SystemMonitor::new();
+        let cpu1 = monitor.cpu_usage();
+        let cpu2 = monitor.cpu_usage();
+        // Both should be in valid range
+        assert!(cpu1 >= 0.0 && cpu1 <= 1.0);
+        assert!(cpu2 >= 0.0 && cpu2 <= 1.0);
+    }
+
+    // ========== check_alerts tests ==========
+
+    #[test]
+    fn test_check_alerts_does_not_panic() {
+        // check_alerts is currently a no-op but should not panic
+        check_alerts();
+    }
+
+    // ========== SystemMonitorTrait mock integration tests ==========
+
+    #[test]
+    fn test_mock_monitor_implements_trait() {
+        let monitor = MockSystemMonitor {
+            cpu: 0.42,
+            memory: 0.58,
+            stale: false,
+        };
+        // Verify trait methods work through the trait interface
+        let trait_ref: &dyn SystemMonitorTrait = &monitor;
+        assert!((trait_ref.cpu_usage() - 0.42).abs() < f64::EPSILON);
+        assert!((trait_ref.memory_usage() - 0.58).abs() < f64::EPSILON);
+        assert!(!trait_ref.is_metrics_stale());
+    }
+
+    #[test]
+    fn test_helper_functions_with_mock_via_trait() {
+        let monitor = MockSystemMonitor {
+            cpu: 0.80,
+            memory: 0.90,
+            stale: true,
+        };
+        let trait_ref: &dyn SystemMonitorTrait = &monitor;
+        assert!((get_cpu_usage_with_monitor(trait_ref) - 0.80).abs() < f64::EPSILON);
+        assert!((get_memory_usage_with_monitor(trait_ref) - 0.90).abs() < f64::EPSILON);
+        assert!(is_metrics_stale_with_monitor(trait_ref));
+    }
 }

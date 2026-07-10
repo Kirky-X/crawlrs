@@ -280,4 +280,127 @@ mod tests {
             WorkerCount::Fixed(n) => panic!("Expected Auto, got Fixed({})", n),
         }
     }
+
+    // ========== RedisSettings ==========
+
+    #[test]
+    fn test_redis_settings_with_values() {
+        let settings = super::RedisSettings {
+            url: "redis://localhost:6379".to_string(),
+            max_connections: Some(25),
+            min_connections: Some(8),
+            connection_timeout: Some(15),
+            idle_timeout: Some(200),
+        };
+        assert_eq!(settings.url(), "redis://localhost:6379");
+        assert_eq!(settings.max_connections(), 25);
+        assert_eq!(settings.min_connections(), 8);
+        assert_eq!(settings.connection_timeout(), 15);
+        assert_eq!(settings.idle_timeout(), 200);
+    }
+
+    #[test]
+    fn test_redis_settings_with_none_defaults() {
+        let settings = super::RedisSettings {
+            url: "redis://localhost:6379".to_string(),
+            max_connections: None,
+            min_connections: None,
+            connection_timeout: None,
+            idle_timeout: None,
+        };
+        assert_eq!(settings.max_connections(), 20);
+        assert_eq!(settings.min_connections(), 5);
+        assert_eq!(settings.connection_timeout(), 10);
+        assert_eq!(settings.idle_timeout(), 300);
+    }
+
+    #[test]
+    fn test_redis_settings_debug_redacts_url() {
+        let settings = super::RedisSettings {
+            url: "redis://secret:password@localhost:6379".to_string(),
+            max_connections: Some(10),
+            min_connections: Some(2),
+            connection_timeout: Some(5),
+            idle_timeout: Some(60),
+        };
+        let debug_str = format!("{:?}", settings);
+        assert!(debug_str.contains("***REDACTED***"));
+        assert!(!debug_str.contains("secret:password"));
+    }
+
+    // ========== DatabaseSettings ==========
+
+    #[test]
+    fn test_database_settings_url() {
+        let settings = super::DatabaseSettings {
+            url: "postgresql://user:pass@localhost/db".to_string(),
+            max_connections: Some(100),
+            min_connections: Some(10),
+            connect_timeout: Some(10),
+            idle_timeout: Some(300),
+            max_lifetime: Some(1800),
+            connection_keepalive: Some(30),
+            health_check_interval: Some(60),
+        };
+        assert_eq!(settings.url(), "postgresql://user:pass@localhost/db");
+    }
+
+    #[test]
+    fn test_database_settings_debug_redacts_url() {
+        let settings = super::DatabaseSettings {
+            url: "postgresql://secret:password@localhost/db".to_string(),
+            max_connections: Some(100),
+            min_connections: Some(10),
+            connect_timeout: Some(10),
+            idle_timeout: Some(300),
+            max_lifetime: Some(1800),
+            connection_keepalive: Some(30),
+            health_check_interval: Some(60),
+        };
+        let debug_str = format!("{:?}", settings);
+        assert!(debug_str.contains("***REDACTED***"));
+        assert!(!debug_str.contains("secret:password"));
+    }
+
+    // ========== ServerSettings ==========
+
+    #[test]
+    fn test_server_settings_construction() {
+        let settings = super::ServerSettings {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            enable_port_detection: false,
+        };
+        assert_eq!(settings.host, "127.0.0.1");
+        assert_eq!(settings.port, 8080);
+        assert!(!settings.enable_port_detection);
+    }
+
+    // ========== RateLimitingSettings ==========
+
+    #[test]
+    fn test_rate_limiting_settings_construction() {
+        let settings = super::RateLimitingSettings {
+            enabled: false,
+            default_rpm: 200,
+            default_limit: 150,
+            burst_size: 50,
+        };
+        assert!(!settings.enabled);
+        assert_eq!(settings.default_rpm, 200);
+        assert_eq!(settings.default_limit, 150);
+        assert_eq!(settings.burst_size, 50);
+    }
+
+    // ========== ConcurrencySettings ==========
+
+    #[test]
+    fn test_concurrency_settings_construction() {
+        let settings = super::ConcurrencySettings {
+            default_team_limit: 20,
+            task_lock_duration_seconds: 600,
+        };
+        assert_eq!(settings.default_team_limit, 20);
+        assert_eq!(settings.task_lock_duration_seconds, 600);
+    }
 }

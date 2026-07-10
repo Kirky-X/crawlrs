@@ -22,6 +22,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dbnexus::DbPool;
+use log::{debug, info, warn};
 use lru::LruCache;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use sha2::{Digest, Sha256};
@@ -29,7 +30,6 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use log::{debug, info, warn};
 use uuid::Uuid;
 
 /// Maximum authentication failures before lockout
@@ -142,7 +142,10 @@ impl ApiKeyCache {
     /// * `token_hash` - The SHA-256 hash of the API key token (format: "sha256:...")
     pub fn invalidate(&mut self, token_hash: &str) {
         if let Some(removed) = self.cache.pop(token_hash) {
-            info!("API Key cache invalidated for security token_hash={} api_key_id={} team_id={}", token_hash, removed.api_key_id, removed.team_id);
+            info!(
+                "API Key cache invalidated for security token_hash={} api_key_id={} team_id={}",
+                token_hash, removed.api_key_id, removed.team_id
+            );
         }
     }
 
@@ -172,7 +175,10 @@ impl ApiKeyCache {
 
         for key in keys_to_remove {
             if let Some(removed) = self.cache.pop(&key) {
-                info!("API Key cache invalidated by ID for security api_key_id={} team_id={}", api_key_id, removed.team_id);
+                info!(
+                    "API Key cache invalidated by ID for security api_key_id={} team_id={}",
+                    api_key_id, removed.team_id
+                );
             }
         }
     }
@@ -211,7 +217,10 @@ impl ApiKeyCache {
         }
 
         if removed_count > 0 {
-            info!("Team API Key cache invalidated for security team_id={} removed_count={:?}", team_id, removed_count);
+            info!(
+                "Team API Key cache invalidated for security team_id={} removed_count={:?}",
+                team_id, removed_count
+            );
         }
     }
 
@@ -227,7 +236,10 @@ impl ApiKeyCache {
         let count = self.cache.len();
         self.cache.clear();
 
-        info!("All API Key cache invalidated for security removed_count={:?}", count);
+        info!(
+            "All API Key cache invalidated for security removed_count={:?}",
+            count
+        );
     }
 
     /// Get cache statistics for monitoring
@@ -333,7 +345,10 @@ pub async fn invalidate_cache_by_team(team_id: Uuid) -> usize {
         cache_guard.invalidate_team(team_id);
         initial_size - cache_guard.cache.len()
     } else {
-        warn!("Global auth cache not initialized when attempting to invalidate by team team_id={}", team_id);
+        warn!(
+            "Global auth cache not initialized when attempting to invalidate by team team_id={}",
+            team_id
+        );
         0
     }
 }
@@ -1141,7 +1156,11 @@ pub fn test_auth_state(db: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid) -> Auth
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex as StdMutex;
     use std::time::Instant;
+
+    /// Serializes tests that touch the global auth cache to prevent race conditions.
+    static GLOBAL_CACHE_LOCK: StdMutex<()> = StdMutex::new(());
 
     #[tokio::test]
     async fn test_cache_ttl_is_2_minutes() {
@@ -1314,6 +1333,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_cache_singleton() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
         reset_global_auth_cache();
         let cache1 = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache1.clone());
@@ -1330,6 +1350,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_cache_invalidate_all() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
         reset_global_auth_cache();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache.clone());
@@ -1357,5 +1378,636 @@ mod tests {
         assert!(stats.is_some());
         let stats = stats.unwrap();
         assert_eq!(stats.size, 0, "Cache should be empty");
+    }
+
+    // ===== Helper functions for tests =====
+
+    fn make_fixed_time(rfc3339: &str) -> chrono::DateTime<chrono::FixedOffset> {
+        chrono::DateTime::parse_from_rfc3339(rfc3339).unwrap()
+    }
+
+    fn make_days_ago(days: i64) -> chrono::DateTime<chrono::FixedOffset> {
+        let offset = chrono::FixedOffset::east_opt(0).unwrap();
+        let past = chrono::Utc::now() - chrono::Duration::days(days);
+        past.with_timezone(&offset)
+    }
+
+    fn make_key_model(key_hash: Option<String>, updated_days_ago: Option<i64>) -> api_key::Model {
+        api_key::Model {
+            id: Uuid::new_v4(),
+            team_id: Uuid::new_v4(),
+            key: "test_key".to_string(),
+            key_hash,
+            created_at: make_fixed_time("2025-01-15T12:00:00+00:00"),
+            updated_at: updated_days_ago.map(make_days_ago),
+        }
+    }
+
+    fn make_bearer_request(auth_header: Option<&str>) -> Request<Body> {
+        let mut builder = axum::http::Request::builder();
+        if let Some(hdr) = auth_header {
+            builder = builder.header(header::AUTHORIZATION, hdr);
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
+    // ===== AuthRateLimiter tests =====
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_default() {
+        let limiter = AuthRateLimiter::default();
+        assert!(!limiter.is_locked_out("10.0.0.1").await);
+        assert_eq!(limiter.get_lockout_remaining("10.0.0.1").await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_not_locked_below_threshold() {
+        let limiter = AuthRateLimiter::new();
+        for _ in 0..(MAX_AUTH_FAILURES - 1) {
+            limiter.record_failure("1.2.3.4").await;
+        }
+        assert!(
+            !limiter.is_locked_out("1.2.3.4").await,
+            "Should not be locked below threshold"
+        );
+        assert_eq!(limiter.get_lockout_remaining("1.2.3.4").await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_locked_at_threshold() {
+        let limiter = AuthRateLimiter::new();
+        for _ in 0..MAX_AUTH_FAILURES {
+            limiter.record_failure("1.2.3.5").await;
+        }
+        assert!(
+            limiter.is_locked_out("1.2.3.5").await,
+            "Should be locked at threshold"
+        );
+        let remaining = limiter.get_lockout_remaining("1.2.3.5").await;
+        assert!(
+            remaining > 0,
+            "Remaining lockout should be positive when locked"
+        );
+        assert!(
+            remaining <= AUTH_LOCKOUT_DURATION.as_secs(),
+            "Remaining should not exceed lockout duration"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_different_ips_independent() {
+        let limiter = AuthRateLimiter::new();
+        for _ in 0..MAX_AUTH_FAILURES {
+            limiter.record_failure("1.2.3.6").await;
+        }
+        assert!(limiter.is_locked_out("1.2.3.6").await);
+        assert!(
+            !limiter.is_locked_out("1.2.3.7").await,
+            "Different IP should not be locked"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_reset_failures() {
+        let limiter = AuthRateLimiter::new();
+        for _ in 0..MAX_AUTH_FAILURES {
+            limiter.record_failure("1.2.3.8").await;
+        }
+        assert!(limiter.is_locked_out("1.2.3.8").await);
+        limiter.reset_failures("1.2.3.8").await;
+        assert!(
+            !limiter.is_locked_out("1.2.3.8").await,
+            "Should not be locked after reset"
+        );
+        assert_eq!(limiter.get_lockout_remaining("1.2.3.8").await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_record_failure_increments() {
+        let limiter = AuthRateLimiter::new();
+        for _ in 0..3 {
+            limiter.record_failure("1.2.3.9").await;
+        }
+        assert!(!limiter.is_locked_out("1.2.3.9").await);
+        limiter.record_failure("1.2.3.9").await;
+        limiter.record_failure("1.2.3.9").await;
+        assert!(limiter.is_locked_out("1.2.3.9").await);
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_reset_nonexistent_ip() {
+        let limiter = AuthRateLimiter::new();
+        // Resetting an IP with no failures should be a no-op
+        limiter.reset_failures("9.9.9.9").await;
+        assert!(!limiter.is_locked_out("9.9.9.9").await);
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_cleanup_preserves_recent_entries() {
+        let limiter = AuthRateLimiter::new();
+        limiter.record_failure("1.2.3.11").await;
+        limiter.cleanup().await;
+        // After cleanup, 4 more failures should still lock out (total 5)
+        for _ in 0..4 {
+            limiter.record_failure("1.2.3.11").await;
+        }
+        assert!(limiter.is_locked_out("1.2.3.11").await);
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_cleanup_no_panic_on_empty() {
+        let limiter = AuthRateLimiter::new();
+        // Cleanup on empty limiter should not panic
+        limiter.cleanup().await;
+    }
+
+    // ===== AuthError Display tests =====
+
+    #[test]
+    fn test_auth_error_display_variants() {
+        assert_eq!(
+            AuthError::InvalidKey.to_string(),
+            "Invalid or missing API key"
+        );
+        assert_eq!(AuthError::InactiveKey.to_string(), "API key is inactive");
+        assert_eq!(
+            AuthError::MissingScope(ScopePermission::Admin).to_string(),
+            "Missing required scope: admin"
+        );
+        assert_eq!(
+            AuthError::NilTeamId.to_string(),
+            "API key associated with nil team_id"
+        );
+        assert_eq!(AuthError::ExpiredKey.to_string(), "API key has expired");
+    }
+
+    // ===== verify_key_hash tests =====
+
+    #[test]
+    fn test_verify_key_hash_sha256_prefix_match() {
+        let token = "test_token_123";
+        let hash = format!("sha256:{:x}", Sha256::digest(token.as_bytes()));
+        let key = make_key_model(Some(hash), Some(0));
+        assert!(verify_key_hash(&key, token));
+    }
+
+    #[test]
+    fn test_verify_key_hash_sha256_prefix_mismatch() {
+        let token = "test_token_123";
+        let hash = format!("sha256:{:x}", Sha256::digest(token.as_bytes()));
+        let key = make_key_model(Some(hash), Some(0));
+        assert!(!verify_key_hash(&key, "wrong_token"));
+    }
+
+    #[test]
+    fn test_verify_key_hash_pure_sha256_match() {
+        let token = "test_token_456";
+        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        let key = make_key_model(Some(hash), Some(0));
+        assert!(verify_key_hash(&key, token));
+    }
+
+    #[test]
+    fn test_verify_key_hash_pure_sha256_mismatch() {
+        let token = "test_token_456";
+        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        let key = make_key_model(Some(hash), Some(0));
+        assert!(!verify_key_hash(&key, "wrong_token"));
+    }
+
+    #[test]
+    fn test_verify_key_hash_plaintext_rejected() {
+        let key = make_key_model(None, Some(0));
+        assert!(!verify_key_hash(&key, "any_token"));
+    }
+
+    #[test]
+    fn test_verify_key_hash_bcrypt_match() {
+        let token = "bcrypt_test_token";
+        let bcrypt_hash = security::hash_api_key(token).unwrap();
+        let key = make_key_model(Some(bcrypt_hash), Some(0));
+        assert!(verify_key_hash(&key, token));
+    }
+
+    #[test]
+    fn test_verify_key_hash_bcrypt_mismatch() {
+        let token = "bcrypt_test_token";
+        let bcrypt_hash = security::hash_api_key(token).unwrap();
+        let key = make_key_model(Some(bcrypt_hash), Some(0));
+        assert!(!verify_key_hash(&key, "wrong_token"));
+    }
+
+    #[test]
+    fn test_verify_key_hash_other_format_fallback_bcrypt() {
+        // A hash that doesn't match any known format should fall through to bcrypt
+        let key = make_key_model(Some("unknown_format_hash".to_string()), Some(0));
+        assert!(!verify_key_hash(&key, "any_token"));
+    }
+
+    // ===== check_key_expiration tests =====
+
+    #[test]
+    fn test_check_key_expiration_nil_hash_rejected() {
+        let key = make_key_model(None, Some(0));
+        assert!(check_key_expiration(&key).is_err());
+    }
+
+    #[test]
+    fn test_check_key_expiration_expired_key_rejected() {
+        let key = make_key_model(Some("sha256:somehash".to_string()), Some(100));
+        assert!(check_key_expiration(&key).is_err());
+    }
+
+    #[test]
+    fn test_check_key_expiration_valid_key_ok() {
+        let key = make_key_model(Some("sha256:somehash".to_string()), Some(10));
+        assert!(check_key_expiration(&key).is_ok());
+    }
+
+    #[test]
+    fn test_check_key_expiration_no_updated_at_ok() {
+        let key = make_key_model(Some("sha256:somehash".to_string()), None);
+        assert!(check_key_expiration(&key).is_ok());
+    }
+
+    #[test]
+    fn test_check_key_expiration_exactly_90_days_boundary() {
+        // 90 days should be OK (boundary: > 90 is rejected, <= 90 is OK)
+        let key = make_key_model(Some("sha256:somehash".to_string()), Some(90));
+        assert!(check_key_expiration(&key).is_ok());
+    }
+
+    // ===== extract_bearer_token tests =====
+
+    #[test]
+    fn test_extract_bearer_token_valid() {
+        let req = make_bearer_request(Some("Bearer my_secret_token"));
+        assert_eq!(
+            extract_bearer_token(&req).as_deref(),
+            Some("my_secret_token")
+        );
+    }
+
+    #[test]
+    fn test_extract_bearer_token_missing_header() {
+        let req = make_bearer_request(None);
+        assert!(extract_bearer_token(&req).is_none());
+    }
+
+    #[test]
+    fn test_extract_bearer_token_non_bearer_scheme() {
+        let req = make_bearer_request(Some("Basic dXNlcjpwYXNz"));
+        assert!(extract_bearer_token(&req).is_none());
+    }
+
+    #[test]
+    fn test_extract_bearer_token_empty_token() {
+        let req = make_bearer_request(Some("Bearer "));
+        assert_eq!(extract_bearer_token(&req).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn test_extract_bearer_token_lowercase_bearer_not_matched() {
+        let req = make_bearer_request(Some("bearer my_token"));
+        assert!(extract_bearer_token(&req).is_none());
+    }
+
+    // ===== is_path_prefix tests =====
+
+    #[test]
+    fn test_is_path_prefix_exact_match() {
+        assert!(is_path_prefix("/api/v1/teams", "/api/v1/teams"));
+    }
+
+    #[test]
+    fn test_is_path_prefix_with_slash() {
+        assert!(is_path_prefix("/api/v1/teams/123", "/api/v1/teams"));
+        assert!(is_path_prefix("/api/v1/teams/", "/api/v1/teams"));
+    }
+
+    #[test]
+    fn test_is_path_prefix_suffix_without_slash_no_match() {
+        assert!(!is_path_prefix("/api/v1/teams-secret", "/api/v1/teams"));
+        assert!(!is_path_prefix("/api/v1/teamsadmin", "/api/v1/teams"));
+    }
+
+    #[test]
+    fn test_is_path_prefix_no_match() {
+        assert!(!is_path_prefix("/api/v1/users", "/api/v1/teams"));
+        assert!(!is_path_prefix("/api/v1/team", "/api/v1/teams"));
+    }
+
+    // ===== determine_required_scope tests =====
+
+    #[test]
+    fn test_determine_required_scope_teams_admin() {
+        assert_eq!(
+            determine_required_scope("/api/v1/teams", "GET"),
+            Some(ScopePermission::Admin)
+        );
+    }
+
+    #[test]
+    fn test_determine_required_scope_teams_subpath_admin() {
+        assert_eq!(
+            determine_required_scope("/api/v1/teams/123", "GET"),
+            Some(ScopePermission::Admin)
+        );
+    }
+
+    #[test]
+    fn test_determine_required_scope_billing_admin() {
+        assert_eq!(
+            determine_required_scope("/api/v1/billing", "GET"),
+            Some(ScopePermission::Admin)
+        );
+    }
+
+    #[test]
+    fn test_determine_required_scope_teams_secret_not_admin() {
+        assert_eq!(
+            determine_required_scope("/api/v1/teams-secret", "GET"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_determine_required_scope_post_write() {
+        assert_eq!(
+            determine_required_scope("/v1/search", "POST"),
+            Some(ScopePermission::Write)
+        );
+        assert_eq!(
+            determine_required_scope("/v1/scrape", "POST"),
+            Some(ScopePermission::Write)
+        );
+        assert_eq!(
+            determine_required_scope("/v1/crawl", "POST"),
+            Some(ScopePermission::Write)
+        );
+    }
+
+    #[test]
+    fn test_determine_required_scope_get_none() {
+        assert_eq!(determine_required_scope("/v1/search", "GET"), None);
+        assert_eq!(determine_required_scope("/v1/scrape", "GET"), None);
+        assert_eq!(determine_required_scope("/v1/crawl", "GET"), None);
+    }
+
+    #[test]
+    fn test_determine_required_scope_put_delete_patch_write() {
+        assert_eq!(
+            determine_required_scope("/v1/crawl", "PUT"),
+            Some(ScopePermission::Write)
+        );
+        assert_eq!(
+            determine_required_scope("/v1/crawl", "DELETE"),
+            Some(ScopePermission::Write)
+        );
+        assert_eq!(
+            determine_required_scope("/v1/crawl", "PATCH"),
+            Some(ScopePermission::Write)
+        );
+    }
+
+    // ===== get_client_ip tests =====
+
+    #[test]
+    fn test_get_client_ip_with_trusted_proxies() {
+        let config = security::TrustedProxyConfig::from_settings(false, vec![]);
+        let req = axum::http::Request::builder()
+            .header("x-forwarded-for", "203.0.113.50")
+            .body(Body::empty())
+            .unwrap();
+        let ip = get_client_ip(&req, Some(&config));
+        assert_eq!(ip, "203.0.113.50");
+    }
+
+    #[test]
+    fn test_get_client_ip_without_trusted_proxies_uses_default() {
+        let req = axum::http::Request::builder()
+            .header("x-forwarded-for", "203.0.113.50")
+            .body(Body::empty())
+            .unwrap();
+        let ip = get_client_ip(&req, None);
+        // With default config (enabled=true, private IPs trusted),
+        // no ConnectInfo → returns "unknown"
+        assert_eq!(ip, "unknown");
+    }
+
+    // ===== ApiKeyCache additional tests =====
+
+    #[test]
+    fn test_cache_new_custom_params() {
+        let cache = ApiKeyCache::new(500, 60);
+        let stats = cache.stats();
+        assert_eq!(stats.capacity, 500);
+        assert_eq!(stats.ttl_seconds, 60);
+        assert_eq!(stats.size, 0);
+    }
+
+    #[test]
+    fn test_cache_get_miss_returns_none() {
+        let mut cache = ApiKeyCache::new_default();
+        assert!(cache.get("nonexistent_key").is_none());
+    }
+
+    #[test]
+    fn test_cache_insert_and_get_hit() {
+        let mut cache = ApiKeyCache::new_default();
+        let key = "sha256:insert_test".to_string();
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        cache.insert(
+            key.clone(),
+            CachedAuthResult {
+                team_id,
+                api_key_id,
+                scope: ApiKeyScope::full_access(),
+                cached_at: Instant::now(),
+            },
+        );
+        let result = cache.get(&key);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.team_id, team_id);
+        assert_eq!(result.api_key_id, api_key_id);
+        assert_eq!(result.scope, ApiKeyScope::full_access());
+    }
+
+    #[test]
+    fn test_cache_invalidate_nonexistent_no_panic() {
+        let mut cache = ApiKeyCache::new_default();
+        // Should not panic when invalidating non-existent key
+        cache.invalidate("sha256:nonexistent");
+        cache.invalidate_by_api_key_id(Uuid::new_v4());
+        cache.invalidate_team(Uuid::new_v4());
+    }
+
+    #[test]
+    fn test_cache_stats_after_inserts() {
+        let mut cache = ApiKeyCache::new_default();
+        for i in 0..5 {
+            cache.insert(
+                format!("sha256:stats_{}", i),
+                CachedAuthResult {
+                    team_id: Uuid::new_v4(),
+                    api_key_id: Uuid::new_v4(),
+                    scope: ApiKeyScope::default(),
+                    cached_at: Instant::now(),
+                },
+            );
+        }
+        let stats = cache.stats();
+        assert_eq!(stats.size, 5);
+        assert_eq!(stats.capacity, DEFAULT_CACHE_MAX_SIZE);
+        assert_eq!(stats.ttl_seconds, DEFAULT_CACHE_TTL_SECS);
+    }
+
+    // ===== Debug impl tests =====
+
+    #[test]
+    fn test_auth_rate_limiter_debug() {
+        let limiter = AuthRateLimiter::new();
+        let debug_str = format!("{:?}", limiter);
+        assert!(debug_str.contains("AuthRateLimiter"));
+    }
+
+    #[test]
+    fn test_api_key_cache_debug() {
+        let cache = ApiKeyCache::new_default();
+        let debug_str = format!("{:?}", cache);
+        assert!(debug_str.contains("ApiKeyCache"));
+        assert!(debug_str.contains("size"));
+        assert!(debug_str.contains("ttl_seconds"));
+    }
+
+    #[test]
+    fn test_cache_stats_debug() {
+        let stats = CacheStats {
+            size: 10,
+            capacity: 100,
+            ttl_seconds: 60,
+        };
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("size"));
+        assert!(debug_str.contains("capacity"));
+        assert!(debug_str.contains("ttl_seconds"));
+    }
+
+    // ===== Global cache function tests (when not initialized) =====
+
+    #[tokio::test]
+    async fn test_global_cache_functions_when_not_initialized() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        reset_global_auth_cache();
+        assert!(!invalidate_cache_by_token_hash("sha256:test").await);
+        assert_eq!(invalidate_cache_by_api_key_id(Uuid::new_v4()).await, 0);
+        assert_eq!(invalidate_cache_by_team(Uuid::new_v4()).await, 0);
+        assert_eq!(invalidate_all_cache().await, 0);
+        assert!(get_cache_stats().await.is_none());
+    }
+
+    // ===== Global cache function tests (when initialized) =====
+
+    #[tokio::test]
+    async fn test_global_invalidate_cache_by_token_hash_hit() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        reset_global_auth_cache();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        set_global_auth_cache(cache.clone());
+        {
+            let mut g = cache.write().await;
+            g.insert(
+                "sha256:global_tok".to_string(),
+                CachedAuthResult {
+                    team_id: Uuid::new_v4(),
+                    api_key_id: Uuid::new_v4(),
+                    scope: ApiKeyScope::default(),
+                    cached_at: Instant::now(),
+                },
+            );
+        }
+        assert!(invalidate_cache_by_token_hash("sha256:global_tok").await);
+    }
+
+    #[tokio::test]
+    async fn test_global_invalidate_cache_by_token_hash_miss() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        reset_global_auth_cache();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        set_global_auth_cache(cache);
+        assert!(!invalidate_cache_by_token_hash("sha256:nonexistent").await);
+    }
+
+    #[tokio::test]
+    async fn test_global_invalidate_cache_by_api_key_id_multiple() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        reset_global_auth_cache();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        set_global_auth_cache(cache.clone());
+        let api_key_id = Uuid::new_v4();
+        {
+            let mut g = cache.write().await;
+            g.insert(
+                "sha256:k1".to_string(),
+                CachedAuthResult {
+                    team_id: Uuid::new_v4(),
+                    api_key_id,
+                    scope: ApiKeyScope::default(),
+                    cached_at: Instant::now(),
+                },
+            );
+            g.insert(
+                "sha256:k2".to_string(),
+                CachedAuthResult {
+                    team_id: Uuid::new_v4(),
+                    api_key_id,
+                    scope: ApiKeyScope::default(),
+                    cached_at: Instant::now(),
+                },
+            );
+        }
+        let removed = invalidate_cache_by_api_key_id(api_key_id).await;
+        assert_eq!(removed, 2);
+    }
+
+    #[tokio::test]
+    async fn test_global_invalidate_cache_by_team() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        reset_global_auth_cache();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        set_global_auth_cache(cache.clone());
+        let team_id = Uuid::new_v4();
+        {
+            let mut g = cache.write().await;
+            g.insert(
+                "sha256:t1".to_string(),
+                CachedAuthResult {
+                    team_id,
+                    api_key_id: Uuid::new_v4(),
+                    scope: ApiKeyScope::default(),
+                    cached_at: Instant::now(),
+                },
+            );
+        }
+        let removed = invalidate_cache_by_team(team_id).await;
+        assert_eq!(removed, 1);
+        // Non-existent team
+        let removed2 = invalidate_cache_by_team(Uuid::new_v4()).await;
+        assert_eq!(removed2, 0);
+    }
+
+    #[tokio::test]
+    async fn test_global_get_cache_stats_when_initialized() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        reset_global_auth_cache();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        set_global_auth_cache(cache);
+        let stats = get_cache_stats().await;
+        assert!(stats.is_some());
+        let stats = stats.unwrap();
+        assert_eq!(stats.size, 0);
+        assert_eq!(stats.capacity, DEFAULT_CACHE_MAX_SIZE);
     }
 }

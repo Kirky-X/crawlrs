@@ -6,11 +6,11 @@
 //! DNS缓存模块（使用 oxcache）
 
 use crate::infrastructure::oxcache::{generate_dns_key, DnsCache, DnsCacheEntry};
+use log::{debug, warn};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
-use log::{debug, warn};
 
 /// 线程安全的DNS缓存（使用 oxcache）
 #[derive(Debug, Clone)]
@@ -219,10 +219,7 @@ mod tests {
     async fn test_set_multiple_entries_then_lookup_host() {
         let svc = make_service(300).await;
 
-        let ips_a: Vec<IpAddr> = vec![
-            "10.0.0.1".parse().unwrap(),
-            "10.0.0.2".parse().unwrap(),
-        ];
+        let ips_a: Vec<IpAddr> = vec!["10.0.0.1".parse().unwrap(), "10.0.0.2".parse().unwrap()];
         let ips_b: Vec<IpAddr> = vec!["192.168.2.1".parse().unwrap()];
 
         svc.set("host-a.example", 80, ips_a.clone(), 300).await;
@@ -292,7 +289,10 @@ mod tests {
         svc.set("miss-after-remove.example", 80, ips, 300).await;
 
         // 先命中缓存
-        assert!(svc.lookup_host("miss-after-remove.example", 80).await.is_ok());
+        assert!(svc
+            .lookup_host("miss-after-remove.example", 80)
+            .await
+            .is_ok());
 
         // remove 后缓存为空
         svc.remove("miss-after-remove.example", 80).await;

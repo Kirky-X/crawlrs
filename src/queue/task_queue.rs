@@ -6,9 +6,9 @@
 use crate::domain::models::Task;
 use crate::domain::repositories::task_repository::TaskRepository;
 use async_trait::async_trait;
+use log::debug;
 use std::sync::Arc;
 use thiserror::Error;
-use log::debug;
 use uuid::Uuid;
 
 /// 队列错误类型

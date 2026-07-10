@@ -16,3 +16,15 @@ pub use error::{AppError, AppResult};
 pub use time_utils::{
     from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt, UTC_OFFSET,
 };
+
+/// Test support utilities shared across modules
+#[cfg(test)]
+pub(crate) mod test_support {
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
+
+    /// Global mutex to serialize tests that manipulate environment variables.
+    /// Environment variables are process-global, so all test modules that
+    /// set/unset env vars must lock this mutex to prevent race conditions.
+    pub static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+}
