@@ -1046,3 +1046,403 @@ impl TaskQueue for TaskQueueComponent {
         queue.cancel(task_id).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::repositories::storage_repository::StorageError;
+
+    // ========== StorageRepositoryComponent ==========
+
+    #[test]
+    fn test_storage_repository_component_new_with_custom_path() {
+        let component = StorageRepositoryComponent::new("/tmp/crawlrs_test_storage".to_string());
+        // 构造成功即可验证，storage_cache 延迟初始化
+        let _trait_obj: &dyn StorageRepository = &component;
+    }
+
+    #[test]
+    fn test_storage_repository_component_with_default_path() {
+        let component = StorageRepositoryComponent::with_default_path();
+        let _trait_obj: &dyn StorageRepository = &component;
+    }
+
+    // 注意：LocalStorage::get_full_path() 对 joined 路径调用 canonicalize()，要求目标
+    // 文件必须已存在（见 storage.rs 中 test_get_full_path_fails_for_nonexistent_file）。
+    // 这导致 save()/get()/exists()/delete() 对不存在的文件均会失败，无法在单元测试中
+    // 验证完整的 save→get→exists→delete 往返流程。此处改为通过无效 key 验证 trait
+    // 委托是否正确：无效 key 在 validate_key 阶段即返回错误，不触及 canonicalize。
+
+    #[tokio::test]
+    async fn test_storage_repository_component_save_rejects_empty_key() {
+        let component = StorageRepositoryComponent::with_default_path();
+        let result = component.save("", b"data").await;
+        assert!(result.is_err());
+        match result {
+            Err(StorageError::InvalidKey(msg)) => assert!(msg.contains("empty")),
+            other => panic!("Expected InvalidKey for empty key, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_storage_repository_component_save_rejects_absolute_path() {
+        let component = StorageRepositoryComponent::with_default_path();
+        let result = component.save("/etc/passwd", b"data").await;
+        assert!(result.is_err());
+        match result {
+            Err(StorageError::InvalidKey(_)) => {}
+            other => panic!("Expected InvalidKey for absolute path, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_storage_repository_component_save_rejects_path_traversal() {
+        let component = StorageRepositoryComponent::with_default_path();
+        let result = component.save("../secret", b"data").await;
+        assert!(result.is_err());
+        match result {
+            Err(StorageError::InvalidKey(_)) => {}
+            other => panic!("Expected InvalidKey for path traversal, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_storage_repository_component_get_rejects_invalid_key() {
+        let component = StorageRepositoryComponent::with_default_path();
+        let result = component.get("").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_storage_repository_component_exists_rejects_invalid_key() {
+        let component = StorageRepositoryComponent::with_default_path();
+        let result = component.exists("").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_storage_repository_component_delete_rejects_invalid_key() {
+        let component = StorageRepositoryComponent::with_default_path();
+        let result = component.delete("").await;
+        assert!(result.is_err());
+    }
+
+    // ========== TaskQueueComponent ==========
+    // TaskQueueComponent 接受 Arc<dyn TaskRepository>，可用 mock 实现 TaskRepository
+    // 来验证 enqueue/dequeue/complete/fail/cancel 的委托逻辑。
+
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Mutex;
+
+    use crate::domain::models::{Task, TaskType};
+    use crate::domain::repositories::task_repository::RepositoryError;
+    use crate::queue::task_queue::QueueError;
+
+    /// Mock TaskRepository 用于测试 TaskQueueComponent 的委托逻辑。
+    /// 使用原子计数器跟踪各方法调用次数，并支持返回失败以测试错误传播。
+    struct MockTaskRepository {
+        create_count: AtomicU32,
+        acquire_next_count: AtomicU32,
+        mark_completed_count: AtomicU32,
+        mark_failed_count: AtomicU32,
+        mark_cancelled_count: AtomicU32,
+        should_fail: bool,
+        dequeue_task: Mutex<Option<Task>>,
+    }
+
+    impl MockTaskRepository {
+        fn success() -> Self {
+            Self {
+                create_count: AtomicU32::new(0),
+                acquire_next_count: AtomicU32::new(0),
+                mark_completed_count: AtomicU32::new(0),
+                mark_failed_count: AtomicU32::new(0),
+                mark_cancelled_count: AtomicU32::new(0),
+                should_fail: false,
+                dequeue_task: Mutex::new(None),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                create_count: AtomicU32::new(0),
+                acquire_next_count: AtomicU32::new(0),
+                mark_completed_count: AtomicU32::new(0),
+                mark_failed_count: AtomicU32::new(0),
+                mark_cancelled_count: AtomicU32::new(0),
+                should_fail: true,
+                dequeue_task: Mutex::new(None),
+            }
+        }
+
+        fn with_dequeue_task(task: Task) -> Self {
+            Self {
+                create_count: AtomicU32::new(0),
+                acquire_next_count: AtomicU32::new(0),
+                mark_completed_count: AtomicU32::new(0),
+                mark_failed_count: AtomicU32::new(0),
+                mark_cancelled_count: AtomicU32::new(0),
+                should_fail: false,
+                dequeue_task: Mutex::new(Some(task)),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TaskRepository for MockTaskRepository {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            self.create_count.fetch_add(1, Ordering::SeqCst);
+            if self.should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!("create failed")));
+            }
+            Ok(task.clone())
+        }
+
+        async fn find_by_id(&self, _id: uuid::Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+
+        async fn acquire_next(
+            &self,
+            _worker_id: uuid::Uuid,
+        ) -> Result<Option<Task>, RepositoryError> {
+            self.acquire_next_count.fetch_add(1, Ordering::SeqCst);
+            if self.should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!("acquire failed")));
+            }
+            let task = self
+                .dequeue_task
+                .lock()
+                .expect("dequeue_task mutex poisoned")
+                .take();
+            Ok(task)
+        }
+
+        async fn mark_completed(&self, _id: uuid::Uuid) -> Result<(), RepositoryError> {
+            self.mark_completed_count.fetch_add(1, Ordering::SeqCst);
+            if self.should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "completed failed"
+                )));
+            }
+            Ok(())
+        }
+
+        async fn mark_failed(&self, _id: uuid::Uuid) -> Result<(), RepositoryError> {
+            self.mark_failed_count.fetch_add(1, Ordering::SeqCst);
+            if self.should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!("failed failed")));
+            }
+            Ok(())
+        }
+
+        async fn mark_cancelled(&self, _id: uuid::Uuid) -> Result<(), RepositoryError> {
+            self.mark_cancelled_count.fetch_add(1, Ordering::SeqCst);
+            if self.should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "cancelled failed"
+                )));
+            }
+            Ok(())
+        }
+
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<std::collections::HashSet<String>, RepositoryError> {
+            Ok(std::collections::HashSet::new())
+        }
+
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: uuid::Uuid,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: uuid::Uuid,
+        ) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn query_tasks(
+            &self,
+            _params: crate::domain::repositories::task_repository::TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            Ok((vec![], 0))
+        }
+
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<uuid::Uuid>,
+            _team_id: uuid::Uuid,
+            _force: bool,
+        ) -> Result<(Vec<uuid::Uuid>, Vec<(uuid::Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+    }
+
+    fn make_test_task() -> Task {
+        Task::new(
+            uuid::Uuid::new_v4(),
+            TaskType::Scrape,
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            "https://example.com".to_string(),
+            serde_json::Value::Null,
+        )
+    }
+
+    #[test]
+    fn test_task_queue_component_new_stores_repository() {
+        let repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::success());
+        let component = TaskQueueComponent::new(repo);
+        // 构造成功即可验证；trait 方法需要实际调用 repository，在异步测试中验证
+        let _trait_obj: &dyn TaskQueue = &component;
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_enqueue_calls_create_and_returns_task() {
+        let mock = Arc::new(MockTaskRepository::success());
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let task = make_test_task();
+        let result = component.enqueue(task.clone()).await;
+        assert!(result.is_ok(), "enqueue should succeed");
+        let returned = result.expect("enqueue result");
+        assert_eq!(returned.id, task.id);
+        assert_eq!(mock.create_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_enqueue_propagates_repository_error() {
+        let mock = Arc::new(MockTaskRepository::failing());
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let task = make_test_task();
+        let result = component.enqueue(task).await;
+        assert!(result.is_err());
+        match result {
+            Err(QueueError::Repository(_)) => {}
+            other => panic!("Expected QueueError::Repository, got {:?}", other),
+        }
+        assert_eq!(mock.create_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_dequeue_returns_task_when_available() {
+        let task = make_test_task();
+        let task_id = task.id;
+        let mock = Arc::new(MockTaskRepository::with_dequeue_task(task));
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let result = component.dequeue(uuid::Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        let dequeued = result.expect("dequeue result");
+        assert!(dequeued.is_some());
+        assert_eq!(dequeued.expect("task").id, task_id);
+        assert_eq!(mock.acquire_next_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_dequeue_returns_none_when_empty() {
+        let mock = Arc::new(MockTaskRepository::success());
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let result = component.dequeue(uuid::Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        assert!(result.expect("dequeue result").is_none());
+        assert_eq!(mock.acquire_next_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_complete_calls_mark_completed() {
+        let mock = Arc::new(MockTaskRepository::success());
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let result = component.complete(uuid::Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        assert_eq!(mock.mark_completed_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_fail_calls_mark_failed() {
+        let mock = Arc::new(MockTaskRepository::success());
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let result = component.fail(uuid::Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        assert_eq!(mock.mark_failed_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_cancel_calls_mark_cancelled() {
+        let mock = Arc::new(MockTaskRepository::success());
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let result = component.cancel(uuid::Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        assert_eq!(mock.mark_cancelled_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_complete_propagates_error() {
+        let mock = Arc::new(MockTaskRepository::failing());
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let result = component.complete(uuid::Uuid::new_v4()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_fail_propagates_error() {
+        let mock = Arc::new(MockTaskRepository::failing());
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let result = component.fail(uuid::Uuid::new_v4()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_cancel_propagates_error() {
+        let mock = Arc::new(MockTaskRepository::failing());
+        let component = TaskQueueComponent::new(mock.clone() as Arc<dyn TaskRepository>);
+        let result = component.cancel(uuid::Uuid::new_v4()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_task_queue_component_as_trait_object() {
+        let mock: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::success());
+        let component = TaskQueueComponent::new(mock);
+        let trait_obj: &dyn TaskQueue = &component;
+        let result = trait_obj.complete(uuid::Uuid::new_v4()).await;
+        assert!(result.is_ok());
+    }
+
+    // ========== 跳过的组件 ==========
+    // 以下组件的构造器需要 Arc<DatabasePool> 或 Arc<DbPool>，而 DatabasePool/DbPool
+    // 必须连接真实数据库才能构造。无法在无数据库环境下测试，故跳过：
+    // - TaskRepositoryComponent::new / with_pool — 需 Arc<DatabasePool>
+    // - CreditsRepositoryComponent::new — 需 Arc<DatabasePool>
+    // - CrawlRepositoryComponent::new — 需 Arc<DatabasePool>
+    // - ScrapeResultRepositoryComponent::new — 需 Arc<DatabasePool>
+    // - WebhookRepositoryComponent::new — 需 Arc<DatabasePool>
+    // - WebhookEventRepositoryComponent::new — 需 Arc<DatabasePool>
+    // - TasksBacklogRepositoryComponent::new — 需 Arc<DatabasePool>
+    // - AuthScopeRepositoryComponent::new — 需 Arc<DatabasePool>
+    // - AuditLogRepositoryComponent::new — 需 Arc<DatabasePool>
+    // - GeoRestrictionRepositoryComponent::new — 需 Arc<DbPool>
+}

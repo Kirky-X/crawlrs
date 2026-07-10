@@ -52,3 +52,105 @@ pub async fn init_all(settings: &LoggingSettings) -> Result<LoggerManager, inklo
     init_metrics();
     Ok(manager)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
+
+    fn settings_console_only() -> LoggingSettings {
+        LoggingSettings {
+            console: ConsoleLoggingSettings { enabled: true },
+            file: FileLoggingSettings {
+                enabled: false,
+                path: "logs/test_telemetry.log".to_string(),
+                max_file_size_mb: 50,
+                file_count: 5,
+            },
+        }
+    }
+
+    fn settings_all_disabled() -> LoggingSettings {
+        LoggingSettings {
+            console: ConsoleLoggingSettings { enabled: false },
+            file: FileLoggingSettings {
+                enabled: false,
+                path: "logs/test_telemetry_disabled.log".to_string(),
+                max_file_size_mb: 10,
+                file_count: 1,
+            },
+        }
+    }
+
+    // ========== init_telemetry tests ==========
+
+    #[tokio::test]
+    async fn test_init_telemetry_succeeds_with_console_only() {
+        let settings = settings_console_only();
+        let result = init_telemetry(&settings).await;
+        assert!(
+            result.is_ok(),
+            "init_telemetry should succeed with console-only settings"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_init_telemetry_succeeds_with_all_disabled() {
+        let settings = settings_all_disabled();
+        let result = init_telemetry(&settings).await;
+        assert!(
+            result.is_ok(),
+            "init_telemetry should succeed with all sinks disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_init_telemetry_returns_logger_manager() {
+        let settings = settings_console_only();
+        let manager = init_telemetry(&settings)
+            .await
+            .expect("init_telemetry should succeed");
+        // LoggerManager should be successfully created and hold the log worker
+        // Dropping it should be safe (shuts down workers)
+        drop(manager);
+    }
+
+    // ========== init_metrics tests ==========
+
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn test_init_metrics_does_not_panic() {
+        // init_metrics sets up the Prometheus metrics exporter.
+        // It internally uses tokio::spawn, so it must run within a Tokio runtime.
+        init_metrics();
+    }
+
+    // ========== init_all tests ==========
+
+    #[tokio::test]
+    async fn test_init_all_succeeds_with_console_only() {
+        let settings = settings_console_only();
+        let result = init_all(&settings).await;
+        assert!(
+            result.is_ok(),
+            "init_all should succeed with console-only settings"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_init_all_succeeds_with_all_disabled() {
+        let settings = settings_all_disabled();
+        let result = init_all(&settings).await;
+        assert!(
+            result.is_ok(),
+            "init_all should succeed with all sinks disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_init_all_returns_logger_manager() {
+        let settings = settings_console_only();
+        let manager = init_all(&settings).await.expect("init_all should succeed");
+        drop(manager);
+    }
+}

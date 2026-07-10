@@ -75,6 +75,13 @@ impl<M: Module> Component<M> for HttpClientComponent {
     }
 }
 
+impl HttpClientComponent {
+    /// Create a new HttpClientComponent with explicit dependencies
+    pub fn new(client: Arc<reqwest::Client>) -> Self {
+        Self { client }
+    }
+}
+
 impl HttpClientTrait for HttpClientComponent {
     fn get(&self) -> Arc<reqwest::Client> {
         self.client.clone()
@@ -176,3 +183,107 @@ impl TransactionManagerTrait for TransactionManagerComponent {
 }
 
 // Database module components - for Shaku DI
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造一个用于测试的 Settings 实例（所有子配置使用默认值）。
+    fn make_test_settings() -> Arc<Settings> {
+        use crate::config::settings::CorsSettings;
+        use crate::config::{
+            BingSearchSettings, CacheSettings, ConcurrencySettings, DatabaseSettings,
+            EngineSettings, LLMSettings, LoggingSettings, ProxySettings, RateLimitingSettings,
+            RedisSettings, SearchSettings, ServerSettings, StorageSettings, TimeoutSettings,
+            TrustedProxySettings, WebhookSettings, WorkerSettings,
+        };
+
+        Arc::new(Settings {
+            server: ServerSettings::default(),
+            database: DatabaseSettings::default(),
+            redis: RedisSettings::default(),
+            cors: CorsSettings::default(),
+            rate_limiting: RateLimitingSettings::default(),
+            concurrency: ConcurrencySettings::default(),
+            storage: StorageSettings::default(),
+            webhook: WebhookSettings::default(),
+            bing_search: BingSearchSettings::default(),
+            search: SearchSettings::default(),
+            llm: LLMSettings::default(),
+            proxy: ProxySettings::default(),
+            engines: EngineSettings::default(),
+            logging: LoggingSettings::default(),
+            workers: WorkerSettings::default(),
+            timeouts: TimeoutSettings::default(),
+            cache: CacheSettings::default(),
+            trusted_proxies: TrustedProxySettings::default(),
+        })
+    }
+
+    // ========== SettingsComponent ==========
+
+    #[test]
+    fn test_settings_component_new_stores_settings() {
+        let settings = make_test_settings();
+        let component = SettingsComponent::new(settings.clone());
+        // get() 应返回与传入相同的 Arc
+        let retrieved = component.get();
+        assert!(Arc::ptr_eq(&retrieved, &settings));
+    }
+
+    #[test]
+    fn test_settings_component_get_returns_clone() {
+        let settings = make_test_settings();
+        let component = SettingsComponent::new(settings.clone());
+        let first = component.get();
+        let second = component.get();
+        // 多次调用 get() 应返回指向同一 Settings 的 Arc
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first, &settings));
+    }
+
+    #[test]
+    fn test_settings_component_as_trait_object() {
+        let settings = make_test_settings();
+        let component = SettingsComponent::new(settings.clone());
+        // 通过 trait 对象访问，验证动态分发正常工作
+        let trait_obj: &dyn SettingsTrait = &component;
+        let retrieved = trait_obj.get();
+        assert!(Arc::ptr_eq(&retrieved, &settings));
+    }
+
+    // ========== HttpClientComponent ==========
+
+    #[test]
+    fn test_http_client_component_new_stores_client() {
+        let client = Arc::new(reqwest::Client::new());
+        let component = HttpClientComponent::new(client.clone());
+        let retrieved = component.get();
+        assert!(Arc::ptr_eq(&retrieved, &client));
+    }
+
+    #[test]
+    fn test_http_client_component_get_returns_clone() {
+        let client = Arc::new(reqwest::Client::new());
+        let component = HttpClientComponent::new(client.clone());
+        let first = component.get();
+        let second = component.get();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first, &client));
+    }
+
+    #[test]
+    fn test_http_client_component_as_trait_object() {
+        let client = Arc::new(reqwest::Client::new());
+        let component = HttpClientComponent::new(client.clone());
+        let trait_obj: &dyn HttpClientTrait = &component;
+        let retrieved = trait_obj.get();
+        assert!(Arc::ptr_eq(&retrieved, &client));
+    }
+
+    // ========== DatabasePoolComponent / TransactionManagerComponent ==========
+    // 注意：DatabasePoolComponent::from(pool) 需要 Arc<DatabasePool>，而 DatabasePool
+    // 内部封装 dbnexus::DbPool，必须连接真实数据库才能构造。
+    // TransactionManagerComponent::new/with_db_pool 同样依赖 DbPool。
+    // 这些构造器无法在无数据库环境的单元测试中测试，故跳过。
+}

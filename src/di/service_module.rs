@@ -812,3 +812,691 @@ impl crate::domain::services::geo_location::GeoLocationService for GeoLocationSe
 
 /// RegexCache component - re-export from utils module
 pub type RegexCacheComponent = crate::utils::regex_cache::RegexCacheComponent;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::di::engines_module::EngineRouterComponent;
+
+    // ========== TeamSemaphoreComponent ==========
+
+    #[test]
+    fn test_team_semaphore_component_new_stores_semaphore() {
+        let semaphore = Arc::new(TeamSemaphore::new(50));
+        let component = TeamSemaphoreComponent::new(semaphore.clone(), 50);
+        let retrieved = component.get_semaphore();
+        assert!(Arc::ptr_eq(&retrieved, &semaphore));
+    }
+
+    #[test]
+    fn test_team_semaphore_component_new_with_different_permits() {
+        let semaphore = Arc::new(TeamSemaphore::new(200));
+        let component = TeamSemaphoreComponent::new(semaphore.clone(), 200);
+        let retrieved = component.get_semaphore();
+        assert!(Arc::ptr_eq(&retrieved, &semaphore));
+    }
+
+    #[test]
+    fn test_team_semaphore_component_with_defaults_creates_on_demand() {
+        let component = TeamSemaphoreComponent::with_defaults();
+        // with_defaults() 内部调用 default()，semaphore 字段为 None
+        // get_semaphore() 应按需创建一个新的 TeamSemaphore
+        let sem1 = component.get_semaphore();
+        let sem2 = component.get_semaphore();
+        // 由于 semaphore 为 None，每次调用 get_semaphore() 都会创建新的 Arc
+        // 因此两次调用不应指向同一对象
+        assert!(!Arc::ptr_eq(&sem1, &sem2));
+    }
+
+    #[test]
+    fn test_team_semaphore_component_as_trait_object() {
+        let semaphore = Arc::new(TeamSemaphore::new(10));
+        let component = TeamSemaphoreComponent::new(semaphore.clone(), 10);
+        let trait_obj: &dyn TeamSemaphoreTrait = &component;
+        let retrieved = trait_obj.get_semaphore();
+        assert!(Arc::ptr_eq(&retrieved, &semaphore));
+    }
+
+    // ========== CreateScrapeUseCaseComponent ==========
+
+    #[test]
+    fn test_create_scrape_use_case_component_new() {
+        let engine_client = Arc::new(crate::engines::engine_client::EngineClient::new());
+        let component = CreateScrapeUseCaseComponent::new(engine_client);
+        // get_use_case() 应返回组件自身作为 trait 对象
+        let _use_case: &dyn CreateScrapeUseCaseTrait = component.get_use_case();
+    }
+
+    #[test]
+    fn test_create_scrape_use_case_component_as_trait_object() {
+        let engine_client = Arc::new(crate::engines::engine_client::EngineClient::new());
+        let component = CreateScrapeUseCaseComponent::new(engine_client);
+        let trait_obj: &dyn CreateScrapeUseCaseTrait = &component;
+        let di_obj: &dyn CreateScrapeUseCaseTraitDI = &component;
+        // 两个 trait 对象应指向同一底层组件
+        let _from_trait = trait_obj;
+        let _from_di = di_obj.get_use_case();
+    }
+
+    // ========== GeoLocationServiceComponent ==========
+
+    #[test]
+    fn test_geo_location_service_component_new() {
+        let http_client: Arc<dyn HttpClientTrait> = Arc::new(
+            crate::di::database_module::HttpClientComponent::new(Arc::new(reqwest::Client::new())),
+        );
+        let component = GeoLocationServiceComponent::new(http_client);
+        // 组件构造成功即可验证，get_location 需要网络访问故不在此测试
+        let _trait_obj: &dyn crate::domain::services::geo_location::GeoLocationService = &component;
+    }
+
+    // ========== EngineClientComponent (via engines_module) ==========
+    // 以下测试验证 service_module 中引用的 EngineRouterComponent 可正常构造
+
+    #[test]
+    fn test_engine_router_component_integration() {
+        // 验证 EngineRouterComponent 可用于构造 CreateScrapeUseCaseComponent 的依赖链
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouterComponent::with_defaults());
+        let engine_client = Arc::new(crate::engines::engine_client::EngineClient::with_router(
+            router,
+        ));
+        let component = CreateScrapeUseCaseComponent::new(engine_client);
+        let _use_case = component.get_use_case();
+    }
+
+    // ========== WebhookServiceComponent ==========
+    // WebhookServiceComponent 接受 Arc<dyn WebhookService>，可用 mock 实现验证
+    // send_webhook/trigger_completion/trigger_failure 的委托逻辑以及 get_service 访问器。
+
+    use crate::domain::auth::{AuditDecision, AuditLogEntry};
+    use crate::domain::models::{Task, TaskType, WebhookEvent, WebhookEventType};
+    use crate::domain::repositories::audit_log_repository::{
+        AuditLogRepository, AuditRepositoryError,
+    };
+    use crate::domain::repositories::auth_scope_repository::{
+        AuthScopeRepository, RepositoryError as AuthScopeRepoError,
+    };
+    use crate::domain::services::audit_service::AuditServiceError;
+    use crate::domain::services::auth_scope_service::AuthScopeServiceError;
+
+    /// Mock WebhookService 用于测试 WebhookServiceComponent 的委托逻辑。
+    struct MockWebhookService {
+        send_count: std::sync::atomic::AtomicU32,
+        completion_count: std::sync::atomic::AtomicU32,
+        failure_count: std::sync::atomic::AtomicU32,
+        should_fail: bool,
+    }
+
+    impl MockWebhookService {
+        fn success() -> Self {
+            Self {
+                send_count: std::sync::atomic::AtomicU32::new(0),
+                completion_count: std::sync::atomic::AtomicU32::new(0),
+                failure_count: std::sync::atomic::AtomicU32::new(0),
+                should_fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                send_count: std::sync::atomic::AtomicU32::new(0),
+                completion_count: std::sync::atomic::AtomicU32::new(0),
+                failure_count: std::sync::atomic::AtomicU32::new(0),
+                should_fail: true,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WebhookService for MockWebhookService {
+        async fn send_webhook(&self, _event: &WebhookEvent) -> Result<(), anyhow::Error> {
+            self.send_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.should_fail {
+                return Err(anyhow::anyhow!("send_webhook failed"));
+            }
+            Ok(())
+        }
+
+        async fn trigger_completion(&self, _task: &Task) -> Result<(), anyhow::Error> {
+            self.completion_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.should_fail {
+                return Err(anyhow::anyhow!("trigger_completion failed"));
+            }
+            Ok(())
+        }
+
+        async fn trigger_failure(
+            &self,
+            _task: &Task,
+            _error_msg: String,
+        ) -> Result<(), anyhow::Error> {
+            self.failure_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.should_fail {
+                return Err(anyhow::anyhow!("trigger_failure failed"));
+            }
+            Ok(())
+        }
+    }
+
+    fn make_test_webhook_event() -> WebhookEvent {
+        WebhookEvent::new(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            WebhookEventType::ScrapeCompleted,
+            serde_json::Value::Null,
+            "https://example.com/webhook".to_string(),
+        )
+    }
+
+    fn make_test_task_for_service() -> Task {
+        Task::new(
+            uuid::Uuid::new_v4(),
+            TaskType::Scrape,
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            "https://example.com".to_string(),
+            serde_json::Value::Null,
+        )
+    }
+
+    #[test]
+    fn test_webhook_service_component_new_stores_inner() {
+        let inner: Arc<dyn WebhookService> = Arc::new(MockWebhookService::success());
+        let component = WebhookServiceComponent::new(inner);
+        let _trait_obj: &dyn WebhookService = &component;
+    }
+
+    #[test]
+    fn test_webhook_service_component_get_service_returns_self() {
+        let inner: Arc<dyn WebhookService> = Arc::new(MockWebhookService::success());
+        let component = WebhookServiceComponent::new(inner);
+        let di_obj: &dyn WebhookServiceTrait = &component;
+        let _service: &dyn WebhookService = di_obj.get_service();
+    }
+
+    #[tokio::test]
+    async fn test_webhook_service_component_send_webhook_delegates_to_inner() {
+        let mock = Arc::new(MockWebhookService::success());
+        let component = WebhookServiceComponent::new(mock.clone() as Arc<dyn WebhookService>);
+        let event = make_test_webhook_event();
+        let result = component.send_webhook(&event).await;
+        assert!(result.is_ok());
+        assert_eq!(mock.send_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_webhook_service_component_trigger_completion_delegates_to_inner() {
+        let mock = Arc::new(MockWebhookService::success());
+        let component = WebhookServiceComponent::new(mock.clone() as Arc<dyn WebhookService>);
+        let task = make_test_task_for_service();
+        let result = component.trigger_completion(&task).await;
+        assert!(result.is_ok());
+        assert_eq!(
+            mock.completion_count
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_webhook_service_component_trigger_failure_delegates_to_inner() {
+        let mock = Arc::new(MockWebhookService::success());
+        let component = WebhookServiceComponent::new(mock.clone() as Arc<dyn WebhookService>);
+        let task = make_test_task_for_service();
+        let result = component
+            .trigger_failure(&task, "timeout".to_string())
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(
+            mock.failure_count.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_webhook_service_component_send_webhook_propagates_error() {
+        let mock = Arc::new(MockWebhookService::failing());
+        let component = WebhookServiceComponent::new(mock.clone() as Arc<dyn WebhookService>);
+        let event = make_test_webhook_event();
+        let result = component.send_webhook(&event).await;
+        assert!(result.is_err());
+    }
+
+    // ========== AuditServiceComponent ==========
+    // AuditServiceComponent 接受 Arc<dyn AuditLogRepository>，可用 mock 实现验证
+    // log/log_allow/log_deny/get_logs_for_key/get_logs_for_team/get_denied_requests
+    // 的委托逻辑，以及 AuditLogBuilder 在组件内部的构建行为。
+
+    use std::sync::Mutex;
+
+    /// Mock AuditLogRepository 用于测试 AuditServiceComponent。
+    /// 记录最近一次 create 收到的 AuditLogEntry 以验证 builder 构建结果。
+    struct MockAuditLogRepository {
+        create_count: std::sync::atomic::AtomicU32,
+        last_entry: Mutex<Option<AuditLogEntry>>,
+        should_fail: bool,
+    }
+
+    impl MockAuditLogRepository {
+        fn success() -> Self {
+            Self {
+                create_count: std::sync::atomic::AtomicU32::new(0),
+                last_entry: Mutex::new(None),
+                should_fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                create_count: std::sync::atomic::AtomicU32::new(0),
+                last_entry: Mutex::new(None),
+                should_fail: true,
+            }
+        }
+
+        fn last_entry(&self) -> Option<AuditLogEntry> {
+            self.last_entry
+                .lock()
+                .expect("last_entry mutex poisoned")
+                .clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AuditLogRepository for MockAuditLogRepository {
+        async fn create(
+            &self,
+            entry: &AuditLogEntry,
+        ) -> Result<AuditLogEntry, AuditRepositoryError> {
+            self.create_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.last_entry.lock().expect("last_entry mutex poisoned") = Some(entry.clone());
+            if self.should_fail {
+                return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
+                    "create failed".to_string(),
+                )));
+            }
+            Ok(entry.clone())
+        }
+
+        async fn find_by_api_key_id(
+            &self,
+            _api_key_id: uuid::Uuid,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn find_by_team_id(
+            &self,
+            _team_id: uuid::Uuid,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn find_denied_for_key(
+            &self,
+            _api_key_id: uuid::Uuid,
+            _limit: u64,
+        ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn cleanup_old_logs(
+            &self,
+            _retention_days: i64,
+        ) -> Result<u64, AuditRepositoryError> {
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn test_audit_service_component_new_stores_repo() {
+        let repo: Arc<dyn AuditLogRepository> = Arc::new(MockAuditLogRepository::success());
+        let component = AuditServiceComponent::new(repo);
+        let _trait_obj: &dyn AuditServiceTrait = &component;
+    }
+
+    #[test]
+    fn test_audit_service_component_get_service_returns_self() {
+        let repo: Arc<dyn AuditLogRepository> = Arc::new(MockAuditLogRepository::success());
+        let component = AuditServiceComponent::new(repo);
+        let di_obj: &dyn AuditServiceTraitDI = &component;
+        let _service: &dyn AuditServiceTrait = di_obj.get_service();
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_log_calls_create() {
+        let mock = Arc::new(MockAuditLogRepository::success());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let entry = AuditLogEntry {
+            id: uuid::Uuid::new_v4(),
+            api_key_id: Some(uuid::Uuid::new_v4()),
+            team_id: Some(uuid::Uuid::new_v4()),
+            requested_action: "scrape".to_string(),
+            decision: AuditDecision::Allow,
+            denial_reason: None,
+            scope_used: None,
+            ip_address: None,
+            trace_id: None,
+            user_agent: None,
+            request_path: None,
+            request_method: None,
+            metadata: serde_json::Value::Null,
+            created_at: chrono::Utc::now(),
+        };
+        let result = component.log(entry).await;
+        assert!(result.is_ok());
+        assert_eq!(
+            mock.create_count.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_log_propagates_error() {
+        let mock = Arc::new(MockAuditLogRepository::failing());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let entry = AuditLogEntry {
+            id: uuid::Uuid::new_v4(),
+            api_key_id: None,
+            team_id: None,
+            requested_action: "search".to_string(),
+            decision: AuditDecision::Deny,
+            denial_reason: Some("forbidden".to_string()),
+            scope_used: None,
+            ip_address: None,
+            trace_id: None,
+            user_agent: None,
+            request_path: None,
+            request_method: None,
+            metadata: serde_json::Value::Null,
+            created_at: chrono::Utc::now(),
+        };
+        let result = component.log(entry).await;
+        assert!(result.is_err());
+        match result {
+            Err(AuditServiceError::RepositoryError(_)) => {}
+            other => panic!(
+                "Expected AuditServiceError::RepositoryError, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_log_allow_builds_entry_with_allow_decision() {
+        let mock = Arc::new(MockAuditLogRepository::success());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let api_key_id = uuid::Uuid::new_v4();
+        let team_id = uuid::Uuid::new_v4();
+        let scope = crate::domain::auth::ApiKeyScope::default();
+        let result = component
+            .log_allow("scrape".to_string(), api_key_id, team_id, scope)
+            .await;
+        assert!(result.is_ok());
+        let last = mock.last_entry().expect("entry should have been created");
+        assert_eq!(last.requested_action, "scrape");
+        assert_eq!(last.decision, AuditDecision::Allow);
+        assert_eq!(last.api_key_id, Some(api_key_id));
+        assert_eq!(last.team_id, Some(team_id));
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_log_deny_builds_entry_with_deny_decision() {
+        let mock = Arc::new(MockAuditLogRepository::success());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let api_key_id = uuid::Uuid::new_v4();
+        let team_id = uuid::Uuid::new_v4();
+        let result = component
+            .log_deny(
+                "delete".to_string(),
+                Some(api_key_id),
+                Some(team_id),
+                "insufficient scope".to_string(),
+                None,
+            )
+            .await;
+        assert!(result.is_ok());
+        let last = mock.last_entry().expect("entry should have been created");
+        assert_eq!(last.requested_action, "delete");
+        assert_eq!(last.decision, AuditDecision::Deny);
+        assert_eq!(last.api_key_id, Some(api_key_id));
+        assert_eq!(last.team_id, Some(team_id));
+        assert_eq!(last.denial_reason.as_deref(), Some("insufficient scope"));
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_log_deny_uses_defaults_for_none_ids() {
+        let mock = Arc::new(MockAuditLogRepository::success());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let result = component
+            .log_deny(
+                "search".to_string(),
+                None,
+                None,
+                "no api key".to_string(),
+                None,
+            )
+            .await;
+        assert!(result.is_ok());
+        let last = mock.last_entry().expect("entry should have been created");
+        // unwrap_or_default() 应产生 nil UUID
+        assert_eq!(last.api_key_id, Some(uuid::Uuid::nil()));
+        assert_eq!(last.team_id, Some(uuid::Uuid::nil()));
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_get_logs_for_key_delegates_to_repo() {
+        let mock = Arc::new(MockAuditLogRepository::success());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let result = component
+            .get_logs_for_key(uuid::Uuid::new_v4(), 10, 0)
+            .await;
+        assert!(result.is_ok());
+        let logs = result.expect("logs result");
+        assert!(logs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_get_logs_for_team_delegates_to_repo() {
+        let mock = Arc::new(MockAuditLogRepository::success());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let result = component
+            .get_logs_for_team(uuid::Uuid::new_v4(), 10, 0)
+            .await;
+        assert!(result.is_ok());
+        let logs = result.expect("logs result");
+        assert!(logs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_component_get_denied_requests_delegates_to_repo() {
+        let mock = Arc::new(MockAuditLogRepository::success());
+        let component = AuditServiceComponent::new(mock.clone() as Arc<dyn AuditLogRepository>);
+        let result = component.get_denied_requests(uuid::Uuid::new_v4(), 5).await;
+        assert!(result.is_ok());
+        let logs = result.expect("denied logs result");
+        assert!(logs.is_empty());
+    }
+
+    // ========== AuthScopeServiceComponent ==========
+    // AuthScopeServiceComponent 接受 Arc<dyn AuthScopeRepository>，可用 mock 实现验证
+    // get_scope_for_key/set_scope/delete_scope 的委托逻辑。
+
+    use crate::domain::auth::ApiKeyScope;
+
+    /// Mock AuthScopeRepository 用于测试 AuthScopeServiceComponent。
+    struct MockAuthScopeRepository {
+        stored_scope: Mutex<Option<ApiKeyScope>>,
+        should_fail: bool,
+    }
+
+    impl MockAuthScopeRepository {
+        fn with_scope(scope: ApiKeyScope) -> Self {
+            Self {
+                stored_scope: Mutex::new(Some(scope)),
+                should_fail: false,
+            }
+        }
+
+        fn empty() -> Self {
+            Self {
+                stored_scope: Mutex::new(None),
+                should_fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                stored_scope: Mutex::new(None),
+                should_fail: true,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AuthScopeRepository for MockAuthScopeRepository {
+        async fn find_by_api_key_id(
+            &self,
+            _api_key_id: uuid::Uuid,
+        ) -> Result<Option<ApiKeyScope>, AuthScopeRepoError> {
+            if self.should_fail {
+                return Err(AuthScopeRepoError::Database(sea_orm::DbErr::Custom(
+                    "find failed".to_string(),
+                )));
+            }
+            Ok(self
+                .stored_scope
+                .lock()
+                .expect("stored_scope mutex poisoned")
+                .clone())
+        }
+
+        async fn find_by_api_key(
+            &self,
+            _key: &str,
+        ) -> Result<Option<ApiKeyScope>, AuthScopeRepoError> {
+            Ok(self
+                .stored_scope
+                .lock()
+                .expect("stored_scope mutex poisoned")
+                .clone())
+        }
+
+        async fn upsert(
+            &self,
+            _api_key_id: uuid::Uuid,
+            scope: ApiKeyScope,
+        ) -> Result<ApiKeyScope, AuthScopeRepoError> {
+            if self.should_fail {
+                return Err(AuthScopeRepoError::Database(sea_orm::DbErr::Custom(
+                    "upsert failed".to_string(),
+                )));
+            }
+            *self
+                .stored_scope
+                .lock()
+                .expect("stored_scope mutex poisoned") = Some(scope.clone());
+            Ok(scope)
+        }
+
+        async fn delete_by_api_key_id(
+            &self,
+            _api_key_id: uuid::Uuid,
+        ) -> Result<bool, AuthScopeRepoError> {
+            if self.should_fail {
+                return Err(AuthScopeRepoError::Database(sea_orm::DbErr::Custom(
+                    "delete failed".to_string(),
+                )));
+            }
+            let mut guard = self
+                .stored_scope
+                .lock()
+                .expect("stored_scope mutex poisoned");
+            let existed = guard.is_some();
+            *guard = None;
+            Ok(existed)
+        }
+    }
+
+    #[test]
+    fn test_auth_scope_service_component_new_stores_repo() {
+        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::empty());
+        let component = AuthScopeServiceComponent::new(repo);
+        let _trait_obj: &dyn AuthScopeServiceTrait = &component;
+    }
+
+    #[tokio::test]
+    async fn test_auth_scope_service_component_get_scope_for_key_returns_stored_scope() {
+        let scope = ApiKeyScope::default();
+        let repo: Arc<dyn AuthScopeRepository> =
+            Arc::new(MockAuthScopeRepository::with_scope(scope));
+        let component = AuthScopeServiceComponent::new(repo);
+        let result = component
+            .get_scope_for_key(uuid::Uuid::new_v4(), None)
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_auth_scope_service_component_get_scope_for_key_uses_default_when_not_found() {
+        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::empty());
+        let component = AuthScopeServiceComponent::new(repo);
+        let default_scope = ApiKeyScope::default();
+        let result = component
+            .get_scope_for_key(uuid::Uuid::new_v4(), Some(default_scope))
+            .await;
+        // 当仓库返回 None 时，AuthScopeService 使用 team_default_scope 作为后备
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_auth_scope_service_component_set_scope_delegates_to_repo() {
+        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::empty());
+        let component = AuthScopeServiceComponent::new(repo);
+        let scope = ApiKeyScope::default();
+        let result = component.set_scope(uuid::Uuid::new_v4(), scope).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_auth_scope_service_component_delete_scope_delegates_to_repo() {
+        let repo: Arc<dyn AuthScopeRepository> =
+            Arc::new(MockAuthScopeRepository::with_scope(ApiKeyScope::default()));
+        let component = AuthScopeServiceComponent::new(repo);
+        let result = component.delete_scope(uuid::Uuid::new_v4()).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_auth_scope_service_component_set_scope_propagates_error() {
+        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepository::failing());
+        let component = AuthScopeServiceComponent::new(repo);
+        let result = component
+            .set_scope(uuid::Uuid::new_v4(), ApiKeyScope::default())
+            .await;
+        assert!(result.is_err());
+        match result {
+            Err(AuthScopeServiceError::DatabaseError(_)) => {}
+            other => panic!(
+                "Expected AuthScopeServiceError::DatabaseError, got {:?}",
+                other
+            ),
+        }
+    }
+
+    // ========== 跳过的组件 ==========
+    // 以下组件的构造器需要 mock 多个 trait 或需真实外部服务，无法在无外部依赖环境下测试：
+    // - TeamServiceComponent — 需 mock GeoLocationService + GeoRestrictionRepository
+    // - SearchServiceComponent — 需 mock 多个 repository 和 SearchClient trait
+    // - RateLimitingServiceComponent — feature-gated，需 RedisClient 和多个 repository
+    // - TemplateLoaderComponent — 需读取文件系统中的模板文件
+}

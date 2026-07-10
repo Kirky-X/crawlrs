@@ -213,6 +213,7 @@ pub fn load_and_configure(is_production: bool) -> Result<(Settings, u16)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_support::ENV_MUTEX;
 
     #[test]
     fn test_validate_security_returns_ok_for_non_production() {
@@ -284,5 +285,169 @@ mod tests {
         // Settings should be unchanged after validation
         assert_eq!(settings1.server.port, settings2.server.port);
         assert_eq!(settings1.server.host, settings2.server.host);
+    }
+
+    // ========== detect_available_port tests ==========
+
+    #[test]
+    fn test_detect_available_port_with_detection_disabled_returns_ok() {
+        // Use a high port number likely to be free, with detection disabled.
+        let mut settings = load_settings().expect("Failed to load settings");
+        settings.server.port = 0; // port 0 lets OS assign a free port; but detection disabled means we check this port
+        settings.server.enable_port_detection = false;
+        // Port 0 is reserved; with detection disabled, the sniffer checks if it's in use.
+        // Since port 0 is never bindable, this may behave specially. Use a high port instead.
+        settings.server.port = 49999;
+        let result = detect_available_port(&mut settings);
+        assert!(
+            result.is_ok(),
+            "detect_available_port should return Ok for a free high port with detection disabled"
+        );
+    }
+
+    #[test]
+    fn test_detect_available_port_returns_configured_port_when_free() {
+        let mut settings = load_settings().expect("Failed to load settings");
+        settings.server.port = 49998;
+        settings.server.enable_port_detection = false;
+        let port = detect_available_port(&mut settings).expect("Should find available port");
+        assert_eq!(
+            port, 49998,
+            "Should return the configured port when it is free"
+        );
+    }
+
+    #[test]
+    fn test_detect_available_port_updates_settings_port() {
+        let mut settings = load_settings().expect("Failed to load settings");
+        settings.server.port = 49997;
+        settings.server.enable_port_detection = false;
+        let _ = detect_available_port(&mut settings).expect("Should find available port");
+        assert_eq!(
+            settings.server.port, 49997,
+            "settings.server.port should match the detected port"
+        );
+    }
+
+    #[test]
+    fn test_detect_available_port_with_detection_enabled_returns_ok() {
+        let mut settings = load_settings().expect("Failed to load settings");
+        settings.server.port = 49996;
+        settings.server.enable_port_detection = true;
+        let result = detect_available_port(&mut settings);
+        assert!(
+            result.is_ok(),
+            "detect_available_port should return Ok with detection enabled"
+        );
+    }
+
+    // ========== validate_environment production mode tests ==========
+
+    #[test]
+    fn test_validate_environment_production_missing_required_returns_error() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Save current values
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+
+        // Remove required env vars to trigger missing-required error in production
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("DATABASE_URL");
+        // Enable test mode to skip forbidden variable check
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+
+        let result = validate_environment(true);
+
+        // Restore saved values
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+
+        assert!(
+            result.is_err(),
+            "validate_environment in production mode should error when required env vars are missing"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Missing required environment variables"),
+            "Error should mention missing required env vars, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_validate_environment_production_with_required_vars_succeeds() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+
+        std::env::set_var("APP_ENVIRONMENT", "production");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+
+        let result = validate_environment(true);
+
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+
+        assert!(
+            result.is_ok(),
+            "validate_environment in production mode should succeed when required vars are set and test mode skips forbidden check, got err: {:?}",
+            result.err()
+        );
+    }
+
+    // ========== load_and_configure tests ==========
+
+    #[test]
+    fn test_load_and_configure_non_production_succeeds() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+
+        let result = load_and_configure(false);
+
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+
+        assert!(
+            result.is_ok(),
+            "load_and_configure in non-production mode should succeed, got err: {:?}",
+            result.err()
+        );
+        let (settings, port) = result.expect("load_and_configure should succeed");
+        assert!(port > 0, "Detected port should be greater than 0");
+        assert_eq!(
+            settings.server.port, port,
+            "settings.server.port should match the detected port"
+        );
     }
 }

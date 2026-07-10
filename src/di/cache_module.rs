@@ -145,3 +145,103 @@ impl OxCacheTrait for OxCacheComponent {
 }
 
 // Cache module components - for Shaku DI
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== RedisClientComponent ==========
+
+    #[test]
+    fn test_redis_client_component_new_stores_client() {
+        // RedisClient::new 创建连接池对象但不会立即建立连接，无需运行 Redis 服务器
+        let client = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
+        let component =
+            RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
+        let retrieved = component.get_client();
+        assert!(Arc::ptr_eq(&retrieved, &client));
+    }
+
+    #[test]
+    fn test_redis_client_component_get_returns_clone() {
+        let client = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
+        let component =
+            RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
+        let first = component.get_client();
+        let second = component.get_client();
+        // 多次调用应返回指向同一 RedisClient 的 Arc
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first, &client));
+    }
+
+    #[test]
+    fn test_redis_client_component_as_trait_object() {
+        let client = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
+        let component =
+            RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
+        let trait_obj: &dyn RedisClientTrait = &component;
+        let retrieved = trait_obj.get_client();
+        assert!(Arc::ptr_eq(&retrieved, &client));
+    }
+
+    // ========== OxCacheComponent ==========
+
+    /// 构造一个用于测试的 OxCacheComponent（使用独立的 cache/rate_limiter/concurrency_controller）
+    fn make_oxcache_component() -> OxCacheComponent {
+        let cache: Arc<SearchCache> = Arc::new(
+            block_on(
+                oxcache::Cache::builder()
+                    .capacity(100)
+                    .ttl(std::time::Duration::from_secs(3600))
+                    .build(),
+            )
+            .unwrap(),
+        );
+        let rate_limiter = Arc::new(RateLimiter::new_with_config(100, 20));
+        let concurrency_controller = Arc::new(ConcurrencyController::new(10));
+        OxCacheComponent::new(cache, rate_limiter, concurrency_controller)
+    }
+
+    #[test]
+    fn test_oxcache_component_get_cache_returns_stored_arc() {
+        let component = make_oxcache_component();
+        let cache1 = component.get_cache();
+        let cache2 = component.get_cache();
+        // 多次调用应返回同一 Arc
+        assert!(Arc::ptr_eq(&cache1, &cache2));
+    }
+
+    #[test]
+    fn test_oxcache_component_get_rate_limiter_returns_stored_arc() {
+        let component = make_oxcache_component();
+        let limiter1 = component.get_rate_limiter();
+        let limiter2 = component.get_rate_limiter();
+        assert!(Arc::ptr_eq(&limiter1, &limiter2));
+    }
+
+    #[test]
+    fn test_oxcache_component_get_concurrency_controller_returns_stored_arc() {
+        let component = make_oxcache_component();
+        let controller1 = component.get_concurrency_controller();
+        let controller2 = component.get_concurrency_controller();
+        assert!(Arc::ptr_eq(&controller1, &controller2));
+    }
+
+    #[test]
+    fn test_oxcache_component_as_trait_object() {
+        let component = make_oxcache_component();
+        let trait_obj: &dyn OxCacheTrait = &component;
+        // 通过 trait 对象访问，验证动态分发正常工作
+        let _cache = trait_obj.get_cache();
+        let _limiter = trait_obj.get_rate_limiter();
+        let _controller = trait_obj.get_concurrency_controller();
+    }
+
+    #[test]
+    fn test_oxcache_component_concurrency_controller_has_correct_permits() {
+        let component = make_oxcache_component();
+        let controller = component.get_concurrency_controller();
+        // 构造时设置 max_permits=10，初始可用许可应为 10
+        assert_eq!(controller.available_permits(), 10);
+    }
+}

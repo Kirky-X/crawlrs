@@ -311,3 +311,424 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
         .layer(Extension(rate_limiting_service.clone()))
         .layer(Extension(state.audit_service()))
 }
+
+// Note: create_public_routes, create_protected_routes_with_state,
+// create_v2_routes_with_state, and build_api_app_with_state are not unit-tested
+// here because they require a fully constructed AppState (Shaku DI container with
+// real DatabasePool, RedisClient, and ~30 Arc<dyn Trait> dependencies). These
+// functions are integration-tested via the test harness with Docker-provided
+// PostgreSQL/Redis. See tests/integration/ for coverage of route wiring.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{HeaderValue, Method, Request, StatusCode};
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    /// Build a minimal Router with the given CorsLayer and a simple GET handler.
+    fn cors_test_app(layer: CorsLayer) -> axum::Router {
+        axum::Router::new()
+            .route("/ping", get(|| async { "pong" }))
+            .layer(layer)
+    }
+
+    /// Load settings and override cors.allowed_origins.
+    fn make_settings(origins: &str) -> Settings {
+        let mut settings =
+            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        settings.cors.allowed_origins = origins.to_string();
+        settings
+    }
+
+    // ========== create_cors_layer: wildcard branch ==========
+
+    #[tokio::test]
+    async fn test_cors_wildcard_adds_allow_origin_star() {
+        // Default config has allowed_origins = "*"
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let allow_origin = response
+            .headers()
+            .get("access-control-allow-origin")
+            .expect("CORS wildcard should set access-control-allow-origin");
+        assert_eq!(allow_origin, "*", "wildcard config should allow origin *");
+    }
+
+    #[tokio::test]
+    async fn test_cors_empty_origins_falls_back_to_wildcard() {
+        let settings = make_settings("");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("*")),
+            "empty origins should fall back to wildcard"
+        );
+    }
+
+    // ========== create_cors_layer: specific origins branch ==========
+
+    #[tokio::test]
+    async fn test_cors_specific_origin_reflected_for_matching_request() {
+        let settings = make_settings("https://example.com");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let allow_origin = response
+            .headers()
+            .get("access-control-allow-origin")
+            .expect("matching origin should get access-control-allow-origin header");
+        assert_eq!(
+            allow_origin, "https://example.com",
+            "specific origin config should reflect the request origin"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_specific_origin_not_set_for_non_matching_request() {
+        let settings = make_settings("https://example.com");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .header("origin", "https://evil.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "non-matching origin should NOT get CORS allow-origin header"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_multiple_specific_origins_match_one() {
+        let settings = make_settings("https://example.com,https://api.example.com");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .header("origin", "https://api.example.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("https://api.example.com")),
+            "second origin in list should be allowed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_whitespace_origins_are_trimmed() {
+        let settings = make_settings(" https://example.com , https://api.example.com ");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("https://example.com")),
+            "whitespace-padded origins should be trimmed and still match"
+        );
+    }
+
+    // ========== create_cors_layer: preflight (OPTIONS) tests ==========
+
+    #[tokio::test]
+    async fn test_cors_preflight_specific_origin_returns_allow_methods() {
+        let settings = make_settings("https://example.com");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let allow_methods = response
+            .headers()
+            .get("access-control-allow-methods")
+            .expect("preflight should return access-control-allow-methods");
+        let methods_str = allow_methods.to_str().expect("methods header is ASCII");
+        assert!(
+            methods_str.contains("GET"),
+            "allow-methods should include GET, got: {}",
+            methods_str
+        );
+        assert!(
+            methods_str.contains("POST"),
+            "allow-methods should include POST, got: {}",
+            methods_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_preflight_specific_origin_returns_allow_headers() {
+        let settings = make_settings("https://example.com");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", "content-type")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let allow_headers = response
+            .headers()
+            .get("access-control-allow-headers")
+            .expect("preflight should return access-control-allow-headers");
+        let headers_str = allow_headers.to_str().expect("headers header is ASCII");
+        assert!(
+            headers_str.contains("authorization"),
+            "allow-headers should include authorization, got: {}",
+            headers_str
+        );
+        assert!(
+            headers_str.contains("content-type"),
+            "allow-headers should include content-type, got: {}",
+            headers_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_preflight_returns_max_age() {
+        let settings = make_settings("https://example.com");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let max_age = response
+            .headers()
+            .get("access-control-max-age")
+            .expect("preflight should return access-control-max-age");
+        let max_age_str = max_age.to_str().expect("max-age is ASCII");
+        let max_age_secs: u64 = max_age_str.parse().expect("max-age should be a number");
+        assert_eq!(
+            max_age_secs, CORS_MAX_AGE_SECS,
+            "max-age should match CORS_MAX_AGE_SECS constant"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_preflight_exposes_request_id_header() {
+        let settings = make_settings("https://example.com");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        // Regular GET request should include expose-headers in response
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let expose = response
+            .headers()
+            .get("access-control-expose-headers")
+            .expect("response should include access-control-expose-headers");
+        let expose_str = expose.to_str().expect("expose-headers is ASCII");
+        assert!(
+            expose_str.contains("x-request-id"),
+            "expose-headers should include x-request-id, got: {}",
+            expose_str
+        );
+    }
+
+    // ========== create_cors_layer: invalid origin fallback ==========
+    // Note: Most strings (including those with spaces) are valid HeaderValue bytes,
+    // so the "origins is empty after filter_map" fallback is nearly unreachable via
+    // normal string input. Here we verify the behavior of an unparseable config:
+    // a string with control chars that HeaderValue::from_str rejects.
+
+    #[tokio::test]
+    async fn test_cors_unparseable_origin_falls_back_to_wildcard() {
+        // A string containing a NUL byte cannot be parsed as HeaderValue,
+        // so the origins vec is empty after filter_map → wildcard fallback.
+        let invalid = format!("https://{}.example.com", '\0');
+        let settings = make_settings(&invalid);
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("*")),
+            "unparseable origin config should fall back to wildcard"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_origin_with_spaces_is_valid_header_value() {
+        // Spaces are allowed in HeaderValue, so "invalid origin with spaces"
+        // is treated as a specific (but useless) allowed origin. A request
+        // with a real origin should NOT get CORS headers.
+        let settings = make_settings("invalid origin with spaces");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .header("origin", "https://example.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "request origin 'https://example.com' should not match the configured 'invalid origin with spaces'"
+        );
+    }
+
+    // ========== create_cors_layer: no Origin header ==========
+
+    #[tokio::test]
+    async fn test_cors_no_origin_header_no_cors_headers() {
+        let settings = make_settings("https://example.com");
+        let app = cors_test_app(create_cors_layer(&settings));
+
+        // Request without Origin header — CORS layer is a no-op
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ping")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "request without Origin should not get CORS headers"
+        );
+    }
+}

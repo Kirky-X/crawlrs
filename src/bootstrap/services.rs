@@ -471,3 +471,256 @@ pub fn init_services(
         expiration_worker,
     }
 }
+
+// Note: The following functions are not unit-tested here because they require
+// real external services that are only available in Docker-based integration tests:
+//   - init_rate_limiting_service: needs Arc<RedisClient> + Repositories (DB pool)
+//   - init_search_service: needs Repositories (DB pool for crawl/task/credits repos)
+//   - init_auth_scope_service: needs dbnexus::DbPool (PostgreSQL connection)
+//   - init_services: needs InfrastructureComponents (full DB + Redis + HTTP stack)
+// These are covered by integration tests in tests/integration/ with Docker-provided
+// PostgreSQL and Redis.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::models::CreditsTransactionType;
+    use crate::domain::services::rate_limiting_service::{
+        BacklogService, ConcurrencyControlService, ConcurrencyResult, QuotaService,
+        RateLimitResult, RateLimitService, RateLimitingError,
+    };
+
+    fn make_http_client() -> Arc<reqwest::Client> {
+        Arc::new(reqwest::Client::new())
+    }
+
+    fn make_engine_client() -> Arc<EngineClient> {
+        Arc::new(EngineClient::new())
+    }
+
+    // ========== Mock RateLimitingService for init_rate_limit_middleware tests ==========
+
+    /// A no-op mock implementation of RateLimitingService for unit testing.
+    /// All methods return Ok with default/empty values.
+    struct MockRateLimitingService;
+
+    #[async_trait::async_trait]
+    impl RateLimitService for MockRateLimitingService {
+        async fn check_rate_limit(
+            &self,
+            _api_key: &str,
+            _endpoint: &str,
+        ) -> Result<RateLimitResult, RateLimitingError> {
+            Ok(RateLimitResult::Allowed)
+        }
+
+        async fn get_team_rate_limit_config(
+            &self,
+            _team_id: uuid::Uuid,
+        ) -> Result<RateLimitConfig, RateLimitingError> {
+            Ok(RateLimitConfig::default())
+        }
+
+        async fn update_team_rate_limit_config(
+            &self,
+            _team_id: uuid::Uuid,
+            _config: RateLimitConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConcurrencyControlService for MockRateLimitingService {
+        async fn check_team_concurrency(
+            &self,
+            _team_id: uuid::Uuid,
+            _task_id: uuid::Uuid,
+        ) -> Result<ConcurrencyResult, RateLimitingError> {
+            Ok(ConcurrencyResult::Allowed)
+        }
+
+        async fn release_team_concurrency_slot(
+            &self,
+            _team_id: uuid::Uuid,
+            _task_id: uuid::Uuid,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn get_team_current_concurrency(
+            &self,
+            _team_id: uuid::Uuid,
+        ) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+
+        async fn get_team_concurrency_config(
+            &self,
+            _team_id: uuid::Uuid,
+        ) -> Result<ConcurrencyConfig, RateLimitingError> {
+            Ok(ConcurrencyConfig::default())
+        }
+
+        async fn update_team_concurrency_config(
+            &self,
+            _team_id: uuid::Uuid,
+            _config: ConcurrencyConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BacklogService for MockRateLimitingService {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: uuid::Uuid,
+        ) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl QuotaService for MockRateLimitingService {
+        async fn check_and_deduct_quota(
+            &self,
+            _team_id: uuid::Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<uuid::Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn get_quota_balance(&self, _team_id: uuid::Uuid) -> Result<i64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    impl RateLimitingService for MockRateLimitingService {}
+
+    // ========== init_team_semaphore tests ==========
+
+    #[test]
+    fn test_init_team_semaphore_creates_instance() {
+        let semaphore = init_team_semaphore(10);
+        assert!(
+            Arc::strong_count(&semaphore) >= 1,
+            "init_team_semaphore should return a valid Arc<TeamSemaphore>"
+        );
+    }
+
+    #[test]
+    fn test_init_team_semaphore_with_different_limits() {
+        let s1 = init_team_semaphore(1);
+        let s2 = init_team_semaphore(100);
+        let s3 = init_team_semaphore(1000);
+        // All should be successfully created
+        assert!(Arc::strong_count(&s1) >= 1);
+        assert!(Arc::strong_count(&s2) >= 1);
+        assert!(Arc::strong_count(&s3) >= 1);
+    }
+
+    #[test]
+    fn test_init_team_semaphore_zero_limit() {
+        // A zero limit is edge case; should still create without panic
+        let semaphore = init_team_semaphore(0);
+        assert!(Arc::strong_count(&semaphore) >= 1);
+    }
+
+    // ========== init_regex_cache tests ==========
+
+    #[test]
+    fn test_init_regex_cache_creates_instance() {
+        let cache = init_regex_cache();
+        // Verify the cache is usable by getting/inserting a simple pattern
+        let result = cache.get_or_insert(r"\d+");
+        assert!(
+            result.is_ok(),
+            "RegexCache should be usable after init_regex_cache"
+        );
+    }
+
+    #[test]
+    fn test_init_regex_cache_returns_arc() {
+        let cache = init_regex_cache();
+        assert!(
+            Arc::strong_count(&cache) >= 1,
+            "init_regex_cache should return a valid Arc<RegexCache>"
+        );
+    }
+
+    // ========== init_llm_service tests ==========
+
+    #[test]
+    fn test_init_llm_service_creates_instance() {
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let http_client = make_http_client();
+        let service = init_llm_service(&settings, http_client);
+        // Verify the service is a valid Arc<dyn LLMServiceTrait>
+        assert!(
+            Arc::strong_count(&service) >= 1,
+            "init_llm_service should return a valid Arc"
+        );
+    }
+
+    // ========== init_search_engine tests ==========
+
+    #[test]
+    fn test_init_search_engine_creates_instance() {
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let engine_client = make_engine_client();
+        let search_engine = init_search_engine(engine_client, &settings);
+        assert!(
+            Arc::strong_count(&search_engine) >= 1,
+            "init_search_engine should return a valid Arc<dyn SearchEngine>"
+        );
+    }
+
+    #[test]
+    fn test_init_search_engine_with_ab_test_disabled() {
+        let mut settings =
+            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        settings.search.ab_test_enabled = false;
+        let engine_client = make_engine_client();
+        let _search_engine = init_search_engine(engine_client, &settings);
+        // Should create without panic; with ab_test disabled, returns SearchAggregator directly
+    }
+
+    #[test]
+    fn test_init_search_engine_with_ab_test_enabled() {
+        let mut settings =
+            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        settings.search.ab_test_enabled = true;
+        settings.search.variant_b_weight = 0.5;
+        let engine_client = make_engine_client();
+        let _search_engine = init_search_engine(engine_client, &settings);
+        // Should create without panic; with ab_test enabled, wraps in SearchABTestEngine
+    }
+
+    // ========== init_rate_limit_middleware tests ==========
+
+    #[test]
+    fn test_init_rate_limit_middleware_creates_instance() {
+        let mock: Arc<dyn RateLimitingService> = Arc::new(MockRateLimitingService);
+        let middleware = init_rate_limit_middleware(mock);
+        // RateLimitMiddleware derives Clone; verify clone works
+        let _cloned = middleware.clone();
+    }
+
+    #[test]
+    fn test_init_rate_limit_middleware_with_cloned_service() {
+        let mock: Arc<dyn RateLimitingService> = Arc::new(MockRateLimitingService);
+        // Verify the middleware can be created with a cloned Arc
+        let middleware = init_rate_limit_middleware(mock.clone());
+        let _middleware2 = init_rate_limit_middleware(mock);
+        // Both should be successfully created (verify no panic)
+        let _ = &middleware;
+    }
+}

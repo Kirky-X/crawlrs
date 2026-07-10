@@ -138,3 +138,118 @@ impl SearchClientTrait for SearchClientComponent {
 }
 
 // Search module components - for Shaku DI
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== HttpClientComponent ==========
+
+    #[test]
+    fn test_http_client_component_new_stores_client() {
+        let client = Arc::new(reqwest::Client::new());
+        let component = HttpClientComponent::new(client.clone());
+        let retrieved = component.get_client();
+        assert!(Arc::ptr_eq(&retrieved, &client));
+    }
+
+    #[test]
+    fn test_http_client_component_get_returns_clone() {
+        let client = Arc::new(reqwest::Client::new());
+        let component = HttpClientComponent::new(client.clone());
+        let first = component.get_client();
+        let second = component.get_client();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first, &client));
+    }
+
+    #[test]
+    fn test_http_client_component_as_trait_object() {
+        let client = Arc::new(reqwest::Client::new());
+        let component = HttpClientComponent::new(client.clone());
+        let trait_obj: &dyn HttpClientTrait = &component;
+        let retrieved = trait_obj.get_client();
+        assert!(Arc::ptr_eq(&retrieved, &client));
+    }
+
+    // ========== EngineClientComponent ==========
+
+    #[test]
+    fn test_engine_client_component_new_stores_client() {
+        let engine_client = Arc::new(EngineClient::new());
+        let component = EngineClientComponent::new(engine_client.clone());
+        let retrieved = component.get_client();
+        assert!(Arc::ptr_eq(&retrieved, &engine_client));
+    }
+
+    #[test]
+    fn test_engine_client_component_get_returns_clone() {
+        let engine_client = Arc::new(EngineClient::new());
+        let component = EngineClientComponent::new(engine_client.clone());
+        let first = component.get_client();
+        let second = component.get_client();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first, &engine_client));
+    }
+
+    #[test]
+    fn test_engine_client_component_as_trait_object() {
+        let engine_client = Arc::new(EngineClient::new());
+        let component = EngineClientComponent::new(engine_client.clone());
+        let trait_obj: &dyn EngineClientTrait = &component;
+        let retrieved = trait_obj.get_client();
+        assert!(Arc::ptr_eq(&retrieved, &engine_client));
+    }
+
+    // ========== SearchAggregatorComponent ==========
+
+    #[test]
+    fn test_search_aggregator_component_new_stores_aggregator() {
+        let aggregator = Arc::new(SearchAggregator::new(Vec::new(), 5000));
+        let component = SearchAggregatorComponent::new(aggregator.clone());
+        let retrieved = component.get_aggregator();
+        // get_aggregator() 返回 &SearchAggregator，应指向 Arc 内部的同一对象
+        let aggregator_ptr = Arc::as_ptr(&aggregator) as *const SearchAggregator;
+        let retrieved_ptr = retrieved as *const SearchAggregator;
+        assert_eq!(aggregator_ptr, retrieved_ptr);
+    }
+
+    #[test]
+    fn test_search_aggregator_component_as_trait_object() {
+        let aggregator = Arc::new(SearchAggregator::new(Vec::new(), 3000));
+        let component = SearchAggregatorComponent::new(aggregator.clone());
+        let trait_obj: &dyn SearchAggregatorTrait = &component;
+        let retrieved = trait_obj.get_aggregator();
+        let aggregator_ptr = Arc::as_ptr(&aggregator) as *const SearchAggregator;
+        let retrieved_ptr = retrieved as *const SearchAggregator;
+        assert_eq!(aggregator_ptr, retrieved_ptr);
+    }
+
+    // ========== SearchClientComponent ==========
+
+    #[test]
+    fn test_search_client_component_new() {
+        let engine_client = Arc::new(EngineClient::new());
+        let component = SearchClientComponent::new(engine_client);
+        // 构造成功即可验证
+        let _trait_obj: &dyn SearchClientTrait = &component;
+    }
+
+    #[tokio::test]
+    async fn test_search_client_component_default_engine() {
+        let engine_client = Arc::new(EngineClient::new());
+        let component = SearchClientComponent::new(engine_client);
+        // default_engine() 应返回一个有效的搜索引擎类型
+        let engine = component.default_engine();
+        let _ = engine; // 验证方法可调用
+    }
+
+    #[test]
+    fn test_search_client_component_as_trait_object() {
+        let engine_client = Arc::new(EngineClient::new());
+        let component = SearchClientComponent::new(engine_client);
+        let trait_obj: &dyn SearchClientTrait = &component;
+        // 通过 trait 对象访问，验证动态分发正常工作
+        let _engine = trait_obj.default_engine();
+    }
+}

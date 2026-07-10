@@ -132,3 +132,142 @@ pub fn init_engine_components(
         engine_client,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_http_client() -> Arc<reqwest::Client> {
+        Arc::new(reqwest::Client::new())
+    }
+
+    // ========== init_engines tests ==========
+
+    #[test]
+    fn test_init_engines_returns_non_empty_vec() {
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let engines = init_engines(http_client, "http://localhost:10808", &engine_config);
+        assert!(
+            !engines.is_empty(),
+            "init_engines should return at least one engine"
+        );
+    }
+
+    #[test]
+    fn test_init_engines_default_contains_reqwest_engine() {
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let engines = init_engines(http_client, "http://localhost:10808", &engine_config);
+        let engine_names: Vec<&str> = engines.iter().map(|e| e.name()).collect();
+        assert!(
+            engine_names.contains(&"reqwest"),
+            "init_engines should include the reqwest engine by default, got: {:?}",
+            engine_names
+        );
+    }
+
+    #[test]
+    fn test_init_engines_default_has_at_least_one_engine() {
+        // With default features, only reqwest engine is available.
+        // Other engines (playwright, fire-cdp, fire-tls, flaresolverr) are behind feature flags.
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let engines = init_engines(http_client, "http://localhost:10808", &engine_config);
+        assert!(
+            !engines.is_empty(),
+            "Should have at least 1 engine with default features"
+        );
+    }
+
+    #[test]
+    fn test_init_engines_with_empty_proxy_url() {
+        // Verify init_engines works with an empty proxy URL string.
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let engines = init_engines(http_client, "", &engine_config);
+        assert!(!engines.is_empty());
+    }
+
+    // ========== init_engine_components tests ==========
+
+    #[test]
+    fn test_init_engine_components_populates_all_fields() {
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let components = init_engine_components(
+            http_client,
+            "http://localhost:10808".to_string(),
+            &engine_config,
+        );
+        assert!(
+            !components.engines.is_empty(),
+            "engines vec should be non-empty"
+        );
+        // router and engine_client should be valid Arcs
+        let _router = &components.router;
+        let _engine_client = &components.engine_client;
+    }
+
+    #[test]
+    fn test_init_engine_components_engines_non_empty() {
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let components = init_engine_components(
+            http_client,
+            "http://localhost:10808".to_string(),
+            &engine_config,
+        );
+        assert!(
+            !components.engines.is_empty(),
+            "EngineComponents.engines should be non-empty"
+        );
+    }
+
+    #[test]
+    fn test_init_engine_components_router_created() {
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let components = init_engine_components(
+            http_client,
+            "http://localhost:10808".to_string(),
+            &engine_config,
+        );
+        // The router should have registered engines matching the engines vec
+        let registered = components.router.registered_engines();
+        assert!(
+            !registered.is_empty(),
+            "router should have registered engines"
+        );
+    }
+
+    #[test]
+    fn test_init_engine_components_engine_client_created() {
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let components = init_engine_components(
+            http_client,
+            "http://localhost:10808".to_string(),
+            &engine_config,
+        );
+        // EngineClient should report at least 1 engine
+        assert!(
+            components.engine_client.engine_count() >= 1,
+            "engine_client should report at least 1 engine"
+        );
+    }
+
+    #[test]
+    fn test_init_engine_components_clone() {
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let components = init_engine_components(
+            http_client,
+            "http://localhost:10808".to_string(),
+            &engine_config,
+        );
+        // EngineComponents derives Clone; verify clone produces equivalent field counts
+        let cloned = components.clone();
+        assert_eq!(components.engines.len(), cloned.engines.len());
+    }
+}

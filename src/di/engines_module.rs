@@ -128,3 +128,60 @@ impl EngineRouterTrait for EngineRouterComponent {
 }
 
 // Engines module components - for Shaku DI
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== EngineRouterComponent ==========
+
+    #[test]
+    fn test_engine_router_component_with_defaults_has_no_engines() {
+        let component = EngineRouterComponent::with_defaults();
+        // 空引擎列表应返回 0 个已注册引擎
+        let engines = component.registered_engines();
+        assert!(engines.is_empty());
+    }
+
+    #[test]
+    fn test_engine_router_component_new_with_empty_engines() {
+        let component = EngineRouterComponent::new(Vec::new());
+        let engines = component.registered_engines();
+        assert!(engines.is_empty());
+    }
+
+    #[test]
+    fn test_engine_router_component_get_engine_stats_empty() {
+        let component = EngineRouterComponent::with_defaults();
+        let stats = component.get_engine_stats();
+        // 空引擎列表应返回空的统计 HashMap
+        assert!(stats.is_empty());
+    }
+
+    #[test]
+    fn test_engine_router_component_reset_engine_stats_no_panic() {
+        let component = EngineRouterComponent::with_defaults();
+        // 重置不存在的引擎统计不应 panic
+        component.reset_engine_stats("nonexistent_engine");
+    }
+
+    // ========== EngineClientComponent ==========
+
+    #[test]
+    fn test_engine_client_component_new_with_empty_router() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouterComponent::with_defaults());
+        let component = EngineClientComponent::new(router);
+        // 空路由器应返回 0 个引擎
+        assert_eq!(component.engine_count(), 0);
+        assert!(component.registered_engines().is_empty());
+    }
+
+    #[test]
+    fn test_engine_client_component_as_trait_object() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouterComponent::with_defaults());
+        let component = EngineClientComponent::new(router);
+        let trait_obj: &dyn crate::engines::engine_client::EngineClientTrait = &component;
+        // 通过 trait 对象访问，验证动态分发正常工作
+        assert_eq!(trait_obj.engine_count(), 0);
+    }
+}

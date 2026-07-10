@@ -426,3 +426,23 @@ impl AppStateExt for Arc<AppState> {
         self.as_ref().geo_restriction_repo()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // AppState 和 AppStateExt 的单元测试说明
+    //
+    // AppState 结构体包含 31 个字段，其中包括：
+    //   - db_pool: Arc<DbPool>          — 需要真实数据库连接
+    //   - redis_client: Arc<RedisClient> — 可构造但需连接池
+    //   - 多个 Arc<dyn Trait> 字段       — 需要 mock 实现
+    //   - Arc<WebhookWorker> 等          — 需要 repository 依赖
+    //
+    // 由于 db_pool 字段强制要求 Arc<DbPool>，而 DbPool 必须连接真实 PostgreSQL
+    // 数据库才能构造，因此无法在无数据库的单元测试环境中构造 AppState 实例。
+    //
+    // AppStateExt trait 的实现仅是简单的字段访问器（clone Arc），
+    // 其正确性由 Rust 编译器保证，无需运行时测试验证。
+    //
+    // 对 AppState 的完整测试应通过集成测试（tests/ 目录）在 Docker 环境
+    // 中进行，使用真实数据库和 Redis 服务。
+}

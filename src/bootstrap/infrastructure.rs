@@ -285,3 +285,103 @@ pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureCo
         storage_repo,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== init_http_client tests ==========
+
+    #[test]
+    fn test_init_http_client_returns_ok_with_default_settings() {
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let result = init_http_client(&settings);
+        assert!(
+            result.is_ok(),
+            "init_http_client should succeed with default settings"
+        );
+    }
+
+    #[test]
+    fn test_init_http_client_returns_arc_client() {
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let client = init_http_client(&settings).expect("Should create HTTP client");
+        // Verify the client is usable (can build a request without sending)
+        let _req = client.get("http://localhost");
+    }
+
+    #[test]
+    fn test_init_http_client_with_proxy_disabled() {
+        let mut settings =
+            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        settings.proxy.enabled = false;
+        let result = init_http_client(&settings);
+        assert!(
+            result.is_ok(),
+            "init_http_client should succeed with proxy disabled"
+        );
+    }
+
+    #[test]
+    fn test_init_http_client_with_invalid_proxy_url_does_not_panic() {
+        let mut settings =
+            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        settings.proxy.enabled = true;
+        // Set an invalid proxy URL to test error handling path
+        settings.proxy.url = "not-a-valid-url".to_string();
+        // init_http_client should handle the invalid proxy gracefully (warn + continue)
+        let result = init_http_client(&settings);
+        assert!(
+            result.is_ok(),
+            "init_http_client should succeed even with invalid proxy URL (just disables proxy)"
+        );
+    }
+
+    #[test]
+    fn test_init_http_client_with_valid_proxy_url() {
+        let mut settings =
+            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        settings.proxy.enabled = true;
+        settings.proxy.url = "http://localhost:10808".to_string();
+        let result = init_http_client(&settings);
+        assert!(
+            result.is_ok(),
+            "init_http_client should succeed with a valid proxy URL"
+        );
+    }
+
+    // ========== init_oxcache tests ==========
+
+    #[tokio::test]
+    async fn test_init_oxcache_returns_ok_when_cache_disabled() {
+        let mut settings =
+            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        settings.cache.enabled = false;
+        let result = init_oxcache(&settings).await;
+        assert!(
+            result.is_ok(),
+            "init_oxcache should return Ok when cache is disabled"
+        );
+        let cache = result.expect("init_oxcache should succeed");
+        assert!(
+            cache.is_none(),
+            "oxcache should be None when cache is disabled"
+        );
+    }
+
+    // ========== init_storage_repository tests ==========
+
+    #[test]
+    fn test_init_storage_repository_with_local_storage() {
+        let mut settings =
+            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        // Force local storage type (no external S3 dependency)
+        settings.storage.storage_type = "local".to_string();
+        let result = init_storage_repository(&settings);
+        assert!(
+            result.is_ok(),
+            "init_storage_repository should succeed with local storage type, got err: {:?}",
+            result.err()
+        );
+    }
+}
