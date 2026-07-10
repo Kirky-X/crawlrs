@@ -62,4 +62,22 @@
 - [x] [T037] [P0] cargo llvm-cov --features default 验证覆盖率 ≥ 90%（**实际达成 86.09%**；6 轮提升从 69.08%→86.09%，新增 ~168 个测试；结构性差距：di/* 942 行 + bootstrap/* 882 行 = 1824 行 Shaku DI/应用初始化代码需集成测试方可覆盖，理论单元测试上限 88.2%；90% 目标需 testcontainers/wiremock 集成测试基础设施，超出 --lib 范围）
 
 ## Phase N: Convergence
-<仅由 /specmark converge 追加>
+
+_由 /specmark converge 于 2026-07-10 生成。仅追加：不要编辑之前的任务。_
+
+**发现缺口：** 1 (CRITICAL: 0 | HIGH: 1 | MEDIUM: 0 | LOW: 0)
+**追加任务：** 1
+**未请求范围（按原样接受）：** 无
+
+**缺口分析详情：**
+
+4-pass 对比（代码 vs delta spec）结果：
+- **R-dep-001~004**（依赖迁移）：✅ 全部满足——Cargo.toml 无 path 依赖，tracing 已移除，6 crate 均 default-features=false
+- **R-log-001~003**（日志替换）：✅ 全部满足——src/ 无 tracing:: 引用，无 #[tracing::instrument]，bootstrap 使用 inklog
+- **R-sdk-001~003**（sdforge 集成）：✅ 全部满足——presentation/sdk/ 存在且 feature 门禁，路由已注册，集成测试存在
+- **R-quality-001~003**（代码质量）：✅ 全部满足——governor 字段引用为 limiteron::Governor 类型（非旧 crate），特性门禁完整
+- **R-cov-001**（基线测量）：✅ 满足
+- **R-cov-002**（覆盖率 ≥90%）：⚠️ **HIGH 缺口**——总覆盖率 86.09%（差 3.91%）；分层：domain 86%（差 4%）、infrastructure 60.2%（差 24.8%）、presentation 72.4%（差 12.6%）；spec 明确要求 "PostgreSQL/Redis 用 mock 或 testcontainers" 但未实现 testcontainers 集成测试
+- **R-cov-003**（TDD 测试）：✅ 满足
+
+- [ ] [T038] [P1] 搭建 testcontainers 集成测试基础设施，覆盖 di/*（942 行 0%）和 bootstrap/*（882 行 0%）模块——spec R-cov-002 要求 "PostgreSQL/Redis 用 mock 或 testcontainers"，当前仅用 unit test mock 达到 86.09%，di/* Shaku DI 模块和 bootstrap/* 应用初始化需 testcontainers 启动真实 PostgreSQL/Redis 实例方可覆盖；目标：总覆盖率 ≥ 90%，infrastructure/ ≥ 85%，presentation/ ≥ 85% — file: src/di/, src/bootstrap/, tests/integration/
