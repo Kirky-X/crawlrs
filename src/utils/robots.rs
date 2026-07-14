@@ -72,11 +72,9 @@ impl CacheStats {
     }
 }
 
-use shaku::Interface;
-
 /// Robots.txt检查器接口
 #[async_trait]
-pub trait RobotsCheckerTrait: Interface + Send + Sync {
+pub trait RobotsCheckerTrait: Send + Sync {
     /// 检查URL是否被允许访问
     async fn is_allowed(&self, url_str: &str, user_agent: &str) -> Result<bool>;
     /// 获取爬取延迟

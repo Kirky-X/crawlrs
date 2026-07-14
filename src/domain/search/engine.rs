@@ -5,7 +5,6 @@
 
 use crate::domain::models::search_result::SearchResult;
 use async_trait::async_trait;
-use shaku::Interface;
 use thiserror::Error;
 
 #[derive(Debug, Error, Clone)]
@@ -21,7 +20,7 @@ pub enum SearchError {
 }
 
 #[async_trait]
-pub trait SearchEngine: Interface + Send + Sync {
+pub trait SearchEngine: Send + Sync {
     /// Perform a search query
     async fn search(
         &self,

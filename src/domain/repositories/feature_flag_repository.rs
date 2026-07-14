@@ -10,7 +10,6 @@
 //! infrastructure layer, following the Dependency Inversion Principle.
 
 use async_trait::async_trait;
-use shaku::Interface;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -44,7 +43,7 @@ impl From<sea_orm::DbErr> for FeatureFlagRepositoryError {
 /// Defines the interface for feature flag persistence operations.
 /// Implementations should handle database interactions and error mapping.
 #[async_trait]
-pub trait FeatureFlagRepository: Interface + Send + Sync {
+pub trait FeatureFlagRepository: Send + Sync {
     /// Find a feature flag by its name
     ///
     /// # Arguments

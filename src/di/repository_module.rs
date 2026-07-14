@@ -3,26 +3,19 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Repository module for Shaku dependency injection.
+//! Repository module for dependency injection.
 //!
-//! This module provides Shaku components for repository layer dependencies
+//! This module provides components for repository layer dependencies
 //! with optimized instance caching using `OnceCell` for singleton pattern.
 //!
 //! # Performance Optimization
 //!
 //! Each repository component uses `OnceCell` to cache the underlying repository
 //! implementation, avoiding repeated instantiation on every method call.
-//!
-//! # Macro-based Component Generation
-//!
-//! The `impl_repository_component!` macro generates boilerplate code for
-//! repository components, significantly reducing code duplication.
 
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::OnceLock;
-
-use shaku::{Component, HasComponent, Module, ModuleBuildContext};
 
 use dbnexus::DbPool;
 
@@ -50,88 +43,6 @@ use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRep
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use anyhow::Result;
 
-use super::database_module::DatabasePoolTrait;
-
-// =============================================================================
-// Repository Component Macro
-// =============================================================================
-
-/// Macro to generate repository component with cached implementation.
-///
-/// This macro generates:
-/// - Struct definition with `pool` and `repo_cache` fields
-/// - `Component` implementation for Shaku DI
-/// - `new()` constructor
-/// - `get_repo()` method for lazy initialization
-/// - `Deref` implementation for transparent delegation
-///
-/// # Arguments
-///
-/// * `$component_name` - Name of the component struct
-/// * `$impl_type` - The concrete repository implementation type
-/// * `$trait_type` - The trait type this component implements
-/// * `$pool_field` - The field name in DatabasePool to use (usually `inner`)
-///
-/// # Example
-///
-/// ```ignore
-/// impl_repository_component!(
-///     CreditsRepositoryComponent,
-///     CreditsRepositoryImpl,
-///     CreditsRepository
-/// );
-/// ```
-macro_rules! impl_repository_component {
-    ($component_name:ident, $impl_type:ty, $trait_type:path) => {
-        /// Repository component with cached implementation instance.
-        ///
-        /// Uses `OnceLock` to cache the underlying repository implementation,
-        /// avoiding repeated instantiation on every method call.
-        pub struct $component_name {
-            pool: Arc<DatabasePool>,
-            /// Cached repository instance
-            repo_cache: OnceLock<$impl_type>,
-        }
-
-        impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M> for $component_name {
-            type Interface = dyn $trait_type;
-            type Parameters = ();
-
-            fn build(
-                context: &mut ModuleBuildContext<M>,
-                _: Self::Parameters,
-            ) -> Box<Self::Interface> {
-                let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
-                Box::new(Self::new(pool_component.get_pool()))
-            }
-        }
-
-        impl $component_name {
-            /// Create a new repository component with explicit dependencies.
-            pub fn new(pool: Arc<DatabasePool>) -> Self {
-                Self {
-                    pool,
-                    repo_cache: OnceLock::new(),
-                }
-            }
-
-            /// Get or create the cached repository instance.
-            fn get_repo(&self) -> &$impl_type {
-                self.repo_cache
-                    .get_or_init(|| <$impl_type>::new(self.pool.clone_inner()))
-            }
-        }
-
-        impl Deref for $component_name {
-            type Target = $impl_type;
-
-            fn deref(&self) -> &Self::Target {
-                self.get_repo()
-            }
-        }
-    };
-}
-
 // =============================================================================
 // TaskRepository Component with Instance Caching
 // =============================================================================
@@ -146,20 +57,6 @@ pub struct TaskRepositoryComponent {
     task_lock_duration_seconds: i64,
     /// Cached repository instance
     repo_cache: OnceLock<TaskRepositoryImpl>,
-}
-
-impl<M: Module + HasComponent<dyn DatabasePoolTrait>> Component<M> for TaskRepositoryComponent {
-    type Interface = dyn TaskRepository;
-    type Parameters = i64;
-
-    fn build(
-        context: &mut ModuleBuildContext<M>,
-        lock_duration: Self::Parameters,
-    ) -> Box<Self::Interface> {
-        let pool_component: Arc<dyn DatabasePoolTrait> = M::build_component(context);
-        let pool = pool_component.get_pool();
-        Box::new(Self::new(pool, lock_duration))
-    }
 }
 
 impl TaskRepositoryComponent {
@@ -334,14 +231,42 @@ impl TaskRepository for TaskRepositoryComponent {
 }
 
 // =============================================================================
-// Standard Repository Components (using macro)
+// Standard Repository Components
 // =============================================================================
 
-impl_repository_component!(
-    CreditsRepositoryComponent,
-    CreditsRepositoryImpl,
-    CreditsRepository
-);
+/// Repository component with cached implementation instance.
+///
+/// Uses `OnceLock` to cache the underlying repository implementation,
+/// avoiding repeated instantiation on every method call.
+pub struct CreditsRepositoryComponent {
+    pool: Arc<DatabasePool>,
+    /// Cached repository instance
+    repo_cache: OnceLock<CreditsRepositoryImpl>,
+}
+
+impl CreditsRepositoryComponent {
+    /// Create a new repository component with explicit dependencies.
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self {
+            pool,
+            repo_cache: OnceLock::new(),
+        }
+    }
+
+    /// Get or create the cached repository instance.
+    fn get_repo(&self) -> &CreditsRepositoryImpl {
+        self.repo_cache
+            .get_or_init(|| CreditsRepositoryImpl::new(self.pool.clone_inner()))
+    }
+}
+
+impl Deref for CreditsRepositoryComponent {
+    type Target = CreditsRepositoryImpl;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_repo()
+    }
+}
 
 #[async_trait::async_trait]
 impl CreditsRepository for CreditsRepositoryComponent {
@@ -402,11 +327,39 @@ impl CreditsRepository for CreditsRepositoryComponent {
     }
 }
 
-impl_repository_component!(
-    CrawlRepositoryComponent,
-    CrawlRepositoryImpl,
-    CrawlRepository
-);
+/// Repository component with cached implementation instance.
+///
+/// Uses `OnceLock` to cache the underlying repository implementation,
+/// avoiding repeated instantiation on every method call.
+pub struct CrawlRepositoryComponent {
+    pool: Arc<DatabasePool>,
+    /// Cached repository instance
+    repo_cache: OnceLock<CrawlRepositoryImpl>,
+}
+
+impl CrawlRepositoryComponent {
+    /// Create a new repository component with explicit dependencies.
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self {
+            pool,
+            repo_cache: OnceLock::new(),
+        }
+    }
+
+    /// Get or create the cached repository instance.
+    fn get_repo(&self) -> &CrawlRepositoryImpl {
+        self.repo_cache
+            .get_or_init(|| CrawlRepositoryImpl::new(self.pool.clone_inner()))
+    }
+}
+
+impl Deref for CrawlRepositoryComponent {
+    type Target = CrawlRepositoryImpl;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_repo()
+    }
+}
 
 #[async_trait::async_trait]
 impl CrawlRepository for CrawlRepositoryComponent {
@@ -491,11 +444,39 @@ impl CrawlRepository for CrawlRepositoryComponent {
     }
 }
 
-impl_repository_component!(
-    ScrapeResultRepositoryComponent,
-    ScrapeResultRepositoryImpl,
-    ScrapeResultRepository
-);
+/// Repository component with cached implementation instance.
+///
+/// Uses `OnceLock` to cache the underlying repository implementation,
+/// avoiding repeated instantiation on every method call.
+pub struct ScrapeResultRepositoryComponent {
+    pool: Arc<DatabasePool>,
+    /// Cached repository instance
+    repo_cache: OnceLock<ScrapeResultRepositoryImpl>,
+}
+
+impl ScrapeResultRepositoryComponent {
+    /// Create a new repository component with explicit dependencies.
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self {
+            pool,
+            repo_cache: OnceLock::new(),
+        }
+    }
+
+    /// Get or create the cached repository instance.
+    fn get_repo(&self) -> &ScrapeResultRepositoryImpl {
+        self.repo_cache
+            .get_or_init(|| ScrapeResultRepositoryImpl::new(self.pool.clone_inner()))
+    }
+}
+
+impl Deref for ScrapeResultRepositoryComponent {
+    type Target = ScrapeResultRepositoryImpl;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_repo()
+    }
+}
 
 #[async_trait::async_trait]
 impl ScrapeResultRepository for ScrapeResultRepositoryComponent {
@@ -525,11 +506,39 @@ impl ScrapeResultRepository for ScrapeResultRepositoryComponent {
     }
 }
 
-impl_repository_component!(
-    WebhookRepositoryComponent,
-    WebhookRepoImpl,
-    WebhookRepository
-);
+/// Repository component with cached implementation instance.
+///
+/// Uses `OnceLock` to cache the underlying repository implementation,
+/// avoiding repeated instantiation on every method call.
+pub struct WebhookRepositoryComponent {
+    pool: Arc<DatabasePool>,
+    /// Cached repository instance
+    repo_cache: OnceLock<WebhookRepoImpl>,
+}
+
+impl WebhookRepositoryComponent {
+    /// Create a new repository component with explicit dependencies.
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self {
+            pool,
+            repo_cache: OnceLock::new(),
+        }
+    }
+
+    /// Get or create the cached repository instance.
+    fn get_repo(&self) -> &WebhookRepoImpl {
+        self.repo_cache
+            .get_or_init(|| WebhookRepoImpl::new(self.pool.clone_inner()))
+    }
+}
+
+impl Deref for WebhookRepositoryComponent {
+    type Target = WebhookRepoImpl;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_repo()
+    }
+}
 
 #[async_trait::async_trait]
 impl WebhookRepository for WebhookRepositoryComponent {
@@ -564,11 +573,39 @@ impl WebhookRepository for WebhookRepositoryComponent {
     }
 }
 
-impl_repository_component!(
-    WebhookEventRepositoryComponent,
-    WebhookEventRepoImpl,
-    WebhookEventRepository
-);
+/// Repository component with cached implementation instance.
+///
+/// Uses `OnceLock` to cache the underlying repository implementation,
+/// avoiding repeated instantiation on every method call.
+pub struct WebhookEventRepositoryComponent {
+    pool: Arc<DatabasePool>,
+    /// Cached repository instance
+    repo_cache: OnceLock<WebhookEventRepoImpl>,
+}
+
+impl WebhookEventRepositoryComponent {
+    /// Create a new repository component with explicit dependencies.
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self {
+            pool,
+            repo_cache: OnceLock::new(),
+        }
+    }
+
+    /// Get or create the cached repository instance.
+    fn get_repo(&self) -> &WebhookEventRepoImpl {
+        self.repo_cache
+            .get_or_init(|| WebhookEventRepoImpl::new(self.pool.clone_inner()))
+    }
+}
+
+impl Deref for WebhookEventRepositoryComponent {
+    type Target = WebhookEventRepoImpl;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_repo()
+    }
+}
 
 #[async_trait::async_trait]
 impl WebhookEventRepository for WebhookEventRepositoryComponent {
@@ -634,11 +671,39 @@ impl WebhookEventRepository for WebhookEventRepositoryComponent {
     }
 }
 
-impl_repository_component!(
-    TasksBacklogRepositoryComponent,
-    TasksBacklogRepositoryImpl,
-    TasksBacklogRepository
-);
+/// Repository component with cached implementation instance.
+///
+/// Uses `OnceLock` to cache the underlying repository implementation,
+/// avoiding repeated instantiation on every method call.
+pub struct TasksBacklogRepositoryComponent {
+    pool: Arc<DatabasePool>,
+    /// Cached repository instance
+    repo_cache: OnceLock<TasksBacklogRepositoryImpl>,
+}
+
+impl TasksBacklogRepositoryComponent {
+    /// Create a new repository component with explicit dependencies.
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self {
+            pool,
+            repo_cache: OnceLock::new(),
+        }
+    }
+
+    /// Get or create the cached repository instance.
+    fn get_repo(&self) -> &TasksBacklogRepositoryImpl {
+        self.repo_cache
+            .get_or_init(|| TasksBacklogRepositoryImpl::new(self.pool.clone_inner()))
+    }
+}
+
+impl Deref for TasksBacklogRepositoryComponent {
+    type Target = TasksBacklogRepositoryImpl;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_repo()
+    }
+}
 
 #[async_trait::async_trait]
 impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
@@ -727,11 +792,39 @@ impl TasksBacklogRepository for TasksBacklogRepositoryComponent {
     }
 }
 
-impl_repository_component!(
-    AuthScopeRepositoryComponent,
-    AuthScopeRepositoryImpl,
-    AuthScopeRepository
-);
+/// Repository component with cached implementation instance.
+///
+/// Uses `OnceLock` to cache the underlying repository implementation,
+/// avoiding repeated instantiation on every method call.
+pub struct AuthScopeRepositoryComponent {
+    pool: Arc<DatabasePool>,
+    /// Cached repository instance
+    repo_cache: OnceLock<AuthScopeRepositoryImpl>,
+}
+
+impl AuthScopeRepositoryComponent {
+    /// Create a new repository component with explicit dependencies.
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self {
+            pool,
+            repo_cache: OnceLock::new(),
+        }
+    }
+
+    /// Get or create the cached repository instance.
+    fn get_repo(&self) -> &AuthScopeRepositoryImpl {
+        self.repo_cache
+            .get_or_init(|| AuthScopeRepositoryImpl::new(self.pool.clone_inner()))
+    }
+}
+
+impl Deref for AuthScopeRepositoryComponent {
+    type Target = AuthScopeRepositoryImpl;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_repo()
+    }
+}
 
 #[async_trait::async_trait]
 impl AuthScopeRepository for AuthScopeRepositoryComponent {
@@ -774,11 +867,39 @@ impl AuthScopeRepository for AuthScopeRepositoryComponent {
     }
 }
 
-impl_repository_component!(
-    AuditLogRepositoryComponent,
-    AuditLogRepositoryImpl,
-    AuditLogRepository
-);
+/// Repository component with cached implementation instance.
+///
+/// Uses `OnceLock` to cache the underlying repository implementation,
+/// avoiding repeated instantiation on every method call.
+pub struct AuditLogRepositoryComponent {
+    pool: Arc<DatabasePool>,
+    /// Cached repository instance
+    repo_cache: OnceLock<AuditLogRepositoryImpl>,
+}
+
+impl AuditLogRepositoryComponent {
+    /// Create a new repository component with explicit dependencies.
+    pub fn new(pool: Arc<DatabasePool>) -> Self {
+        Self {
+            pool,
+            repo_cache: OnceLock::new(),
+        }
+    }
+
+    /// Get or create the cached repository instance.
+    fn get_repo(&self) -> &AuditLogRepositoryImpl {
+        self.repo_cache
+            .get_or_init(|| AuditLogRepositoryImpl::new(self.pool.clone_inner()))
+    }
+}
+
+impl Deref for AuditLogRepositoryComponent {
+    type Target = AuditLogRepositoryImpl;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_repo()
+    }
+}
 
 #[async_trait::async_trait]
 impl AuditLogRepository for AuditLogRepositoryComponent {
@@ -845,8 +966,6 @@ impl AuditLogRepository for AuditLogRepositoryComponent {
 
 /// GeoRestrictionRepository component with cached implementation instance.
 #[allow(dead_code)]
-#[derive(Component)]
-#[shaku(interface = GeoRestrictionRepository)]
 pub struct GeoRestrictionRepositoryComponent {
     db: Arc<DbPool>,
     /// Cached repository instance

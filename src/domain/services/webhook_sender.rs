@@ -14,7 +14,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
-use shaku::Interface;
 use std::collections::HashMap;
 
 /// WebhookSender trait - webhook HTTP 发送接口
@@ -42,7 +41,7 @@ use std::collections::HashMap;
 /// }
 /// ```
 #[async_trait]
-pub trait WebhookSender: Interface + Send + Sync {
+pub trait WebhookSender: Send + Sync {
     /// 发送 webhook HTTP POST 请求
     ///
     /// # Arguments

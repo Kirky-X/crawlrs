@@ -6,7 +6,7 @@
 //! Dependency state management module.
 //!
 //! This module provides functionality for tracking and managing the state
-//! of all registered dependencies in the Shaku DI container.
+//! of all registered dependencies in the trait-kit DI container.
 
 use std::collections::HashMap;
 use std::sync::RwLock;

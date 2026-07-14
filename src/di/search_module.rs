@@ -3,18 +3,16 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Search module for Shaku dependency injection.
+//! Search module for dependency injection.
 //!
-//! This module provides Shaku components for search layer dependencies
+//! This module provides components for search layer dependencies
 //! including SearchClient, SearchAggregator, and individual search engine implementations.
 
 use std::sync::Arc;
 
 use crate::engines::engine_client::EngineClient;
-use crate::engines::router::EngineRouterTrait;
 use crate::search::aggregator::SearchAggregator;
 use crate::search::client::{SearchClient, SearchClientTrait};
-use shaku::{Component, HasComponent, Module, ModuleBuildContext};
 
 /// Trait for HttpClient component
 pub trait HttpClientTrait: Send + Sync {
@@ -104,17 +102,6 @@ impl SearchClientComponent {
     }
 }
 
-impl<M: Module + HasComponent<dyn EngineRouterTrait>> Component<M> for SearchClientComponent {
-    type Interface = dyn SearchClientTrait;
-    type Parameters = ();
-
-    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
-        let router: Arc<dyn EngineRouterTrait> = M::build_component(context);
-        let engine_client = Arc::new(EngineClient::with_router(router));
-        Box::new(Self::new(engine_client))
-    }
-}
-
 #[async_trait::async_trait]
 impl SearchClientTrait for SearchClientComponent {
     async fn search(&self, query: &str) -> crate::search::client::SearchCommand {
@@ -137,7 +124,7 @@ impl SearchClientTrait for SearchClientComponent {
     }
 }
 
-// Search module components - for Shaku DI
+// Search module components
 
 #[cfg(test)]
 mod tests {

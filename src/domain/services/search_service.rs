@@ -100,11 +100,10 @@ impl From<anyhow::Error> for SearchServiceError {
 }
 
 use crate::search::client::SearchClientTrait;
-use shaku::Interface;
 
 /// Search service trait for trait object support.
 #[async_trait::async_trait]
-pub trait SearchServiceTrait: Interface + Send + Sync {
+pub trait SearchServiceTrait: Send + Sync {
     /// Perform search operation.
     async fn search(
         &self,

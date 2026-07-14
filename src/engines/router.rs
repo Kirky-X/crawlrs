@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 /// Trait for EngineRouter - enables dependency injection
 #[async_trait::async_trait]
-pub trait EngineRouterTrait: shaku::Interface + Send + Sync {
+pub trait EngineRouterTrait: Send + Sync {
     /// Route a request to the optimal engine
     async fn route(
         &self,

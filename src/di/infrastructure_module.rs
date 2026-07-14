@@ -3,9 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Infrastructure module for Shaku dependency injection.
+//! Infrastructure module for dependency injection.
 //!
-//! This module provides Shaku components for infrastructure layer dependencies
+//! This module provides components for infrastructure layer dependencies
 //! including database connection pool, Redis client, and repository implementations.
 //!
 //! # Module Structure
@@ -39,4 +39,4 @@ pub use super::repository_module::{
     WebhookEventRepositoryComponent, WebhookRepositoryComponent,
 };
 
-// Infrastructure module components - for Shaku DI
+// Infrastructure module components

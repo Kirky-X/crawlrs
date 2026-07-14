@@ -9,7 +9,6 @@ use crate::common::error::AppError;
 use crate::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
 use crate::domain::repositories::audit_log_repository::{AuditLogRepository, AuditRepositoryError};
 use log::debug;
-use shaku::Interface;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -914,7 +913,7 @@ mod tests {
 
 /// Trait for AuditService - enables dependency injection
 #[async_trait::async_trait]
-pub trait AuditServiceTrait: Interface + Send + Sync {
+pub trait AuditServiceTrait: Send + Sync {
     /// Create a new audit log entry
     async fn log(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError>;
 

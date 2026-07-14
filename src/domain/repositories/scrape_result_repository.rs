@@ -6,7 +6,6 @@
 use crate::domain::models::scrape_result::ScrapeResult;
 use anyhow::Result;
 use async_trait::async_trait;
-use shaku::Interface;
 
 use uuid::Uuid;
 
@@ -14,7 +13,7 @@ use uuid::Uuid;
 ///
 /// 定义爬取结果数据访问接口
 #[async_trait]
-pub trait ScrapeResultRepository: Interface + Send + Sync {
+pub trait ScrapeResultRepository: Send + Sync {
     /// 保存爬取结果
     async fn save(&self, result: ScrapeResult) -> Result<()>;
     /// 根据任务ID查找结果

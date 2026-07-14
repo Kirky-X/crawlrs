@@ -12,7 +12,6 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::info;
 use serde::{Deserialize, Serialize};
-use shaku::{Component, Interface};
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -35,7 +34,7 @@ pub enum GeoRestrictionResult {
 
 /// Trait for TeamService - enables dependency injection
 #[async_trait::async_trait]
-pub trait TeamServiceTrait: shaku::Interface + Send + Sync {
+pub trait TeamServiceTrait: Send + Sync {
     async fn validate_geographic_restriction(
         &self,
         team_id: Uuid,
@@ -255,7 +254,7 @@ impl TeamServiceTrait for TeamService {
 /// 与 `TeamServiceTrait` 互补——后者专注于地理限制验证，
 /// 本接口专注于团队生命周期与积分管理。
 #[async_trait]
-pub trait TeamManagementService: Interface + Send + Sync {
+pub trait TeamManagementService: Send + Sync {
     /// 创建新团队
     ///
     /// # 参数
@@ -305,14 +304,10 @@ pub trait TeamManagementService: Interface + Send + Sync {
 ///
 /// 通过注入 `TeamRepository` 和 `CreditsRepository` 实现团队与积分管理。
 /// DI 注册在 Phase 11 统一处理。
-#[derive(Component)]
-#[shaku(interface = TeamManagementService)]
 pub struct TeamManagementServiceImpl {
     /// 团队仓库
-    #[shaku(inject)]
     team_repository: Arc<dyn TeamRepository>,
     /// 积分仓库
-    #[shaku(inject)]
     credits_repository: Arc<dyn CreditsRepository>,
 }
 

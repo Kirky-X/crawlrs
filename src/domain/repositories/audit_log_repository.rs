@@ -10,7 +10,6 @@
 
 use async_trait::async_trait;
 use dbnexus::DbError;
-use shaku::Interface;
 use uuid::Uuid;
 
 use crate::domain::auth::AuditLogEntry;
@@ -54,7 +53,7 @@ impl From<DbError> for AuditRepositoryError {
 /// 定义了审计日志的创建、查询和删除操作。
 /// 领域层依赖这个接口，而非具体实现。
 #[async_trait]
-pub trait AuditLogRepository: Interface + Send + Sync {
+pub trait AuditLogRepository: Send + Sync {
     /// 创建审计日志条目
     async fn create(&self, entry: &AuditLogEntry) -> Result<AuditLogEntry, AuditRepositoryError>;
 

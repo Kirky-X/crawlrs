@@ -9,14 +9,13 @@
 //! 支持通过 DI 注入，便于测试时模拟不同配置。
 
 use async_trait::async_trait;
-use shaku::{Component, Interface};
 use std::time::Duration;
 
 /// 配置服务 trait
 ///
 /// 统一管理所有环境变量配置，支持测试时注入 mock 实现。
 #[async_trait]
-pub trait ConfigServiceTrait: Interface + Send + Sync {
+pub trait ConfigServiceTrait: Send + Sync {
     /// 获取代理 URL
     fn get_proxy_url(&self) -> Option<String>;
 
@@ -69,7 +68,7 @@ pub trait ConfigServiceTrait: Interface + Send + Sync {
 /// 浏览器配置 trait
 ///
 /// 专门用于浏览器相关的配置。
-pub trait BrowserConfigTrait: Interface + Send + Sync {
+pub trait BrowserConfigTrait: Send + Sync {
     /// 获取代理 URL
     fn get_proxy_url(&self) -> Option<String>;
 
@@ -83,8 +82,6 @@ pub trait BrowserConfigTrait: Interface + Send + Sync {
 /// 浏览器配置组件
 ///
 /// 通过 DI 注入的浏览器配置实现。
-#[derive(Component)]
-#[shaku(interface = BrowserConfigTrait)]
 pub struct BrowserConfigComponent {
     /// 代理 URL（优先使用环境变量）
     proxy_url: Option<String>,
@@ -131,8 +128,6 @@ impl BrowserConfigTrait for BrowserConfigComponent {
 /// 配置服务组件
 ///
 /// 从 Settings 中读取配置，支持环境变量覆盖。
-#[derive(Component)]
-#[shaku(interface = ConfigServiceTrait)]
 pub struct ConfigServiceComponent {
     /// 代理 URL
     proxy_url: Option<String>,

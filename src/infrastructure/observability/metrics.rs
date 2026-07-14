@@ -11,7 +11,6 @@ use chrono::Utc;
 use log::{error, warn};
 use metrics::{describe_counter, describe_gauge, describe_histogram, gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
-use shaku::{Component, Interface};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -20,7 +19,7 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 /// 系统监控 trait（支持 DI）
 ///
 /// 提供系统资源监控的抽象接口，便于测试时注入 mock 实现。
-pub trait SystemMonitorTrait: Interface + Send + Sync {
+pub trait SystemMonitorTrait: Send + Sync {
     /// 获取当前 CPU 使用率 (0.0 - 1.0)
     fn cpu_usage(&self) -> f64;
     /// 获取当前内存使用率 (0.0 - 1.0)
@@ -32,8 +31,6 @@ pub trait SystemMonitorTrait: Interface + Send + Sync {
 /// 系统监控组件（DI 实现）
 ///
 /// 通过原子变量提供无锁读取，同时保持热路径高性能。
-#[derive(Component)]
-#[shaku(interface = SystemMonitorTrait)]
 pub struct SystemMonitorComponent {
     /// 系统信息
     system: Arc<Mutex<System>>,

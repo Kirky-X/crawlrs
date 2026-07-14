@@ -12,7 +12,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shaku::Interface;
 use uuid::Uuid;
 
 use crate::domain::repositories::task_repository::RepositoryError;
@@ -159,7 +158,7 @@ impl TasksBacklog {
 
 /// 任务积压仓储接口
 #[async_trait]
-pub trait TasksBacklogRepository: Interface + Send + Sync {
+pub trait TasksBacklogRepository: Send + Sync {
     /// 创建任务积压项
     async fn create(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError>;
 

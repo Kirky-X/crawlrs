@@ -3,14 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Dependency Injection module using Shaku library.
+//! Dependency Injection module using trait-kit library.
 //!
 //! This module provides a standardized dependency injection framework for managing
 //! component dependencies across the crawlrs application.
 //!
 //! # Module Structure
 //!
-//! - [`app_module`](app_module::AppModule) - Root application module
 //! - [`infrastructure_module`](infrastructure_module) - Infrastructure components
 //!   - [`database_module`](database_module) - Database components
 //!   - [`cache_module`](cache_module) - Cache components
@@ -28,19 +27,8 @@
 //! - Lazy initialization of underlying implementations
 //! - Singleton pattern without repeated instantiation
 //! - Thread-safe caching with minimal overhead
-//!
-//! # Usage
-//!
-//! ```rust
-//! use shaku::HasComponent;
-//! use crate::di::app_module::AppModule;
-//!
-//! let module = AppModule::builder().build();
-//! let component: &dyn SomeInterface = module.resolve_ref();
-//! ```
 
 // Core DI modules
-pub mod app_module;
 pub mod axum_state;
 pub mod engines_module;
 pub mod search_module;

@@ -10,7 +10,6 @@ use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
 use crate::presentation::middleware::auth_middleware::invalidate_cache_by_api_key_id;
 use async_trait::async_trait;
 use log::debug;
-use shaku::Interface;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -32,7 +31,7 @@ pub enum AuthScopeServiceError {
 
 /// Service trait for managing API Key scopes
 #[async_trait]
-pub trait AuthScopeServiceTrait: Interface + Send + Sync {
+pub trait AuthScopeServiceTrait: Send + Sync {
     async fn get_scope_for_key(
         &self,
         api_key_id: Uuid,

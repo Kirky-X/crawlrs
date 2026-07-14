@@ -3,42 +3,38 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Service module for Shaku dependency injection.
+//! Service module for dependency injection.
 //!
-//! This module provides Shaku components for service layer dependencies
+//! This module provides components for service layer dependencies
 //! including TeamService, WebhookService, and other application services.
 
 use std::sync::Arc;
 
-use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
-
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
-use crate::di::cache_module::RedisClientTrait;
-use crate::di::database_module::{HttpClientTrait, SettingsTrait};
 use crate::domain::repositories::audit_log_repository::AuditLogRepository;
 use crate::domain::repositories::auth_scope_repository::AuthScopeRepository;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
-use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::auth_scope_service::{AuthScopeService, AuthScopeServiceTrait};
-use crate::domain::services::llm_service::{
-    FileTemplateLoader, LLMService, LLMServiceTrait, TemplateLoaderTrait,
-};
+use crate::domain::services::llm_service::{FileTemplateLoader, TemplateLoaderTrait};
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
 use crate::domain::services::team_service::TeamService;
 use crate::domain::services::team_service::{GeoRestrictionResult, TeamGeoRestrictions};
 use crate::domain::services::webhook_service::WebhookService;
-use crate::engines::router::EngineRouterTrait;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::search::client::SearchClientTrait;
-use crate::utils::robots::RobotsCheckerTrait;
+
+#[cfg(test)]
+use crate::di::database_module::HttpClientTrait;
+#[cfg(test)]
+use crate::engines::router::EngineRouterTrait;
 
 /// Trait for RateLimitingService component
-pub trait RateLimitingServiceTrait: Interface + Send + Sync {
+pub trait RateLimitingServiceTrait: Send + Sync {
     fn get_service(&self) -> &dyn RateLimitingService;
 }
 
@@ -47,71 +43,6 @@ pub trait RateLimitingServiceTrait: Interface + Send + Sync {
 pub struct RateLimitingServiceComponent {
     /// Inner implementation
     inner: crate::infrastructure::services::limiteron_service::LimiteronService,
-}
-
-#[cfg(feature = "rate-limiting")]
-impl<M: Module> Component<M> for RateLimitingServiceComponent
-where
-    M: HasComponent<dyn CreditsRepository>
-        + HasComponent<dyn TaskRepository>
-        + HasComponent<dyn TasksBacklogRepository>
-        + HasComponent<dyn SettingsTrait>,
-{
-    type Interface = dyn RateLimitingServiceTrait;
-    type Parameters = ();
-
-    fn build(
-        context: &mut ModuleBuildContext<M>,
-        _params: Self::Parameters,
-    ) -> Box<dyn RateLimitingServiceTrait> {
-        use crate::domain::services::rate_limiting_service::{
-            ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy,
-        };
-        use crate::infrastructure::services::limiteron_service::RateLimitingConfig;
-
-        let credits_repo: Arc<dyn CreditsRepository> = M::build_component(context);
-        let task_repo: Arc<dyn TaskRepository> = M::build_component(context);
-        let tasks_backlog_repo: Arc<dyn TasksBacklogRepository> = M::build_component(context);
-        let settings_component: Arc<dyn SettingsTrait> = M::build_component(context);
-        let settings = settings_component.get();
-
-        let rate_limit_config = RateLimitConfig {
-            strategy: RateLimitStrategy::TokenBucket,
-            requests_per_second: settings.rate_limiting.default_rpm / 60,
-            requests_per_minute: settings.rate_limiting.default_rpm,
-            requests_per_hour: settings.rate_limiting.default_rpm * 60,
-            bucket_capacity: Some(settings.rate_limiting.burst_size),
-            enabled: settings.rate_limiting.enabled,
-        };
-
-        let concurrency_config = ConcurrencyConfig {
-            strategy: ConcurrencyStrategy::DistributedSemaphore,
-            max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
-            max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
-            lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds as u64,
-            enabled: true,
-        };
-
-        let config = RateLimitingConfig {
-            redis_key_prefix: "crawlrs".to_string(),
-            rate_limit: rate_limit_config,
-            concurrency: concurrency_config,
-            backlog_process_interval_seconds: 30,
-            rate_limit_ttl_seconds: 3600,
-        };
-
-        let inner = futures::executor::block_on(
-            crate::infrastructure::services::limiteron_service::LimiteronService::new(
-                task_repo,
-                tasks_backlog_repo,
-                credits_repo,
-                config,
-            ),
-        )
-        .expect("Failed to create LimiteronService");
-
-        Box::new(Self { inner })
-    }
 }
 
 #[cfg(feature = "rate-limiting")]
@@ -259,14 +190,10 @@ impl crate::domain::services::rate_limiting_service::QuotaService for RateLimiti
 impl RateLimitingService for RateLimitingServiceComponent {}
 
 /// TeamService component
-#[derive(Component)]
-#[shaku(interface = crate::domain::services::team_service::TeamServiceTrait)]
 pub struct TeamServiceComponent {
     /// Geolocation service
-    #[shaku(inject)]
     geolocation_service: Arc<dyn crate::domain::services::geo_location::GeoLocationService>,
     /// Geo restriction repository
-    #[shaku(inject)]
     geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 
@@ -322,15 +249,12 @@ impl crate::domain::services::team_service::TeamServiceTrait for TeamServiceComp
 }
 
 /// Trait for WebhookService component (delegate to WebhookServiceImpl)
-pub trait WebhookServiceTrait: Interface + Send + Sync {
+pub trait WebhookServiceTrait: Send + Sync {
     fn get_service(&self) -> &dyn WebhookService;
 }
 
-/// WebhookService component - delegates to WebhookServiceImpl via Shaku
-#[derive(Component)]
-#[shaku(interface = WebhookService)]
+/// WebhookService component - delegates to WebhookServiceImpl
 pub struct WebhookServiceComponent {
-    #[shaku(inject)]
     inner: Arc<dyn WebhookService>,
 }
 
@@ -373,7 +297,7 @@ impl WebhookServiceTrait for WebhookServiceComponent {
 }
 
 /// Trait for CreateScrapeUseCase component
-pub trait CreateScrapeUseCaseTraitDI: Interface + Send + Sync {
+pub trait CreateScrapeUseCaseTraitDI: Send + Sync {
     fn get_use_case(&self) -> &dyn CreateScrapeUseCaseTrait;
 }
 
@@ -381,21 +305,6 @@ pub trait CreateScrapeUseCaseTraitDI: Interface + Send + Sync {
 pub struct CreateScrapeUseCaseComponent {
     /// Engine client
     engine_client: Arc<crate::engines::engine_client::EngineClient>,
-}
-
-impl<M: Module + HasComponent<dyn EngineRouterTrait>> Component<M>
-    for CreateScrapeUseCaseComponent
-{
-    type Interface = dyn CreateScrapeUseCaseTrait;
-    type Parameters = ();
-
-    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
-        let engine_router: Arc<dyn EngineRouterTrait> = M::build_component(context);
-        let engine_client = Arc::new(crate::engines::engine_client::EngineClient::with_router(
-            engine_router,
-        ));
-        Box::new(Self::new(engine_client))
-    }
 }
 
 impl CreateScrapeUseCaseComponent {
@@ -427,11 +336,9 @@ impl CreateScrapeUseCaseTraitDI for CreateScrapeUseCaseComponent {
 
 /// TeamSemaphore component
 #[allow(dead_code)]
-#[derive(Component, Default)]
-#[shaku(interface = TeamSemaphoreTrait)]
+#[derive(Default)]
 pub struct TeamSemaphoreComponent {
     /// Default permits per team
-    #[shaku(default = 100)]
     default_permits: usize,
     /// The actual team semaphore (optional, created on demand)
     semaphore: Option<Arc<TeamSemaphore>>,
@@ -454,7 +361,7 @@ impl TeamSemaphoreComponent {
 
 /// Trait for TeamSemaphore component
 #[async_trait::async_trait]
-pub trait TeamSemaphoreTrait: Interface + Send + Sync {
+pub trait TeamSemaphoreTrait: Send + Sync {
     /// Get the semaphore
     fn get_semaphore(&self) -> Arc<TeamSemaphore>;
 }
@@ -476,16 +383,6 @@ pub trait AuditServiceTraitDI: Send + Sync {
 /// AuditService component with cached implementation instance
 pub struct AuditServiceComponent {
     audit_repo: Arc<dyn AuditLogRepository>,
-}
-
-impl<M: Module + HasComponent<dyn AuditLogRepository>> Component<M> for AuditServiceComponent {
-    type Interface = dyn AuditServiceTrait;
-    type Parameters = ();
-
-    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
-        let audit_repo: Arc<dyn AuditLogRepository> = M::build_component(context);
-        Box::new(Self::new(audit_repo))
-    }
 }
 
 impl AuditServiceComponent {
@@ -596,25 +493,12 @@ impl AuditServiceTraitDI for AuditServiceComponent {
     }
 }
 
-use crate::utils::robots::RobotsChecker;
-
-// Service module components - for Shaku DI
+// Service module components
 
 /// TemplateLoader component
 #[allow(dead_code)]
 pub struct TemplateLoaderComponent {
     inner: FileTemplateLoader,
-}
-
-impl<M: Module> Component<M> for TemplateLoaderComponent {
-    type Interface = dyn TemplateLoaderTrait;
-    type Parameters = ();
-
-    fn build(_: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
-        Box::new(Self {
-            inner: FileTemplateLoader::default(),
-        })
-    }
 }
 
 impl TemplateLoaderTrait for TemplateLoaderComponent {
@@ -623,57 +507,8 @@ impl TemplateLoaderTrait for TemplateLoaderComponent {
     }
 }
 
-/// RobotsChecker component
-impl<M: Module + HasComponent<dyn HttpClientTrait> + HasComponent<dyn RedisClientTrait>>
-    Component<M> for RobotsChecker
-{
-    type Interface = dyn RobotsCheckerTrait;
-    type Parameters = ();
-
-    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
-        let http_client_comp: Arc<dyn HttpClientTrait> = M::build_component(context);
-        let redis_client_comp: Arc<dyn RedisClientTrait> = M::build_component(context);
-
-        let http_client = http_client_comp.get();
-        let redis_client = redis_client_comp.get_client();
-
-        let checker = RobotsChecker::new(http_client, Some(redis_client), None);
-        Box::new(checker)
-    }
-}
-
-/// LLMService component
-impl<
-        M: Module
-            + HasComponent<dyn SettingsTrait>
-            + HasComponent<dyn HttpClientTrait>
-            + HasComponent<dyn TemplateLoaderTrait>,
-    > Component<M> for LLMService
-{
-    type Interface = dyn LLMServiceTrait;
-    type Parameters = ();
-
-    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
-        let settings_component: Arc<dyn SettingsTrait> = M::build_component(context);
-        let http_client_comp: Arc<dyn HttpClientTrait> = M::build_component(context);
-        let template_loader: Arc<dyn TemplateLoaderTrait> = M::build_component(context);
-
-        let settings = settings_component.get();
-        let http_client = http_client_comp.get();
-
-        Box::new(LLMService::new_with_template_loader(
-            &settings,
-            http_client,
-            template_loader,
-        ))
-    }
-}
-
 /// AuthScopeService component
-#[derive(Component)]
-#[shaku(interface = AuthScopeServiceTrait)]
 pub struct AuthScopeServiceComponent {
-    #[shaku(inject)]
     scope_repo: Arc<dyn AuthScopeRepository>,
 }
 
@@ -729,35 +564,6 @@ pub struct SearchServiceComponent {
     settings: Arc<crate::config::Settings>,
 }
 
-impl<M: Module> Component<M> for SearchServiceComponent
-where
-    M: HasComponent<dyn CrawlRepository>
-        + HasComponent<dyn TaskRepository>
-        + HasComponent<dyn CreditsRepository>
-        + HasComponent<dyn SearchClientTrait>
-        + HasComponent<dyn SettingsTrait>,
-{
-    type Interface = dyn SearchServiceTrait;
-    type Parameters = ();
-
-    fn build(context: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
-        let crawl_repo: Arc<dyn CrawlRepository> = M::build_component(context);
-        let task_repo: Arc<dyn TaskRepository> = M::build_component(context);
-        let credits_repo: Arc<dyn CreditsRepository> = M::build_component(context);
-        let search_client: Arc<dyn SearchClientTrait> = M::build_component(context);
-        let settings_component: Arc<dyn SettingsTrait> = M::build_component(context);
-        let settings = settings_component.get();
-
-        Box::new(Self {
-            crawl_repo,
-            task_repo,
-            credits_repo,
-            search_client,
-            settings,
-        })
-    }
-}
-
 #[async_trait::async_trait]
 impl SearchServiceTrait for SearchServiceComponent {
     async fn search(
@@ -781,11 +587,8 @@ impl SearchServiceTrait for SearchServiceComponent {
 }
 
 /// GeoLocationService component
-#[derive(Component)]
-#[shaku(interface = crate::domain::services::geo_location::GeoLocationService)]
 pub struct GeoLocationServiceComponent {
     /// HTTP client
-    #[shaku(inject)]
     http_client: Arc<dyn crate::di::database_module::HttpClientTrait>,
 }
 
@@ -1832,5 +1635,5 @@ mod tests {
     // 以下组件的构造器需要 mock 多个 trait 或需真实外部服务，无法在无外部依赖环境下测试：
     // - SearchServiceComponent — 需 mock 多个 repository 和 SearchClient trait
     // - RateLimitingServiceComponent — feature-gated，需 RedisClient 和多个 repository
-    // - TemplateLoaderComponent — 无公开构造方法，build() 需 ModuleBuildContext
+    // - TemplateLoaderComponent — 无公开构造方法
 }

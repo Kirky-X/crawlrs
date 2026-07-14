@@ -227,8 +227,6 @@ genai = { version = "0.6", optional = true }
 toml = "0.9"
 
 # Dependency Injection
-shaku = "0.6"
-shaku_axum = "0.6"
 trait-kit = { version = "0.3", features = ["async", "confers"] }
 oxcache = { version = "0.3", default-features = false, features = ["memory", "redis", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing", "futures"], optional = true }
 ahash = "0.8"

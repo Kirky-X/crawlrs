@@ -27,7 +27,7 @@ pub enum GeoRestrictionRepositoryError {
 ///
 /// 定义了团队地理限制配置的持久化操作
 #[async_trait::async_trait]
-pub trait GeoRestrictionRepository: shaku::Interface + Send + Sync {
+pub trait GeoRestrictionRepository: Send + Sync {
     /// 获取团队的地理限制配置
     ///
     /// # 参数

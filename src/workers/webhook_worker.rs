@@ -13,29 +13,23 @@ use chrono::Utc;
 use log::{error, info, warn};
 #[cfg(feature = "metrics")]
 use metrics::counter;
-use shaku::Component;
 use std::sync::Arc;
 
 /// Webhook Worker Trait
 #[async_trait::async_trait]
-pub trait WebhookWorkerTrait: shaku::Interface + Send + Sync {
+pub trait WebhookWorkerTrait: Send + Sync {
     async fn run(&self);
 }
 
 /// Webhook工作器
 ///
 /// 负责处理webhook事件的发送和重试
-#[derive(Component)]
-#[shaku(interface = WebhookWorkerTrait)]
 pub struct WebhookWorker {
     /// Webhook事件仓库
-    #[shaku(inject)]
     repo: Arc<dyn WebhookEventRepository>,
     /// Webhook服务
-    #[shaku(inject)]
     webhook_service: Arc<dyn WebhookService>,
     /// 重试策略
-    #[shaku(default = RetryPolicy::default())]
     retry_policy: RetryPolicy,
 }
 

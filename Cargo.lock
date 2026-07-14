@@ -180,12 +180,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
-name = "anymap2"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d301b3b94cb4b2f23d7917810addbbaff90738e0ca2be692bd027e70d7e0330c"
-
-[[package]]
 name = "apalis"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1641,8 +1635,6 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sha2 0.10.9",
- "shaku",
- "shaku_axum",
  "strsim",
  "sysinfo",
  "tempfile",
@@ -6587,38 +6579,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "digest 0.11.3",
-]
-
-[[package]]
-name = "shaku"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d599314a26c92706bde1c984391b1eeb77ebf46e23142216a58eacb6e12f858b"
-dependencies = [
- "anymap2",
- "once_cell",
- "shaku_derive",
-]
-
-[[package]]
-name = "shaku_axum"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b4cb5052ca87a5f83bbc924b3faef0b523183841f57d2093b2cb96747985c59"
-dependencies = [
- "axum",
- "shaku",
-]
-
-[[package]]
-name = "shaku_derive"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "524f791f1f958b9c1825c1e48657d3bc485ee9ac4a1c7c226ab7fc7010afa7dc"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]

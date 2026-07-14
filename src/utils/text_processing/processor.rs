@@ -7,7 +7,6 @@ use crate::utils::text_processing::encoding::{TextEncodingError, TextEncodingPro
 use async_trait::async_trait;
 use log::{debug, error, info};
 use regex::Regex;
-use shaku::{Component, Interface};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -67,14 +66,12 @@ pub fn detect_html_structure(content: &str) -> bool {
 
 /// 文本编码处理器 trait（支持 DI）
 #[async_trait]
-pub trait TextEncodingProcessorTrait: Interface + Send + Sync {
+pub trait TextEncodingProcessorTrait: Send + Sync {
     fn process_text(&self, content: &[u8]) -> Result<String, TextEncodingError>;
     fn trim_newlines(&self, text: &str) -> String;
 }
 
 /// 文本编码处理器组件
-#[derive(Component)]
-#[shaku(interface = TextEncodingProcessorTrait)]
 #[allow(dead_code)]
 pub struct TextEncodingProcessorComponent {
     default_encoding: &'static str,
@@ -110,7 +107,7 @@ impl TextEncodingProcessorTrait for TextEncodingProcessorComponent {
 ///
 /// 提供网页内容处理的抽象接口，便于测试时注入 mock 实现。
 #[async_trait]
-pub trait WebContentProcessorTrait: Interface + Send + Sync {
+pub trait WebContentProcessorTrait: Send + Sync {
     fn process_web_content(
         &self,
         content: &[u8],
@@ -123,11 +120,8 @@ pub trait WebContentProcessorTrait: Interface + Send + Sync {
 }
 
 /// 网页内容处理器组件（DI 实现）
-#[derive(Component)]
-#[shaku(interface = WebContentProcessorTrait)]
 pub struct WebContentProcessorComponent {
     /// 文本编码处理器
-    #[shaku(inject)]
     text_processor: Arc<dyn TextEncodingProcessorTrait>,
     /// 编码模式
     encoding_patterns: HashMap<&'static str, Regex>,

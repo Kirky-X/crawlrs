@@ -629,7 +629,7 @@ pub enum EngineHealthStatus {
 
 /// Trait for EngineClient - enables dependency injection
 #[async_trait]
-pub trait EngineClientTrait: shaku::Interface + Send + Sync {
+pub trait EngineClientTrait: Send + Sync {
     /// Perform a scraping request
     async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError>;
 

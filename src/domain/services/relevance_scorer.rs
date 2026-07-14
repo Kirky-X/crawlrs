@@ -9,7 +9,6 @@
 
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
-use shaku::{Component, Interface};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
@@ -50,7 +49,7 @@ type DateParser = fn(&str) -> Option<DateTime<Utc>>;
 /// 日期解析器 trait（支持 DI）
 ///
 /// 提供日期提取的抽象接口，便于测试时注入 mock 实现。
-pub trait DateParserTrait: Interface + Send + Sync {
+pub trait DateParserTrait: Send + Sync {
     /// 从文本中提取日期
     fn extract_date(&self, text: &str) -> Option<DateTime<Utc>>;
 }
@@ -58,8 +57,6 @@ pub trait DateParserTrait: Interface + Send + Sync {
 /// 默认日期解析器组件
 ///
 /// 预编译了常用日期格式的正则表达式。
-#[derive(Component)]
-#[shaku(interface = DateParserTrait)]
 pub struct DateParserComponent {
     /// 预编译的日期正则表达式
     date_regexes: Vec<(Regex, DateParser)>,

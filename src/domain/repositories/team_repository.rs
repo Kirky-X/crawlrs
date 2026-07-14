@@ -11,7 +11,6 @@
 use super::task_repository::RepositoryError;
 use crate::domain::models::Team;
 use async_trait::async_trait;
-use shaku::Interface;
 use uuid::Uuid;
 
 /// 团队仓库特质
@@ -20,7 +19,7 @@ use uuid::Uuid;
 /// 与 `GeoRestrictionRepository` 互补——后者管理地理限制配置，
 /// 本接口管理团队基本信息。
 #[async_trait]
-pub trait TeamRepository: Interface + Send + Sync {
+pub trait TeamRepository: Send + Sync {
     /// 创建新团队
     ///
     /// # 参数

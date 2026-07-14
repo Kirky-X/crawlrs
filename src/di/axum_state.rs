@@ -3,9 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Axum integration for Shaku dependency injection.
+//! Axum integration for trait-kit dependency injection.
 //!
-//! This module provides Shaku-compatible state management for Axum,
+//! This module provides trait-kit-compatible state management for Axum,
 //! enabling clean dependency injection in HTTP handlers.
 
 use std::sync::Arc;

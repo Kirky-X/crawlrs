@@ -5,7 +5,6 @@
 
 use crate::domain::auth::ApiKeyScope;
 use async_trait::async_trait;
-use shaku::Interface;
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -40,7 +39,7 @@ impl From<dbnexus::DbError> for RepositoryError {
 }
 
 #[async_trait]
-pub trait AuthScopeRepository: Interface + Send + Sync {
+pub trait AuthScopeRepository: Send + Sync {
     async fn find_by_api_key_id(
         &self,
         api_key_id: Uuid,

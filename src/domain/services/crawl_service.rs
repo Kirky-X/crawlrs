@@ -20,7 +20,6 @@ use chrono::Utc;
 use log::debug;
 use regex::Regex;
 use scraper::{Html, Selector};
-use shaku::{Component, Interface};
 use std::collections::HashSet;
 use std::sync::Arc;
 use url::Url;
@@ -28,7 +27,7 @@ use uuid::Uuid;
 
 /// 爬取服务接口
 #[async_trait::async_trait]
-pub trait CrawlServiceTrait: Interface + Send + Sync {
+pub trait CrawlServiceTrait: Send + Sync {
     /// 处理爬取结果
     async fn process_crawl_result(
         &self,
@@ -40,18 +39,13 @@ pub trait CrawlServiceTrait: Interface + Send + Sync {
 /// 爬取服务
 ///
 /// 处理网站爬取任务的核心业务逻辑
-#[derive(Component)]
-#[shaku(interface = CrawlServiceTrait)]
 pub struct CrawlService {
     /// 任务仓库
-    #[shaku(inject)]
     repo: Arc<dyn TaskRepository>,
     /// Robots.txt检查器
-    #[shaku(inject)]
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     /// 系统监控器（用于负载降级）
     #[cfg(feature = "metrics")]
-    #[shaku(inject)]
     system_monitor: Arc<dyn crate::infrastructure::observability::metrics::SystemMonitorTrait>,
 }
 

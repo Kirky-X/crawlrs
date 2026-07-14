@@ -9,7 +9,6 @@ use anyhow::Result;
 use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use shaku::{Component, Interface};
 use std::collections::HashMap;
 use std::sync::Arc;
 use url::Url;
@@ -45,7 +44,7 @@ impl ExtractableRule for ExtractionRule {
 
 /// 提取服务接口
 #[async_trait::async_trait]
-pub trait ExtractionServiceTrait: Interface + Send + Sync {
+pub trait ExtractionServiceTrait: Send + Sync {
     /// 提取数据（完整版本，需要Settings用于LLM）
     async fn extract(
         &self,
@@ -73,10 +72,7 @@ pub trait ExtractionServiceTrait: Interface + Send + Sync {
 /// 提取服务
 ///
 /// 负责从 HTML 内容中提取结构化数据
-#[derive(Component)]
-#[shaku(interface = ExtractionServiceTrait)]
 pub struct ExtractionService {
-    #[shaku(inject)]
     llm_service: Arc<dyn LLMServiceTrait>,
 }
 

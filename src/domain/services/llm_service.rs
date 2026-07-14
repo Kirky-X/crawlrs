@@ -29,7 +29,7 @@ pub struct TokenUsage {
 }
 
 /// Trait for template loading - enables DI and testing
-pub trait TemplateLoaderTrait: shaku::Interface + Send + Sync {
+pub trait TemplateLoaderTrait: Send + Sync {
     /// Load all templates
     fn load_templates(&self) -> Result<HashMap<String, String>>;
 }
@@ -126,7 +126,7 @@ impl TemplateLoaderTrait for InMemoryTemplateLoader {
 }
 
 #[async_trait]
-pub trait LLMServiceTrait: shaku::Interface + Send + Sync {
+pub trait LLMServiceTrait: Send + Sync {
     async fn extract_data(
         &self,
         text: &str,

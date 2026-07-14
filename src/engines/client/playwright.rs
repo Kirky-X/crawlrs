@@ -16,7 +16,6 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
-use shaku::{Component, Interface};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -55,7 +54,7 @@ impl PlaywrightContext {
 ///
 /// 提供浏览器实例管理的抽象接口，便于测试时注入 mock 实现。
 #[async_trait]
-pub trait BrowserManagerTrait: Interface + Send + Sync {
+pub trait BrowserManagerTrait: Send + Sync {
     /// 获取或创建浏览器实例
     async fn get_browser(&self) -> Result<Arc<Browser>, EngineError>;
     /// 清理浏览器实例
@@ -67,11 +66,8 @@ pub trait BrowserManagerTrait: Interface + Send + Sync {
 }
 
 /// Playwright 浏览器管理器组件（DI 实现）
-#[derive(Component)]
-#[shaku(interface = BrowserManagerTrait)]
 pub struct PlaywrightBrowserManagerComponent {
     /// 浏览器配置
-    #[shaku(inject)]
     config: Arc<dyn BrowserConfigTrait>,
     /// 浏览器实例
     browser: Arc<Mutex<Option<Arc<Browser>>>>,

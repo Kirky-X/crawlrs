@@ -21,7 +21,6 @@ use hmac::{Hmac, Mac};
 use log::{error, info};
 use serde_json::json;
 use sha2::Sha256;
-use shaku::{Component, Interface};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -29,7 +28,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 /// Webhook服务接口（支持 DI）
 #[async_trait]
-pub trait WebhookService: Interface + Send + Sync {
+pub trait WebhookService: Send + Sync {
     /// 发送Webhook事件
     async fn send_webhook(&self, event: &WebhookEvent) -> Result<()>;
 
@@ -41,17 +40,12 @@ pub trait WebhookService: Interface + Send + Sync {
 }
 
 /// Webhook服务实现
-#[derive(Component)]
-#[shaku(interface = WebhookService)]
 pub struct WebhookServiceImpl {
     /// Webhook 发送器
-    #[shaku(inject)]
     webhook_sender: Arc<dyn WebhookSender>,
     /// Webhook 签名密钥
-    #[shaku(default = String::new())]
     secret: String,
     /// Webhook 事件仓库
-    #[shaku(inject)]
     repository: Arc<dyn WebhookEventRepository>,
 }
 
@@ -227,7 +221,7 @@ impl WebhookServiceImpl {
 /// 与 `WebhookService` 互补——后者专注于发送通知，
 /// 本接口专注于 webhook 端点的生命周期管理与批量重试。
 #[async_trait]
-pub trait WebhookManagementService: Interface + Send + Sync {
+pub trait WebhookManagementService: Send + Sync {
     /// 注册新的 webhook 端点
     ///
     /// # 参数
@@ -284,17 +278,12 @@ pub trait WebhookManagementService: Interface + Send + Sync {
 ///
 /// 通过组合 `WebhookService` 复用已有的签名生成与发送逻辑，
 /// 避免代码重复。DI 注册在 Phase 11 统一处理。
-#[derive(Component)]
-#[shaku(interface = WebhookManagementService)]
 pub struct WebhookManagementServiceImpl {
     /// Webhook 仓库（端点 CRUD）
-    #[shaku(inject)]
     webhook_repository: Arc<dyn WebhookRepository>,
     /// Webhook 事件仓库（事件持久化）
-    #[shaku(inject)]
     event_repository: Arc<dyn WebhookEventRepository>,
     /// Webhook 发送服务（复用现有签名+发送逻辑）
-    #[shaku(inject)]
     webhook_service: Arc<dyn WebhookService>,
 }
 

@@ -18,7 +18,6 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::Value;
-use shaku::{Component, Interface};
 use uuid::Uuid;
 
 use crate::application::dto::scrape_request::{
@@ -76,7 +75,7 @@ impl std::fmt::Display for ScrapeStatus {
 ///
 /// 定义抓取领域的业务接口，支持依赖注入。
 #[async_trait]
-pub trait ScrapeService: Interface + Send + Sync {
+pub trait ScrapeService: Send + Sync {
     /// 执行单次抓取
     ///
     /// # 参数
@@ -122,14 +121,10 @@ pub trait ScrapeService: Interface + Send + Sync {
 }
 
 /// 抓取服务实现
-#[derive(Component)]
-#[shaku(interface = ScrapeService)]
 pub struct ScrapeServiceImpl {
     /// 引擎客户端
-    #[shaku(inject)]
     engine_client: Arc<dyn EngineClientTrait>,
     /// 任务仓库
-    #[shaku(inject)]
     task_repository: Arc<dyn TaskRepository>,
 }
 

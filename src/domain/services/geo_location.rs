@@ -11,7 +11,6 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use shaku::Interface;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// IP地理位置信息
@@ -58,7 +57,7 @@ impl Default for GeoLocation {
 /// 定义IP地址地理位置查询的抽象接口。
 /// 实现此trait的具体服务位于基础设施层。
 #[async_trait::async_trait]
-pub trait GeoLocationService: Interface + Send + Sync {
+pub trait GeoLocationService: Send + Sync {
     /// 获取指定IP地址的地理位置信息
     ///
     /// # 参数

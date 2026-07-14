@@ -3,24 +3,19 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Engines module for Shaku dependency injection.
+//! Engines module for dependency injection.
 //!
-//! This module provides Shaku components for engine layer dependencies
+//! This module provides components for engine layer dependencies
 //! including EngineClient and EngineRouter.
 
 use std::sync::Arc;
-
-use shaku::Component;
 
 use crate::engines::engine_client::{EngineClient, EngineClientTrait};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
 
 /// EngineClient component
-#[derive(Component)]
-#[shaku(interface = crate::engines::engine_client::EngineClientTrait)]
 pub struct EngineClientComponent {
     /// Engine router
-    #[shaku(inject)]
     router: Arc<dyn EngineRouterTrait>,
 }
 
@@ -62,11 +57,8 @@ impl EngineClientTrait for EngineClientComponent {
 }
 
 /// EngineRouter component
-#[derive(Component)]
-#[shaku(interface = EngineRouterTrait)]
 pub struct EngineRouterComponent {
     /// List of engines
-    #[shaku(default)]
     engines: Vec<Arc<dyn crate::engines::engine_client::ScraperEngine>>,
 }
 
@@ -127,7 +119,7 @@ impl EngineRouterTrait for EngineRouterComponent {
     }
 }
 
-// Engines module components - for Shaku DI
+// Engines module components
 
 #[cfg(test)]
 mod tests {
