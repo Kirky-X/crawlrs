@@ -426,9 +426,6 @@ mod tests {
         fn get_webhook_secret(&self) -> String {
             "test-secret".to_string()
         }
-        fn get_redis_url(&self) -> String {
-            "redis://localhost:6379".to_string()
-        }
         fn get_health_check_url(&self) -> Option<String> {
             None
         }

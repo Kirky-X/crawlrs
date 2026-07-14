@@ -46,9 +46,6 @@ pub trait ConfigServiceTrait: Send + Sync {
     /// 获取 Webhook Secret
     fn get_webhook_secret(&self) -> String;
 
-    /// 获取 Redis URL
-    fn get_redis_url(&self) -> String;
-
     /// 获取健康检查 URL
     fn get_health_check_url(&self) -> Option<String>;
 
@@ -145,8 +142,6 @@ pub struct ConfigServiceComponent {
     app_environment: String,
     /// Webhook Secret
     webhook_secret: String,
-    /// Redis URL
-    redis_url: String,
     /// 健康检查 URL
     health_check_url: Option<String>,
     /// 是否禁用 SSRF 保护
@@ -193,8 +188,6 @@ impl ConfigServiceComponent {
                 .unwrap_or_else(|_| "development".to_string()),
             webhook_secret: std::env::var("WEBHOOK_SECRET")
                 .unwrap_or_else(|_| "default-webhook-secret".to_string()),
-            redis_url: std::env::var("REDIS_URL")
-                .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
             health_check_url: std::env::var("CRAWLRS_HEALTH_CHECK_URL").ok(),
             ssrf_protection_disabled: std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").is_ok(),
             network_tests_enabled: std::env::var("CRAWLRS_ENABLE_NETWORK_TESTS").is_ok(),
@@ -245,10 +238,6 @@ impl ConfigServiceTrait for ConfigServiceComponent {
 
     fn get_webhook_secret(&self) -> String {
         self.webhook_secret.clone()
-    }
-
-    fn get_redis_url(&self) -> String {
-        self.redis_url.clone()
     }
 
     fn get_health_check_url(&self) -> Option<String> {
@@ -454,26 +443,6 @@ mod tests {
         assert_eq!(config.get_webhook_secret(), "my-secret-key");
 
         std::env::remove_var("WEBHOOK_SECRET");
-    }
-
-    #[test]
-    fn test_config_service_redis_url_default() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::remove_var("REDIS_URL");
-
-        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
-        assert_eq!(config.get_redis_url(), "redis://localhost:6379");
-    }
-
-    #[test]
-    fn test_config_service_redis_url_from_env() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("REDIS_URL", "redis://custom:6380");
-
-        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
-        assert_eq!(config.get_redis_url(), "redis://custom:6380");
-
-        std::env::remove_var("REDIS_URL");
     }
 
     #[test]
@@ -731,7 +700,6 @@ mod tests {
         std::env::set_var("CHROMIUM_REMOTE_DEBUGGING_URL", "localhost:9222");
         std::env::set_var("CRAWLRS_ENV", "production");
         std::env::set_var("WEBHOOK_SECRET", "comprehensive-secret");
-        std::env::set_var("REDIS_URL", "redis://comprehensive:6380");
         std::env::set_var("CRAWLRS_HEALTH_CHECK_URL", "http://health:8080/check");
         std::env::set_var("CRAWLRS_FLARESOLVERR_URL", "http://flaresolverr:8191");
 
@@ -748,7 +716,6 @@ mod tests {
         assert_eq!(config.get_app_environment(), "production");
         assert!(config.is_production());
         assert_eq!(config.get_webhook_secret(), "comprehensive-secret");
-        assert_eq!(config.get_redis_url(), "redis://comprehensive:6380");
         assert_eq!(
             config.get_health_check_url(),
             Some("http://health:8080/check".to_string())
@@ -765,7 +732,6 @@ mod tests {
         std::env::remove_var("CHROMIUM_REMOTE_DEBUGGING_URL");
         std::env::remove_var("CRAWLRS_ENV");
         std::env::remove_var("WEBHOOK_SECRET");
-        std::env::remove_var("REDIS_URL");
         std::env::remove_var("CRAWLRS_HEALTH_CHECK_URL");
         std::env::remove_var("CRAWLRS_FLARESOLVERR_URL");
     }

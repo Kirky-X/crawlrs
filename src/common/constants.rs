@@ -45,7 +45,6 @@ pub mod metrics {
 pub mod cache_config {
     pub const DEFAULT_TTL_SECS: u64 = 300; // 5分钟
     pub const ROBOTS_TTL_SECS: u64 = 3600; // 1小时
-    pub const REDIS_CACHE_TTL_SECS: u64 = 86400; // 24小时
     pub const MAX_CACHE_ENTRIES: usize = 10000;
     pub const MEMORY_CACHE_MAX_SIZE: usize = 1000;
     pub const EVICTION_BUFFER_PERCENT: usize = 10;
@@ -294,10 +293,6 @@ pub mod env_vars {
     pub const TEST_DATABASE_URL: &str = "TEST_DATABASE_URL";
     /// 测试数据库密码
     pub const TEST_DATABASE_PASSWORD: &str = "TEST_DATABASE_PASSWORD";
-    /// 测试 Redis URL
-    pub const TEST_REDIS_URL: &str = "TEST_REDIS_URL";
-    /// 测试 Redis 端口
-    pub const TEST_REDIS_PORT: &str = "TEST_REDIS_PORT";
     /// 测试 Webhook 密钥
     pub const TEST_WEBHOOK_SECRET: &str = "TEST_WEBHOOK_SECRET";
     /// 测试 S3 访问密钥

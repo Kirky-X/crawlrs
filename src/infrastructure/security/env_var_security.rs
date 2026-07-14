@@ -48,10 +48,6 @@ impl Default for EnvVarWhitelist {
                 "DB_NAME",
                 "DATABASE_URL",
                 "DATABASE_MAX_CONNECTIONS",
-                // Redis配置
-                "REDIS_HOST",
-                "REDIS_PORT",
-                "REDIS_URL",
                 // 服务器配置
                 "SERVER_HOST",
                 "SERVER_PORT",
@@ -101,9 +97,6 @@ impl Default for EnvVarWhitelist {
                 "DB_PASSWORD",
                 "DATABASE_URL",
                 "DATABASE_PASSWORD",
-                // Redis敏感变量
-                "REDIS_URL",
-                "REDIS_PASSWORD",
                 // LLM API密钥
                 "LLM_API_KEY",
                 "OPENAI_API_KEY",
