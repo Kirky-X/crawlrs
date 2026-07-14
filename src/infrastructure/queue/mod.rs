@@ -35,3 +35,5 @@
 
 // 重新导出 queue 模块以保持向后兼容性
 pub use crate::queue::*;
+
+pub mod apalis_queue;
