@@ -41,9 +41,6 @@ mod tests {
                 println!("\nDatabase Config:");
                 println!("  URL: {}", settings.database.url);
 
-                println!("\nRedis Config:");
-                println!("  URL: {}", settings.redis.url);
-
                 // Verify that the new config sections are present
                 assert!(settings.bing_search.api_key.is_some());
                 assert!(settings.search.default_engine.is_some());

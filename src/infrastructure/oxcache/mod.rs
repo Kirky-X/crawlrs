@@ -415,12 +415,6 @@ mod tests {
                 capacity: 100,
                 ttl_seconds: 60,
             },
-            redis: crate::config::settings::RedisCacheSettings {
-                enabled: false,
-                url: "redis://localhost:6379".to_string(),
-                pool_size: 10,
-                ttl_seconds: 3600,
-            },
             types: crate::config::settings::CacheTypeSpecificSettings {
                 search: crate::config::settings::CacheTypeSettings {
                     ttl_seconds: 60,

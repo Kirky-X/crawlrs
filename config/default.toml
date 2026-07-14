@@ -18,15 +18,6 @@ user = "crawlrs"
 password = ""  # Set via CRAWLRS__DATABASE__PASSWORD
 name = "crawlrs"
 
-# Redis Configuration
-[redis]
-url = "redis://localhost:6379"
-
-# Docker Redis Configuration (overridden by environment variables)
-[redis.docker]
-host = "redis"
-port = 6379
-
 # Server Configuration
 [server]
 host = "0.0.0.0"
@@ -57,13 +48,6 @@ enabled = true
 [cache.memory]
 capacity = 10000
 ttl_seconds = 300
-
-# L2 Redis Cache (Optional, for distributed caching)
-[cache.redis]
-enabled = false
-url = "redis://localhost:6379"
-pool_size = 10
-ttl_seconds = 3600
 
 # Cache Type Specific Settings
 [cache.types.search]
@@ -212,7 +196,6 @@ max_backoff_seconds = 60
 [timeouts.cache]
 default_ttl_seconds = 300
 memory_ttl_seconds = 300
-redis_ttl_seconds = 300
 
 # Logging Configuration
 # 日志配置，支持控制台和文件输出

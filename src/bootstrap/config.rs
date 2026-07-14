@@ -272,14 +272,6 @@ mod tests {
     }
 
     #[test]
-    fn test_load_settings_has_redis_config() {
-        let settings = load_settings().expect("Failed to load settings");
-        // Redis URL should be loaded from config or env var
-        // Just verify the field exists and is a string
-        let _url = &settings.redis.url;
-    }
-
-    #[test]
     fn test_load_settings_has_database_config() {
         let settings = load_settings().expect("Failed to load settings");
         // max_connections may be overridden by env var; just verify field exists

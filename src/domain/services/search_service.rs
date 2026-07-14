@@ -1625,7 +1625,6 @@ mod tests {
         Settings {
             server: ServerSettings::default(),
             database: DatabaseSettings::default(),
-            redis: RedisSettings::default(),
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),

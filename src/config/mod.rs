@@ -5,7 +5,7 @@
 
 //! 配置模块
 //!
-//! 处理应用程序的配置设置，包括数据库、Redis、服务器等配置
+//! 处理应用程序的配置设置，包括数据库、服务器等配置
 //! 配置结构体按功能分组到子模块中：
 
 pub mod app;
@@ -19,7 +19,6 @@ pub mod search;
 pub use app::ConcurrencySettings;
 pub use app::DatabaseSettings;
 pub use app::RateLimitingSettings;
-pub use app::RedisSettings;
 pub use app::ServerSettings;
 
 pub use engines::{EngineSettings, FireCdpSettings, FireTlsSettings, FlareSolverrSettings};

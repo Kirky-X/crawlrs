@@ -144,14 +144,13 @@ mod tests {
         use crate::config::{
             BingSearchSettings, CacheSettings, ConcurrencySettings, DatabaseSettings,
             EngineSettings, LLMSettings, LoggingSettings, ProxySettings, RateLimitingSettings,
-            RedisSettings, SearchSettings, ServerSettings, TimeoutSettings, TrustedProxySettings,
+            SearchSettings, ServerSettings, TimeoutSettings, TrustedProxySettings,
             WebhookSettings, WorkerSettings,
         };
 
         Arc::new(Settings {
             server: ServerSettings::default(),
             database: DatabaseSettings::default(),
-            redis: RedisSettings::default(),
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),

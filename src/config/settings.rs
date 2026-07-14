@@ -17,7 +17,7 @@ use validator::Validate;
 
 // 重新导出子模块中的类型
 pub use super::app::{
-    ConcurrencySettings, DatabaseSettings, RateLimitingSettings, RedisSettings, ServerSettings,
+    ConcurrencySettings, DatabaseSettings, RateLimitingSettings, ServerSettings,
 };
 pub use super::engines::{EngineSettings, FireCdpSettings, FireTlsSettings, FlareSolverrSettings};
 pub use super::llm::LLMSettings;
@@ -30,7 +30,7 @@ pub use super::search::{BingSearchSettings, SearchSettings};
 
 /// 应用程序配置设置
 ///
-/// 包含数据库、Redis、服务器、速率限制和并发控制等所有配置项
+/// 包含数据库、服务器、速率限制和并发控制等所有配置项
 ///
 /// # 使用示例
 ///
@@ -51,9 +51,6 @@ pub struct Settings {
 
     /// 数据库配置
     pub database: DatabaseSettings,
-
-    /// Redis 配置
-    pub redis: RedisSettings,
 
     /// CORS 配置
     pub cors: CorsSettings,
@@ -315,10 +312,6 @@ pub struct CacheTimeoutSettings {
     /// 内存缓存TTL（秒）
     #[config(default = 600)]
     pub memory_ttl_seconds: u64,
-
-    /// Redis缓存TTL（秒）
-    #[config(default = 7200)]
-    pub redis_ttl_seconds: u64,
 }
 
 // =============================================================================
@@ -346,9 +339,6 @@ pub struct CacheSettings {
     /// L1 内存缓存配置
     pub memory: MemoryCacheSettings,
 
-    /// L2 Redis 缓存配置
-    pub redis: RedisCacheSettings,
-
     /// 各缓存类型特定配置
     pub types: CacheTypeSpecificSettings,
 }
@@ -362,27 +352,6 @@ pub struct MemoryCacheSettings {
     pub capacity: u64,
     /// TTL（秒）
     #[config(default = 300)]
-    pub ttl_seconds: u64,
-}
-
-/// L2 Redis 缓存配置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__CACHE__REDIS__")]
-pub struct RedisCacheSettings {
-    /// 是否启用 Redis 缓存
-    #[config(default = false)]
-    pub enabled: bool,
-
-    /// Redis URL
-    #[config(default = "redis://localhost:6379".to_string())]
-    pub url: String,
-
-    /// 连接池大小
-    #[config(default = 10)]
-    pub pool_size: u32,
-
-    /// TTL（秒）
-    #[config(default = 3600)]
     pub ttl_seconds: u64,
 }
 
@@ -587,7 +556,6 @@ mod tests {
         let settings = Settings {
             server: ServerSettings::default(),
             database: DatabaseSettings::default(),
-            redis: RedisSettings::default(),
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),
@@ -845,7 +813,6 @@ mod tests {
         assert_eq!(settings.retry.max_backoff_seconds, 60);
         assert_eq!(settings.cache.default_ttl_seconds, 600);
         assert_eq!(settings.cache.memory_ttl_seconds, 600);
-        assert_eq!(settings.cache.redis_ttl_seconds, 7200);
     }
 
     #[test]
@@ -885,11 +852,9 @@ mod tests {
         let settings = CacheTimeoutSettings {
             default_ttl_seconds: 300,
             memory_ttl_seconds: 200,
-            redis_ttl_seconds: 3600,
         };
         assert_eq!(settings.default_ttl_seconds, 300);
         assert_eq!(settings.memory_ttl_seconds, 200);
-        assert_eq!(settings.redis_ttl_seconds, 3600);
     }
 
     // ========== CacheSettings tests ==========
@@ -900,10 +865,6 @@ mod tests {
         assert!(settings.enabled);
         assert_eq!(settings.memory.capacity, 10000);
         assert_eq!(settings.memory.ttl_seconds, 300);
-        assert!(!settings.redis.enabled);
-        assert_eq!(settings.redis.url, "redis://localhost:6379");
-        assert_eq!(settings.redis.pool_size, 10);
-        assert_eq!(settings.redis.ttl_seconds, 3600);
     }
 
     #[test]
@@ -914,20 +875,6 @@ mod tests {
         };
         assert_eq!(settings.capacity, 5000);
         assert_eq!(settings.ttl_seconds, 120);
-    }
-
-    #[test]
-    fn test_redis_cache_settings_construction() {
-        let settings = RedisCacheSettings {
-            enabled: true,
-            url: "redis://prod:6379".to_string(),
-            pool_size: 20,
-            ttl_seconds: 7200,
-        };
-        assert!(settings.enabled);
-        assert_eq!(settings.url, "redis://prod:6379");
-        assert_eq!(settings.pool_size, 20);
-        assert_eq!(settings.ttl_seconds, 7200);
     }
 
     #[test]
@@ -948,12 +895,6 @@ mod tests {
                 capacity: 100,
                 ttl_seconds: 50,
             },
-            redis: RedisCacheSettings {
-                enabled: true,
-                url: "redis://x:1".to_string(),
-                pool_size: 5,
-                ttl_seconds: 99,
-            },
             types: CacheTypeSpecificSettings {
                 search: CacheTypeSettings {
                     ttl_seconds: 10,
@@ -973,7 +914,6 @@ mod tests {
         let back: CacheSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(!back.enabled);
         assert_eq!(back.memory.capacity, 100);
-        assert!(back.redis.enabled);
         assert_eq!(back.types.search.ttl_seconds, 10);
         assert_eq!(back.types.dns.max_size, 40);
         assert_eq!(back.types.regex.ttl_seconds, 60);
@@ -1017,7 +957,6 @@ mod tests {
         Settings {
             server: ServerSettings::default(),
             database: DatabaseSettings::default(),
-            redis: RedisSettings::default(),
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),

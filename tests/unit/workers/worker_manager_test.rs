@@ -22,7 +22,6 @@ mod tests {
             settings.database.url.len() > 0,
             "Database URL must be configured"
         );
-        assert!(settings.redis.url.len() > 0, "Redis URL must be configured");
 
         // Test that WorkerManager can be created with settings
         // Note: We won't actually start the worker manager in this test
@@ -32,14 +31,6 @@ mod tests {
         println!(
             "  Database URL configured: {}",
             if settings.database.url.is_empty() {
-                "[EMPTY]"
-            } else {
-                "[SET]"
-            }
-        );
-        println!(
-            "  Redis URL configured: {}",
-            if settings.redis.url.is_empty() {
                 "[EMPTY]"
             } else {
                 "[SET]"

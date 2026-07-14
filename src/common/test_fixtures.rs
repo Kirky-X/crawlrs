@@ -110,7 +110,6 @@ pub fn database_settings(url: &str) -> crate::config::DatabaseSettings {
 ///
 /// Loads the default configuration file, then overrides the database URL
 /// to point at the testcontainers PostgreSQL instance.
-/// RedisSettings is kept as default (vestigial — Redis is no longer used at runtime).
 pub fn settings_with_urls(db_url: &str) -> anyhow::Result<crate::config::Settings> {
     let mut settings = crate::bootstrap::config::load_settings()?;
     settings.database = database_settings(db_url);
