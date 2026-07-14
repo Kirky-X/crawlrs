@@ -30,5 +30,6 @@ pub mod geo_restriction_repository;
 pub mod scrape_result_repository;
 pub mod task_repository;
 pub mod tasks_backlog_repository;
+pub mod team_repository;
 pub mod webhook_event_repository;
 pub mod webhook_repository;

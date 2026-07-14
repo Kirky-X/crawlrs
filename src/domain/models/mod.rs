@@ -17,6 +17,7 @@
 pub mod crawl_model;
 pub mod credits_model;
 pub mod task_model;
+pub mod team_model;
 pub mod webhook_model;
 
 // Domain types (enums, errors)
@@ -32,6 +33,7 @@ pub use crawl_model::{Crawl, CrawlStatus};
 pub use credits_model::{Credits, CreditsError, CreditsTransaction, CreditsTransactionType};
 pub use task_domain::{DomainError, TaskStatus, TaskType};
 pub use task_model::Task;
+pub use team_model::{Team, TeamError};
 pub use webhook_model::{Webhook, WebhookError, WebhookEvent, WebhookEventType, WebhookStatus};
 
 // Legacy re-exports for backward compatibility

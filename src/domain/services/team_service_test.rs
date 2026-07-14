@@ -3,17 +3,24 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::domain::models::{CreditsTransaction, CreditsTransactionType, Team};
+use crate::domain::repositories::credits_repository::{CreditsRepository, CreditsRepositoryError};
 use crate::domain::repositories::geo_restriction_repository::{
     GeoRestrictionRepository, GeoRestrictionRepositoryError,
 };
+use crate::domain::repositories::task_repository::RepositoryError;
+use crate::domain::repositories::team_repository::TeamRepository;
 use crate::domain::services::geo_location::GeoLocation;
 use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::team_service::{
-    GeoRestrictionResult, TeamGeoRestrictions, TeamService,
+    GeoRestrictionResult, TeamGeoRestrictions, TeamManagementService, TeamManagementServiceImpl,
+    TeamService,
 };
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::sync::Mutex;
 use uuid::Uuid;
 
 fn mock_geo_location(country_code: String) -> GeoLocation {
@@ -828,4 +835,475 @@ async fn test_no_restrictions_configured_allows_all() {
         .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
         .await;
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+}
+
+// ============ TeamManagementService mocks ============
+
+/// 可配置的 Team 仓库 mock（内存存储）
+#[derive(Default)]
+struct MockTeamRepository {
+    teams: Mutex<HashMap<Uuid, Team>>,
+}
+
+#[async_trait]
+impl TeamRepository for MockTeamRepository {
+    async fn create(&self, team: &Team) -> Result<Team, RepositoryError> {
+        let mut teams = self.teams.lock().unwrap();
+        teams.insert(team.id, team.clone());
+        Ok(team.clone())
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<Team>, RepositoryError> {
+        Ok(self.teams.lock().unwrap().get(&id).cloned())
+    }
+}
+
+/// 始终失败的 Team 仓库 mock
+struct FailingTeamRepository;
+
+#[async_trait]
+impl TeamRepository for FailingTeamRepository {
+    async fn create(&self, _team: &Team) -> Result<Team, RepositoryError> {
+        Err(RepositoryError::Database(anyhow::anyhow!("team repo down")))
+    }
+
+    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Team>, RepositoryError> {
+        Err(RepositoryError::Database(anyhow::anyhow!("team repo down")))
+    }
+}
+
+/// 可配置的 Credits 仓库 mock（支持余额设置和操作追踪）
+#[derive(Default)]
+struct ConfigurableCreditsRepository {
+    balances: Mutex<HashMap<Uuid, i64>>,
+    add_count: std::sync::atomic::AtomicU32,
+    deduct_count: std::sync::atomic::AtomicU32,
+    should_fail_deduct: bool,
+}
+
+use std::sync::atomic::Ordering;
+
+impl ConfigurableCreditsRepository {
+    fn with_balance(team_id: Uuid, balance: i64) -> Self {
+        let mut balances = HashMap::new();
+        balances.insert(team_id, balance);
+        Self {
+            balances: Mutex::new(balances),
+            ..Default::default()
+        }
+    }
+}
+
+#[async_trait]
+impl CreditsRepository for ConfigurableCreditsRepository {
+    async fn get_balance(&self, team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+        Ok(*self.balances.lock().unwrap().get(&team_id).unwrap_or(&0))
+    }
+
+    async fn deduct_credits(
+        &self,
+        team_id: Uuid,
+        amount: i64,
+        _transaction_type: CreditsTransactionType,
+        _description: String,
+        _reference_id: Option<Uuid>,
+    ) -> Result<(), CreditsRepositoryError> {
+        self.deduct_count.fetch_add(1, Ordering::SeqCst);
+        if self.should_fail_deduct {
+            return Err(CreditsRepositoryError::InsufficientCredits {
+                available: 0,
+                required: amount,
+            });
+        }
+        let mut balances = self.balances.lock().unwrap();
+        let current = *balances.get(&team_id).unwrap_or(&0);
+        if current < amount {
+            return Err(CreditsRepositoryError::InsufficientCredits {
+                available: current,
+                required: amount,
+            });
+        }
+        balances.insert(team_id, current - amount);
+        Ok(())
+    }
+
+    async fn add_credits(
+        &self,
+        team_id: Uuid,
+        amount: i64,
+        _transaction_type: CreditsTransactionType,
+        _description: String,
+        _reference_id: Option<Uuid>,
+    ) -> Result<i64, CreditsRepositoryError> {
+        self.add_count.fetch_add(1, Ordering::SeqCst);
+        let mut balances = self.balances.lock().unwrap();
+        let current = *balances.get(&team_id).unwrap_or(&0);
+        let new_balance = current + amount;
+        balances.insert(team_id, new_balance);
+        Ok(new_balance)
+    }
+
+    async fn get_transaction_history(
+        &self,
+        _team_id: Uuid,
+        _limit: Option<u32>,
+    ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
+        Ok(vec![])
+    }
+
+    async fn initialize_team_credits(
+        &self,
+        team_id: Uuid,
+        initial_balance: i64,
+    ) -> Result<i64, CreditsRepositoryError> {
+        self.balances
+            .lock()
+            .unwrap()
+            .insert(team_id, initial_balance);
+        Ok(initial_balance)
+    }
+}
+
+/// 始终失败的 Credits 仓库 mock
+struct FailingCreditsRepository;
+
+#[async_trait]
+impl CreditsRepository for FailingCreditsRepository {
+    async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+        Err(CreditsRepositoryError::DatabaseError(
+            "credits repo down".to_string(),
+        ))
+    }
+
+    async fn deduct_credits(
+        &self,
+        _team_id: Uuid,
+        _amount: i64,
+        _transaction_type: CreditsTransactionType,
+        _description: String,
+        _reference_id: Option<Uuid>,
+    ) -> Result<(), CreditsRepositoryError> {
+        Err(CreditsRepositoryError::DatabaseError(
+            "credits repo down".to_string(),
+        ))
+    }
+
+    async fn add_credits(
+        &self,
+        _team_id: Uuid,
+        _amount: i64,
+        _transaction_type: CreditsTransactionType,
+        _description: String,
+        _reference_id: Option<Uuid>,
+    ) -> Result<i64, CreditsRepositoryError> {
+        Err(CreditsRepositoryError::DatabaseError(
+            "credits repo down".to_string(),
+        ))
+    }
+
+    async fn get_transaction_history(
+        &self,
+        _team_id: Uuid,
+        _limit: Option<u32>,
+    ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
+        Ok(vec![])
+    }
+
+    async fn initialize_team_credits(
+        &self,
+        _team_id: Uuid,
+        _initial_balance: i64,
+    ) -> Result<i64, CreditsRepositoryError> {
+        Err(CreditsRepositoryError::DatabaseError(
+            "credits repo down".to_string(),
+        ))
+    }
+}
+
+fn make_management_service(
+    team_repo: Arc<dyn TeamRepository>,
+    credits_repo: Arc<dyn CreditsRepository>,
+) -> TeamManagementServiceImpl {
+    TeamManagementServiceImpl::new(team_repo, credits_repo)
+}
+
+// ---- create_team ----
+
+#[tokio::test]
+async fn test_create_team_success_returns_team() {
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.create_team("New Team".to_string()).await;
+
+    assert!(result.is_ok(), "create should succeed");
+    let team = result.unwrap();
+    assert_eq!(team.name, "New Team");
+    assert!(!team.id.is_nil());
+}
+
+#[tokio::test]
+async fn test_create_team_empty_name_returns_error() {
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.create_team(String::new()).await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Invalid team name"),
+        "should report invalid name, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_create_team_whitespace_name_returns_error() {
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.create_team("   ".to_string()).await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Invalid team name"));
+}
+
+#[tokio::test]
+async fn test_create_team_repo_failure_propagates() {
+    let team_repo: Arc<dyn TeamRepository> = Arc::new(FailingTeamRepository);
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.create_team("Valid Name".to_string()).await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Failed to create team"),
+        "should report repo failure, got: {}",
+        err
+    );
+}
+
+// ---- get_team ----
+
+#[tokio::test]
+async fn test_get_team_success_returns_team() {
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::default());
+    let service = make_management_service(team_repo.clone(), credits_repo);
+
+    let created = service
+        .create_team("Find Me".to_string())
+        .await
+        .expect("create should succeed");
+
+    let result = service.get_team(created.id).await;
+
+    assert!(result.is_ok(), "get should succeed");
+    let team = result.unwrap();
+    assert_eq!(team.id, created.id);
+    assert_eq!(team.name, "Find Me");
+}
+
+#[tokio::test]
+async fn test_get_team_not_found_returns_error() {
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.get_team(Uuid::new_v4()).await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Team not found"),
+        "should report not found, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_get_team_repo_failure_propagates() {
+    let team_repo: Arc<dyn TeamRepository> = Arc::new(FailingTeamRepository);
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.get_team(Uuid::new_v4()).await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Failed to find team"),
+        "should report repo failure, got: {}",
+        err
+    );
+}
+
+// ---- update_credits ----
+
+#[tokio::test]
+async fn test_update_credits_add_positive_returns_new_balance() {
+    let team_id = Uuid::new_v4();
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::with_balance(team_id, 100));
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let service = make_management_service(team_repo, credits_repo.clone());
+
+    let result = service
+        .update_credits(team_id, 50, "add 50".to_string())
+        .await;
+
+    assert!(result.is_ok(), "update should succeed");
+    let balance = result.unwrap();
+    assert_eq!(balance, 150, "balance should be 100 + 50 = 150");
+    assert_eq!(
+        credits_repo.add_count.load(Ordering::SeqCst),
+        1,
+        "add_credits should be called once"
+    );
+    assert_eq!(
+        credits_repo.deduct_count.load(Ordering::SeqCst),
+        0,
+        "deduct_credits should not be called"
+    );
+}
+
+#[tokio::test]
+async fn test_update_credits_deduct_negative_returns_new_balance() {
+    let team_id = Uuid::new_v4();
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::with_balance(team_id, 100));
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let service = make_management_service(team_repo, credits_repo.clone());
+
+    let result = service
+        .update_credits(team_id, -30, "deduct 30".to_string())
+        .await;
+
+    assert!(result.is_ok(), "update should succeed");
+    let balance = result.unwrap();
+    assert_eq!(balance, 70, "balance should be 100 - 30 = 70");
+    assert_eq!(
+        credits_repo.deduct_count.load(Ordering::SeqCst),
+        1,
+        "deduct_credits should be called once"
+    );
+    assert_eq!(
+        credits_repo.add_count.load(Ordering::SeqCst),
+        0,
+        "add_credits should not be called"
+    );
+}
+
+#[tokio::test]
+async fn test_update_credits_zero_amount_returns_current_balance() {
+    let team_id = Uuid::new_v4();
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::with_balance(team_id, 100));
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let service = make_management_service(team_repo, credits_repo.clone());
+
+    let result = service
+        .update_credits(team_id, 0, "no-op".to_string())
+        .await;
+
+    assert!(result.is_ok(), "update should succeed");
+    let balance = result.unwrap();
+    assert_eq!(balance, 100, "balance should be unchanged");
+    assert_eq!(
+        credits_repo.add_count.load(Ordering::SeqCst),
+        0,
+        "add_credits should not be called"
+    );
+    assert_eq!(
+        credits_repo.deduct_count.load(Ordering::SeqCst),
+        0,
+        "deduct_credits should not be called"
+    );
+}
+
+#[tokio::test]
+async fn test_update_credits_insufficient_balance_returns_error() {
+    let team_id = Uuid::new_v4();
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::with_balance(team_id, 50));
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service
+        .update_credits(team_id, -100, "overdraw".to_string())
+        .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Failed to deduct credits"),
+        "should report deduct failure, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_update_credits_repo_failure_propagates() {
+    let team_id = Uuid::new_v4();
+    let credits_repo: Arc<dyn CreditsRepository> = Arc::new(FailingCreditsRepository);
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.update_credits(team_id, 50, "add".to_string()).await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Failed to add credits"),
+        "should report add failure, got: {}",
+        err
+    );
+}
+
+// ---- check_credits ----
+
+#[tokio::test]
+async fn test_check_credits_returns_balance() {
+    let team_id = Uuid::new_v4();
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::with_balance(team_id, 250));
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.check_credits(team_id).await;
+
+    assert!(result.is_ok(), "check should succeed");
+    assert_eq!(result.unwrap(), 250, "should return configured balance");
+}
+
+#[tokio::test]
+async fn test_check_credits_no_balance_returns_zero() {
+    let team_id = Uuid::new_v4();
+    let credits_repo = Arc::new(ConfigurableCreditsRepository::default());
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.check_credits(team_id).await;
+
+    assert!(result.is_ok(), "check should succeed");
+    assert_eq!(result.unwrap(), 0, "should return 0 for unknown team");
+}
+
+#[tokio::test]
+async fn test_check_credits_repo_failure_propagates() {
+    let credits_repo: Arc<dyn CreditsRepository> = Arc::new(FailingCreditsRepository);
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.check_credits(Uuid::new_v4()).await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Failed to check credits"),
+        "should report repo failure, got: {}",
+        err
+    );
 }
