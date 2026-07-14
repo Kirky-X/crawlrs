@@ -1128,7 +1128,7 @@ func Scrape(url string) error {
 5. **Monitor Credits** - Track credit usage to avoid service interruption
 6. **Handle Errors Gracefully** - Check both HTTP status and response `success` field
 7. **Validate Inputs** - Validate URLs and parameters before sending requests
-8. **Use Caching** - Enable Redis caching for frequently accessed content
+8. **Use Caching** - Enable oxcache for frequently accessed content
 9. **Set Proper Rates** - Configure rate limits appropriate for your capacity
 10. **Secure Webhooks** - Always verify webhook signatures
 

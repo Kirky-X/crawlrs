@@ -106,7 +106,7 @@ System is open for extension, closed for modification:
 │  ┌──────────────────────────────────────────────────────────────────────┐  │
 │  │  Middleware Stack                                             │  │
 │  │  - Authentication (API Key)                                    │  │
-│  │  - Rate Limiting (Redis)                                       │  │
+│  │  - Rate Limiting (limiteron)                                    │  │
 │  │  - Team Concurrency (Semaphore)                                 │  │
 │  │  - CORS, Security Headers, Logging                              │  │
 │  └──────────────────────────────────────────────────────────────────────┘  │
@@ -135,17 +135,17 @@ System is open for extension, closed for modification:
 │    Interfaces       │            │
 └──────────┬──────────┘            │
            │                       │
-           │  ┌────────────────────┼────────────────────┐
-           │  │                    │                    │
-           ▼  ▼                    ▼                    ▼
-     ┌──────────┐         ┌──────────┐         ┌──────────┐
-     │ Postgres │         │  Redis   │         │   S3     │
-     │ Database │         │  Cache   │         │  Storage  │
-     │  - Tasks │         │  - Rate  │         │ - Results │
-     │  - Logs  │         │  - Cache │         │ - Screenshots│
-     └──────────┘         └──────────┘         └──────────┘
-            │                    │                    │
-            └────────────────────┼────────────────────┘
+           │  ┌────────────────────┐
+           │  │                    │
+           ▼  ▼                    ▼
+     ┌──────────┐         ┌──────────┐
+     │ Postgres │         │ oxcache  │
+     │ Database │         │  Cache   │
+     │  - Tasks │         │  - Rate  │
+     │  - Logs  │         │  - Cache │
+     └──────────┘         └──────────┘
+            │                    │
+            └────────────────────┘
                                 │
                        ┌──────────┴──────────┐
                        ▼                     ▼
@@ -172,7 +172,7 @@ flowchart TD
     subgraph API [API Gateway - Axum]
         subgraph Middleware [Middleware Stack]
             M1[Authentication - API Key]
-            M2[Rate Limiting - Redis]
+            M2[Rate Limiting - limiteron]
             M3[Team Concurrency - Semaphore]
             M4[CORS, Security Headers, Logging]
         end
@@ -208,8 +208,7 @@ flowchart TD
 
     subgraph Infra [Infrastructure Layer]
         DB[(Postgres Database)]
-        RC[(Redis Cache)]
-        S3[(S3 Storage)]
+        RC[(oxcache)]
         EXT[External APIs]
         MON[Monitoring Systems]
     end
@@ -218,8 +217,6 @@ flowchart TD
     DB --> DBLogs[Logs]
     RC --> RCRate[Rate]
     RC --> RCCache[Cache]
-    S3 --> S3Results[Results]
-    S3 --> S3Screenshots[Screenshots]
     EXT --> EXTGoogle[Google]
     EXT --> EXTBing[Bing]
     EXT --> EXTBaidu[Baidu]
@@ -1303,12 +1300,12 @@ CREATE TABLE audit_logs (
 
 ## Deployment Architecture
 
-       ▼                     ▼          ▼
-┌────────────┐     ┌────────────┐  ┌────────────┐
-│ Postgres   │     │   Redis    │  │    S3      │
-│ Database   │     │   Cache    │  │  Storage   │
-│ (Single)   │     │ (Single)   │  │ (External) │
-└────────────┘     └────────────┘  └────────────┘
+       ▼                     ▼
+┌────────────┐     ┌────────────┐
+│ Postgres   │     │  oxcache   │
+│ Database   │     │   Cache    │
+│ (Single)   │     │ (Single)   │
+└────────────┘     └────────────┘
 -->
 
 
@@ -1324,13 +1321,11 @@ flowchart TB
 
     subgraph Resources [External Resources]
         DB[(Postgres Database<br/>Single)]
-        RC[(Redis Cache<br/>Single)]
-        S3[(S3 Storage<br/>External)]
+        RC[(oxcache<br/>in-memory)]
     end
 
     App --> DB
     App --> RC
-    App --> S3
 ```
 
 ### Multi-Instance Deployment (Kubernetes)
@@ -1346,13 +1341,13 @@ flowchart TB
 │  └────────┬─────────┘  └────────┬─────────┘│
 │           │                     │           │
 │  ┌────────┴──────────┬────────┴──────────┐│
-│  │                 │                 │    │
-│  ▼                 ▼                 ▼    ▼
-│ ┌────────────┐  ┌────────────┐  ┌────────────┐
-│ │ Postgres   │  │   Redis    │  │    S3      │
-│ │ (Primary)  │  │   Cluster  │  │  Storage   │
-│ │ + Replica  │  │  (6 nodes) │  │            │
-│ └────────────┘  └────────────┘  └────────────┘
+│  │                                      │
+│  ▼                                      ▼
+│ ┌────────────┐
+│ │ Postgres   │
+│ │ (Primary)  │
+│ │ + Replica  │
+│ └────────────┘
 │                                             │
 │  ┌──────────────────────────────────────────┐    │
 │  │  Prometheus + Grafana            │    │
@@ -1379,18 +1374,12 @@ flowchart TB
 
         subgraph Infrastructure [Infrastructure Services]
             DB[(Postgres<br/>Primary + Replica)]
-            RC[(Redis Cluster<br/>6 nodes)]
-            S3[(S3 Storage)]
             MON[Prometheus + Grafana<br/>Metrics collection<br/>Visualization]
         end
     end
 
     Pod1 --> DB
-    Pod1 --> RC
-    Pod1 --> S3
     Pod2 --> DB
-    Pod2 --> RC
-    Pod2 --> S3
     Pod1 --> MON
     Pod2 --> MON
 ```
@@ -1407,17 +1396,7 @@ flowchart TB
    - Automatic failover
    - Backups
 
-3. **Redis Cluster**
-   - 6 nodes (3 master, 3 replica)
-   - Sentinel for failover
-   - Cluster mode enabled
-
-4. **S3 Storage**
-   - Multi-region replication
-   - Lifecycle policies
-   - CDN integration
-
-5. **Monitoring**
+3. **Monitoring**
    - Prometheus scraping
    - Grafana dashboards
    - AlertManager
@@ -1435,8 +1414,6 @@ flowchart TB
 
 **Shared State:**
 - Postgres - Shared database
-- Redis - Shared cache
-- S3 - Shared storage
 
 **Scaling Strategy:**
 
