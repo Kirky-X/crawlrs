@@ -14,9 +14,7 @@ use futures::executor::block_on;
 use shaku::{Component, HasComponent, Interface, Module, ModuleBuildContext};
 
 use crate::infrastructure::cache::redis_client::RedisClient;
-use crate::infrastructure::oxcache::{
-    create_cache, ConcurrencyController, RateLimiter, SearchCache,
-};
+use crate::infrastructure::oxcache::{create_cache, ConcurrencyController, SearchCache};
 
 use super::database_module::SettingsTrait;
 
@@ -66,23 +64,23 @@ impl RedisClientTrait for RedisClientComponent {
 }
 
 // =============================================================================
-// OxCache Component (Extended with RateLimiter and ConcurrencyController)
+// OxCache Component (Cache + ConcurrencyController)
 // =============================================================================
 
 /// Trait for OxCache component
 pub trait OxCacheTrait: Interface + Send + Sync {
     fn get_cache(&self) -> Arc<SearchCache>;
-    fn get_rate_limiter(&self) -> Arc<RateLimiter>;
     fn get_concurrency_controller(&self) -> Arc<ConcurrencyController>;
 }
 
 /// OxCache component for Shaku DI
 ///
 /// This component provides the unified oxcache instance for all caching operations,
-/// including search cache, rate limiting, and concurrency control.
+/// including search cache and concurrency control.
+/// Rate limiting is handled by `LimiteronService` via the domain
+/// `RateLimitingService` trait.
 pub struct OxCacheComponent {
     cache: Arc<SearchCache>,
-    rate_limiter: Arc<RateLimiter>,
     concurrency_controller: Arc<ConcurrencyController>,
 }
 
@@ -97,12 +95,6 @@ impl<M: Module + HasComponent<dyn SettingsTrait>> Component<M> for OxCacheCompon
         // Create search cache
         let cache = block_on(create_cache(&settings.cache)).expect("Failed to create oxcache");
 
-        // Create rate limiter with config from settings
-        let rate_limiter = Arc::new(RateLimiter::new_with_config(
-            settings.rate_limiting.default_limit as u64,
-            settings.rate_limiting.burst_size as u64,
-        ));
-
         // Create concurrency controller
         let concurrency_controller = Arc::new(ConcurrencyController::new(
             settings.concurrency.default_team_limit as usize,
@@ -110,7 +102,6 @@ impl<M: Module + HasComponent<dyn SettingsTrait>> Component<M> for OxCacheCompon
 
         Box::new(Self {
             cache,
-            rate_limiter,
             concurrency_controller,
         })
     }
@@ -119,12 +110,10 @@ impl<M: Module + HasComponent<dyn SettingsTrait>> Component<M> for OxCacheCompon
 impl OxCacheComponent {
     pub fn new(
         cache: Arc<SearchCache>,
-        rate_limiter: Arc<RateLimiter>,
         concurrency_controller: Arc<ConcurrencyController>,
     ) -> Self {
         Self {
             cache,
-            rate_limiter,
             concurrency_controller,
         }
     }
@@ -133,10 +122,6 @@ impl OxCacheComponent {
 impl OxCacheTrait for OxCacheComponent {
     fn get_cache(&self) -> Arc<SearchCache> {
         self.cache.clone()
-    }
-
-    fn get_rate_limiter(&self) -> Arc<RateLimiter> {
-        self.rate_limiter.clone()
     }
 
     fn get_concurrency_controller(&self) -> Arc<ConcurrencyController> {
@@ -186,7 +171,7 @@ mod tests {
 
     // ========== OxCacheComponent ==========
 
-    /// 构造一个用于测试的 OxCacheComponent（使用独立的 cache/rate_limiter/concurrency_controller）
+    /// 构造一个用于测试的 OxCacheComponent（使用独立的 cache/concurrency_controller）
     fn make_oxcache_component() -> OxCacheComponent {
         let cache: Arc<SearchCache> = Arc::new(
             block_on(
@@ -197,9 +182,8 @@ mod tests {
             )
             .unwrap(),
         );
-        let rate_limiter = Arc::new(RateLimiter::new_with_config(100, 20));
         let concurrency_controller = Arc::new(ConcurrencyController::new(10));
-        OxCacheComponent::new(cache, rate_limiter, concurrency_controller)
+        OxCacheComponent::new(cache, concurrency_controller)
     }
 
     #[test]
@@ -209,14 +193,6 @@ mod tests {
         let cache2 = component.get_cache();
         // 多次调用应返回同一 Arc
         assert!(Arc::ptr_eq(&cache1, &cache2));
-    }
-
-    #[test]
-    fn test_oxcache_component_get_rate_limiter_returns_stored_arc() {
-        let component = make_oxcache_component();
-        let limiter1 = component.get_rate_limiter();
-        let limiter2 = component.get_rate_limiter();
-        assert!(Arc::ptr_eq(&limiter1, &limiter2));
     }
 
     #[test]
@@ -233,7 +209,6 @@ mod tests {
         let trait_obj: &dyn OxCacheTrait = &component;
         // 通过 trait 对象访问，验证动态分发正常工作
         let _cache = trait_obj.get_cache();
-        let _limiter = trait_obj.get_rate_limiter();
         let _controller = trait_obj.get_concurrency_controller();
     }
 

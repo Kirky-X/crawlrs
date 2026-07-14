@@ -9,18 +9,17 @@
 //! - Search result caching
 //! - DNS caching
 //! - Regex caching
-//! - Rate limiting (using oxcache's TokenBucket)
-//! - Concurrency control (using oxcache's Semaphore)
+//! - Concurrency control (using tokio::sync::Semaphore)
+//!
+//! Rate limiting is handled by `limiteron_service` via the domain
+//! `RateLimitingService` trait — no hand-written token bucket here.
 
 use crate::config::settings::CacheSettings;
 use crate::domain::models::search_result::SearchResult;
 use oxcache::Cache;
-use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-pub mod rate_limiter;
+use std::time::Duration;
 
 // =============================================================================
 // Cache Types
@@ -41,35 +40,6 @@ pub struct DnsCacheEntry {
 
 /// DNS cache type
 pub type DnsCache = Cache<String, DnsCacheEntry>;
-
-// =============================================================================
-// Rate Limiting (token bucket implementation)
-// =============================================================================
-
-/// Rate limit configuration
-#[derive(Debug, Clone)]
-pub struct RateLimitConfig {
-    /// Maximum requests per second
-    pub max_requests_per_second: u64,
-    /// Burst capacity (max tokens in bucket)
-    pub burst_capacity: u64,
-    /// Block duration in seconds when rate limit exceeded
-    pub block_duration_secs: u64,
-}
-
-/// Per-client token bucket state
-#[derive(Clone)]
-struct TokenBucket {
-    tokens: f64,
-    last_refill: Instant,
-}
-
-/// Rate limiter using token bucket algorithm
-#[derive(Clone)]
-pub struct RateLimiter {
-    inner: Arc<tokio::sync::Mutex<HashMap<String, TokenBucket>>>,
-    config: RateLimitConfig,
-}
 
 // =============================================================================
 // Concurrency Control (using Semaphore)
@@ -278,16 +248,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rate_limiter() {
-        let limiter = RateLimiter::new_default();
-
-        // First few requests should succeed
-        for _ in 0..5 {
-            assert!(limiter.check_rate_limit("test_client").await.is_ok());
-        }
-    }
-
-    #[tokio::test]
     async fn test_concurrency_controller() {
         let controller = ConcurrencyController::new(2);
 
@@ -300,136 +260,6 @@ mod tests {
 
         // Third should fail (_p1 和 _p2 仍存活，未释放)
         assert!(controller.try_acquire().await.is_none());
-    }
-
-    // =========================================================================
-    // RateLimiter 构造器与配置
-    // =========================================================================
-
-    #[test]
-    fn test_rate_limiter_new_default_config() {
-        let limiter = RateLimiter::new_default();
-        let config = limiter.config();
-        assert_eq!(config.max_requests_per_second, 60);
-        assert_eq!(config.burst_capacity, 20);
-        assert_eq!(config.block_duration_secs, 1);
-    }
-
-    #[test]
-    fn test_rate_limiter_new_custom_config() {
-        let config = RateLimitConfig {
-            max_requests_per_second: 100,
-            burst_capacity: 50,
-            block_duration_secs: 5,
-        };
-        let limiter = RateLimiter::new(config);
-        let cfg = limiter.config();
-        assert_eq!(cfg.max_requests_per_second, 100);
-        assert_eq!(cfg.burst_capacity, 50);
-        assert_eq!(cfg.block_duration_secs, 5);
-    }
-
-    #[test]
-    fn test_rate_limiter_new_with_config_params() {
-        let limiter = RateLimiter::new_with_config(30, 10);
-        let cfg = limiter.config();
-        assert_eq!(cfg.max_requests_per_second, 30);
-        assert_eq!(cfg.burst_capacity, 10);
-        // new_with_config 固定 block_duration_secs = 1
-        assert_eq!(cfg.block_duration_secs, 1);
-    }
-
-    #[test]
-    fn test_rate_limit_config_field_access() {
-        let config = RateLimitConfig {
-            max_requests_per_second: 200,
-            burst_capacity: 80,
-            block_duration_secs: 10,
-        };
-        assert_eq!(config.max_requests_per_second, 200);
-        assert_eq!(config.burst_capacity, 80);
-        assert_eq!(config.block_duration_secs, 10);
-    }
-
-    #[tokio::test]
-    async fn test_rate_limiter_config_getter_returns_reference() {
-        let limiter = RateLimiter::new_with_config(42, 7);
-        let cfg = limiter.config();
-        assert_eq!(cfg.max_requests_per_second, 42);
-        assert_eq!(cfg.burst_capacity, 7);
-    }
-
-    // =========================================================================
-    // RateLimiter 批量扣减与限流触发
-    // =========================================================================
-
-    #[tokio::test]
-    async fn test_check_rate_limit_n_batch_deduction() {
-        // burst_capacity=20, 一次扣减 5 后剩 15，再扣 10 后剩 5
-        let limiter = RateLimiter::new_with_config(60, 20);
-
-        assert!(limiter.check_rate_limit_n("batch_client", 5).await.is_ok());
-        assert!(limiter.check_rate_limit_n("batch_client", 10).await.is_ok());
-        // 仅剩 5 个令牌，请求 10 个应失败
-        let result = limiter.check_rate_limit_n("batch_client", 10).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_check_rate_limit_n_exceeds_capacity() {
-        // burst_capacity=5，请求 10 必然失败
-        let limiter = RateLimiter::new_with_config(60, 5);
-        let result = limiter.check_rate_limit_n("big_client", 10).await;
-        assert!(result.is_err());
-        let retry_after = result.unwrap_err();
-        // needed = 10 - 5 = 5, retry_after = 5 / 60
-        assert!(retry_after.as_secs_f64() > 0.0);
-        assert!(retry_after.as_secs_f64() < 1.0);
-    }
-
-    #[tokio::test]
-    async fn test_rate_limiter_burst_exhaustion_returns_error() {
-        // burst_capacity=3，连续 3 次成功后第 4 次应返回 Err(Duration)
-        let limiter = RateLimiter::new_with_config(60, 3);
-
-        assert!(limiter.check_rate_limit("limit_client").await.is_ok());
-        assert!(limiter.check_rate_limit("limit_client").await.is_ok());
-        assert!(limiter.check_rate_limit("limit_client").await.is_ok());
-
-        let result = limiter.check_rate_limit("limit_client").await;
-        assert!(result.is_err());
-        let retry_after = result.unwrap_err();
-        // 令牌近乎耗尽，retry_after 应为正且小于 1 秒（refill_rate=60）
-        assert!(retry_after.as_secs_f64() > 0.0);
-        assert!(retry_after.as_secs_f64() < 1.0);
-    }
-
-    #[tokio::test]
-    async fn test_rate_limiter_token_refill_after_wait() {
-        // refill_rate=2/s, burst=2：耗尽后等待令牌恢复
-        let limiter = RateLimiter::new_with_config(2, 2);
-
-        // 耗尽令牌
-        assert!(limiter.check_rate_limit("refill_client").await.is_ok());
-        assert!(limiter.check_rate_limit("refill_client").await.is_ok());
-        // 立即再请求应失败
-        assert!(limiter.check_rate_limit("refill_client").await.is_err());
-
-        // 等待 600ms，refill_rate=2/s 应恢复约 1.2 个令牌（>=1）
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        assert!(limiter.check_rate_limit("refill_client").await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_rate_limiter_independent_clients() {
-        // 不同 client_id 应有独立的令牌桶
-        let limiter = RateLimiter::new_with_config(60, 2);
-
-        assert!(limiter.check_rate_limit("client_a").await.is_ok());
-        assert!(limiter.check_rate_limit("client_a").await.is_ok());
-        // client_a 耗尽，但 client_b 仍可用
-        assert!(limiter.check_rate_limit("client_a").await.is_err());
-        assert!(limiter.check_rate_limit("client_b").await.is_ok());
     }
 
     // =========================================================================

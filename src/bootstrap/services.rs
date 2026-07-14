@@ -25,13 +25,10 @@ use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::{WebhookService, WebhookServiceImpl};
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
-use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
 use crate::infrastructure::database::repositories::auth_scope_repo_impl::AuthScopeRepositoryImpl;
 use crate::infrastructure::geolocation::GeoLocationServiceImpl;
-use crate::infrastructure::services::rate_limiting_service_impl::{
-    RateLimitingConfig, RateLimitingServiceImpl,
-};
+use crate::infrastructure::services::limiteron_service::{LimiteronService, RateLimitingConfig};
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::presentation::middleware::auth_middleware::AuthRateLimiter;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
@@ -120,19 +117,17 @@ pub fn init_team_semaphore(default_team_limit: u64) -> Arc<TeamSemaphore> {
     Arc::new(TeamSemaphore::new(default_team_limit as usize))
 }
 
-/// Initialize rate limiting service.
+/// Initialize rate limiting service using LimiteronService (in-memory storage, no Redis).
 ///
 /// # Arguments
 ///
-/// * `redis_client` - Redis client for distributed rate limiting
 /// * `repositories` - Application repositories
 /// * `settings` - Application settings
 ///
 /// # Returns
 ///
 /// Returns an initialized rate limiting service.
-pub fn init_rate_limiting_service(
-    redis_client: Arc<RedisClient>,
+pub async fn init_rate_limiting_service(
     repositories: &Repositories,
     settings: &Settings,
 ) -> Arc<dyn RateLimitingService> {
@@ -171,13 +166,16 @@ pub fn init_rate_limiting_service(
         rate_limit_ttl_seconds: 3600,
     };
 
-    Arc::new(RateLimitingServiceImpl::new(
-        redis_client.clone(),
+    let service = LimiteronService::new(
         repositories.task_repo.clone(),
         repositories.tasks_backlog_repo.clone(),
         repositories.credits_repo.clone(),
         rate_limiting_config,
-    ))
+    )
+    .await
+    .expect("Failed to create LimiteronService");
+
+    Arc::new(service)
 }
 
 /// Initialize search engine service.
@@ -317,7 +315,7 @@ pub fn init_regex_cache() -> Arc<RegexCache> {
 /// # Returns
 ///
 /// Returns all initialized services.
-pub fn init_services(
+pub async fn init_services(
     infrastructure: &InfrastructureComponents,
     engine_router: Arc<EngineRouter>,
     engine_client: Arc<EngineClient>,
@@ -334,8 +332,7 @@ pub fn init_services(
     let team_semaphore = init_team_semaphore(settings.concurrency.default_team_limit as u64);
 
     // Initialize rate limiting service
-    let rate_limiting_service =
-        init_rate_limiting_service(redis_client.clone(), repositories, settings);
+    let rate_limiting_service = init_rate_limiting_service(repositories, settings).await;
 
     // Initialize rate limit middleware
     let rate_limit_middleware = init_rate_limit_middleware(rate_limiting_service.clone());
@@ -474,10 +471,10 @@ pub fn init_services(
 
 // Note: The following functions are not unit-tested here because they require
 // real external services that are only available in Docker-based integration tests:
-//   - init_rate_limiting_service: needs Arc<RedisClient> + Repositories (DB pool)
+//   - init_rate_limiting_service: needs Repositories (DB pool) — LimiteronService uses in-memory storage
 //   - init_search_service: needs Repositories (DB pool for crawl/task/credits repos)
 //   - init_auth_scope_service: needs dbnexus::DbPool (PostgreSQL connection)
-//   - init_services: needs InfrastructureComponents (full DB + Redis + HTTP stack)
+//   - init_services: needs InfrastructureComponents (full DB + HTTP stack)
 // These are covered by integration tests in tests/integration/ with Docker-provided
 // PostgreSQL and Redis.
 
@@ -729,9 +726,7 @@ mod tests {
     // These tests exercise service initialization paths that require real
     // PostgreSQL and/or Redis. They early-return if Docker is unavailable.
 
-    use crate::bootstrap::infrastructure::{
-        init_database, init_infrastructure, init_redis, init_repositories,
-    };
+    use crate::bootstrap::infrastructure::{init_database, init_infrastructure, init_repositories};
     use crate::common::test_support::testcontainers_fixtures as tcf;
 
     async fn require_docker() -> bool {
@@ -739,28 +734,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tc_init_rate_limiting_service_with_redis() {
+    async fn tc_init_rate_limiting_service() {
         if !require_docker().await {
-            eprintln!("[skip] Docker unavailable — tc_init_rate_limiting_service_with_redis");
+            eprintln!("[skip] Docker unavailable — tc_init_rate_limiting_service");
             return;
         }
-        let handle = match tcf::DbRedisHandle::start().await {
-            Ok(h) => h,
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
             Err(e) => {
-                eprintln!("[skip] failed to start containers: {e}");
+                eprintln!("[skip] failed to start postgres container: {e}");
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url).unwrap();
+        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
         let repos = init_repositories(db.clone(), &settings);
-        let redis_client = init_redis(&settings)
-            .await
-            .expect("redis client should be created");
 
-        let service = init_rate_limiting_service(redis_client, &repos, &settings);
+        let service = init_rate_limiting_service(&repos, &settings).await;
         // Verify the service is usable (Arc strong count >= 1).
         assert!(Arc::strong_count(&service) >= 1);
     }
@@ -848,7 +840,8 @@ mod tests {
             engine_client,
             infra.http_client.clone(),
             &settings,
-        );
+        )
+        .await;
 
         // Verify all service components are constructed.
         assert!(Arc::strong_count(&services.rate_limiting_service) >= 1);

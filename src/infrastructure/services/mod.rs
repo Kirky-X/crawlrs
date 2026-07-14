@@ -11,7 +11,6 @@ pub mod concurrency_controller_impl;
 pub mod config_service;
 #[cfg(feature = "rate-limiting")]
 pub mod limiteron_service;
-pub mod rate_limiting_service_impl;
 pub mod webhook_sender_impl;
 
 /// Webhook 服务公共接口

@@ -443,7 +443,8 @@ mod tests {
             engines.engine_client.clone(),
             infra.http_client.clone(),
             &settings,
-        );
+        )
+        .await;
         let search_client = Arc::new(crate::search::client::SearchClient::new(
             engines.engine_client.clone(),
         ));

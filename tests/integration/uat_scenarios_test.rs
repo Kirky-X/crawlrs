@@ -142,24 +142,20 @@ async fn test_uat007_path_filtering() {
 
 /// UAT-006: 分布式速率限制测试
 ///
-/// 测试场景：验证分布式信号量和令牌桶限流在多任务场景下的有效性
+/// 测试场景：验证令牌桶限流和并发控制在多任务场景下的有效性
 ///
 /// 测试步骤：
 /// 1. 模拟多个并发任务请求同一资源
 /// 2. 验证超出限制的请求被正确拒绝或排队
-// 3. 验证Redis中的限流键值正确更新
-// 注意：这里使用RateLimitingServiceImpl进行真实测试，而非mock
+// 注意：使用 LimiteronService（内存存储）进行真实测试，而非 mock
 #[tokio::test]
 #[ignore]  # Skip: Integration test requiring full environment
 async fn test_uat006_distributed_rate_limiting() {
     // 1. 设置测试环境
-    // create_test_app_no_worker 已经初始化了 Redis 并暴露在 app.redis 中
     let app = create_test_app_no_worker().await;
-    let redis_client = app.redis.clone();
 
     // 初始化限流服务
-    // 注意：在集成测试环境中，我们直接使用RateLimitingServiceImpl
-    // 这里的配置应该与生产环境一致，使用Redis作为后端
+    // 使用 LimiteronService（limiteron 库 + 内存存储）
     use crawlrs::domain::services::rate_limiting_service::{
         ConcurrencyConfig, ConcurrencyResult, ConcurrencyStrategy, RateLimitConfig,
         RateLimitResult, RateLimitStrategy, RateLimitingService,
@@ -168,24 +164,19 @@ async fn test_uat006_distributed_rate_limiting() {
         credits_repo_impl::CreditsRepositoryImpl, task_repo_impl::TaskRepositoryImpl,
         tasks_backlog_repo_impl::TasksBacklogRepositoryImpl,
     };
-    use crawlrs::infrastructure::services::rate_limiting_service_impl::{
-        RateLimitingConfig, RateLimitingServiceImpl,
+    use crawlrs::infrastructure::services::limiteron_service::{
+        LimiteronService, RateLimitingConfig,
     };
 
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         app.db_pool.clone(),
         chrono::Duration::seconds(300),
     ));
-    // TasksBacklogRepositoryImpl expects DatabaseConnection, not RedisClient
     let backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(app.db_pool.clone()));
     let credits_repo = Arc::new(CreditsRepositoryImpl::new(app.db_pool.clone()));
 
-    // Use unique Redis key prefix to avoid conflicts when tests run concurrently
-    let test_run_id = Uuid::new_v4().to_string();
-    let redis_key_prefix = format!("crawlrs:test:ratelimit:{}", test_run_id);
-
     let config = RateLimitingConfig {
-        redis_key_prefix: redis_key_prefix.clone(),
+        redis_key_prefix: "crawlrs:test:ratelimit".to_string(),
         rate_limit: RateLimitConfig {
             strategy: RateLimitStrategy::TokenBucket,
             requests_per_second: 5, // 每秒5个请求
@@ -205,13 +196,14 @@ async fn test_uat006_distributed_rate_limiting() {
         rate_limit_ttl_seconds: 60,
     };
 
-    let rate_limiter = RateLimitingServiceImpl::new(
-        Arc::new(redis_client.clone()),
+    let rate_limiter = LimiteronService::new(
         task_repo.clone(),
         backlog_repo,
         credits_repo,
         config,
-    );
+    )
+    .await
+    .expect("Failed to create LimiteronService");
 
     // 1. 测试API限流 (Token Bucket)
     let api_key = "test-api-key";
@@ -306,24 +298,12 @@ async fn test_uat006_distributed_rate_limiting() {
         "第4个并发请求应该被拒绝或排队"
     );
 
-    // 释放一个任务
-    // 清除 Redis 中的信号量 key 模拟任务完成
-    // 这是一个真实的 Redis 操作，用于模拟真实的任务生命周期结束
-    let semaphore_key = format!("{}:team:{}:semaphore", redis_key_prefix, team_id);
-    // 这里我们简单地删除 key 来模拟重置，或者我们需要找到刚才添加的 token 并移除
-    // 由于我们无法轻易获得 token (它是在 check_team_concurrency 内部生成的)，
-    // 我们直接删除整个 key 来重置信号量，这样所有槽位都释放了。
-    // 注意：这将释放所有 3 个并发任务，不仅仅是一个。
-    let _: () = redis::cmd("DEL")
-        .arg(&semaphore_key)
-        .query_async(
-            &mut redis_client
-                .get_connection()
-                .await
-                .expect("Failed to get Redis connection"),
-        )
+    // 释放一个并发槽位（模拟任务完成）
+    // LimiteronService 使用内存存储，通过 release_team_concurrency_slot 释放
+    rate_limiter
+        .release_team_concurrency_slot(team_id, task_id)
         .await
-        .expect("Failed to delete semaphore key");
+        .expect("释放并发槽位失败");
 
     // 再次请求应该允许
     let task_id_retry = Uuid::new_v4();
@@ -1257,7 +1237,7 @@ async fn test_uat018_rate_limiting() {
 /// 2. 验证多余的任务状态为 Queued (在我们的实现中是通过信号量控制)
 #[tokio::test]
 #[ignore]  # Skip: Integration test requiring full environment
-#[ignore  # Skip: Uses private RateLimitingServiceImpl methods]
+#[ignore  # Skip: Uses service internals that require full DB setup]
 async fn test_uat019_team_concurrency_limit() {
     // 这个测试需要验证任务处理器的并发控制逻辑
     // 在我们的系统中，并发控制是在 RateLimitingService 中实现的
@@ -1268,8 +1248,8 @@ use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
     use crawlrs::domain::services::rate_limiting_service::{
         ConcurrencyResult, RateLimitingService,
     };
-    use crawlrs::infrastructure::services::rate_limiting_service_impl::{
-        RateLimitingConfig, RateLimitingServiceImpl,
+    use crawlrs::infrastructure::services::limiteron_service::{
+        LimiteronService, RateLimitingConfig,
     };
     use serde_json::json;
     use std::sync::Arc;
@@ -1277,12 +1257,6 @@ use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 
     let app = create_test_app_no_worker().await;
 
-    // 获取 rate_limiting_service
-    // 在 create_test_app_no_worker 中，它被初始化并放入了 Extension
-    // 我们可以直接创建一个新的实例用于测试，使用相同的 Redis 客户端
-    let redis_client =
-        crawlrs::infrastructure::cache::redis_client::RedisClient::new(&app.redis_url)
-            .expect("Failed to create Redis client");
     let task_repo = app.task_repo.clone();
     let credits_repo = Arc::new(
         crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl::new(
@@ -1294,13 +1268,14 @@ use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
     let mut config = RateLimitingConfig::default();
     config.concurrency.max_concurrent_per_team = 2; // 设置极小的并发限制用于测试
 
-    let service = RateLimitingServiceImpl::new(
-        Arc::new(redis_client),
+    let service = LimiteronService::new(
         task_repo.clone(),
         backlog_repo,
         credits_repo,
         config,
-    );
+    )
+    .await
+    .expect("Failed to create LimiteronService");
 
     let team_id = app.team_id;
 

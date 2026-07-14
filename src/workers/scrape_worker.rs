@@ -4031,7 +4031,8 @@ mod tests {
             engines.engine_client.clone(),
             infra.http_client.clone(),
             &settings,
-        );
+        )
+        .await;
 
         // Construct ScrapeWorker via new().
         let worker = ScrapeWorker::new(
@@ -4185,7 +4186,8 @@ mod tests {
             engines.engine_client.clone(),
             infra.http_client.clone(),
             &settings,
-        );
+        )
+        .await;
 
         // Use ScrapeWorkerBuilder to construct the worker.
         let worker =

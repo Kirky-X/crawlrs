@@ -203,7 +203,8 @@ async fn main() -> anyhow::Result<()> {
         engines.engine_client.clone(),
         http_client.clone(),
         &settings,
-    );
+    )
+    .await;
 
     // Create SearchClient for AppState
     let search_client = Arc::new(crawlrs::search::client::SearchClient::new(

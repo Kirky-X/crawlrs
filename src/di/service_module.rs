@@ -42,18 +42,17 @@ pub trait RateLimitingServiceTrait: Interface + Send + Sync {
     fn get_service(&self) -> &dyn RateLimitingService;
 }
 
-/// RateLimitingService component - delegates to RateLimitingServiceImpl
+/// RateLimitingService component - delegates to LimiteronService
 #[cfg(feature = "rate-limiting")]
 pub struct RateLimitingServiceComponent {
     /// Inner implementation
-    inner: crate::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl,
+    inner: crate::infrastructure::services::limiteron_service::LimiteronService,
 }
 
 #[cfg(feature = "rate-limiting")]
 impl<M: Module> Component<M> for RateLimitingServiceComponent
 where
-    M: HasComponent<dyn RedisClientTrait>
-        + HasComponent<dyn CreditsRepository>
+    M: HasComponent<dyn CreditsRepository>
         + HasComponent<dyn TaskRepository>
         + HasComponent<dyn TasksBacklogRepository>
         + HasComponent<dyn SettingsTrait>,
@@ -68,10 +67,8 @@ where
         use crate::domain::services::rate_limiting_service::{
             ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy,
         };
-        use crate::infrastructure::services::rate_limiting_service_impl::RateLimitingConfig;
+        use crate::infrastructure::services::limiteron_service::RateLimitingConfig;
 
-        let redis_client_component: Arc<dyn RedisClientTrait> = M::build_component(context);
-        let redis_client = redis_client_component.get_client();
         let credits_repo: Arc<dyn CreditsRepository> = M::build_component(context);
         let task_repo: Arc<dyn TaskRepository> = M::build_component(context);
         let tasks_backlog_repo: Arc<dyn TasksBacklogRepository> = M::build_component(context);
@@ -103,13 +100,15 @@ where
             rate_limit_ttl_seconds: 3600,
         };
 
-        let inner = crate::infrastructure::services::rate_limiting_service_impl::RateLimitingServiceImpl::new(
-            redis_client,
-            task_repo,
-            tasks_backlog_repo,
-            credits_repo,
-            config,
-        );
+        let inner = futures::executor::block_on(
+            crate::infrastructure::services::limiteron_service::LimiteronService::new(
+                task_repo,
+                tasks_backlog_repo,
+                credits_repo,
+                config,
+            ),
+        )
+        .expect("Failed to create LimiteronService");
 
         Box::new(Self { inner })
     }
