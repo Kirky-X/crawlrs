@@ -8,7 +8,6 @@
 
 - **Rust 1.70+**：`rustc --version`
 - **PostgreSQL 14+** 或 **SQLite 3.35+**
-- **Redis 7+**（可选，用于缓存和限流）
 
 安装依赖：
 

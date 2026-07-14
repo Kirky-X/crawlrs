@@ -1,20 +1,20 @@
 # Cache Examples
 
-缓存配置示例，演示如何使用 crawlrs 的Redis缓存功能。
+缓存配置示例，演示如何使用 crawlrs 的 oxcache 缓存功能。
 
 ## 包含的示例
 
 | 示例文件 | 功能描述 |
 |---------|---------|
-| `redis_cache.rs` | Redis缓存示例 |
+| `oxcache_cache.rs` | oxcache 缓存示例 |
 | `cache_configuration.rs` | 缓存配置示例 |
 | `ttl_management.rs` | TTL管理示例 |
 
 ## 核心功能
 
-### Redis集成
-- 连接配置
-- 连接池管理
+### oxcache 集成
+- 内存缓存配置
+- TTL 管理
 - 故障恢复
 
 ### 缓存策略
@@ -34,8 +34,7 @@ use crawlrs::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cache = Cache::redis()
-        .url("redis://localhost:6379")
+    let cache = Cache::builder()
         .default_ttl(3600)
         .build()?;
     
@@ -46,8 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## 前置条件
 
-- 确保Redis服务可用
-- 根据需要配置Redis集群
+- oxcache 使用内存后端（moka），无需外部服务
 
 ## 相关示例
 

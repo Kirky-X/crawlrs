@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## 前置条件
 
-- 确保Redis服务可用（用于分布式限流）
+- 限流使用 limiteron MemoryStorage（无需外部服务）
 - 根据需要配置适当的限制值
 
 ## 相关示例

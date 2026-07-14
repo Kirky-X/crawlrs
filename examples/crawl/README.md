@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## 前置条件
 
 - 确保已配置好数据库连接
-- 根据需要配置Redis进行分布式缓存
+- 分布式缓存由 oxcache 自动管理
 - 建议配置适当的请求延迟以避免被封禁
 
 ## 相关示例

@@ -76,7 +76,7 @@ examples/
 │   ├── task_events.rs
 │   └── retry_logic.rs
 ├── cache/               # 缓存示例
-│   ├── redis_cache.rs
+│   ├── oxcache_cache.rs
 │   ├── cache_configuration.rs
 │   └── ttl_management.rs
 ├── rate-limiting/       # 限流示例
@@ -151,7 +151,6 @@ cargo run --example browser
 - PostgreSQL 14+ 或 SQLite 3.35+
 
 ### 可选
-- Redis 7+（用于缓存和限流）
 - Chrome/Chromium（用于Playwright）
 - LLM API密钥（用于LLM提取）
 

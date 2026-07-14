@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## 前置条件
 
 - 确保已配置数据库
-- 根据需要配置Redis进行配额缓存
+- 配额缓存由 oxcache 自动管理
 
 ## 相关示例
 
