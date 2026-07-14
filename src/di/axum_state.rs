@@ -485,8 +485,8 @@ mod tests {
     /// PostgreSQL + Redis pair, builds the kit, then constructs `AppState`
     /// through the canonical `from_kit` entry point.
     async fn build_app_state() -> anyhow::Result<AppState> {
-        let handle = tcf::DbRedisHandle::start().await?;
-        let settings = Arc::new(tcf::settings_with_urls(&handle.pg.url, &handle.redis.url)?);
+        let handle = tcf::DbHandle::start().await?;
+        let settings = Arc::new(tcf::settings_with_urls(&handle.pg.url)?);
 
         let mut kit = AsyncKit::new();
         kit.set_config(settings);

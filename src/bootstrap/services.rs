@@ -728,7 +728,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -752,7 +752,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -774,7 +774,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -795,14 +795,14 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_init_services_full_stack");
             return;
         }
-        let handle = match tcf::DbRedisHandle::start().await {
+        let handle = match tcf::DbHandle::start().await {
             Ok(h) => h,
             Err(e) => {
-                eprintln!("[skip] failed to start containers: {e}");
+                eprintln!("[skip] failed to start db container: {e}");
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url).unwrap();
+        let settings = tcf::settings_with_urls(&handle.pg.url).unwrap();
         let infra = init_infrastructure(&settings)
             .await
             .expect("infrastructure should initialize");

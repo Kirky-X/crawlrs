@@ -262,9 +262,9 @@ criterion = { version = "0.8", features = ["html_reports"] }
 
 # testcontainers: 集成测试基础设施（需 Docker）
 # testcontainers 0.27.1 提供 core API + AsyncRunner
-# testcontainers-modules 0.15.0 提供 PostgreSQL/Redis 现成镜像
+# testcontainers-modules 0.15.0 提供 PostgreSQL 现成镜像
 testcontainers = "0.27"
-testcontainers-modules = { version = "0.15", features = ["postgres", "redis"] }
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
 
 [[test]]
 name = "integration_tests"

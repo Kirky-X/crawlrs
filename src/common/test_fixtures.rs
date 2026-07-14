@@ -5,7 +5,7 @@
 
 //! Testcontainers integration test fixtures.
 //!
-//! Provides on-demand PostgreSQL and Redis containers for tests that
+//! Provides on-demand PostgreSQL containers for tests that
 //! require real external services. Containers are started per-test and
 //! torn down on drop.
 //!
@@ -19,7 +19,6 @@ use testcontainers::core::IntoContainerPort;
 use testcontainers::runners::AsyncRunner;
 use testcontainers::ImageExt;
 use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::redis::Redis;
 
 /// Check whether Docker is available on the host.
 ///
@@ -78,53 +77,18 @@ impl PgHandle {
     }
 }
 
-/// A running Redis container with its mapped port.
+/// A test fixture that starts a PostgreSQL container.
 ///
-/// The container is stopped when this struct is dropped.
-pub struct RedisHandle {
-    /// Host port mapped to Redis' 6379.
-    #[allow(dead_code)]
-    pub port: u16,
-    /// Full connection URL (redis://127.0.0.1:PORT).
-    pub url: String,
-    _container: Option<testcontainers::ContainerAsync<Redis>>,
-}
-
-impl RedisHandle {
-    /// Start a fresh Redis container and return a handle.
-    ///
-    /// Uses the `redis:7-alpine` image.
-    pub async fn start() -> anyhow::Result<Self> {
-        let image = Redis::default();
-        let container = image
-            .with_tag("7-alpine")
-            .start()
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to start redis container: {e}"))?;
-        let port = container
-            .get_host_port_ipv4(6379.tcp())
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to get redis port: {e}"))?;
-        let url = format!("redis://127.0.0.1:{port}");
-        Ok(Self {
-            port,
-            url,
-            _container: Some(container),
-        })
-    }
-}
-
-/// A combined fixture that starts both PostgreSQL and Redis.
-pub struct DbRedisHandle {
+/// Replaces the former `DbRedisHandle` — Redis is no longer used at runtime.
+pub struct DbHandle {
     pub pg: PgHandle,
-    pub redis: RedisHandle,
 }
 
-impl DbRedisHandle {
-    /// Start both PostgreSQL and Redis containers concurrently.
+impl DbHandle {
+    /// Start a PostgreSQL container.
     pub async fn start() -> anyhow::Result<Self> {
-        let (pg, redis) = tokio::try_join!(PgHandle::start(), RedisHandle::start())?;
-        Ok(Self { pg, redis })
+        let pg = PgHandle::start().await?;
+        Ok(Self { pg })
     }
 }
 
@@ -142,27 +106,13 @@ pub fn database_settings(url: &str) -> crate::config::DatabaseSettings {
     }
 }
 
-/// Build a `crate::config::RedisSettings` pointing at the given URL.
-pub fn redis_settings(url: &str) -> crate::config::RedisSettings {
-    crate::config::RedisSettings {
-        url: url.to_string(),
-        max_connections: Some(5),
-        min_connections: Some(1),
-        connection_timeout: Some(10),
-        idle_timeout: Some(300),
-    }
-}
-
-/// Build app `Settings` patched with the given database and Redis URLs.
+/// Build app `Settings` patched with the given database URL.
 ///
-/// Loads the default configuration file, then overrides the database
-/// and Redis URLs to point at the testcontainers instances.
-pub fn settings_with_urls(
-    db_url: &str,
-    redis_url: &str,
-) -> anyhow::Result<crate::config::Settings> {
+/// Loads the default configuration file, then overrides the database URL
+/// to point at the testcontainers PostgreSQL instance.
+/// RedisSettings is kept as default (vestigial — Redis is no longer used at runtime).
+pub fn settings_with_urls(db_url: &str) -> anyhow::Result<crate::config::Settings> {
     let mut settings = crate::bootstrap::config::load_settings()?;
     settings.database = database_settings(db_url);
-    settings.redis = redis_settings(redis_url);
     Ok(settings)
 }

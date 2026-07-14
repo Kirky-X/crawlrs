@@ -3938,8 +3938,8 @@ mod tests {
 
     /// Build a full ScrapeWorker using testcontainers-provided services.
     async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
-        let handle = tcf::DbRedisHandle::start().await?;
-        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url)?;
+        let handle = tcf::DbHandle::start().await?;
+        let settings = tcf::settings_with_urls(&handle.pg.url)?;
         let settings_arc = std::sync::Arc::new(settings.clone());
         let infra = init_infrastructure(&settings).await?;
         let engines = crate::bootstrap::engines::init_engine_components(
@@ -4081,14 +4081,14 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_scrape_worker_builder_builds_full_worker");
             return;
         }
-        let handle = match tcf::DbRedisHandle::start().await {
+        let handle = match tcf::DbHandle::start().await {
             Ok(h) => h,
             Err(e) => {
-                eprintln!("[skip] failed to start containers: {e}");
+                eprintln!("[skip] failed to start db container: {e}");
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url).unwrap();
+        let settings = tcf::settings_with_urls(&handle.pg.url).unwrap();
         let settings_arc = std::sync::Arc::new(settings.clone());
         let infra = match init_infrastructure(&settings).await {
             Ok(i) => i,

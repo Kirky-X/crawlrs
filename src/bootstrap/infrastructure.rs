@@ -368,7 +368,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let pool = init_database(&settings).await;
         assert!(
             pool.is_ok(),
@@ -397,7 +397,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let pool = init_database(&settings)
             .await
             .expect("pool should be created");
@@ -416,7 +416,6 @@ mod tests {
         // Use a deliberately invalid URL that cannot be connected to.
         let settings = tcf::settings_with_urls(
             "postgres://nobody:nopass@127.0.0.1:1/nonexistent",
-            "redis://127.0.0.1:1",
         )
         .unwrap();
         let result = init_database(&settings).await;
@@ -439,7 +438,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -462,14 +461,14 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_init_infrastructure_full_stack");
             return;
         }
-        let handle = match tcf::DbRedisHandle::start().await {
+        let handle = match tcf::DbHandle::start().await {
             Ok(h) => h,
             Err(e) => {
-                eprintln!("[skip] failed to start db+redis containers: {e}");
+                eprintln!("[skip] failed to start db container: {e}");
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url).unwrap();
+        let settings = tcf::settings_with_urls(&handle.pg.url).unwrap();
         let infra = init_infrastructure(&settings).await;
         assert!(
             infra.is_ok(),
@@ -489,19 +488,8 @@ mod tests {
 
     #[tokio::test]
     async fn tc_init_infrastructure_fails_without_db() {
-        if !require_docker().await {
-            eprintln!("[skip] Docker unavailable — tc_init_infrastructure_fails_without_db");
-            return;
-        }
-        let redis = match tcf::RedisHandle::start().await {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[skip] failed to start redis container: {e}");
-                return;
-            }
-        };
         // DB points at an unreachable port; init_infrastructure should fail.
-        let settings = tcf::settings_with_urls("postgres://127.0.0.1:1/x", &redis.url).unwrap();
+        let settings = tcf::settings_with_urls("postgres://127.0.0.1:1/x").unwrap();
         let result = init_infrastructure(&settings).await;
         assert!(
             result.is_err(),

@@ -95,7 +95,7 @@
 //!
 //! ## Testing
 //!
-//! Tests use `tcf::DbRedisHandle` (testcontainers) to provision PostgreSQL + Redis,
+//! Tests use `tcf::DbHandle` (testcontainers) to provision PostgreSQL,
 //! then build a real `AsyncKit` via the same module registration flow as production.
 //! See `axum_state::tests::build_app_state()` for the canonical test helper.
 //!

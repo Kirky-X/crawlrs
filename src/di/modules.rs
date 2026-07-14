@@ -495,7 +495,7 @@ mod tests {
             }
         };
         let settings = Arc::new(
-            tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1")
+            tcf::settings_with_urls(&pg.url)
                 .expect("Failed to build settings"),
         );
 
@@ -528,7 +528,7 @@ mod tests {
             }
         };
         let settings = Arc::new(
-            tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1")
+            tcf::settings_with_urls(&pg.url)
                 .expect("Failed to build settings"),
         );
 
@@ -559,15 +559,15 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_infrastructure_module_builds_components");
             return;
         }
-        let combo = match tcf::DbRedisHandle::start().await {
+        let combo = match tcf::DbHandle::start().await {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[skip] failed to start pg+redis containers: {e}");
+                eprintln!("[skip] failed to start db container: {e}");
                 return;
             }
         };
         let settings = Arc::new(
-            tcf::settings_with_urls(&combo.pg.url, &combo.redis.url)
+            tcf::settings_with_urls(&combo.pg.url)
                 .expect("Failed to build settings"),
         );
 
@@ -595,15 +595,15 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_service_module_builds_components");
             return;
         }
-        let combo = match tcf::DbRedisHandle::start().await {
+        let combo = match tcf::DbHandle::start().await {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[skip] failed to start pg+redis containers: {e}");
+                eprintln!("[skip] failed to start db container: {e}");
                 return;
             }
         };
         let settings = Arc::new(
-            tcf::settings_with_urls(&combo.pg.url, &combo.redis.url)
+            tcf::settings_with_urls(&combo.pg.url)
                 .expect("Failed to build settings"),
         );
 
@@ -632,15 +632,15 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_all_modules_registered_simultaneously");
             return;
         }
-        let combo = match tcf::DbRedisHandle::start().await {
+        let combo = match tcf::DbHandle::start().await {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[skip] failed to start pg+redis containers: {e}");
+                eprintln!("[skip] failed to start db container: {e}");
                 return;
             }
         };
         let settings = Arc::new(
-            tcf::settings_with_urls(&combo.pg.url, &combo.redis.url)
+            tcf::settings_with_urls(&combo.pg.url)
                 .expect("Failed to build settings"),
         );
 

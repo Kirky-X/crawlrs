@@ -1435,7 +1435,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -1463,7 +1463,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -1493,7 +1493,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -1515,7 +1515,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -1539,7 +1539,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -1561,7 +1561,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -1585,7 +1585,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -1609,7 +1609,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
@@ -1633,7 +1633,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
         let db = init_database(&settings)
             .await
             .expect("db pool should be created");
