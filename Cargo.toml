@@ -289,10 +289,6 @@ path = "benches/benchmark.rs"
 name = "crawlrs"
 path = "src/main.rs"
 
-# [[bin]]
-# name = "crawlrs-shaku"
-# path = "src/main_shaku.rs"
-
 # =============================================================================
 # Build Optimization Profiles
 # =============================================================================
