@@ -13,15 +13,15 @@ exclude = []
 
 [features]
 # 默认核心功能（不包含 S3、genai）
-default = ["engine-reqwest", "redis-cache", "rate-limiting", "metrics", "dbnexus-postgres", "logging", "config", "oxcache-cache"]
+default = ["engine-reqwest", "redis-cache", "rate-limiting", "metrics", "dbnexus-postgres", "logging", "config", "oxcache-cache", "queue-apalis"]
 
 # 预设配置
-lite = ["engine-reqwest", "dbnexus-sqlite", "redis-cache", "rate-limiting", "logging", "config", "oxcache-cache"]
+lite = ["engine-reqwest", "dbnexus-sqlite", "redis-cache", "rate-limiting", "logging", "config", "oxcache-cache", "queue-apalis"]
 standard = ["default", "engine-playwright"]
 full = ["standard", "engine-fire-cdp", "engine-fire-tls", "engine-flaresolverr", "dbnexus-sqlite", "search-all", "api-sdk"]
 
-# 实验性功能（需要显式启用）
-experimental = ["dep:genai"]
+# genai 作为独立 optional dep，通过 features 启用
+genai-llm = ["dep:genai"]
 
 # 搜索引擎组合特性
 search-all = ["search-google", "search-bing", "search-baidu", "search-sogou"]
@@ -77,6 +77,10 @@ api-sdk = ["dep:sdforge"]
 # oxcache: 多后端缓存库（moka + redis）
 oxcache-cache = ["dep:oxcache"]
 
+# --- 队列特性 ---
+# apalis: PostgreSQL-backed task queue（复用 dbnexus-postgres，不引入 redis）
+queue-apalis = ["dep:apalis", "dbnexus-postgres"]
+
 # --- 已移除的旧数据库特性 (不再使用) ---
 # db-postgres = ["sea-orm/sqlx-postgres", "sqlx/postgres"]
 # db-sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
@@ -108,7 +112,7 @@ confers = { version = "0.4", default-features = false, features = ["validation",
 figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"], optional = true }
 
 # Error handling
-thiserror = "2.0.17"
+thiserror = "2.0"
 anyhow = "1.0"
 
 # HTTP client and networking
@@ -136,10 +140,10 @@ dbnexus = { version = "0.2", default-features = false, features = [
 ], optional = true }
 
 # Sea-ORM - 需要用于实体宏定义 (dbnexus 构建在 Sea-ORM 之上)
-# 注意：版本必须与 dbnexus 保持一致 (2.0.0-rc.27)
+# 注意：版本必须与 dbnexus 0.2 保持一致 (2.0.0-rc.37)
 # 只有启用 dbnexus 特性时才需要 sea-orm
 # 使用 sea_orm 内部名 (Cargo 要求) 通过 package 属性引用实际包
-sea_orm = { version = "2.0.0-rc.27", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"], optional = true, package = "sea-orm" }
+sea_orm = { version = "2.0.0-rc.37", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"], optional = true, package = "sea-orm" }
 
 # --- 已移除的旧数据库依赖 (不再使用) ---
 # sea-orm = { version = "1.1", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
@@ -149,13 +153,13 @@ sea_orm = { version = "2.0.0-rc.27", default-features = false, features = ["runt
 redis = { version = "1.2", features = ["tokio-comp"], optional = true }
 deadpool = { version = "0.13", optional = true }
 deadpool-redis = { version = "0.23", features = ["rt_tokio_1"], optional = true }
-dashmap = "6.1.0"
-once_cell = "1.21.3"
+dashmap = "6.1"
+once_cell = "1.21"
 
 # Utilities
 uuid = { version = "1.23", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-rand = "0.9.2"
+rand = "0.9"
 validator = { version = "0.20", features = ["derive"] }
 sysinfo = { version = "0.39", optional = true }
 dirs = "5.0"
@@ -189,7 +193,7 @@ serde_urlencoded = "0.7"
 urlencoding = "2.1"
 
 # Cryptography and encoding
-base64 = "0.22.1"
+base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
@@ -216,17 +220,21 @@ limiteron = { version = "0.2", default-features = false, features = [
 parking_lot = "0.12"
 
 # Regular expressions
-regex = "1.12.2"
+regex = "1.12"
 
 bytes = "1.11"
 genai = { version = "0.6", optional = true }
-toml = "0.9.11"
+toml = "0.9"
 
 # Dependency Injection
 shaku = "0.6"
 shaku_axum = "0.6"
+trait-kit = { version = "0.3", features = ["async", "confers"] }
 oxcache = { version = "0.3", default-features = false, features = ["memory", "redis", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing", "futures"], optional = true }
-ahash = "0.8.12"
+ahash = "0.8"
+
+# Task Queue (apalis: PostgreSQL-backed, no redis dependency)
+apalis = { version = "0.5", default-features = false, features = ["postgres", "retry", "limit", "timeout"], optional = true }
 
 # API Documentation (optional - controlled by 'openapi' feature)
 # utoipa = { version = "5.4", optional = true }
@@ -250,7 +258,7 @@ wiremock = "0.6"
 reqwest = { version = "0.13", features = ["json"] }
 serde_json = "1.0"
 cucumber = { version = "0.23", features = ["macros"] }
-axum-test = "18.6.0"
+axum-test = "18.6"
 futures = "0.3"
 tempfile = "3.24"
 uuid = { version = "1.23", features = ["v4"] }
