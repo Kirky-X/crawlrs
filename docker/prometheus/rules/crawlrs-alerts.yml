@@ -78,19 +78,6 @@ groups:
           description: "Database connection pool utilization exceeds 90%."
           runbook_url: "https://wiki.example.com/runbooks/db-connections"
 
-      # P1-High: Redis 内存使用率高
-      - alert: CrawlrsRedisMemoryHigh
-        expr: |
-          redis_memory_used_bytes / redis_memory_max_bytes > 0.85
-        for: 15m
-        labels:
-          severity: high
-          team: platform
-        annotations:
-          summary: "Redis memory usage > 85%"
-          description: "Redis memory usage has exceeded 85%."
-          runbook_url: "https://wiki.example.com/runbooks/redis-memory"
-
   - name: crawlrs-medium
     rules:
       # P2-Medium: 队列积压超过 10000

@@ -7,12 +7,11 @@
 # =============================================================================
 # Crawlrs 测试环境清理主脚本
 # =============================================================================
-# 协调清理所有测试环境：数据库、Redis、文件系统
+# 协调清理所有测试环境：数据库、文件系统
 #
 # 使用方法:
-#   ./cleanup-test-env.sh              # 清理所有（数据库+Redis+文件）
+#   ./cleanup-test-env.sh              # 清理所有（数据库+文件）
 #   ./cleanup-test-env.sh --db-only    # 仅清理数据库
-#   ./cleanup-test-env.sh --redis-only # 仅清理 Redis
 #   ./cleanup-test-env.sh --files-only # 仅清理文件
 #   ./cleanup-test-env.sh --verify     # 仅验证（不清理）
 # =============================================================================
@@ -32,7 +31,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 默认配置
 DB_CLEANUP=true
-REDIS_CLEANUP=true
 FILES_CLEANUP=true
 PARALLEL_CLEANUP=true
 TIMEOUT_SECONDS=30
@@ -68,10 +66,6 @@ check_dependencies() {
 
     if ! command -v psql &> /dev/null; then
         missing+=("psql")
-    fi
-
-    if ! command -v redis-cli &> /dev/null; then
-        missing+=("redis-cli")
     fi
 
     if [ ${#missing[@]} -gt 0 ]; then
@@ -113,40 +107,6 @@ cleanup_database() {
         log_warning "数据库清理耗时 ${duration}秒，超过目标 ${TIMEOUT_SECONDS}秒"
     else
         log_info "数据库清理耗时 ${duration}秒"
-    fi
-
-    return 0
-}
-
-# 清理 Redis
-cleanup_redis() {
-    log_section "清理 Redis"
-
-    if [ "$REDIS_CLEANUP" = false ]; then
-        log_info "跳过 Redis 清理"
-        return 0
-    fi
-
-    local start_time=$(date +%s)
-
-    if "$SCRIPT_DIR/cleanup-redis.sh" --verify &>/dev/null; then
-        log_success "Redis 已经是干净的"
-    else
-        if "$SCRIPT_DIR/cleanup-redis.sh"; then
-            log_success "Redis 清理完成"
-        else
-            log_error "Redis 清理失败"
-            return 1
-        fi
-    fi
-
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-
-    if [ "$duration" -gt "$TIMEOUT_SECONDS" ]; then
-        log_warning "Redis 清理耗时 ${duration}秒，超过目标 ${TIMEOUT_SECONDS}秒"
-    else
-        log_info "Redis 清理耗时 ${duration}秒"
     fi
 
     return 0
@@ -194,11 +154,6 @@ cleanup_parallel() {
         local db_pid=$!
     fi
 
-    if [ "$REDIS_CLEANUP" = true ]; then
-        "$SCRIPT_DIR/cleanup-redis.sh" > /tmp/cleanup-redis.log 2>&1 &
-        local redis_pid=$!
-    fi
-
     if [ "$FILES_CLEANUP" = true ]; then
         "$SCRIPT_DIR/cleanup-files.sh" > /tmp/cleanup-files.log 2>&1 &
         local files_pid=$!
@@ -208,9 +163,6 @@ cleanup_parallel() {
     local pids=()
     if [ "$DB_CLEANUP" = true ]; then
         pids+=("$db_pid")
-    fi
-    if [ "$REDIS_CLEANUP" = true ]; then
-        pids+=("$redis_pid")
     fi
     if [ "$FILES_CLEANUP" = true ]; then
         pids+=("$files_pid")
@@ -232,7 +184,6 @@ cleanup_parallel() {
         log_error "$failed 个清理任务失败"
         # 显示失败任务的日志
         [ "$DB_CLEANUP" = true ] && [ $db_pid -gt 0 ] && cat /tmp/cleanup-db.log
-        [ "$REDIS_CLEANUP" = true ] && [ $redis_pid -gt 0 ] && cat /tmp/cleanup-redis.log
         [ "$FILES_CLEANUP" = true ] && [ $files_pid -gt 0 ] && cat /tmp/cleanup-files.log
         return 1
     fi
@@ -247,13 +198,6 @@ verify_cleanup() {
     if [ "$DB_CLEANUP" = true ]; then
         log_info "验证数据库..."
         if ! "$SCRIPT_DIR/cleanup-db.sh" --verify; then
-            all_passed=false
-        fi
-    fi
-
-    if [ "$REDIS_CLEANUP" = true ]; then
-        log_info "验证 Redis..."
-        if ! "$SCRIPT_DIR/cleanup-redis.sh" --verify; then
             all_passed=false
         fi
     fi
@@ -282,10 +226,6 @@ show_status() {
     "$SCRIPT_DIR/cleanup-db.sh" --status 2>/dev/null || log_warning "无法获取数据库状态"
 
     echo ""
-    log_info "Redis:"
-    "$SCRIPT_DIR/cleanup-redis.sh" --status 2>/dev/null || log_warning "无法获取 Redis 状态"
-
-    echo ""
     log_info "文件系统:"
     "$SCRIPT_DIR/cleanup-files.sh" --status 2>/dev/null || log_warning "无法获取文件系统状态"
 }
@@ -297,9 +237,8 @@ show_help() {
     echo "使用方法: $0 [命令] [选项]"
     echo ""
     echo "命令:"
-    echo "  (无)           清理所有测试环境（数据库+Redis+文件）"
+    echo "  (无)           清理所有测试环境（数据库+文件）"
     echo "  --db-only      仅清理数据库"
-    echo "  --redis-only   仅清理 Redis"
     echo "  --files-only   仅清理文件系统"
     echo "  --status       显示清理前状态"
     echo "  --verify       仅验证（不清理）"
@@ -320,7 +259,6 @@ show_help() {
 # 主函数
 main() {
     local cleanup_db=true
-    local cleanup_redis=true
     local cleanup_files=true
     local verify_only=false
     local show_status_flag=false
@@ -330,19 +268,11 @@ main() {
         case $1 in
             --db-only)
                 cleanup_db=true
-                cleanup_redis=false
-                cleanup_files=false
-                shift
-                ;;
-            --redis-only)
-                cleanup_db=false
-                cleanup_redis=true
                 cleanup_files=false
                 shift
                 ;;
             --files-only)
                 cleanup_db=false
-                cleanup_redis=false
                 cleanup_files=true
                 shift
                 ;;
@@ -376,7 +306,7 @@ main() {
 
     echo ""
     log_section "Crawlrs 测试环境清理"
-    echo "数据库: $cleanup_db | Redis: $cleanup_redis | 文件: $cleanup_files"
+    echo "数据库: $cleanup_db | 文件: $cleanup_files"
     echo "模式: $([ "$PARALLEL_CLEANUP" = true ] && echo "并行" || echo "顺序")"
     echo "超时: ${TIMEOUT_SECONDS}秒"
 
@@ -406,12 +336,6 @@ main() {
     else
         if [ "$cleanup_db" = true ]; then
             if ! cleanup_database; then
-                cleanup_failed=true
-            fi
-        fi
-
-        if [ "$cleanup_redis" = true ]; then
-            if ! cleanup_redis; then
                 cleanup_failed=true
             fi
         fi

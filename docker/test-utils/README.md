@@ -12,7 +12,6 @@
 |------|------|----------|
 | `cleanup-test-env.sh` | 主清理脚本，协调所有清理 | 主要入口 |
 | `cleanup-db.sh` | 清理 PostgreSQL 数据库 | 仅清理数据库 |
-| `cleanup-redis.sh` | 清理 Redis 缓存 | 仅清理 Redis |
 | `cleanup-files.sh` | 清理文件系统 | 仅清理文件 |
 | `reset-containers.sh` | 重建 Docker 容器 | 容器级清理 |
 
@@ -43,14 +42,11 @@ cd /path/to/crawlrs
 ### 主清理脚本
 
 ```bash
-# 清理所有（数据库 + Redis + 文件系统）
+# 清理所有（数据库 + 文件系统）
 ./docker/test-utils/cleanup-test-env.sh
 
 # 仅清理数据库
 ./docker/test-utils/cleanup-test-env.sh --db-only
-
-# 仅清理 Redis
-./docker/test-utils/cleanup-test-env.sh --redis-only
 
 # 仅清理文件系统
 ./docker/test-utils/cleanup-test-env.sh --files-only
@@ -79,22 +75,6 @@ cd /path/to/crawlrs
 
 # 查看状态
 ./docker/test-utils/cleanup-db.sh --status
-```
-
-### Redis 清理
-
-```bash
-# 清理所有 Crawlrs 相关数据
-./docker/test-utils/cleanup-redis.sh
-
-# 仅清理指定模式
-./docker/test-utils/cleanup-redis.sh --partial "rate:*,task:*"
-
-# 完全清理（危险！）
-./docker/test-utils/cleanup-redis.sh --flush
-
-# 仅验证
-./docker/test-utils/cleanup-redis.sh --verify
 ```
 
 ### 文件系统清理
@@ -129,7 +109,7 @@ cd /path/to/crawlrs
 ./docker/test-utils/reset-containers.sh --verify
 
 # 仅重置指定服务
-./docker/test-utils/reset-containers.sh --partial test-db,test-redis
+./docker/test-utils/reset-containers.sh --partial test-db
 ```
 
 ## 清理流程
@@ -137,11 +117,10 @@ cd /path/to/crawlrs
 ### 完整清理流程
 
 ```
-1. 检查依赖工具 (psql, redis-cli)
+1. 检查依赖工具 (psql)
 2. 验证服务连接
 3. 并行清理：
    - PostgreSQL: TRUNCATE 所有表 + 重置序列
-   - Redis: SCAN + DEL 匹配模式的 keys
    - 文件系统: 删除 temp, logs, test-data 等目录内容
 4. 验证清理结果
 5. 报告状态
@@ -150,7 +129,6 @@ cd /path/to/crawlrs
 ### 清理目标
 
 - **数据库**: 30 秒内完成
-- **Redis**: 30 秒内完成
 - **文件系统**: 30 秒内完成
 - **总体**: 60 秒内完成（并行执行）
 
@@ -159,10 +137,9 @@ cd /path/to/crawlrs
 每个测试运行前，清理机制确保：
 
 1. ✅ 数据库中无残留数据
-2. ✅ Redis 中无残留 keys
-3. ✅ 文件系统中无临时文件
-4. ✅ Docker 容器状态干净
-5. ✅ 应用状态重置
+2. ✅ 文件系统中无临时文件
+3. ✅ Docker 容器状态干净
+4. ✅ 应用状态重置
 
 ## CI/CD 集成
 
@@ -224,19 +201,6 @@ docker ps | grep test-db
 docker logs crawlrs-test-db
 ```
 
-### Redis 连接问题
-
-```bash
-# 检查 Redis 连接
-./docker/test-utils/cleanup-redis.sh --verify
-
-# 检查容器状态
-docker ps | grep test-redis
-
-# 手动连接测试
-docker exec crawlrs-test-redis redis-cli PING
-```
-
 ## 自定义配置
 
 ### 环境变量
@@ -248,10 +212,6 @@ export CRAWLRS__DATABASE__PORT=5432
 export CRAWLRS__DATABASE__NAME=crawlrs_test
 export CRAWLRS__DATABASE__USER=crawlrs
 export CRAWLRS__DATABASE__PASSWORD=password
-
-# Redis 配置
-export CRAWLRS__REDIS__HOST=test-redis
-export CRAWLRS__REDIS__PORT=6379
 ```
 
 ### 超时配置

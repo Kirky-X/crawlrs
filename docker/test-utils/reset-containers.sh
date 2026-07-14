@@ -31,7 +31,7 @@ PROJECT_NAME="crawlrs-docker"
 TIMEOUT_SECONDS=60
 
 # 所有测试服务
-ALL_SERVICES=("test-db" "test-redis" "chrome" "flaresolverr" "test-runner" "minio")
+ALL_SERVICES=("test-db" "chrome" "flaresolverr" "test-runner" "minio")
 
 # 日志函数
 log_info() {
@@ -142,7 +142,6 @@ cleanup_network() {
     if docker network inspect "$network_name" &>/dev/null; then
         # 断开所有容器连接
         docker network disconnect -f "$network_name" "${PROJECT_NAME}-test-db" 2>/dev/null || true
-        docker network disconnect -f "$network_name" "${PROJECT_NAME}-test-redis" 2>/dev/null || true
         docker network disconnect -f "$network_name" "${PROJECT_NAME}-chrome" 2>/dev/null || true
 
         # 删除网络
@@ -166,9 +165,6 @@ reset_service() {
     case "$service" in
         test-db)
             cleanup_volume "${PROJECT_NAME}_test_db_data"
-            ;;
-        test-redis)
-            cleanup_volume "${PROJECT_NAME}_test_redis_data"
             ;;
         chrome)
             cleanup_volume "${PROJECT_NAME}_chrome_data"
@@ -359,7 +355,7 @@ show_help() {
     echo "  $0 --reset                   # 仅重置"
     echo "  $0 --start                   # 仅启动"
     echo "  $0 --verify                  # 仅验证"
-    echo "  $0 --partial test-db,redis   # 仅重置指定服务"
+    echo "  $0 --partial test-db,chrome  # 仅重置指定服务"
 }
 
 # 主函数

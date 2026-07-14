@@ -8,7 +8,7 @@
 # =============================================================================
 # 支持一键启动完整项目环境，包括：
 # - 应用服务 (API + 引擎)
-# - 基础设施 (PostgreSQL, Redis)
+# - 基础设施 (PostgreSQL)
 # - 浏览器服务 (Chrome, FlareSolverr)
 # - 监控服务 (Prometheus)
 #
@@ -55,10 +55,6 @@ services:
       - CRAWLRS__DATABASE__MAX_CONNECTIONS=${DATABASE_MAX_CONNECTIONS:-20}
       - CRAWLRS__DATABASE__CONNECT_TIMEOUT=60
 
-      # Redis配置
-      - CRAWLRS__REDIS__URL=redis://${REDIS_HOST:-redis}:6379
-      - CRAWLRS__REDIS__HOST=${REDIS_HOST:-redis}
-
       # 服务器配置
       - CRAWLRS__SERVER__HOST=0.0.0.0
       - CRAWLRS__SERVER__PORT=3000
@@ -103,8 +99,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     volumes:
       - ../storage:/app/storage
       - ../logs:/app/logs
@@ -148,27 +142,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    networks:
-      - crawlrs-network
-    profiles:
-      - infrastructure
-      - all
-
-  # Redis 缓存
-  redis:
-    image: redis:latest
-    container_name: crawlrs-redis
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     networks:
       - crawlrs-network
     profiles:
@@ -331,7 +304,6 @@ services:
     environment:
       # 测试配置
       - TEST_DATABASE_URL=postgres://crawlrs:password@db:5432/crawlrs_test
-      - TEST_REDIS_PORT=6379
       - SKIP_S3_TESTS=true
       - SKIP_BROWSER_TESTS=true
       - SKIP_SEARCH_TESTS=true
@@ -344,10 +316,6 @@ services:
       - CRAWLRS__DATABASE__USER=crawlrs
       - CRAWLRS__DATABASE__PASSWORD=password
 
-      # Redis配置 (使用服务名)
-      - CRAWLRS__REDIS__URL=redis://redis:6379
-      - CRAWLRS__REDIS__HOST=redis
-
       # 服务器配置
       - CRAWLRS__SERVER__HOST=0.0.0.0
       - CRAWLRS__SERVER__PORT=3000
@@ -358,8 +326,6 @@ services:
 
     depends_on:
       db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     volumes:
       - ../target:/app/target
@@ -389,13 +355,6 @@ networks:
 volumes:
   db_data:
     driver: local
-
-  redis_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${DATA_VOLUME_PATH:-./data}/redis
 
   chrome_data:
     driver: local
@@ -430,7 +389,7 @@ volumes:
 # 所有服务均配置了健康检查，确保依赖服务启动顺序正确
 #
 # 启动顺序:
-# 1. 基础设施层: db, redis (并行启动)
+# 1. 基础设施层: db
 # 2. 浏览器服务层: flaresolverr, chrome (并行启动)
 # 3. 应用层: crawlrs (等待基础设施就绪)
 # 4. 监控层: prometheus, grafana (可选)
@@ -438,7 +397,6 @@ volumes:
 # 端口分配策略:
 # - 应用API: 3000 (可配置)
 # - PostgreSQL: 5432 (可配置)
-# - Redis: 6379 (可配置)
 # - FlareSolverr: 8191 (可配置)
 # - Chrome: 9222 (可配置, 内部端口3000)
 # - Prometheus: 9090 (可配置)

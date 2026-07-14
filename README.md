@@ -102,7 +102,7 @@ Compared to Node.js implementations:
 | Feature | Description |
 |---------|-------------|
 | **Rate Limiting** | Per-team concurrency and RPM controls |
-| **Distributed Caching** | Redis-based caching with TTL |
+| **Caching** | oxcache-based caching (moka memory backend) with TTL |
 | **Metrics & Monitoring** | Prometheus-compatible export |
 | **Webhooks** | Event-driven task notifications |
 | **API Key Authentication** | Scoped access and team isolation |
@@ -115,7 +115,7 @@ Compared to Node.js implementations:
 | Presentation | Axum | HTTP handlers, middleware |
 | Application | Use Cases | Business logic orchestration |
 | Domain | Traits | Core entities and services |
-| Infrastructure | Postgres, Redis, S3 | External integrations |
+| Infrastructure | Postgres | External integrations |
 
 ---
 
@@ -128,7 +128,6 @@ Compared to Node.js implementations:
 | Rust | 1.70+ | Latest stable |
 | PostgreSQL | 14+ | Latest stable |
 | SQLite | 3.x | 3.35+ |
-| Redis | 7+ | Latest stable |
 | Docker | 20+ | Latest |
 
 ### Build from Source
@@ -138,14 +137,14 @@ Compared to Node.js implementations:
 git clone https://github.com/your-org/crawlrs.git
 cd crawlrs
 
-# Install with default features (PostgreSQL + Redis)
+# Install with default features (PostgreSQL + oxcache)
 cargo build --release
 
 # Install with all features (SQLite + all engines)
 cargo build --release --features full
 
 # Install with custom features
-cargo build --release --features "engine-playwright,db-sqlite,metrics"
+cargo build --release --features "engine-playwright,dbnexus-sqlite,metrics"
 ```
 
 ### Feature Flags
@@ -157,8 +156,7 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 | `engine-fire-cdp` | Fire Engine CDP support | ❌ No |
 | `engine-fire-tls` | Fire Engine TLS support | ❌ No |
 | `engine-flaresolverr` | FlareSolverr anti-bot protection | ❌ No |
-| `redis-cache` | Redis caching support | ✅ Yes |
-| `rate-limiting` | Rate limiting with Redis | ✅ Yes |
+| `rate-limiting` | Rate limiting with limiteron | ✅ Yes |
 | `metrics` | Prometheus metrics export | ✅ Yes |
 | `dbnexus-postgres` | PostgreSQL database (via dbnexus) | ✅ Yes |
 | `dbnexus-sqlite` | SQLite database (via dbnexus) | ❌ No |
@@ -181,23 +179,16 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 
 | 配置 | 特性组合 | 二进制大小 | 适用场景 |
 |-----|---------|-----------|---------|
-| lite | `engine-reqwest, db-sqlite` | ~30MB | 简单爬取，资源受限环境 |
-| default | `engine-reqwest, redis-cache, rate-limiting, metrics, db-postgres` | ~27MB | 默认生产环境 |
+| lite | `engine-reqwest, dbnexus-sqlite, rate-limiting, oxcache-cache` | ~30MB | 简单爬取，资源受限环境 |
+| default | `engine-reqwest, rate-limiting, metrics, dbnexus-postgres, oxcache-cache` | ~27MB | 默认生产环境 |
 | standard | `default + engine-playwright` | ~35MB | 需要 JS 渲染 |
-| full | `standard + fire 系列 + storage-s3 + search-all` | ~52MB | 所有功能 |
-| experimental | `full + genai` | ~54MB | AI 实验功能 |
+| full | `standard + fire 系列 + search-all + api-sdk` | ~52MB | 所有功能 |
 
 ### 自定义组合
 
 ```bash
-# 轻量版 + S3 存储
-cargo build --release --features "lite,storage-s3"
-
-# 标准版 + AI 功能
-cargo build --release --features "standard,experimental"
-
 # 自定义组合
-cargo build --release --features "engine-reqwest,db-sqlite,storage-s3,redis-cache"
+cargo build --release --features "engine-reqwest,dbnexus-sqlite,oxcache-cache"
 ```
 
 ### 特性参考
@@ -209,14 +200,11 @@ cargo build --release --features "engine-reqwest,db-sqlite,storage-s3,redis-cach
 | `engine-fire-cdp` | Fire CDP 引擎（远程 FlareSolverr） | - |
 | `engine-fire-tls` | Fire TLS 引擎（远程 FlareSolverr） | - |
 | `engine-flaresolverr` | FlareSolverr 引擎 | - |
-| `storage-s3` | AWS S3 云存储 | +13MB |
-| `redis-cache` | Redis 缓存 | - |
-| `rate-limiting` | Redis 限流 | - |
+| `rate-limiting` | limiteron 限流 | - |
 | `metrics` | 指标监控 | - |
-| `db-postgres` | PostgreSQL 数据库（默认） | 基础 |
-| `db-sqlite` | SQLite 数据库 | - |
+| `dbnexus-postgres` | PostgreSQL 数据库（默认） | 基础 |
+| `dbnexus-sqlite` | SQLite 数据库 | - |
 | `search-all` | 所有搜索引擎 | - |
-| `experimental` | AI 功能（genai） | +2MB |
 
 ---
 
@@ -233,9 +221,6 @@ Create a configuration file `config/default.toml`:
 [database]
 url = "postgresql://user:password@localhost/crawlrs"
 max_connections = 20
-
-[redis]
-url = "redis://localhost:6379"
 
 [server]
 host = "0.0.0.0"
@@ -299,7 +284,6 @@ curl http://localhost:8899/health
 | Variable | Description | Default | Required |
 |----------|-------------|----------|-----------|
 | `DATABASE_URL` | PostgreSQL connection string | - | Yes |
-| `REDIS_URL` | Redis connection string | - | No |
 | `SERVER_HOST` | Server bind address | 0.0.0.0 | No |
 | `SERVER_PORT` | Server port | 8899 | No |
 | `LOG_LEVEL` | Logging level | info | No |
@@ -396,14 +380,14 @@ flowchart TD
 | Async Runtime | Tokio | 1.48 |
 | Database ORM | Sea-ORM 2.0.0-rc (via dbnexus 0.2) | - |
 | Database | PostgreSQL / SQLite | 14+ / 3.x |
-| Cache | Redis | 7+ |
+| Cache | oxcache (moka memory backend) | 0.3 |
 | HTTP Client | Reqwest | 0.12 |
 | Browser Automation | Playwright | 0.40+ |
-| Structured Logging | inklog | 0.1.2 |
-| API SDK | sdforge | 0.3.1 |
-| Multi-backend Cache | oxcache | 0.3.3 |
-| Rate Limiting | limiteron | 0.2.1 |
-| Configuration | confers | 0.2.2 |
+| Structured Logging | inklog | 0.1 |
+| API SDK | sdforge | 0.4 |
+| Multi-backend Cache | oxcache | 0.3 |
+| Rate Limiting | limiteron | 0.2 |
+| Configuration | confers | 0.4 |
 
 ---
 
@@ -419,7 +403,6 @@ docker build -t crawlrs:latest .
 docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgresql://user:pass@db:5432/crawlrs" \
-  -e REDIS_URL="redis://redis:6379" \
   crawlrs:latest
 
 # Run with Docker Compose
@@ -430,7 +413,7 @@ docker-compose up -d
 
 - [ ] Set strong API keys and secrets
 - [ ] Configure proper database connection pooling
-- [ ] Enable Redis for production caching
+- [ ] Configure oxcache for production caching
 - [ ] Set up rate limiting appropriate for your capacity
 - [ ] Configure metrics export to Prometheus
 - [ ] Enable distributed tracing (inklog HTTP sink)
