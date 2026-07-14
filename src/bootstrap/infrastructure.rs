@@ -414,10 +414,8 @@ mod tests {
             return;
         }
         // Use a deliberately invalid URL that cannot be connected to.
-        let settings = tcf::settings_with_urls(
-            "postgres://nobody:nopass@127.0.0.1:1/nonexistent",
-        )
-        .unwrap();
+        let settings =
+            tcf::settings_with_urls("postgres://nobody:nopass@127.0.0.1:1/nonexistent").unwrap();
         let result = init_database(&settings).await;
         assert!(
             result.is_err(),

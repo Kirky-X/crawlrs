@@ -494,10 +494,8 @@ mod tests {
                 return;
             }
         };
-        let settings = Arc::new(
-            tcf::settings_with_urls(&pg.url)
-                .expect("Failed to build settings"),
-        );
+        let settings =
+            Arc::new(tcf::settings_with_urls(&pg.url).expect("Failed to build settings"));
 
         let mut kit = AsyncKit::new();
         kit.set_config(settings.clone());
@@ -527,10 +525,8 @@ mod tests {
                 return;
             }
         };
-        let settings = Arc::new(
-            tcf::settings_with_urls(&pg.url)
-                .expect("Failed to build settings"),
-        );
+        let settings =
+            Arc::new(tcf::settings_with_urls(&pg.url).expect("Failed to build settings"));
 
         let mut kit = AsyncKit::new();
         kit.set_config(settings.clone());
@@ -566,10 +562,8 @@ mod tests {
                 return;
             }
         };
-        let settings = Arc::new(
-            tcf::settings_with_urls(&combo.pg.url)
-                .expect("Failed to build settings"),
-        );
+        let settings =
+            Arc::new(tcf::settings_with_urls(&combo.pg.url).expect("Failed to build settings"));
 
         let mut kit = AsyncKit::new();
         kit.set_config(settings);
@@ -602,10 +596,8 @@ mod tests {
                 return;
             }
         };
-        let settings = Arc::new(
-            tcf::settings_with_urls(&combo.pg.url)
-                .expect("Failed to build settings"),
-        );
+        let settings =
+            Arc::new(tcf::settings_with_urls(&combo.pg.url).expect("Failed to build settings"));
 
         let mut kit = AsyncKit::new();
         kit.set_config(settings);
@@ -639,10 +631,8 @@ mod tests {
                 return;
             }
         };
-        let settings = Arc::new(
-            tcf::settings_with_urls(&combo.pg.url)
-                .expect("Failed to build settings"),
-        );
+        let settings =
+            Arc::new(tcf::settings_with_urls(&combo.pg.url).expect("Failed to build settings"));
 
         let mut kit = AsyncKit::new();
         kit.set_config(settings);

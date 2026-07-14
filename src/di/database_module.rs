@@ -144,8 +144,8 @@ mod tests {
         use crate::config::{
             BingSearchSettings, CacheSettings, ConcurrencySettings, DatabaseSettings,
             EngineSettings, LLMSettings, LoggingSettings, ProxySettings, RateLimitingSettings,
-            SearchSettings, ServerSettings, TimeoutSettings, TrustedProxySettings,
-            WebhookSettings, WorkerSettings,
+            SearchSettings, ServerSettings, TimeoutSettings, TrustedProxySettings, WebhookSettings,
+            WorkerSettings,
         };
 
         Arc::new(Settings {

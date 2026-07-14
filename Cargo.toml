@@ -13,10 +13,10 @@ exclude = []
 
 [features]
 # 默认核心功能（不包含 S3、genai）
-default = ["engine-reqwest", "rate-limiting", "metrics", "dbnexus-postgres", "logging", "config", "oxcache-cache", "queue-apalis"]
+default = ["engine-reqwest", "rate-limiting", "metrics", "dbnexus-postgres", "logging", "config", "oxcache-cache"]
 
 # 预设配置
-lite = ["engine-reqwest", "dbnexus-sqlite", "rate-limiting", "logging", "config", "oxcache-cache", "queue-apalis"]
+lite = ["engine-reqwest", "dbnexus-sqlite", "rate-limiting", "logging", "config", "oxcache-cache"]
 standard = ["default", "engine-playwright"]
 full = ["standard", "engine-fire-cdp", "engine-fire-tls", "engine-flaresolverr", "dbnexus-sqlite", "search-all", "api-sdk"]
 
@@ -75,10 +75,6 @@ api-sdk = ["dep:sdforge"]
 # --- 缓存特性 ---
 # oxcache: 内存缓存库（moka backend）
 oxcache-cache = ["dep:oxcache"]
-
-# --- 队列特性 ---
-# apalis: PostgreSQL-backed task queue（复用 dbnexus-postgres，不引入 redis）
-queue-apalis = ["dep:apalis", "dbnexus-postgres"]
 
 # --- 已移除的旧数据库特性 (不再使用) ---
 # db-postgres = ["sea-orm/sqlx-postgres", "sqlx/postgres"]
@@ -226,9 +222,6 @@ toml = "0.9"
 trait-kit = { version = "0.3", features = ["async", "confers"] }
 oxcache = { version = "0.3", default-features = false, features = ["memory", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing", "futures"], optional = true }
 ahash = "0.8"
-
-# Task Queue (apalis: PostgreSQL-backed, no redis dependency)
-apalis = { version = "0.5", default-features = false, features = ["postgres", "retry", "limit", "timeout"], optional = true }
 
 # API Documentation (optional - controlled by 'openapi' feature)
 # utoipa = { version = "5.4", optional = true }
