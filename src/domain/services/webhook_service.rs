@@ -6,7 +6,7 @@
 //! Webhook Service
 //!
 //! Unified webhook service for task completion and failure notifications.
-//! Supports dependency injection via Shaku.
+//! Supports dependency injection via trait-kit.
 
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::domain::models::{Task, Webhook};

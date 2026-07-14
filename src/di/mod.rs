@@ -10,23 +10,17 @@
 //!
 //! # Module Structure
 //!
-//! - [`infrastructure_module`](infrastructure_module) - Infrastructure components
+//! - [`modules`](modules) — trait-kit module definitions (Settings, Database, Http, Cache, etc.)
+//! - [`axum_state`](axum_state::AppState) — Axum integration; `AppState::from_kit` is the
+//!   canonical entry point after building the `AsyncKit`
+//! - [`infrastructure_module`](infrastructure_module) - Legacy infrastructure components
 //!   - [`database_module`](database_module) - Database components
 //!   - [`cache_module`](cache_module) - Cache components
 //!   - [`repository_module`](repository_module) - Repository components with caching
 //!   - [`infrastructure_service_module`](infrastructure_service_module) - Infrastructure services
-//! - [`search_module`](search_module::SearchModule) - Search components
-//! - [`service_module`](service_module::ServiceModule) - Service components
+//! - [`search_module`](search_module) - Search components
+//! - [`service_module`](service_module) - Service components
 //! - [`engines_module`](engines_module) - Engine components
-//! - [`axum_state`](axum_state::AppState) - Axum integration
-//! - [`state_manager`](state_manager::DependencyStateManager) - Dependency state management
-//!
-//! # Performance Optimization
-//!
-//! Repository components use `OnceLock` for instance caching, providing:
-//! - Lazy initialization of underlying implementations
-//! - Singleton pattern without repeated instantiation
-//! - Thread-safe caching with minimal overhead
 
 // Core DI modules
 pub mod axum_state;

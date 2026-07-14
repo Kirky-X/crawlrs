@@ -4,7 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::common::error::{RepositoryResultExt, WorkerError};
-use crate::di::infrastructure_module::SettingsTrait;
+use crate::config::Settings;
 use crate::domain::models::task_domain::TaskStatus;
 use crate::domain::repositories::{
     task_repository::TaskRepository, tasks_backlog_repository::TasksBacklogRepository,
@@ -25,7 +25,7 @@ pub struct BacklogWorker {
     tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
     task_repository: Arc<dyn TaskRepository>,
     rate_limiting_service: Arc<dyn RateLimitingService>,
-    settings: Arc<dyn SettingsTrait>,
+    settings: Arc<Settings>,
     cleanup_cycle_counter: AtomicU64,
 }
 
@@ -34,7 +34,7 @@ impl BacklogWorker {
         tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
         task_repository: Arc<dyn TaskRepository>,
         rate_limiting_service: Arc<dyn RateLimitingService>,
-        settings: Arc<dyn SettingsTrait>,
+        settings: Arc<Settings>,
     ) -> Self {
         Self {
             tasks_backlog_repository,
@@ -49,7 +49,7 @@ impl BacklogWorker {
     async fn process_backlog(&self) -> Result<(), WorkerError> {
         info!("开始处理积压任务");
 
-        let batch_size = self.settings.get().concurrency.default_team_limit as usize;
+        let batch_size = self.settings.concurrency.default_team_limit as usize;
 
         // 1. 获取所有待处理的积压任务
         let pending_backlogs = self
@@ -371,49 +371,33 @@ mod tests {
     use std::sync::Mutex;
     use uuid::Uuid;
 
-    // ========== Mock SettingsTrait ==========
+    // ========== Test Settings factory ==========
 
-    struct MockSettings {
-        settings: Arc<crate::config::Settings>,
-    }
-
-    impl MockSettings {
-        fn new(default_team_limit: i64) -> Self {
-            use crate::config::settings::*;
-            let mut settings = Settings {
-                server: ServerSettings::default(),
-                database: DatabaseSettings::default(),
-                redis: RedisSettings::default(),
-                cors: CorsSettings::default(),
-                rate_limiting: RateLimitingSettings::default(),
-                concurrency: ConcurrencySettings {
-                    default_team_limit,
-                    task_lock_duration_seconds: 300,
-                },
-                webhook: WebhookSettings::default(),
-                bing_search: BingSearchSettings::default(),
-                search: SearchSettings::default(),
-                llm: LLMSettings::default(),
-                proxy: ProxySettings::default(),
-                engines: EngineSettings::default(),
-                logging: LoggingSettings::default(),
-                workers: WorkerSettings::default(),
-                timeouts: TimeoutSettings::default(),
-                cache: CacheSettings::default(),
-                trusted_proxies: TrustedProxySettings::default(),
-            };
-            // Ensure config validation passes
-            let _ = &mut settings;
-            Self {
-                settings: Arc::new(settings),
-            }
-        }
-    }
-
-    impl SettingsTrait for MockSettings {
-        fn get(&self) -> Arc<crate::config::Settings> {
-            self.settings.clone()
-        }
+    fn make_test_settings(default_team_limit: i64) -> Arc<Settings> {
+        use crate::config::settings::*;
+        let settings = Settings {
+            server: ServerSettings::default(),
+            database: DatabaseSettings::default(),
+            redis: RedisSettings::default(),
+            cors: CorsSettings::default(),
+            rate_limiting: RateLimitingSettings::default(),
+            concurrency: ConcurrencySettings {
+                default_team_limit,
+                task_lock_duration_seconds: 300,
+            },
+            webhook: WebhookSettings::default(),
+            bing_search: BingSearchSettings::default(),
+            search: SearchSettings::default(),
+            llm: LLMSettings::default(),
+            proxy: ProxySettings::default(),
+            engines: EngineSettings::default(),
+            logging: LoggingSettings::default(),
+            workers: WorkerSettings::default(),
+            timeouts: TimeoutSettings::default(),
+            cache: CacheSettings::default(),
+            trusted_proxies: TrustedProxySettings::default(),
+        };
+        Arc::new(settings)
     }
 
     // ========== Mock TasksBacklogRepository ==========
@@ -834,13 +818,13 @@ mod tests {
         backlog_repo: Arc<dyn TasksBacklogRepository>,
         task_repo: Arc<dyn TaskRepository>,
         rate_limiting: Arc<dyn RateLimitingService>,
-        settings: Arc<dyn SettingsTrait>,
+        settings: Arc<Settings>,
     ) -> BacklogWorker {
         BacklogWorker::new(backlog_repo, task_repo, rate_limiting, settings)
     }
 
-    fn default_settings() -> Arc<dyn SettingsTrait> {
-        Arc::new(MockSettings::new(10))
+    fn default_settings() -> Arc<Settings> {
+        make_test_settings(10)
     }
 
     // ========== name() tests ==========

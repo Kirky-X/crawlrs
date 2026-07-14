@@ -405,16 +405,6 @@ pub async fn init_services(
     // Initialize regex cache
     let regex_cache = init_regex_cache();
 
-    // Use Shaku module to resolve workers
-    // This assumes we have an AppModule that we can use or build here.
-    // However, since we are initializing services manually here for now,
-    // we should update this function to use Shaku module if we want full DI.
-    // For now, we will manually construct the workers using the components' new methods
-    // or by resolving from a module if we had one built.
-
-    // But wait, the goal is to use Shaku.
-    // Let's create the components and use them.
-
     // Initialize WebhookWorker
     let webhook_worker = Arc::new(crate::workers::webhook_worker::WebhookWorker::new(
         repositories.webhook_event_repo.clone(),
@@ -423,18 +413,11 @@ pub async fn init_services(
     ));
 
     // Initialize BacklogWorker
-    // Note: BacklogWorker now expects SettingsTrait, but we have Settings struct.
-    // We need to wrap Settings in SettingsComponent or similar if we use manual new.
-    // But BacklogWorker::new takes Arc<dyn SettingsTrait>.
-    let settings_component = Arc::new(crate::di::infrastructure_module::SettingsComponent::new(
-        Arc::new(settings.clone()),
-    ));
-
     let backlog_worker = Arc::new(crate::workers::backlog_worker::BacklogWorker::new(
         repositories.tasks_backlog_repo.clone(),
         repositories.task_repo.clone(),
         rate_limiting_service.clone(),
-        settings_component,
+        Arc::new(settings.clone()),
     ));
 
     // Initialize ExpirationWorker

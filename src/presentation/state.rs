@@ -7,7 +7,7 @@
 //!
 //! This module provides the `HandlerState` trait for type-safe state access in handlers.
 //! The main `AppState` is defined in `crate::di::axum_state` and provides centralized
-//! dependency management through the Shaku DI container.
+//! dependency management through the trait-kit AsyncKit container.
 //!
 //! # Architecture
 //!

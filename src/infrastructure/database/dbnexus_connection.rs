@@ -6,7 +6,7 @@
 //! Database connection pool implementation using dbnexus.
 //!
 //! This module provides a PostgreSQL connection pool wrapper that integrates
-//! with the Shaku dependency injection framework and replaces the Sea-ORM
+//! with the trait-kit dependency injection framework and replaces the Sea-ORM
 //! based implementation.
 
 use crate::config::DatabaseSettings;

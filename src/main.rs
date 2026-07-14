@@ -4,6 +4,10 @@
 // See LICENSE file in the project root for full license information.
 
 use crawlrs::bootstrap::routes::build_api_app_with_state;
+use crawlrs::di::modules::{
+    CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule, RepositoryModule,
+    ServiceModule, SettingsModule,
+};
 use crawlrs::di::{AppState, AppStateExt};
 use crawlrs::workers::manager::{WorkerManager, WorkerManagerConfig};
 use crawlrs::workers::{AbstractWorker, Worker};
@@ -11,6 +15,7 @@ use log::error;
 use std::sync::Arc;
 use std::{env, process};
 use tokio::net::TcpListener;
+use trait_kit::AsyncKit;
 
 /// Service type enumeration.
 enum ServiceType {
@@ -181,69 +186,36 @@ async fn main() -> anyhow::Result<()> {
         log::info!("HTTP proxy enabled (credentials hidden)");
     }
 
-    // 4. Create application state using bootstrap infrastructure
+    // 4. Build application state via trait-kit AsyncKit
     log::info!("Initializing application dependencies...");
 
-    // Initialize infrastructure first (needed for http_client)
-    let proxy_url = settings.proxy.url();
-    let infrastructure = crawlrs::bootstrap::infrastructure::init_infrastructure(&settings).await?;
-    let http_client = infrastructure.http_client.clone();
+    let mut kit = AsyncKit::new();
+    kit.set_config(settings.clone());
+    kit.register::<SettingsModule>()
+        .map_err(|e| anyhow::anyhow!("register SettingsModule: {e}"))?;
+    kit.register::<DatabaseModule>()
+        .map_err(|e| anyhow::anyhow!("register DatabaseModule: {e}"))?;
+    kit.register::<HttpModule>()
+        .map_err(|e| anyhow::anyhow!("register HttpModule: {e}"))?;
+    kit.register::<CacheModule>()
+        .map_err(|e| anyhow::anyhow!("register CacheModule: {e}"))?;
+    kit.register::<RepositoryModule>()
+        .map_err(|e| anyhow::anyhow!("register RepositoryModule: {e}"))?;
+    kit.register::<EngineModule>()
+        .map_err(|e| anyhow::anyhow!("register EngineModule: {e}"))?;
+    kit.register::<InfrastructureModule>()
+        .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
+    kit.register::<ServiceModule>()
+        .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
 
-    // Initialize engines (needed by services)
-    let engines = crawlrs::bootstrap::engines::init_engine_components(
-        http_client.clone(),
-        proxy_url.to_string(),
-        &settings.engines,
-    );
-
-    // Initialize services (needs engines and http_client)
-    let services = crawlrs::bootstrap::services::init_services(
-        &infrastructure,
-        engines.router.clone(),
-        engines.engine_client.clone(),
-        http_client.clone(),
-        &settings,
-    )
-    .await;
-
-    // Create SearchClient for AppState
-    let search_client = Arc::new(crawlrs::search::client::SearchClient::new(
-        engines.engine_client.clone(),
-    ));
-
-    // Create AppState using struct literal
-    let app_state = AppState {
-        db_pool: infrastructure.db.inner().clone(),
-        redis_client: infrastructure.redis_client,
-        task_repo: infrastructure.repositories.task_repo,
-        credits_repo: infrastructure.repositories.credits_repo,
-        crawl_repo: infrastructure.repositories.crawl_repo,
-        result_repo: infrastructure.repositories.result_repo,
-        webhook_repo: infrastructure.repositories.webhook_repo,
-        webhook_event_repo: infrastructure.repositories.webhook_event_repo,
-        tasks_backlog_repo: infrastructure.repositories.tasks_backlog_repo,
-        task_queue: services.queue,
-        rate_limiting_service: services.rate_limiting_service,
-        team_service: services.team_service,
-        webhook_service: services.webhook_service,
-        robots_checker: services.robots_checker,
-        team_semaphore: services.team_semaphore,
-        engine_router: engines.router,
-        engine_client: engines.engine_client,
-        create_scrape_use_case: services.create_scrape_use_case,
-        search_client,
-        search_service: services.search_service,
-        auth_scope_service: services.auth_scope_service,
-        audit_service: services.audit_service,
-        llm_service: services.llm_service,
-        extraction_service: services.extraction_service,
-        regex_cache: services.regex_cache,
-        webhook_worker: services.webhook_worker,
-        backlog_worker: services.backlog_worker,
-        expiration_worker: services.expiration_worker,
-        geo_location_service: services.geo_location_service,
-        geo_restriction_repo: infrastructure.repositories.geo_restriction_repo,
-    };
+    let kit = kit
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!("build AsyncKit: {e}"))?;
+    let app_state = AppState::from_kit(&kit)?;
+    let http_client = kit
+        .require::<HttpModule>()
+        .map_err(|e| anyhow::anyhow!("require HttpModule: {e}"))?;
 
     log::info!("Application dependencies initialized successfully");
 

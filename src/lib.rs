@@ -69,5 +69,5 @@ pub mod bootstrap;
 
 /// 依赖注入模块
 ///
-/// 提供基于 Shaku 的依赖注入框架
+/// 提供基于 trait-kit 的依赖注入框架
 pub mod di;

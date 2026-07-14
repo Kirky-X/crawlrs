@@ -314,7 +314,7 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
 
 // Note: create_public_routes, create_protected_routes_with_state,
 // create_v2_routes_with_state, and build_api_app_with_state are not unit-tested
-// here because they require a fully constructed AppState (Shaku DI container with
+// here because they require a fully constructed AppState (trait-kit AsyncKit with
 // real DatabasePool, RedisClient, and ~30 Arc<dyn Trait> dependencies). These
 // functions are integration-tested via the test harness with Docker-provided
 // PostgreSQL/Redis. See tests/integration/ for coverage of route wiring.
