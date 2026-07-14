@@ -5,6 +5,6 @@
 
 //! Presentation layer error types
 //!
-//! Re-exports the unified error types from the utils module.
+//! Re-exports the unified error types from common::error.
 
-pub use crate::utils::errors::AppError;
+pub use crate::common::error::AppError;

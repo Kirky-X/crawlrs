@@ -38,9 +38,17 @@ pub enum AppError {
     #[error("Not found: {0}")]
     NotFound(String),
 
-    /// 权限拒绝
+    /// 认证失败（401，未登录或凭证无效）
+    #[error("Authentication failed: {0}")]
+    Authentication(String),
+
+    /// 权限拒绝（403，已登录但无权限）
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
+
+    /// 服务不可用（503，下游服务宕机或不可达）
+    #[error("Service unavailable: {0}")]
+    ServiceUnavailable(String),
 
     /// 超时错误
     #[error("Timeout: {0}")]
@@ -84,7 +92,9 @@ impl AppError {
             AppError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Validation(_) => StatusCode::BAD_REQUEST,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::Authentication(_) => StatusCode::UNAUTHORIZED,
             AppError::PermissionDenied(_) => StatusCode::FORBIDDEN,
+            AppError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
             AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Json(_) => StatusCode::BAD_REQUEST,
@@ -104,7 +114,9 @@ impl AppError {
             AppError::Config(_) => "CONFIGURATION_ERROR",
             AppError::Validation(_) => "VALIDATION_ERROR",
             AppError::NotFound(_) => "NOT_FOUND",
+            AppError::Authentication(_) => "AUTHENTICATION_ERROR",
             AppError::PermissionDenied(_) => "FORBIDDEN",
+            AppError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE",
             AppError::Timeout(_) => "TIMEOUT",
             AppError::Io(_) => "IO_ERROR",
             AppError::Json(_) => "JSON_ERROR",
@@ -131,7 +143,11 @@ impl AppError {
             AppError::Config(_) => "Configuration error. Please contact support.".to_string(),
             AppError::Validation(msg) => format!("Validation error: {}", msg),
             AppError::NotFound(msg) => format!("Resource not found: {}", msg),
+            AppError::Authentication(msg) => format!("Authentication failed: {}", msg),
             AppError::PermissionDenied(msg) => format!("Permission denied: {}", msg),
+            AppError::ServiceUnavailable(_) => {
+                "Service unavailable. Please try again later.".to_string()
+            }
             AppError::Timeout(_) => "Request timed out. Please try again later.".to_string(),
             AppError::Io(_) => "Internal I/O error. Please try again later.".to_string(),
             AppError::Json(_) => "Invalid JSON format. Please check your request.".to_string(),
@@ -427,6 +443,178 @@ impl From<crate::engines::engine_client::EngineError> for AppError {
             crate::engines::engine_client::EngineError::Other(msg) => AppError::Engine(msg),
             crate::engines::engine_client::EngineError::Internal(msg) => AppError::Engine(msg),
         }
+    }
+}
+
+// =============================================================================
+// 通用错误转换宏（从 utils/errors.rs 迁移）
+// =============================================================================
+
+/// 为错误类型生成标准 From 转换（From<String> / From<&str> / From<anyhow::Error>）
+///
+/// 用法：`impl_basic_error_conversions!(MyError, TargetVariant);`
+#[macro_export]
+macro_rules! impl_basic_error_conversions {
+    ($error_type:ty, $variant:ident) => {
+        impl From<String> for $error_type {
+            fn from(msg: String) -> Self {
+                Self::$variant(msg)
+            }
+        }
+
+        impl From<&str> for $error_type {
+            fn from(msg: &str) -> Self {
+                Self::$variant(msg.to_string())
+            }
+        }
+
+        impl From<anyhow::Error> for $error_type {
+            fn from(err: anyhow::Error) -> Self {
+                Self::$variant(err.to_string())
+            }
+        }
+    };
+}
+
+// =============================================================================
+// 仓库层错误类型（从 utils/errors.rs 迁移）
+// =============================================================================
+
+/// 通用仓库层错误类型
+///
+/// 注意：与 `domain::repositories::task_repository::RepositoryError` 是不同类型，
+/// 后者专用于任务仓库，变体为 `Database(anyhow::Error)` / `NotFound`。
+#[derive(Debug, thiserror::Error)]
+pub enum RepositoryError {
+    #[error("数据库错误: {0}")]
+    DatabaseError(String),
+
+    #[error("未找到数据")]
+    NotFound,
+
+    #[error("数据已存在")]
+    AlreadyExists,
+
+    #[error("无效参数: {0}")]
+    InvalidParameter(String),
+
+    #[error("内部错误: {0}")]
+    InternalError(String),
+}
+
+// =============================================================================
+// Worker 错误类型（从 utils/errors.rs 迁移）
+// =============================================================================
+
+/// Worker 错误类型
+#[derive(Debug, thiserror::Error)]
+pub enum WorkerError {
+    #[error("仓库错误: {0}")]
+    RepositoryError(String),
+
+    #[error("限流错误: {0}")]
+    RateLimitingError(String),
+
+    #[error("内部错误: {0}")]
+    InternalError(String),
+
+    #[error("领域错误: {0}")]
+    DomainError(String),
+
+    #[error("服务错误: {0}")]
+    ServiceError(String),
+
+    #[error("未找到: {0}")]
+    NotFound(String),
+}
+
+impl_basic_error_conversions!(WorkerError, InternalError);
+
+impl From<RepositoryError> for WorkerError {
+    fn from(err: RepositoryError) -> Self {
+        match err {
+            RepositoryError::DatabaseError(msg) => WorkerError::RepositoryError(msg),
+            RepositoryError::NotFound => WorkerError::NotFound("Resource not found".to_string()),
+            RepositoryError::AlreadyExists => {
+                WorkerError::RepositoryError("Resource already exists".to_string())
+            }
+            RepositoryError::InvalidParameter(msg) => WorkerError::DomainError(msg),
+            RepositoryError::InternalError(msg) => WorkerError::InternalError(msg),
+        }
+    }
+}
+
+// =============================================================================
+// From<RepositoryError> for AppError（通用仓库错误 → 应用错误）
+// =============================================================================
+
+impl From<RepositoryError> for AppError {
+    fn from(err: RepositoryError) -> Self {
+        match err {
+            RepositoryError::DatabaseError(msg) => AppError::Other(msg),
+            RepositoryError::NotFound => AppError::NotFound("Resource not found".to_string()),
+            RepositoryError::AlreadyExists => {
+                AppError::Validation("Resource already exists".to_string())
+            }
+            RepositoryError::InvalidParameter(msg) => AppError::Validation(msg),
+            RepositoryError::InternalError(msg) => AppError::Other(msg),
+        }
+    }
+}
+
+// =============================================================================
+// From<task_repository::RepositoryError> for AppError（任务仓库错误 → 应用错误）
+// =============================================================================
+
+impl From<crate::domain::repositories::task_repository::RepositoryError> for AppError {
+    fn from(err: crate::domain::repositories::task_repository::RepositoryError) -> Self {
+        match err {
+            crate::domain::repositories::task_repository::RepositoryError::Database(db_err) => {
+                AppError::Other(db_err.to_string())
+            }
+            crate::domain::repositories::task_repository::RepositoryError::NotFound => {
+                AppError::NotFound("Resource not found".to_string())
+            }
+        }
+    }
+}
+
+// =============================================================================
+// From<confers::ConfigError> for AppError
+// =============================================================================
+
+impl From<confers::ConfigError> for AppError {
+    fn from(err: confers::ConfigError) -> Self {
+        AppError::Config(err.to_string())
+    }
+}
+
+// =============================================================================
+// From<RobotsCheckerError> for AppError
+// =============================================================================
+
+impl From<crate::utils::robots::RobotsCheckerError> for AppError {
+    fn from(err: crate::utils::robots::RobotsCheckerError) -> Self {
+        AppError::Other(err.to_string())
+    }
+}
+
+// 为 AppError 生成 From<String> / From<&str> / From<anyhow::Error>（映射到 Other 变体）
+impl_basic_error_conversions!(AppError, Other);
+
+// =============================================================================
+// RepositoryResultExt —— 消除重复的 .map_err(|e| WorkerError::RepositoryError(...))
+// =============================================================================
+
+/// 将任意 Display 错误结果转换为 WorkerError::RepositoryError 的扩展 trait
+pub trait RepositoryResultExt<T> {
+    /// 转换为 WorkerError 格式
+    fn repo_err(self) -> Result<T, WorkerError>;
+}
+
+impl<T, E: std::fmt::Display> RepositoryResultExt<T> for Result<T, E> {
+    fn repo_err(self) -> Result<T, WorkerError> {
+        self.map_err(|e| WorkerError::RepositoryError(e.to_string()))
     }
 }
 
@@ -755,6 +943,15 @@ mod tests {
             AppError::Database(sea_orm::DbErr::Custom("db down".to_string())).status_code(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
+        // 新增变体：Authentication(401) / ServiceUnavailable(503)
+        assert_eq!(
+            AppError::Authentication("bad token".to_string()).status_code(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            AppError::ServiceUnavailable("redis down".to_string()).status_code(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     // =============================================================================
@@ -807,6 +1004,15 @@ mod tests {
         assert_eq!(
             AppError::RateLimit("test".to_string()).error_code(),
             "RATE_LIMITED"
+        );
+        // 新增变体
+        assert_eq!(
+            AppError::Authentication("test".to_string()).error_code(),
+            "AUTHENTICATION_ERROR"
+        );
+        assert_eq!(
+            AppError::ServiceUnavailable("test".to_string()).error_code(),
+            "SERVICE_UNAVAILABLE"
         );
     }
 
@@ -861,6 +1067,13 @@ mod tests {
 
         let perm = AppError::PermissionDenied("insufficient scope".to_string());
         assert!(perm.user_message().contains("insufficient scope"));
+
+        // 新增变体
+        let auth = AppError::Authentication("bad token".to_string());
+        assert!(auth.user_message().contains("Authentication failed"));
+
+        let svc_unavail = AppError::ServiceUnavailable("redis down".to_string());
+        assert!(svc_unavail.user_message().contains("Service unavailable"));
 
         // 引擎错误经过脱敏处理
         let engine_err =
@@ -1094,5 +1307,185 @@ mod tests {
             AppError::Network(msg) => assert!(!msg.is_empty()),
             other => panic!("expected Network variant, got {:?}", other),
         }
+    }
+
+    // =============================================================================
+    // 迁移自 utils/errors.rs：WorkerError / RepositoryError / RepositoryResultExt
+    // =============================================================================
+
+    #[test]
+    fn test_worker_error_from_string() {
+        let err: WorkerError = "something failed".to_string().into();
+        assert!(matches!(err, WorkerError::InternalError(msg) if msg == "something failed"));
+    }
+
+    #[test]
+    fn test_worker_error_from_str() {
+        let err: WorkerError = "disk full".into();
+        assert!(matches!(err, WorkerError::InternalError(msg) if msg == "disk full"));
+    }
+
+    #[test]
+    fn test_worker_error_from_anyhow() {
+        let err: WorkerError = anyhow::anyhow!("network down").into();
+        assert!(matches!(err, WorkerError::InternalError(msg) if msg.contains("network down")));
+    }
+
+    #[test]
+    fn test_app_error_from_string_via_macro() {
+        let err: AppError = "boom".to_string().into();
+        assert!(matches!(err, AppError::Other(msg) if msg == "boom"));
+    }
+
+    #[test]
+    fn test_app_error_from_str_via_macro() {
+        let err: AppError = "crash".into();
+        assert!(matches!(err, AppError::Other(msg) if msg == "crash"));
+    }
+
+    #[test]
+    fn test_app_error_from_anyhow_via_macro() {
+        let err: AppError = anyhow::anyhow!("db timeout").into();
+        assert!(matches!(err, AppError::Other(msg) if msg.contains("db timeout")));
+    }
+
+    // ========== From<RepositoryError> for WorkerError ==========
+
+    #[test]
+    fn test_worker_error_from_repository_database_error() {
+        let err: WorkerError = RepositoryError::DatabaseError("conn refused".to_string()).into();
+        assert!(matches!(err, WorkerError::RepositoryError(msg) if msg == "conn refused"));
+    }
+
+    #[test]
+    fn test_worker_error_from_repository_not_found() {
+        let err: WorkerError = RepositoryError::NotFound.into();
+        assert!(matches!(err, WorkerError::NotFound(msg) if msg.contains("not found")));
+    }
+
+    #[test]
+    fn test_worker_error_from_repository_already_exists() {
+        let err: WorkerError = RepositoryError::AlreadyExists.into();
+        assert!(matches!(err, WorkerError::RepositoryError(msg) if msg.contains("already exists")));
+    }
+
+    #[test]
+    fn test_worker_error_from_repository_invalid_parameter() {
+        let err: WorkerError = RepositoryError::InvalidParameter("bad uuid".to_string()).into();
+        assert!(matches!(err, WorkerError::DomainError(msg) if msg == "bad uuid"));
+    }
+
+    #[test]
+    fn test_worker_error_from_repository_internal_error() {
+        let err: WorkerError = RepositoryError::InternalError("oops".to_string()).into();
+        assert!(matches!(err, WorkerError::InternalError(msg) if msg == "oops"));
+    }
+
+    // ========== From<RepositoryError> for AppError ==========
+
+    #[test]
+    fn test_app_error_from_repository_database_error() {
+        let err: AppError = RepositoryError::DatabaseError("conn refused".to_string()).into();
+        assert!(matches!(err, AppError::Other(msg) if msg == "conn refused"));
+    }
+
+    #[test]
+    fn test_app_error_from_repository_not_found() {
+        let err: AppError = RepositoryError::NotFound.into();
+        assert!(matches!(err, AppError::NotFound(msg) if msg.contains("not found")));
+    }
+
+    #[test]
+    fn test_app_error_from_repository_already_exists() {
+        let err: AppError = RepositoryError::AlreadyExists.into();
+        assert!(matches!(err, AppError::Validation(msg) if msg.contains("already exists")));
+    }
+
+    #[test]
+    fn test_app_error_from_repository_invalid_parameter() {
+        let err: AppError = RepositoryError::InvalidParameter("bad input".to_string()).into();
+        assert!(matches!(err, AppError::Validation(msg) if msg == "bad input"));
+    }
+
+    #[test]
+    fn test_app_error_from_repository_internal_error() {
+        let err: AppError = RepositoryError::InternalError("oops".to_string()).into();
+        assert!(matches!(err, AppError::Other(msg) if msg == "oops"));
+    }
+
+    // ========== From<task_repository::RepositoryError> for AppError ==========
+
+    #[test]
+    fn test_app_error_from_task_repo_database_error() {
+        use crate::domain::repositories::task_repository::RepositoryError as TaskRepoError;
+        let err: AppError = TaskRepoError::Database(anyhow::anyhow!("pool exhausted")).into();
+        assert!(matches!(err, AppError::Other(msg) if msg.contains("pool exhausted")));
+    }
+
+    #[test]
+    fn test_app_error_from_task_repo_not_found() {
+        use crate::domain::repositories::task_repository::RepositoryError as TaskRepoError;
+        let err: AppError = TaskRepoError::NotFound.into();
+        assert!(matches!(err, AppError::NotFound(msg) if msg.contains("not found")));
+    }
+
+    // ========== From<RobotsCheckerError> for AppError ==========
+
+    #[test]
+    fn test_app_error_from_robots_checker_error() {
+        let robots_err =
+            crate::utils::robots::RobotsCheckerError::ValidationError("blocked".to_string());
+        let err: AppError = robots_err.into();
+        assert!(matches!(err, AppError::Other(msg) if msg.contains("blocked")));
+    }
+
+    // ========== RepositoryResultExt ==========
+
+    #[test]
+    fn test_repository_result_ext_ok() {
+        let result: Result<i32, &str> = Ok(42);
+        assert_eq!(result.repo_err().expect("ok should pass through"), 42);
+    }
+
+    #[test]
+    fn test_repository_result_ext_err_maps_to_worker_error() {
+        let result: Result<i32, &str> = Err("disk failure");
+        let err = result.repo_err().unwrap_err();
+        assert!(matches!(err, WorkerError::RepositoryError(msg) if msg.contains("disk failure")));
+    }
+
+    // ========== 新变体 Authentication / ServiceUnavailable 的 IntoResponse ==========
+
+    #[tokio::test]
+    async fn test_app_error_authentication_returns_401() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("RUST_ENV");
+        let response = AppError::Authentication("bad token".to_string()).into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "AUTHENTICATION_ERROR");
+        assert_eq!(json["error"]["status"], 401);
+    }
+
+    #[tokio::test]
+    async fn test_app_error_service_unavailable_returns_503() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("CRAWLRS_ENV", "production");
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("RUST_ENV");
+        let response = AppError::ServiceUnavailable("redis down".to_string()).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "SERVICE_UNAVAILABLE");
+        assert_eq!(json["error"]["status"], 503);
+        std::env::remove_var("CRAWLRS_ENV");
     }
 }

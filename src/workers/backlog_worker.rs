@@ -3,13 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::common::error::{RepositoryResultExt, WorkerError};
 use crate::di::infrastructure_module::SettingsTrait;
 use crate::domain::models::task_domain::TaskStatus;
 use crate::domain::repositories::{
     task_repository::TaskRepository, tasks_backlog_repository::TasksBacklogRepository,
 };
 use crate::domain::services::rate_limiting_service::RateLimitingService;
-use crate::utils::errors::{RepositoryResultExt, WorkerError};
 use crate::workers::worker::{ProcessResult, WorkerProcess};
 use async_trait::async_trait;
 use chrono::Utc;

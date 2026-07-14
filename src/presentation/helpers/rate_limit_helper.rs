@@ -79,20 +79,20 @@ pub async fn check_rate_limit<T: RateLimitingService + ?Sized>(
 /// # Returns
 ///
 /// * `Ok(())` - Rate limit check passed
-/// * `Err(AppError::RateLimited)` - Rate limit exceeded
+/// * `Err(AppError::RateLimit)` - Rate limit exceeded
 pub async fn check_rate_limit_as_app_error<T: RateLimitingService + ?Sized>(
     service: &T,
     api_key: &str,
     endpoint: &str,
 ) -> Result<(), AppError> {
     match service.check_rate_limit(api_key, endpoint).await {
-        Ok(RateLimitResult::Denied { reason }) => Err(AppError::RateLimited(format!(
+        Ok(RateLimitResult::Denied { reason }) => Err(AppError::RateLimit(format!(
             "Rate limit exceeded: {}",
             reason
         ))),
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
-        }) => Err(AppError::RateLimited(format!(
+        }) => Err(AppError::RateLimit(format!(
             "Rate limit exceeded, please retry after {} seconds",
             retry_after_seconds
         ))),

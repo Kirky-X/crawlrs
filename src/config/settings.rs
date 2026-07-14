@@ -1077,7 +1077,7 @@ mod tests {
     // ========== validate_security tests (serialized via mutex due to env var) ==========
 
     // Use the shared global ENV_MUTEX to prevent cross-module env var race conditions
-    // (config::settings, utils::errors, and common::error all manipulate CRAWLRS_ENV)
+    // (config::settings and common::error all manipulate CRAWLRS_ENV)
 
     #[test]
     fn test_validate_security_valid() {
