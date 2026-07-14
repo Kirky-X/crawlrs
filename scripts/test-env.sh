@@ -59,8 +59,8 @@ start_env() {
     fi
 
     # 启动基础设施
-    log_info "启动 PostgreSQL 和 Redis..."
-    docker-compose -f docker/docker-compose.test.yml up -d test-db test-redis
+    log_info "启动 PostgreSQL..."
+    docker-compose -f docker/docker-compose.test.yml up -d test-db
 
     # 等待基础设施就绪
     log_info "等待服务就绪..."
@@ -93,7 +93,6 @@ start_env() {
     log_section "测试环境启动完成"
     echo "API 服务:      http://localhost:3000"
     echo "PostgreSQL:    localhost:5443"
-    echo "Redis:         localhost:6380"
     echo "Chrome:        localhost:9223"
     echo "MinIO:         localhost:9000"
     echo "Prometheus:    localhost:9090"

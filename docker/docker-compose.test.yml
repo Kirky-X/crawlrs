@@ -41,26 +41,6 @@ services:
       - crawlrs-test-network
 
   # ==========================================================================
-  # 测试 Redis
-  # ==========================================================================
-  test-redis:
-    image: redis:latest
-    container_name: crawlrs-test-redis
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    ports:
-      - "6380:6379"
-    volumes:
-      - test_redis_data:/data
-    restart: no
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - crawlrs-test-network
-
-  # ==========================================================================
   # Chrome (用于搜索引擎测试 - 绕过反爬虫)
   # ==========================================================================
   chrome:
@@ -129,14 +109,8 @@ services:
       - CRAWLRS__DATABASE__MAX_CONNECTIONS=20
       - CRAWLRS__DATABASE__CONNECT_TIMEOUT=60
 
-      # Redis配置 (使用服务名)
-      - CRAWLRS__REDIS__URL=redis://test-redis:6379
-      - CRAWLRS__REDIS__HOST=test-redis
-
-      # 测试配置 - 启用浏览器和搜索测试
+      # 测试配置
       - TEST_DATABASE_URL=postgres://crawlrs:password@test-db:5432/crawlrs_test
-      - TEST_REDIS_PORT=6379
-      - SKIP_S3_TESTS=true
 
       # Webhook secret (required for tests)
       - CRAWLRS__WEBHOOK__SECRET=test-secret-key-for-testing-only
@@ -165,8 +139,6 @@ services:
     depends_on:
       test-db:
         condition: service_healthy
-      test-redis:
-        condition: service_healthy
       chrome:
         condition: service_healthy
     volumes:
@@ -179,32 +151,6 @@ services:
     restart: no
     profiles:
       - test
-
-  # ==========================================================================
-  # MinIO (可选 - 用于 S3 存储测试)
-  # ==========================================================================
-  minio:
-    image: minio/minio:latest
-    container_name: crawlrs-minio
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin123
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 5
-    networks:
-      - crawlrs-test-network
-    restart: no
-    profiles:
-      - minio
 
 # =============================================================================
 # 网络配置
@@ -224,18 +170,8 @@ volumes:
   test_db_data:
     driver: local
 
-  test_redis_data:
-    driver: local
-
   chrome_data:
     driver: local
 
   flaresolverr_data:
     driver: local
-
-  minio_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./data/minio

@@ -6,9 +6,6 @@ enable_port_detection = false
 [database]
 url = "postgres://crawlrs:password@localhost:5443/crawlrs_test"
 
-[redis]
-url = "redis://localhost:6380"
-
 [cors]
 allowed_origins = "*"
 
@@ -17,9 +14,6 @@ enabled = false
 
 [concurrency]
 default_team_limit = 10
-
-[storage]
-type = "local"
 
 [webhook]
 secret = "test-secret"

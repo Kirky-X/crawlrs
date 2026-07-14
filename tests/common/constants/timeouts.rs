@@ -44,11 +44,6 @@ pub const WEBHOOK_DELIVERY_TIMEOUT: Duration = Duration::from_secs(30);
 /// 用于数据库查询和操作的超时时间。
 pub const DATABASE_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Redis 操作超时时间（5秒）
-///
-/// 用于 Redis 缓存操作的超时时间。
-pub const REDIS_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
-
 /// 任务执行超时时间（60秒）
 ///
 /// 用于任务执行操作的超时时间。

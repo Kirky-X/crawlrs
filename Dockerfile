@@ -31,7 +31,7 @@ COPY src/ src/
 COPY config/ config/
 
 # Feature set is parameterizable via BUILD_FEATURES build arg
-# Default: standard deployment (postgres + redis + all engines except playwright/fire)
+# Default: standard deployment (postgres + oxcache + all engines except playwright/fire)
 ARG BUILD_FEATURES=default
 RUN cargo build --features ${BUILD_FEATURES} --release --bin crawlrs
 

@@ -13,7 +13,6 @@ class Feature(Enum):
     MINIO = "minio"
     BROWSER = "browser"
     SEARCH = "search"
-    REDIS = "redis"
     POSTGRES = "postgres"
     FLARESOLVERR = "flaresolverr"
 
@@ -30,8 +29,8 @@ CONFIGURATIONS = {
     "minio_only": TestConfiguration(
         name="minio_only",
         description="仅启用 MinIO 存储服务",
-        enabled_features=[Feature.MINIO, Feature.POSTGRES, Feature.REDIS],
-        expected_services=["postgres", "redis", "minio"],
+        enabled_features=[Feature.MINIO, Feature.POSTGRES],
+        expected_services=["postgres", "minio"],
     ),
     "browser_only": TestConfiguration(
         name="browser_only",
@@ -40,9 +39,8 @@ CONFIGURATIONS = {
             Feature.BROWSER,
             Feature.FLARESOLVERR,
             Feature.POSTGRES,
-            Feature.REDIS,
         ],
-        expected_services=["postgres", "redis", "chrome", "flaresolverr"],
+        expected_services=["postgres", "chrome", "flaresolverr"],
     ),
     "search_only": TestConfiguration(
         name="search_only",
@@ -50,10 +48,9 @@ CONFIGURATIONS = {
         enabled_features=[
             Feature.SEARCH,
             Feature.POSTGRES,
-            Feature.REDIS,
             Feature.FLARESOLVERR,
         ],
-        expected_services=["postgres", "redis", "flaresolverr"],
+        expected_services=["postgres", "flaresolverr"],
     ),
     "full_features": TestConfiguration(
         name="full_features",
@@ -62,11 +59,10 @@ CONFIGURATIONS = {
             Feature.MINIO,
             Feature.BROWSER,
             Feature.SEARCH,
-            Feature.REDIS,
             Feature.POSTGRES,
             Feature.FLARESOLVERR,
         ],
-        expected_services=["postgres", "redis", "chrome", "flaresolverr", "minio"],
+        expected_services=["postgres", "chrome", "flaresolverr", "minio"],
     ),
 }
 

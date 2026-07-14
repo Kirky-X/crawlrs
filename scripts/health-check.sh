@@ -19,7 +19,6 @@ set -e
 # 服务列表: 服务名:端口
 SERVICES=(
     "postgres:5432"
-    "redis:6379"
     "chrome:9222"
     "flaresolverr:8191"
     "minio:9000"

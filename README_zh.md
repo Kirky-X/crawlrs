@@ -101,7 +101,7 @@
 | 特性 | 描述 |
 |---------|-------------|
 | **速率限制** | 每团队并发和 RPM 控制 |
-| **分布式缓存** | 基于 Redis 的 TTL 缓存 |
+| **缓存** | 基于 oxcache 的 TTL 缓存（moka 内存后端） |
 | **指标与监控** | Prometheus 兼容的导出 |
 | **Webhooks** | 事件驱动的任务完成通知 |
 | **API Key 认证** | 作用域访问控制和团队隔离 |
@@ -114,7 +114,7 @@
 | 表现层 | Axum | HTTP 处理器、中间件 |
 | 应用层 | Use Cases | 业务逻辑编排 |
 | 领域层 | Traits | 核心实体和服务 |
-| 基础设施层 | Postgres、Redis、S3 | 外部集成 |
+| 基础设施层 | Postgres | 外部集成 |
 
 ---
 
@@ -127,7 +127,6 @@
 | Rust | 1.70+ | 最新稳定版 |
 | PostgreSQL | 14+ | 最新稳定版 |
 | SQLite | 3.x | 3.35+ |
-| Redis | 7+ | 最新稳定版 |
 | Docker | 20+ | 最新版 |
 
 ### 从源码构建
@@ -137,14 +136,14 @@
 git clone https://github.com/your-org/crawlrs.git
 cd crawlrs
 
-# 使用默认特性安装（PostgreSQL + Redis）
+# 使用默认特性安装（PostgreSQL + oxcache）
 cargo build --release
 
 # 安装所有特性（SQLite + 所有引擎）
 cargo build --release --features full
 
 # 使用自定义特性安装
-cargo build --release --features "engine-playwright,db-sqlite,metrics"
+cargo build --release --features "engine-playwright,dbnexus-sqlite,metrics"
 ```
 
 ### 特性标志
@@ -156,8 +155,7 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 | `engine-fire-cdp` | Fire 引擎 CDP 支持 | ❌ 否 |
 | `engine-fire-tls` | Fire 引擎 TLS 支持 | ❌ 否 |
 | `engine-flaresolverr` | FlareSolverr 反爬虫保护 | ❌ 否 |
-| `redis-cache` | Redis 缓存支持 | ✅ 是 |
-| `rate-limiting` | 基于 Redis 的速率限制 | ✅ 是 |
+| `rate-limiting` | 基于 limiteron 的速率限制 | ✅ 是 |
 | `metrics` | Prometheus 指标导出 | ✅ 是 |
 | `dbnexus-postgres` | PostgreSQL 数据库（通过 dbnexus） | ✅ 是 |
 | `dbnexus-sqlite` | SQLite 数据库（通过 dbnexus） | ❌ 否 |
@@ -185,9 +183,6 @@ cargo build --release --features "engine-playwright,db-sqlite,metrics"
 [database]
 url = "postgresql://user:password@localhost/crawlrs"
 max_connections = 20
-
-[redis]
-url = "redis://localhost:6379"
 
 [server]
 host = "0.0.0.0"
@@ -251,7 +246,6 @@ curl http://localhost:8899/health
 | 环境变量 | 描述 | 默认值 | 必需 |
 |-------------|----------|--------|------|
 | `DATABASE_URL` | PostgreSQL 连接字符串 | - | 是 |
-| `REDIS_URL` | Redis 连接字符串 | - | 否 |
 | `SERVER_HOST` | 服务器绑定地址 | 0.0.0.0 | 否 |
 | `SERVER_PORT` | 服务器端口 | 8899 | 否 |
 | `LOG_LEVEL` | 日志级别 | info | 否 |
@@ -345,14 +339,14 @@ flowchart TB
 | 异步运行时 | Tokio | 1.48 |
 | 数据库 ORM | Sea-ORM 2.0.0-rc（通过 dbnexus 0.2） | - |
 | 数据库 | PostgreSQL / SQLite | 14+ / 3.x |
-| 缓存 | Redis | 7+ |
+| 缓存 | oxcache (moka) | 0.3 |
 | HTTP 客户端 | Reqwest | 0.12 |
 | 浏览器自动化 | Playwright | 0.40+ |
-| 结构化日志 | inklog | 0.1.2 |
-| API SDK | sdforge | 0.3.1 |
-| 多后端缓存 | oxcache | 0.3.3 |
-| 速率限制 | limiteron | 0.2.1 |
-| 配置管理 | confers | 0.2.2 |
+| 结构化日志 | inklog | 0.1 |
+| API SDK | sdforge | 0.4 |
+| 多后端缓存 | oxcache | 0.3 |
+| 速率限制 | limiteron | 0.2 |
+| 配置管理 | confers | 0.4 |
 
 ---
 
@@ -368,7 +362,6 @@ docker build -t crawlrs:latest .
 docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgresql://user:pass@db:5432/crawlrs" \
-  -e REDIS_URL="redis://redis:6379" \
   crawlrs:latest
 
 # 使用 Docker Compose 运行
@@ -379,7 +372,7 @@ docker-compose up -d
 
 - [ ] 设置强密码 API 密钥和密钥
 - [ ] 配置适当的数据库连接池
-- [ ] 为生产环境启用 Redis 缓存
+- [ ] 为生产环境配置 oxcache 缓存
 - [ ] 根据容量设置适当的速率限制
 - [ ] 配置指标导出到 Prometheus
 - [ ] 启用分布式追踪（inklog HTTP sink）

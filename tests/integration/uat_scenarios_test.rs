@@ -176,7 +176,6 @@ async fn test_uat006_distributed_rate_limiting() {
     let credits_repo = Arc::new(CreditsRepositoryImpl::new(app.db_pool.clone()));
 
     let config = RateLimitingConfig {
-        redis_key_prefix: "crawlrs:test:ratelimit".to_string(),
         rate_limit: RateLimitConfig {
             strategy: RateLimitStrategy::TokenBucket,
             requests_per_second: 5, // 每秒5个请求
@@ -1163,12 +1162,8 @@ async fn test_uat018_rate_limiting() {
     // 创建启用了速率限制的应用
     let app = create_test_app_with_rate_limit_options(true, true).await;
 
-    // Set a specific rate limit for this test's API key (10 RPM)
-    let rate_limit_key = format!("rate_limit_config:{}", app.api_key);
-    if app.redis.set(&rate_limit_key, "10", 60).await.is_err() {
-        println!("⚠️  UAT-018 rate limiting test skipped - Redis connection failed");
-        return;
-    }
+    // Note: Rate limit config is now managed by limiteron (MemoryStorage).
+    // Previously this test set a Redis key for rate_limit_config; that is no longer needed.
 
     // 第一次请求应该成功
     let response = app

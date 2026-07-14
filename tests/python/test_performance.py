@@ -110,29 +110,6 @@ class TestThroughput:
         assert statistics.mean(response_times) < 500, "并发请求响应时间过长"
 
 
-class TestCacheEffectiveness:
-    """缓存效果测试"""
-
-    def test_redis_cache_hit_rate(self, api_client):
-        """测试 Redis 缓存命中率"""
-        query = "test cache"
-
-        result1 = api_client.search(query=query, engines=["bing"], limit=5)
-        time1 = result1.response.elapsed_time_ms
-
-        times = []
-        for i in range(5):
-            result = api_client.search(query=query, engines=["bing"], limit=5)
-            if result.success:
-                times.append(result.response.elapsed_time_ms)
-
-        cached_times = [t for t in times if t < time1]
-        cache_hit_rate = len(cached_times) / len(times) if times else 0
-
-        print(f"\n缓存命中率: {cache_hit_rate * 100:.1f}%")
-        assert cache_hit_rate >= 0.5, f"缓存命中率 {cache_hit_rate * 100:.1f}% 过低"
-
-
 class TestDatabasePerformance:
     """数据库性能测试"""
 

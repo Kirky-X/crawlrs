@@ -8,7 +8,7 @@
 # =============================================================================
 # Usage:
 #   docker compose up -d                    # Start all services
-#   docker compose up -d crawlrs            # Start crawlrs only (needs db + redis)
+#   docker compose up -d crawlrs            # Start crawlrs only (needs db)
 #   docker compose --profile worker up -d   # Start with separate worker process
 #
 # Feature set is controlled via BUILD_FEATURES (default: "default").
@@ -33,19 +33,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   crawlrs:
     build:
       context: .
@@ -55,11 +42,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
       CRAWLRS__DATABASE__URL: postgresql://${POSTGRES_USER:-crawlrs}:${POSTGRES_PASSWORD:-crawlrs}@db:5432/${POSTGRES_DB:-crawlrs}
-      CRAWLRS__REDIS__URL: redis://redis:6379
       CRAWLRS__SERVER__HOST: "0.0.0.0"
       CRAWLRS__SERVER__PORT: "8899"
       RUST_LOG: ${RUST_LOG:-info}
@@ -80,15 +64,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
       CRAWLRS__DATABASE__URL: postgresql://${POSTGRES_USER:-crawlrs}:${POSTGRES_PASSWORD:-crawlrs}@db:5432/${POSTGRES_DB:-crawlrs}
-      CRAWLRS__REDIS__URL: redis://redis:6379
       RUST_LOG: ${RUST_LOG:-info}
     command: ["worker"]
     restart: unless-stopped
 
 volumes:
   pgdata:
-  redisdata:
