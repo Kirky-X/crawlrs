@@ -8,7 +8,7 @@
 use crate::config::settings::Settings;
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::database::dbnexus_connection::DatabasePool;
-use crate::infrastructure::oxcache::{create_cache, SearchCache};
+use crate::infrastructure::oxcache::{create_cache, CacheService, OxcacheService, SearchCache};
 use crate::infrastructure::repositories::{
     crawl_repo_impl::CrawlRepositoryImpl, credits_repo_impl::CreditsRepositoryImpl,
     database_geo_restriction_repo::DatabaseGeoRestrictionRepository,
@@ -183,6 +183,8 @@ pub struct InfrastructureComponents {
     pub redis_client: Arc<RedisClient>,
     /// OxCache instance for simple caching scenarios (search results, DNS, regex).
     pub oxcache: Option<Arc<SearchCache>>,
+    /// Cache service for key-value caching (robots.txt, etc.).
+    pub cache_service: Arc<dyn CacheService>,
     /// HTTP client.
     pub http_client: Arc<reqwest::Client>,
     /// All application repositories.
@@ -226,6 +228,31 @@ pub async fn init_oxcache(settings: &Settings) -> Result<Option<Arc<SearchCache>
     }
 }
 
+/// Initialize the cache service for key-value caching.
+///
+/// Creates an `OxcacheService` backed by `oxcache::Cache<String, String>`
+/// for general-purpose key-value caching (e.g. robots.txt content).
+///
+/// # Arguments
+///
+/// * `settings` - Application settings containing cache configuration
+///
+/// # Returns
+///
+/// Returns an initialized cache service as a trait object.
+pub async fn init_cache_service(settings: &Settings) -> Result<Arc<dyn CacheService>> {
+    let capacity = settings.cache.memory.capacity;
+    let ttl = std::time::Duration::from_secs(settings.cache.memory.ttl_seconds);
+    let service = OxcacheService::build(capacity, ttl)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to build cache service: {e}"))?;
+    info!(
+        "Cache service initialized (capacity: {}, ttl: {}s)",
+        capacity, settings.cache.memory.ttl_seconds
+    );
+    Ok(Arc::new(service))
+}
+
 /// Initialize all infrastructure components.
 ///
 /// This is a convenience function that combines database, Redis, HTTP client,
@@ -244,11 +271,13 @@ pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureCo
     let http_client = init_http_client(settings)?;
     let repositories = init_repositories(db.clone(), settings);
     let oxcache = init_oxcache(settings).await?;
+    let cache_service = init_cache_service(settings).await?;
 
     Ok(InfrastructureComponents {
         db,
         redis_client,
         oxcache,
+        cache_service,
         http_client,
         repositories,
     })

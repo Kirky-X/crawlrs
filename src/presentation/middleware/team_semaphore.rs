@@ -54,6 +54,21 @@ impl TeamSemaphore {
         self.get_or_create(team_id).acquire_owned().await
     }
 
+    /// 尝试获取指定团队的信号量许可（非阻塞）
+    ///
+    /// 如果当前没有可用许可，立即返回 `None`。
+    ///
+    /// # 参数
+    ///
+    /// * `team_id` - 团队的唯一标识符
+    ///
+    /// # 返回值
+    ///
+    /// 返回 `Some(permit)` 如果成功获取许可，否则返回 `None`
+    pub fn try_acquire(&self, team_id: Uuid) -> Option<OwnedSemaphorePermit> {
+        self.get_or_create(team_id).try_acquire_owned().ok()
+    }
+
     /// 获取或创建指定团队的信号量
     ///
     /// # 参数

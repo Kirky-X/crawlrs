@@ -322,7 +322,6 @@ pub async fn init_services(
     http_client: Arc<reqwest::Client>,
     settings: &Settings,
 ) -> ServicesComponents {
-    let redis_client = infrastructure.redis_client.clone();
     let repositories = &infrastructure.repositories;
 
     // Initialize rate limiter (for auth rate limiting)
@@ -361,10 +360,10 @@ pub async fn init_services(
         repositories.geo_restriction_repo.clone(),
     ));
 
-    // Initialize robots checker (使用依赖注入的 HTTP_CLIENT)
+    // Initialize robots checker (使用依赖注入的 HTTP_CLIENT + CacheService)
     let robots_checker = Arc::new(RobotsChecker::new(
         http_client.clone(),
-        Some(redis_client.clone()),
+        Some(infrastructure.cache_service.clone()),
         None,
     ));
 

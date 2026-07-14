@@ -5,12 +5,15 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use dashmap::DashMap;
 use log::{debug, error, info, warn};
 use scraper::{Html, Selector};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::sleep;
 use url::Url;
 use uuid::Uuid;
@@ -36,13 +39,11 @@ use crate::engines::engine_client::{
     EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
     ScreenshotConfig, ScrollDirection,
 };
-#[cfg(feature = "redis-cache")]
-use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
 use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::RobotsCheckerTrait;
-use crate::workers::constants::CONCURRENCY_CONTROL_LUA;
 use crate::workers::errors::ScrapeWorkerError;
 
 /// 从缓存获取正则表达式
@@ -61,8 +62,8 @@ pub struct ScrapeWorker {
     credits_repository: Arc<dyn CreditsRepository>,
     engine_client: Arc<EngineClient>,
     _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
-    #[cfg(feature = "redis-cache")]
-    redis: RedisClient,
+    team_semaphore: Arc<TeamSemaphore>,
+    token_usage: Arc<DashMap<Uuid, AtomicI64>>,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
     worker_id: Uuid,
@@ -84,7 +85,6 @@ impl std::fmt::Debug for ScrapeWorker {
 impl ScrapeWorker {
     /// 创建新的抓取工作器实例
     #[allow(clippy::too_many_arguments)]
-    #[cfg(feature = "redis-cache")]
     pub fn new(
         repository: Arc<dyn TaskRepository>,
         result_repository: Arc<dyn ScrapeResultRepository>,
@@ -93,7 +93,7 @@ impl ScrapeWorker {
         credits_repository: Arc<dyn CreditsRepository>,
         engine_client: Arc<EngineClient>,
         _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
-        redis: RedisClient,
+        team_semaphore: Arc<TeamSemaphore>,
         robots_checker: Arc<dyn RobotsCheckerTrait>,
         settings: Arc<Settings>,
         default_concurrency_limit: usize,
@@ -112,7 +112,8 @@ impl ScrapeWorker {
             credits_repository,
             engine_client,
             _create_scrape_use_case,
-            redis,
+            team_semaphore,
+            token_usage: Arc::new(DashMap::new()),
             robots_checker,
             settings,
             worker_id: Uuid::new_v4(),
@@ -153,51 +154,8 @@ impl ScrapeWorker {
         Ok(false)
     }
 
-    async fn acquire_concurrency_permit(&self, task: &Task) -> Result<bool> {
-        let team_id = task.team_id;
-        let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
-        let team_concurrency_limit_key = format!("team:{}:concurrency_limit", team_id);
-        let now = Utc::now().timestamp() as f64;
-        let stale_threshold = now - 3600.0; // 1 hour stale
-
-        // Get limit - Priority: 1. Task Payload 2. Redis Key 3. Default
-        let payload_limit = if task.task_type == TaskType::Crawl {
-            task.payload
-                .get("config")
-                .and_then(|c| c.get("max_concurrency"))
-                .and_then(|v| v.as_u64())
-                .map(|v| v as usize)
-        } else {
-            None
-        };
-
-        let default_limit = payload_limit.unwrap_or(self.default_concurrency_limit);
-
-        // Execute atomic Lua script - reduces 4 Redis calls to 1
-        let result = self
-            .redis
-            .eval(
-                CONCURRENCY_CONTROL_LUA,
-                &[&team_active_tasks_key, &team_concurrency_limit_key],
-                &[
-                    &task.id.to_string(),
-                    &now.to_string(),
-                    &stale_threshold.to_string(),
-                    &default_limit.to_string(),
-                ],
-            )
-            .await?;
-
-        let granted = result == "1";
-        Ok(granted)
-    }
-
-    async fn release_concurrency_permit(&self, team_id: Uuid, task_id: Uuid) -> Result<()> {
-        let team_active_tasks_key = format!("team:{}:active_tasks", team_id);
-        self.redis
-            .zrem(&team_active_tasks_key, &task_id.to_string())
-            .await?;
-        Ok(())
+    fn acquire_concurrency_permit(&self, task: &Task) -> Option<OwnedSemaphorePermit> {
+        self.team_semaphore.try_acquire(task.team_id)
     }
 
     async fn process_task(&self, mut task: Task) -> Result<()> {
@@ -220,29 +178,22 @@ impl ScrapeWorker {
         }
 
         // Concurrency Check (Layer 2: Team Semaphore)
-        if !self.acquire_concurrency_permit(&task).await? {
-            warn!(
-                "Team {} concurrency limit exceeded, rescheduling task {}",
-                task.team_id, task.id
-            );
-            // Reschedule logic (Backlog)
-            // Delay by 30 seconds
-            task.scheduled_at = Some(Utc::now() + chrono::Duration::seconds(30));
-            task.status = TaskStatus::Queued;
-            // Reset attempt count to avoid failing task due to concurrency limits?
-            // Or keep it? If we keep it, it might eventually fail.
-            // PRD says "Enter backlog". It doesn't imply failure count increment.
-            // So we probably shouldn't increment attempt_count here, but update resets status.
-            // Since we acquired it, attempt_count might have been incremented by queue?
-            // PostgresTaskQueue usually doesn't increment attempt_count on acquire, only on error handling?
-            // Let's assume we just update it.
-            self.repository.update(&task).await?;
-            return Ok(());
-        }
-
-        // Extract values needed after task is moved
-        let task_id = task.id;
-        let team_id = task.team_id;
+        // The permit is held for the duration of task processing and auto-releases on drop.
+        let _permit = match self.acquire_concurrency_permit(&task) {
+            Some(p) => p,
+            None => {
+                warn!(
+                    "Team {} concurrency limit exceeded, rescheduling task {}",
+                    task.team_id, task.id
+                );
+                // Reschedule logic (Backlog)
+                // Delay by 30 seconds
+                task.scheduled_at = Some(Utc::now() + chrono::Duration::seconds(30));
+                task.status = TaskStatus::Queued;
+                self.repository.update(&task).await?;
+                return Ok(());
+            }
+        };
 
         let task_type = task.task_type;
 
@@ -255,13 +206,7 @@ impl ScrapeWorker {
             _ => return Err(anyhow::anyhow!("Unknown task type: {}", task_type)),
         };
 
-        // Always release permit
-        if let Err(e) = self.release_concurrency_permit(team_id, task_id).await {
-            error!(
-                "Failed to release concurrency permit for team {}: {}",
-                team_id, e
-            );
-        }
+        // _permit auto-releases here when it goes out of scope
 
         if let Err(ref e) = result {
             debug!("error: {}", e);
@@ -1021,13 +966,11 @@ impl ScrapeWorker {
                         extracted_data = Some(data);
                         // Record usage (PRD-334: Tokens Billing)
                         if usage.total_tokens > 0 {
-                            // 1. Record in Redis for real-time tracking
-                            let key = format!("team:{}:token_usage", task.team_id);
-                            if let Err(e) =
-                                self.redis.incr_by(&key, usage.total_tokens as i64).await
-                            {
-                                error!("Failed to record token usage in Redis: {}", e);
-                            }
+                            // 1. Record in-memory for real-time tracking
+                            self.token_usage
+                                .entry(task.team_id)
+                                .or_insert_with(|| AtomicI64::new(0))
+                                .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
 
                             // 2. Convert to credits and deduct from database
                             // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
@@ -1236,11 +1179,11 @@ impl ScrapeWorker {
         description: &str,
     ) {
         if usage.total_tokens > 0 {
-            // 1. Record in Redis for real-time tracking
-            let key = format!("team:{}:token_usage", team_id);
-            if let Err(e) = self.redis.incr_by(&key, usage.total_tokens as i64).await {
-                error!("Failed to record token usage in Redis: {}", e);
-            }
+            // 1. Record in-memory for real-time tracking
+            self.token_usage
+                .entry(team_id)
+                .or_insert_with(|| AtomicI64::new(0))
+                .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
 
             // 2. Convert to credits and deduct from database
             // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
@@ -1375,8 +1318,7 @@ pub struct ScrapeWorkerBuilder {
     credits_repository: Option<Arc<dyn CreditsRepository>>,
     engine_client: Option<Arc<EngineClient>>,
     create_scrape_use_case: Option<Arc<dyn CreateScrapeUseCaseTrait>>,
-    #[cfg(feature = "redis-cache")]
-    redis: Option<RedisClient>,
+    team_semaphore: Option<Arc<TeamSemaphore>>,
     robots_checker: Option<Arc<dyn RobotsCheckerTrait>>,
     settings: Option<Arc<Settings>>,
     default_concurrency_limit: usize,
@@ -1394,8 +1336,7 @@ impl Default for ScrapeWorkerBuilder {
             credits_repository: None,
             engine_client: None,
             create_scrape_use_case: None,
-            #[cfg(feature = "redis-cache")]
-            redis: None,
+            team_semaphore: None,
             robots_checker: None,
             settings: None,
             default_concurrency_limit: 10,
@@ -1407,7 +1348,6 @@ impl Default for ScrapeWorkerBuilder {
 
 impl ScrapeWorkerBuilder {
     /// 创建新的构建器
-    #[cfg(feature = "redis-cache")]
     pub fn new() -> Self {
         Self::default()
     }
@@ -1463,10 +1403,9 @@ impl ScrapeWorkerBuilder {
         self
     }
 
-    /// 设置 Redis 客户端 (必需)
-    #[cfg(feature = "redis-cache")]
-    pub fn with_redis(mut self, redis: RedisClient) -> Self {
-        self.redis = Some(redis);
+    /// 设置团队信号量 (必需)
+    pub fn with_team_semaphore(mut self, team_semaphore: Arc<TeamSemaphore>) -> Self {
+        self.team_semaphore = Some(team_semaphore);
         self
     }
 
@@ -1505,7 +1444,6 @@ impl ScrapeWorkerBuilder {
 
     /// 构建 ScrapeWorker 实例
     #[allow(clippy::too_many_arguments)]
-    #[cfg(feature = "redis-cache")]
     pub fn build(self) -> Result<ScrapeWorker, &'static str> {
         let repository = self.repository.ok_or("repository is required")?;
         let result_repository = self
@@ -1522,7 +1460,7 @@ impl ScrapeWorkerBuilder {
         let create_scrape_use_case = self
             .create_scrape_use_case
             .ok_or("create_scrape_use_case is required")?;
-        let redis = self.redis.ok_or("redis is required")?;
+        let team_semaphore = self.team_semaphore.ok_or("team_semaphore is required")?;
         let robots_checker = self.robots_checker.ok_or("robots_checker is required")?;
         let settings = self.settings.ok_or("settings is required")?;
         let extraction_service = self
@@ -1538,7 +1476,7 @@ impl ScrapeWorkerBuilder {
             credits_repository,
             engine_client,
             create_scrape_use_case,
-            redis,
+            team_semaphore,
             robots_checker,
             settings,
             self.default_concurrency_limit,
@@ -2246,7 +2184,6 @@ mod tests {
 
     // ========== ScrapeWorkerBuilder tests ==========
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_builder_default_build_fails_with_repository_required() {
         let builder = ScrapeWorkerBuilder::default();
@@ -2258,7 +2195,6 @@ mod tests {
         assert_eq!(err, "repository is required");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_builder_new_equals_default() {
         // Both new() and default() produce a builder that fails at the same
@@ -2275,7 +2211,6 @@ mod tests {
         assert_eq!(err_new, "repository is required");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_builder_with_default_concurrency_limit_does_not_satisfy_required_fields() {
         // Setting only the concurrency limit should not make build() succeed
@@ -2289,7 +2224,6 @@ mod tests {
         assert_eq!(err, "repository is required");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_builder_with_default_concurrency_limit_zero() {
         let err = match ScrapeWorkerBuilder::default()
@@ -2302,7 +2236,6 @@ mod tests {
         assert_eq!(err, "repository is required");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_builder_default_concurrency_limit_is_ten_by_default() {
         // The default concurrency limit is 10 (from ScrapeWorkerBuilder::default).
@@ -2634,16 +2567,15 @@ mod tests {
     /// Build a ScrapeWorker with all mock/no-op dependencies.
     ///
     /// This allows testing pure-logic methods without Docker or external
-    /// services. The RedisClient uses a dummy URL (the pool is lazy and
-    /// no actual connection is made during these tests).
+    /// services. The TeamSemaphore is an in-memory primitive — no external
+    /// service is required during these tests.
     async fn build_mock_worker() -> ScrapeWorker {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for mock worker");
         let settings_arc = Arc::new(settings.clone());
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient for mock worker");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         ScrapeWorker::new(
             Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
@@ -2653,7 +2585,7 @@ mod tests {
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            redis,
+            team_semaphore,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             settings_arc,
             10,
@@ -3634,8 +3566,7 @@ mod tests {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let worker = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
@@ -3651,7 +3582,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
@@ -3670,8 +3601,7 @@ mod tests {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_result_repository(
@@ -3686,7 +3616,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
@@ -3704,8 +3634,7 @@ mod tests {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
@@ -3718,7 +3647,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
@@ -3736,8 +3665,7 @@ mod tests {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
@@ -3752,7 +3680,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
@@ -3770,8 +3698,7 @@ mod tests {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
@@ -3786,7 +3713,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
@@ -3803,8 +3730,7 @@ mod tests {
     async fn test_builder_build_missing_engine_client() {
         let regex_cache = make_regex_cache().await;
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
@@ -3819,7 +3745,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
@@ -3833,7 +3759,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_builder_build_missing_redis() {
+    async fn test_builder_build_missing_team_semaphore() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
@@ -3861,15 +3787,14 @@ mod tests {
             .build();
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "redis is required");
+        assert_eq!(result.unwrap_err(), "team_semaphore is required");
     }
 
     #[tokio::test]
     async fn test_builder_build_missing_settings() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
@@ -3885,7 +3810,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_extraction_service(
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
@@ -3902,8 +3827,7 @@ mod tests {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
@@ -3919,7 +3843,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_regex_cache(regex_cache)
@@ -3933,8 +3857,7 @@ mod tests {
     async fn test_builder_build_missing_regex_cache() {
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
@@ -3950,7 +3873,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
@@ -3967,8 +3890,7 @@ mod tests {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let redis =
-            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let worker = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
@@ -3984,7 +3906,7 @@ mod tests {
             .with_create_scrape_use_case(
                 Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
-            .with_redis(redis)
+            .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
@@ -4043,7 +3965,7 @@ mod tests {
             infra.repositories.credits_repo.clone() as Arc<dyn CreditsRepository>,
             engines.engine_client.clone(),
             services.create_scrape_use_case.clone(),
-            (*infra.redis_client).clone(),
+            services.team_semaphore.clone(),
             services.robots_checker.clone(),
             settings_arc,
             settings.concurrency.default_team_limit as usize,
@@ -4205,7 +4127,7 @@ mod tests {
                 )
                 .with_engine_client(engines.engine_client.clone())
                 .with_create_scrape_use_case(services.create_scrape_use_case.clone())
-                .with_redis((*infra.redis_client).clone())
+                .with_team_semaphore(services.team_semaphore.clone())
                 .with_robots_checker(services.robots_checker.clone())
                 .with_settings(settings_arc)
                 .with_default_concurrency_limit(settings.concurrency.default_team_limit as usize)
@@ -4332,8 +4254,7 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for mock worker");
         let settings_arc = Arc::new(settings.clone());
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient for mock worker");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         ScrapeWorker::new(
             Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
@@ -4343,7 +4264,7 @@ mod tests {
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            redis,
+            team_semaphore,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             settings_arc,
             10,

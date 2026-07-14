@@ -7,8 +7,7 @@ use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::{EngineClient, HttpMethod, ScrapeOptions, ScrapeRequest};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::impl_basic_error_conversions;
-#[cfg(feature = "redis-cache")]
-use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::infrastructure::oxcache::CacheService;
 use crate::utils::retry_policy::RetryPolicy;
 use anyhow::Result;
 use robotstxt::DefaultMatcher;
@@ -100,9 +99,8 @@ pub struct RobotsChecker {
     /// 内存缓存
     memory_cache: Arc<Mutex<HashMap<String, CachedRobots>>>,
 
-    /// Redis客户端
-    #[cfg(feature = "redis-cache")]
-    redis_client: Option<Arc<RedisClient>>,
+    /// 缓存服务（可选，用于持久化缓存）
+    cache_service: Option<Arc<dyn CacheService>>,
 
     /// 重试策略
     retry_policy: RetryPolicy,
@@ -126,14 +124,13 @@ impl RobotsCheckerTrait for RobotsChecker {
     }
 }
 
-#[cfg(feature = "redis-cache")]
 impl RobotsChecker {
     /// 创建新的Robots检查器实例（通过依赖注入）
     ///
     /// # Arguments
     ///
     /// * `http_client` - HTTP 客户端（通过依赖注入）
-    /// * `redis_client` - Redis 客户端（可选，用于缓存）
+    /// * `cache_service` - 缓存服务（可选，用于持久化缓存）
     /// * `cache_stats` - 缓存统计（可选，用于追踪缓存命中率）
     ///
     /// # Returns
@@ -141,14 +138,14 @@ impl RobotsChecker {
     /// 返回新的Robots检查器实例
     pub fn new(
         http_client: Arc<reqwest::Client>,
-        redis_client: Option<Arc<RedisClient>>,
+        cache_service: Option<Arc<dyn CacheService>>,
         cache_stats: Option<Arc<CacheStats>>,
     ) -> Self {
         let engine_client = Self::create_engine_client(http_client);
         Self {
             engine_client,
             memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
-            redis_client,
+            cache_service,
             retry_policy: RetryPolicy {
                 max_retries: 5,
                 initial_backoff: Duration::from_secs(2),
@@ -186,10 +183,10 @@ impl RobotsChecker {
 
         self.cache_stats.record_miss();
 
-        // 2. Check Redis cache
-        let redis_key = format!("robots_cache:{}", robots_url);
-        if let Some(ref redis) = self.redis_client {
-            if let Ok(Some(content)) = redis.get(&redis_key).await {
+        // 2. Check cache service
+        let cache_key = format!("robots_cache:{}", robots_url);
+        if let Some(ref cache_service) = self.cache_service {
+            if let Ok(Some(content)) = cache_service.get(&cache_key).await {
                 // Update memory cache
                 let mut cache = self.memory_cache.lock().await;
                 cache.insert(
@@ -274,9 +271,9 @@ impl RobotsChecker {
             );
         }
 
-        // 5. Update Redis cache
-        if let Some(ref redis) = self.redis_client {
-            let _ = redis.set(&redis_key, &content, 86400).await; // Redis cache for 24 hours
+        // 5. Update cache service
+        if let Some(ref cache_service) = self.cache_service {
+            let _ = cache_service.set(&cache_key, &content, 86400).await; // Cache for 24 hours
         }
 
         Ok(content)
@@ -529,15 +526,12 @@ mod tests {
     }
 
     // ========== RobotsChecker construction & parse_crawl_delay tests ==========
-    // These tests require the `redis-cache` feature for RobotsChecker::new.
 
-    #[cfg(feature = "redis-cache")]
     fn make_checker() -> RobotsChecker {
         let http_client = Arc::new(reqwest::Client::new());
         RobotsChecker::new(http_client, None, None)
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_checker_new_creates_instance_with_defaults() {
         let checker = make_checker();
@@ -546,7 +540,6 @@ mod tests {
         assert_eq!(misses, 0, "new checker should have 0 cache misses");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_checker_new_with_custom_cache_stats() {
         let http_client = Arc::new(reqwest::Client::new());
@@ -562,7 +555,6 @@ mod tests {
 
     // ----- parse_crawl_delay tests -----
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_wildcard_agent() {
         let checker = make_checker();
@@ -575,7 +567,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_specific_agent_match() {
         let checker = make_checker();
@@ -588,7 +579,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_specific_agent_no_match() {
         let checker = make_checker();
@@ -600,7 +590,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_no_directive() {
         let checker = make_checker();
@@ -612,7 +601,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_empty_content() {
         let checker = make_checker();
@@ -620,7 +608,6 @@ mod tests {
         assert_eq!(delay, None, "empty content should return None");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_specific_overrides_wildcard() {
         // When a specific agent block appears after the wildcard block,
@@ -640,7 +627,6 @@ Crawl-delay: 30
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_wildcard_when_no_specific_match() {
         // When a specific agent block exists but doesn't match,
@@ -660,7 +646,6 @@ Crawl-delay: 30
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_invalid_value_ignored() {
         let checker = make_checker();
@@ -672,7 +657,6 @@ Crawl-delay: 30
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_skips_comments_and_empty_lines() {
         let checker = make_checker();
@@ -691,7 +675,6 @@ Crawl-delay: 7
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_case_insensitive_user_agent() {
         // The matching logic uses to_lowercase() for comparison.
@@ -705,7 +688,6 @@ Crawl-delay: 7
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_case_insensitive_directive() {
         // The directive parsing uses to_lowercase() for the directive name.
@@ -719,7 +701,6 @@ Crawl-delay: 7
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_fractional_seconds() {
         let checker = make_checker();
@@ -732,7 +713,6 @@ Crawl-delay: 7
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_multiple_blocks_same_agent() {
         // When the same agent appears in multiple blocks, the last matching
@@ -753,7 +733,6 @@ Crawl-delay: 8
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
     fn test_parse_crawl_delay_only_directive_without_agent() {
         // Crawl-delay without a preceding User-agent directive should be ignored
@@ -771,7 +750,6 @@ Crawl-delay: 8
     // These tests pre-populate the memory cache to exercise the cache-hit path
     // and the robots.txt matching logic without making real HTTP requests.
 
-    #[cfg(feature = "redis-cache")]
     async fn populate_robots_cache(checker: &RobotsChecker, robots_url: &str, content: &str) {
         let mut cache = checker.memory_cache.lock().await;
         cache.insert(
@@ -783,7 +761,6 @@ Crawl-delay: 8
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_is_allowed_with_cached_robots_allows_non_disallowed_path() {
         let checker = make_checker();
@@ -797,7 +774,6 @@ Crawl-delay: 8
         assert!(allowed, "non-disallowed path should be allowed");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_is_allowed_with_cached_robots_blocks_disallowed_path() {
         let checker = make_checker();
@@ -811,7 +787,6 @@ Crawl-delay: 8
         assert!(!allowed, "disallowed path should be blocked");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_is_allowed_with_cached_robots_blocks_disallowed_subpath() {
         let checker = make_checker();
@@ -828,7 +803,6 @@ Crawl-delay: 8
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_is_allowed_with_cached_empty_robots_allows_all() {
         let checker = make_checker();
@@ -841,7 +815,6 @@ Crawl-delay: 8
         assert!(allowed, "empty robots.txt should allow all paths");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_is_allowed_with_cached_robots_specific_agent_block() {
         let checker = make_checker();
@@ -877,7 +850,6 @@ Crawl-delay: 8
         assert!(good_allowed, "GoodBot should be allowed via * group");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_get_crawl_delay_with_cached_robots() {
         let checker = make_checker();
@@ -895,7 +867,6 @@ Crawl-delay: 8
         );
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_get_crawl_delay_with_cached_no_delay_directive() {
         let checker = make_checker();
@@ -914,7 +885,6 @@ Crawl-delay: 8
 
     // ========== Cache hit statistics tests ==========
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_is_allowed_cache_hit_increments_stats() {
         let http_client = Arc::new(reqwest::Client::new());
@@ -942,7 +912,6 @@ Crawl-delay: 8
         assert_eq!(misses_after, 0, "no misses should occur for cache hit");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_get_crawl_delay_cache_hit_increments_stats() {
         let http_client = Arc::new(reqwest::Client::new());
@@ -968,7 +937,6 @@ Crawl-delay: 8
 
     // ========== Error path tests ==========
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_is_allowed_invalid_url_returns_error() {
         let checker = make_checker();
@@ -976,7 +944,6 @@ Crawl-delay: 8
         assert!(result.is_err(), "invalid URL should return an error");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_is_allowed_url_without_host_returns_error() {
         let checker = make_checker();
@@ -984,7 +951,6 @@ Crawl-delay: 8
         assert!(result.is_err(), "URL without host should return an error");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_get_crawl_delay_invalid_url_returns_error() {
         let checker = make_checker();
@@ -992,7 +958,6 @@ Crawl-delay: 8
         assert!(result.is_err(), "invalid URL should return an error");
     }
 
-    #[cfg(feature = "redis-cache")]
     #[tokio::test]
     async fn test_get_crawl_delay_url_without_host_returns_error() {
         let checker = make_checker();

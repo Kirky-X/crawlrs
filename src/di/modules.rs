@@ -361,10 +361,15 @@ impl AsyncAutoBuilder for InfrastructureModule {
                 .await
                 .map_err(|e| ModuleBuildError::InfrastructureInit(e.to_string()))?;
 
+            let cache_service = crate::bootstrap::infrastructure::init_cache_service(&settings)
+                .await
+                .map_err(|e| ModuleBuildError::InfrastructureInit(e.to_string()))?;
+
             Ok(InfrastructureComponents {
                 db,
                 redis_client,
                 oxcache: Some(cache_components.search_cache),
+                cache_service,
                 http_client,
                 repositories,
             })

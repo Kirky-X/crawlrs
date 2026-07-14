@@ -10,8 +10,7 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
-#[cfg(feature = "redis-cache")]
-use crate::infrastructure::cache::redis_client::RedisClient;
+use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::utils::regex_cache::RegexCache;
 use crate::workers::expiration_worker::ExpirationWorker;
@@ -35,7 +34,7 @@ pub struct WorkerManager {
     credits_repository: Arc<dyn CreditsRepository>,
     engine_client: Arc<EngineClient>,
     create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
-    redis: RedisClient,
+    team_semaphore: Arc<TeamSemaphore>,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
     default_concurrency_limit: usize,
@@ -55,7 +54,7 @@ pub struct WorkerManagerDeps {
     pub credits_repository: Arc<dyn CreditsRepository>,
     pub engine_client: Arc<EngineClient>,
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
-    pub redis: RedisClient,
+    pub team_semaphore: Arc<TeamSemaphore>,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     pub http_client: Arc<reqwest::Client>,
     pub extraction_service:
@@ -80,7 +79,7 @@ impl WorkerManager {
             credits_repository: deps.credits_repository,
             engine_client: deps.engine_client,
             create_scrape_use_case: deps.create_scrape_use_case,
-            redis: deps.redis,
+            team_semaphore: deps.team_semaphore,
             robots_checker: deps.robots_checker,
             settings: config.settings,
             default_concurrency_limit: config.default_concurrency_limit,
@@ -115,7 +114,7 @@ impl WorkerManager {
                 self.credits_repository.clone(),
                 self.engine_client.clone(),
                 self.create_scrape_use_case.clone(),
-                self.redis.clone(),
+                self.team_semaphore.clone(),
                 self.robots_checker.clone(),
                 self.settings.clone(),
                 self.default_concurrency_limit,
@@ -221,18 +220,29 @@ mod tests {
         let _cloned = client.clone();
     }
 
-    // ========== RedisClient construction (pool only, no connection) ==========
+    // ========== TeamSemaphore construction (in-memory, no external service) ==========
 
-    #[cfg(feature = "redis-cache")]
     #[test]
-    fn test_redis_client_can_be_constructed_without_server() {
-        // RedisClient::new creates a connection pool lazily;
-        // it should succeed even without a running Redis server.
-        let result = RedisClient::new("redis://localhost:6379");
-        assert!(
-            result.is_ok(),
-            "RedisClient pool creation should succeed without a running server"
-        );
+    fn test_team_semaphore_can_be_constructed() {
+        // TeamSemaphore is an in-memory primitive — no external service required.
+        let sem = TeamSemaphore::new(10);
+        // Verify behavior: acquiring a permit should succeed (limit is 10)
+        let team_id = uuid::Uuid::new_v4();
+        assert!(sem.try_acquire(team_id).is_some());
+    }
+
+    #[test]
+    fn test_team_semaphore_clone_shares_state() {
+        let sem = TeamSemaphore::new(1);
+        let cloned = sem.clone();
+        // Both clones share the same internal DashMap
+        let team_id = uuid::Uuid::new_v4();
+        // Acquire from original — exhausts the single permit
+        let _permit = sem
+            .try_acquire(team_id)
+            .expect("first acquire should succeed");
+        // Cloned should also see the exhausted state (shared internal map)
+        assert!(cloned.try_acquire(team_id).is_none());
     }
 
     // ========== WorkerManagerDeps field types verification ==========
@@ -357,35 +367,25 @@ mod tests {
         let _cloned = settings.clone();
     }
 
-    // ========== RedisClient additional tests (pool construction only) ==========
+    // ========== TeamSemaphore additional tests ==========
 
-    #[cfg(feature = "redis-cache")]
-    #[test]
-    fn test_redis_client_with_custom_config() {
-        use crate::infrastructure::cache::redis_client::{RedisClient, RedisClientConfig};
-        let config = RedisClientConfig {
-            max_connections: 5,
-            connection_timeout: 3,
-            recycle_timeout: 2,
-        };
-        let client = RedisClient::with_config("redis://localhost:6379", config).unwrap();
-        let config_ref = client.config();
-        assert_eq!(config_ref.max_connections, 5);
-        assert_eq!(config_ref.connection_timeout, 3);
-        assert_eq!(config_ref.recycle_timeout, 2);
+    #[tokio::test]
+    async fn test_team_semaphore_acquire_returns_permit() {
+        let sem = TeamSemaphore::new(3);
+        let team_id = uuid::Uuid::new_v4();
+        let permit = sem.acquire(team_id).await;
+        assert!(permit.is_ok());
     }
 
-    #[cfg(feature = "redis-cache")]
     #[test]
-    fn test_redis_client_clone_shares_pool() {
-        use crate::infrastructure::cache::redis_client::RedisClient;
-        let client = RedisClient::new("redis://localhost:6379").unwrap();
-        let cloned = client.clone();
-        // Both should have the same config values (shared pool)
-        assert_eq!(
-            client.config().max_connections,
-            cloned.config().max_connections
-        );
+    fn test_team_semaphore_try_acquire_respects_limit() {
+        let sem = TeamSemaphore::new(1);
+        let team_id = uuid::Uuid::new_v4();
+        let p1 = sem.try_acquire(team_id);
+        assert!(p1.is_some());
+        // Limit is 1, second acquire should fail
+        let p2 = sem.try_acquire(team_id);
+        assert!(p2.is_none());
     }
 
     // ========== RegexCache construction ==========

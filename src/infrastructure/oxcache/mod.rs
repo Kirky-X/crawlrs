@@ -25,6 +25,8 @@ use std::time::Duration;
 
 pub mod cache_service;
 
+pub use cache_service::OxcacheService;
+
 // =============================================================================
 // CacheService Trait
 // =============================================================================

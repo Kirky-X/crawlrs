@@ -121,7 +121,7 @@ async fn start_worker_service(
         credits_repository: app_state.credits_repo(),
         engine_client: app_state.engine_client(),
         create_scrape_use_case: app_state.create_scrape_use_case(),
-        redis: (*app_state.redis_client).clone(),
+        team_semaphore: app_state.team_semaphore.clone(),
         robots_checker: app_state.robots_checker.clone(),
         http_client,
         extraction_service: app_state.extraction_service(),
