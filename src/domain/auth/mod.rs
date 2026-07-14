@@ -8,6 +8,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub mod feature_flag;
+pub mod scope;
+
 /// API Key scope permissions
 ///
 /// Represents the fine-grained permissions for an API Key.
@@ -31,82 +34,6 @@ pub struct ApiKeyScope {
     pub(crate) scrape_limit: u32,
 }
 
-impl Default for ApiKeyScope {
-    fn default() -> Self {
-        Self {
-            read: true,
-            write: false,
-            admin: false,
-            search_limit: 100,
-            scrape_limit: 50,
-        }
-    }
-}
-
-impl std::fmt::Display for ApiKeyScope {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "ApiKeyScope(read={}, write={}, admin={}, search_limit={}, scrape_limit={})",
-            self.read, self.write, self.admin, self.search_limit, self.scrape_limit
-        )
-    }
-}
-
-impl ApiKeyScope {
-    /// Create a new scope with all permissions disabled
-    pub fn denied() -> Self {
-        Self {
-            read: false,
-            write: false,
-            admin: false,
-            search_limit: 0,
-            scrape_limit: 0,
-        }
-    }
-
-    /// Create a new scope with read-only access
-    pub fn read_only() -> Self {
-        Self {
-            read: true,
-            write: false,
-            admin: false,
-            search_limit: 100,
-            scrape_limit: 50,
-        }
-    }
-
-    /// Create a new scope with full access
-    pub fn full_access() -> Self {
-        Self {
-            read: true,
-            write: true,
-            admin: true,
-            search_limit: u32::MAX,
-            scrape_limit: u32::MAX,
-        }
-    }
-
-    /// Check if the scope has permission for a required scope
-    pub fn has_permission(&self, permission: ScopePermission) -> bool {
-        match permission {
-            ScopePermission::Read => self.read,
-            ScopePermission::Write => self.write,
-            ScopePermission::Admin => self.admin,
-        }
-    }
-
-    /// Check if the scope allows the requested search count
-    pub fn allows_search_count(&self, count: u32) -> bool {
-        self.search_limit == u32::MAX || count <= self.search_limit
-    }
-
-    /// Check if the scope allows the requested scrape count
-    pub fn allows_scrape_count(&self, count: u32) -> bool {
-        self.scrape_limit == u32::MAX || count <= self.scrape_limit
-    }
-}
-
 /// Scope permission types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ScopePermission {
@@ -116,44 +43,6 @@ pub enum ScopePermission {
     Write,
     /// Admin access
     Admin,
-}
-
-impl std::fmt::Display for ScopePermission {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ScopePermission::Read => write!(f, "read"),
-            ScopePermission::Write => write!(f, "write"),
-            ScopePermission::Admin => write!(f, "admin"),
-        }
-    }
-}
-
-impl From<ScopePermission> for ApiKeyScope {
-    fn from(permission: ScopePermission) -> Self {
-        match permission {
-            ScopePermission::Read => Self {
-                read: true,
-                write: false,
-                admin: false,
-                search_limit: 100,
-                scrape_limit: 50,
-            },
-            ScopePermission::Write => Self {
-                read: true,
-                write: true,
-                admin: false,
-                search_limit: 100,
-                scrape_limit: 50,
-            },
-            ScopePermission::Admin => Self {
-                read: true,
-                write: true,
-                admin: true,
-                search_limit: 100,
-                scrape_limit: 50,
-            },
-        }
-    }
 }
 
 /// Feature flag for runtime feature control
@@ -167,39 +56,6 @@ pub struct FeatureFlag {
     pub metadata: serde_json::Value,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub stopped_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl FeatureFlag {
-    /// Check if the feature is currently active
-    pub fn is_active(&self) -> bool {
-        self.enabled
-            && self.started_at.is_none_or(|t| t <= chrono::Utc::now())
-            && self.stopped_at.is_none_or(|t| t > chrono::Utc::now())
-    }
-
-    /// Check if a specific API Key should have access based on rollout
-    pub fn should_enable_for_key(&self, api_key_id: Uuid) -> bool {
-        if !self.is_active() {
-            return false;
-        }
-
-        if self.rollout_percentage == 100 {
-            return true;
-        }
-
-        if self.rollout_percentage == 0 {
-            return false;
-        }
-
-        // Deterministic rollout based on API Key ID
-        let bytes = api_key_id.as_bytes();
-        let mut hash: u64 = 0;
-        for &byte in bytes {
-            hash = hash.wrapping_mul(31).wrapping_add(byte as u64);
-        }
-        let bucket = hash % 100;
-        bucket < self.rollout_percentage as u64
-    }
 }
 
 /// Per-API-Key feature flag override
