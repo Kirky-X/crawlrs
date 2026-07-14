@@ -7,10 +7,17 @@
 //!
 //! This module provides trait-kit-compatible state management for Axum,
 //! enabling clean dependency injection in HTTP handlers.
+//!
+//! [`AppState::from_kit`] is the canonical entry point: after building all
+//! trait-kit modules via `AsyncKit::build()`, call `from_kit()` to extract
+//! capabilities and populate the runtime state consumed by Axum handlers.
 
 use std::sync::Arc;
 
+use trait_kit::{AsyncKit, AsyncReady};
+
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
+use crate::di::modules::{EngineModule, InfrastructureModule, ModuleBuildError, ServiceModule};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
@@ -38,7 +45,11 @@ use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsCheckerTrait;
 use dbnexus::DbPool;
 
-/// State extracted from Shaku module for use in Axum handlers
+/// Runtime state extracted from a built `AsyncKit<Ready>` for use in Axum handlers.
+///
+/// Construct via [`AppState::from_kit`] after registering and building all
+/// trait-kit modules. Once created, `AppState` is a plain `Clone` struct
+/// with no connection to the DI container — it is cheap to clone per-request.
 #[derive(Clone)]
 pub struct AppState {
     /// Database pool (dbnexus DbPool for repositories that need it)
@@ -101,6 +112,60 @@ pub struct AppState {
     pub geo_location_service: Arc<dyn GeoLocationService>,
     /// Geo restriction repository
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
+}
+
+impl AppState {
+    /// Construct an [`AppState`] from a built `AsyncKit<Ready>`.
+    ///
+    /// This is the canonical entry point for wiring the application at startup:
+    /// register all trait-kit modules, call `AsyncKit::build()`, then pass the
+    /// ready kit here. The method extracts the three top-level capability
+    /// bundles (infrastructure, engines, services) and maps them onto the
+    /// flat `AppState` fields consumed by Axum handlers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModuleBuildError`] if any required module is missing from the kit.
+    pub fn from_kit(kit: &AsyncKit<AsyncReady>) -> Result<Self, ModuleBuildError> {
+        let infra = kit.require::<InfrastructureModule>()?;
+        let engines = kit.require::<EngineModule>()?;
+        let services = kit.require::<ServiceModule>()?;
+
+        let search_client = Arc::new(SearchClient::new(engines.engine_client.clone()));
+
+        Ok(AppState {
+            db_pool: infra.db.inner().clone(),
+            redis_client: infra.redis_client.clone(),
+            task_repo: infra.repositories.task_repo.clone(),
+            credits_repo: infra.repositories.credits_repo.clone(),
+            crawl_repo: infra.repositories.crawl_repo.clone(),
+            result_repo: infra.repositories.result_repo.clone(),
+            webhook_repo: infra.repositories.webhook_repo.clone(),
+            webhook_event_repo: infra.repositories.webhook_event_repo.clone(),
+            tasks_backlog_repo: infra.repositories.tasks_backlog_repo.clone(),
+            task_queue: services.queue.clone(),
+            rate_limiting_service: services.rate_limiting_service.clone(),
+            team_service: services.team_service.clone(),
+            webhook_service: services.webhook_service.clone(),
+            robots_checker: services.robots_checker.clone(),
+            team_semaphore: services.team_semaphore.clone(),
+            engine_router: engines.router.clone(),
+            engine_client: engines.engine_client.clone(),
+            create_scrape_use_case: services.create_scrape_use_case.clone(),
+            search_client,
+            search_service: services.search_service.clone(),
+            auth_scope_service: services.auth_scope_service.clone(),
+            llm_service: services.llm_service.clone(),
+            extraction_service: services.extraction_service.clone(),
+            regex_cache: services.regex_cache.clone(),
+            audit_service: services.audit_service.clone(),
+            webhook_worker: services.webhook_worker.clone(),
+            backlog_worker: services.backlog_worker.clone(),
+            expiration_worker: services.expiration_worker.clone(),
+            geo_location_service: services.geo_location_service.clone(),
+            geo_restriction_repo: infra.repositories.geo_restriction_repo.clone(),
+        })
+    }
 }
 
 /// Trait for extracting dependencies from AppState
@@ -417,70 +482,46 @@ impl AppStateExt for Arc<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bootstrap::engines::init_engine_components;
-    use crate::bootstrap::infrastructure::init_infrastructure;
-    use crate::bootstrap::services::init_services;
     use crate::common::test_support::testcontainers_fixtures as tcf;
+    use crate::di::modules::{
+        CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule,
+        RepositoryModule, ServiceModule, SettingsModule,
+    };
     use std::sync::Arc;
 
     async fn require_docker() -> bool {
         tcf::docker_available().await
     }
 
-    /// Build a full AppState using testcontainers-provided PostgreSQL + Redis.
+    /// Build a full AppState via `AsyncKit` + `AppState::from_kit()`.
     ///
-    /// This mirrors the construction in `main.rs` and exercises every
-    /// AppStateExt accessor.
+    /// Registers all trait-kit modules against a testcontainers-provided
+    /// PostgreSQL + Redis pair, builds the kit, then constructs `AppState`
+    /// through the canonical `from_kit` entry point.
     async fn build_app_state() -> anyhow::Result<AppState> {
         let handle = tcf::DbRedisHandle::start().await?;
-        let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url)?;
-        let infra = init_infrastructure(&settings).await?;
-        let engines =
-            init_engine_components(infra.http_client.clone(), String::new(), &settings.engines);
-        let services = init_services(
-            &infra,
-            engines.router.clone(),
-            engines.engine_client.clone(),
-            infra.http_client.clone(),
-            &settings,
-        )
-        .await;
-        let search_client = Arc::new(crate::search::client::SearchClient::new(
-            engines.engine_client.clone(),
-        ));
+        let settings = Arc::new(tcf::settings_with_urls(&handle.pg.url, &handle.redis.url)?);
 
-        Ok(AppState {
-            db_pool: infra.db.inner().clone(),
-            redis_client: infra.redis_client.clone(),
-            task_repo: infra.repositories.task_repo.clone(),
-            credits_repo: infra.repositories.credits_repo.clone(),
-            crawl_repo: infra.repositories.crawl_repo.clone(),
-            result_repo: infra.repositories.result_repo.clone(),
-            webhook_repo: infra.repositories.webhook_repo.clone(),
-            webhook_event_repo: infra.repositories.webhook_event_repo.clone(),
-            tasks_backlog_repo: infra.repositories.tasks_backlog_repo.clone(),
-            task_queue: services.queue.clone(),
-            rate_limiting_service: services.rate_limiting_service.clone(),
-            team_service: services.team_service.clone(),
-            webhook_service: services.webhook_service.clone(),
-            robots_checker: services.robots_checker.clone(),
-            team_semaphore: services.team_semaphore.clone(),
-            engine_router: engines.router.clone(),
-            engine_client: engines.engine_client.clone(),
-            create_scrape_use_case: services.create_scrape_use_case.clone(),
-            search_client,
-            search_service: services.search_service.clone(),
-            auth_scope_service: services.auth_scope_service.clone(),
-            llm_service: services.llm_service.clone(),
-            extraction_service: services.extraction_service.clone(),
-            regex_cache: services.regex_cache.clone(),
-            audit_service: services.audit_service.clone(),
-            webhook_worker: services.webhook_worker.clone(),
-            backlog_worker: services.backlog_worker.clone(),
-            expiration_worker: services.expiration_worker.clone(),
-            geo_location_service: services.geo_location_service.clone(),
-            geo_restriction_repo: infra.repositories.geo_restriction_repo.clone(),
-        })
+        let mut kit = AsyncKit::new();
+        kit.set_config(settings);
+        kit.register::<SettingsModule>()
+            .expect("register SettingsModule");
+        kit.register::<DatabaseModule>()
+            .expect("register DatabaseModule");
+        kit.register::<HttpModule>().expect("register HttpModule");
+        kit.register::<CacheModule>().expect("register CacheModule");
+        kit.register::<RepositoryModule>()
+            .expect("register RepositoryModule");
+        kit.register::<EngineModule>()
+            .expect("register EngineModule");
+        kit.register::<InfrastructureModule>()
+            .expect("register InfrastructureModule");
+        kit.register::<ServiceModule>()
+            .expect("register ServiceModule");
+
+        let kit = kit.build().await.expect("Failed to build kit");
+        let state = AppState::from_kit(&kit)?;
+        Ok(state)
     }
 
     #[tokio::test]
