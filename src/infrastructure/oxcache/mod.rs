@@ -264,15 +264,7 @@ pub async fn create_regex_cache(
     Ok(Arc::new(cache))
 }
 
-/// Create oxcache with Redis backend (tiered cache)
-#[cfg(feature = "redis-cache")]
-pub async fn create_tiered_cache(
-    settings: &CacheSettings,
-) -> Result<Arc<SearchCache>, oxcache::OxCacheError> {
-    create_cache(settings).await
-}
-
-#[cfg(not(feature = "redis-cache"))]
+/// Create oxcache (unified cache — no Redis backend)
 pub async fn create_tiered_cache(
     settings: &CacheSettings,
 ) -> Result<Arc<SearchCache>, oxcache::OxCacheError> {
@@ -496,7 +488,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_tiered_cache_ok() {
-        // 未启用 redis-cache feature 时，create_tiered_cache 等价于 create_cache
+        // create_tiered_cache 等价于 create_cache
         let settings = make_test_cache_settings();
         let cache = create_tiered_cache(&settings).await;
         assert!(cache.is_ok(), "create_tiered_cache should succeed");

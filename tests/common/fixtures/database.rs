@@ -16,10 +16,6 @@ use std::sync::Arc;
 pub struct DatabaseOptions {
     /// 数据库URL
     pub url: String,
-    /// 是否使用Redis
-    pub use_redis: bool,
-    /// Redis端口
-    pub redis_port: u16,
 }
 
 impl Default for DatabaseOptions {
@@ -33,8 +29,6 @@ impl Default for DatabaseOptions {
                     db_password
                 )
             }),
-            use_redis: true,
-            redis_port: 6380,
         }
     }
 }

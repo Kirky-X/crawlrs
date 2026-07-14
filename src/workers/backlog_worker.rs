@@ -365,7 +365,6 @@ mod tests {
         ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult, RateLimitConfig,
         RateLimitResult, RateLimitService, RateLimitingError,
     };
-    use crate::infrastructure::cache::redis_client::RedisClientConfig;
     use async_trait::async_trait;
     use std::collections::HashSet;
     use std::sync::Mutex;
@@ -1101,15 +1100,6 @@ mod tests {
         let _ = worker.process().await; // counter 2 -> no cleanup
         let result = worker.process().await; // counter 3 -> no cleanup
         assert_eq!(result, ProcessResult::Completed);
-    }
-
-    // ========== RedisClientConfig sanity ==========
-
-    #[test]
-    fn test_redis_client_config_default() {
-        let config = RedisClientConfig::default();
-        // Just verify it can be constructed
-        assert!(config.max_connections > 0);
     }
 
     // ========== cleanup_expired_tasks: process_expired_backlog with task not found ==========

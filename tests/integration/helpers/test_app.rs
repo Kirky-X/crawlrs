@@ -1,3 +1,8 @@
+// Copyright (c) 2025 Kirky.X
+//
+// Licensed under the Apache License, Version 2.0
+// See LICENSE file in the project root for full license information.
+
 // Minimal test helpers for queue_client_test and task_repository_test
 // This file provides just enough functionality to run the basic tests
 
@@ -11,16 +16,6 @@ pub struct TestApp {
     pub db_pool: Arc<DatabaseConnection>,
     pub team_id: Uuid,
     pub api_key_id: Uuid,
-    pub redis_port: u16,
-    pub redis_process: Option<std::process::Child>,
-}
-
-impl Drop for TestApp {
-    fn drop(&mut self) {
-        if let Some(mut process) = self.redis_process.take() {
-            let _ = process.kill();
-        }
-    }
 }
 
 /// Create a minimal test app without starting workers
@@ -70,32 +65,10 @@ pub async fn create_test_app_no_worker() -> TestApp {
         .execute_unprepared("DELETE FROM tasks_backlog")
         .await;
 
-    let redis_port = std::env::var("TEST_REDIS_PORT")
-        .unwrap_or_else(|_| "6380".to_string())
-        .parse::<u16>()
-        .expect("Invalid redis port");
-
-    // 启动 Redis 进程（如果需要）
-    let redis_process = Some(
-        std::process::Command::new("redis-server")
-            .arg("--port")
-            .arg(redis_port.to_string())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("Failed to start redis-server"),
-    );
-
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let redis_url = format!("redis://127.0.0.1:{}", redis_port);
-    let _ = crawlrs::infrastructure::cache::redis_client::RedisClient::new(&redis_url);
-
     TestApp {
         db_pool,
         team_id,
         api_key_id,
-        redis_port,
-        redis_process,
     }
 }
 

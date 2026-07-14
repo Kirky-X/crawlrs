@@ -1,2 +1,1 @@
-#[cfg(feature = "redis-cache")]
-pub mod redis_client;
+// Cache module — Redis client removed; all caching handled by oxcache.

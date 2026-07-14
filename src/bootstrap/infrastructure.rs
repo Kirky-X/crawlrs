@@ -3,10 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Infrastructure initialization: database, Redis, HTTP client, and repositories.
+//! Infrastructure initialization: database, HTTP client, and repositories.
 
 use crate::config::settings::Settings;
-use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::database::dbnexus_connection::DatabasePool;
 use crate::infrastructure::oxcache::{create_cache, CacheService, OxcacheService, SearchCache};
 use crate::infrastructure::repositories::{
@@ -66,29 +65,6 @@ pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
     info!("Database connection established");
 
     Ok(db)
-}
-
-/// Initialize Redis client.
-///
-/// This function creates a Redis client connection based on the
-/// configured Redis URL and connection pool settings.
-///
-/// # Arguments
-///
-/// * `settings` - Application settings containing Redis configuration
-///
-/// # Returns
-///
-/// Returns a connected Redis client with connection pool.
-pub async fn init_redis(settings: &Settings) -> Result<Arc<RedisClient>> {
-    let redis_client = Arc::new(RedisClient::from_settings(&settings.redis)?);
-    info!(
-        "Redis client initialized with connection pool (max: {}, connection_timeout: {}s, recycle_timeout: {}s)",
-        settings.redis.max_connections(),
-        settings.redis.connection_timeout(),
-        settings.redis.idle_timeout()
-    );
-    Ok(redis_client)
 }
 
 /// Initialize HTTP client.
@@ -179,8 +155,6 @@ pub fn init_repositories(db: Arc<DatabasePool>, settings: &Settings) -> Reposito
 pub struct InfrastructureComponents {
     /// Database connection pool.
     pub db: Arc<DatabasePool>,
-    /// Redis client (used for complex operations like rate limiting with Lua scripts).
-    pub redis_client: Arc<RedisClient>,
     /// OxCache instance for simple caching scenarios (search results, DNS, regex).
     pub oxcache: Option<Arc<SearchCache>>,
     /// Cache service for key-value caching (robots.txt, etc.).
@@ -194,8 +168,7 @@ pub struct InfrastructureComponents {
 /// Initialize oxcache for simple caching scenarios.
 ///
 /// This function creates an oxcache instance for caching search results,
-/// DNS lookups, and regex patterns. For complex rate limiting and
-/// distributed semaphore operations, RedisClient is still required.
+/// DNS lookups, and regex patterns.
 ///
 /// # Arguments
 ///
@@ -255,7 +228,7 @@ pub async fn init_cache_service(settings: &Settings) -> Result<Arc<dyn CacheServ
 
 /// Initialize all infrastructure components.
 ///
-/// This is a convenience function that combines database, Redis, HTTP client,
+/// This is a convenience function that combines database, HTTP client,
 /// and repository initialization.
 ///
 /// # Arguments
@@ -267,7 +240,6 @@ pub async fn init_cache_service(settings: &Settings) -> Result<Arc<dyn CacheServ
 /// Returns all initialized infrastructure components.
 pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureComponents> {
     let db = init_database(settings).await?;
-    let redis_client = init_redis(settings).await?;
     let http_client = init_http_client(settings)?;
     let repositories = init_repositories(db.clone(), settings);
     let oxcache = init_oxcache(settings).await?;
@@ -275,7 +247,6 @@ pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureCo
 
     Ok(InfrastructureComponents {
         db,
-        redis_client,
         oxcache,
         cache_service,
         http_client,
@@ -456,67 +427,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tc_init_redis_connects_to_redis() {
-        if !require_docker().await {
-            eprintln!("[skip] Docker unavailable — tc_init_redis_connects_to_redis");
-            return;
-        }
-        let redis = match tcf::RedisHandle::start().await {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[skip] failed to start redis container: {e}");
-                return;
-            }
-        };
-        let settings = tcf::settings_with_urls("postgres://127.0.0.1:1/x", &redis.url).unwrap();
-        let client = init_redis(&settings).await;
-        assert!(
-            client.is_ok(),
-            "init_redis should succeed against a live redis: {:?}",
-            client.err()
-        );
-        let client = client.unwrap();
-        // Verify the connection pool is usable by checking its status.
-        let _status = client.pool_status();
-    }
-
-    #[tokio::test]
-    async fn tc_init_redis_returns_arc_redis_client() {
-        if !require_docker().await {
-            eprintln!("[skip] Docker unavailable — tc_init_redis_returns_arc_redis_client");
-            return;
-        }
-        let redis = match tcf::RedisHandle::start().await {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[skip] failed to start redis container: {e}");
-                return;
-            }
-        };
-        let settings = tcf::settings_with_urls("postgres://127.0.0.1:1/x", &redis.url).unwrap();
-        let client = init_redis(&settings)
-            .await
-            .expect("redis client should be created");
-        assert!(Arc::strong_count(&client) >= 1);
-    }
-
-    #[tokio::test]
-    async fn tc_init_redis_fails_on_invalid_url() {
-        if !require_docker().await {
-            eprintln!("[skip] Docker unavailable — tc_init_redis_fails_on_invalid_url");
-            return;
-        }
-        // Deliberately invalid Redis URL (port 1 should refuse connections).
-        // Note: RedisClient::from_settings may still construct the client
-        // object (deadpool is lazy), so we only verify it doesn't panic.
-        let settings =
-            tcf::settings_with_urls("postgres://127.0.0.1:1/x", "redis://127.0.0.1:1/0").unwrap();
-        // Construction itself should not panic; actual connection errors
-        // surface on first use.
-        let _ = init_redis(&settings).await;
-    }
-
-    #[tokio::test]
     async fn tc_init_repositories_creates_all_repos() {
         if !require_docker().await {
             eprintln!("[skip] Docker unavailable — tc_init_repositories_creates_all_repos");
@@ -563,14 +473,13 @@ mod tests {
         let infra = init_infrastructure(&settings).await;
         assert!(
             infra.is_ok(),
-            "init_infrastructure should succeed against live db+redis: {:?}",
+            "init_infrastructure should succeed against live db: {:?}",
             infra.err()
         );
         let infra = infra.unwrap();
 
         // Verify all components are present.
         assert!(Arc::strong_count(&infra.db) >= 1);
-        assert!(Arc::strong_count(&infra.redis_client) >= 1);
         assert!(Arc::strong_count(&infra.http_client) >= 1);
         // oxcache may be None if cache is disabled in config; just verify it's set or None.
         let _ = &infra.oxcache;

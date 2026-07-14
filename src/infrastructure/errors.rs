@@ -28,9 +28,6 @@ pub enum InfrastructureError {
     DuplicateRecord { table: String, key: String },
 
     // ==================== 缓存错误 ====================
-    #[error("Redis操作失败: {0}")]
-    RedisOperation(#[from] redis::RedisError),
-
     #[error("缓存未命中: {key}")]
     CacheMiss { key: String },
 

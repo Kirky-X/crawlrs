@@ -300,7 +300,6 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
         .layer(Extension(crawl_repo))
         .layer(Extension(webhook_event_repo))
         .layer(Extension(webhook_repo.clone()))
-        .layer(Extension(state.redis_client()))
         .layer(Extension(rate_limit_middleware))
         .layer(Extension(state.crawl_repo.clone()))
         .layer(Extension(credits_repo))
@@ -315,9 +314,9 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
 // Note: create_public_routes, create_protected_routes_with_state,
 // create_v2_routes_with_state, and build_api_app_with_state are not unit-tested
 // here because they require a fully constructed AppState (trait-kit AsyncKit with
-// real DatabasePool, RedisClient, and ~30 Arc<dyn Trait> dependencies). These
+// real DatabasePool and ~30 Arc<dyn Trait> dependencies). These
 // functions are integration-tested via the test harness with Docker-provided
-// PostgreSQL/Redis. See tests/integration/ for coverage of route wiring.
+// PostgreSQL. See tests/integration/ for coverage of route wiring.
 
 #[cfg(test)]
 mod tests {

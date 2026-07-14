@@ -113,7 +113,6 @@ impl Default for MockTestData {
 /// Test environment configuration
 pub struct TestEnvironmentConfig {
     pub database_url: String,
-    pub redis_url: String,
     pub chromium_url: String,
     pub flaresolverr_url: String,
 }
@@ -122,7 +121,6 @@ impl Default for TestEnvironmentConfig {
     fn default() -> Self {
         Self {
             database_url: "postgres://postgres:postgres@localhost:5432/crawlrs_test".to_string(),
-            redis_url: "redis://localhost:6379".to_string(),
             chromium_url: "http://localhost:9222".to_string(),
             flaresolverr_url: "http://localhost:8191".to_string(),
         }

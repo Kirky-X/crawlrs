@@ -24,7 +24,6 @@ use crate::{
         scrape_result_repository::ScrapeResultRepository, task_repository::TaskRepository,
     },
     domain::services::rate_limiting_service::RateLimitingService,
-    infrastructure::cache::redis_client::RedisClient,
     presentation::handlers::response_builder::{errors, success_response, ApiResponse},
     presentation::handlers::task_handler::handle_sync_wait_and_get_status,
     presentation::helpers::rate_limit_helper::check_rate_limit,
@@ -36,7 +35,6 @@ use crate::{
 #[allow(clippy::too_many_arguments)]
 pub async fn create_scrape(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
-    Extension(_redis_client): Extension<Arc<RedisClient>>,
     Extension(_settings): Extension<Arc<Settings>>,
     Extension(task_repository): Extension<Arc<dyn TaskRepository>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,

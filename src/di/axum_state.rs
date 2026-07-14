@@ -37,7 +37,6 @@ use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
-use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
@@ -54,8 +53,6 @@ use dbnexus::DbPool;
 pub struct AppState {
     /// Database pool (dbnexus DbPool for repositories that need it)
     pub db_pool: Arc<DbPool>,
-    /// Redis client
-    pub redis_client: Arc<RedisClient>,
     /// Task repository
     pub task_repo: Arc<dyn TaskRepository>,
     /// Credits repository
@@ -135,7 +132,6 @@ impl AppState {
 
         Ok(AppState {
             db_pool: infra.db.inner().clone(),
-            redis_client: infra.redis_client.clone(),
             task_repo: infra.repositories.task_repo.clone(),
             credits_repo: infra.repositories.credits_repo.clone(),
             crawl_repo: infra.repositories.crawl_repo.clone(),
@@ -207,8 +203,6 @@ pub trait AppStateExt {
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait>;
     /// Get regex cache
     fn regex_cache(&self) -> Arc<RegexCache>;
-    /// Get Redis client
-    fn redis_client(&self) -> Arc<RedisClient>;
     /// Get database pool (dbnexus DbPool)
     fn db_pool(&self) -> Arc<DbPool>;
     /// Get tasks backlog repository
@@ -302,10 +296,6 @@ impl AppStateExt for AppState {
 
     fn regex_cache(&self) -> Arc<RegexCache> {
         self.regex_cache.clone()
-    }
-
-    fn redis_client(&self) -> Arc<RedisClient> {
-        self.redis_client.clone()
     }
 
     fn db_pool(&self) -> Arc<DbPool> {
@@ -424,10 +414,6 @@ impl AppStateExt for Arc<AppState> {
 
     fn regex_cache(&self) -> Arc<RegexCache> {
         self.as_ref().regex_cache()
-    }
-
-    fn redis_client(&self) -> Arc<RedisClient> {
-        self.as_ref().redis_client()
     }
 
     fn db_pool(&self) -> Arc<DbPool> {
@@ -590,9 +576,6 @@ mod tests {
         let regex_cache: Arc<RegexCache> = state.regex_cache();
         assert!(Arc::strong_count(&regex_cache) >= 1);
 
-        let redis_client: Arc<RedisClient> = state.redis_client();
-        assert!(Arc::strong_count(&redis_client) >= 1);
-
         let db_pool: Arc<DbPool> = state.db_pool();
         assert!(Arc::strong_count(&db_pool) >= 1);
 
@@ -653,11 +636,6 @@ mod tests {
         // Cloning an Arc increments the strong count; both should be valid.
         assert!(Arc::strong_count(&task_repo_a) >= 1);
         assert!(Arc::strong_count(&task_repo_b) >= 1);
-
-        let redis_a = state_arc.redis_client();
-        let redis_b = state_arc.redis_client();
-        assert!(Arc::strong_count(&redis_a) >= 1);
-        assert!(Arc::strong_count(&redis_b) >= 1);
 
         let db_a = state_arc.db_pool();
         let db_b = state_arc.db_pool();

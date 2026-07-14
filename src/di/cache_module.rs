@@ -6,43 +6,11 @@
 //! Cache module for dependency injection.
 //!
 //! This module provides components for cache layer dependencies
-//! including Redis client, OxCache, rate limiter, and concurrency controller.
+//! including OxCache and concurrency controller.
 
 use std::sync::Arc;
 
-use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::oxcache::{ConcurrencyController, SearchCache};
-
-// =============================================================================
-// Redis Client Component
-// =============================================================================
-
-/// Trait for RedisClient component
-pub trait RedisClientTrait: Send + Sync {
-    fn get_client(&self) -> Arc<RedisClient>;
-}
-
-/// RedisClient component
-#[allow(dead_code)]
-pub struct RedisClientComponent {
-    /// Redis URL
-    redis_url: String,
-    /// Redis client
-    client: Arc<RedisClient>,
-}
-
-impl RedisClientComponent {
-    /// Create a new RedisClientComponent with explicit dependencies
-    pub fn new(redis_url: String, client: Arc<RedisClient>) -> Self {
-        Self { redis_url, client }
-    }
-}
-
-impl RedisClientTrait for RedisClientComponent {
-    fn get_client(&self) -> Arc<RedisClient> {
-        self.client.clone()
-    }
-}
 
 // =============================================================================
 // OxCache Component (Cache + ConcurrencyController)
@@ -91,40 +59,6 @@ impl OxCacheTrait for OxCacheComponent {
 mod tests {
     use super::*;
     use futures::executor::block_on;
-
-    // ========== RedisClientComponent ==========
-
-    #[test]
-    fn test_redis_client_component_new_stores_client() {
-        // RedisClient::new 创建连接池对象但不会立即建立连接，无需运行 Redis 服务器
-        let client = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
-        let component =
-            RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
-        let retrieved = component.get_client();
-        assert!(Arc::ptr_eq(&retrieved, &client));
-    }
-
-    #[test]
-    fn test_redis_client_component_get_returns_clone() {
-        let client = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
-        let component =
-            RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
-        let first = component.get_client();
-        let second = component.get_client();
-        // 多次调用应返回指向同一 RedisClient 的 Arc
-        assert!(Arc::ptr_eq(&first, &second));
-        assert!(Arc::ptr_eq(&first, &client));
-    }
-
-    #[test]
-    fn test_redis_client_component_as_trait_object() {
-        let client = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
-        let component =
-            RedisClientComponent::new("redis://localhost:6379".to_string(), client.clone());
-        let trait_obj: &dyn RedisClientTrait = &component;
-        let retrieved = trait_obj.get_client();
-        assert!(Arc::ptr_eq(&retrieved, &client));
-    }
 
     // ========== OxCacheComponent ==========
 

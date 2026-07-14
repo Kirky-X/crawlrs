@@ -1634,6 +1634,6 @@ mod tests {
     // ========== 跳过的组件 ==========
     // 以下组件的构造器需要 mock 多个 trait 或需真实外部服务，无法在无外部依赖环境下测试：
     // - SearchServiceComponent — 需 mock 多个 repository 和 SearchClient trait
-    // - RateLimitingServiceComponent — feature-gated，需 RedisClient 和多个 repository
+    // - RateLimitingServiceComponent — 需多个 repository 依赖
     // - TemplateLoaderComponent — 无公开构造方法
 }

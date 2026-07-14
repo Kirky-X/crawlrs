@@ -21,7 +21,6 @@
 //! - **API Key Enumeration**: Strict limits on failed authentication attempts
 
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
-use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::security::secure_ip::{get_secure_client_ip, TrustedProxyConfig};
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 use axum::{
@@ -54,10 +53,7 @@ const RATE_LIMIT_FAIL_OPEN: bool = true;
 
 /// 简单的内存速率限制器（用于测试和 IP 限流）
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct RateLimiter {
-    /// Redis 客户端（预留用于分布式速率限制）
-    redis_client: Option<Arc<RedisClient>>,
     /// 内存中速率限制计数器
     in_memory_counts: Arc<RwLock<HashMap<String, (u64, Instant)>>>,
     /// 请求限制数
@@ -68,9 +64,8 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     /// 创建新的速率限制器
-    pub fn new(redis_client: Arc<RedisClient>, limit: u64) -> Self {
+    pub fn new(limit: u64) -> Self {
         Self {
-            redis_client: Some(redis_client),
             in_memory_counts: Arc::new(RwLock::new(HashMap::new())),
             limit,
             window_seconds: 60,
@@ -80,7 +75,6 @@ impl RateLimiter {
     /// 创建用于 IP 限流的内存速率限制器
     pub fn new_for_ip_limit(limit: u64) -> Self {
         Self {
-            redis_client: None,
             in_memory_counts: Arc::new(RwLock::new(HashMap::new())),
             limit,
             window_seconds: IP_RATE_LIMIT_WINDOW_SECS,
@@ -568,9 +562,8 @@ mod tests {
     // ========== RateLimiter::new tests ==========
 
     #[test]
-    fn test_rate_limiter_new_with_redis() {
-        let redis = Arc::new(RedisClient::new("redis://localhost:6379").unwrap());
-        let limiter = RateLimiter::new(redis, 100);
+    fn test_rate_limiter_new() {
+        let limiter = RateLimiter::new(100);
         // Verify get_status works (indirectly verifying construction)
         let (count, remaining) = limiter.get_status("fresh-key-new");
         assert_eq!(count, 0);

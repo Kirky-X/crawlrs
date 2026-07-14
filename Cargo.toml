@@ -13,10 +13,10 @@ exclude = []
 
 [features]
 # 默认核心功能（不包含 S3、genai）
-default = ["engine-reqwest", "redis-cache", "rate-limiting", "metrics", "dbnexus-postgres", "logging", "config", "oxcache-cache", "queue-apalis"]
+default = ["engine-reqwest", "rate-limiting", "metrics", "dbnexus-postgres", "logging", "config", "oxcache-cache", "queue-apalis"]
 
 # 预设配置
-lite = ["engine-reqwest", "dbnexus-sqlite", "redis-cache", "rate-limiting", "logging", "config", "oxcache-cache", "queue-apalis"]
+lite = ["engine-reqwest", "dbnexus-sqlite", "rate-limiting", "logging", "config", "oxcache-cache", "queue-apalis"]
 standard = ["default", "engine-playwright"]
 full = ["standard", "engine-fire-cdp", "engine-fire-tls", "engine-flaresolverr", "dbnexus-sqlite", "search-all", "api-sdk"]
 
@@ -52,8 +52,7 @@ search-baidu = []
 search-sogou = []
 
 # --- 基础设施特性 ---
-redis-cache = ["dep:redis", "dep:deadpool", "dep:deadpool-redis"]
-rate-limiting = ["dep:redis", "dep:deadpool", "dep:deadpool-redis", "dep:limiteron"]
+rate-limiting = ["dep:limiteron"]
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
 
 # --- 数据库特性 (使用 dbnexus) ---
@@ -74,7 +73,7 @@ logging = ["dep:inklog"]
 api-sdk = ["dep:sdforge"]
 
 # --- 缓存特性 ---
-# oxcache: 多后端缓存库（moka + redis）
+# oxcache: 内存缓存库（moka backend）
 oxcache-cache = ["dep:oxcache"]
 
 # --- 队列特性 ---
@@ -150,9 +149,6 @@ sea_orm = { version = "2.0.0-rc.37", default-features = false, features = ["runt
 # sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "macros", "migrate", "uuid", "chrono", "json", "postgres"] }
 
 # Caching and state management
-redis = { version = "1.2", features = ["tokio-comp"], optional = true }
-deadpool = { version = "0.13", optional = true }
-deadpool-redis = { version = "0.23", features = ["rt_tokio_1"], optional = true }
 dashmap = "6.1"
 once_cell = "1.21"
 
@@ -228,7 +224,7 @@ toml = "0.9"
 
 # Dependency Injection
 trait-kit = { version = "0.3", features = ["async", "confers"] }
-oxcache = { version = "0.3", default-features = false, features = ["memory", "redis", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing", "futures"], optional = true }
+oxcache = { version = "0.3", default-features = false, features = ["memory", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing", "futures"], optional = true }
 ahash = "0.8"
 
 # Task Queue (apalis: PostgreSQL-backed, no redis dependency)

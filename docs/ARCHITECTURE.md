@@ -482,8 +482,8 @@ infrastructure/
 │   ├── webhook_event_repo_impl.rs
 │   ├── database_geo_restriction_repo.rs
 │   └── mod.rs
-├── cache/            # Cache implementations
-│   └── redis_client.rs
+├── cache/            # Cache module (delegates to oxcache)
+├── oxcache/          # Unified cache (CacheService trait + OxcacheService)
 ├── storage/          # Storage implementations
 │   └── s3_storage.rs
 └── services/         # Infrastructure services
@@ -520,24 +520,21 @@ Database access is now provided through **dbnexus 0.2**, which builds on top of 
 
 **Cache Layer:**
 
-**Technology:** oxcache 0.3.3 (multi-backend)
+**Technology:** oxcache 0.3 (memory backend)
 
-Caching is provided through **oxcache 0.3.3**, a multi-backend cache layer gated behind the `oxcache-cache` feature flag (enabled by default). oxcache supports the following features:
+Caching is provided through **oxcache 0.3**, an in-memory cache layer gated behind the `oxcache-cache` feature flag (enabled by default). oxcache supports the following features:
 - moka (in-memory)
-- Redis
 - Serialization
 - Batch-write
 - Metrics
 - Bloom-filter
-- WAL recovery
-- Rate limiting
 - Tracing
 
 **Use Cases:**
-- Rate limiting storage
 - Response caching (TTL-based)
-- Session management
-- Distributed locks
+- Search result caching
+- DNS caching
+- Regex caching
 
 **Storage Layer:**
 
@@ -565,7 +562,6 @@ Caching is provided through **oxcache 0.3.3**, a multi-backend cache layer gated
 ```rust
 pub async fn create_scrape(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
-    Extension(redis_client): Extension<Arc<RedisClient>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
     Json(payload): Json<ScrapeRequestDto>,
@@ -692,18 +688,18 @@ pub async fn establish_connection(
 }
 ```
 
-**Redis Client:**
+**Cache Service (oxcache):**
 
 ```rust
-pub struct RedisClient {
-    client: redis::Client,
-    pool: Arc<Pool>,
+pub trait CacheService: Send + Sync {
+    fn get(&self, key: &str) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>>;
+    fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+    fn delete(&self, key: &str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+    fn exists(&self, key: &str) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
 }
 
-impl RedisClient {
-    pub async fn get(&self, key: &str) -> Result<Option<String>>;
-    pub async fn set(&self, key: &str, value: &str, ttl: u64) -> Result<()>;
-    pub async fn increment(&self, key: &str) -> Result<i64>;
+pub struct OxcacheService {
+    cache: oxcache::Cache<String, String>,
 }
 ```
 
@@ -998,24 +994,15 @@ impl WorkerManager {
 
 <!--
 ┌─────────────────────────────────────────────────────┐
-│           L1: In-Memory Cache                 │
-│         (Arc<Mutex<HashMap>>)               │
+│           L1: oxcache (moka in-memory)        │
 │  - Fast access (< 1ms)                       │
-│  - Limited size (100MB)                       │
-│  - LRU eviction                              │
+│  - Configurable capacity & TTL               │
+│  - LRU eviction (moka)                       │
 └──────────────────┬──────────────────────────────┘
                     │ (miss)
                     ▼
 ┌─────────────────────────────────────────────────────┐
-│           L2: Redis Cache                      │
-│  - Distributed across instances                 │
-│  - TTL-based expiration (5-60 min)            │
-│  - Configurable per-endpoint                  │
-└──────────────────┬──────────────────────────────┘
-                    │ (miss)
-                    ▼
-┌─────────────────────────────────────────────────────┐
-│           L3: Source (Engine/Database)        │
+│           L2: Source (Engine/Database)        │
 │  - Actual scraping                            │
 │  - Database queries                           │
 └─────────────────────────────────────────────────────┘
@@ -1025,26 +1012,19 @@ impl WorkerManager {
 
 ```mermaid
 flowchart TD
-    subgraph L1 [L1: In-Memory Cache]
-        L1Desc[Arc<Mutex<HashMap>>]
+    subgraph L1 [L1: oxcache (moka)]
+        L1Desc[oxcache::Cache K,V]
         L1Feat1[Fast access < 1ms]
-        L1Feat2[Limited size 100MB]
-        L1Feat3[LRU eviction]
+        L1Feat2[Configurable capacity & TTL]
+        L1Feat3[LRU eviction moka]
     end
 
-    subgraph L2 [L2: Redis Cache]
-        L2Feat1[Distributed across instances]
-        L2Feat2[TTL-based expiration 5-60 min]
-        L2Feat3[Configurable per-endpoint]
-    end
-
-    subgraph L3 [L3: Source]
-        L3Feat1[Actual scraping]
-        L3Feat2[Database queries]
+    subgraph L2 [L2: Source]
+        L2Feat1[Actual scraping]
+        L2Feat2[Database queries]
     end
 
     L1 -->|"miss"| L2
-    L2 -->|"miss"| L3
 ```
 
 ### Cache Keys
@@ -1061,16 +1041,16 @@ search:{engine}:{hash(query+options)}
 TTL: 30 minutes
 ```
 
-**Rate Limit Cache:**
+**DNS Cache:**
 ```
-ratelimit:{api_key}:{endpoint}
-TTL: 1 minute
+dns:{hostname}:{port}
+TTL: configurable
 ```
 
-**Concurrency Cache:**
+**Regex Cache:**
 ```
-concurrent:{team_id}
-TTL: No expiration (manual decrement)
+regex:{hash(pattern)}
+TTL: configurable
 ```
 
 ### Cache Invalidation

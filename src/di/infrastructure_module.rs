@@ -6,14 +6,14 @@
 //! Infrastructure module for dependency injection.
 //!
 //! This module provides components for infrastructure layer dependencies
-//! including database connection pool, Redis client, and repository implementations.
+//! including database connection pool and repository implementations.
 //!
 //! # Module Structure
 //!
 //! The infrastructure module is organized into the following sub-modules:
 //!
 //! - [`database_module`] - Database components (Settings, HttpClient, DatabasePool, TransactionManager)
-//! - [`cache_module`] - Cache components (RedisClient, OxCache)
+//! - [`cache_module`] - Cache components (OxCache)
 //! - [`repository_module`] - Repository components with instance caching
 //! - [`infrastructure_service_module`] - Infrastructure services (WebhookSender)
 //!
@@ -24,9 +24,7 @@
 //! for frequently accessed repositories.
 
 // Re-export all components from sub-modules for backward compatibility
-pub use super::cache_module::{
-    OxCacheComponent, OxCacheTrait, RedisClientComponent, RedisClientTrait,
-};
+pub use super::cache_module::{OxCacheComponent, OxCacheTrait};
 pub use super::database_module::{
     DatabasePoolComponent, DatabasePoolTrait, HttpClientComponent, HttpClientTrait,
     SettingsComponent, SettingsTrait, TransactionManagerComponent, TransactionManagerTrait,
