@@ -111,9 +111,12 @@ async fn main() {
     info!("🔄 准备执行交互动作...");
 
     let options = ScrapeOptionsBuilder::default()
-        .actions(actions)
         .timeout(Duration::from_secs(120))
         .build();
+    // ScrapeOptionsBuilder doesn't have an actions() method;
+    // set the actions field directly on the built options.
+    let mut options = options;
+    options.actions = actions;
 
     let request = crawlrs::engines::engine_client::ScrapeRequest::new(url).with_options(options);
 

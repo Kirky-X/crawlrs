@@ -5,8 +5,10 @@
 
 //! Baidu 搜索引擎真实搜索测试
 
+use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::search::client::baidu::BaiduSearchEngine;
 use crawlrs::search::SearchEngine;
+use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 
 const TIMEOUT_SECS: u64 = 60;
@@ -18,9 +20,12 @@ async fn main() {
     println!("测试关键词: {}", TEST_KEYWORD);
     println!("超时时间: {} 秒\n", TIMEOUT_SECS);
 
+    let engine_client = Arc::new(EngineClient::new());
+
     match timeout(
         Duration::from_secs(TIMEOUT_SECS),
-        BaiduSearchEngine::new().search(&crawlrs::search::SearchRequest::new(TEST_KEYWORD)),
+        BaiduSearchEngine::new(engine_client)
+            .search(&crawlrs::search::SearchRequest::new(TEST_KEYWORD)),
     )
     .await
     {

@@ -27,14 +27,17 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq)]
 enum TaskStatus {
     Pending,
+    #[allow(dead_code)]
     Queued,
     Running,
     Completed,
     Failed,
+    #[allow(dead_code)]
     Cancelled,
 }
 
 // 任务事件类型
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum TaskEvent {
     Created {
@@ -64,6 +67,7 @@ enum TaskEvent {
 }
 
 // 事件订阅配置
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct EventSubscription {
     id: Uuid,

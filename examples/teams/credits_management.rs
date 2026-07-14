@@ -32,7 +32,9 @@ enum TransactionType {
 // 积分交易记录
 #[derive(Debug, Clone)]
 struct CreditTransaction {
+    #[allow(dead_code)]
     id: Uuid,
+    #[allow(dead_code)]
     team_id: Uuid,
     amount: i64,
     transaction_type: TransactionType,
@@ -46,7 +48,9 @@ struct CreditsManager {
     team_id: Uuid,
     balance: i64,
     transactions: Vec<CreditTransaction>,
+    #[allow(dead_code)]
     daily_limit: i64,
+    #[allow(dead_code)]
     monthly_limit: i64,
 }
 

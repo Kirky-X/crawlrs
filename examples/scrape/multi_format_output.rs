@@ -64,9 +64,9 @@ async fn main() {
                     let clean =
                         line.trim_start_matches(|c: char| c.is_ascii_whitespace() && c != '\t');
                     if clean.starts_with("<h") && clean.ends_with(">") {
-                        clean.replace(|c: char| c == '<' || c == '>', "")
+                        clean.replace(['<', '>'], "")
                     } else if clean.starts_with("<p") && clean.ends_with(">") {
-                        format!("\n{}\n", clean.replace(|c: char| c == '<' || c == '>', ""))
+                        format!("\n{}\n", clean.replace(['<', '>'], ""))
                     } else {
                         clean.to_string()
                     }

@@ -19,9 +19,7 @@
 //! cargo run --features engine-playwright --bin test_playwright_basic
 //! ```
 
-use crawlrs::engines::client::ReqwestEngine;
-use crawlrs::engines::{EngineClient, ScrapeRequest, ScraperEngine};
-use std::sync::Arc;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
 use std::time::Duration;
 
 #[tokio::main]
@@ -33,8 +31,7 @@ async fn main() {
 
     // Test 1: Simple page load with Reqwest (static HTML)
     println!("Test 1: Loading example.com with Reqwest (static HTML)...");
-    let request =
-        ScrapeRequest::new("https://example.com".to_string()).timeout(Duration::from_secs(30));
+    let request = ScrapeRequest::new("https://example.com").timeout(Duration::from_secs(30));
 
     match engine_client.scrape(&request).await {
         Ok(response) => {

@@ -23,6 +23,7 @@ use log::info;
 /// robots.txt解析结果
 #[derive(Debug)]
 struct RobotsTxt {
+    #[allow(dead_code)]
     user_agent: String,
     allow: Vec<String>,
     disallow: Vec<String>,
@@ -48,7 +49,7 @@ impl RobotsTxt {
                 continue;
             }
 
-            let parts: Vec<&str> = line.splitn(2).collect();
+            let parts: Vec<&str> = line.splitn(2, ':').collect();
             if parts.len() < 2 {
                 continue;
             }
@@ -70,10 +71,10 @@ impl RobotsTxt {
                         self.disallow.push(value);
                     }
                 }
-                "crawl-delay" => {
-                    if current_section.is_none() || current_section.as_ref().unwrap() == "*" {
-                        self.crawl_delay = value.parse().ok();
-                    }
+                "crawl-delay"
+                    if current_section.is_none() || current_section.as_ref().unwrap() == "*" =>
+                {
+                    self.crawl_delay = value.parse().ok();
                 }
                 _ => {}
             }
@@ -207,7 +208,7 @@ Sitemap: https://example.com/sitemap.xml
     info!("   let config = CrawlConfigDto {{");
     info!("       check_robots_txt: true,");
     info!("       obey_crawl_delay: true,");
-    info!("       user_agent: \"MyBot/1.0\"".to_string());
+    info!("       user_agent: \"MyBot/1.0\"");
     info!("       ...");
     info!("   }};");
     info!("");

@@ -8,8 +8,9 @@
 //! 支持同时测试所有搜索引擎，统一输出格式和 URL 可访问性检查
 
 use crawlrs::engines::engine_client::EngineClient;
-use crawlrs::search::bing::BingSearchEngine;
-use crawlrs::search::google::GoogleSearchEngine;
+use crawlrs::search::client::BingSearchEngine;
+use crawlrs::search::client::GoogleSearchEngine;
+use crawlrs::search::SearchEngine;
 use crawlrs::search::SearchRequest;
 use log::info;
 use std::sync::Arc;
@@ -57,7 +58,7 @@ async fn main() {
         "[2/2] 测试 Bing 搜索引擎 (超时 {} 秒)...",
         ENGINE_TIMEOUT_SECS
     );
-    let bing_engine = BingSearchEngine::new();
+    let bing_engine = BingSearchEngine::new(engine_client.clone());
 
     match timeout(timeout_duration, bing_engine.search(&request)).await {
         Ok(Ok(response)) => {

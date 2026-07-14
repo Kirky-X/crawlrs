@@ -17,29 +17,43 @@ use log::info;
 use std::time::Duration;
 
 // 模拟的错误类型
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 enum CustomEngineError {
-    #[error("Invalid URL: {0}")]
     InvalidUrl(String),
-    #[error("Network error: {0}")]
+    #[allow(dead_code)]
     NetworkError(String),
-    #[error("Timeout")]
+    #[allow(dead_code)]
     Timeout,
 }
+
+impl std::fmt::Display for CustomEngineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CustomEngineError::InvalidUrl(url) => write!(f, "Invalid URL: {}", url),
+            CustomEngineError::NetworkError(msg) => write!(f, "Network error: {}", msg),
+            CustomEngineError::Timeout => write!(f, "Timeout"),
+        }
+    }
+}
+
+impl std::error::Error for CustomEngineError {}
 
 // 模拟的爬取请求
 #[derive(Debug, Clone)]
 struct ScrapeRequest {
     url: String,
+    #[allow(dead_code)]
     timeout_ms: u64,
 }
 
 // 模拟的爬取响应
 #[derive(Debug)]
 struct ScrapeResponse {
+    #[allow(dead_code)]
     url: String,
     status_code: u16,
     content: String,
+    #[allow(dead_code)]
     success: bool,
 }
 
@@ -47,6 +61,7 @@ struct ScrapeResponse {
 #[derive(Debug, Clone)]
 struct CustomHttpEngine {
     name: String,
+    #[allow(dead_code)]
     timeout: Duration,
 }
 

@@ -57,8 +57,13 @@ impl RetryPolicy {
 #[derive(Debug, Clone)]
 enum DeliveryResult {
     Success,
-    TransientFailure { reason: String }, // 可重试
-    PermanentFailure { reason: String }, // 不可重试
+    TransientFailure {
+        reason: String,
+    }, // 可重试
+    #[allow(dead_code)]
+    PermanentFailure {
+        reason: String,
+    }, // 不可重试
 }
 
 // 模拟的 Webhook 发送器
@@ -99,7 +104,7 @@ impl WebhookDelivery {
                     info!("✅ Successfully delivered to {}", self.url);
                     return DeliveryResult::Success;
                 }
-                DeliveryResult::TransientFailure { reason } => {
+                DeliveryResult::TransientFailure { ref reason } => {
                     if self.policy.should_retry(attempt) {
                         let delay = self.policy.calculate_delay(attempt);
                         warn!(

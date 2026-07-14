@@ -70,7 +70,7 @@ async fn main() {
     let request = ScrapeRequest::new(url).timeout(Duration::from_secs(30));
 
     match client.scrape(&request).await {
-        Ok(response) => {
+        Ok(_) => {
             info!("✅ 自定义User-Agent已发送");
             info!("  响应包含我们设置的头信息");
         }

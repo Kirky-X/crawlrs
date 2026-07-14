@@ -21,7 +21,7 @@
 //!
 //! ```bash
 //! cargo run --example css_selector
-//!
+//! ```
 
 use log::info;
 
@@ -185,7 +185,7 @@ fn extract_first(html: &str, selector: &str) -> Option<String> {
         "title" => regex::Regex::new(r"<title>([^<]*)</title>")
             .unwrap()
             .captures(html)
-            .and_then(|c: &regex::Captures| c.get(1))
+            .and_then(|c: regex::Captures| c.get(1))
             .map(|m: regex::Match| m.as_str().to_string()),
         _ => None,
     }
@@ -196,25 +196,25 @@ fn extract_all(html: &str, selector: &str) -> Vec<String> {
         "article h2" => regex::Regex::new(r"<article[^>]*>[\s\S]*?<h2>([^<]*)</h2>")
             .unwrap()
             .captures_iter(html)
-            .filter_map(|c: &regex::Captures| c.get(1))
+            .filter_map(|c: regex::Captures| c.get(1))
             .map(|m: regex::Match| m.as_str().to_string())
             .collect(),
         ".summary" | "p.summary" => regex::Regex::new(r#"<p[^>]*class="summary"[^>]*>([^<]*)</p>"#)
             .unwrap()
             .captures_iter(html)
-            .filter_map(|c: &regex::Captures| c.get(1))
+            .filter_map(|c: regex::Captures| c.get(1))
             .map(|m: regex::Match| m.as_str().to_string())
             .collect(),
         _ => Vec::new(),
     }
 }
 
-fn extract_attributes(html: &str, selector: &str, attr: &str) -> Vec<String> {
+fn extract_attributes(html: &str, selector: &str, _attr: &str) -> Vec<String> {
     match selector {
         "a[href]" => regex::Regex::new(r#"<a[^>]+href="([^"]*)""#)
             .unwrap()
             .captures_iter(html)
-            .filter_map(|c: &regex::Captures| c.get(1))
+            .filter_map(|c: regex::Captures| c.get(1))
             .map(|m: regex::Match| m.as_str().to_string())
             .collect(),
         _ => Vec::new(),

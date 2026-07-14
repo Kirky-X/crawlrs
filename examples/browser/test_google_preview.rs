@@ -5,32 +5,19 @@
 
 //! Test Google search and show content preview
 
-use crawlrs::engines::client::playwright::PlaywrightEngine;
-use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
+use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
     println!("🚀 Testing Google search with content preview...\n");
 
-    let engine = PlaywrightEngine;
+    let client = EngineClient::new();
 
     println!("Loading Google search results for 'test'...\n");
-    let request = ScrapeRequest {
-        url: "https://www.google.com/search?q=test".to_string(),
-        headers: std::collections::HashMap::new(),
-        timeout: Duration::from_secs(60),
-        needs_js: true,
-        needs_screenshot: false,
-        screenshot_config: None,
-        mobile: false,
-        proxy: None,
-        skip_tls_verification: false,
-        needs_tls_fingerprint: false,
-        use_fire_engine: false,
-        actions: vec![],
-        sync_wait_ms: 5000,
-    };
+    let request = ScrapeRequest::new("https://www.google.com/search?q=test")
+        .needs_js()
+        .timeout(Duration::from_secs(60));
 
     match client.scrape(&request).await {
         Ok(response) => {

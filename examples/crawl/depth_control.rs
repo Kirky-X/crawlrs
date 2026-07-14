@@ -22,7 +22,7 @@
 //! cargo run --example depth_control
 //!
 
-use crawlrs::application::dto::crawl_request::{CrawlConfigDto, CrawlRequestDto};
+use crawlrs::application::dto::crawl_request::CrawlConfigDto;
 use log::info;
 
 #[tokio::main]
@@ -32,13 +32,13 @@ async fn main() {
     info!("🚀 开始深度控制爬取示例");
     info!("=====================================\n");
 
-    let base_url = "https://example.com";
+    let _base_url = "https://example.com";
 
     // 1. 深度0：只爬取起始页面
     info!("1️⃣  深度0：只爬取起始页面");
     info!("-----------------------------");
 
-    let config0 = CrawlConfigDto {
+    let _config0 = CrawlConfigDto {
         max_depth: 0,
         include_patterns: None,
         exclude_patterns: None,
@@ -60,7 +60,7 @@ async fn main() {
     info!("2️⃣  深度1：一级链接");
     info!("-----------------------------");
 
-    let config1 = CrawlConfigDto {
+    let _config1 = CrawlConfigDto {
         max_depth: 1,
         include_patterns: None,
         exclude_patterns: None,
@@ -82,7 +82,7 @@ async fn main() {
     info!("3️⃣  深度2：二级链接");
     info!("-----------------------------");
 
-    let config2 = CrawlConfigDto {
+    let _config2 = CrawlConfigDto {
         max_depth: 2,
         include_patterns: None,
         exclude_patterns: None,
@@ -104,7 +104,7 @@ async fn main() {
     info!("4️⃣  深度3：深层爬取");
     info!("-----------------------------");
 
-    let config3 = CrawlConfigDto {
+    let _config3 = CrawlConfigDto {
         max_depth: 3,
         include_patterns: None,
         exclude_patterns: None,

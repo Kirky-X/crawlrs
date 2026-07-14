@@ -16,7 +16,6 @@
 use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::search::engine_trait::SearchEngine;
 use crawlrs::search::engine_trait::SearchRequest;
-use crawlrs::search::factory::SearchEngineFactory;
 use crawlrs::search::smart::{SmartSearchEngine, SmartSearchEngineConfig};
 use crawlrs::search::types::SearchEngineType;
 use log::info;
@@ -87,23 +86,8 @@ async fn demo_factory_usage() {
     info!("📖 演示二：工厂方法用法");
     info!("----------------------------------------");
 
-    let http_client = crawlrs::utils::http_client::create_http_client();
-    let factory = SearchEngineFactory::new(http_client);
-
-    let _google_engine = factory.create_google_smart_search();
-    info!("✅ 已通过工厂创建 Google 智能搜索引擎");
-
-    let _bing_engine = factory.create_bing_smart_search();
-    info!("✅ 已通过工厂创建 Bing 智能搜索引擎");
-
-    let _baidu_engine = factory.create_baidu_smart_search();
-    info!("✅ 已通过工厂创建 Baidu 智能搜索引擎");
-
-    info!("\n📊 工厂已注册的引擎:");
-    let registered = factory.router().registered_engines();
-    for engine in registered {
-        info!("  - {}", engine);
-    }
+    info!("ℹ️  工厂方法需要 ConfigServiceTrait 实现，此示例已跳过");
+    info!("   实际使用时可通过依赖注入获取 SearchEngineFactory");
     info!("");
 }
 

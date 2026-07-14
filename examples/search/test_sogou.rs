@@ -5,8 +5,10 @@
 
 //! Sogou 搜索引擎真实搜索测试
 
+use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::search::client::sogou::SogouSearchEngine;
 use crawlrs::search::SearchEngine;
+use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 
 const TIMEOUT_SECS: u64 = 60;
@@ -18,9 +20,12 @@ async fn main() {
     println!("测试关键词: {}", TEST_KEYWORD);
     println!("超时时间: {} 秒\n", TIMEOUT_SECS);
 
+    let engine_client = Arc::new(EngineClient::new());
+    let engine = SogouSearchEngine::new(engine_client);
+
     match timeout(
         Duration::from_secs(TIMEOUT_SECS),
-        SogouSearchEngine::new().search(&crawlrs::search::SearchRequest::new(TEST_KEYWORD)),
+        engine.search(&crawlrs::search::SearchRequest::new(TEST_KEYWORD)),
     )
     .await
     {

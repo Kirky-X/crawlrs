@@ -16,7 +16,7 @@
 //! cargo run --example extraction_rules
 //!
 
-use crawlrs::engines::engine_client::ScrapeRequest;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
 use log::info;
 use std::time::Duration;
 
@@ -113,7 +113,7 @@ async fn main() {
             info!("-----------------------------");
 
             let content = &response.content;
-            apply_extraction_rules(&content, &rules);
+            apply_extraction_rules(content, &rules);
         }
         Err(e) => {
             info!("⚠️  爬取失败: {:?}", e);
@@ -157,6 +157,14 @@ fn apply_extraction_rules(html: &str, rules: &[ExtractionRule]) {
     info!("📊 提取结果:");
     info!("-----------------------------");
 
+    // 预编译所有正则表达式（避免在循环中编译）
+    let re_h1 = regex::Regex::new(r"<h1[^>]*>([^<]*)</h1>").unwrap();
+    let re_p = regex::Regex::new(r"<p[^>]*>([^<]*)</p>").unwrap();
+    let re_a_href = regex::Regex::new(r#"<a[^>]+href="([^"]*)""#).unwrap();
+    let re_a_text = regex::Regex::new(r"<a[^>]*>([^<]*)</a>").unwrap();
+    let re_img_src = regex::Regex::new(r#"<img[^>]+src="([^"]*)""#).unwrap();
+    let re_img_alt = regex::Regex::new(r#"<img[^>]+alt="([^"]*)""#).unwrap();
+
     for rule in rules {
         info!("  【{}】", rule.name);
         info!("  选择器: {}", rule.selector);
@@ -164,25 +172,16 @@ fn apply_extraction_rules(html: &str, rules: &[ExtractionRule]) {
         // 简单模拟匹配逻辑
         match rule.selector.as_str() {
             "h1" => {
-                if let Some(captures) = regex::Regex::new(r"<h1[^>]*>([^<]*)</h1>")
-                    .unwrap()
-                    .captures(html)
-                {
+                if let Some(captures) = re_h1.captures(html) {
                     if let Some(m) = captures.get(1) {
                         info!("  结果: {}", m.as_str().trim());
                     }
                 }
             }
             "p" => {
-                let count = regex::Regex::new(r"<p[^>]*>([^<]*)</p>")
-                    .unwrap()
-                    .captures_iter(html)
-                    .count();
+                let count = re_p.captures_iter(html).count();
                 info!("  匹配数量: {} 个", count);
-                if let Some(captures) = regex::Regex::new(r"<p[^>]*>([^<]*)</p>")
-                    .unwrap()
-                    .captures(html)
-                {
+                if let Some(captures) = re_p.captures(html) {
                     if let Some(m) = captures.get(1) {
                         info!("  第一个: {}", m.as_str().trim());
                     }
@@ -191,8 +190,7 @@ fn apply_extraction_rules(html: &str, rules: &[ExtractionRule]) {
             "a" => {
                 if let Some(attr) = &rule.attribute {
                     if attr == "href" {
-                        let hrefs: Vec<_> = regex::Regex::new(r#"<a[^>]+href="([^"]*)""#)
-                            .unwrap()
+                        let hrefs: Vec<_> = re_a_href
                             .captures_iter(html)
                             .filter_map(|c| c.get(1))
                             .map(|m| m.as_str())
@@ -204,8 +202,7 @@ fn apply_extraction_rules(html: &str, rules: &[ExtractionRule]) {
                         );
                     }
                 } else if rule.extract_text {
-                    let links: Vec<_> = regex::Regex::new(r"<a[^>]*>([^<]*)</a>")
-                        .unwrap()
+                    let links: Vec<_> = re_a_text
                         .captures_iter(html)
                         .filter_map(|c| c.get(1))
                         .map(|m| m.as_str().trim())
@@ -216,16 +213,14 @@ fn apply_extraction_rules(html: &str, rules: &[ExtractionRule]) {
             "img" => {
                 if let Some(attr) = &rule.attribute {
                     if attr == "src" {
-                        let srcs: Vec<_> = regex::Regex::new(r#"<img[^>]+src="([^"]*)""#)
-                            .unwrap()
+                        let srcs: Vec<_> = re_img_src
                             .captures_iter(html)
                             .filter_map(|c| c.get(1))
                             .map(|m| m.as_str())
                             .collect();
                         info!("  {} 个图片: {:?}", srcs.len(), srcs);
                     } else if attr == "alt" {
-                        let alts: Vec<_> = regex::Regex::new(r#"<img[^>]+alt="([^"]*)""#)
-                            .unwrap()
+                        let alts: Vec<_> = re_img_alt
                             .captures_iter(html)
                             .filter_map(|c| c.get(1))
                             .map(|m| m.as_str())

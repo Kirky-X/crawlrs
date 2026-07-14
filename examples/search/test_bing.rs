@@ -5,10 +5,12 @@
 
 //! Bing 搜索引擎真实搜索测试
 
+use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::search::client::BingSearchEngine;
 use crawlrs::search::SearchEngine;
 use crawlrs::search::SearchRequest;
 use log::info;
+use std::sync::Arc;
 
 const TIMEOUT_SECS: u64 = 60;
 
@@ -23,7 +25,8 @@ async fn main() {
     info!("==========================================");
     info!("");
 
-    let engine = BingSearchEngine::new();
+    let engine_client = Arc::new(EngineClient::new());
+    let engine = BingSearchEngine::new(engine_client);
     let request = SearchRequest::new("gemini-3-pro").with_limit(10);
 
     match engine.search(&request).await {

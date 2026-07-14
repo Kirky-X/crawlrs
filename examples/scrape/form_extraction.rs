@@ -159,18 +159,19 @@ fn extract_form_data(html: &str) -> FormData {
     // 提取 select 字段
     let select_pattern =
         regex::Regex::new(r#"<select[^>]+name="([^"]+)"[^>]*>([\s\S]*?)</select>"#).unwrap();
+    // 预编译循环内使用的 regex（避免 clippy::regex_creation_in_loops）
+    let selected_pattern =
+        regex::Regex::new(r#"<option[^>]+value="([^"]+)"[^>]+selected"#).unwrap();
+    let first_option = regex::Regex::new(r#"<option[^>]+value="([^"]+)""#).unwrap();
     for cap in select_pattern.captures_iter(html) {
         let select_content = &cap[2];
         let selected = if select_content.contains("selected") || select_content.contains("checked")
         {
             // 提取选中的值
-            let selected_pattern =
-                regex::Regex::new(r#"<option[^>]+value="([^"]+)"[^>]+selected"#).unwrap();
             if let Some(selected_cap) = selected_pattern.captures(select_content) {
                 selected_cap[1].to_string()
             } else {
                 // 默认取第一个
-                let first_option = regex::Regex::new(r#"<option[^>]+value="([^"]+)""#).unwrap();
                 if let Some(first_cap) = first_option.captures(select_content) {
                     first_cap[1].to_string()
                 } else {

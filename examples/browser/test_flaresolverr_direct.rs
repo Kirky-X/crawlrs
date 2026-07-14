@@ -8,6 +8,8 @@
 //! This example requires the `engine-flaresolverr` feature to be enabled.
 //! Run with: cargo run --bin test_flaresolverr_direct --features engine-flaresolverr
 
+#![allow(unexpected_cfgs)]
+
 #[cfg(feature = "engine-flaresolverr")]
 use crawlrs::engines::client::flare_solverr::FlareSolverrEngine;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
@@ -26,7 +28,7 @@ async fn main() {
             .timeout(Duration::from_secs(90))
             .needs_js();
 
-        match client.scrape(&request).await {
+        match engine.scrape(&request).await {
             Ok(response) => {
                 println!("✅ Page loaded!");
                 println!("   Status: {}", response.status_code);

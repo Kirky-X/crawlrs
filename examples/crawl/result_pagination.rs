@@ -41,6 +41,7 @@ struct PaginatedResult<T> {
     items: Vec<T>,
     total: u32,
     page: u32,
+    #[allow(dead_code)]
     page_size: u32,
     total_pages: u32,
     has_next: bool,

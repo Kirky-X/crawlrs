@@ -51,6 +51,7 @@ impl Default for TeamGeoRestrictions {
 }
 
 // 模拟地理限制验证结果
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum GeoRestrictionResult {
     Allowed,

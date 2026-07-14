@@ -20,7 +20,10 @@
 //!
 //! 截图功能需要启用 `engine-playwright` 特性。
 
-use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScreenshotConfig};
+use base64::Engine as _;
+use crawlrs::engines::engine_client::{
+    EngineClient, ScrapeOptionsBuilder, ScrapeRequest, ScreenshotConfig,
+};
 use log::info;
 use std::time::Duration;
 
@@ -32,7 +35,6 @@ async fn main() {
     info!("=====================================\n");
 
     let client = EngineClient::new();
-    let client = EngineClient::new();
     let url = "https://example.com";
 
     info!("📸 目标页面: {}", url);
@@ -42,11 +44,12 @@ async fn main() {
     info!("1️⃣  基本截图（默认设置）");
     info!("-----------------------------");
 
-    let options = ScrapeOptions::default()
+    let options = ScrapeOptionsBuilder::default()
         .needs_screenshot(true)
-        .timeout(Duration::from_secs(60));
+        .timeout(Duration::from_secs(60))
+        .build();
 
-    let request = crawlrs::engines::engine_client::ScrapeRequest::new(url).with_options(options);
+    let request = ScrapeRequest::new(url).with_options(options);
 
     match client.scrape(&request).await {
         Ok(response) => {
@@ -73,21 +76,25 @@ async fn main() {
     info!("-----------------------------");
 
     // 全页面截图配置
-    let full_page_config = ScreenshotConfig::default()
-        .full_page(true)
-        .quality(85)
-        .format("png");
+    let full_page_config = ScreenshotConfig {
+        full_page: true,
+        quality: Some(85),
+        format: Some("png".to_string()),
+        selector: None,
+    };
 
     // 区域截图配置
-    let region_config = ScreenshotConfig::default()
-        .selector("#main-content")
-        .quality(90)
-        .format("jpeg");
+    let region_config = ScreenshotConfig {
+        full_page: false,
+        selector: Some("#main-content".to_string()),
+        quality: Some(90),
+        format: Some("jpeg".to_string()),
+    };
 
     info!("✅ 截图配置创建成功");
     info!(
         "  全页面配置: full_page={}, quality={}, format={}",
-        full_page_config.full_page.unwrap_or(false),
+        full_page_config.full_page,
         full_page_config.quality.unwrap_or(80),
         full_page_config.format.as_deref().unwrap_or("png")
     );
@@ -115,7 +122,8 @@ async fn main() {
 
     // 解码Base64示例
     info!("📊 Base64解码示例:");
-    match base64::decode(&mock_screenshot[..100.min(mock_screenshot.len())]) {
+    let slice = &mock_screenshot[..100.min(mock_screenshot.len())];
+    match base64::engine::general_purpose::STANDARD.decode(slice) {
         Ok(decoded) => {
             info!("  成功解码 {} 字节", decoded.len());
             info!("  前几个字节: {:?}", &decoded[..8.min(decoded.len())]);
@@ -131,7 +139,7 @@ async fn main() {
     info!("💡 提示:");
     info!("   - 截图保存在响应对象的 screenshot 字段中");
     info!("   - 截图格式为Base64编码的图像数据");
-    info!("   - 使用 base64::decode() 或 <img src=\"data:image/png;base64,{}\"> 显示");
+    info!("   - 使用 base64::Engine::decode 解码");
     info!("   - 全页面截图可能消耗更多内存和时间");
 }
 

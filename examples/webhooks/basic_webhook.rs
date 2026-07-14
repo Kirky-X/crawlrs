@@ -20,10 +20,10 @@
 //! - 负载配置
 
 use log::{info, warn};
-use std::time::Duration;
 use uuid::Uuid;
 
 // 支持的事件类型
+#[allow(dead_code, clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 enum WebhookEvent {
     TaskCreated,
@@ -35,6 +35,7 @@ enum WebhookEvent {
 }
 
 // Webhook 配置
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct WebhookConfig {
     id: Uuid,

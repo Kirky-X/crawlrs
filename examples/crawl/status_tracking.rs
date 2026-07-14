@@ -30,6 +30,7 @@ enum CrawlStatus {
     Running,
     Completed,
     Failed(String),
+    #[allow(dead_code)]
     Cancelled,
 }
 

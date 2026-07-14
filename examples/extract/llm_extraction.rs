@@ -156,7 +156,7 @@ async fn main() {
     info!("4️⃣  实际提取示例");
     info!("-----------------------------");
 
-    let sample_html = r#"
+    let _sample_html = r#"
     <html>
     <body>
         <div class="product">
