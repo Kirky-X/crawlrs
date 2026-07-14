@@ -28,8 +28,6 @@ use crate::domain::services::rate_limiting_service::{
 /// 限流服务配置
 #[derive(Debug, Clone)]
 pub struct RateLimitingConfig {
-    /// Redis键前缀（保留用于兼容性）
-    pub redis_key_prefix: String,
     /// 限流配置
     pub rate_limit: RateLimitConfig,
     /// 并发控制配置
@@ -43,7 +41,6 @@ pub struct RateLimitingConfig {
 impl Default for RateLimitingConfig {
     fn default() -> Self {
         Self {
-            redis_key_prefix: "crawlrs:ratelimit".to_string(),
             rate_limit: RateLimitConfig::default(),
             concurrency: ConcurrencyConfig::default(),
             backlog_process_interval_seconds: 30,
@@ -89,7 +86,7 @@ impl LimiteronService {
             .with_config(flow_config)
             .with_storage(storage)
             .with_ban_storage(ban_storage)
-            .with_l1_cache_enabled(false) // 禁用 L1 缓存，使用 Redis 缓存
+            .with_l1_cache_enabled(false) // 禁用 L1 缓存，使用 MemoryStorage 后端
             .build()
             .await
             .map_err(|e| RateLimitingError::ConfigurationError(e.to_string()))?;
@@ -342,7 +339,7 @@ impl ConcurrencyControlService for LimiteronService {
         _team_id: uuid::Uuid,
     ) -> Result<u32, RateLimitingError> {
         // 在实际实现中，应该从存储中获取当前并发数
-        // 这里暂时返回 0，生产环境需要从 Redis 或数据库获取
+        // 这里暂时返回 0，生产环境需要从数据库获取
         Ok(0)
     }
 
@@ -529,7 +526,6 @@ mod tests {
     #[test]
     fn test_rate_limiting_config_default_values() {
         let config = RateLimitingConfig::default();
-        assert_eq!(config.redis_key_prefix, "crawlrs:ratelimit");
         assert_eq!(config.backlog_process_interval_seconds, 30);
         assert_eq!(config.rate_limit_ttl_seconds, 3600);
         assert!(config.rate_limit.enabled);

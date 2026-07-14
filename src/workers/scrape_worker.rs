@@ -3923,7 +3923,7 @@ mod tests {
     // ========== testcontainers integration tests ==========
     //
     // These tests construct a full ScrapeWorker with real PostgreSQL +
-    // Redis + HTTP client via testcontainers, exercising the `new()`
+    // HTTP client via testcontainers, exercising the `new()`
     // constructor, `ScrapeWorkerBuilder`, and pure-logic methods like
     // `should_crawl` and `build_crawl_request` that require a
     // fully-initialized worker instance.

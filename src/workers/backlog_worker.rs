@@ -690,7 +690,9 @@ mod tests {
             _task_id: Uuid,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             if self.should_error {
-                return Err(RateLimitingError::Other(anyhow::anyhow!("redis error")));
+                return Err(RateLimitingError::Other(anyhow::anyhow!(
+                    "concurrency check error"
+                )));
             }
             Ok(self.concurrency_result.lock().unwrap().clone())
         }

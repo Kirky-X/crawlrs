@@ -10,9 +10,7 @@ use scraper::{Html, Selector};
 use std::sync::Arc;
 
 use crate::domain::models::search_result::SearchResult;
-use crate::domain::services::rate_limiting_service::{
-    RateLimitResult, RateLimitingError, RateLimitingService,
-};
+use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::domain::services::relevance_scorer::{DateParserComponent, RelevanceScorer};
 use crate::engines::engine_client::{
     EngineClient, EngineError, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest,
@@ -230,10 +228,6 @@ impl SmartSearchEngine {
                 }) => {
                     warn!("速率限制要求重试，等待 {} 秒", retry_after_seconds);
                     tokio::time::sleep(Duration::from_secs(retry_after_seconds)).await;
-                    Ok(())
-                }
-                Err(RateLimitingError::RedisError) => {
-                    error!("Redis连接错误，降级处理");
                     Ok(())
                 }
                 Err(e) => {
@@ -1315,7 +1309,6 @@ mod tests_ext {
         Allowed,
         Denied(String),
         RetryAfter(u64),
-        RedisError,
         OtherError,
     }
 
@@ -1344,7 +1337,6 @@ mod tests_ext {
                 MockBehavior::RetryAfter(secs) => Ok(RateLimitResult::RetryAfter {
                     retry_after_seconds: *secs,
                 }),
-                MockBehavior::RedisError => Err(RateLimitingError::RedisError),
                 MockBehavior::OtherError => Err(RateLimitingError::ConfigurationError(
                     "mock config error".to_string(),
                 )),
@@ -2300,15 +2292,6 @@ mod tests_ext {
         let config = make_config_with_service(SearchEngineType::Google, service);
         let engine = SmartSearchEngine::new(create_test_client(), config);
         // With 0 seconds wait, should return Ok
-        assert!(engine.check_rate_limit().await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_check_rate_limit_redis_error_degrades_gracefully() {
-        let service = MockRateLimitingService::with_behavior(MockBehavior::RedisError);
-        let config = make_config_with_service(SearchEngineType::Google, service);
-        let engine = SmartSearchEngine::new(create_test_client(), config);
-        // Redis errors should degrade gracefully to Ok
         assert!(engine.check_rate_limit().await.is_ok());
     }
 

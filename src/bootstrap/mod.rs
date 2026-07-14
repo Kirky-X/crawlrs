@@ -12,7 +12,7 @@
 //!
 //! - [`telemetry`](telemetry) - Telemetry and metrics initialization
 //! - [`config`](config) - Configuration loading and validation
-//! - [`infrastructure`](infrastructure) - Database, Redis, repositories
+//! - [`infrastructure`](infrastructure) - Database, cache (oxcache), repositories
 //! - [`engines`](engines) - Scraper engines and router
 //! - [`services`](services) - Application services
 //! - [`routes`](routes) - Route configuration and application builder

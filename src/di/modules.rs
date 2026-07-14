@@ -548,7 +548,7 @@ mod tests {
     }
 
     /// 测试 InfrastructureModule 可以注册并构建，返回 InfrastructureComponents。
-    /// 需要 Docker (PostgreSQL + Redis via testcontainers)。
+    /// 需要 Docker (PostgreSQL via testcontainers)。
     #[tokio::test]
     async fn tc_infrastructure_module_builds_components() {
         if !tcf::docker_available().await {
@@ -582,7 +582,7 @@ mod tests {
     }
 
     /// 测试 ServiceModule 可以注册并构建，返回 ServicesComponents。
-    /// 需要 Docker (PostgreSQL + Redis via testcontainers)。
+    /// 需要 Docker (PostgreSQL via testcontainers)。
     #[tokio::test]
     async fn tc_service_module_builds_components() {
         if !tcf::docker_available().await {
@@ -617,7 +617,7 @@ mod tests {
     }
 
     /// 测试模块依赖图拓扑排序正确 — 所有模块同时注册，build 按依赖顺序构建。
-    /// 需要 Docker (PostgreSQL + Redis via testcontainers)。
+    /// 需要 Docker (PostgreSQL via testcontainers)。
     #[tokio::test]
     async fn tc_all_modules_registered_simultaneously() {
         if !tcf::docker_available().await {

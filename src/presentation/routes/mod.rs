@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn test_routes_returns_router_without_panic() {
         // The routes() function should build the router without requiring
-        // external services (DB, Redis) since it only registers handlers.
+        // external services (DB, cache) since it only registers handlers.
         let _router = routes();
     }
 

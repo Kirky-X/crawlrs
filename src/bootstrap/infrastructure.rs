@@ -340,7 +340,7 @@ mod tests {
     // ========== testcontainers integration tests ==========
     //
     // The following tests require Docker to be running on the host. They use
-    // testcontainers to spin up ephemeral PostgreSQL and Redis containers,
+    // testcontainers to spin up ephemeral PostgreSQL containers,
     // enabling real end-to-end coverage of the infrastructure initialization
     // paths that are impossible to test with mocks alone.
     //

@@ -5,7 +5,7 @@
 
 //! 应用核心配置
 //!
-//! 包含数据库、Redis、服务器、速率限制和并发控制等核心配置项
+//! 包含数据库、缓存（oxcache）、服务器、速率限制和并发控制等核心配置项
 
 use confers::Config;
 use serde::{Deserialize, Serialize};

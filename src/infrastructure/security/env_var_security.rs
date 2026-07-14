@@ -27,15 +27,7 @@ pub struct EnvVarWhitelist {
 impl Default for EnvVarWhitelist {
     fn default() -> Self {
         Self {
-            allowed_prefixes: vec![
-                "CRAWLRS_",
-                "APP_",
-                "DATABASE_",
-                "REDIS_",
-                "RUST_",
-                "HTTP_",
-                "HTTPS_",
-            ],
+            allowed_prefixes: vec!["CRAWLRS_", "APP_", "DATABASE_", "RUST_", "HTTP_", "HTTPS_"],
             allowed_names: HashSet::from([
                 // 应用配置
                 "APP_ENVIRONMENT",
@@ -1027,7 +1019,6 @@ mod tests {
         assert!(whitelist.allowed_prefixes.contains(&"CRAWLRS_"));
         assert!(whitelist.allowed_prefixes.contains(&"APP_"));
         assert!(whitelist.allowed_prefixes.contains(&"DATABASE_"));
-        assert!(whitelist.allowed_prefixes.contains(&"REDIS_"));
         assert!(whitelist.allowed_prefixes.contains(&"RUST_"));
         assert!(whitelist.allowed_prefixes.contains(&"HTTP_"));
         assert!(whitelist.allowed_prefixes.contains(&"HTTPS_"));

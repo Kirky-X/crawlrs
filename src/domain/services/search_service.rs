@@ -1770,10 +1770,10 @@ mod tests {
 
     #[test]
     fn test_search_service_error_display_credits_repository() {
-        let inner = CreditsRepositoryError::DatabaseError("redis timeout".to_string());
+        let inner = CreditsRepositoryError::DatabaseError("db timeout".to_string());
         let err = SearchServiceError::CreditsRepository(inner);
         let msg = err.to_string();
         assert!(msg.contains("Credits repository error"));
-        assert!(msg.contains("redis timeout"));
+        assert!(msg.contains("db timeout"));
     }
 }

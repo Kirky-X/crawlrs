@@ -949,7 +949,7 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            AppError::ServiceUnavailable("redis down".to_string()).status_code(),
+            AppError::ServiceUnavailable("cache down".to_string()).status_code(),
             StatusCode::SERVICE_UNAVAILABLE
         );
     }
@@ -1045,7 +1045,7 @@ mod tests {
             "Invalid JSON format. Please check your request."
         );
         assert_eq!(
-            AppError::Cache("redis down".to_string()).user_message(),
+            AppError::Cache("cache down".to_string()).user_message(),
             "Cache service unavailable. Please try again later."
         );
         assert_eq!(
@@ -1072,7 +1072,7 @@ mod tests {
         let auth = AppError::Authentication("bad token".to_string());
         assert!(auth.user_message().contains("Authentication failed"));
 
-        let svc_unavail = AppError::ServiceUnavailable("redis down".to_string());
+        let svc_unavail = AppError::ServiceUnavailable("cache down".to_string());
         assert!(svc_unavail.user_message().contains("Service unavailable"));
 
         // 引擎错误经过脱敏处理
@@ -1478,7 +1478,7 @@ mod tests {
         std::env::set_var("CRAWLRS_ENV", "production");
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("RUST_ENV");
-        let response = AppError::ServiceUnavailable("redis down".to_string()).into_response();
+        let response = AppError::ServiceUnavailable("cache down".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await

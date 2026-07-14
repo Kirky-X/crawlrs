@@ -27,8 +27,6 @@ pub enum ConcurrencyStrategy {
     DistributedSemaphore,
     /// 信号量
     Semaphore,
-    /// 基于Redis的锁
-    RedisLock,
     /// 数据库级别的并发控制
     DatabaseLevel,
 }
@@ -290,10 +288,6 @@ pub enum RateLimitingError {
     #[error("配置错误: {0}")]
     ConfigurationError(String),
 
-    #[cfg(feature = "rate-limiting")]
-    #[error("Redis连接错误: 服务暂时不可用")]
-    RedisError,
-
     #[error("数据库操作失败，请稍后重试")]
     DatabaseError,
 
@@ -372,7 +366,6 @@ mod tests {
         for strategy in [
             ConcurrencyStrategy::DistributedSemaphore,
             ConcurrencyStrategy::Semaphore,
-            ConcurrencyStrategy::RedisLock,
             ConcurrencyStrategy::DatabaseLevel,
         ] {
             let json = serde_json::to_string(&strategy).expect("serialize");
@@ -392,7 +385,7 @@ mod tests {
             ConcurrencyStrategy::Semaphore
         );
         assert_ne!(
-            ConcurrencyStrategy::RedisLock,
+            ConcurrencyStrategy::Semaphore,
             ConcurrencyStrategy::DatabaseLevel
         );
     }

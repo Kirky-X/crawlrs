@@ -482,7 +482,7 @@ mod tests {
     /// Build a full AppState via `AsyncKit` + `AppState::from_kit()`.
     ///
     /// Registers all trait-kit modules against a testcontainers-provided
-    /// PostgreSQL + Redis pair, builds the kit, then constructs `AppState`
+    /// PostgreSQL pair, builds the kit, then constructs `AppState`
     /// through the canonical `from_kit` entry point.
     async fn build_app_state() -> anyhow::Result<AppState> {
         let handle = tcf::DbHandle::start().await?;

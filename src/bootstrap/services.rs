@@ -51,7 +51,7 @@ pub struct ServicesComponents {
     pub team_semaphore: Arc<TeamSemaphore>,
     /// Rate limiting service for distributed rate limiting.
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
-    /// Rate limiter (Redis-based)
+    /// Rate limiter (in-memory via limiteron)
     pub rate_limiter: Option<Arc<AuthRateLimiter>>,
     /// Create scrape use case.
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
@@ -159,7 +159,6 @@ pub async fn init_rate_limiting_service(
     }
 
     let rate_limiting_config = RateLimitingConfig {
-        redis_key_prefix: "crawlrs".to_string(),
         rate_limit: rate_limit_config,
         concurrency: concurrency_config,
         backlog_process_interval_seconds: 30,
@@ -458,7 +457,7 @@ pub async fn init_services(
 //   - init_auth_scope_service: needs dbnexus::DbPool (PostgreSQL connection)
 //   - init_services: needs InfrastructureComponents (full DB + HTTP stack)
 // These are covered by integration tests in tests/integration/ with Docker-provided
-// PostgreSQL and Redis.
+// PostgreSQL.
 
 #[cfg(test)]
 mod tests {
@@ -706,7 +705,7 @@ mod tests {
     // ========== testcontainers integration tests ==========
     //
     // These tests exercise service initialization paths that require real
-    // PostgreSQL and/or Redis. They early-return if Docker is unavailable.
+    // PostgreSQL. They early-return if Docker is unavailable.
 
     use crate::bootstrap::infrastructure::{init_database, init_infrastructure, init_repositories};
     use crate::common::test_support::testcontainers_fixtures as tcf;
