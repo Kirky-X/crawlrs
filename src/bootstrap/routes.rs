@@ -347,8 +347,7 @@ mod tests {
     #[tokio::test]
     async fn test_cors_wildcard_adds_allow_origin_star() {
         // Default config has allowed_origins = "*"
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let app = cors_test_app(create_cors_layer(&settings));
 
         let response = app
@@ -421,8 +420,7 @@ mod tests {
             .get("access-control-allow-origin")
             .expect("matching origin should get access-control-allow-origin header");
         assert_eq!(
-            allow_origin,
-            "https://example.com",
+            allow_origin, "https://example.com",
             "specific origin config should reflect the request origin"
         );
     }
@@ -603,9 +601,7 @@ mod tests {
             .get("access-control-max-age")
             .expect("preflight should return access-control-max-age");
         let max_age_str = max_age.to_str().expect("max-age is ASCII");
-        let max_age_secs: u64 = max_age_str
-            .parse()
-            .expect("max-age should be a number");
+        let max_age_secs: u64 = max_age_str.parse().expect("max-age should be a number");
         assert_eq!(
             max_age_secs, CORS_MAX_AGE_SECS,
             "max-age should match CORS_MAX_AGE_SECS constant"
@@ -816,8 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cors_preflight_wildcard_returns_allow_origin_star() {
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let app = cors_test_app(create_cors_layer(&settings));
 
         let response = app
@@ -998,7 +993,10 @@ mod tests {
                     .uri("/ping")
                     .header("origin", "https://example.com")
                     .header("access-control-request-method", "POST")
-                    .header("access-control-request-headers", "authorization, content-type")
+                    .header(
+                        "access-control-request-headers",
+                        "authorization, content-type",
+                    )
                     .body(Body::empty())
                     .expect("Failed to build request"),
             )

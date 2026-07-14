@@ -229,8 +229,8 @@ impl HandlerState for CrawlHandlerState {
 mod tests {
     use super::*;
     use crate::domain::models::credits_model::CreditsTransactionType;
-    use crate::domain::models::{Crawl, Task, Webhook};
     use crate::domain::models::scrape_result::ScrapeResult;
+    use crate::domain::models::{Crawl, Task, Webhook};
     use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
     use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
     use crate::domain::services::rate_limiting_service::{
@@ -373,16 +373,10 @@ mod tests {
         async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
             Ok(())
         }
-        async fn find_by_task_id(
-            &self,
-            _task_id: Uuid,
-        ) -> anyhow::Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
             Ok(None)
         }
-        async fn find_by_task_ids(
-            &self,
-            _task_ids: &[Uuid],
-        ) -> anyhow::Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
             Ok(vec![])
         }
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
@@ -396,16 +390,20 @@ mod tests {
         async fn get_team_restrictions(
             &self,
             _team_id: Uuid,
-        ) -> Result<TeamGeoRestrictions, crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError>
-        {
+        ) -> Result<
+            TeamGeoRestrictions,
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(TeamGeoRestrictions::default())
         }
         async fn update_team_restrictions(
             &self,
             _team_id: Uuid,
             _restrictions: &TeamGeoRestrictions,
-        ) -> Result<(), crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError>
-        {
+        ) -> Result<
+            (),
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(())
         }
         async fn log_geo_restriction_action(
@@ -415,8 +413,10 @@ mod tests {
             _country_code: &str,
             _action: &str,
             _reason: &str,
-        ) -> Result<(), crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError>
-        {
+        ) -> Result<
+            (),
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(())
         }
     }
@@ -521,8 +521,10 @@ mod tests {
         let crawl_repo: Arc<dyn CrawlRepository> = Arc::new(MockCrawlRepository);
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
         let webhook_repo: Arc<dyn WebhookRepository> = Arc::new(MockWebhookRepository);
-        let scrape_result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
-        let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository);
+        let scrape_result_repo: Arc<dyn ScrapeResultRepository> =
+            Arc::new(MockScrapeResultRepository);
+        let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository);
         let team_service = Arc::new(TeamService::new(
             Arc::new(MockGeoLocationService),
             geo_restriction_repo.clone(),
@@ -558,22 +560,10 @@ mod tests {
         let state = build_test_state();
         // The trait accessors must return Arcs pointing to the same underlying
         // objects that were injected via new(), verifying correct wiring.
-        assert!(Arc::ptr_eq(
-            &state.crawl_repo,
-            &state.crawl_repo(),
-        ));
-        assert!(Arc::ptr_eq(
-            &state.task_repo,
-            &state.task_repo(),
-        ));
-        assert!(Arc::ptr_eq(
-            &state.webhook_repo,
-            &state.webhook_repo(),
-        ));
-        assert!(Arc::ptr_eq(
-            &state.scrape_result_repo,
-            &state.result_repo(),
-        ));
+        assert!(Arc::ptr_eq(&state.crawl_repo, &state.crawl_repo(),));
+        assert!(Arc::ptr_eq(&state.task_repo, &state.task_repo(),));
+        assert!(Arc::ptr_eq(&state.webhook_repo, &state.webhook_repo(),));
+        assert!(Arc::ptr_eq(&state.scrape_result_repo, &state.result_repo(),));
         assert!(Arc::ptr_eq(
             &state.geo_restriction_repo,
             &state.geo_restriction_repo(),
@@ -583,10 +573,7 @@ mod tests {
     #[test]
     fn test_handler_state_trait_returns_injected_services() {
         let state = build_test_state();
-        assert!(Arc::ptr_eq(
-            &state.team_service,
-            &state.team_service(),
-        ));
+        assert!(Arc::ptr_eq(&state.team_service, &state.team_service(),));
         assert!(Arc::ptr_eq(
             &state.rate_limiting_service,
             &state.rate_limiting_service(),
@@ -608,8 +595,14 @@ mod tests {
         assert!(Arc::ptr_eq(&state.crawl_repo, &cloned.crawl_repo));
         assert!(Arc::ptr_eq(&state.task_repo, &cloned.task_repo));
         assert!(Arc::ptr_eq(&state.webhook_repo, &cloned.webhook_repo));
-        assert!(Arc::ptr_eq(&state.scrape_result_repo, &cloned.scrape_result_repo));
-        assert!(Arc::ptr_eq(&state.geo_restriction_repo, &cloned.geo_restriction_repo));
+        assert!(Arc::ptr_eq(
+            &state.scrape_result_repo,
+            &cloned.scrape_result_repo
+        ));
+        assert!(Arc::ptr_eq(
+            &state.geo_restriction_repo,
+            &cloned.geo_restriction_repo
+        ));
         assert!(Arc::ptr_eq(&state.team_service, &cloned.team_service));
         assert!(Arc::ptr_eq(
             &state.rate_limiting_service,
@@ -622,9 +615,6 @@ mod tests {
         let state = build_test_state();
         let cloned = state.clone();
         // Trait accessor on the clone must return the same Arc as the original
-        assert!(Arc::ptr_eq(
-            &state.crawl_repo(),
-            &cloned.crawl_repo()
-        ));
+        assert!(Arc::ptr_eq(&state.crawl_repo(), &cloned.crawl_repo()));
     }
 }

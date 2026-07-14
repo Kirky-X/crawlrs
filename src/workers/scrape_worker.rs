@@ -26,7 +26,6 @@ use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
-use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 use crate::domain::services::retry_handler::RetryHandler;
@@ -58,7 +57,6 @@ pub struct ScrapeWorker {
     repository: Arc<dyn TaskRepository>,
     result_repository: Arc<dyn ScrapeResultRepository>,
     crawl_repository: Arc<dyn CrawlRepository>,
-    storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
     webhook_service: Arc<dyn WebhookService>,
     credits_repository: Arc<dyn CreditsRepository>,
     engine_client: Arc<EngineClient>,
@@ -91,7 +89,6 @@ impl ScrapeWorker {
         repository: Arc<dyn TaskRepository>,
         result_repository: Arc<dyn ScrapeResultRepository>,
         crawl_repository: Arc<dyn CrawlRepository>,
-        storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
         webhook_service: Arc<dyn WebhookService>,
         credits_repository: Arc<dyn CreditsRepository>,
         engine_client: Arc<EngineClient>,
@@ -111,7 +108,6 @@ impl ScrapeWorker {
             repository,
             result_repository,
             crawl_repository,
-            storage_repository,
             webhook_service,
             credits_repository,
             engine_client,
@@ -1151,27 +1147,9 @@ impl ScrapeWorker {
             meta_data = data;
         }
 
-        // Handle large content/screenshot storage if StorageRepository is available
+        // Content and screenshot from response
         let content_to_store = response.content.clone();
         let _screenshot_to_store = response.screenshot.clone();
-
-        // Example logic: if content is very large, store in S3/Local and save reference
-        if let Some(storage) = &self.storage_repository {
-            if content_to_store.len() > 1024 * 1024 {
-                // 1MB threshold
-                let key = format!("content/{}/{}.html", task.id, Uuid::new_v4());
-                if let Err(e) = storage.save(&key, content_to_store.as_bytes()).await {
-                    error!("Failed to store content to storage: {}", e);
-                    // Fallback to DB or fail? For now, log error and continue with DB
-                } else {
-                    // Store reference in metadata or specific field if we had one.
-                    // Currently ScrapeResult stores content directly.
-                    // In a real scenario, we might change ScrapeResult.content to be Option or handle "external" storage.
-                    // For this implementation, we'll just log that we *could* offload it.
-                    info!("Content stored in external storage: {}", key);
-                }
-            }
-        }
 
         // Create result entity
         let result = ScrapeResult {
@@ -1393,7 +1371,6 @@ pub struct ScrapeWorkerBuilder {
     repository: Option<Arc<dyn TaskRepository>>,
     result_repository: Option<Arc<dyn ScrapeResultRepository>>,
     crawl_repository: Option<Arc<dyn CrawlRepository>>,
-    storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
     webhook_service: Option<Arc<dyn WebhookService>>,
     credits_repository: Option<Arc<dyn CreditsRepository>>,
     engine_client: Option<Arc<EngineClient>>,
@@ -1413,7 +1390,6 @@ impl Default for ScrapeWorkerBuilder {
             repository: None,
             result_repository: None,
             crawl_repository: None,
-            storage_repository: None,
             webhook_service: None,
             credits_repository: None,
             engine_client: None,
@@ -1454,15 +1430,6 @@ impl ScrapeWorkerBuilder {
     /// 设置爬取仓储 (必需)
     pub fn with_crawl_repository(mut self, crawl_repository: Arc<dyn CrawlRepository>) -> Self {
         self.crawl_repository = Some(crawl_repository);
-        self
-    }
-
-    /// 设置存储仓储 (可选)
-    pub fn with_storage_repository(
-        mut self,
-        storage_repository: Arc<dyn StorageRepository + Send + Sync>,
-    ) -> Self {
-        self.storage_repository = Some(storage_repository);
         self
     }
 
@@ -1567,7 +1534,6 @@ impl ScrapeWorkerBuilder {
             repository,
             result_repository,
             crawl_repository,
-            self.storage_repository,
             webhook_service,
             credits_repository,
             engine_client,
@@ -2476,16 +2442,10 @@ mod tests {
         async fn save(&self, _result: ScrapeResult) -> Result<()> {
             Ok(())
         }
-        async fn find_by_task_id(
-            &self,
-            _task_id: Uuid,
-        ) -> Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
             Ok(None)
         }
-        async fn find_by_task_ids(
-            &self,
-            _task_ids: &[Uuid],
-        ) -> Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<ScrapeResult>> {
             Ok(vec![])
         }
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
@@ -2689,7 +2649,6 @@ mod tests {
             Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
             Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Some(Arc::new(NoOpStorage) as Arc<dyn StorageRepository + Send + Sync>),
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
@@ -2764,10 +2723,7 @@ mod tests {
     async fn test_mock_should_crawl_multiple_include_patterns() {
         let worker = build_mock_worker().await;
         let config = make_crawl_config(
-            Some(vec![
-                "example\\.com".to_string(),
-                "test\\.org".to_string(),
-            ]),
+            Some(vec!["example\\.com".to_string(), "test\\.org".to_string()]),
             None,
         );
         assert!(worker.should_crawl("https://example.com/page", &config));
@@ -2778,10 +2734,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_should_crawl_multiple_exclude_patterns() {
         let worker = build_mock_worker().await;
-        let config = make_crawl_config(
-            None,
-            Some(vec!["blocked".to_string(), "admin".to_string()]),
-        );
+        let config =
+            make_crawl_config(None, Some(vec!["blocked".to_string(), "admin".to_string()]));
         assert!(worker.should_crawl("https://example.com/page", &config));
         assert!(!worker.should_crawl("https://example.com/blocked", &config));
         assert!(!worker.should_crawl("https://example.com/admin", &config));
@@ -2862,7 +2816,10 @@ mod tests {
             extraction_rules: None,
         };
         let request = worker.build_crawl_request(&task, &config);
-        assert_eq!(request.options.headers.get("Accept"), Some(&"text/html".to_string()));
+        assert_eq!(
+            request.options.headers.get("Accept"),
+            Some(&"text/html".to_string())
+        );
         assert_eq!(
             request.options.headers.get("Authorization"),
             Some(&"Bearer token123".to_string())
@@ -2898,7 +2855,10 @@ mod tests {
         };
         let request = worker.build_crawl_request(&task, &config);
         assert_eq!(request.options.headers.len(), 1);
-        assert_eq!(request.options.headers.get("X-Valid"), Some(&"ok".to_string()));
+        assert_eq!(
+            request.options.headers.get("X-Valid"),
+            Some(&"ok".to_string())
+        );
         assert!(!request.options.headers.contains_key("X-Number"));
         assert!(!request.options.headers.contains_key("X-Bool"));
         assert!(!request.options.headers.contains_key("X-Null"));
@@ -2927,10 +2887,7 @@ mod tests {
             extraction_rules: None,
         };
         let request = worker.build_crawl_request(&task, &config);
-        assert_eq!(
-            request.options.proxy,
-            Some("http://proxy:3128".to_string())
-        );
+        assert_eq!(request.options.proxy, Some("http://proxy:3128".to_string()));
     }
 
     #[tokio::test]
@@ -3676,33 +3633,29 @@ mod tests {
     async fn test_builder_build_success() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let worker = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
-            .with_storage_repository(
-                Arc::new(NoOpStorage) as Arc<dyn StorageRepository + Send + Sync>,
-            )
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -3716,29 +3669,28 @@ mod tests {
     async fn test_builder_build_missing_repository() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let result = ScrapeWorkerBuilder::new()
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -3751,27 +3703,26 @@ mod tests {
     async fn test_builder_build_missing_result_repository() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -3784,29 +3735,28 @@ mod tests {
     async fn test_builder_build_missing_crawl_repository() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -3819,29 +3769,28 @@ mod tests {
     async fn test_builder_build_missing_webhook_service() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -3853,29 +3802,28 @@ mod tests {
     #[tokio::test]
     async fn test_builder_build_missing_engine_client() {
         let regex_cache = make_regex_cache().await;
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -3888,27 +3836,26 @@ mod tests {
     async fn test_builder_build_missing_redis() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -3921,27 +3868,27 @@ mod tests {
     async fn test_builder_build_missing_settings() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -3954,24 +3901,23 @@ mod tests {
     async fn test_builder_build_missing_extraction_service() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
@@ -3986,30 +3932,29 @@ mod tests {
     #[tokio::test]
     async fn test_builder_build_missing_regex_cache() {
         let engine_client = Arc::new(EngineClient::new());
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .build();
 
@@ -4021,30 +3966,29 @@ mod tests {
     async fn test_builder_with_custom_concurrency_limit() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings = crate::bootstrap::config::load_settings()
-            .expect("Failed to load settings");
-        let redis = RedisClient::new("redis://localhost:6379")
-            .expect("Failed to create RedisClient");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let redis =
+            RedisClient::new("redis://localhost:6379").expect("Failed to create RedisClient");
 
         let worker = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_redis(redis)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .with_default_concurrency_limit(100)
@@ -4065,7 +4009,6 @@ mod tests {
     use crate::bootstrap::infrastructure::init_infrastructure;
     use crate::bootstrap::services::init_services;
     use crate::common::test_support::testcontainers_fixtures as tcf;
-    use crate::domain::repositories::storage_repository::NoOpStorage;
 
     async fn require_docker() -> bool {
         tcf::docker_available().await
@@ -4095,7 +4038,6 @@ mod tests {
             infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>,
             infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>,
             infra.repositories.crawl_repo.clone() as Arc<dyn CrawlRepository>,
-            infra.storage_repo.clone(),
             services.webhook_service.clone(),
             infra.repositories.credits_repo.clone() as Arc<dyn CreditsRepository>,
             engines.engine_client.clone(),
@@ -4169,7 +4111,9 @@ mod tests {
     #[tokio::test]
     async fn tc_scrape_worker_should_crawl_with_include_patterns() {
         if !require_docker().await {
-            eprintln!("[skip] Docker unavailable — tc_scrape_worker_should_crawl_with_include_patterns");
+            eprintln!(
+                "[skip] Docker unavailable — tc_scrape_worker_should_crawl_with_include_patterns"
+            );
             return;
         }
         let worker = match build_scrape_worker().await {
@@ -4189,7 +4133,9 @@ mod tests {
     #[tokio::test]
     async fn tc_scrape_worker_should_crawl_with_exclude_patterns() {
         if !require_docker().await {
-            eprintln!("[skip] Docker unavailable — tc_scrape_worker_should_crawl_with_exclude_patterns");
+            eprintln!(
+                "[skip] Docker unavailable — tc_scrape_worker_should_crawl_with_exclude_patterns"
+            );
             return;
         }
         let worker = match build_scrape_worker().await {
@@ -4242,34 +4188,29 @@ mod tests {
         );
 
         // Use ScrapeWorkerBuilder to construct the worker.
-        // with_storage_repository requires a non-Option Arc; fall back to NoOpStorage.
-        let storage = infra
-            .storage_repo
-            .clone()
-            .unwrap_or_else(|| Arc::new(NoOpStorage));
-        let worker = ScrapeWorkerBuilder::new()
-            .with_repository(infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>)
-            .with_result_repository(
-                infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>,
-            )
-            .with_crawl_repository(
-                infra.repositories.crawl_repo.clone() as Arc<dyn CrawlRepository>,
-            )
-            .with_storage_repository(storage)
-            .with_webhook_service(services.webhook_service.clone())
-            .with_credits_repository(
-                infra.repositories.credits_repo.clone() as Arc<dyn CreditsRepository>,
-            )
-            .with_engine_client(engines.engine_client.clone())
-            .with_create_scrape_use_case(services.create_scrape_use_case.clone())
-            .with_redis((*infra.redis_client).clone())
-            .with_robots_checker(services.robots_checker.clone())
-            .with_settings(settings_arc)
-            .with_default_concurrency_limit(settings.concurrency.default_team_limit as usize)
-            .with_extraction_service(services.extraction_service.clone())
-            .with_regex_cache((*services.regex_cache).clone())
-            .build()
-            .expect("ScrapeWorkerBuilder::build should succeed with all required deps");
+        let worker =
+            ScrapeWorkerBuilder::new()
+                .with_repository(infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>)
+                .with_result_repository(
+                    infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>
+                )
+                .with_crawl_repository(
+                    infra.repositories.crawl_repo.clone() as Arc<dyn CrawlRepository>
+                )
+                .with_webhook_service(services.webhook_service.clone())
+                .with_credits_repository(
+                    infra.repositories.credits_repo.clone() as Arc<dyn CreditsRepository>
+                )
+                .with_engine_client(engines.engine_client.clone())
+                .with_create_scrape_use_case(services.create_scrape_use_case.clone())
+                .with_redis((*infra.redis_client).clone())
+                .with_robots_checker(services.robots_checker.clone())
+                .with_settings(settings_arc)
+                .with_default_concurrency_limit(settings.concurrency.default_team_limit as usize)
+                .with_extraction_service(services.extraction_service.clone())
+                .with_regex_cache((*services.regex_cache).clone())
+                .build()
+                .expect("ScrapeWorkerBuilder::build should succeed with all required deps");
 
         // Verify the builder produced a valid worker.
         assert_ne!(worker.worker_id, Uuid::nil());
@@ -4396,7 +4337,6 @@ mod tests {
             Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
             Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Some(Arc::new(NoOpStorage) as Arc<dyn StorageRepository + Send + Sync>),
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
@@ -4876,13 +4816,13 @@ mod tests {
         }
     }
 
-    // --- save_result with large content (storage path) ---
+    // --- save_result with large content ---
 
     #[tokio::test]
-    async fn test_mock_save_result_large_content_uses_storage() {
+    async fn test_mock_save_result_large_content() {
         let worker = build_mock_worker().await;
         let task = make_task(json!({"url": "https://example.com"}));
-        // Content > 1MB threshold to trigger storage path
+        // Content > 1MB threshold
         let large_content = "x".repeat(1024 * 1024 + 1);
         let response = ScrapeResponse {
             content: large_content,
@@ -4894,7 +4834,6 @@ mod tests {
             final_url: None,
         };
         let result = worker.save_result(&task, &response, None).await;
-        // NoOpStorage::save returns Ok, so this should succeed
         assert!(result.is_ok());
     }
 }

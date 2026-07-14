@@ -10,14 +10,23 @@
 use crate::config::settings::Settings;
 use crate::infrastructure::security::env_var_security::{EnvVarSecurityMonitor, EnvVarValidator};
 use anyhow::Result;
+use confers::{ConfigBuilder, EnvSource};
 use log::{debug, error, info, warn};
 
-/// Load application configuration from settings file.
+/// Load application configuration from the standard settings file and environment.
 ///
-/// This function reads the configuration from the standard settings location
-/// and returns a configured [`Settings`] instance.
+/// Uses confers 0.4 `ConfigBuilder` to merge `config/default.toml` with
+/// environment variables prefixed by `CRAWLRS__` (nested via `__`).
+/// Note: confers 0.4's `load_sync()` only applies field-level defaults and env
+/// vars; it no longer auto-discovers config files (breaking change from 0.2.2).
 pub fn load_settings() -> Result<Settings> {
-    let settings = Settings::load_sync()?;
+    let settings = ConfigBuilder::<Settings>::new()
+        .file("config/default.toml")
+        .source(Box::new(
+            EnvSource::with_prefix("CRAWLRS__").separator("__"),
+        ))
+        .build()
+        .map_err(|e| anyhow::anyhow!("Configuration load failed: {}", e))?;
     info!("Configuration loaded successfully from config sources");
     Ok(settings)
 }
@@ -232,16 +241,30 @@ mod tests {
 
     #[test]
     fn test_validate_environment_non_production_returns_ok() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // In non-production mode, validate_environment should return Ok(())
-        // even if required env vars are missing (only warns)
+        // even if required env vars are missing (only warns).
+        // Use test mode to avoid interference from forbidden env vars set by
+        // parallel tests (e.g. LD_PRELOAD from other test cases).
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
         let result = validate_environment(false);
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_load_settings_returns_valid_config() {
         let settings = load_settings();
-        assert!(settings.is_ok());
+        assert!(
+            settings.is_ok(),
+            "load_settings failed: {:?}",
+            settings.err()
+        );
         let settings = settings.unwrap();
         // Verify some default values from config/default.toml
         assert_eq!(settings.server.port, 8899);
@@ -444,10 +467,7 @@ mod tests {
             result.err()
         );
         let (settings, port) = result.expect("load_and_configure should succeed");
-        assert!(
-            port > 0,
-            "Detected port should be greater than 0"
-        );
+        assert!(port > 0, "Detected port should be greater than 0");
         assert_eq!(
             settings.server.port, port,
             "settings.server.port should match the detected port"
@@ -694,7 +714,10 @@ mod tests {
         let settings2 = settings1.clone();
         assert_eq!(settings1.server.port, settings2.server.port);
         assert_eq!(settings1.server.host, settings2.server.host);
-        assert_eq!(settings1.cors.allowed_origins, settings2.cors.allowed_origins);
+        assert_eq!(
+            settings1.cors.allowed_origins,
+            settings2.cors.allowed_origins
+        );
     }
 
     // ========== load_settings server config ==========

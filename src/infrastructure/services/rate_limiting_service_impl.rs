@@ -1017,10 +1017,7 @@ mod tests {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(
-            &self,
-            _crawl_id: Uuid,
-        ) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
@@ -1049,16 +1046,10 @@ mod tests {
 
     #[async_trait]
     impl TasksBacklogRepository for MockBacklogRepository {
-        async fn create(
-            &self,
-            backlog: &TasksBacklog,
-        ) -> Result<TasksBacklog, RepositoryError> {
+        async fn create(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
             Ok(backlog.clone())
         }
-        async fn find_by_id(
-            &self,
-            _id: Uuid,
-        ) -> Result<Option<TasksBacklog>, RepositoryError> {
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
             Ok(None)
         }
         async fn find_by_task_id(
@@ -1067,10 +1058,7 @@ mod tests {
         ) -> Result<Option<TasksBacklog>, RepositoryError> {
             Ok(None)
         }
-        async fn update(
-            &self,
-            backlog: &TasksBacklog,
-        ) -> Result<TasksBacklog, RepositoryError> {
+        async fn update(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
             Ok(backlog.clone())
         }
         async fn delete(&self, _id: Uuid) -> Result<(), RepositoryError> {
@@ -1285,10 +1273,7 @@ mod tests {
         let service = create_service(RateLimitingConfig::default());
         let team_id = Uuid::new_v4();
         let key = service.build_team_semaphore_key(team_id);
-        assert_eq!(
-            key,
-            format!("crawlrs:ratelimit:team:{}:semaphore", team_id)
-        );
+        assert_eq!(key, format!("crawlrs:ratelimit:team:{}:semaphore", team_id));
     }
 
     #[test]

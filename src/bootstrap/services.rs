@@ -729,7 +729,9 @@ mod tests {
     // These tests exercise service initialization paths that require real
     // PostgreSQL and/or Redis. They early-return if Docker is unavailable.
 
-    use crate::bootstrap::infrastructure::{init_database, init_infrastructure, init_redis, init_repositories};
+    use crate::bootstrap::infrastructure::{
+        init_database, init_infrastructure, init_redis, init_repositories,
+    };
     use crate::common::test_support::testcontainers_fixtures as tcf;
 
     async fn require_docker() -> bool {
@@ -750,9 +752,13 @@ mod tests {
             }
         };
         let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url).unwrap();
-        let db = init_database(&settings).await.expect("db pool should be created");
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
         let repos = init_repositories(db.clone(), &settings);
-        let redis_client = init_redis(&settings).await.expect("redis client should be created");
+        let redis_client = init_redis(&settings)
+            .await
+            .expect("redis client should be created");
 
         let service = init_rate_limiting_service(redis_client, &repos, &settings);
         // Verify the service is usable (Arc strong count >= 1).
@@ -773,7 +779,9 @@ mod tests {
             }
         };
         let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
-        let db = init_database(&settings).await.expect("db pool should be created");
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
 
         let service = init_auth_scope_service(db.inner().clone());
         assert!(Arc::strong_count(&service) >= 1);
@@ -793,7 +801,9 @@ mod tests {
             }
         };
         let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
-        let db = init_database(&settings).await.expect("db pool should be created");
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
         let repos = init_repositories(db.clone(), &settings);
 
         // Build a search client with a dummy engine client.

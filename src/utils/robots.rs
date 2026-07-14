@@ -866,7 +866,12 @@ Crawl-delay: 8
         // With only a BadBot-specific group and no * group, other bots
         // should be allowed (no applicable rules).
         let other_content = "User-agent: BadBot\nDisallow: /\nUser-agent: *\nAllow: /\n";
-        populate_robots_cache(&checker, "https://example.com:443/robots.txt", other_content).await;
+        populate_robots_cache(
+            &checker,
+            "https://example.com:443/robots.txt",
+            other_content,
+        )
+        .await;
         let good_allowed = checker
             .is_allowed("https://example.com/page", "GoodBot")
             .await
@@ -903,7 +908,10 @@ Crawl-delay: 8
             .get_crawl_delay("https://example.com/page", "MyBot/1.0")
             .await
             .expect("should succeed");
-        assert_eq!(delay, None, "should return None when no Crawl-delay directive");
+        assert_eq!(
+            delay, None,
+            "should return None when no Crawl-delay directive"
+        );
     }
 
     // ========== Cache hit statistics tests ==========

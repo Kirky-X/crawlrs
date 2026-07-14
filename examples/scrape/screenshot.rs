@@ -21,8 +21,8 @@
 //! 截图功能需要启用 `engine-playwright` 特性。
 
 use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScreenshotConfig};
-use std::time::Duration;
 use log::info;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {

@@ -14,7 +14,6 @@ pub mod llm;
 pub mod logging;
 pub mod runtime;
 pub mod search;
-pub mod storage;
 
 // 重新导出子模块中的类型，保持向后兼容
 pub use app::ConcurrencySettings;
@@ -30,13 +29,12 @@ pub use logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 pub use search::BingSearchSettings;
 pub use search::SearchSettings;
 
-pub use storage::StorageSettings;
-pub use storage::WebhookSettings;
-
 pub use llm::LLMSettings;
 
 pub use runtime::RuntimeConfig;
-pub use settings::{CacheSettings, ProxySettings, TimeoutSettings, WorkerCount, WorkerSettings};
+pub use settings::{
+    CacheSettings, ProxySettings, TimeoutSettings, WebhookSettings, WorkerCount, WorkerSettings,
+};
 
 // 主配置结构体
 pub mod settings;

@@ -190,13 +190,13 @@ mod tests {
 
     /// 构造一个用于测试的 Settings 实例（所有子配置使用默认值）。
     fn make_test_settings() -> Arc<Settings> {
-        use crate::config::{
-            BingSearchSettings, CacheSettings, ConcurrencySettings,
-            DatabaseSettings, EngineSettings, LLMSettings, LoggingSettings, ProxySettings,
-            RateLimitingSettings, RedisSettings, SearchSettings, ServerSettings, StorageSettings,
-            TimeoutSettings, TrustedProxySettings, WebhookSettings, WorkerSettings,
-        };
         use crate::config::settings::CorsSettings;
+        use crate::config::{
+            BingSearchSettings, CacheSettings, ConcurrencySettings, DatabaseSettings,
+            EngineSettings, LLMSettings, LoggingSettings, ProxySettings, RateLimitingSettings,
+            RedisSettings, SearchSettings, ServerSettings, TimeoutSettings, TrustedProxySettings,
+            WebhookSettings, WorkerSettings,
+        };
 
         Arc::new(Settings {
             server: ServerSettings::default(),
@@ -205,7 +205,6 @@ mod tests {
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),
-            storage: StorageSettings::default(),
             webhook: WebhookSettings::default(),
             bing_search: BingSearchSettings::default(),
             search: SearchSettings::default(),

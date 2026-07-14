@@ -1134,7 +1134,10 @@ mod tests {
 
     #[test]
     fn test_error_codes_external_service_error() {
-        assert_eq!(error_codes::EXTERNAL_SERVICE_ERROR, "EXTERNAL_SERVICE_ERROR");
+        assert_eq!(
+            error_codes::EXTERNAL_SERVICE_ERROR,
+            "EXTERNAL_SERVICE_ERROR"
+        );
     }
 
     #[test]

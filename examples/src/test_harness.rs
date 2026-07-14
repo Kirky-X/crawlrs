@@ -10,17 +10,17 @@
 //! # 使用示例
 //!
 //! ```rust
-//! use crate::test_harness::SearchTestHarness;
+//! use crawlrs_examples::test_harness::SearchTestHarness;
 //!
 //! let harness = SearchTestHarness::new("Google", 60, 10);
 //! let result = harness.run_test("test query").await;
 //! ```
 
-use crate::utils::search_test::{run_engine_test_with_output, TestResult};
 use anyhow::Result;
-use std::sync::Arc;
-use tokio::time::{timeout, Duration};
+use crawlrs::search::engine_trait::SearchEngine;
+use crawlrs::utils::search_test::{run_engine_test_with_output, TestResult};
 use log::{info, Level, Metadata, Record};
+use tokio::time::{timeout, Duration};
 
 /// 最小化的 stderr 日志实现（替代 tracing_subscriber 用于测试）
 struct StderrLogger;
@@ -64,16 +64,12 @@ impl SearchTestHarness {
     /// 初始化日志系统（使用最小化 stderr logger）
     pub fn init_logging(&self) {
         let logger = StderrLogger;
-        log::set_boxed_logger(Box::new(logger))
-            .ok();
+        log::set_boxed_logger(Box::new(logger)).ok();
         log::set_max_level(log::LevelFilter::Info);
     }
 
     /// 运行测试引擎
-    pub async fn run_engine_test<E: crate::search::engine_trait::SearchEngine>(
-        &self,
-        engine: E,
-    ) -> Result<TestResult> {
+    pub async fn run_engine_test<E: SearchEngine>(&self, engine: E) -> Result<TestResult> {
         run_engine_test_with_output(
             &self.engine_name,
             engine,
@@ -85,7 +81,7 @@ impl SearchTestHarness {
     }
 
     /// 运行带超时的测试
-    pub async fn run_engine_test_with_timeout<E: crate::search::engine_trait::SearchEngine>(
+    pub async fn run_engine_test_with_timeout<E: SearchEngine>(
         &self,
         engine: E,
     ) -> Result<TestResult> {
@@ -135,7 +131,7 @@ impl SearchTestHarness {
     }
 
     /// 运行完整测试流程
-    pub async fn run_full_test<E: crate::search::engine_trait::SearchEngine>(&self, engine: E) {
+    pub async fn run_full_test<E: SearchEngine>(&self, engine: E) {
         self.print_header();
 
         let result = self.run_engine_test_with_timeout(engine).await;

@@ -393,7 +393,12 @@ mod tests {
                 .chars()
                 .collect();
         for c in id.chars() {
-            assert!(valid_chars.contains(&c), "invalid character '{}' in ID: {}", c, id);
+            assert!(
+                valid_chars.contains(&c),
+                "invalid character '{}' in ID: {}",
+                c,
+                id
+            );
         }
     }
 

@@ -150,9 +150,7 @@ mod tests {
     #[tokio::test]
     async fn test_init_all_returns_logger_manager() {
         let settings = settings_console_only();
-        let manager = init_all(&settings)
-            .await
-            .expect("init_all should succeed");
+        let manager = init_all(&settings).await.expect("init_all should succeed");
         drop(manager);
     }
 }

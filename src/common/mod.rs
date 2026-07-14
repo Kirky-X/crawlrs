@@ -41,8 +41,8 @@ pub(crate) mod test_support {
     ///   early-return if unavailable (see [`docker_available`]).
     pub mod testcontainers_fixtures {
         use testcontainers::core::IntoContainerPort;
-        use testcontainers::ImageExt;
         use testcontainers::runners::AsyncRunner;
+        use testcontainers::ImageExt;
         use testcontainers_modules::postgres::Postgres;
         use testcontainers_modules::redis::Redis;
 
@@ -182,7 +182,10 @@ pub(crate) mod test_support {
         ///
         /// Loads the default configuration file, then overrides the database
         /// and Redis URLs to point at the testcontainers instances.
-        pub fn settings_with_urls(db_url: &str, redis_url: &str) -> anyhow::Result<crate::config::Settings> {
+        pub fn settings_with_urls(
+            db_url: &str,
+            redis_url: &str,
+        ) -> anyhow::Result<crate::config::Settings> {
             let mut settings = crate::bootstrap::config::load_settings()?;
             settings.database = database_settings(db_url);
             settings.redis = redis_settings(redis_url);

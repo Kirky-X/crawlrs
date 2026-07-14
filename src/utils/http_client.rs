@@ -265,15 +265,19 @@ mod tests {
 
         let client = create_http_client_with_redirects(5, 10);
         let url = format!("{}/redirect", mock_server.uri());
-        let response = client.get(&url).send().await.expect("request should succeed");
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
 
         // The redirect target is 127.0.0.1 which is_internal_url returns true,
-            // so the policy calls attempt.stop() and returns the 302 response.
-            assert_eq!(
-                response.status().as_u16(),
-                302,
-                "redirect to internal URL should be blocked (302 returned, not followed)"
-            );
+        // so the policy calls attempt.stop() and returns the 302 response.
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "redirect to internal URL should be blocked (302 returned, not followed)"
+        );
     }
 
     #[tokio::test]
@@ -296,7 +300,11 @@ mod tests {
 
         let client = create_http_client_with_redirects(5, 0);
         let url = format!("{}/redirect", mock_server.uri());
-        let response = client.get(&url).send().await.expect("request should succeed");
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
 
         assert_eq!(
             response.status().as_u16(),
@@ -322,7 +330,11 @@ mod tests {
 
         let client = create_http_client_with_redirects(5, 10);
         let url = format!("{}/normal", mock_server.uri());
-        let response = client.get(&url).send().await.expect("request should succeed");
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
 
         assert_eq!(response.status().as_u16(), 200);
         let body = response.text().await.expect("body should be readable");
@@ -348,7 +360,11 @@ mod tests {
 
         let client = create_http_client_with_redirects(5, 10);
         let url = format!("{}/redirect-localhost", mock_server.uri());
-        let response = client.get(&url).send().await.expect("request should succeed");
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
 
         assert_eq!(
             response.status().as_u16(),
@@ -376,7 +392,11 @@ mod tests {
 
         let client = create_http_client_with_redirects(5, 10);
         let url = format!("{}/redirect-private", mock_server.uri());
-        let response = client.get(&url).send().await.expect("request should succeed");
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
 
         assert_eq!(
             response.status().as_u16(),

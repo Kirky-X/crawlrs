@@ -17,8 +17,8 @@
 //!
 
 use crawlrs::engines::engine_client::ScrapeRequest;
-use std::time::Duration;
 use log::info;
+use std::time::Duration;
 
 /// 提取规则配置
 #[derive(Debug)]

@@ -1915,7 +1915,10 @@ mod tests_ext {
         let client = build_client(queue);
 
         let result = client.dequeue_batch(Uuid::new_v4(), 5).await;
-        assert!(result.is_err(), "dequeue_batch should fail with dequeue error");
+        assert!(
+            result.is_err(),
+            "dequeue_batch should fail with dequeue error"
+        );
         match result.unwrap_err() {
             QueueClientError::Internal(msg) => {
                 assert!(msg.contains("mock dequeue failure"), "msg: {}", msg);
@@ -1954,7 +1957,10 @@ mod tests_ext {
         let metrics = QueueMetricsImpl::new();
         metrics.record(QueueOperation::BatchComplete, true);
         let data = metrics.collect();
-        assert_eq!(data.tasks_processed, 1, "BatchComplete should increment tasks_processed");
+        assert_eq!(
+            data.tasks_processed, 1,
+            "BatchComplete should increment tasks_processed"
+        );
     }
 
     #[test]
@@ -1962,7 +1968,10 @@ mod tests_ext {
         let metrics = QueueMetricsImpl::new();
         metrics.record(QueueOperation::BatchFail, false);
         let data = metrics.collect();
-        assert_eq!(data.tasks_failed, 1, "BatchFail should increment tasks_failed");
+        assert_eq!(
+            data.tasks_failed, 1,
+            "BatchFail should increment tasks_failed"
+        );
     }
 
     #[test]
@@ -1974,8 +1983,14 @@ mod tests_ext {
         metrics.record(QueueOperation::BatchEnqueue, true);
         metrics.record(QueueOperation::BatchDequeue, true);
         let data = metrics.collect();
-        assert_eq!(data.tasks_processed, 0, "non-complete/fail ops should not change processed");
-        assert_eq!(data.tasks_failed, 0, "non-complete/fail ops should not change failed");
+        assert_eq!(
+            data.tasks_processed, 0,
+            "non-complete/fail ops should not change processed"
+        );
+        assert_eq!(
+            data.tasks_failed, 0,
+            "non-complete/fail ops should not change failed"
+        );
     }
 
     #[test]
@@ -2051,6 +2066,9 @@ mod tests_ext {
 
         let request = DequeueRequest::new(Uuid::new_v4()).with_batch_size(3);
         let result = client.dequeue(request).await;
-        assert!(result.is_err(), "dequeue with batch_size should fail on dequeue error");
+        assert!(
+            result.is_err(),
+            "dequeue with batch_size should fail on dequeue error"
+        );
     }
 }

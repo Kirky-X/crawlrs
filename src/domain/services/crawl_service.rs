@@ -1878,7 +1878,10 @@ mod tests {
                 .unwrap(),
             0
         );
-        assert_eq!(repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await.unwrap(), 0);
+        assert_eq!(
+            repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await.unwrap(),
+            0
+        );
         assert_eq!(repo.expire_tasks().await.unwrap(), 0);
         assert!(repo
             .find_by_crawl_id(Uuid::new_v4())

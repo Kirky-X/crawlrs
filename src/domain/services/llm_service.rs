@@ -988,7 +988,6 @@ json = "J"
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),
-            storage: StorageSettings::default(),
             webhook: WebhookSettings::default(),
             bing_search: BingSearchSettings::default(),
             search: SearchSettings::default(),

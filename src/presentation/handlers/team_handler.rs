@@ -518,7 +518,11 @@ mod tests {
     fn test_country_code_validation_lowercase_two_letters() {
         // Handler only checks length, not case
         let country = "us".to_string();
-        assert_eq!(country.len(), 2, "lowercase 2-letter should pass length check");
+        assert_eq!(
+            country.len(),
+            2,
+            "lowercase 2-letter should pass length check"
+        );
     }
 
     // ========== TeamGeoRestrictionsResponse construction ==========
@@ -783,10 +787,7 @@ mod tests {
 
     #[test]
     fn test_ip_whitelist_validation_all_invalid() {
-        let whitelist = vec![
-            "not-an-ip".to_string(),
-            "999.999.999.999".to_string(),
-        ];
+        let whitelist = vec!["not-an-ip".to_string(), "999.999.999.999".to_string()];
         let all_invalid = whitelist.iter().all(|ip| !is_valid_ip_or_cidr(ip));
         assert!(all_invalid, "All entries should be invalid");
     }

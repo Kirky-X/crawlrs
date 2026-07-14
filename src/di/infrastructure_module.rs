@@ -35,8 +35,8 @@ pub use super::infrastructure_service_module::{WebhookSenderComponent, WebhookSe
 pub use super::repository_module::{
     AuditLogRepositoryComponent, AuthScopeRepositoryComponent, CrawlRepositoryComponent,
     CreditsRepositoryComponent, GeoRestrictionRepositoryComponent, ScrapeResultRepositoryComponent,
-    StorageRepositoryComponent, TaskQueueComponent, TaskRepositoryComponent,
-    TasksBacklogRepositoryComponent, WebhookEventRepositoryComponent, WebhookRepositoryComponent,
+    TaskQueueComponent, TaskRepositoryComponent, TasksBacklogRepositoryComponent,
+    WebhookEventRepositoryComponent, WebhookRepositoryComponent,
 };
 
 // Infrastructure module components - for Shaku DI

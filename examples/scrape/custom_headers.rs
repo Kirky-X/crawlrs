@@ -18,9 +18,9 @@
 //! ```
 
 use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use log::info;
 use std::collections::HashMap;
 use std::time::Duration;
-use log::info;
 
 #[tokio::main]
 async fn main() {

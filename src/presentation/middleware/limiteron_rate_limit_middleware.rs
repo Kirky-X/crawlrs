@@ -209,7 +209,10 @@ mod tests {
     }
 
     fn socket_addr(ip: &str, port: u16) -> SocketAddr {
-        SocketAddr::new(IpAddr::V4(ip.parse::<Ipv4Addr>().expect("valid ipv4")), port)
+        SocketAddr::new(
+            IpAddr::V4(ip.parse::<Ipv4Addr>().expect("valid ipv4")),
+            port,
+        )
     }
 
     #[test]
@@ -307,9 +310,7 @@ mod tests {
     #[tokio::test]
     async fn test_limiteron_middleware_state_clone_preserves_governor() {
         // Clone must share the same Governor Arc.
-        use limiteron::config::{
-            Action, ActionConfig, GlobalConfig, LimiterConfig, Matcher, Rule,
-        };
+        use limiteron::config::{Action, ActionConfig, GlobalConfig, LimiterConfig, Matcher, Rule};
 
         let storage: Arc<dyn limiteron::storage::Storage> =
             Arc::new(limiteron::storage::MemoryStorage::new());

@@ -10,9 +10,7 @@ edition = "2021"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
 description = "Example programs demonstrating crawlrs library usage"
 default-run = "basic_scrape"
-
-# Explicitly declare this as an independent workspace (not part of main crawlrs workspace)
-[workspace]
+publish = false
 
 [dependencies]
 # crawlrs 主项目 - 从父目录引用
@@ -73,10 +71,6 @@ name = "team_isolation"
 path = "auth/team_isolation.rs"
 
 # Browser examples
-[[bin]]
-name = "engine_router_demo"
-path = "browser/engine_router_demo.rs"
-
 [[bin]]
 name = "test_flaresolverr_direct"
 path = "browser/test_flaresolverr_direct.rs"
@@ -221,14 +215,6 @@ name = "test_bing"
 path = "search/test_bing.rs"
 
 [[bin]]
-name = "test_google"
-path = "search/test_google.rs"
-
-[[bin]]
-name = "test_harness"
-path = "search/test_harness.rs"
-
-[[bin]]
 name = "test_smart_search"
 path = "search/test_smart_search.rs"
 
@@ -258,14 +244,6 @@ name = "geo_restrictions"
 path = "teams/geo_restrictions.rs"
 
 # Text encoding examples
-[[bin]]
-name = "text_encoding_integration_demo"
-path = "text_encoding/text_encoding_integration_demo.rs"
-
-# Test examples (root level)
-[[bin]]
-name = "test_llm_extraction"
-path = "test_llm_extraction.rs"
 
 # Webhooks examples
 [[bin]]
@@ -280,7 +258,7 @@ path = "webhooks/retry_logic.rs"
 name = "task_events"
 path = "webhooks/task_events.rs"
 
-[profile.release]
-opt-level = 2
-lto = true
-codegen-units = 1
+# 共享库：提供示例程序复用的工具模块（如搜索测试工具）
+[lib]
+name = "crawlrs_examples"
+path = "src/lib.rs"

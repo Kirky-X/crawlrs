@@ -20,8 +20,8 @@
 //! - 事件过滤和路由
 
 use log::info;
-use uuid::Uuid;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 // 任务状态
 #[derive(Debug, Clone, PartialEq)]
@@ -37,12 +37,30 @@ enum TaskStatus {
 // 任务事件类型
 #[derive(Debug, Clone)]
 enum TaskEvent {
-    Created { task_id: Uuid, url: String },
-    Started { task_id: Uuid },
-    Progress { task_id: Uuid, pages_scraped: u32 },
-    Completed { task_id: Uuid, pages_scraped: u32, success: bool },
-    Failed { task_id: Uuid, error: String },
-    Cancelled { task_id: Uuid, reason: String },
+    Created {
+        task_id: Uuid,
+        url: String,
+    },
+    Started {
+        task_id: Uuid,
+    },
+    Progress {
+        task_id: Uuid,
+        pages_scraped: u32,
+    },
+    Completed {
+        task_id: Uuid,
+        pages_scraped: u32,
+        success: bool,
+    },
+    Failed {
+        task_id: Uuid,
+        error: String,
+    },
+    Cancelled {
+        task_id: Uuid,
+        reason: String,
+    },
 }
 
 // 事件订阅配置
@@ -109,7 +127,10 @@ impl EventRouter {
 
     pub fn add_subscription(&mut self, subscription: &EventSubscription) {
         self.subscriptions.push(subscription.clone());
-        info!("Added subscription: {} -> {}", subscription.name, subscription.webhook_url);
+        info!(
+            "Added subscription: {} -> {}",
+            subscription.name, subscription.webhook_url
+        );
     }
 
     pub fn route_event(&self, event: &TaskEvent) {
@@ -133,14 +154,14 @@ async fn main() {
     // 创建订阅
     let mut completion_sub = EventSubscription::new(
         "Completion Notifications",
-        "https://api.example.com/webhooks/completions"
+        "https://api.example.com/webhooks/completions",
     );
     completion_sub.subscribe_to(TaskStatus::Completed);
     completion_sub.subscribe_to(TaskStatus::Failed);
 
     let mut progress_sub = EventSubscription::new(
         "Progress Tracker",
-        "https://api.example.com/webhooks/progress"
+        "https://api.example.com/webhooks/progress",
     );
     progress_sub.subscribe_to(TaskStatus::Running);
     progress_sub.add_filter("url_pattern", "https://example.com/*");

@@ -184,10 +184,7 @@ mod tests {
     fn test_clearable_blanket_impl_for_string() {
         let mut data: String = String::from("secret-value-to-clear");
         Clearable::clear(&mut data);
-        assert!(
-            data.is_empty(),
-            "String should be cleared after zeroize"
-        );
+        assert!(data.is_empty(), "String should be cleared after zeroize");
     }
 
     #[test]

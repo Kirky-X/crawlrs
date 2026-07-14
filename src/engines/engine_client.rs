@@ -1512,9 +1512,7 @@ mod tests {
         assert!(!EngineError::SsrfProtection("blocked".to_string()).is_retryable());
         assert!(EngineError::BrowserError("err".to_string()).is_retryable());
         assert!(!EngineError::Internal("err".to_string()).is_retryable());
-        assert!(
-            !EngineError::AllEnginesFailed("all failed".to_string()).is_retryable()
-        );
+        assert!(!EngineError::AllEnginesFailed("all failed".to_string()).is_retryable());
         assert!(!EngineError::Expired.is_retryable());
         assert!(!EngineError::Other("err".to_string()).is_retryable());
     }
@@ -1538,10 +1536,7 @@ mod tests {
         assert_eq!(public.content_type, "text/html");
         assert!(public.headers.is_empty());
         assert_eq!(public.response_time_ms, 150);
-        assert_eq!(
-            public.final_url,
-            Some("https://example.com".to_string())
-        );
+        assert_eq!(public.final_url, Some("https://example.com".to_string()));
     }
 
     #[test]

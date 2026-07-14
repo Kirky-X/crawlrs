@@ -19,10 +19,10 @@ use crawlrs::search::engine_trait::SearchRequest;
 use crawlrs::search::factory::SearchEngineFactory;
 use crawlrs::search::smart::{SmartSearchEngine, SmartSearchEngineConfig};
 use crawlrs::search::types::SearchEngineType;
+use log::info;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
-use log::info;
 
 const TEST_QUERY: &str = "rust programming language";
 const TIMEOUT_SECS: u64 = 30;

@@ -1630,7 +1630,6 @@ mod tests {
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),
-            storage: StorageSettings::default(),
             webhook: WebhookSettings::default(),
             bing_search: BingSearchSettings::default(),
             search: SearchSettings::default(),
@@ -1675,10 +1674,8 @@ mod tests {
         // crawl_config is Some(custom). Verifies the custom config values are
         // serialized into the created Crawl record (not the defaults).
         let credits = Arc::new(MockCreditsRepo::with_balance(100));
-        let (service, crawl_repo, task_repo) = make_service_with_recording(
-            credits,
-            Arc::new(MockSearchClient::new()),
-        );
+        let (service, crawl_repo, task_repo) =
+            make_service_with_recording(credits, Arc::new(MockSearchClient::new()));
         let custom_config = SearchCrawlConfig {
             max_depth: 5,
             include_patterns: Some(vec!["*/blog/*".to_string()]),
@@ -1740,10 +1737,8 @@ mod tests {
         // and max_depth=1, confirming the default branch is distinct from the
         // custom config branch.
         let credits = Arc::new(MockCreditsRepo::with_balance(100));
-        let (service, crawl_repo, _) = make_service_with_recording(
-            credits,
-            Arc::new(MockSearchClient::new()),
-        );
+        let (service, crawl_repo, _) =
+            make_service_with_recording(credits, Arc::new(MockSearchClient::new()));
         let query = SearchQuery {
             crawl_results: Some(true),
             crawl_config: None,
@@ -1757,10 +1752,7 @@ mod tests {
             .last_created_config()
             .expect("crawl record should exist");
         assert_eq!(config["max_depth"], 1, "default max_depth should be 1");
-        assert_eq!(
-            config["strategy"], "bfs",
-            "default strategy should be bfs"
-        );
+        assert_eq!(config["strategy"], "bfs", "default strategy should be bfs");
         assert_eq!(
             config["max_concurrency"], 10,
             "default max_concurrency should be 10"

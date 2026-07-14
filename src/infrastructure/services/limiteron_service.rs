@@ -128,12 +128,13 @@ impl LimiteronService {
         };
 
         // 构建 IP 限流规则
+        // 使用 "0.0.0.0/0" 匹配所有 IPv4 地址（limiteron 不接受 "*" 作为 IP 范围）
         let ip_rule = Rule {
             id: "ip_rate_limit".to_string(),
             name: "IP Rate Limit".to_string(),
             priority: 90,
             matchers: vec![Matcher::Ip {
-                ip_ranges: vec!["*".to_string()],
+                ip_ranges: vec!["0.0.0.0/0".to_string()],
             }],
             limiters: vec![LimiterConfig::TokenBucket {
                 capacity: config.rate_limit.bucket_capacity.unwrap_or(50) as u64,
@@ -520,7 +521,8 @@ impl RateLimitingService for LimiteronService {}
 #[cfg(all(test, feature = "rate-limiting"))]
 mod tests {
     use super::*;
-    use limiteron::config::LimiterConfig;
+    use limiteron::config::{LimiterConfig, Matcher};
+    use std::str::FromStr;
 
     // ========== RateLimitingConfig::default() tests ==========
 
@@ -598,10 +600,31 @@ mod tests {
         }
     }
 
-    // Note: build_request_context is an instance method that requires a
-    // LimiteronService instance. However, LimiteronService::new() fails due to
-    // a pre-existing bug in build_flow_control_config: it uses "*" as an IP
-    // range, which the limiteron Governor rejects as an invalid IP address.
-    // Testing build_request_context requires either fixing that bug or adding
-    // a test-only constructor, both of which are out of scope for this task.
+    #[test]
+    fn test_build_flow_control_config_ip_range_is_valid_cidr() {
+        // Regression test: previously used "*" which limiteron Governor rejects
+        let config = RateLimitingConfig::default();
+        let flow_config = LimiteronService::build_flow_control_config(&config).unwrap();
+
+        let ip_rule = &flow_config.rules[1];
+        assert_eq!(ip_rule.id, "ip_rate_limit");
+        for matcher in &ip_rule.matchers {
+            match matcher {
+                Matcher::Ip { ip_ranges } => {
+                    for range in ip_ranges {
+                        // Each IP range must be a valid CIDR (not "*")
+                        assert_ne!(
+                            range, "*",
+                            "IP range must not be wildcard '*', use CIDR notation"
+                        );
+                        // Validate it parses as a valid IP network
+                        ipnetwork::IpNetwork::from_str(range).unwrap_or_else(|_| {
+                            panic!("IP range '{}' is not a valid CIDR notation", range)
+                        });
+                    }
+                }
+                _ => panic!("Expected Ip matcher for ip_rate_limit rule"),
+            }
+        }
+    }
 }

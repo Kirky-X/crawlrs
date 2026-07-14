@@ -11,7 +11,7 @@ use thiserror::Error;
 
 /// Infrastructure层错误类型
 ///
-/// 表示外部系统交互失败，如数据库、缓存、存储等
+/// 表示外部系统交互失败，如数据库、缓存等
 #[derive(Error, Debug)]
 pub enum InfrastructureError {
     // ==================== 数据库错误 ====================
@@ -37,19 +37,6 @@ pub enum InfrastructureError {
     #[error("缓存序列化失败: {0}")]
     CacheSerialization(#[from] serde_json::Error),
 
-    // ==================== 存储错误 ====================
-    #[error("存储操作失败: {operation}, 路径: {path}")]
-    StorageError {
-        operation: String,
-        path: String,
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
-    },
-
-    #[cfg(feature = "storage-s3")]
-    #[error("S3操作失败: {0}")]
-    S3Operation(#[from] aws_sdk_s3::Error),
-
     // ==================== 网络错误 ====================
     #[error("HTTP请求失败: {url}, 状态码: {status}")]
     HttpRequestFailed { url: String, status: u16 },
@@ -72,14 +59,6 @@ pub enum InfrastructureError {
 impl InfrastructureError {
     pub fn cache_miss(key: impl Into<String>) -> Self {
         InfrastructureError::CacheMiss { key: key.into() }
-    }
-
-    pub fn storage_error(operation: impl Into<String>, path: impl Into<String>) -> Self {
-        InfrastructureError::StorageError {
-            operation: operation.into(),
-            path: path.into(),
-            source: None,
-        }
     }
 }
 
@@ -108,16 +87,6 @@ mod tests {
         let msg = error.to_string();
         assert!(msg.contains("缓存未命中"));
         assert!(msg.contains("test_key"));
-    }
-
-    #[test]
-    fn test_storage_error() {
-        let error = InfrastructureError::storage_error("read", "/path/to/file");
-
-        let msg = error.to_string();
-        assert!(msg.contains("存储操作失败"));
-        assert!(msg.contains("read"));
-        assert!(msg.contains("/path/to/file"));
     }
 
     #[test]

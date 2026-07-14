@@ -919,10 +919,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Test Result");
         assert_eq!(results[0].url, "https://example.com");
-        assert_eq!(
-            results[0].description,
-            Some("Test description".to_string())
-        );
+        assert_eq!(results[0].description, Some("Test description".to_string()));
         assert_eq!(results[0].engine, "Google");
         assert!((results[0].score - 1.0).abs() < f64::EPSILON);
         assert!(results[0].published_time.is_none());
@@ -1155,10 +1152,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_default_router_with_config_returns_populated_router() {
-        let router =
-            create_default_router_with_config(make_http_client(), make_config_service())
-                .await
-                .expect("create_default_router_with_config should succeed");
+        let router = create_default_router_with_config(make_http_client(), make_config_service())
+            .await
+            .expect("create_default_router_with_config should succeed");
         let engines = router.registered_engines();
         assert_eq!(engines.len(), 4, "should register exactly 4 engines");
         assert!(engines.iter().any(|n| n == "Google"));

@@ -1,8 +1,8 @@
 # Database Configuration
 [database]
-# Use environment variable: CRAWLRS__DATABASE__URL or build URL from components
-# Example: postgres://user:password@host:5432/database
-# For security, password should NOT be hardcoded in this file
+# URL is loaded from CRAWLRS__DATABASE__URL env var in production
+# Empty default allows config to load in test/dev environments
+url = ""
 max_connections = 20
 min_connections = 5
 connect_timeout = 30
@@ -126,18 +126,6 @@ download_timeout_seconds = 300
 # [browser.windows]
 # executable = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 
-# Storage Configuration
-[storage]
-storage_type = "local"
-local_path = "storage"
-# For S3 storage, use environment variables:
-# CRAWLRS__STORAGE__S3_ACCESS_KEY
-# CRAWLRS__STORAGE__S3_SECRET_KEY
-# s3_region = "us-east-1"
-# s3_bucket = "my-bucket"
-# s3_access_key = ""  # Set via environment variable
-# s3_secret_key = ""  # Set via environment variable
-
 # Webhook Configuration
 [webhook]
 timeout_seconds = 10
@@ -148,6 +136,10 @@ user_agent = "Crawlrs-Webhook/1.0"
 # Do NOT use weak default values like "your-webhook-secret"
 secret = ""
 batch_size = 1000
+
+# Bing Search API Configuration
+# api_key defaults to None; set via CRAWLRS__BING_SEARCH__API_KEY env var
+[bing_search]
 
 # LLM Configuration
 [llm]

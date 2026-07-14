@@ -744,11 +744,7 @@ mod shared_tests {
 
     #[test]
     fn test_validate_result_url_with_path() {
-        let result =
-            validate_result_url("https://example.com/path/to/page", &["http", "https"]);
-        assert_eq!(
-            result,
-            Some("https://example.com/path/to/page".to_string())
-        );
+        let result = validate_result_url("https://example.com/path/to/page", &["http", "https"]);
+        assert_eq!(result, Some("https://example.com/path/to/page".to_string()));
     }
 }

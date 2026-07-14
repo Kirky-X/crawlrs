@@ -1683,7 +1683,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), make_crawl_dto(), "not-an-ip")
+            .create_crawl(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                make_crawl_dto(),
+                "not-an-ip",
+            )
             .await;
         let err = match result {
             Err(CrawlUseCaseError::ValidationError(msg)) => msg,
@@ -1705,7 +1710,9 @@ mod tests {
         // Counter/status stubs are no-ops returning Ok
         repo.increment_completed_tasks(id).await.unwrap();
         repo.increment_failed_tasks(id).await.unwrap();
-        repo.update_status(id, CrawlStatus::Completed).await.unwrap();
+        repo.update_status(id, CrawlStatus::Completed)
+            .await
+            .unwrap();
         repo.increment_total_tasks(id).await.unwrap();
         // Query stubs return empty / zero
         assert!(repo
@@ -1757,9 +1764,7 @@ mod tests {
         assert_eq!(repo.expire_tasks().await.unwrap(), 0);
         // query_tasks returns empty + 0
         let (tasks, count) = repo
-            .query_tasks(
-                crate::domain::repositories::task_repository::TaskQueryParams::default(),
-            )
+            .query_tasks(crate::domain::repositories::task_repository::TaskQueryParams::default())
             .await
             .unwrap();
         assert!(tasks.is_empty());
@@ -1800,9 +1805,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_geo_restriction_repo_update_team_restrictions_succeeds() {
-        let repo = MockGeoRestrictionRepository::with_restrictions(
-            TeamGeoRestrictions::default(),
-        );
+        let repo = MockGeoRestrictionRepository::with_restrictions(TeamGeoRestrictions::default());
         let result = repo
             .update_team_restrictions(Uuid::new_v4(), &TeamGeoRestrictions::default())
             .await;

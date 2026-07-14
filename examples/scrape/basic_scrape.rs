@@ -22,8 +22,8 @@
 //! 成功时将显示爬取状态、内容长度等信息。
 
 use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
-use std::time::Duration;
 use log::info;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {

@@ -555,7 +555,10 @@ mod tests {
         assert!(result.is_ok(), "search with items should succeed");
         let tr = result.unwrap();
         assert_eq!(tr.total, 3, "should have 3 total results");
-        assert_eq!(tr.accessible, 0, "all localhost URLs should be inaccessible");
+        assert_eq!(
+            tr.accessible, 0,
+            "all localhost URLs should be inaccessible"
+        );
         assert_eq!(tr.inaccessible, 3, "all 3 items should be inaccessible");
     }
 
@@ -570,10 +573,7 @@ mod tests {
         )
         .await;
 
-        assert!(
-            result.is_err(),
-            "search error should propagate as Err"
-        );
+        assert!(result.is_err(), "search error should propagate as Err");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
             err_msg.contains("mock engine failure"),
@@ -605,16 +605,12 @@ mod tests {
     #[tokio::test]
     async fn test_run_engine_test_uses_default_query_when_none() {
         // When query is None, the function should use "test query" as default.
-        let result = run_engine_test_with_output(
-            "MockEmpty",
-            MockEngineEmpty,
-            None,
-            5,
-            None,
-        )
-        .await;
+        let result = run_engine_test_with_output("MockEmpty", MockEngineEmpty, None, 5, None).await;
 
-        assert!(result.is_ok(), "should succeed with default query and limit");
+        assert!(
+            result.is_ok(),
+            "should succeed with default query and limit"
+        );
         let tr = result.unwrap();
         assert_eq!(tr.total, 0);
     }

@@ -32,7 +32,6 @@ use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
-use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
@@ -48,7 +47,6 @@ use crate::infrastructure::database::repositories::task_repo_impl::TaskRepositor
 use crate::infrastructure::database::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use crate::infrastructure::database::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
-use crate::infrastructure::storage::LocalStorage;
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use anyhow::Result;
 
@@ -914,84 +912,6 @@ impl GeoRestrictionRepository for GeoRestrictionRepositoryComponent {
 }
 
 // =============================================================================
-// StorageRepository Component
-// =============================================================================
-
-/// StorageRepository component using LocalStorage with cached instance.
-pub struct StorageRepositoryComponent {
-    /// Storage path
-    storage_path: String,
-    /// Cached storage instance
-    storage_cache: OnceLock<LocalStorage>,
-}
-
-impl<M: Module> Component<M> for StorageRepositoryComponent {
-    type Interface = dyn StorageRepository;
-    type Parameters = ();
-
-    fn build(_: &mut ModuleBuildContext<M>, _: Self::Parameters) -> Box<Self::Interface> {
-        Box::new(Self::with_default_path())
-    }
-}
-
-impl StorageRepositoryComponent {
-    /// Create a new StorageRepositoryComponent with explicit path.
-    pub fn new(storage_path: String) -> Self {
-        Self {
-            storage_path,
-            storage_cache: OnceLock::new(),
-        }
-    }
-
-    /// Create with default storage path ("./storage").
-    pub fn with_default_path() -> Self {
-        Self {
-            storage_path: "./storage".to_string(),
-            storage_cache: OnceLock::new(),
-        }
-    }
-
-    /// Get or create the cached storage instance.
-    fn get_storage(&self) -> &LocalStorage {
-        self.storage_cache
-            .get_or_init(|| LocalStorage::new(self.storage_path.clone()))
-    }
-}
-
-#[async_trait::async_trait]
-impl StorageRepository for StorageRepositoryComponent {
-    async fn save(
-        &self,
-        key: &str,
-        data: &[u8],
-    ) -> Result<(), crate::domain::repositories::storage_repository::StorageError> {
-        self.get_storage().save(key, data).await
-    }
-
-    async fn get(
-        &self,
-        key: &str,
-    ) -> Result<Option<Vec<u8>>, crate::domain::repositories::storage_repository::StorageError>
-    {
-        self.get_storage().get(key).await
-    }
-
-    async fn delete(
-        &self,
-        key: &str,
-    ) -> Result<(), crate::domain::repositories::storage_repository::StorageError> {
-        self.get_storage().delete(key).await
-    }
-
-    async fn exists(
-        &self,
-        key: &str,
-    ) -> Result<bool, crate::domain::repositories::storage_repository::StorageError> {
-        self.get_storage().exists(key).await
-    }
-}
-
-// =============================================================================
 // TaskQueue Component
 // =============================================================================
 
@@ -1050,82 +970,6 @@ impl TaskQueue for TaskQueueComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::repositories::storage_repository::StorageError;
-
-    // ========== StorageRepositoryComponent ==========
-
-    #[test]
-    fn test_storage_repository_component_new_with_custom_path() {
-        let component = StorageRepositoryComponent::new("/tmp/crawlrs_test_storage".to_string());
-        // 构造成功即可验证，storage_cache 延迟初始化
-        let _trait_obj: &dyn StorageRepository = &component;
-    }
-
-    #[test]
-    fn test_storage_repository_component_with_default_path() {
-        let component = StorageRepositoryComponent::with_default_path();
-        let _trait_obj: &dyn StorageRepository = &component;
-    }
-
-    // 注意：LocalStorage::get_full_path() 对 joined 路径调用 canonicalize()，要求目标
-    // 文件必须已存在（见 storage.rs 中 test_get_full_path_fails_for_nonexistent_file）。
-    // 这导致 save()/get()/exists()/delete() 对不存在的文件均会失败，无法在单元测试中
-    // 验证完整的 save→get→exists→delete 往返流程。此处改为通过无效 key 验证 trait
-    // 委托是否正确：无效 key 在 validate_key 阶段即返回错误，不触及 canonicalize。
-
-    #[tokio::test]
-    async fn test_storage_repository_component_save_rejects_empty_key() {
-        let component = StorageRepositoryComponent::with_default_path();
-        let result = component.save("", b"data").await;
-        assert!(result.is_err());
-        match result {
-            Err(StorageError::InvalidKey(msg)) => assert!(msg.contains("empty")),
-            other => panic!("Expected InvalidKey for empty key, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_storage_repository_component_save_rejects_absolute_path() {
-        let component = StorageRepositoryComponent::with_default_path();
-        let result = component.save("/etc/passwd", b"data").await;
-        assert!(result.is_err());
-        match result {
-            Err(StorageError::InvalidKey(_)) => {}
-            other => panic!("Expected InvalidKey for absolute path, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_storage_repository_component_save_rejects_path_traversal() {
-        let component = StorageRepositoryComponent::with_default_path();
-        let result = component.save("../secret", b"data").await;
-        assert!(result.is_err());
-        match result {
-            Err(StorageError::InvalidKey(_)) => {}
-            other => panic!("Expected InvalidKey for path traversal, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_storage_repository_component_get_rejects_invalid_key() {
-        let component = StorageRepositoryComponent::with_default_path();
-        let result = component.get("").await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_storage_repository_component_exists_rejects_invalid_key() {
-        let component = StorageRepositoryComponent::with_default_path();
-        let result = component.exists("").await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_storage_repository_component_delete_rejects_invalid_key() {
-        let component = StorageRepositoryComponent::with_default_path();
-        let result = component.delete("").await;
-        assert!(result.is_err());
-    }
 
     // ========== TaskQueueComponent ==========
     // TaskQueueComponent 接受 Arc<dyn TaskRepository>，可用 mock 实现 TaskRepository

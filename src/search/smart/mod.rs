@@ -2804,13 +2804,11 @@ mod tests_ext {
         let results = engine.parse_google_results(html).unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].description.is_some());
-        assert!(
-            results[0]
-                .description
-                .as_ref()
-                .unwrap()
-                .contains("snippet description")
-        );
+        assert!(results[0]
+            .description
+            .as_ref()
+            .unwrap()
+            .contains("snippet description"));
     }
 
     #[test]
@@ -2872,7 +2870,11 @@ mod tests_ext {
         let results = engine.parse_sogou_results(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Sogou Title");
-        assert!(results[0].description.as_ref().unwrap().contains("Snippet from ft"));
+        assert!(results[0]
+            .description
+            .as_ref()
+            .unwrap()
+            .contains("Snippet from ft"));
     }
 
     #[test]
@@ -2891,13 +2893,11 @@ mod tests_ext {
         let results = engine.parse_sogou_results(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Sogou P Fallback");
-        assert!(
-            results[0]
-                .description
-                .as_ref()
-                .unwrap()
-                .contains("Bare paragraph")
-        );
+        assert!(results[0]
+            .description
+            .as_ref()
+            .unwrap()
+            .contains("Bare paragraph"));
     }
 
     #[test]

@@ -4,9 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::engines::browser_downloader::{BrowserDownloadConfig, BrowserDownloadManager};
-use crate::engines::client::playwright_pool::{
-    get_global_pool, init_global_pool, BrowserInstance, BrowserPool, BrowserPoolConfig,
-};
+use crate::engines::client::playwright_pool::{get_global_pool, BrowserPool, BrowserPoolConfig};
 use crate::engines::engine_client::{
     EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse,
     InternalScreenshotConfig, ScraperEngine,
@@ -274,9 +272,6 @@ impl PlaywrightBrowserManagerComponent {
         }
     }
 }
-
-// Maximum number of recovery attempts
-const MAX_RECOVERY_ATTEMPTS: u32 = 3;
 
 /// Check if browser is still healthy and can be used
 pub async fn check_browser_health(browser: &Browser) -> bool {

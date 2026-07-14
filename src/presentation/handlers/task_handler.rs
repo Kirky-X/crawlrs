@@ -1236,7 +1236,9 @@ mod tests {
     // ========== build_scrape_result_json tests ==========
 
     // 构造测试用 ScrapeResult
-    fn make_test_scrape_result(task_id: Uuid) -> crate::domain::models::scrape_result::ScrapeResult {
+    fn make_test_scrape_result(
+        task_id: Uuid,
+    ) -> crate::domain::models::scrape_result::ScrapeResult {
         crate::domain::models::scrape_result_entity::Model {
             id: Uuid::new_v4(),
             task_id,
@@ -1261,7 +1263,10 @@ mod tests {
         assert_eq!(dto.id, result.id);
         assert_eq!(dto.status_code, 200);
         // content 经过 html_escape::encode_text 转义
-        assert_eq!(dto.content, "&lt;html&gt;&lt;body&gt;Hello&lt;/body&gt;&lt;/html&gt;");
+        assert_eq!(
+            dto.content,
+            "&lt;html&gt;&lt;body&gt;Hello&lt;/body&gt;&lt;/html&gt;"
+        );
     }
 
     #[test]
@@ -1391,8 +1396,10 @@ mod tests {
             make_test_task(task1_id, TaskStatus::Completed),
             make_test_task(task2_id, TaskStatus::Failed),
         ];
-        let results_map: std::collections::HashMap<Uuid, crate::domain::models::scrape_result::ScrapeResult> =
-            std::collections::HashMap::new();
+        let results_map: std::collections::HashMap<
+            Uuid,
+            crate::domain::models::scrape_result::ScrapeResult,
+        > = std::collections::HashMap::new();
 
         let infos = build_task_infos(&tasks, Some(&results_map));
 

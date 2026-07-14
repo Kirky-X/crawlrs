@@ -299,8 +299,8 @@ impl From<crate::utils::robots::RobotsCheckerError> for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::response::IntoResponse;
     use crate::common::test_support::ENV_MUTEX;
+    use axum::response::IntoResponse;
     #[test]
     fn test_sanitize_error_message_removes_table_names() {
         let msg = "Database error: table: users column: email not found";
@@ -514,7 +514,8 @@ mod tests {
 
     #[test]
     fn test_app_error_from_robots_checker_error() {
-        let robots_err = crate::utils::robots::RobotsCheckerError::ValidationError("blocked".to_string());
+        let robots_err =
+            crate::utils::robots::RobotsCheckerError::ValidationError("blocked".to_string());
         let err: AppError = robots_err.into();
         assert!(matches!(err, AppError::Internal(msg) if msg.contains("blocked")));
     }
@@ -571,7 +572,10 @@ mod tests {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_ENV");
         let response = AppError::Internal("table: users not found".to_string()).into_response();
-        assert_eq!(response.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     #[test]
@@ -579,7 +583,10 @@ mod tests {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_ENV");
         let response = AppError::ServiceUnavailable("redis down".to_string()).into_response();
-        assert_eq!(response.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     // ========== AppError Internal sanitization in production ==========
@@ -594,13 +601,19 @@ mod tests {
             "Error: table: users column: email at /home/app/src/main.rs:42".to_string(),
         )
         .into_response();
-        assert_eq!(response.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
         // The response body should not contain the raw sensitive data.
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body should be readable");
         let body_str = std::str::from_utf8(&body).expect("body should be utf8");
-        assert!(!body_str.contains("/home/app/src/main.rs"), "file path should be redacted");
+        assert!(
+            !body_str.contains("/home/app/src/main.rs"),
+            "file path should be redacted"
+        );
         {
             let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
             std::env::remove_var("CRAWLRS_ENV");
@@ -614,13 +627,19 @@ mod tests {
             std::env::set_var("CRAWLRS_ENV", "development");
         }
         let response = AppError::Internal("table: users".to_string()).into_response();
-        assert_eq!(response.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body should be readable");
         let body_str = std::str::from_utf8(&body).expect("body should be utf8");
         // In dev mode, the raw message is preserved (not sanitized).
-        assert!(body_str.contains("table: users"), "raw message should be preserved in dev");
+        assert!(
+            body_str.contains("table: users"),
+            "raw message should be preserved in dev"
+        );
         {
             let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
             std::env::remove_var("CRAWLRS_ENV");
@@ -638,6 +657,9 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_slice(&body).expect("body should be valid json");
         assert_eq!(json["success"], serde_json::Value::Bool(false));
-        assert_eq!(json["error"], serde_json::Value::String("invalid email".to_string()));
+        assert_eq!(
+            json["error"],
+            serde_json::Value::String("invalid email".to_string())
+        );
     }
 }

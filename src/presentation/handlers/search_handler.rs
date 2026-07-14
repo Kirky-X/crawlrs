@@ -714,9 +714,7 @@ mod tests {
 
     #[test]
     fn test_search_response_dto_deserialization() {
-        let json = format!(
-            r#"{{"query":"test","results":[],"crawl_id":null,"credits_used":0}}"#
-        );
+        let json = format!(r#"{{"query":"test","results":[],"crawl_id":null,"credits_used":0}}"#);
         let dto: SearchResponseDto = serde_json::from_str(&json).unwrap();
         assert_eq!(dto.query, "test");
         assert!(dto.results.is_empty());
@@ -963,7 +961,8 @@ mod tests {
 
     #[test]
     fn test_search_engine_error_with_url() {
-        let err = SearchServiceError::SearchEngine("failed to fetch https://google.com".to_string());
+        let err =
+            SearchServiceError::SearchEngine("failed to fetch https://google.com".to_string());
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert!(msg.contains("https://google.com"));

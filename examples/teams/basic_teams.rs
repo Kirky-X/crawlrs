@@ -56,7 +56,10 @@ impl Team {
             info!("Consumed {} credits. Remaining: {}", amount, self.credits);
             true
         } else {
-            warn!("Insufficient credits! Required: {}, Available: {}", amount, self.credits);
+            warn!(
+                "Insufficient credits! Required: {}, Available: {}",
+                amount, self.credits
+            );
             false
         }
     }

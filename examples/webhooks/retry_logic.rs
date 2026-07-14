@@ -20,8 +20,8 @@
 //! - 重试条件判断
 
 use log::{info, warn};
-use std::time::Duration;
 use rand::Rng;
+use std::time::Duration;
 
 // 重试策略配置
 #[derive(Debug, Clone)]
@@ -102,7 +102,11 @@ impl WebhookDelivery {
                 DeliveryResult::TransientFailure { reason } => {
                     if self.policy.should_retry(attempt) {
                         let delay = self.policy.calculate_delay(attempt);
-                        warn!("Transient failure: {}. Retrying in {}ms", reason, delay.as_millis());
+                        warn!(
+                            "Transient failure: {}. Retrying in {}ms",
+                            reason,
+                            delay.as_millis()
+                        );
                         tokio::time::sleep(delay).await;
                         continue;
                     } else {
@@ -127,16 +131,20 @@ impl WebhookDelivery {
         match roll {
             r if r < 0.7 => DeliveryResult::Success,
             r if r < 0.85 => DeliveryResult::TransientFailure {
-                reason: "Connection timeout".to_string()
+                reason: "Connection timeout".to_string(),
             },
             _ => DeliveryResult::TransientFailure {
-                reason: "Server busy (503)".to_string()
+                reason: "Server busy (503)".to_string(),
             },
         }
     }
 
     fn get_stats(&self) -> (u32, u32, u32) {
-        (self.total_attempts, self.successful_attempts, self.failed_attempts)
+        (
+            self.total_attempts,
+            self.successful_attempts,
+            self.failed_attempts,
+        )
     }
 }
 
@@ -163,13 +171,12 @@ async fn main() {
     }
 
     // 模拟发送
-    let mut delivery = WebhookDelivery::new(
-        "https://api.example.com/webhook",
-        policy
-    );
+    let mut delivery = WebhookDelivery::new("https://api.example.com/webhook", policy);
 
     info!("\n--- 模拟发送测试 ---");
-    let _ = delivery.send_with_retry(r#"{"event": "task.completed"}"#).await;
+    let _ = delivery
+        .send_with_retry(r#"{"event": "task.completed"}"#)
+        .await;
 
     // 显示统计
     let (total, success, failed) = delivery.get_stats();

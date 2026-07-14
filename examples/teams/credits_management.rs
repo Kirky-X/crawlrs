@@ -64,7 +64,10 @@ impl CreditsManager {
     // 消费积分
     pub fn consume(&mut self, amount: i64, description: &str) -> Result<(), String> {
         if self.balance < amount {
-            return Err(format!("Insufficient credits. Required: {}, Available: {}", amount, self.balance));
+            return Err(format!(
+                "Insufficient credits. Required: {}, Available: {}",
+                amount, self.balance
+            ));
         }
 
         self.balance -= amount;
@@ -93,7 +96,10 @@ impl CreditsManager {
             created_at: chrono::Utc::now(),
         });
 
-        info!("Deposited {} credits. New balance: {}", amount, self.balance);
+        info!(
+            "Deposited {} credits. New balance: {}",
+            amount, self.balance
+        );
     }
 
     // 获取余额
@@ -151,7 +157,13 @@ async fn main() {
             TransactionType::Credit => "+",
             TransactionType::Debit => "-",
         };
-        info!("  [{}] {} {} - {}", tx.created_at.format("%H:%M:%S"), sign, tx.amount, tx.description);
+        info!(
+            "  [{}] {} {} - {}",
+            tx.created_at.format("%H:%M:%S"),
+            sign,
+            tx.amount,
+            tx.description
+        );
     }
 
     info!("\nFinal balance: {}", manager.get_balance());

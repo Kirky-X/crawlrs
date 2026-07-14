@@ -11,9 +11,9 @@ use crawlrs::engines::engine_client::EngineClient;
 use crawlrs::search::bing::BingSearchEngine;
 use crawlrs::search::google::GoogleSearchEngine;
 use crawlrs::search::SearchRequest;
+use log::info;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
-use log::info;
 
 const ENGINE_TIMEOUT_SECS: u64 = 30;
 const TEST_KEYWORD: &str = "gemini-3-pro";

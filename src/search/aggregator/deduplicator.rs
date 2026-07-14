@@ -456,14 +456,20 @@ mod tests {
     fn test_normalize_url_only_fragment() {
         // 测试仅包含片段标识符的 URL 被清空
         let dedup = ResultDeduplicator::with_default_config();
-        assert_eq!(dedup.normalize_url("https://example.com#section"), "https://example.com");
+        assert_eq!(
+            dedup.normalize_url("https://example.com#section"),
+            "https://example.com"
+        );
     }
 
     #[test]
     fn test_normalize_url_only_query() {
         // 测试仅包含查询参数的 URL 被移除查询部分
         let dedup = ResultDeduplicator::with_default_config();
-        assert_eq!(dedup.normalize_url("https://example.com?a=1&b=2"), "https://example.com");
+        assert_eq!(
+            dedup.normalize_url("https://example.com?a=1&b=2"),
+            "https://example.com"
+        );
     }
 
     #[test]
@@ -511,10 +517,7 @@ mod tests {
     fn test_normalize_title_leading_trailing_whitespace_trimmed() {
         // 测试首尾空白被移除
         let dedup = ResultDeduplicator::with_default_config();
-        assert_eq!(
-            dedup.normalize_title("  Rust Guide  "),
-            "rust guide"
-        );
+        assert_eq!(dedup.normalize_title("  Rust Guide  "), "rust guide");
     }
 
     #[test]
@@ -555,7 +558,10 @@ mod tests {
         let dedup = ResultDeduplicator::with_default_config();
         let fp1 = dedup.generate_fingerprint("rust programming language");
         let fp2 = dedup.generate_fingerprint("python scripting language");
-        assert_ne!(fp1, fp2, "different content should produce different fingerprint");
+        assert_ne!(
+            fp1, fp2,
+            "different content should produce different fingerprint"
+        );
     }
 
     #[test]
@@ -662,7 +668,11 @@ mod tests {
         assert_eq!(stats.seen_fingerprints_count, 0);
 
         let second_pass = dedup.deduplicate(results);
-        assert_eq!(second_pass.len(), 1, "after reset, first result should pass again");
+        assert_eq!(
+            second_pass.len(),
+            1,
+            "after reset, first result should pass again"
+        );
     }
 
     // ========== get_stats 测试 ==========
@@ -707,7 +717,11 @@ mod tests {
         ];
 
         let deduplicated = dedup.deduplicate_multi_engine(engine_results);
-        assert_eq!(deduplicated.len(), 3, "should have 3 unique results after cross-engine dedup");
+        assert_eq!(
+            deduplicated.len(),
+            3,
+            "should have 3 unique results after cross-engine dedup"
+        );
         // 验证引擎名被正确设置
         assert_eq!(deduplicated[0].engine, "google");
         assert_eq!(deduplicated[2].engine, "bing");
@@ -728,7 +742,11 @@ mod tests {
         ];
 
         let deduplicated = dedup.deduplicate(results);
-        assert_eq!(deduplicated.len(), 2, "same title should trigger dedup in UrlAndTitle strategy");
+        assert_eq!(
+            deduplicated.len(),
+            2,
+            "same title should trigger dedup in UrlAndTitle strategy"
+        );
     }
 
     // ========== is_similar_by_fingerprint: hamming distance 路径 ==========
@@ -748,7 +766,11 @@ mod tests {
 
         let deduplicated = dedup.deduplicate(results);
         // 第二个结果应被 hamming distance 检测为相似而被去重
-        assert_eq!(deduplicated.len(), 1, "hamming distance path should detect similarity");
+        assert_eq!(
+            deduplicated.len(),
+            1,
+            "hamming distance path should detect similarity"
+        );
     }
 
     #[test]
@@ -764,6 +786,10 @@ mod tests {
         ];
 
         let deduplicated = dedup.deduplicate(results);
-        assert_eq!(deduplicated.len(), 1, "UrlAndTitle should also use hamming distance");
+        assert_eq!(
+            deduplicated.len(),
+            1,
+            "UrlAndTitle should also use hamming distance"
+        );
     }
 }

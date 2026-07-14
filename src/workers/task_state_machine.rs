@@ -624,13 +624,9 @@ mod tests {
 
     #[test]
     fn test_is_terminal_state_all_variants() {
-        assert!(TaskStateValidator::is_terminal_state(
-            TaskStatus::Completed
-        ));
+        assert!(TaskStateValidator::is_terminal_state(TaskStatus::Completed));
         assert!(TaskStateValidator::is_terminal_state(TaskStatus::Failed));
-        assert!(TaskStateValidator::is_terminal_state(
-            TaskStatus::Cancelled
-        ));
+        assert!(TaskStateValidator::is_terminal_state(TaskStatus::Cancelled));
         assert!(!TaskStateValidator::is_terminal_state(TaskStatus::Queued));
         assert!(!TaskStateValidator::is_terminal_state(TaskStatus::Active));
     }

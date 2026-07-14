@@ -313,7 +313,10 @@ mod tests {
     fn test_escape_html_plain_text_unchanged() {
         // 测试普通文本不被修改
         let text = "Hello World Rust Programming";
-        assert_eq!(HtmlParser::escape_html(text), "Hello World Rust Programming");
+        assert_eq!(
+            HtmlParser::escape_html(text),
+            "Hello World Rust Programming"
+        );
     }
 
     #[test]
@@ -327,7 +330,10 @@ mod tests {
         assert!(escaped.contains("&gt;"), "should contain &gt;");
         assert!(escaped.contains("&amp;"), "should contain &amp;");
         // 确保原始的 "& " (后跟空格的裸 & ) 不存在
-        assert!(!escaped.contains("& "), "should not contain raw & followed by space");
+        assert!(
+            !escaped.contains("& "),
+            "should not contain raw & followed by space"
+        );
     }
 
     #[test]

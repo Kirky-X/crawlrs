@@ -21,7 +21,7 @@ use crate::engines::engine_client::EngineError;
 use crate::infrastructure::services::config_service::BrowserConfigTrait;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -351,7 +351,7 @@ impl BrowserPoolState {
 
             // 添加自定义参数
             for arg in &self.config.browser_args {
-                builder = builder.arg(arg);
+                builder = builder.arg(arg.as_str());
             }
 
             if let Some(ref proxy) = proxy_url {
@@ -719,12 +719,6 @@ impl BrowserPool {
     /// 获取配置
     pub fn config(&self) -> &BrowserPoolConfig {
         &self.state.config
-    }
-
-    /// 获取归还通道发送端
-    async fn get_return_sender(&self) -> Option<mpsc::Sender<ReturnMessage>> {
-        let sender = self.state.return_sender.lock().await;
-        sender.clone()
     }
 }
 

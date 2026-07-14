@@ -257,7 +257,7 @@ pub fn generate_regex_key(pattern: &str) -> String {
 /// Create a new oxcache instance with the given settings
 pub async fn create_cache(
     settings: &CacheSettings,
-) -> Result<Arc<SearchCache>, oxcache::CacheError> {
+) -> Result<Arc<SearchCache>, oxcache::OxCacheError> {
     let cache: SearchCache = Cache::builder()
         .capacity(settings.memory.capacity)
         .ttl(Duration::from_secs(settings.memory.ttl_seconds))
@@ -270,7 +270,7 @@ pub async fn create_cache(
 pub async fn create_dns_cache(
     capacity: u64,
     ttl_seconds: u64,
-) -> Result<Arc<DnsCache>, oxcache::CacheError> {
+) -> Result<Arc<DnsCache>, oxcache::OxCacheError> {
     let cache: DnsCache = Cache::builder()
         .capacity(capacity)
         .ttl(Duration::from_secs(ttl_seconds))
@@ -283,7 +283,7 @@ pub async fn create_dns_cache(
 pub async fn create_regex_cache(
     capacity: u64,
     ttl_seconds: u64,
-) -> Result<Arc<RegexCacheType>, oxcache::CacheError> {
+) -> Result<Arc<RegexCacheType>, oxcache::OxCacheError> {
     let cache: RegexCacheType = Cache::builder()
         .capacity(capacity)
         .ttl(Duration::from_secs(ttl_seconds))
@@ -296,14 +296,14 @@ pub async fn create_regex_cache(
 #[cfg(feature = "redis-cache")]
 pub async fn create_tiered_cache(
     settings: &CacheSettings,
-) -> Result<Arc<SearchCache>, oxcache::CacheError> {
+) -> Result<Arc<SearchCache>, oxcache::OxCacheError> {
     create_cache(settings).await
 }
 
 #[cfg(not(feature = "redis-cache"))]
 pub async fn create_tiered_cache(
     settings: &CacheSettings,
-) -> Result<Arc<SearchCache>, oxcache::CacheError> {
+) -> Result<Arc<SearchCache>, oxcache::OxCacheError> {
     create_cache(settings).await
 }
 

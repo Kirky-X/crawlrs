@@ -7,7 +7,6 @@ use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
-use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
@@ -32,7 +31,6 @@ pub struct WorkerManager {
     repository: Arc<dyn TaskRepository>,
     result_repository: Arc<dyn ScrapeResultRepository>,
     crawl_repository: Arc<dyn CrawlRepository>,
-    storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
     webhook_service: Arc<dyn WebhookService>,
     credits_repository: Arc<dyn CreditsRepository>,
     engine_client: Arc<EngineClient>,
@@ -53,7 +51,6 @@ pub struct WorkerManagerDeps {
     pub repository: Arc<dyn TaskRepository>,
     pub result_repository: Arc<dyn ScrapeResultRepository>,
     pub crawl_repository: Arc<dyn CrawlRepository>,
-    pub storage_repository: Option<Arc<dyn StorageRepository + Send + Sync>>,
     pub webhook_service: Arc<dyn WebhookService>,
     pub credits_repository: Arc<dyn CreditsRepository>,
     pub engine_client: Arc<EngineClient>,
@@ -79,7 +76,6 @@ impl WorkerManager {
             repository: deps.repository,
             result_repository: deps.result_repository,
             crawl_repository: deps.crawl_repository,
-            storage_repository: deps.storage_repository,
             webhook_service: deps.webhook_service,
             credits_repository: deps.credits_repository,
             engine_client: deps.engine_client,
@@ -115,7 +111,6 @@ impl WorkerManager {
                 self.repository.clone(),
                 self.result_repository.clone(),
                 self.crawl_repository.clone(),
-                self.storage_repository.clone(),
                 self.webhook_service.clone(),
                 self.credits_repository.clone(),
                 self.engine_client.clone(),
@@ -497,7 +492,11 @@ mod tests {
         // The struct should be 16 bytes (no padding needed).
         let size = std::mem::size_of::<WorkerManagerConfig>();
         assert!(size > 0);
-        assert!(size <= 32, "WorkerManagerConfig size {} seems too large", size);
+        assert!(
+            size <= 32,
+            "WorkerManagerConfig size {} seems too large",
+            size
+        );
     }
 
     // ========== WorkerManager handles field verification ==========

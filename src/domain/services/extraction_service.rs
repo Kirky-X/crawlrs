@@ -1420,12 +1420,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_async_array_attr_non_href_without_base() {
-        let html = r#"<html><body><span data-id="1">A</span><span data-id="2">B</span></body></html>"#;
+        let html =
+            r#"<html><body><span data-id="1">A</span><span data-id="2">B</span></body></html>"#;
         let mut rules = HashMap::new();
-        rules.insert(
-            "ids".to_string(),
-            rule(Some("span"), Some("data-id"), true),
-        );
+        rules.insert("ids".to_string(), rule(Some("span"), Some("data-id"), true));
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let service = ExtractionService::new(Arc::new(mock));
@@ -1444,10 +1442,7 @@ mod tests {
     async fn test_extract_async_single_attr_non_href_with_base() {
         let html = r#"<html><body><div class="content">Text</div></body></html>"#;
         let mut rules = HashMap::new();
-        rules.insert(
-            "cls".to_string(),
-            rule(Some("div"), Some("class"), false),
-        );
+        rules.insert("cls".to_string(), rule(Some("div"), Some("class"), false));
 
         let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
         let service = ExtractionService::new(Arc::new(mock));

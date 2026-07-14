@@ -5,7 +5,7 @@
 
 //! sdforge-based SDK interface layer.
 //!
-//! Exposes domain services as HTTP endpoints via sdforge's `#[service_api]` macro.
+//! Exposes domain services as HTTP endpoints via sdforge's `#[forge]` macro.
 //! Each wrapper delegates to an existing domain trait (SearchServiceTrait,
 //! TaskQueue, CrawlRepository) without modifying domain logic.
 //!
@@ -95,7 +95,7 @@ pub struct SdkCrawlResponse {
 // "/api/v1/sdk/..." (the default prefix is /api/{version}).
 // ============================================================================
 
-#[service_api(
+#[forge(
     name = "sdk_search",
     version = "v1",
     path = "/sdk/search",
@@ -152,7 +152,7 @@ async fn sdk_search(
     })
 }
 
-#[service_api(
+#[forge(
     name = "sdk_create_task",
     version = "v1",
     path = "/sdk/tasks",
@@ -222,7 +222,7 @@ async fn sdk_create_task(
     })
 }
 
-#[service_api(
+#[forge(
     name = "sdk_scrape",
     version = "v1",
     path = "/sdk/scrape",
@@ -279,7 +279,7 @@ async fn sdk_scrape(
     })
 }
 
-#[service_api(
+#[forge(
     name = "sdk_create_crawl",
     version = "v1",
     path = "/sdk/crawl",

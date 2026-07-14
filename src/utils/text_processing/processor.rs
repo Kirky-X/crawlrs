@@ -1498,7 +1498,9 @@ mod tests {
     fn test_web_content_processor_process_xml_content() {
         let processor = WebContentProcessor::new();
         let xml = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><root><item>test</item></root>";
-        let result = processor.process_web_content(xml, Some("application/xml")).unwrap();
+        let result = processor
+            .process_web_content(xml, Some("application/xml"))
+            .unwrap();
         // XML does not contain HTML tags (html, head, body, div, p, a),
         // so is_html should be false
         assert!(!result.is_html);
@@ -1608,7 +1610,9 @@ mod tests {
     fn test_web_content_processor_component_process_html_with_encoding() {
         let component = WebContentProcessorComponent::default();
         let html = b"<html><head><meta charset=\"utf-8\"></head><body><p>Encoded content</p></body></html>";
-        let result = component.process_web_content(html, Some("text/html")).unwrap();
+        let result = component
+            .process_web_content(html, Some("text/html"))
+            .unwrap();
         assert!(result.is_html);
         assert_eq!(result.declared_encoding, Some("utf-8".to_string()));
         assert!(result.extracted_text.contains("Encoded content"));

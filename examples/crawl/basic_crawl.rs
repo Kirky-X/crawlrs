@@ -23,8 +23,8 @@ use crawlrs::application::dto::task_query_request::{Pagination, TaskQueryRequest
 use crawlrs::domain::repositories::crawl_repo::CrawlRepository;
 use crawlrs::domain::repositories::task_repo::TaskRepository;
 use crawlrs::domain::services::extraction_service::ExtractionRule;
-use std::collections::HashMap;
 use log::info;
+use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() {

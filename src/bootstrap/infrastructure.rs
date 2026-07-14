@@ -6,7 +6,6 @@
 //! Infrastructure initialization: database, Redis, HTTP client, and repositories.
 
 use crate::config::settings::Settings;
-use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::infrastructure::cache::redis_client::RedisClient;
 use crate::infrastructure::database::dbnexus_connection::DatabasePool;
 use crate::infrastructure::oxcache::{create_cache, SearchCache};
@@ -175,33 +174,6 @@ pub fn init_repositories(db: Arc<DatabasePool>, settings: &Settings) -> Reposito
     }
 }
 
-/// Initialize storage repository.
-///
-/// This function creates the appropriate storage repository based on
-/// the configuration (e.g., S3, local filesystem).
-///
-/// # Arguments
-///
-/// * `settings` - Application settings for storage configuration
-///
-/// # Returns
-///
-/// Returns an optional storage repository.
-pub fn init_storage_repository(
-    settings: &Settings,
-) -> Result<Option<Arc<dyn StorageRepository + Send + Sync>>> {
-    match crate::infrastructure::storage::create_storage_repository(&settings.storage) {
-        Ok(repo) => Ok(Some(Arc::from(repo))),
-        Err(e) => {
-            log::error!("Failed to initialize storage repository: {}", e);
-            Err(anyhow::anyhow!(
-                "Failed to initialize storage repository: {}",
-                e
-            ))
-        }
-    }
-}
-
 /// All infrastructure components initialized for the application.
 #[derive(Clone)]
 pub struct InfrastructureComponents {
@@ -215,8 +187,6 @@ pub struct InfrastructureComponents {
     pub http_client: Arc<reqwest::Client>,
     /// All application repositories.
     pub repositories: Repositories,
-    /// Optional storage repository.
-    pub storage_repo: Option<Arc<dyn StorageRepository + Send + Sync>>,
 }
 
 /// Initialize oxcache for simple caching scenarios.
@@ -273,7 +243,6 @@ pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureCo
     let redis_client = init_redis(settings).await?;
     let http_client = init_http_client(settings)?;
     let repositories = init_repositories(db.clone(), settings);
-    let storage_repo = init_storage_repository(settings)?;
     let oxcache = init_oxcache(settings).await?;
 
     Ok(InfrastructureComponents {
@@ -282,7 +251,6 @@ pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureCo
         oxcache,
         http_client,
         repositories,
-        storage_repo,
     })
 }
 
@@ -369,22 +337,6 @@ mod tests {
         );
     }
 
-    // ========== init_storage_repository tests ==========
-
-    #[test]
-    fn test_init_storage_repository_with_local_storage() {
-        let mut settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        // Force local storage type (no external S3 dependency)
-        settings.storage.storage_type = "local".to_string();
-        let result = init_storage_repository(&settings);
-        assert!(
-            result.is_ok(),
-            "init_storage_repository should succeed with local storage type, got err: {:?}",
-            result.err()
-        );
-    }
-
     // ========== testcontainers integration tests ==========
     //
     // The following tests require Docker to be running on the host. They use
@@ -446,7 +398,9 @@ mod tests {
             }
         };
         let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
-        let pool = init_database(&settings).await.expect("pool should be created");
+        let pool = init_database(&settings)
+            .await
+            .expect("pool should be created");
         // Verify the Arc strong count is at least 1.
         assert!(Arc::strong_count(&pool) >= 1);
         // Verify inner() accessor returns a usable Arc<DbPool>.
@@ -511,7 +465,9 @@ mod tests {
             }
         };
         let settings = tcf::settings_with_urls("postgres://127.0.0.1:1/x", &redis.url).unwrap();
-        let client = init_redis(&settings).await.expect("redis client should be created");
+        let client = init_redis(&settings)
+            .await
+            .expect("redis client should be created");
         assert!(Arc::strong_count(&client) >= 1);
     }
 
@@ -524,11 +480,8 @@ mod tests {
         // Deliberately invalid Redis URL (port 1 should refuse connections).
         // Note: RedisClient::from_settings may still construct the client
         // object (deadpool is lazy), so we only verify it doesn't panic.
-        let settings = tcf::settings_with_urls(
-            "postgres://127.0.0.1:1/x",
-            "redis://127.0.0.1:1/0",
-        )
-        .unwrap();
+        let settings =
+            tcf::settings_with_urls("postgres://127.0.0.1:1/x", "redis://127.0.0.1:1/0").unwrap();
         // Construction itself should not panic; actual connection errors
         // surface on first use.
         let _ = init_redis(&settings).await;
@@ -548,7 +501,9 @@ mod tests {
             }
         };
         let settings = tcf::settings_with_urls(&pg.url, "redis://127.0.0.1:1").unwrap();
-        let db = init_database(&settings).await.expect("db pool should be created");
+        let db = init_database(&settings)
+            .await
+            .expect("db pool should be created");
         let repos = init_repositories(db.clone(), &settings);
 
         // Verify all repositories are constructed and share the same pool.
@@ -590,8 +545,6 @@ mod tests {
         assert!(Arc::strong_count(&infra.http_client) >= 1);
         // oxcache may be None if cache is disabled in config; just verify it's set or None.
         let _ = &infra.oxcache;
-        // storage_repo should be Some (local storage default).
-        assert!(infra.storage_repo.is_some());
         // Repositories: verify task_repo is constructed (Arc strong count >= 1).
         assert!(Arc::strong_count(&infra.repositories.task_repo) >= 1);
     }

@@ -37,7 +37,12 @@ impl Default for TeamGeoRestrictions {
     fn default() -> Self {
         Self {
             enable_geo_restrictions: true,
-            allowed_countries: Some(vec!["US".to_string(), "GB".to_string(), "DE".to_string(), "JP".to_string()]),
+            allowed_countries: Some(vec![
+                "US".to_string(),
+                "GB".to_string(),
+                "DE".to_string(),
+                "JP".to_string(),
+            ]),
             blocked_countries: Some(vec!["CN".to_string(), "RU".to_string()]),
             ip_whitelist: Some(vec!["192.168.1.0/24".to_string()]),
             domain_blacklist: Some(vec!["malicious.com".to_string()]),
@@ -65,8 +70,7 @@ fn validate_ip_whitelist(ip: IpAddr, whitelist: &Option<Vec<String>>) -> bool {
 
 fn is_ip_in_cidr(ip: IpAddr, cidr: &str) -> bool {
     // 简化的 CIDR 检查（实际使用 ipnet  crate）
-    cidr.contains(&format!("{}", ip))
-        || (ip.is_ipv4() && cidr == "0.0.0.0/0")
+    cidr.contains(&format!("{}", ip)) || (ip.is_ipv4() && cidr == "0.0.0.0/0")
 }
 
 fn validate_domain(domain: &str, blacklist: &Option<Vec<String>>) -> Result<(), String> {
@@ -90,7 +94,10 @@ async fn main() {
     let restrictions = TeamGeoRestrictions::default();
 
     info!("Team ID: {}", team_id);
-    info!("Geo restrictions enabled: {}", restrictions.enable_geo_restrictions);
+    info!(
+        "Geo restrictions enabled: {}",
+        restrictions.enable_geo_restrictions
+    );
 
     // 验证 IP 白名单
     info!("\n--- IP 白名单验证 ---");

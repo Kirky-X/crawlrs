@@ -17,8 +17,8 @@
 //! ```
 
 use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
-use std::time::Duration;
 use log::info;
+use std::time::Duration;
 
 /// 模拟的表单数据提取结果
 #[derive(Debug)]

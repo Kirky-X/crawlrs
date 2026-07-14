@@ -20,8 +20,8 @@
 //! - 负载配置
 
 use log::{info, warn};
-use uuid::Uuid;
 use std::time::Duration;
+use uuid::Uuid;
 
 // 支持的事件类型
 #[derive(Debug, Clone)]
@@ -96,7 +96,10 @@ impl WebhookSender {
         }
 
         self.delivery_count += 1;
-        info!("Sending webhook to {} for event: {:?}", self.config.url, event);
+        info!(
+            "Sending webhook to {} for event: {:?}",
+            self.config.url, event
+        );
         info!("  Payload: {} bytes", payload.len());
         info!("  Timeout: {}ms", self.config.timeout_ms);
 
@@ -126,7 +129,7 @@ async fn main() {
     // 创建 Webhook 配置
     let mut webhook_config = WebhookConfig::new(
         "https://your-server.com/webhook/crawlrs",
-        "whsec_secret_key_here"
+        "whsec_secret_key_here",
     );
 
     info!("Created webhook: {}", webhook_config.id);
@@ -135,7 +138,9 @@ async fn main() {
     // 配置事件类型
     info!("\n--- 配置事件类型 ---");
     webhook_config.add_event(WebhookEvent::TaskCompleted);
-    webhook_config.add_event(WebhookEvent::TaskFailed { error: String::new() });
+    webhook_config.add_event(WebhookEvent::TaskFailed {
+        error: String::new(),
+    });
     webhook_config.add_event(WebhookEvent::TaskProgress { progress: 50 });
 
     // 配置超时
@@ -147,20 +152,28 @@ async fn main() {
     // 模拟发送 Webhook
     info!("\n--- 模拟发送 Webhook ---");
 
-    let _ = sender.send(
-        &WebhookEvent::TaskCompleted,
-        r#"{"task_id": "uuid", "status": "completed", "result_count": 100}"#
-    ).await;
+    let _ = sender
+        .send(
+            &WebhookEvent::TaskCompleted,
+            r#"{"task_id": "uuid", "status": "completed", "result_count": 100}"#,
+        )
+        .await;
 
-    let _ = sender.send(
-        &WebhookEvent::TaskProgress { progress: 50 },
-        r#"{"task_id": "uuid", "progress": 50}"#
-    ).await;
+    let _ = sender
+        .send(
+            &WebhookEvent::TaskProgress { progress: 50 },
+            r#"{"task_id": "uuid", "progress": 50}"#,
+        )
+        .await;
 
-    let _ = sender.send(
-        &WebhookEvent::TaskFailed { error: "Timeout".to_string() },
-        r#"{"task_id": "uuid", "status": "failed", "error": "Timeout"}"#
-    ).await;
+    let _ = sender
+        .send(
+            &WebhookEvent::TaskFailed {
+                error: "Timeout".to_string(),
+            },
+            r#"{"task_id": "uuid", "status": "failed", "error": "Timeout"}"#,
+        )
+        .await;
 
     // 显示统计
     let (delivered, success) = sender.get_stats();

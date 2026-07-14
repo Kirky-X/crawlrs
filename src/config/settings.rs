@@ -23,7 +23,6 @@ pub use super::engines::{EngineSettings, FireCdpSettings, FireTlsSettings, Flare
 pub use super::llm::LLMSettings;
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 pub use super::search::{BingSearchSettings, SearchSettings};
-pub use super::storage::{StorageSettings, WebhookSettings};
 
 // =============================================================================
 // 主配置结构
@@ -64,9 +63,6 @@ pub struct Settings {
 
     /// 并发控制配置
     pub concurrency: ConcurrencySettings,
-
-    /// 存储配置
-    pub storage: StorageSettings,
 
     /// Webhook 配置
     pub webhook: WebhookSettings,
@@ -115,6 +111,50 @@ pub struct CorsSettings {
     /// 允许的跨域来源列表（逗号分隔）
     #[config(default = "*".to_string())]
     pub allowed_origins: String,
+}
+
+// =============================================================================
+// Webhook 配置
+// =============================================================================
+
+/// Webhook配置设置
+///
+/// 配置 Webhook 功能的参数
+///
+/// # 字段说明
+///
+/// * `secret` - Webhook 签名密钥，用于验证请求真实性（敏感信息，仅 crate 可见）
+///
+/// # 安全提示
+///
+/// `secret` 字段包含 Webhook 签名密钥，泄露可能导致伪造请求。
+/// 该字段仅对 crate 可见，外部模块应使用 `secret()` 方法访问。
+#[derive(Debug, Clone, Deserialize, Serialize, Config)]
+#[config(env_prefix = "CRAWLRS__WEBHOOK__")]
+pub struct WebhookSettings {
+    /// Webhook签名密钥 (敏感信息)
+    /// 注意：此字段包含敏感信息，仅 crate 内部可访问
+    pub(crate) secret: String,
+
+    /// 最大重试次数
+    #[config(default = 5)]
+    pub max_retries: u32,
+
+    /// 批处理大小
+    #[config(default = 1000)]
+    pub batch_size: usize,
+}
+
+impl WebhookSettings {
+    /// 获取 Webhook 签名密钥
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回 Webhook 签名密钥，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn secret(&self) -> &str {
+        &self.secret
+    }
 }
 
 // =============================================================================
@@ -504,39 +544,6 @@ pub fn validate_security(settings: &Settings) -> Result<(), validator::Validatio
         }
     }
 
-    // 检查 S3 配置
-    if settings.storage.storage_type == "s3" {
-        // 检查 S3 bucket
-        if settings.storage.s3_bucket.is_none()
-            || settings
-                .storage
-                .s3_bucket
-                .as_ref()
-                .is_some_and(|b| b.is_empty())
-        {
-            return Err(validator::ValidationError::new("s3_bucket_missing"));
-        }
-
-        // 检查 S3 access key
-        if settings.storage.s3_access_key().is_none()
-            || settings
-                .storage
-                .s3_access_key()
-                .is_some_and(|s| s.is_empty())
-        {
-            return Err(validator::ValidationError::new("s3_access_key_missing"));
-        }
-
-        // 检查 S3 secret key 长度
-        if settings
-            .storage
-            .s3_secret_key()
-            .is_some_and(|s| s.len() < 32)
-        {
-            return Err(validator::ValidationError::new("s3_secret_key_short"));
-        }
-    }
-
     Ok(())
 }
 
@@ -552,11 +559,6 @@ pub fn validate_values(settings: &Settings) -> Result<(), validator::ValidationE
     // 验证 A/B 测试权重范围
     if settings.search.variant_b_weight < 0.0 || settings.search.variant_b_weight > 1.0 {
         return Err(validator::ValidationError::new("invalid_variant_b_weight"));
-    }
-
-    // 验证存储类型
-    if settings.storage.storage_type != "local" && settings.storage.storage_type != "s3" {
-        return Err(validator::ValidationError::new("invalid_storage_type"));
     }
 
     Ok(())
@@ -589,7 +591,6 @@ mod tests {
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),
-            storage: StorageSettings::default(),
             webhook: WebhookSettings::default(),
             bing_search: BingSearchSettings::default(),
             search: SearchSettings::default(),
@@ -1020,7 +1021,6 @@ mod tests {
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),
-            storage: StorageSettings::default(),
             webhook: WebhookSettings {
                 secret: "a-very-strong-and-secure-webhook-secret-key-32+chars".to_string(),
                 max_retries: 5,
@@ -1072,22 +1072,6 @@ mod tests {
         settings.search.variant_b_weight = 1.5;
         let result = validate_values(&settings);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_values_invalid_storage_type() {
-        let mut settings = build_test_settings();
-        settings.storage.storage_type = "invalid".to_string();
-        let result = validate_values(&settings);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code.to_string(), "invalid_storage_type");
-    }
-
-    #[test]
-    fn test_validate_values_storage_type_s3_valid() {
-        let mut settings = build_test_settings();
-        settings.storage.storage_type = "s3".to_string();
-        assert!(validate_values(&settings).is_ok());
     }
 
     // ========== validate_security tests (serialized via mutex due to env var) ==========
@@ -1191,66 +1175,5 @@ mod tests {
             result.unwrap_err().code.to_string(),
             "database_password_weak"
         );
-    }
-
-    #[test]
-    fn test_validate_security_s3_missing_bucket() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::remove_var("APP_ENVIRONMENT");
-        std::env::remove_var("CRAWLRS_ENV");
-        let mut settings = build_test_settings();
-        settings.storage = StorageSettings::s3("us-east-1", "", None, None, None);
-        let result = validate_security(&settings);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code.to_string(), "s3_bucket_missing");
-    }
-
-    #[test]
-    fn test_validate_security_s3_missing_access_key() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::remove_var("APP_ENVIRONMENT");
-        std::env::remove_var("CRAWLRS_ENV");
-        let mut settings = build_test_settings();
-        settings.storage = StorageSettings::s3("us-east-1", "my-bucket", None, None, None);
-        let result = validate_security(&settings);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().code.to_string(),
-            "s3_access_key_missing"
-        );
-    }
-
-    #[test]
-    fn test_validate_security_s3_short_secret_key() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::remove_var("APP_ENVIRONMENT");
-        std::env::remove_var("CRAWLRS_ENV");
-        let mut settings = build_test_settings();
-        settings.storage = StorageSettings::s3(
-            "us-east-1",
-            "my-bucket",
-            Some("access-key".to_string()),
-            Some("short-secret".to_string()),
-            None,
-        );
-        let result = validate_security(&settings);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code.to_string(), "s3_secret_key_short");
-    }
-
-    #[test]
-    fn test_validate_security_s3_valid_config() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::remove_var("APP_ENVIRONMENT");
-        std::env::remove_var("CRAWLRS_ENV");
-        let mut settings = build_test_settings();
-        settings.storage = StorageSettings::s3(
-            "us-east-1",
-            "valid-bucket",
-            Some("access-key".to_string()),
-            Some("this-is-a-valid-secret-key-32-chars!".to_string()),
-            None,
-        );
-        assert!(validate_security(&settings).is_ok());
     }
 }

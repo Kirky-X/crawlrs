@@ -37,31 +37,31 @@ pub struct DatabaseSettings {
     pub(crate) url: String,
 
     /// 最大连接数
-    #[config(default = 150)]
+    #[config(default = Some(150))]
     pub max_connections: Option<u32>,
 
     /// 最小连接数
-    #[config(default = 20)]
+    #[config(default = Some(20))]
     pub min_connections: Option<u32>,
 
     /// 连接超时时间（秒）
-    #[config(default = 15)]
+    #[config(default = Some(15))]
     pub connect_timeout: Option<u64>,
 
     /// 空闲连接超时时间（秒）
-    #[config(default = 300)]
+    #[config(default = Some(300))]
     pub idle_timeout: Option<u64>,
 
     /// 连接最大存活时间（秒）
-    #[config(default = 1800)]
+    #[config(default = Some(1800))]
     pub max_lifetime: Option<u64>,
 
     /// 连接存活检查间隔（秒）
-    #[config(default = 30)]
+    #[config(default = Some(30))]
     pub connection_keepalive: Option<u64>,
 
     /// 健康检查间隔（秒）
-    #[config(default = 60)]
+    #[config(default = Some(60))]
     pub health_check_interval: Option<u64>,
 }
 
@@ -116,19 +116,19 @@ pub struct RedisSettings {
     pub(crate) url: String,
 
     /// 最大连接数
-    #[config(default = 20)]
+    #[config(default = Some(20))]
     pub max_connections: Option<u32>,
 
     /// 最小连接数（连接池预热）
-    #[config(default = 5)]
+    #[config(default = Some(5))]
     pub min_connections: Option<u32>,
 
     /// 连接超时时间（秒）
-    #[config(default = 10)]
+    #[config(default = Some(10))]
     pub connection_timeout: Option<u64>,
 
     /// 空闲连接超时时间（秒）
-    #[config(default = 300)]
+    #[config(default = Some(300))]
     pub idle_timeout: Option<u64>,
 }
 

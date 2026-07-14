@@ -62,7 +62,10 @@ impl CustomHttpEngine {
         &self.name
     }
 
-    pub async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, CustomEngineError> {
+    pub async fn scrape(
+        &self,
+        request: &ScrapeRequest,
+    ) -> Result<ScrapeResponse, CustomEngineError> {
         info!("Engine '{}' scraping: {}", self.name, request.url);
 
         // 验证 URL
@@ -77,7 +80,8 @@ impl CustomHttpEngine {
         let response = ScrapeResponse {
             url: request.url.clone(),
             status_code: 200,
-            content: format!(r#"<!DOCTYPE html>
+            content: format!(
+                r#"<!DOCTYPE html>
 <html>
 <head><title>{}</title></head>
 <body>
@@ -85,7 +89,9 @@ impl CustomHttpEngine {
 <p>URL: {}</p>
 <p>Engine: {}</p>
 </body>
-</html>"#, request.url, request.url, self.name),
+</html>"#,
+                request.url, request.url, self.name
+            ),
             success: true,
         };
 

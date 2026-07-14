@@ -290,8 +290,14 @@ mod tests {
 
         assert_eq!(params.get("q"), Some(&"rust".to_string()));
         assert_eq!(params.get("pq"), Some(&"rust".to_string()));
-        assert!(params.get("first").is_none(), "page 1 should not have 'first'");
-        assert!(params.get("FORM").is_none(), "page 1 should not have 'FORM'");
+        assert!(
+            params.get("first").is_none(),
+            "page 1 should not have 'first'"
+        );
+        assert!(
+            params.get("FORM").is_none(),
+            "page 1 should not have 'FORM'"
+        );
     }
 
     #[test]
@@ -333,7 +339,10 @@ mod tests {
         let url = engine.build_bing_url("rust language", 1);
 
         assert!(url.starts_with("https://www.bing.com/search?"));
-        assert!(url.contains("q=rust+language"), "URL should contain encoded query");
+        assert!(
+            url.contains("q=rust+language"),
+            "URL should contain encoded query"
+        );
         assert!(url.contains("pq=rust+language"));
         assert!(!url.contains("first="), "page 1 should not have 'first'");
     }
@@ -420,7 +429,10 @@ mod tests {
         let err = result.unwrap_err();
         match err {
             SearchError::Parse(msg) => {
-                assert!(msg.contains("Empty HTML"), "error should mention empty HTML")
+                assert!(
+                    msg.contains("Empty HTML"),
+                    "error should mention empty HTML"
+                )
             }
             other => panic!("expected SearchError::Parse, got {:?}", other),
         }

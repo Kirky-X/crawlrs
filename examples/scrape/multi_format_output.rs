@@ -22,8 +22,8 @@
 //! ```
 
 use crawlrs::engines::engine_client::{EngineClient, ScrapeOptionsBuilder};
-use std::time::Duration;
 use log::info;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {

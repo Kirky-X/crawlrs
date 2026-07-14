@@ -112,7 +112,6 @@ async fn start_worker_service(
         repository: app_state.task_repo(),
         result_repository: app_state.result_repo(),
         crawl_repository: app_state.crawl_repo(),
-        storage_repository: Some(app_state.storage_repo()),
         webhook_service: app_state.webhook_service(),
         credits_repository: app_state.credits_repo(),
         engine_client: app_state.engine_client(),
@@ -222,9 +221,6 @@ async fn main() -> anyhow::Result<()> {
         webhook_repo: infrastructure.repositories.webhook_repo,
         webhook_event_repo: infrastructure.repositories.webhook_event_repo,
         tasks_backlog_repo: infrastructure.repositories.tasks_backlog_repo,
-        storage_repo: infrastructure.storage_repo.unwrap_or_else(|| {
-            Arc::new(crawlrs::domain::repositories::storage_repository::NoOpStorage)
-        }),
         task_queue: services.queue,
         rate_limiting_service: services.rate_limiting_service,
         team_service: services.team_service,

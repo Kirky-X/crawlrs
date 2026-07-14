@@ -1465,11 +1465,8 @@ mod tests {
         let mut router = EngineRouter::new(engines);
         router.set_strategy(LoadBalancingStrategy::Random);
         let stats = std::collections::HashMap::new();
-        let mut candidates: Vec<(f64, Arc<dyn ScraperEngine>)> = router
-            .engines
-            .iter()
-            .map(|e| (1.0, e.clone()))
-            .collect();
+        let mut candidates: Vec<(f64, Arc<dyn ScraperEngine>)> =
+            router.engines.iter().map(|e| (1.0, e.clone())).collect();
         router.sort_candidates_by_strategy(&mut candidates, &stats);
         // Random may or may not change order, just verify no panic
         assert_eq!(candidates.len(), 3);
@@ -1666,7 +1663,9 @@ mod tests {
     fn test_router_metrics_record_engine_success() {
         let metrics = RouterMetrics::new();
         // Pre-initialize success_count entry (record_engine_success only increments existing keys)
-        metrics.engine_success_count.insert("engine1".to_string(), 0);
+        metrics
+            .engine_success_count
+            .insert("engine1".to_string(), 0);
         metrics.record_engine_success("engine1");
         metrics.record_engine_success("engine1");
         let count = metrics.engine_success_count.get("engine1").unwrap();
@@ -1678,9 +1677,15 @@ mod tests {
         let metrics = RouterMetrics::new();
         // Pre-initialize failure_count and failure_classification entries
         // (record_engine_failure only increments existing keys)
-        metrics.engine_failure_count.insert("engine1".to_string(), 0);
-        metrics.failure_classification.insert("timeout".to_string(), 0);
-        metrics.failure_classification.insert("network_error".to_string(), 0);
+        metrics
+            .engine_failure_count
+            .insert("engine1".to_string(), 0);
+        metrics
+            .failure_classification
+            .insert("timeout".to_string(), 0);
+        metrics
+            .failure_classification
+            .insert("network_error".to_string(), 0);
         metrics.record_engine_failure("engine1", "timeout error");
         metrics.record_engine_failure("engine1", "network error");
         let count = metrics.engine_failure_count.get("engine1").unwrap();
@@ -1732,8 +1737,12 @@ mod tests {
     fn test_router_metrics_get_avg_latency_ns_with_data() {
         let metrics = RouterMetrics::new();
         // Manually populate both latencies and success_count
-        metrics.engine_latencies.insert("engine1".to_string(), 1_000_000);
-        metrics.engine_success_count.insert("engine1".to_string(), 10);
+        metrics
+            .engine_latencies
+            .insert("engine1".to_string(), 1_000_000);
+        metrics
+            .engine_success_count
+            .insert("engine1".to_string(), 10);
         let avg = metrics.get_avg_latency_ns("engine1");
         assert_eq!(avg, Some(100_000));
     }
@@ -2233,7 +2242,10 @@ mod tests {
         let request = make_request();
         let result = router.route(&request).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), EngineError::AllEnginesFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            EngineError::AllEnginesFailed(_)
+        ));
     }
 }
 

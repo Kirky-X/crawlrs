@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use chardetng::EncodingDetector;
+use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use encoding_rs::Encoding;
 use log::{debug, warn};
 use lru::LruCache;
@@ -187,9 +187,9 @@ impl TextEncodingProcessor {
         input: &[u8],
     ) -> (Result<String, TextEncodingError>, EncodingDetection) {
         debug!("开始编码检测");
-        let mut detector = EncodingDetector::new();
+        let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
         detector.feed(input, true);
-        let encoding = detector.guess(None, true);
+        let encoding = detector.guess(None, Utf8Detection::Allow);
         let encoding_name = encoding.name();
         let is_utf8 = encoding_name == "utf-8";
         let confidence = if is_utf8 { 1.0 } else { 0.9 };

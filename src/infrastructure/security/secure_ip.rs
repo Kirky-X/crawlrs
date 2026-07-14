@@ -705,10 +705,7 @@ mod tests {
         // 包含无效 CIDR/IP 的条目应被跳过，继续检查后续条目
         let config = TrustedProxyConfig::from_settings(
             true,
-            vec![
-                "not-a-valid-cidr-or-ip".to_string(),
-                "10.0.0.1".to_string(),
-            ],
+            vec!["not-a-valid-cidr-or-ip".to_string(), "10.0.0.1".to_string()],
         );
 
         // 10.0.0.1 匹配第二个有效条目
@@ -774,10 +771,7 @@ mod tests {
     #[test]
     fn test_is_trusted_ipv6_cidr() {
         // 测试 IPv6 CIDR 格式
-        let config = TrustedProxyConfig::from_settings(
-            true,
-            vec!["2001:db8::/32".to_string()],
-        );
+        let config = TrustedProxyConfig::from_settings(true, vec!["2001:db8::/32".to_string()]);
 
         let ip: IpAddr = "2001:db8::1".parse().unwrap();
         assert!(config.is_trusted(&ip));

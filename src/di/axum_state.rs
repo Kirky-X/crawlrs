@@ -15,7 +15,6 @@ use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
-use crate::domain::repositories::storage_repository::StorageRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
@@ -58,8 +57,6 @@ pub struct AppState {
     pub webhook_repo: Arc<dyn WebhookRepository>,
     /// Webhook event repository
     pub webhook_event_repo: Arc<dyn WebhookEventRepository>,
-    /// Storage repository
-    pub storage_repo: Arc<dyn StorageRepository>,
     /// Tasks backlog repository
     pub tasks_backlog_repo: Arc<dyn TasksBacklogRepository>,
     /// Task queue
@@ -149,8 +146,6 @@ pub trait AppStateExt {
     fn redis_client(&self) -> Arc<RedisClient>;
     /// Get database pool (dbnexus DbPool)
     fn db_pool(&self) -> Arc<DbPool>;
-    /// Get storage repository
-    fn storage_repo(&self) -> Arc<dyn StorageRepository>;
     /// Get tasks backlog repository
     fn tasks_backlog_repo(&self) -> Arc<dyn TasksBacklogRepository>;
     /// Get task queue
@@ -250,10 +245,6 @@ impl AppStateExt for AppState {
 
     fn db_pool(&self) -> Arc<DbPool> {
         self.db_pool.clone()
-    }
-
-    fn storage_repo(&self) -> Arc<dyn StorageRepository> {
-        self.storage_repo.clone()
     }
 
     fn tasks_backlog_repo(&self) -> Arc<dyn TasksBacklogRepository> {
@@ -378,10 +369,6 @@ impl AppStateExt for Arc<AppState> {
         self.as_ref().db_pool()
     }
 
-    fn storage_repo(&self) -> Arc<dyn StorageRepository> {
-        self.as_ref().storage_repo()
-    }
-
     fn tasks_backlog_repo(&self) -> Arc<dyn TasksBacklogRepository> {
         self.as_ref().tasks_backlog_repo()
     }
@@ -434,7 +421,6 @@ mod tests {
     use crate::bootstrap::infrastructure::init_infrastructure;
     use crate::bootstrap::services::init_services;
     use crate::common::test_support::testcontainers_fixtures as tcf;
-    use crate::domain::repositories::storage_repository::NoOpStorage;
     use std::sync::Arc;
 
     async fn require_docker() -> bool {
@@ -449,11 +435,8 @@ mod tests {
         let handle = tcf::DbRedisHandle::start().await?;
         let settings = tcf::settings_with_urls(&handle.pg.url, &handle.redis.url)?;
         let infra = init_infrastructure(&settings).await?;
-        let engines = init_engine_components(
-            infra.http_client.clone(),
-            String::new(),
-            &settings.engines,
-        );
+        let engines =
+            init_engine_components(infra.http_client.clone(), String::new(), &settings.engines);
         let services = init_services(
             &infra,
             engines.router.clone(),
@@ -474,10 +457,6 @@ mod tests {
             result_repo: infra.repositories.result_repo.clone(),
             webhook_repo: infra.repositories.webhook_repo.clone(),
             webhook_event_repo: infra.repositories.webhook_event_repo.clone(),
-            storage_repo: infra
-                .storage_repo
-                .clone()
-                .unwrap_or_else(|| Arc::new(NoOpStorage)),
             tasks_backlog_repo: infra.repositories.tasks_backlog_repo.clone(),
             task_queue: services.queue.clone(),
             rate_limiting_service: services.rate_limiting_service.clone(),
@@ -574,9 +553,6 @@ mod tests {
 
         let db_pool: Arc<DbPool> = state.db_pool();
         assert!(Arc::strong_count(&db_pool) >= 1);
-
-        let storage_repo: Arc<dyn StorageRepository> = state.storage_repo();
-        let _ = &storage_repo;
 
         let tasks_backlog: Arc<dyn TasksBacklogRepository> = state.tasks_backlog_repo();
         assert!(Arc::strong_count(&tasks_backlog) >= 1);

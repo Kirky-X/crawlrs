@@ -89,7 +89,6 @@
 //! | `WebhookEventRepositoryComponent` | `WebhookEventRepository` | Webhook event data access |
 //! | `TasksBacklogRepositoryComponent` | `TasksBacklogRepository` | Tasks backlog data access |
 //! | `GeoRestrictionRepositoryComponent` | `GeoRestrictionRepository` | Geo restriction data access |
-//! | `StorageRepositoryComponent` | `StorageRepository` | File storage (local/S3) |
 //! | `TaskQueueComponent` | `TaskQueue` | PostgreSQL-based task queue |
 //!
 //! ### Service Components

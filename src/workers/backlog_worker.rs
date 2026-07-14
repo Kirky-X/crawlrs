@@ -390,7 +390,6 @@ mod tests {
                     default_team_limit,
                     task_lock_duration_seconds: 300,
                 },
-                storage: StorageSettings::default(),
                 webhook: WebhookSettings::default(),
                 bing_search: BingSearchSettings::default(),
                 search: SearchSettings::default(),

@@ -34,11 +34,11 @@ pub struct LLMSettings {
     pub(crate) api_key: Option<String>,
 
     /// 使用的模型名称
-    #[config(default = "gpt-3.5-turbo".to_string())]
+    #[config(default = Some("gpt-3.5-turbo".to_string()))]
     pub model: Option<String>,
 
     /// LLM API 基础 URL
-    #[config(default = "https://api.openai.com/v1".to_string())]
+    #[config(default = Some("https://api.openai.com/v1".to_string()))]
     pub api_base_url: Option<String>,
 }
 

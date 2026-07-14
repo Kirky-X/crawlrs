@@ -863,9 +863,8 @@ mod tests {
         assert!(perm.user_message().contains("insufficient scope"));
 
         // 引擎错误经过脱敏处理
-        let engine_err = AppError::Engine(
-            "Failed at /home/dev/src/main.rs:42 with api_key=secret".to_string(),
-        );
+        let engine_err =
+            AppError::Engine("Failed at /home/dev/src/main.rs:42 with api_key=secret".to_string());
         let msg = engine_err.user_message();
         assert!(!msg.contains("secret"));
         assert!(!msg.contains("/home/dev/"));
@@ -915,12 +914,10 @@ mod tests {
         assert_eq!(json["error"]["code"], "NOT_FOUND");
         assert_eq!(json["error"]["status"], 404);
         // 生产环境返回脱敏后的用户消息
-        assert!(
-            json["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("Resource not found")
-        );
+        assert!(json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Resource not found"));
     }
 
     #[tokio::test]
@@ -941,12 +938,10 @@ mod tests {
         assert_eq!(json["error"]["code"], "VALIDATION_ERROR");
         assert_eq!(json["error"]["status"], 400);
         // 开发环境返回详细错误信息
-        assert!(
-            json["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("bad input")
-        );
+        assert!(json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("bad input"));
     }
 
     #[tokio::test]
@@ -996,8 +991,7 @@ mod tests {
 
     #[test]
     fn test_from_engine_error_no_engines_available() {
-        let err: AppError =
-            crate::engines::engine_client::EngineError::NoEnginesAvailable.into();
+        let err: AppError = crate::engines::engine_client::EngineError::NoEnginesAvailable.into();
         match err {
             AppError::Engine(msg) => assert!(msg.contains("No scraping engines available")),
             other => panic!("expected Engine variant, got {:?}", other),
@@ -1077,8 +1071,7 @@ mod tests {
     #[test]
     fn test_from_engine_error_internal() {
         let err: AppError =
-            crate::engines::engine_client::EngineError::Internal("internal bug".to_string())
-                .into();
+            crate::engines::engine_client::EngineError::Internal("internal bug".to_string()).into();
         match err {
             AppError::Engine(msg) => assert_eq!(msg, "internal bug"),
             other => panic!("expected Engine variant, got {:?}", other),
@@ -1091,9 +1084,10 @@ mod tests {
 
     #[test]
     fn test_from_reqwest_error_conversion() {
-        // 使用无效证书数据触发 reqwest::Error
-        let result = reqwest::Certificate::from_pem(b"not a valid cert");
-        assert!(result.is_err());
+        // reqwest 0.13 + rustls 后端下 Certificate::from_pem 不再立即验证 PEM，
+        // 改用无效代理 URL 触发 reqwest::Error。
+        let result = reqwest::Proxy::all("not a valid url");
+        assert!(result.is_err(), "Proxy::all should reject invalid URL");
         let reqwest_err = result.unwrap_err();
         let app_err: AppError = reqwest_err.into();
         match app_err {

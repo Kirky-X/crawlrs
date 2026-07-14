@@ -613,9 +613,15 @@ mod tests {
         let svc = GeoLocationServiceImpl::new(client);
         let ips: Vec<IpAddr> = vec![];
         let result = svc.get_locations(&ips).await;
-        assert!(result.is_ok(), "get_locations should succeed for empty list");
+        assert!(
+            result.is_ok(),
+            "get_locations should succeed for empty list"
+        );
         let locations = result.unwrap();
-        assert!(locations.is_empty(), "should return empty Vec for empty input");
+        assert!(
+            locations.is_empty(),
+            "should return empty Vec for empty input"
+        );
     }
 
     // =========================================================================
@@ -798,7 +804,8 @@ mod tests {
     fn test_geo_location_service_impl_with_endpoint_trailing_slash() {
         // 带尾部斜杠的端点
         let client = Arc::new(reqwest::Client::new());
-        let svc = GeoLocationServiceImpl::with_endpoint("https://api.example.com/".to_string(), client);
+        let svc =
+            GeoLocationServiceImpl::with_endpoint("https://api.example.com/".to_string(), client);
         assert_eq!(svc.api_endpoint, "https://api.example.com/");
     }
 

@@ -316,10 +316,7 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/webhook"))
-            .respond_with(
-                ResponseTemplate::new(500)
-                    .set_body_string(long_body.clone()),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_string(long_body.clone()))
             .mount(&mock_server)
             .await;
 
@@ -338,7 +335,10 @@ mod tests {
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         // Verify the body was truncated
-        assert!(error_msg.contains("... (truncated)"), "Error should contain truncated marker");
+        assert!(
+            error_msg.contains("... (truncated)"),
+            "Error should contain truncated marker"
+        );
         // Verify the error contains the status code
         assert!(error_msg.contains("500"));
     }
