@@ -6,6 +6,8 @@
 //! Unified oxcache module for all caching operations.
 //!
 //! This module provides:
+//! - [`CacheService`] trait — abstract cache interface (get/set/delete/exists)
+//! - [`OxcacheService`] — implementation wrapping `oxcache::Cache<String, String>`
 //! - Search result caching
 //! - DNS caching
 //! - Regex caching
@@ -20,6 +22,71 @@ use oxcache::Cache;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
+
+pub mod cache_service;
+
+// =============================================================================
+// CacheService Trait
+// =============================================================================
+
+/// Abstract cache service interface.
+///
+/// Provides basic key-value cache operations backed by oxcache.
+/// All methods are async and return `anyhow::Result`.
+///
+/// # Implementations
+///
+/// - [`OxcacheService`](cache_service::OxcacheService) — wraps `oxcache::Cache<String, String>`
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// use crate::infrastructure::oxcache::CacheService;
+///
+/// async fn example(cache: &dyn CacheService) -> anyhow::Result<()> {
+///     cache.set("key", "value", 3600).await?;     // TTL = 3600s
+///     let val = cache.get("key").await?;           // Option<String>
+///     assert!(cache.exists("key").await?);
+///     cache.delete("key").await?;
+///     Ok(())
+/// }
+/// ```
+#[async_trait::async_trait]
+pub trait CacheService: Send + Sync {
+    /// Get value by key.
+    ///
+    /// Returns `Ok(None)` if key does not exist (not an error).
+    fn get(
+        &self,
+        key: &str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>,
+    >;
+
+    /// Set key-value pair with TTL (in seconds).
+    ///
+    /// If `ttl_seconds` is 0, the entry is stored without expiration.
+    fn set(
+        &self,
+        key: &str,
+        value: &str,
+        ttl_seconds: u64,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>;
+
+    /// Delete a key.
+    ///
+    /// Returns `Ok(())` even if the key did not exist.
+    fn delete(
+        &self,
+        key: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>;
+
+    /// Check if a key exists.
+    fn exists(
+        &self,
+        key: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>;
+}
 
 // =============================================================================
 // Cache Types
