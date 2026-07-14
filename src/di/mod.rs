@@ -31,6 +31,7 @@
 // Core DI modules
 pub mod axum_state;
 pub mod engines_module;
+pub mod modules;
 pub mod search_module;
 pub mod service_module;
 pub mod state_manager;
@@ -44,4 +45,5 @@ pub mod repository_module;
 
 // Re-exports for convenience
 pub use axum_state::{AppState, AppStateExt};
+pub use modules::ModuleBuildError;
 pub use state_manager::DependencyStateManager;
