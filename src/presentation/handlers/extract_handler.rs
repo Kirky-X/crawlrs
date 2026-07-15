@@ -637,4 +637,848 @@ mod tests {
         );
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
+
+    // ========== Handler tests (calling extract function directly) ==========
+
+    use crate::domain::auth::ApiKeyScope;
+    use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError;
+    use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
+    use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
+    use crate::domain::services::team_service::TeamGeoRestrictions;
+    use crate::queue::task_queue::QueueError;
+    use async_trait::async_trait;
+    use axum::body::to_bytes;
+    use dbnexus::{DbConfig, DbPool};
+    use std::collections::HashSet;
+    use std::net::IpAddr;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Mutex;
+
+    // ============ MockTaskQueue ============
+
+    struct MockTaskQueue {
+        enqueue_should_fail: bool,
+        enqueue_count: AtomicU32,
+    }
+
+    impl MockTaskQueue {
+        fn succeeding() -> Self {
+            Self {
+                enqueue_should_fail: false,
+                enqueue_count: AtomicU32::new(0),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                enqueue_should_fail: true,
+                enqueue_count: AtomicU32::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TaskQueue for MockTaskQueue {
+        async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
+            self.enqueue_count.fetch_add(1, Ordering::SeqCst);
+            if self.enqueue_should_fail {
+                return Err(QueueError::Repository(RepositoryError::Database(
+                    anyhow::anyhow!("queue enqueue down"),
+                )));
+            }
+            Ok(task)
+        }
+
+        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+            Ok(None)
+        }
+
+        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+
+        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+
+        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+    }
+
+    // ============ MockTaskRepository ============
+
+    struct MockTaskRepository {
+        created_count: AtomicU32,
+        should_fail_query: bool,
+    }
+
+    impl MockTaskRepository {
+        fn succeeding() -> Self {
+            Self {
+                created_count: AtomicU32::new(0),
+                should_fail_query: false,
+            }
+        }
+
+        fn failing_query() -> Self {
+            Self {
+                created_count: AtomicU32::new(0),
+                should_fail_query: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TaskRepository for MockTaskRepository {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            self.created_count.fetch_add(1, Ordering::SeqCst);
+            Ok(task.clone())
+        }
+
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: Uuid,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            if self.should_fail_query {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "query_tasks down"
+                )));
+            }
+            Ok((vec![], 0))
+        }
+
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+    }
+
+    // ============ MockGeoRestrictionRepository ============
+
+    struct MockGeoRestrictionRepository {
+        restrictions: Mutex<TeamGeoRestrictions>,
+        get_should_fail: bool,
+        log_should_fail: bool,
+        log_count: AtomicU32,
+    }
+
+    impl MockGeoRestrictionRepository {
+        fn with_restrictions(restrictions: TeamGeoRestrictions) -> Self {
+            Self {
+                restrictions: Mutex::new(restrictions),
+                get_should_fail: false,
+                log_should_fail: false,
+                log_count: AtomicU32::new(0),
+            }
+        }
+
+        fn failing_get() -> Self {
+            Self {
+                restrictions: Mutex::new(TeamGeoRestrictions::default()),
+                get_should_fail: true,
+                log_should_fail: false,
+                log_count: AtomicU32::new(0),
+            }
+        }
+
+        fn with_failing_log(restrictions: TeamGeoRestrictions) -> Self {
+            Self {
+                restrictions: Mutex::new(restrictions),
+                get_should_fail: false,
+                log_should_fail: true,
+                log_count: AtomicU32::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl GeoRestrictionRepository for MockGeoRestrictionRepository {
+        async fn get_team_restrictions(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
+            if self.get_should_fail {
+                return Err(GeoRestrictionRepositoryError::Database(
+                    "geo restriction repo down".to_string(),
+                ));
+            }
+            Ok(self.restrictions.lock().unwrap().clone())
+        }
+
+        async fn update_team_restrictions(
+            &self,
+            _team_id: Uuid,
+            _restrictions: &TeamGeoRestrictions,
+        ) -> Result<(), GeoRestrictionRepositoryError> {
+            Ok(())
+        }
+
+        async fn log_geo_restriction_action(
+            &self,
+            _team_id: Uuid,
+            _ip_address: &str,
+            _country_code: &str,
+            _action: &str,
+            _reason: &str,
+        ) -> Result<(), GeoRestrictionRepositoryError> {
+            self.log_count.fetch_add(1, Ordering::SeqCst);
+            if self.log_should_fail {
+                return Err(GeoRestrictionRepositoryError::Other(
+                    "log action down".to_string(),
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    // ============ MockGeoLocationService ============
+
+    struct MockGeoLocationService {
+        should_fail: bool,
+        country_code: String,
+    }
+
+    impl MockGeoLocationService {
+        fn succeeding_with_country(code: &str) -> Self {
+            Self {
+                should_fail: false,
+                country_code: code.to_string(),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                should_fail: true,
+                country_code: "US".to_string(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl GeoLocationService for MockGeoLocationService {
+        async fn get_location(&self, _ip: &IpAddr) -> anyhow::Result<GeoLocation> {
+            if self.should_fail {
+                return Err(anyhow::anyhow!("geolocation service down"));
+            }
+            Ok(GeoLocation {
+                country_code: self.country_code.clone(),
+                ..GeoLocation::default()
+            })
+        }
+    }
+
+    // ============ Helpers ============
+
+    /// Construct a lazy `DbPool` that does not connect to any database.
+    /// Reuses the pattern from webhook_handler tests: spawns a dedicated OS
+    /// thread with its own runtime to avoid "Cannot start a runtime from
+    /// within a runtime" panic when `try_from` calls `block_on`.
+    fn make_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    fn make_test_auth_state() -> AuthState {
+        AuthState::new(
+            make_test_db_pool(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        )
+    }
+
+    fn make_test_settings() -> Arc<Settings> {
+        Arc::new(Settings::default())
+    }
+
+    fn make_addr() -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], 8080))
+    }
+
+    fn make_valid_payload() -> ExtractRequestDto {
+        ExtractRequestDto {
+            urls: vec!["https://example.com".to_string()],
+            prompt: Some("Extract title".to_string()),
+            schema: None,
+            model: None,
+            rules: None,
+            sync_wait_ms: Some(0),
+        }
+    }
+
+    /// Build a TeamService with the given geo location service and a default
+    /// (disabled) geo restriction repo for its internal use.
+    fn make_team_service(geo_loc_service: Arc<dyn GeoLocationService>) -> Arc<TeamService> {
+        let geo_repo: Arc<dyn GeoRestrictionRepository> = Arc::new(
+            MockGeoRestrictionRepository::with_restrictions(TeamGeoRestrictions::default()),
+        );
+        Arc::new(TeamService::new(geo_loc_service, geo_repo))
+    }
+
+    /// Helper to extract status code and JSON body from an IntoResponse.
+    async fn assert_response(
+        response: axum::response::Response,
+        expected_status: StatusCode,
+    ) -> serde_json::Value {
+        assert_eq!(response.status(), expected_status);
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("failed to read response body");
+        serde_json::from_slice(&bytes).expect("response body is not valid JSON")
+    }
+
+    // ============ Handler test cases ============
+
+    #[tokio::test]
+    async fn test_extract_empty_urls_returns_bad_request() {
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            TeamGeoRestrictions::default(),
+        ));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let payload = ExtractRequestDto {
+            urls: vec![],
+            prompt: Some("test".to_string()),
+            schema: None,
+            model: None,
+            rules: None,
+            sync_wait_ms: None,
+        };
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::BAD_REQUEST).await;
+        assert_eq!(json["success"], false);
+    }
+
+    #[tokio::test]
+    async fn test_extract_no_extraction_method_returns_bad_request() {
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            TeamGeoRestrictions::default(),
+        ));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let payload = ExtractRequestDto {
+            urls: vec!["https://example.com".to_string()],
+            prompt: None,
+            schema: None,
+            model: None,
+            rules: None,
+            sync_wait_ms: None,
+        };
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::BAD_REQUEST).await;
+        assert_eq!(json["success"], false);
+    }
+
+    #[tokio::test]
+    async fn test_extract_geo_repo_error_returns_internal_error() {
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::failing_get());
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(make_valid_payload()),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::INTERNAL_SERVER_ERROR).await;
+        assert_eq!(json["success"], false);
+    }
+
+    #[tokio::test]
+    async fn test_extract_sync_wait_ms_exceeds_max_returns_bad_request() {
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            TeamGeoRestrictions::default(),
+        ));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let payload = ExtractRequestDto {
+            urls: vec!["https://example.com".to_string()],
+            prompt: Some("test".to_string()),
+            schema: None,
+            model: None,
+            rules: None,
+            sync_wait_ms: Some(crawl_task::MAX_SYNC_WAIT_MS + 1),
+        };
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::BAD_REQUEST).await;
+        assert_eq!(json["success"], false);
+    }
+
+    #[tokio::test]
+    async fn test_extract_geo_denied_returns_forbidden() {
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        // Enable geo restrictions and block "US"
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            allowed_countries: None,
+            blocked_countries: Some(vec!["US".to_string()]),
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions));
+        // GeoLocation service returns "US" which is in blocked_countries
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(make_valid_payload()),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::FORBIDDEN).await;
+        assert_eq!(json["success"], false);
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("geographic restrictions"),
+            "error message should mention geographic restrictions"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_geo_validation_error_returns_internal_error() {
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        // Enable geo restrictions so that validate_geographic_restriction
+        // calls the (failing) geolocation service.
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            allowed_countries: None,
+            blocked_countries: Some(vec!["CN".to_string()]),
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::failing()));
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(make_valid_payload()),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::INTERNAL_SERVER_ERROR).await;
+        assert_eq!(json["success"], false);
+    }
+
+    #[tokio::test]
+    async fn test_extract_success_returns_created() {
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            TeamGeoRestrictions::default(),
+        ));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        // sync_wait_ms = 0 → no waiting → CREATED
+        let payload = make_valid_payload();
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::CREATED).await;
+        assert_eq!(json["success"], true);
+        assert!(json["data"]["id"].is_string());
+        assert_eq!(json["data"]["status"], "pending");
+    }
+
+    #[tokio::test]
+    async fn test_extract_with_sync_wait_returns_accepted() {
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            TeamGeoRestrictions::default(),
+        ));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        // sync_wait_ms = 1 → wait_for_tasks_completion runs, times out → ACCEPTED
+        let payload = ExtractRequestDto {
+            urls: vec!["https://example.com".to_string()],
+            prompt: Some("test".to_string()),
+            schema: None,
+            model: None,
+            rules: None,
+            sync_wait_ms: Some(1),
+        };
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::ACCEPTED).await;
+        assert_eq!(json["success"], true);
+        assert!(json["data"]["id"].is_string());
+        assert_eq!(json["data"]["status"], "pending");
+    }
+
+    #[tokio::test]
+    async fn test_extract_enqueue_failure_returns_internal_error() {
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::failing());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            TeamGeoRestrictions::default(),
+        ));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(make_valid_payload()),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::INTERNAL_SERVER_ERROR).await;
+        assert_eq!(json["success"], false);
+    }
+
+    #[tokio::test]
+    async fn test_extract_allowed_country_passes_geo_check() {
+        // Enable geo restrictions but the client's country is in allowed list
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            allowed_countries: Some(vec!["US".to_string()]),
+            blocked_countries: None,
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(make_valid_payload()),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::CREATED).await;
+        assert_eq!(json["success"], true);
+    }
+
+    #[tokio::test]
+    async fn test_extract_ip_whitelist_bypasses_country_check() {
+        // IP in whitelist should be allowed regardless of country rules
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            allowed_countries: Some(vec!["CN".to_string()]),
+            blocked_countries: None,
+            ip_whitelist: Some(vec!["127.0.0.0/8".to_string()]),
+            domain_blacklist: None,
+        };
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions));
+        // Even though geo service returns "US" (not in allowed "CN"),
+        // the IP whitelist 127.0.0.0/8 should allow 127.0.0.1 first.
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(make_valid_payload()),
+        )
+        .await
+        .into_response();
+
+        let json = assert_response(response, StatusCode::CREATED).await;
+        assert_eq!(json["success"], true);
+    }
+
+    #[tokio::test]
+    async fn test_extract_allowed_with_failing_log() {
+        // Allowed path where log_geo_restriction_action returns Err — covers
+        // the error! branch on the Allowed arm (line 107).
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_failing_log(
+            TeamGeoRestrictions::default(),
+        ));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo.clone()),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(make_valid_payload()),
+        )
+        .await
+        .into_response();
+
+        // Log failure is non-fatal: handler still returns CREATED
+        let json = assert_response(response, StatusCode::CREATED).await;
+        assert_eq!(json["success"], true);
+        // Confirm the log path was actually exercised
+        assert_eq!(geo_repo.log_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_extract_denied_with_failing_log() {
+        // Denied path where log_geo_restriction_action returns Err — covers
+        // the error! branch on the Denied arm (line 122).
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
+        let restrictions = TeamGeoRestrictions {
+            enable_geo_restrictions: true,
+            allowed_countries: None,
+            blocked_countries: Some(vec!["US".to_string()]),
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_failing_log(restrictions));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo.clone()),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(make_valid_payload()),
+        )
+        .await
+        .into_response();
+
+        // Denied path returns FORBIDDEN even when logging fails
+        let json = assert_response(response, StatusCode::FORBIDDEN).await;
+        assert_eq!(json["success"], false);
+        assert_eq!(geo_repo.log_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_extract_sync_wait_with_query_failure() {
+        // sync_wait_ms > 0 but query_tasks fails → wait_for_tasks_completion
+        // returns Err — covers the error! branch on the wait arm (lines 192-193).
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::failing_query());
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            TeamGeoRestrictions::default(),
+        ));
+        let team_service =
+            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let payload = ExtractRequestDto {
+            urls: vec!["https://example.com".to_string()],
+            prompt: Some("test".to_string()),
+            schema: None,
+            model: None,
+            rules: None,
+            // Use a generous timeout: the query fails immediately on the first
+            // poll, so the loop exits via Err before any sleeping. A larger
+            // value avoids timing races where the loop condition is already
+            // false before the first iteration under tarpaulin instrumentation.
+            sync_wait_ms: Some(1000),
+        };
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        // Even when wait_for_tasks_completion fails, the handler returns the
+        // created task. waited_time_ms stays 0, so 0 >= 1000 is false → CREATED.
+        let json = assert_response(response, StatusCode::CREATED).await;
+        assert_eq!(json["success"], true);
+        assert!(json["data"]["id"].is_string());
+    }
 }

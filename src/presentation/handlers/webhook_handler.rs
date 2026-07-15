@@ -81,7 +81,16 @@ pub async fn list_webhooks<R: WebhookRepository>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::auth::ApiKeyScope;
+    use crate::domain::repositories::task_repository::RepositoryError;
+    use crate::domain::services::rate_limiting_service::{
+        BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
+        QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
+    };
+    use async_trait::async_trait;
     use chrono::Utc;
+    use dbnexus::{DbConfig, DbPool};
+    use std::sync::Mutex;
     use uuid::Uuid;
 
     // ========== CreateWebhookRequest tests ==========
@@ -256,5 +265,420 @@ mod tests {
         assert_eq!(webhook.team_id, team_id);
         assert_eq!(webhook.url, "https://example.com/hook");
         assert!(webhook.created_at <= Utc::now());
+    }
+
+    // ========== Handler test infrastructure ==========
+
+    /// Construct a lazy `DbPool` that does not connect to any database.
+    ///
+    /// `DbPool::try_from` is lazy: it builds the internal struct (including the
+    /// permission policy cache) without opening a connection. The connection is
+    /// only established on `get_session()`, which the webhook handlers never
+    /// call — they only read `team_id` / `api_key_id` from `AuthState`.
+    ///
+    /// The `permission` feature variant of `try_from` internally calls
+    /// `Handle::current().block_on(...)` to build the oxcache policy cache.
+    /// Calling `block_on` from within a `#[tokio::test]` runtime panics with
+    /// "Cannot start a runtime from within a runtime", so we construct the pool
+    /// on a dedicated OS thread with its own runtime.
+    fn make_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    /// Build an `AuthState` suitable for handler unit tests.
+    ///
+    /// Uses a lazy (non-connecting) `DbPool` — see `make_test_db_pool`.
+    fn make_test_auth_state() -> AuthState {
+        AuthState::new(
+            make_test_db_pool(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        )
+    }
+
+    // ========== MockWebhookRepository ==========
+
+    /// Mock `WebhookRepository` whose `create` / `find_by_team_id` behaviour is
+    /// configurable per test via the builder methods.
+    struct MockWebhookRepository {
+        /// When `Some`, `create` returns this error; otherwise it echoes the
+        /// webhook back successfully.
+        create_error: Mutex<Option<RepositoryError>>,
+        /// When `Some`, `find_by_team_id` returns this stored result; otherwise
+        /// it returns an empty list.
+        find_by_team_id_result: Mutex<Option<Result<Vec<Webhook>, RepositoryError>>>,
+    }
+
+    impl MockWebhookRepository {
+        fn new() -> Self {
+            Self {
+                create_error: Mutex::new(None),
+                find_by_team_id_result: Mutex::new(None),
+            }
+        }
+
+        fn with_create_error(err: RepositoryError) -> Self {
+            Self {
+                create_error: Mutex::new(Some(err)),
+                find_by_team_id_result: Mutex::new(None),
+            }
+        }
+
+        fn with_find_result(result: Result<Vec<Webhook>, RepositoryError>) -> Self {
+            Self {
+                create_error: Mutex::new(None),
+                find_by_team_id_result: Mutex::new(Some(result)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl WebhookRepository for MockWebhookRepository {
+        async fn create(&self, webhook: &Webhook) -> Result<Webhook, RepositoryError> {
+            if let Some(err) = self.create_error.lock().unwrap().take() {
+                return Err(err);
+            }
+            Ok(webhook.clone())
+        }
+
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn find_by_team_id(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<Vec<Webhook>, RepositoryError> {
+            match self.find_by_team_id_result.lock().unwrap().take() {
+                Some(result) => result,
+                None => Ok(vec![]),
+            }
+        }
+    }
+
+    // ========== MockRateLimitingService ==========
+
+    /// Mock `RateLimitingService` with configurable `check_rate_limit` result.
+    /// All other trait methods return benign defaults.
+    struct MockRateLimitingService {
+        rate_limit_result: RateLimitResult,
+    }
+
+    impl MockRateLimitingService {
+        fn new_allowed() -> Self {
+            Self {
+                rate_limit_result: RateLimitResult::Allowed,
+            }
+        }
+
+        fn new_denied(reason: &str) -> Self {
+            Self {
+                rate_limit_result: RateLimitResult::Denied {
+                    reason: reason.to_string(),
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RateLimitService for MockRateLimitingService {
+        async fn check_rate_limit(
+            &self,
+            _api_key: &str,
+            _endpoint: &str,
+        ) -> Result<RateLimitResult, RateLimitingError> {
+            Ok(self.rate_limit_result.clone())
+        }
+
+        async fn get_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<RateLimitConfig, RateLimitingError> {
+            Ok(RateLimitConfig::default())
+        }
+
+        async fn update_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+            _config: RateLimitConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait]
+    impl ConcurrencyControlService for MockRateLimitingService {
+        async fn check_team_concurrency(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<ConcurrencyResult, RateLimitingError> {
+            Ok(ConcurrencyResult::Allowed)
+        }
+
+        async fn release_team_concurrency_slot(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn get_team_current_concurrency(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+
+        async fn get_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<ConcurrencyConfig, RateLimitingError> {
+            Ok(ConcurrencyConfig::default())
+        }
+
+        async fn update_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+            _config: ConcurrencyConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BacklogService for MockRateLimitingService {
+        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait]
+    impl QuotaService for MockRateLimitingService {
+        async fn check_and_deduct_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: crate::domain::models::CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    // 组合 trait（向后兼容，空实现即可）
+    impl RateLimitingService for MockRateLimitingService {}
+
+    // ========== create_webhook handler tests ==========
+
+    #[tokio::test]
+    async fn test_create_webhook_success() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let team_id = auth.team_id;
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Json(payload),
+        )
+        .await;
+
+        assert!(result.is_ok(), "create_webhook should succeed");
+        let (status, webhook) = result.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(webhook.team_id, team_id);
+        assert_eq!(webhook.url, "https://example.com/webhook");
+    }
+
+    #[tokio::test]
+    async fn test_create_webhook_ssrf_blocked() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "http://127.0.0.1:8080".to_string(),
+        };
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Json(payload),
+        )
+        .await;
+
+        assert!(result.is_err(), "SSRF URL should be rejected");
+        match result.unwrap_err() {
+            AppError::Validation(msg) => {
+                assert!(
+                    msg.contains("Invalid webhook URL"),
+                    "expected SSRF validation message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected AppError::Validation, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_webhook_rate_limit_exceeded() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_denied("too many requests"));
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Json(payload),
+        )
+        .await;
+
+        assert!(result.is_err(), "rate-limited request should fail");
+        match result.unwrap_err() {
+            AppError::RateLimit(msg) => {
+                assert!(
+                    msg.contains("Rate limit exceeded"),
+                    "expected rate limit message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected AppError::RateLimit, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_webhook_repo_create_failure() {
+        let repo = Arc::new(MockWebhookRepository::with_create_error(
+            RepositoryError::Database(anyhow::anyhow!("repo down")),
+        ));
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Json(payload),
+        )
+        .await;
+
+        assert!(result.is_err(), "repo failure should propagate");
+        match result.unwrap_err() {
+            AppError::Other(msg) => {
+                assert!(
+                    msg.contains("repo down"),
+                    "expected repo failure message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected AppError::Other, got {:?}", other),
+        }
+    }
+
+    // ========== list_webhooks handler tests ==========
+
+    #[tokio::test]
+    async fn test_list_webhooks_empty() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let auth = make_test_auth_state();
+
+        let result = list_webhooks::<MockWebhookRepository>(
+            Extension(repo),
+            Extension(auth),
+        )
+        .await;
+
+        assert!(result.is_ok(), "list_webhooks should succeed for empty list");
+        let response = result.unwrap();
+        let data = response.data.as_ref().expect("response data should be present");
+        assert_eq!(data.total, 0);
+        assert!(data.webhooks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_webhooks_with_items() {
+        let team_id = Uuid::new_v4();
+        let webhook1 = Webhook::new(Uuid::new_v4(), team_id, "https://hook1.example.com".to_string());
+        let webhook2 = Webhook::new(Uuid::new_v4(), team_id, "https://hook2.example.com".to_string());
+        let repo = Arc::new(MockWebhookRepository::with_find_result(Ok(vec![
+            webhook1.clone(),
+            webhook2.clone(),
+        ])));
+        let auth = make_test_auth_state();
+
+        let result = list_webhooks::<MockWebhookRepository>(
+            Extension(repo),
+            Extension(auth),
+        )
+        .await;
+
+        assert!(result.is_ok(), "list_webhooks should succeed with items");
+        let response = result.unwrap();
+        let data = response.data.as_ref().expect("response data should be present");
+        assert_eq!(data.total, 2);
+        assert_eq!(data.webhooks.len(), 2);
+        assert_eq!(data.webhooks[0].url, "https://hook1.example.com");
+        assert_eq!(data.webhooks[1].url, "https://hook2.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_list_webhooks_repo_failure() {
+        let repo = Arc::new(MockWebhookRepository::with_find_result(Err(
+            RepositoryError::Database(anyhow::anyhow!("find_by_team_id failed")),
+        )));
+        let auth = make_test_auth_state();
+
+        let result = list_webhooks::<MockWebhookRepository>(
+            Extension(repo),
+            Extension(auth),
+        )
+        .await;
+
+        assert!(result.is_err(), "repo failure should propagate");
+        match result.unwrap_err() {
+            AppError::Other(msg) => {
+                assert!(
+                    msg.contains("find_by_team_id failed"),
+                    "expected repo failure message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected AppError::Other, got {:?}", other),
+        }
     }
 }

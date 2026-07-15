@@ -1067,4 +1067,1055 @@ mod tests {
         let dto: ScrapeRequestDto = serde_json::from_str(&json).unwrap();
         assert!(dto.validate().is_ok());
     }
+
+    // ========== Handler function tests ==========
+
+    use crate::domain::auth::ApiKeyScope;
+    use crate::domain::models::scrape_result::ScrapeResult;
+    use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
+    use crate::domain::services::rate_limiting_service::{
+        BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
+        QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
+    };
+    use crate::queue::task_queue::QueueError;
+    use async_trait::async_trait;
+    use dbnexus::{DbConfig, DbPool};
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Mutex;
+
+    // --- MockTaskQueue ---
+
+    type SharedTasks = Arc<Mutex<HashMap<Uuid, Task>>>;
+
+    struct MockTaskQueue {
+        enqueue_should_fail: bool,
+    }
+
+    impl MockTaskQueue {
+        fn new_success() -> Self {
+            Self {
+                enqueue_should_fail: false,
+            }
+        }
+
+        fn new_failing() -> Self {
+            Self {
+                enqueue_should_fail: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TaskQueue for MockTaskQueue {
+        async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
+            if self.enqueue_should_fail {
+                return Err(QueueError::Repository(RepositoryError::Database(
+                    anyhow::anyhow!("enqueue failed"),
+                )));
+            }
+            Ok(task)
+        }
+
+        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+            Ok(None)
+        }
+
+        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+
+        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+
+        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+    }
+
+    /// A queue that stores enqueued tasks into a shared store as Completed,
+    /// so that sync-wait polling immediately observes completion.
+    struct MockTaskQueueLinkedCompleted {
+        shared: SharedTasks,
+    }
+
+    impl MockTaskQueueLinkedCompleted {
+        fn new(shared: SharedTasks) -> Self {
+            Self { shared }
+        }
+    }
+
+    #[async_trait]
+    impl TaskQueue for MockTaskQueueLinkedCompleted {
+        async fn enqueue(&self, mut task: Task) -> Result<Task, QueueError> {
+            task.status = TaskStatus::Completed;
+            task.completed_at = Some(chrono::Utc::now());
+            self.shared.lock().unwrap().insert(task.id, task.clone());
+            Ok(task)
+        }
+
+        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+            Ok(None)
+        }
+
+        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+
+        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+
+        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+    }
+
+    // --- MockTaskRepository ---
+
+    struct MockTaskRepository {
+        tasks: SharedTasks,
+        find_should_fail: bool,
+        mark_cancelled_should_fail: bool,
+    }
+
+    impl MockTaskRepository {
+        fn new() -> Self {
+            Self {
+                tasks: Arc::new(Mutex::new(HashMap::new())),
+                find_should_fail: false,
+                mark_cancelled_should_fail: false,
+            }
+        }
+
+        fn with_task(task: Task) -> Self {
+            let id = task.id;
+            let map = Arc::new(Mutex::new(HashMap::new()));
+            map.lock().unwrap().insert(id, task);
+            Self {
+                tasks: map,
+                find_should_fail: false,
+                mark_cancelled_should_fail: false,
+            }
+        }
+
+        fn new_linked(shared: SharedTasks) -> Self {
+            Self {
+                tasks: shared,
+                find_should_fail: false,
+                mark_cancelled_should_fail: false,
+            }
+        }
+
+        fn failing_find() -> Self {
+            Self {
+                tasks: Arc::new(Mutex::new(HashMap::new())),
+                find_should_fail: true,
+                mark_cancelled_should_fail: false,
+            }
+        }
+
+        fn failing_mark_cancelled() -> Self {
+            Self {
+                tasks: Arc::new(Mutex::new(HashMap::new())),
+                find_should_fail: false,
+                mark_cancelled_should_fail: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TaskRepository for MockTaskRepository {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+
+        async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            if self.find_should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "find_by_id failed"
+                )));
+            }
+            Ok(self.tasks.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            if self.mark_cancelled_should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "mark_cancelled failed"
+                )));
+            }
+            Ok(())
+        }
+
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: Uuid,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn query_tasks(
+            &self,
+            params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            let tasks = self.tasks.lock().unwrap();
+            let mut result: Vec<Task> = Vec::new();
+            if let Some(ref task_ids) = params.task_ids {
+                for id in task_ids {
+                    if let Some(task) = tasks.get(id) {
+                        result.push(task.clone());
+                    }
+                }
+            }
+            let count = result.len() as u64;
+            Ok((result, count))
+        }
+
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+    }
+
+    // --- MockRateLimitingService ---
+
+    struct MockRateLimitingService {
+        rate_limit_result: RateLimitResult,
+        quota_should_fail: bool,
+    }
+
+    impl MockRateLimitingService {
+        fn new_allowed() -> Self {
+            Self {
+                rate_limit_result: RateLimitResult::Allowed,
+                quota_should_fail: false,
+            }
+        }
+
+        fn new_denied() -> Self {
+            Self {
+                rate_limit_result: RateLimitResult::Denied {
+                    reason: "Too many requests".to_string(),
+                },
+                quota_should_fail: false,
+            }
+        }
+
+        fn new_retry_after() -> Self {
+            Self {
+                rate_limit_result: RateLimitResult::RetryAfter {
+                    retry_after_seconds: 30,
+                },
+                quota_should_fail: false,
+            }
+        }
+
+        fn new_quota_exceeded() -> Self {
+            Self {
+                rate_limit_result: RateLimitResult::Allowed,
+                quota_should_fail: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RateLimitService for MockRateLimitingService {
+        async fn check_rate_limit(
+            &self,
+            _api_key: &str,
+            _endpoint: &str,
+        ) -> Result<RateLimitResult, RateLimitingError> {
+            Ok(self.rate_limit_result.clone())
+        }
+
+        async fn get_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<RateLimitConfig, RateLimitingError> {
+            Ok(RateLimitConfig::default())
+        }
+
+        async fn update_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+            _config: RateLimitConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait]
+    impl ConcurrencyControlService for MockRateLimitingService {
+        async fn check_team_concurrency(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<ConcurrencyResult, RateLimitingError> {
+            Ok(ConcurrencyResult::Allowed)
+        }
+
+        async fn release_team_concurrency_slot(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn get_team_current_concurrency(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+
+        async fn get_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<ConcurrencyConfig, RateLimitingError> {
+            Ok(ConcurrencyConfig::default())
+        }
+
+        async fn update_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+            _config: ConcurrencyConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BacklogService for MockRateLimitingService {
+        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait]
+    impl QuotaService for MockRateLimitingService {
+        async fn check_and_deduct_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: crate::domain::models::CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            if self.quota_should_fail {
+                return Err(RateLimitingError::CreditsError);
+            }
+            Ok(())
+        }
+
+        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+            Ok(1000)
+        }
+    }
+
+    #[async_trait]
+    impl RateLimitingService for MockRateLimitingService {}
+
+    // --- MockScrapeResultRepository ---
+
+    struct MockScrapeResultRepository {
+        result: Option<ScrapeResult>,
+        should_fail: bool,
+    }
+
+    impl MockScrapeResultRepository {
+        fn new_empty() -> Self {
+            Self {
+                result: None,
+                should_fail: false,
+            }
+        }
+
+        fn with_result(result: ScrapeResult) -> Self {
+            Self {
+                result: Some(result),
+                should_fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                result: None,
+                should_fail: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ScrapeResultRepository for MockScrapeResultRepository {
+        async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+            if self.should_fail {
+                return Err(anyhow::anyhow!("scrape result repo down"));
+            }
+            Ok(self.result.clone())
+        }
+
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[Uuid],
+        ) -> anyhow::Result<Vec<ScrapeResult>> {
+            Ok(vec![])
+        }
+
+        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+            Ok(0.0)
+        }
+    }
+
+    // --- Helper functions ---
+
+    fn make_db_pool() -> Arc<DbPool> {
+        // `DbPool::try_from` with the `permission` feature internally calls
+        // `Handle::current().block_on(...)` to build the oxcache policy cache.
+        // Calling `block_on` from within a `#[tokio::test]` runtime panics with
+        // "Cannot start a runtime from within a runtime", so we construct the
+        // pool on a dedicated OS thread with its own runtime.
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    fn make_auth_state() -> AuthState {
+        AuthState::new(
+            make_db_pool(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        )
+    }
+
+    fn make_auth_state_with_team(team_id: Uuid) -> AuthState {
+        AuthState::new(
+            make_db_pool(),
+            team_id,
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        )
+    }
+
+    fn make_task(team_id: Uuid, status: TaskStatus) -> Task {
+        let now = chrono::Utc::now();
+        Task {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Scrape,
+            status,
+            priority: 0,
+            team_id,
+            api_key_id: Uuid::new_v4(),
+            url: "https://example.com".to_string(),
+            payload: serde_json::Value::Null,
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: now,
+            lock_token: None,
+            lock_expires_at: None,
+        }
+    }
+
+    fn make_scrape_result(task_id: Uuid) -> ScrapeResult {
+        ScrapeResult {
+            id: Uuid::new_v4(),
+            task_id,
+            url: "https://example.com".to_string(),
+            status_code: 200,
+            content: "<html>test</html>".to_string(),
+            content_type: "text/html".to_string(),
+            response_time_ms: 100,
+            created_at: chrono::Utc::now().naive_utc(),
+            headers: serde_json::json!({"content-length": "100"}),
+            meta_data: serde_json::json!({"key": "value"}),
+            screenshot: None,
+        }
+    }
+
+    fn make_scrape_request_dto(url: &str, sync_wait_ms: Option<u32>) -> ScrapeRequestDto {
+        ScrapeRequestDto {
+            url: url.to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            actions: None,
+            options: None,
+            metadata: None,
+            sync_wait_ms,
+        }
+    }
+
+    // ========== create_scrape tests ==========
+
+    #[tokio::test]
+    async fn test_create_scrape_success_async() {
+        let queue = Arc::new(MockTaskQueue::new_success());
+        let task_repo = Arc::new(MockTaskRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let settings = Arc::new(Settings::default());
+        let auth = make_auth_state();
+
+        let payload = make_scrape_request_dto("https://example.com", None);
+
+        let response = create_scrape(
+            Extension(queue),
+            Extension(settings),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_create_scrape_sync_wait_ms_exceeds_max() {
+        let queue = Arc::new(MockTaskQueue::new_success());
+        let task_repo = Arc::new(MockTaskRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let settings = Arc::new(Settings::default());
+        let auth = make_auth_state();
+
+        let payload = make_scrape_request_dto("https://example.com", Some(MAX_SYNC_WAIT_MS + 1));
+
+        let response = create_scrape(
+            Extension(queue),
+            Extension(settings),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_create_scrape_ssrf_blocked_localhost() {
+        let queue = Arc::new(MockTaskQueue::new_success());
+        let task_repo = Arc::new(MockTaskRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let settings = Arc::new(Settings::default());
+        let auth = make_auth_state();
+
+        let payload = make_scrape_request_dto("http://localhost", None);
+
+        let response = create_scrape(
+            Extension(queue),
+            Extension(settings),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_create_scrape_ssrf_blocked_127001() {
+        let queue = Arc::new(MockTaskQueue::new_success());
+        let task_repo = Arc::new(MockTaskRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let settings = Arc::new(Settings::default());
+        let auth = make_auth_state();
+
+        let payload = make_scrape_request_dto("http://127.0.0.1", None);
+
+        let response = create_scrape(
+            Extension(queue),
+            Extension(settings),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_create_scrape_rate_limited_denied() {
+        let queue = Arc::new(MockTaskQueue::new_success());
+        let task_repo = Arc::new(MockTaskRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_denied());
+        let settings = Arc::new(Settings::default());
+        let auth = make_auth_state();
+
+        let payload = make_scrape_request_dto("https://example.com", None);
+
+        let response = create_scrape(
+            Extension(queue),
+            Extension(settings),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_create_scrape_rate_limited_retry_after() {
+        let queue = Arc::new(MockTaskQueue::new_success());
+        let task_repo = Arc::new(MockTaskRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_retry_after());
+        let settings = Arc::new(Settings::default());
+        let auth = make_auth_state();
+
+        let payload = make_scrape_request_dto("https://example.com", None);
+
+        let response = create_scrape(
+            Extension(queue),
+            Extension(settings),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_create_scrape_quota_exceeded() {
+        let queue = Arc::new(MockTaskQueue::new_success());
+        let task_repo = Arc::new(MockTaskRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_quota_exceeded());
+        let settings = Arc::new(Settings::default());
+        let auth = make_auth_state();
+
+        let payload = make_scrape_request_dto("https://example.com", None);
+
+        let response = create_scrape(
+            Extension(queue),
+            Extension(settings),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn test_create_scrape_enqueue_failure() {
+        let queue = Arc::new(MockTaskQueue::new_failing());
+        let task_repo = Arc::new(MockTaskRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let settings = Arc::new(Settings::default());
+        let auth = make_auth_state();
+
+        let payload = make_scrape_request_dto("https://example.com", None);
+
+        let response = create_scrape(
+            Extension(queue),
+            Extension(settings),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_create_scrape_sync_mode_completed() {
+        // sync_wait_ms > 0 with task becoming completed via linked queue/repo → CREATED
+        // The queue and repo share the same task store, so when enqueue inserts
+        // the task, the sync-wait poll will find it. We mark it Completed via
+        // a shared store so completion_rate >= 1.0 → is_timeout=false → CREATED.
+        let team_id = Uuid::new_v4();
+        let shared: SharedTasks = Arc::new(Mutex::new(HashMap::new()));
+        let task_repo = Arc::new(MockTaskRepository::new_linked(Arc::clone(&shared)));
+        // Wrap queue so that on enqueue, the task is stored as Completed.
+        let queue = Arc::new(MockTaskQueueLinkedCompleted::new(Arc::clone(&shared)));
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let settings = Arc::new(Settings::default());
+        let auth = make_auth_state_with_team(team_id);
+
+        let payload = make_scrape_request_dto("https://example.com", Some(100));
+
+        let response = create_scrape(
+            Extension(queue),
+            Extension(settings),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        // sync_wait_ms > 0, not timeout → CREATED
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    // ========== cancel_scrape tests ==========
+
+    #[tokio::test]
+    async fn test_cancel_scrape_success() {
+        let team_id = Uuid::new_v4();
+        let task = make_task(team_id, TaskStatus::Queued);
+        let task_id = task.id;
+        let repo = Arc::new(MockTaskRepository::with_task(task));
+        let auth = make_auth_state_with_team(team_id);
+
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_scrape_not_found() {
+        let repo = Arc::new(MockTaskRepository::new());
+        let auth = make_auth_state();
+        let task_id = Uuid::new_v4();
+
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_scrape_forbidden() {
+        let task = make_task(Uuid::new_v4(), TaskStatus::Queued);
+        let task_id = task.id;
+        let repo = Arc::new(MockTaskRepository::with_task(task));
+        // Different team_id
+        let auth = make_auth_state_with_team(Uuid::new_v4());
+
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_scrape_find_error() {
+        let repo = Arc::new(MockTaskRepository::failing_find());
+        let auth = make_auth_state();
+        let task_id = Uuid::new_v4();
+
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_scrape_mark_cancelled_error() {
+        let team_id = Uuid::new_v4();
+        let task = make_task(team_id, TaskStatus::Queued);
+        let task_id = task.id;
+        let repo = Arc::new(MockTaskRepository::failing_mark_cancelled());
+        // Need the task to exist for find_by_id, but mark_cancelled to fail
+        {
+            let mut tasks = repo.tasks.lock().unwrap();
+            tasks.insert(task_id, task);
+        }
+        let auth = make_auth_state_with_team(team_id);
+
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // ========== get_scrape_status tests ==========
+
+    #[tokio::test]
+    async fn test_get_scrape_status_in_progress() {
+        let team_id = Uuid::new_v4();
+        let task = make_task(team_id, TaskStatus::Active);
+        let task_id = task.id;
+        let task_repo = Arc::new(MockTaskRepository::with_task(task));
+        let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
+        let auth = make_auth_state_with_team(team_id);
+
+        let response = get_scrape_status(
+            Path(task_id),
+            Extension(task_repo),
+            Extension(result_repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_scrape_status_completed_with_result() {
+        let team_id = Uuid::new_v4();
+        let mut task = make_task(team_id, TaskStatus::Completed);
+        task.completed_at = Some(chrono::Utc::now());
+        let task_id = task.id;
+        let result = make_scrape_result(task_id);
+        let task_repo = Arc::new(MockTaskRepository::with_task(task));
+        let result_repo = Arc::new(MockScrapeResultRepository::with_result(result));
+        let auth = make_auth_state_with_team(team_id);
+
+        let response = get_scrape_status(
+            Path(task_id),
+            Extension(task_repo),
+            Extension(result_repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_scrape_status_completed_no_result() {
+        let team_id = Uuid::new_v4();
+        let mut task = make_task(team_id, TaskStatus::Completed);
+        task.completed_at = Some(chrono::Utc::now());
+        let task_id = task.id;
+        let task_repo = Arc::new(MockTaskRepository::with_task(task));
+        let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
+        let auth = make_auth_state_with_team(team_id);
+
+        let response = get_scrape_status(
+            Path(task_id),
+            Extension(task_repo),
+            Extension(result_repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_scrape_status_completed_result_error() {
+        let team_id = Uuid::new_v4();
+        let mut task = make_task(team_id, TaskStatus::Completed);
+        task.completed_at = Some(chrono::Utc::now());
+        let task_id = task.id;
+        let task_repo = Arc::new(MockTaskRepository::with_task(task));
+        let result_repo = Arc::new(MockScrapeResultRepository::failing());
+        let auth = make_auth_state_with_team(team_id);
+
+        let response = get_scrape_status(
+            Path(task_id),
+            Extension(task_repo),
+            Extension(result_repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        // Error is logged but status is still OK (result_data = None)
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_scrape_status_failed_task() {
+        let team_id = Uuid::new_v4();
+        let mut task = make_task(team_id, TaskStatus::Failed);
+        task.completed_at = Some(chrono::Utc::now());
+        task.payload = serde_json::json!({"error": "Connection timeout"});
+        let task_id = task.id;
+        let task_repo = Arc::new(MockTaskRepository::with_task(task));
+        let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
+        let auth = make_auth_state_with_team(team_id);
+
+        let response = get_scrape_status(
+            Path(task_id),
+            Extension(task_repo),
+            Extension(result_repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_scrape_status_failed_task_no_error_field() {
+        let team_id = Uuid::new_v4();
+        let mut task = make_task(team_id, TaskStatus::Failed);
+        task.completed_at = Some(chrono::Utc::now());
+        // payload has no "error" field → should default to "Task failed"
+        let task_id = task.id;
+        let task_repo = Arc::new(MockTaskRepository::with_task(task));
+        let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
+        let auth = make_auth_state_with_team(team_id);
+
+        let response = get_scrape_status(
+            Path(task_id),
+            Extension(task_repo),
+            Extension(result_repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_scrape_status_not_found() {
+        let task_repo = Arc::new(MockTaskRepository::new());
+        let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
+        let auth = make_auth_state();
+        let task_id = Uuid::new_v4();
+
+        let response = get_scrape_status(
+            Path(task_id),
+            Extension(task_repo),
+            Extension(result_repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_scrape_status_forbidden() {
+        let task = make_task(Uuid::new_v4(), TaskStatus::Active);
+        let task_id = task.id;
+        let task_repo = Arc::new(MockTaskRepository::with_task(task));
+        let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
+        // Different team_id
+        let auth = make_auth_state_with_team(Uuid::new_v4());
+
+        let response = get_scrape_status(
+            Path(task_id),
+            Extension(task_repo),
+            Extension(result_repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_scrape_status_find_error() {
+        let task_repo = Arc::new(MockTaskRepository::failing_find());
+        let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
+        let auth = make_auth_state();
+        let task_id = Uuid::new_v4();
+
+        let response = get_scrape_status(
+            Path(task_id),
+            Extension(task_repo),
+            Extension(result_repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }
