@@ -20,6 +20,7 @@ use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crate::presentation::routes;
 use crate::presentation::routes::task::task_routes;
+use crate::presentation::state::CrawlHandlerState;
 use axum::{
     routing::{delete, get, post, put},
     Extension, Router,
@@ -130,8 +131,10 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
     let webhook_repo_impl: Arc<WebhookRepoImpl> =
         Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
 
-    // Create Arc<AppState> for crawl handlers that use unified state
+    // Create Arc<AppState> for handlers that need unified state, and derive
+    // CrawlHandlerState from it for crawl handlers (decoupled for testability).
     let app_state_arc = Arc::new(state.clone());
+    let crawl_handler_state = Arc::new(CrawlHandlerState::from_app_state(&app_state_arc));
 
     // Auth state for middleware - wrap in Arc and set global state
     let auth_scope_service = state.auth_scope_service.as_ref().map(|arc| (**arc).clone());
@@ -196,7 +199,7 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
         .layer(Extension(state.search_service.clone()))
         .layer(Extension(team_service))
         .layer(Extension(geo_location_service))
-        .layer(Extension(app_state_arc)) // Unified AppState for crawl handlers
+        .layer(Extension(crawl_handler_state)) // CrawlHandlerState for crawl handlers
         .layer(Extension(credits_repo))
         .layer(Extension(webhook_repo_impl))
         .layer(Extension(geo_restriction_repo_impl));
