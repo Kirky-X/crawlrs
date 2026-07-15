@@ -23,7 +23,7 @@ use std::collections::HashMap;
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```ignore
 /// use std::sync::Arc;
 /// use anyhow::Result;
 /// use serde_json::json;

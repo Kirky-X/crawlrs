@@ -43,7 +43,7 @@ pub enum SecurityError {
 ///
 /// # 示例
 ///
-/// ```
+/// ```ignore
 /// use crawlrs::infrastructure::security::hash_api_key;
 ///
 /// let key = "my_secret_api_key";

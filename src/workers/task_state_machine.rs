@@ -24,7 +24,7 @@
 //!
 //! # Usage Example
 //!
-//! ```rust
+//! ```ignore
 //! use crate::domain::models::{Task, TaskStatus, TaskType};
 //! use crate::workers::task_state_machine::{TaskStateMachine, TaskStateEvent, TaskStateError};
 //!

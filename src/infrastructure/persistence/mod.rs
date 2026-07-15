@@ -9,7 +9,7 @@
 //! - Mappers: Convert between domain models and database entities
 //!
 //! Architecture:
-//! ```
+//! ```ignore
 //! Domain Layer (pure models)
 //!         ↕
 //!    Mappers (conversion)

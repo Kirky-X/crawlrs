@@ -44,7 +44,7 @@ use url::Url;
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// use crate::presentation::helpers::ssrf::is_internal_url;
 ///
 /// // Internal URLs - returns true

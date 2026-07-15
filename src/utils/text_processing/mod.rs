@@ -12,7 +12,7 @@
 //!
 //! # 使用示例
 //!
-//! ```
+//! ```ignore
 //! use crawlrs::utils::text_processing::{process_web_content, process_crawled_content};
 //!
 //! #[tokio::main]

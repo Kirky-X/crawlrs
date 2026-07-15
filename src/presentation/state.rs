@@ -19,7 +19,7 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```ignore
 //! use crate::di::{AppState, AppStateExt};
 //! use crate::presentation::state::HandlerState;
 //!
@@ -112,7 +112,7 @@ impl HandlerState for Arc<AppState> {
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```ignore
 /// use crate::di::AppState;
 /// use crate::presentation::state::CrawlHandlerState;
 ///

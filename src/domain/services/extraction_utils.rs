@@ -34,7 +34,7 @@ impl ExtractionUtils {
     /// Extract element attribute value with automatic URL joining for relative URLs
     ///
     /// This function consolidates the repeated pattern:
-    /// ```rust
+    /// ```ignore
     /// if let (Some(v), Some(b)) = (&val, &base) {
     ///     if attr == "href" || attr == "src" {
     ///         b.join(v).ok().map(|u| u.to_string()).or(val)
@@ -54,7 +54,7 @@ impl ExtractionUtils {
     /// Extracted string value (may be empty string), or None if extraction fails
     ///
     /// # Example
-    /// ```rust
+    /// ```ignore
     /// let value = ExtractionUtils::extract_element_value(
     ///     element,
     ///     "href",
@@ -90,7 +90,7 @@ impl ExtractionUtils {
     /// Batch extract values from multiple elements
     ///
     /// Consolidates the repeated array extraction pattern:
-    /// ```rust
+    /// ```ignore
     /// let mut values = Vec::new();
     /// for element in document.select(&selector) {
     ///     let value = extract_element_value(...);

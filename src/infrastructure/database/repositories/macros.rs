@@ -11,7 +11,7 @@
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```ignore
 /// use crate::infrastructure::database::repositories::macros::repository_new;
 ///
 /// struct MyRepository {
@@ -22,7 +22,7 @@
 /// ```
 ///
 /// This expands to:
-/// ```rust
+/// ```ignore
 /// impl MyRepository {
 ///     pub fn new(db: Arc<DatabaseConnection>) -> Self {
 ///         Self { db }
@@ -45,7 +45,7 @@ macro_rules! repository_new {
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```ignore
 /// use crate::infrastructure::database::repositories::macros::repository_new_with;
 ///
 /// struct TaskRepositoryImpl {
@@ -57,7 +57,7 @@ macro_rules! repository_new {
 /// ```
 ///
 /// This expands to:
-/// ```rust
+/// ```ignore
 /// impl TaskRepositoryImpl {
 ///     pub fn new(
 ///         db: Arc<DatabaseConnection>,

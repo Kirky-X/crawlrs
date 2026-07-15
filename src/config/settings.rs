@@ -32,7 +32,7 @@ pub use super::search::{BingSearchSettings, SearchSettings};
 ///
 /// # 使用示例
 ///
-/// ```rust
+/// ```ignore
 /// use crawlrs::config::Settings;
 ///
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {

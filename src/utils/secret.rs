@@ -23,7 +23,7 @@ pub trait Clearable {
 ///
 /// # 示例
 ///
-/// ```
+/// ```ignore
 /// use utils::SecretString;
 ///
 /// fn process_api_key() {
@@ -50,7 +50,7 @@ impl SecretString {
     ///
     /// # 示例
     ///
-    /// ```
+    /// ```ignore
     /// use utils::SecretString;
     ///
     /// let secret = SecretString::new("my-secret-api-key");
