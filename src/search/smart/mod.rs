@@ -1295,10 +1295,13 @@ mod tests_ext {
         RateLimitingService,
     };
     use crate::engines::client::reqwest::ReqwestEngine;
-    use crate::engines::engine_client::ScraperEngine;
+    use crate::engines::engine_client::{
+        InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+    };
     use crate::engines::router::EngineRouter;
     use crate::search::engine_trait::SearchRequest;
     use crate::utils::http_client::create_http_client;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
     use tempfile::TempDir;
     use uuid::Uuid;
@@ -2982,5 +2985,276 @@ mod tests_ext {
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].title, "First");
         assert_eq!(results[2].title, "Third");
+    }
+
+    // === Mock ScraperEngine for search() flow tests ===
+
+    enum MockScrapeBehavior {
+        Success(String),
+        ShortHtml,
+        RetryableError,
+        NonRetryableError,
+        FailOnceThenSucceed(String),
+        Slow,
+    }
+
+    struct MockScraperEngine {
+        behavior: MockScrapeBehavior,
+        call_count: Arc<AtomicU32>,
+    }
+
+    impl MockScraperEngine {
+        fn new(behavior: MockScrapeBehavior) -> Self {
+            Self {
+                behavior,
+                call_count: Arc::new(AtomicU32::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ScraperEngine for MockScraperEngine {
+        async fn scrape(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+            match &self.behavior {
+                MockScrapeBehavior::Success(html) => Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: html.clone(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 0,
+                }),
+                MockScrapeBehavior::ShortHtml => Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "short".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 0,
+                }),
+                MockScrapeBehavior::RetryableError => Err(EngineError::RequestFailed(
+                    "mock retryable failure".to_string(),
+                )),
+                MockScrapeBehavior::NonRetryableError => {
+                    Err(EngineError::InvalidUrl("mock non-retryable".to_string()))
+                }
+                MockScrapeBehavior::FailOnceThenSucceed(html) => {
+                    if count == 0 {
+                        Err(EngineError::RequestFailed(
+                            "first attempt fails".to_string(),
+                        ))
+                    } else {
+                        Ok(InternalScrapeResponse {
+                            status_code: 200,
+                            content: html.clone(),
+                            screenshot: None,
+                            content_type: "text/html".to_string(),
+                            headers: HashMap::new(),
+                            response_time_ms: 0,
+                        })
+                    }
+                }
+                MockScrapeBehavior::Slow => {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    Ok(InternalScrapeResponse {
+                        status_code: 200,
+                        content: "late".to_string(),
+                        screenshot: None,
+                        content_type: "text/html".to_string(),
+                        headers: HashMap::new(),
+                        response_time_ms: 3000,
+                    })
+                }
+            }
+        }
+
+        fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+            100
+        }
+
+        fn name(&self) -> &'static str {
+            "mock"
+        }
+    }
+
+    fn create_engine_with_mock(
+        behavior: MockScrapeBehavior,
+        config: SmartSearchEngineConfig,
+    ) -> SmartSearchEngine {
+        let mock_engine = Arc::new(MockScraperEngine::new(behavior));
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![mock_engine];
+        let router = Arc::new(EngineRouter::new(engines));
+        let client = Arc::new(EngineClient::with_router(router));
+        SmartSearchEngine::new(client, config)
+    }
+
+    fn large_google_html() -> String {
+        let mut html = String::from("<html><body>");
+        for i in 0..15 {
+            html.push_str(&format!(
+                r#"<div class="g"><h3>Test Result Number {}</h3><a href="https://example{}.com/page">Link to result {}</a><div class="zIBAzf">This is a description for result number {} with some extra text to increase the HTML length beyond 1000 bytes.</div></div>"#,
+                i, i, i, i
+            ));
+        }
+        html.push_str("</body></html>");
+        html
+    }
+
+    // === search() flow with mock engine ===
+
+    #[tokio::test]
+    async fn test_search_success_with_mock_engine() {
+        let html = large_google_html();
+        let config = create_test_config();
+        let engine = create_engine_with_mock(MockScrapeBehavior::Success(html), config);
+
+        let mut request = SearchRequest::new("rust");
+        request.limit = 5;
+        let response = engine.search(&request).await.unwrap();
+        assert_eq!(response.engine, SearchEngineType::Google);
+        assert_eq!(response.items.len(), 5);
+        assert!(response
+            .items
+            .iter()
+            .any(|i| i.title.contains("Test Result")));
+    }
+
+    #[tokio::test]
+    async fn test_search_html_too_short() {
+        let config = create_test_config();
+        let engine = create_engine_with_mock(MockScrapeBehavior::ShortHtml, config);
+
+        let request = SearchRequest::new("rust");
+        let result = engine.search(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::Engine(msg) => assert!(msg.contains("insufficient content")),
+            _ => panic!("Expected SearchError::Engine with insufficient content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_non_retryable_error() {
+        let config = create_test_config();
+        let engine = create_engine_with_mock(MockScrapeBehavior::NonRetryableError, config);
+
+        let request = SearchRequest::new("rust");
+        let result = engine.search(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::Engine(msg) => assert!(msg.contains("Smart routing failed")),
+            _ => panic!("Expected SearchError::Engine"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_retryable_error_exhausted() {
+        let mut config = create_test_config();
+        config.max_retries = 1;
+        config.retry_delay_ms = 0;
+        let engine = create_engine_with_mock(MockScrapeBehavior::RetryableError, config);
+
+        let request = SearchRequest::new("rust");
+        let result = engine.search(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::Engine(msg) => assert!(msg.contains("Smart routing failed")),
+            _ => panic!("Expected SearchError::Engine"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_retry_then_success() {
+        let html = large_google_html();
+        let mut config = create_test_config();
+        config.max_retries = 2;
+        config.retry_delay_ms = 0;
+        let engine = create_engine_with_mock(MockScrapeBehavior::FailOnceThenSucceed(html), config);
+
+        let request = SearchRequest::new("rust");
+        let response = engine.search(&request).await.unwrap();
+        assert_eq!(response.engine, SearchEngineType::Google);
+        assert!(!response.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_timeout_exhausted() {
+        let mut config = create_test_config();
+        config.timeout_seconds = 1;
+        config.max_retries = 1;
+        config.retry_delay_ms = 0;
+        let engine = create_engine_with_mock(MockScrapeBehavior::Slow, config);
+
+        let request = SearchRequest::new("rust");
+        let result = engine.search(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::Engine(msg) => assert!(msg.contains("Timeout")),
+            _ => panic!("Expected SearchError::Engine with Timeout"),
+        }
+    }
+
+    // === parse_sogou_results None branches ===
+
+    #[test]
+    fn test_parse_sogou_results_missing_title_node() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3>No anchor child here</h3>
+            <div class="text-layout"><p>Description without title anchor</p></div>
+        </div>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://valid.com">Valid Title</a></h3>
+            <div class="text-layout"><p>Desc</p></div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_sogou_results(html).unwrap();
+        assert_eq!(results.len(), 1, "vrwrap without h3 a should be skipped");
+        assert_eq!(results[0].title, "Valid Title");
+    }
+
+    #[test]
+    fn test_parse_sogou_results_missing_snippet_node() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://example.com">Title Without Snippet</a></h3>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_sogou_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Title Without Snippet");
+        assert_eq!(results[0].description, Some(String::new()));
+    }
+
+    // === build_scrape_request with non-specific engine type ===
+
+    #[test]
+    fn test_build_scrape_request_auto_engine_referer() {
+        let engine = create_engine_with_type(SearchEngineType::Auto);
+        let request = engine.build_scrape_request("https://example.com", false, false);
+        assert_eq!(
+            request.options.headers.get("Referer").unwrap(),
+            "https://www.google.com/"
+        );
+    }
+
+    #[test]
+    fn test_build_scrape_request_smart_engine_referer() {
+        let engine = create_engine_with_type(SearchEngineType::Smart);
+        let request = engine.build_scrape_request("https://example.com", false, false);
+        assert_eq!(
+            request.options.headers.get("Referer").unwrap(),
+            "https://www.google.com/"
+        );
     }
 }

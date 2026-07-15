@@ -1156,11 +1156,103 @@ pub fn test_auth_state(db: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid) -> Auth
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::repositories::auth_scope_repository::{
+        AuthScopeRepository, RepositoryError,
+    };
+    use async_trait::async_trait;
+    use dbnexus::DbConfig;
     use std::sync::Mutex as StdMutex;
     use std::time::Instant;
 
     /// Serializes tests that touch the global auth cache to prevent race conditions.
     static GLOBAL_CACHE_LOCK: StdMutex<()> = StdMutex::new(());
+
+    /// Serializes tests that touch GLOBAL_AUTH_STATE (OnceLock — set once, never reset).
+    static GLOBAL_STATE_LOCK: StdMutex<()> = StdMutex::new(());
+
+    /// Create a lazy (non-connecting) DbPool for testing.
+    ///
+    /// Uses a dedicated thread with a current-thread tokio runtime to avoid
+    /// runtime-in-runtime panics — mirrors the pattern in tests/unit.
+    fn create_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    /// Mock AuthScopeRepository that returns a configurable scope or an error.
+    ///
+    /// Avoids storing `Result<.., RepositoryError>` because RepositoryError does
+    /// not implement Clone — instead we store the scope and a should_error flag.
+    struct MockAuthScopeRepo {
+        scope: Option<ApiKeyScope>,
+        should_error: bool,
+    }
+
+    #[async_trait]
+    impl AuthScopeRepository for MockAuthScopeRepo {
+        async fn find_by_api_key_id(
+            &self,
+            _api_key_id: Uuid,
+        ) -> Result<Option<ApiKeyScope>, RepositoryError> {
+            if self.should_error {
+                return Err(RepositoryError::NotFound("mock error".to_string()));
+            }
+            Ok(self.scope.clone())
+        }
+        async fn find_by_api_key(
+            &self,
+            _key: &str,
+        ) -> Result<Option<ApiKeyScope>, RepositoryError> {
+            if self.should_error {
+                return Err(RepositoryError::NotFound("mock error".to_string()));
+            }
+            Ok(self.scope.clone())
+        }
+        async fn upsert(
+            &self,
+            _api_key_id: Uuid,
+            scope: ApiKeyScope,
+        ) -> Result<ApiKeyScope, RepositoryError> {
+            if self.should_error {
+                return Err(RepositoryError::NotFound("mock error".to_string()));
+            }
+            Ok(scope)
+        }
+        async fn delete_by_api_key_id(&self, _api_key_id: Uuid) -> Result<bool, RepositoryError> {
+            if self.should_error {
+                return Err(RepositoryError::NotFound("mock error".to_string()));
+            }
+            Ok(true)
+        }
+    }
+
+    /// Build an AuthScopeService backed by a mock repo that returns the given scope.
+    fn make_auth_scope_service(scope: Option<ApiKeyScope>) -> AuthScopeService {
+        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepo {
+            scope,
+            should_error: false,
+        });
+        AuthScopeService::new(repo)
+    }
+
+    /// Build an AuthScopeService backed by a mock repo that always errors.
+    fn make_auth_scope_service_error() -> AuthScopeService {
+        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepo {
+            scope: None,
+            should_error: true,
+        });
+        AuthScopeService::new(repo)
+    }
 
     #[tokio::test]
     async fn test_cache_ttl_is_2_minutes() {
@@ -2009,5 +2101,555 @@ mod tests {
         let stats = stats.unwrap();
         assert_eq!(stats.size, 0);
         assert_eq!(stats.capacity, DEFAULT_CACHE_MAX_SIZE);
+    }
+
+    // ===== AuthState construction (with_scope_service) =====
+
+    #[test]
+    fn test_auth_state_with_scope_service_sets_service() {
+        let pool = create_test_db_pool();
+        let service = make_auth_scope_service(Some(ApiKeyScope::full_access()));
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let default_scope = ApiKeyScope::read_only();
+
+        let state = AuthState::with_scope_service(
+            pool,
+            service,
+            team_id,
+            api_key_id,
+            default_scope.clone(),
+        );
+
+        assert!(state.auth_scope_service.is_some());
+        assert_eq!(state.team_id, team_id);
+        assert_eq!(state.api_key_id, api_key_id);
+        assert_eq!(state.scope, default_scope);
+        assert!(state.api_key_cache.is_none());
+        assert!(state.auth_rate_limiter.is_none());
+        assert!(state.trusted_proxies.is_none());
+    }
+
+    // ===== load_scope_from_db =====
+
+    #[tokio::test]
+    async fn test_load_scope_from_db_with_service_loads_scope() {
+        let pool = create_test_db_pool();
+        let custom_scope = ApiKeyScope {
+            read: true,
+            write: true,
+            admin: false,
+            search_limit: 500,
+            scrape_limit: 250,
+        };
+        let service = make_auth_scope_service(Some(custom_scope.clone()));
+        let mut state = AuthState::with_scope_service(
+            pool,
+            service,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        );
+
+        // Before load: default scope
+        assert_eq!(state.scope, ApiKeyScope::default());
+
+        state.load_scope_from_db().await;
+
+        // After load: scope from mock repo
+        assert_eq!(state.scope, custom_scope);
+    }
+
+    #[tokio::test]
+    async fn test_load_scope_from_db_service_error_keeps_default() {
+        let pool = create_test_db_pool();
+        let service = make_auth_scope_service_error();
+        let original_scope = ApiKeyScope::read_only();
+        let mut state = AuthState::with_scope_service(
+            pool,
+            service,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            original_scope.clone(),
+        );
+
+        state.load_scope_from_db().await;
+
+        // On error, scope should remain unchanged
+        assert_eq!(state.scope, original_scope);
+    }
+
+    #[tokio::test]
+    async fn test_load_scope_from_db_no_service_is_no_op() {
+        let pool = create_test_db_pool();
+        let original_scope = ApiKeyScope::full_access();
+        let mut state =
+            AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), original_scope.clone());
+
+        state.load_scope_from_db().await;
+
+        // No service → no-op, scope unchanged
+        assert_eq!(state.scope, original_scope);
+    }
+
+    // ===== try_get_cached_auth =====
+
+    #[tokio::test]
+    async fn test_try_get_cached_auth_no_cache_returns_none() {
+        let pool = create_test_db_pool();
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+
+        let result = try_get_cached_auth(&state, "sha256:any").await;
+        assert!(result.is_none(), "Should return None when no cache is set");
+    }
+
+    #[tokio::test]
+    async fn test_try_get_cached_auth_cache_miss_returns_none() {
+        let pool = create_test_db_pool();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        let state = AuthState::with_cache(
+            pool,
+            None,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            cache,
+        );
+
+        let result = try_get_cached_auth(&state, "sha256:nonexistent").await;
+        assert!(result.is_none(), "Should return None on cache miss");
+    }
+
+    #[tokio::test]
+    async fn test_try_get_cached_auth_cache_hit_returns_state() {
+        let pool = create_test_db_pool();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let token_hash = "sha256:cache_hit_test".to_string();
+        let cached_scope = ApiKeyScope::full_access();
+
+        // Insert a cache entry before constructing AuthState
+        {
+            let mut g = cache.write().await;
+            g.insert(
+                token_hash.clone(),
+                CachedAuthResult {
+                    team_id,
+                    api_key_id,
+                    scope: cached_scope.clone(),
+                    cached_at: Instant::now(),
+                },
+            );
+        }
+
+        let state = AuthState::with_cache(
+            pool,
+            None,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            cache,
+        );
+
+        let result = try_get_cached_auth(&state, &token_hash).await;
+        assert!(result.is_some(), "Should return Some on cache hit");
+        let cached = result.unwrap();
+        assert_eq!(cached.team_id, team_id);
+        assert_eq!(cached.api_key_id, api_key_id);
+        assert_eq!(cached.scope, cached_scope);
+        // Cache should still be present (not consumed)
+        assert!(state.api_key_cache.is_some());
+    }
+
+    // ===== inject_auth_state =====
+
+    #[test]
+    fn test_inject_auth_state_inserts_extensions() {
+        let pool = create_test_db_pool();
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let auth_state = AuthState::new(pool, team_id, api_key_id, ApiKeyScope::default());
+        let token_hash = "sha256:inject_test";
+
+        let mut req = Request::builder().body(Body::empty()).unwrap();
+
+        // Before inject: no extensions
+        assert!(req.extensions().get::<AuthState>().is_none());
+        assert!(req.extensions().get::<Uuid>().is_none());
+        assert!(req.extensions().get::<String>().is_none());
+
+        inject_auth_state(&mut req, auth_state, token_hash);
+
+        // After inject: all extensions present
+        assert!(req.extensions().get::<AuthState>().is_some());
+        // Note: Uuid is inserted twice (team_id, api_key_id) — only the last survives
+        let injected_uuid = req.extensions().get::<Uuid>();
+        assert!(injected_uuid.is_some(), "Uuid extension should be inserted");
+        assert_eq!(*injected_uuid.unwrap(), api_key_id);
+        let injected_str = req.extensions().get::<String>();
+        assert!(
+            injected_str.is_some(),
+            "String extension should be inserted"
+        );
+        assert_eq!(injected_str.unwrap(), token_hash);
+    }
+
+    // ===== validate_api_key_from_db =====
+
+    #[tokio::test]
+    async fn test_validate_api_key_from_db_lazy_pool_returns_500() {
+        // Lazy (non-connecting) DbPool — get_session fails because no real DB.
+        let pool = create_test_db_pool();
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+
+        let result = validate_api_key_from_db(&state, "sha256:any", "10.0.0.1").await;
+
+        assert!(
+            result.is_err(),
+            "Lazy pool should fail to provide a session"
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DB session failure should map to INTERNAL_SERVER_ERROR"
+        );
+    }
+
+    // ===== create_and_cache_auth_state =====
+
+    #[tokio::test]
+    async fn test_create_and_cache_auth_state_no_service_returns_500() {
+        let pool = create_test_db_pool();
+        // No auth_scope_service, no cache
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+
+        let key = make_key_model(Some("sha256:somehash".to_string()), Some(0));
+
+        let result = create_and_cache_auth_state(&state, &key, "sha256:any").await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Missing AuthScopeService should return 500"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_and_cache_auth_state_with_service_succeeds_and_caches() {
+        let pool = create_test_db_pool();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        let service = make_auth_scope_service(Some(ApiKeyScope::full_access()));
+        let state = AuthState::with_cache(
+            pool,
+            Some(service),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            cache.clone(),
+        );
+
+        let key = make_key_model(Some("sha256:somehash".to_string()), Some(0));
+        let token_hash = "sha256:create_cache_test".to_string();
+
+        let result = create_and_cache_auth_state(&state, &key, &token_hash).await;
+
+        assert!(result.is_ok(), "Should succeed with service present");
+        let auth_state = result.unwrap();
+        assert_eq!(auth_state.team_id, key.team_id);
+        assert_eq!(auth_state.api_key_id, key.id);
+        assert_eq!(auth_state.scope, ApiKeyScope::full_access());
+
+        // Verify the cache was populated (get requires &mut self → write lock)
+        let mut cache_guard = cache.write().await;
+        let cached = cache_guard.get(&token_hash);
+        assert!(cached.is_some(), "Cache should be populated after create");
+        let cached = cached.unwrap();
+        assert_eq!(cached.team_id, key.team_id);
+        assert_eq!(cached.api_key_id, key.id);
+        assert_eq!(cached.scope, ApiKeyScope::full_access());
+    }
+
+    #[tokio::test]
+    async fn test_create_and_cache_auth_state_without_cache_still_returns_state() {
+        let pool = create_test_db_pool();
+        let service = make_auth_scope_service(None);
+        // No cache — uses with_scope_service (api_key_cache is None)
+        let state = AuthState::with_scope_service(
+            pool,
+            service,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        );
+
+        let key = make_key_model(Some("sha256:somehash".to_string()), Some(0));
+
+        let result = create_and_cache_auth_state(&state, &key, "sha256:any").await;
+
+        // Should still succeed (cache insert is guarded by if-let-Some)
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().api_key_id, key.id);
+    }
+
+    // ===== check_rate_limit_lockout =====
+
+    #[tokio::test]
+    async fn test_check_rate_limit_lockout_no_limiter_returns_ok() {
+        let pool = create_test_db_pool();
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+
+        let result = check_rate_limit_lockout(&state, "10.0.0.1").await;
+
+        assert!(result.is_ok(), "No rate limiter → Ok");
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_lockout_unlocked_returns_ok() {
+        let pool = create_test_db_pool();
+        let rate_limiter = Arc::new(AuthRateLimiter::new());
+        let state = AuthState::with_trusted_proxies(
+            pool,
+            None,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            None,
+            Some(rate_limiter),
+            security::TrustedProxyConfig::from_settings(false, vec![]),
+        );
+
+        let result = check_rate_limit_lockout(&state, "10.0.0.2").await;
+
+        assert!(result.is_ok(), "Unlocked IP → Ok");
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_lockout_locked_returns_429() {
+        let pool = create_test_db_pool();
+        let rate_limiter = Arc::new(AuthRateLimiter::new());
+        let test_ip = "10.0.0.3";
+        for _ in 0..MAX_AUTH_FAILURES {
+            rate_limiter.record_failure(test_ip).await;
+        }
+        let state = AuthState::with_trusted_proxies(
+            pool,
+            None,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            None,
+            Some(rate_limiter),
+            security::TrustedProxyConfig::from_settings(false, vec![]),
+        );
+
+        let result = check_rate_limit_lockout(&state, test_ip).await;
+
+        assert!(result.is_err(), "Locked IP → Err");
+        assert_eq!(
+            result.unwrap_err(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "Locked IP should return 429"
+        );
+    }
+
+    // ===== record_auth_failure =====
+
+    #[tokio::test]
+    async fn test_record_auth_failure_no_limiter_is_no_op() {
+        let pool = create_test_db_pool();
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+
+        // Should not panic
+        record_auth_failure(&state, "10.0.0.4").await;
+    }
+
+    #[tokio::test]
+    async fn test_record_auth_failure_with_limiter_records_failure() {
+        let pool = create_test_db_pool();
+        let rate_limiter = Arc::new(AuthRateLimiter::new());
+        let test_ip = "10.0.0.5";
+        let state = AuthState::with_trusted_proxies(
+            pool,
+            None,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            None,
+            Some(rate_limiter.clone()),
+            security::TrustedProxyConfig::from_settings(false, vec![]),
+        );
+
+        // Record a few failures via the helper
+        record_auth_failure(&state, test_ip).await;
+        record_auth_failure(&state, test_ip).await;
+
+        // Verify via the rate limiter directly
+        assert!(!rate_limiter.is_locked_out(test_ip).await);
+        // Record enough to lock out via the helper
+        for _ in 0..(MAX_AUTH_FAILURES - 1) {
+            record_auth_failure(&state, test_ip).await;
+        }
+        assert!(
+            rate_limiter.is_locked_out(test_ip).await,
+            "After MAX failures IP should be locked out"
+        );
+    }
+
+    // ===== reset_auth_failures =====
+
+    #[tokio::test]
+    async fn test_reset_auth_failures_no_limiter_is_no_op() {
+        let pool = create_test_db_pool();
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+
+        // Should not panic
+        reset_auth_failures(&state, "10.0.0.6").await;
+    }
+
+    #[tokio::test]
+    async fn test_reset_auth_failures_with_limiter_clears_failures() {
+        let pool = create_test_db_pool();
+        let rate_limiter = Arc::new(AuthRateLimiter::new());
+        let test_ip = "10.0.0.7";
+        // Pre-fill failures
+        for _ in 0..MAX_AUTH_FAILURES {
+            rate_limiter.record_failure(test_ip).await;
+        }
+        assert!(rate_limiter.is_locked_out(test_ip).await);
+
+        let state = AuthState::with_trusted_proxies(
+            pool,
+            None,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            None,
+            Some(rate_limiter.clone()),
+            security::TrustedProxyConfig::from_settings(false, vec![]),
+        );
+
+        reset_auth_failures(&state, test_ip).await;
+
+        assert!(
+            !rate_limiter.is_locked_out(test_ip).await,
+            "After reset IP should not be locked out"
+        );
+    }
+
+    // ===== auth_middleware wrapper =====
+
+    #[test]
+    fn test_auth_middleware_wrapper_returns_callable() {
+        let wrapper = auth_middleware();
+        // The wrapper is a closure — calling it requires a Request and Next.
+        // We only verify it is cloneable and callable (type-checks).
+        let _cloned = wrapper.clone();
+        // Force the closure type to be inferred (avoids dead_code warning on `wrapper`).
+        drop(wrapper);
+    }
+
+    // ===== test_auth_state helper =====
+
+    #[test]
+    fn test_test_auth_state_helper_constructs_default_scope() {
+        let pool = create_test_db_pool();
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let state = test_auth_state(pool, team_id, api_key_id);
+
+        assert_eq!(state.team_id, team_id);
+        assert_eq!(state.api_key_id, api_key_id);
+        assert_eq!(state.scope, ApiKeyScope::default());
+        assert!(state.auth_scope_service.is_none());
+        assert!(state.api_key_cache.is_none());
+    }
+
+    // ===== check_feature_flag (inline coverage) =====
+
+    #[tokio::test]
+    async fn test_check_feature_flag_inline_returns_true() {
+        let pool = create_test_db_pool();
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+
+        let result = check_feature_flag("any_feature", &state).await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "feature flag should default to true");
+    }
+
+    // ===== AuthState with global cache (inline) =====
+
+    #[tokio::test]
+    async fn test_auth_state_with_global_cache_uses_global_inline() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        reset_global_auth_cache();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        set_global_auth_cache(cache.clone());
+
+        let pool = create_test_db_pool();
+        let state = AuthState::with_global_cache(
+            pool,
+            None,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            None,
+            None,
+        );
+
+        assert!(state.api_key_cache.is_some());
+        let state_cache = state.api_key_cache.unwrap();
+        assert!(
+            Arc::ptr_eq(&cache, &state_cache),
+            "with_global_cache should reuse the global cache Arc"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_new_for_middleware_creates_cache_when_absent() {
+        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        reset_global_auth_cache();
+        // Ensure no global cache exists before calling new_for_middleware
+        assert!(get_global_auth_cache().is_none());
+
+        let pool = create_test_db_pool();
+        let _state = AuthState::new_for_middleware(pool, None);
+
+        // new_for_middleware should have created and set the global cache
+        let global = get_global_auth_cache();
+        assert!(
+            global.is_some(),
+            "new_for_middleware should initialize global cache if absent"
+        );
+    }
+
+    // ===== set/get_global_auth_state (inline coverage of the set path) =====
+
+    #[test]
+    fn test_set_get_global_auth_state_roundtrip() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        let pool = create_test_db_pool();
+        let state = Arc::new(AuthState::new(
+            pool,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        ));
+
+        set_global_auth_state(state.clone());
+
+        // get should return Some (either our state or a previously-set one — OnceLock semantics)
+        let retrieved = get_global_auth_state();
+        assert!(
+            retrieved.is_some(),
+            "get_global_auth_state should return Some after set"
+        );
+        // If we were the first to set, ptr_eq should hold. If not, the earlier state wins.
+        if let Some(retrieved_state) = retrieved {
+            // Either our set won (ptr_eq), or an earlier set won (different ptr, still Some)
+            let _ = retrieved_state; // confirm Some
+        }
     }
 }

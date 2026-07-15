@@ -983,4 +983,472 @@ Crawl-delay: 8
             names
         );
     }
+
+    // ========== Mock infrastructure for HTTP fetch & cache_service path tests ==========
+    //
+    // The following mocks allow testing get_robots_content() paths that
+    // normally require real HTTP requests or a real cache service backend.
+    // A public IP (8.8.8.8) is used as the target host so SSRF validation
+    // passes without requiring DNS resolution (IP literals are parsed
+    // directly by lookup_host).
+
+    use crate::engines::engine_client::{
+        EngineError, InternalScrapeRequest, InternalScrapeResponse,
+    };
+    use crate::engines::router::EngineStats;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    /// In-memory mock CacheService for testing the cache_service hit/miss paths.
+    struct MockCacheService {
+        data: std::sync::Mutex<HashMap<String, String>>,
+        set_count: AtomicU64,
+    }
+
+    impl MockCacheService {
+        fn new() -> Self {
+            Self {
+                data: std::sync::Mutex::new(HashMap::new()),
+                set_count: AtomicU64::new(0),
+            }
+        }
+
+        fn with_entry(key: &str, value: &str) -> Self {
+            let s = Self::new();
+            s.data
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            s
+        }
+
+        fn set_count(&self) -> u64 {
+            self.set_count.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait]
+    impl CacheService for MockCacheService {
+        fn get(
+            &self,
+            key: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
+            let data = self.data.lock().unwrap().get(key).cloned();
+            Box::pin(async move { Ok(data) })
+        }
+
+        fn set(
+            &self,
+            _key: &str,
+            _value: &str,
+            _ttl_seconds: u64,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+            self.set_count.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async move { Ok(()) })
+        }
+
+        fn delete(&self, key: &str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+            self.data.lock().unwrap().remove(key);
+            Box::pin(async move { Ok(()) })
+        }
+
+        fn exists(&self, key: &str) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
+            let exists = self.data.lock().unwrap().contains_key(key);
+            Box::pin(async move { Ok(exists) })
+        }
+    }
+
+    /// Mock EngineRouterTrait that returns a canned response or error,
+    /// allowing get_robots_content() to be tested without real HTTP requests.
+    struct MockEngineRouter {
+        response: Option<InternalScrapeResponse>,
+        error: Option<String>,
+        call_count: AtomicU64,
+    }
+
+    impl MockEngineRouter {
+        fn with_response(status_code: u16, content: &str) -> Self {
+            Self {
+                response: Some(InternalScrapeResponse {
+                    status_code,
+                    content: content.to_string(),
+                    screenshot: None,
+                    content_type: "text/plain".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 0,
+                }),
+                error: None,
+                call_count: AtomicU64::new(0),
+            }
+        }
+
+        fn with_error(msg: &str) -> Self {
+            Self {
+                response: None,
+                error: Some(msg.to_string()),
+                call_count: AtomicU64::new(0),
+            }
+        }
+
+        fn call_count(&self) -> u64 {
+            self.call_count.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait]
+    impl EngineRouterTrait for MockEngineRouter {
+        async fn route(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            self.call_count.fetch_add(1, Ordering::Relaxed);
+            if let Some(resp) = &self.response {
+                Ok(resp.clone())
+            } else {
+                Err(EngineError::RequestFailed(
+                    self.error.clone().unwrap_or_default(),
+                ))
+            }
+        }
+
+        async fn aggregate(
+            &self,
+            request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            self.route(request).await
+        }
+
+        fn get_engine_stats(&self) -> HashMap<String, EngineStats> {
+            HashMap::new()
+        }
+
+        fn reset_engine_stats(&self, _engine_name: &str) {}
+
+        fn registered_engines(&self) -> Vec<String> {
+            vec!["mock".to_string()]
+        }
+    }
+
+    /// Build a RobotsChecker backed by a mock engine router, with short
+    /// retry delays so tests run fast.
+    fn make_checker_with_mock_router(router: Arc<dyn EngineRouterTrait>) -> RobotsChecker {
+        let engine_client = Arc::new(EngineClient::with_router(router));
+        RobotsChecker {
+            engine_client,
+            memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
+            cache_service: None,
+            retry_policy: RetryPolicy {
+                max_retries: 3,
+                initial_backoff: Duration::from_millis(1),
+                max_backoff: Duration::from_millis(10),
+                ..Default::default()
+            },
+            cache_stats: Arc::new(CacheStats::default()),
+        }
+    }
+
+    // ========== Cache service path tests (lines 184, 187-200, 179) ==========
+
+    #[tokio::test]
+    async fn test_cache_service_hit_returns_content_without_http() {
+        // When memory cache misses but cache_service has the content,
+        // the content should be returned without making an HTTP request.
+        let robots_url = "http://8.8.8.8:80/robots.txt";
+        let cache_key = format!("robots_cache:{}", robots_url);
+        let mock_cache = Arc::new(MockCacheService::with_entry(
+            &cache_key,
+            "User-agent: *\nDisallow: /private\n",
+        ));
+        let checker = RobotsChecker {
+            engine_client: Arc::new(EngineClient::new()),
+            memory_cache: Arc::new(Mutex::new(HashMap::new())),
+            cache_service: Some(mock_cache as Arc<dyn CacheService>),
+            retry_policy: RetryPolicy::default(),
+            cache_stats: Arc::new(CacheStats::default()),
+        };
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/page", "MyBot")
+            .await
+            .expect("should succeed via cache_service");
+        assert!(allowed, "non-disallowed path should be allowed");
+
+        // cache_service hit should be recorded
+        let (hits, misses) = checker.get_cache_stats();
+        assert_eq!(hits, 1, "cache_service hit should increment hits");
+        assert_eq!(misses, 1, "memory cache miss should increment misses");
+
+        // Memory cache should be updated from cache_service content
+        let mem_cache = checker.memory_cache.lock().await;
+        let entry = mem_cache
+            .get(robots_url)
+            .expect("memory cache should be populated from cache_service");
+        assert!(entry.content.contains("Disallow: /private"));
+        assert!(entry.expires_at > Instant::now());
+    }
+
+    #[tokio::test]
+    async fn test_expired_memory_cache_removed_then_cache_service_hit() {
+        // An expired memory cache entry should be removed (line 179),
+        // then cache_service is consulted (lines 184, 187-200).
+        let robots_url = "http://8.8.8.8:80/robots.txt";
+        let cache_key = format!("robots_cache:{}", robots_url);
+        let mock_cache = Arc::new(MockCacheService::with_entry(
+            &cache_key,
+            "User-agent: *\nDisallow: /\n",
+        ));
+        let checker = RobotsChecker {
+            engine_client: Arc::new(EngineClient::new()),
+            memory_cache: Arc::new(Mutex::new(HashMap::new())),
+            cache_service: Some(mock_cache as Arc<dyn CacheService>),
+            retry_policy: RetryPolicy::default(),
+            cache_stats: Arc::new(CacheStats::default()),
+        };
+
+        // Pre-populate memory cache with an EXPIRED entry.
+        {
+            let mut cache = checker.memory_cache.lock().await;
+            cache.insert(
+                robots_url.to_string(),
+                CachedRobots {
+                    content: "old-expired-content".to_string(),
+                    expires_at: Instant::now() - Duration::from_secs(1),
+                },
+            );
+        }
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/page", "MyBot")
+            .await
+            .expect("should succeed via cache_service after expired memory cache");
+        assert!(!allowed, "Disallow: / should block all paths");
+
+        // Memory cache should now hold the fresh content from cache_service.
+        let mem_cache = checker.memory_cache.lock().await;
+        let entry = mem_cache
+            .get(robots_url)
+            .expect("memory cache should have fresh entry");
+        assert_eq!(entry.content, "User-agent: *\nDisallow: /\n");
+        assert!(
+            entry.expires_at > Instant::now(),
+            "new entry should not be expired"
+        );
+    }
+
+    // ========== HTTP fetch path tests (lines 205-279) ==========
+    //
+    // These tests use a mock EngineRouter so no real HTTP request is made.
+    // The target host is 8.8.8.8 (a public IP) so SSRF validation passes
+    // without DNS resolution.
+
+    #[tokio::test]
+    async fn test_http_fetch_success_returns_content() {
+        // 200 response → content stored and returned.
+        let router = Arc::new(MockEngineRouter::with_response(
+            200,
+            "User-agent: *\nDisallow: /private\n",
+        ));
+        let checker = make_checker_with_mock_router(router);
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/page", "MyBot")
+            .await
+            .expect("should succeed via HTTP fetch");
+        assert!(allowed, "non-disallowed path should be allowed");
+
+        // Memory cache should be updated after fetch.
+        let mem_cache = checker.memory_cache.lock().await;
+        let entry = mem_cache
+            .get("http://8.8.8.8:80/robots.txt")
+            .expect("memory cache should be updated after HTTP fetch");
+        assert!(entry.content.contains("Disallow: /private"));
+    }
+
+    #[tokio::test]
+    async fn test_http_fetch_404_returns_empty_content() {
+        // 404 → empty content → allow all.
+        let router = Arc::new(MockEngineRouter::with_response(404, "Not Found"));
+        let checker = make_checker_with_mock_router(router);
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/anything", "MyBot")
+            .await
+            .expect("should succeed with empty content on 404");
+        assert!(allowed, "404 should default to allowing all paths");
+
+        let mem_cache = checker.memory_cache.lock().await;
+        let entry = mem_cache
+            .get("http://8.8.8.8:80/robots.txt")
+            .expect("memory cache should have empty content");
+        assert_eq!(entry.content, "", "404 should store empty content");
+    }
+
+    #[tokio::test]
+    async fn test_http_fetch_403_returns_empty_content() {
+        // Other non-500 status (e.g. 403) → empty content → allow all.
+        let router = Arc::new(MockEngineRouter::with_response(403, "Forbidden"));
+        let checker = make_checker_with_mock_router(router);
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/anything", "MyBot")
+            .await
+            .expect("should succeed with empty content on 403");
+        assert!(allowed, "403 should default to allowing all paths");
+    }
+
+    #[tokio::test]
+    async fn test_http_fetch_500_retries_then_defaults_empty() {
+        // 500 (server error) triggers retries; after all retries the
+        // content defaults to empty.
+        let router = Arc::new(MockEngineRouter::with_response(
+            500,
+            "Internal Server Error",
+        ));
+        let router_ref = router.clone();
+        let checker = make_checker_with_mock_router(router);
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/anything", "MyBot")
+            .await
+            .expect("should succeed with empty content after retries");
+        assert!(
+            allowed,
+            "server errors should default to allowing all paths"
+        );
+
+        // Should have retried max_retries (3) times.
+        assert_eq!(
+            router_ref.call_count(),
+            3,
+            "should retry 3 times on 500 errors"
+        );
+
+        let mem_cache = checker.memory_cache.lock().await;
+        let entry = mem_cache
+            .get("http://8.8.8.8:80/robots.txt")
+            .expect("memory cache should have entry");
+        assert_eq!(
+            entry.content, "",
+            "content should be empty after failed retries"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_http_fetch_request_error_defaults_empty() {
+        // Request failure (e.g. connection refused) triggers retries;
+        // after all retries the content defaults to empty.
+        let router = Arc::new(MockEngineRouter::with_error("connection refused"));
+        let router_ref = router.clone();
+        let checker = make_checker_with_mock_router(router);
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/anything", "MyBot")
+            .await
+            .expect("should succeed with empty content after request errors");
+        assert!(
+            allowed,
+            "request errors should default to allowing all paths"
+        );
+
+        assert_eq!(
+            router_ref.call_count(),
+            3,
+            "should retry 3 times on request errors"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_http_fetch_updates_cache_service() {
+        // After a successful HTTP fetch, cache_service.set should be called
+        // to persist the content.
+        let router = Arc::new(MockEngineRouter::with_response(
+            200,
+            "User-agent: *\nDisallow: /private\n",
+        ));
+        let mock_cache = Arc::new(MockCacheService::new());
+        let checker = RobotsChecker {
+            engine_client: Arc::new(EngineClient::with_router(router)),
+            memory_cache: Arc::new(Mutex::new(HashMap::new())),
+            cache_service: Some(mock_cache.clone() as Arc<dyn CacheService>),
+            retry_policy: RetryPolicy {
+                max_retries: 3,
+                initial_backoff: Duration::from_millis(1),
+                max_backoff: Duration::from_millis(10),
+                ..Default::default()
+            },
+            cache_stats: Arc::new(CacheStats::default()),
+        };
+
+        checker
+            .is_allowed("http://8.8.8.8/page", "MyBot")
+            .await
+            .expect("should succeed");
+
+        assert_eq!(
+            mock_cache.set_count(),
+            1,
+            "cache_service.set should be called once after HTTP fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_full_flow_first_fetch_then_cache_hit() {
+        // First call: cache miss → HTTP fetch → memory cache populated.
+        // Second call: memory cache hit → no HTTP fetch needed.
+        let router = Arc::new(MockEngineRouter::with_response(
+            200,
+            "User-agent: *\nDisallow: /private\n",
+        ));
+        let router_ref = router.clone();
+        let checker = make_checker_with_mock_router(router);
+
+        // First call — should fetch via HTTP.
+        let allowed1 = checker
+            .is_allowed("http://8.8.8.8/page", "MyBot")
+            .await
+            .expect("first call should succeed");
+        assert!(allowed1, "first call: non-disallowed path allowed");
+        assert_eq!(
+            router_ref.call_count(),
+            1,
+            "first call should trigger HTTP fetch"
+        );
+
+        // Second call — should hit memory cache (no HTTP fetch).
+        let allowed2 = checker
+            .is_allowed("http://8.8.8.8/private", "MyBot")
+            .await
+            .expect("second call should succeed");
+        assert!(!allowed2, "second call: disallowed path blocked");
+        assert_eq!(
+            router_ref.call_count(),
+            1,
+            "second call should NOT trigger HTTP fetch (cache hit)"
+        );
+
+        let (hits, misses) = checker.get_cache_stats();
+        assert_eq!(hits, 1, "one cache hit (second call)");
+        assert_eq!(misses, 1, "one cache miss (first call)");
+    }
+
+    // ========== SSRF failure path test (line 205) ==========
+
+    #[tokio::test]
+    async fn test_get_robots_content_ssrf_blocked_returns_error() {
+        // A localhost URL should be blocked by SSRF validation (line 205),
+        // returning an error before any HTTP fetch is attempted.
+        let router = Arc::new(MockEngineRouter::with_response(200, ""));
+        let router_ref = router.clone();
+        let checker = make_checker_with_mock_router(router);
+
+        let result = checker.is_allowed("http://localhost/page", "MyBot").await;
+        assert!(result.is_err(), "localhost URL should be blocked by SSRF");
+
+        // The mock engine should never have been called.
+        assert_eq!(
+            router_ref.call_count(),
+            0,
+            "no HTTP fetch should occur when SSRF blocks the URL"
+        );
+    }
 }

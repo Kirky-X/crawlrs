@@ -328,3 +328,7 @@ path = "webhooks/task_events.rs"
 [lib]
 name = "crawlrs_examples"
 path = "src/lib.rs"
+
+# 与主 crate 保持一致的 lints 配置（sdforge_macros 的 forge 宏会生成 cfg(feature = "openapi")）
+[lints.rust]
+unexpected_cfgs = "allow"
