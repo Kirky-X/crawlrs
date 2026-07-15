@@ -18,15 +18,18 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use axum::Extension;
 use axum_test::TestServer;
+use dbnexus::{DbConfig, DbPool};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crawlrs::domain::auth::ApiKeyScope;
 use crawlrs::domain::models::{Crawl, CrawlStatus, Task};
 use crawlrs::domain::repositories::crawl_repository::CrawlRepository;
 use crawlrs::domain::repositories::task_repository::RepositoryError;
 use crawlrs::domain::services::search_service::{
     SearchQuery, SearchResponse, SearchResult, SearchServiceError, SearchServiceTrait,
 };
+use crawlrs::presentation::middleware::auth_middleware::AuthState;
 use crawlrs::presentation::sdk::build_sdk_router;
 use crawlrs::queue::task_queue::{QueueError, TaskQueue};
 
@@ -120,8 +123,36 @@ impl CrawlRepository for MockCrawlRepository {
     }
 }
 
-/// Build a TestServer with mock services injected via Extension layers.
+/// Create a lazy (non-connecting) DbPool for testing.
+///
+/// Mirrors the helper in `src/presentation/middleware/auth_middleware.rs::tests`.
+/// Uses a dedicated thread with a current-thread tokio runtime to avoid
+/// runtime-in-runtime panics.
+fn create_test_db_pool() -> Arc<DbPool> {
+    std::thread::scope(|s| {
+        let handle = s.spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build tokio runtime for DbPool construction");
+            let _guard = rt.enter();
+            DbPool::try_from(&DbConfig::default()).expect("failed to create lazy DbPool for test")
+        });
+        Arc::new(handle.join().expect("DbPool construction thread panicked"))
+    })
+}
+
+/// Build a TestServer with mock services + AuthState Extension injected.
+///
+/// SDK endpoints use `#[state] auth_state: AuthState` which sdforge resolves
+/// from the axum Extension layer — without it, every request returns 500
+/// "Missing request extension: AuthState".
 fn make_server() -> TestServer {
+    let team_id = Uuid::parse_str(TEAM_ID).expect("valid TEAM_ID uuid");
+    let api_key_id = Uuid::parse_str(API_KEY_ID).expect("valid API_KEY_ID uuid");
+    let pool = create_test_db_pool();
+    let auth_state = AuthState::new(pool, team_id, api_key_id, ApiKeyScope::default());
+
     let app = build_sdk_router()
         .layer(Extension(
             Arc::new(MockSearchService) as Arc<dyn SearchServiceTrait>
@@ -129,7 +160,8 @@ fn make_server() -> TestServer {
         .layer(Extension(Arc::new(MockTaskQueue) as Arc<dyn TaskQueue>))
         .layer(Extension(
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
-        ));
+        ))
+        .layer(Extension(auth_state));
     TestServer::new(app).expect("failed to build TestServer")
 }
 
