@@ -91,7 +91,11 @@ async fn create_task_with_auth(
     }
 
     // 检查角色权限
-    if !auth_state.roles.iter().any(|r| r == "writer" || r == "admin") {
+    if !auth_state
+        .roles
+        .iter()
+        .any(|r| r == "writer" || r == "admin")
+    {
         return Err(ApiError::AccessDenied {
             permission: "task:create".to_string(),
             user_id: Some(auth_state.api_key_id.to_string()),
@@ -187,12 +191,7 @@ async fn error_handler_middleware(req: Request<Body>, next: Next) -> Response<Bo
     let response = next.run(req).await;
 
     if response.status().is_server_error() {
-        log::error!(
-            "Server error: {} {} → {}",
-            method,
-            path,
-            response.status()
-        );
+        log::error!("Server error: {} {} → {}", method, path, response.status());
     }
 
     response

@@ -4,3 +4,4 @@
 // See LICENSE file in project root for full license information.
 
 pub mod handlers;
+pub mod middleware;

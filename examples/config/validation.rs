@@ -55,12 +55,15 @@ fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
     if valid_levels.contains(&level.to_lowercase().as_str()) {
         Ok(())
     } else {
-        Err(validator::ValidationError::new("invalid_log_level")
-            .with_message(format!(
-                "log_level must be one of {:?}, got '{}'",
-                valid_levels, level
-            )
-            .into()))
+        Err(
+            validator::ValidationError::new("invalid_log_level").with_message(
+                format!(
+                    "log_level must be one of {:?}, got '{}'",
+                    valid_levels, level
+                )
+                .into(),
+            ),
+        )
     }
 }
 
@@ -124,7 +127,10 @@ async fn main() {
     info!("2️⃣  验证成功示例");
     info!("-----------------------------");
     let valid = valid_sample();
-    info!("📖 验证合法配置：port={}, log_level={}", valid.port, valid.log_level);
+    info!(
+        "📖 验证合法配置：port={}, log_level={}",
+        valid.port, valid.log_level
+    );
     match valid.validate() {
         Ok(()) => info!("✅ 验证通过"),
         Err(e) => info!("❌ 验证失败：{:?}", e),
@@ -149,7 +155,10 @@ async fn main() {
     info!("4️⃣  验证失败示例（自定义规则）");
     info!("-----------------------------");
     let invalid_level = invalid_log_level_sample();
-    info!("📖 验证非法配置：log_level='{}'（应为 trace/debug/info/warn/error）", invalid_level.log_level);
+    info!(
+        "📖 验证非法配置：log_level='{}'（应为 trace/debug/info/warn/error）",
+        invalid_level.log_level
+    );
     match invalid_level.validate() {
         Ok(()) => info!("⚠️  验证通过（不应发生）"),
         Err(e) => {

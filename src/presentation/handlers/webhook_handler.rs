@@ -357,10 +357,7 @@ mod tests {
             Ok(None)
         }
 
-        async fn find_by_team_id(
-            &self,
-            _team_id: Uuid,
-        ) -> Result<Vec<Webhook>, RepositoryError> {
+        async fn find_by_team_id(&self, _team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
             match self.find_by_team_id_result.lock().unwrap().take() {
                 Some(result) => result,
                 None => Ok(vec![]),
@@ -617,15 +614,17 @@ mod tests {
         let repo = Arc::new(MockWebhookRepository::new());
         let auth = make_test_auth_state();
 
-        let result = list_webhooks::<MockWebhookRepository>(
-            Extension(repo),
-            Extension(auth),
-        )
-        .await;
+        let result = list_webhooks::<MockWebhookRepository>(Extension(repo), Extension(auth)).await;
 
-        assert!(result.is_ok(), "list_webhooks should succeed for empty list");
+        assert!(
+            result.is_ok(),
+            "list_webhooks should succeed for empty list"
+        );
         let response = result.unwrap();
-        let data = response.data.as_ref().expect("response data should be present");
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
         assert_eq!(data.total, 0);
         assert!(data.webhooks.is_empty());
     }
@@ -633,23 +632,30 @@ mod tests {
     #[tokio::test]
     async fn test_list_webhooks_with_items() {
         let team_id = Uuid::new_v4();
-        let webhook1 = Webhook::new(Uuid::new_v4(), team_id, "https://hook1.example.com".to_string());
-        let webhook2 = Webhook::new(Uuid::new_v4(), team_id, "https://hook2.example.com".to_string());
+        let webhook1 = Webhook::new(
+            Uuid::new_v4(),
+            team_id,
+            "https://hook1.example.com".to_string(),
+        );
+        let webhook2 = Webhook::new(
+            Uuid::new_v4(),
+            team_id,
+            "https://hook2.example.com".to_string(),
+        );
         let repo = Arc::new(MockWebhookRepository::with_find_result(Ok(vec![
             webhook1.clone(),
             webhook2.clone(),
         ])));
         let auth = make_test_auth_state();
 
-        let result = list_webhooks::<MockWebhookRepository>(
-            Extension(repo),
-            Extension(auth),
-        )
-        .await;
+        let result = list_webhooks::<MockWebhookRepository>(Extension(repo), Extension(auth)).await;
 
         assert!(result.is_ok(), "list_webhooks should succeed with items");
         let response = result.unwrap();
-        let data = response.data.as_ref().expect("response data should be present");
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
         assert_eq!(data.total, 2);
         assert_eq!(data.webhooks.len(), 2);
         assert_eq!(data.webhooks[0].url, "https://hook1.example.com");
@@ -663,11 +669,7 @@ mod tests {
         )));
         let auth = make_test_auth_state();
 
-        let result = list_webhooks::<MockWebhookRepository>(
-            Extension(repo),
-            Extension(auth),
-        )
-        .await;
+        let result = list_webhooks::<MockWebhookRepository>(Extension(repo), Extension(auth)).await;
 
         assert!(result.is_err(), "repo failure should propagate");
         match result.unwrap_err() {

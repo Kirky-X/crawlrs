@@ -116,7 +116,7 @@ impl LimiteronService {
             }],
             limiters: vec![LimiterConfig::TokenBucket {
                 capacity: config.rate_limit.bucket_capacity.unwrap_or(100) as u64,
-                refill_rate: config.rate_limit.requests_per_second as u64,
+                refill_rate: (config.rate_limit.requests_per_second as u64).max(1),
             }],
             action: ActionConfig {
                 on_exceed: Action::Reject,
@@ -135,7 +135,7 @@ impl LimiteronService {
             }],
             limiters: vec![LimiterConfig::TokenBucket {
                 capacity: config.rate_limit.bucket_capacity.unwrap_or(50) as u64,
-                refill_rate: (config.rate_limit.requests_per_second / 2) as u64,
+                refill_rate: ((config.rate_limit.requests_per_second / 2) as u64).max(1),
             }],
             action: ActionConfig {
                 on_exceed: Action::Reject,

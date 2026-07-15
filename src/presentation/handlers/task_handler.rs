@@ -541,7 +541,12 @@ pub async fn cancel_tasks<T: TaskRepository>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::auth::ApiKeyScope;
     use crate::domain::models::{Task, TaskStatus, TaskType};
+    use crate::domain::repositories::task_repository::RepositoryError;
+    use async_trait::async_trait;
+    use dbnexus::{DbConfig, DbPool};
+    use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
     // ========== Helper to create test Task ==========
@@ -1423,5 +1428,754 @@ mod tests {
         let result_dto = infos[0].result.as_ref().expect("result should exist");
         assert!(result_dto.content.contains("&lt;b&gt;"));
         assert!(!result_dto.content.contains("<b>"));
+    }
+
+    // ========== Handler test infrastructure ==========
+
+    /// Construct a lazy `DbPool` that does not connect to any database.
+    ///
+    /// `DbPool::try_from` is lazy: it builds the internal struct without opening
+    /// a connection. The connection is only established on `get_session()`, which
+    /// handlers under test never call (they only read `team_id` / `api_key_id`
+    /// from `AuthState`). Since `try_from` internally calls
+    /// `Handle::current().block_on(...)`, we construct the pool on a dedicated
+    /// OS thread to avoid runtime-in-runtime panics.
+    fn make_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    /// Build an `AuthState` suitable for handler unit tests.
+    fn make_test_auth_state() -> AuthState {
+        AuthState::new(
+            make_test_db_pool(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        )
+    }
+
+    /// Build a `ScrapeResultRepositoryImpl` backed by a lazy (non-connecting) pool.
+    fn make_test_scrape_result_repo() -> Arc<ScrapeResultRepositoryImpl> {
+        Arc::new(ScrapeResultRepositoryImpl::new(make_test_db_pool()))
+    }
+
+    // ========== MockTaskRepository ==========
+
+    /// Mock `TaskRepository` with configurable `query_tasks` and `batch_cancel`.
+    ///
+    /// All other trait methods return benign defaults. `query_tasks` returns the
+    /// stored data on each call (cloned), or returns a stored error once (consumed).
+    /// `batch_cancel` returns the stored result once (consumed), then empty.
+    struct MockTaskRepository {
+        query_error: Mutex<Option<RepositoryError>>,
+        query_tasks_data: Mutex<Vec<Task>>,
+        query_total: u64,
+        batch_cancel_result:
+            Mutex<Option<Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError>>>,
+    }
+
+    impl MockTaskRepository {
+        fn new() -> Self {
+            Self {
+                query_error: Mutex::new(None),
+                query_tasks_data: Mutex::new(Vec::new()),
+                query_total: 0,
+                batch_cancel_result: Mutex::new(None),
+            }
+        }
+
+        fn with_query_data(tasks: Vec<Task>, total: u64) -> Self {
+            Self {
+                query_error: Mutex::new(None),
+                query_tasks_data: Mutex::new(tasks),
+                query_total: total,
+                batch_cancel_result: Mutex::new(None),
+            }
+        }
+
+        fn with_query_error(err: RepositoryError) -> Self {
+            Self {
+                query_error: Mutex::new(Some(err)),
+                query_tasks_data: Mutex::new(Vec::new()),
+                query_total: 0,
+                batch_cancel_result: Mutex::new(None),
+            }
+        }
+
+        fn with_batch_cancel_result(
+            result: Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError>,
+        ) -> Self {
+            Self {
+                query_error: Mutex::new(None),
+                query_tasks_data: Mutex::new(Vec::new()),
+                query_total: 0,
+                batch_cancel_result: Mutex::new(Some(result)),
+            }
+        }
+
+        fn with_batch_cancel_result_and_query_data(
+            result: Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError>,
+            query_tasks: Vec<Task>,
+        ) -> Self {
+            Self {
+                query_error: Mutex::new(None),
+                query_tasks_data: Mutex::new(query_tasks),
+                query_total: 1,
+                batch_cancel_result: Mutex::new(Some(result)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TaskRepository for MockTaskRepository {
+        async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
+            unreachable!("create not expected in task_handler tests")
+        }
+
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> {
+            unreachable!("update not expected in task_handler tests")
+        }
+
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<std::collections::HashSet<String>, RepositoryError> {
+            Ok(std::collections::HashSet::new())
+        }
+
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(Vec::new())
+        }
+
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            if let Some(err) = self.query_error.lock().unwrap().take() {
+                return Err(err);
+            }
+            Ok((
+                self.query_tasks_data.lock().unwrap().clone(),
+                self.query_total,
+            ))
+        }
+
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            match self.batch_cancel_result.lock().unwrap().take() {
+                Some(result) => result,
+                None => Ok((Vec::new(), Vec::new())),
+            }
+        }
+    }
+
+    // ========== query_tasks handler tests ==========
+
+    #[tokio::test]
+    async fn test_query_tasks_handler_success() {
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let repo = Arc::new(MockTaskRepository::with_query_data(vec![task], 1));
+        let auth = make_test_auth_state();
+        let scrape_repo = make_test_scrape_result_repo();
+        let request = TaskQueryRequestDto {
+            sync_wait_ms: Some(0),
+            ..TaskQueryRequestDto::default()
+        };
+
+        let result = query_tasks::<MockTaskRepository>(
+            Extension(auth),
+            Extension(repo),
+            Extension(scrape_repo),
+            Json(request),
+        )
+        .await;
+
+        assert!(result.is_ok(), "query_tasks should succeed");
+        let response = result.unwrap();
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
+        assert_eq!(data.tasks.len(), 1);
+        assert_eq!(data.total, 1);
+        assert!(!data.has_more);
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_handler_empty_result() {
+        let repo = Arc::new(MockTaskRepository::new());
+        let auth = make_test_auth_state();
+        let scrape_repo = make_test_scrape_result_repo();
+        let request = TaskQueryRequestDto {
+            sync_wait_ms: Some(0),
+            ..TaskQueryRequestDto::default()
+        };
+
+        let result = query_tasks::<MockTaskRepository>(
+            Extension(auth),
+            Extension(repo),
+            Extension(scrape_repo),
+            Json(request),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "query_tasks should succeed with empty results"
+        );
+        let response = result.unwrap();
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
+        assert_eq!(data.tasks.len(), 0);
+        assert_eq!(data.total, 0);
+        assert!(!data.has_more);
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_handler_has_more() {
+        let task1 = make_test_task(Uuid::new_v4(), TaskStatus::Completed);
+        let task2 = make_test_task(Uuid::new_v4(), TaskStatus::Completed);
+        let repo = Arc::new(MockTaskRepository::with_query_data(vec![task1, task2], 10));
+        let auth = make_test_auth_state();
+        let scrape_repo = make_test_scrape_result_repo();
+        let request = TaskQueryRequestDto {
+            limit: Some(2),
+            offset: Some(0),
+            sync_wait_ms: Some(0),
+            ..TaskQueryRequestDto::default()
+        };
+
+        let result = query_tasks::<MockTaskRepository>(
+            Extension(auth),
+            Extension(repo),
+            Extension(scrape_repo),
+            Json(request),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
+        assert_eq!(data.tasks.len(), 2);
+        assert_eq!(data.total, 10);
+        assert!(
+            data.has_more,
+            "has_more should be true when total > offset+limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_handler_validation_error_limit() {
+        let repo = Arc::new(MockTaskRepository::new());
+        let auth = make_test_auth_state();
+        let scrape_repo = make_test_scrape_result_repo();
+        let request = TaskQueryRequestDto {
+            limit: Some(0),
+            sync_wait_ms: Some(0),
+            ..TaskQueryRequestDto::default()
+        };
+
+        let result = query_tasks::<MockTaskRepository>(
+            Extension(auth),
+            Extension(repo),
+            Extension(scrape_repo),
+            Json(request),
+        )
+        .await;
+
+        assert!(result.is_err(), "limit=0 should fail validation");
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_handler_validation_error_sync_wait() {
+        let repo = Arc::new(MockTaskRepository::new());
+        let auth = make_test_auth_state();
+        let scrape_repo = make_test_scrape_result_repo();
+        let request = TaskQueryRequestDto {
+            sync_wait_ms: Some(30001),
+            ..TaskQueryRequestDto::default()
+        };
+
+        let result = query_tasks::<MockTaskRepository>(
+            Extension(auth),
+            Extension(repo),
+            Extension(scrape_repo),
+            Json(request),
+        )
+        .await;
+
+        assert!(result.is_err(), "sync_wait_ms=30001 should fail validation");
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_handler_repo_error() {
+        let repo = Arc::new(MockTaskRepository::with_query_error(
+            RepositoryError::Database(anyhow::anyhow!("query failed")),
+        ));
+        let auth = make_test_auth_state();
+        let scrape_repo = make_test_scrape_result_repo();
+        let request = TaskQueryRequestDto {
+            sync_wait_ms: Some(0),
+            ..TaskQueryRequestDto::default()
+        };
+
+        let result = query_tasks::<MockTaskRepository>(
+            Extension(auth),
+            Extension(repo),
+            Extension(scrape_repo),
+            Json(request),
+        )
+        .await;
+
+        assert!(result.is_err(), "repo error should propagate");
+        match result.unwrap_err() {
+            AppError::Other(msg) => assert!(msg.contains("Query failed")),
+            other => panic!("expected AppError::Other, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_handler_sync_wait_completed() {
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let repo = Arc::new(MockTaskRepository::with_query_data(vec![task], 1));
+        let auth = make_test_auth_state();
+        let scrape_repo = make_test_scrape_result_repo();
+        let request = TaskQueryRequestDto {
+            sync_wait_ms: Some(100),
+            ..TaskQueryRequestDto::default()
+        };
+
+        let result = query_tasks::<MockTaskRepository>(
+            Extension(auth),
+            Extension(repo),
+            Extension(scrape_repo),
+            Json(request),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "sync wait with completed tasks should succeed"
+        );
+        let response = result.unwrap();
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
+        assert_eq!(data.tasks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_handler_include_results_db_error() {
+        // With include_results=true and a lazy (non-connecting) pool,
+        // fetch_scrape_results should fail because the pool cannot connect.
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let repo = Arc::new(MockTaskRepository::with_query_data(vec![task], 1));
+        let auth = make_test_auth_state();
+        let scrape_repo = make_test_scrape_result_repo();
+        let request = TaskQueryRequestDto {
+            include_results: Some(true),
+            sync_wait_ms: Some(0),
+            ..TaskQueryRequestDto::default()
+        };
+
+        let result = query_tasks::<MockTaskRepository>(
+            Extension(auth),
+            Extension(repo),
+            Extension(scrape_repo),
+            Json(request),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "include_results with lazy pool should fail"
+        );
+    }
+
+    // ========== cancel_tasks handler tests ==========
+
+    #[tokio::test]
+    async fn test_cancel_tasks_handler_success() {
+        let task_id = Uuid::new_v4();
+        let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
+            vec![task_id],
+            vec![],
+        ))));
+        let auth = make_test_auth_state();
+        let request = TaskCancelRequestDto {
+            task_ids: vec![task_id],
+            team_id: auth.team_id,
+            force: Some(false),
+            sync_wait_ms: Some(0),
+        };
+
+        let result =
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+                .await;
+
+        assert!(result.is_ok(), "cancel_tasks should succeed");
+        let response = result.unwrap();
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
+        assert_eq!(data.total_cancelled, 1);
+        assert_eq!(data.total_failed, 0);
+        assert_eq!(data.cancelled_tasks.len(), 1);
+        assert_eq!(data.cancelled_tasks[0].task_id, task_id);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_handler_empty_task_ids() {
+        let repo = Arc::new(MockTaskRepository::new());
+        let auth = make_test_auth_state();
+        let request = TaskCancelRequestDto {
+            task_ids: vec![],
+            team_id: auth.team_id,
+            force: Some(false),
+            sync_wait_ms: Some(0),
+        };
+
+        let result =
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+                .await;
+
+        assert!(result.is_err(), "empty task_ids should fail");
+        match result.unwrap_err() {
+            AppError::Validation(msg) => {
+                assert!(msg.contains("Task IDs cannot be empty"), "got: {}", msg);
+            }
+            other => panic!("expected AppError::Validation, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_handler_validation_error_sync_wait() {
+        let repo = Arc::new(MockTaskRepository::new());
+        let auth = make_test_auth_state();
+        let request = TaskCancelRequestDto {
+            task_ids: vec![Uuid::new_v4()],
+            team_id: auth.team_id,
+            force: Some(false),
+            sync_wait_ms: Some(30001),
+        };
+
+        let result =
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+                .await;
+
+        assert!(result.is_err(), "sync_wait_ms=30001 should fail validation");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_handler_repo_error() {
+        let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Err(
+            RepositoryError::Database(anyhow::anyhow!("batch_cancel failed")),
+        )));
+        let auth = make_test_auth_state();
+        let request = TaskCancelRequestDto {
+            task_ids: vec![Uuid::new_v4()],
+            team_id: auth.team_id,
+            force: Some(false),
+            sync_wait_ms: Some(0),
+        };
+
+        let result =
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+                .await;
+
+        assert!(result.is_err(), "repo error should propagate");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_handler_with_failed_tasks() {
+        let task_id1 = Uuid::new_v4();
+        let task_id2 = Uuid::new_v4();
+        let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
+            vec![task_id1],
+            vec![(task_id2, "Already completed".to_string())],
+        ))));
+        let auth = make_test_auth_state();
+        let request = TaskCancelRequestDto {
+            task_ids: vec![task_id1, task_id2],
+            team_id: auth.team_id,
+            force: Some(false),
+            sync_wait_ms: Some(0),
+        };
+
+        let result =
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+                .await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
+        assert_eq!(data.total_cancelled, 1);
+        assert_eq!(data.total_failed, 1);
+        assert_eq!(data.failed_tasks[0].task_id, task_id2);
+        assert_eq!(data.failed_tasks[0].reason, "Already completed");
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_handler_sync_wait() {
+        let task_id = Uuid::new_v4();
+        let cancelled_task = make_test_task(task_id, TaskStatus::Cancelled);
+        let repo = Arc::new(MockTaskRepository::with_batch_cancel_result_and_query_data(
+            Ok((vec![task_id], vec![])),
+            vec![cancelled_task],
+        ));
+        let auth = make_test_auth_state();
+        let request = TaskCancelRequestDto {
+            task_ids: vec![task_id],
+            team_id: auth.team_id,
+            force: Some(false),
+            sync_wait_ms: Some(100),
+        };
+
+        let result =
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+                .await;
+
+        assert!(result.is_ok(), "cancel with sync wait should succeed");
+        let response = result.unwrap();
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
+        assert_eq!(data.total_cancelled, 1);
+    }
+
+    // ========== wait_for_tasks_completion tests ==========
+
+    #[tokio::test]
+    async fn test_wait_for_tasks_completion_already_completed() {
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let repo = MockTaskRepository::with_query_data(vec![task], 1);
+
+        let result = wait_for_tasks_completion(&repo, &[task_id], Uuid::nil(), 100, 500).await;
+
+        assert!(
+            result.is_ok(),
+            "should complete immediately when tasks are done"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_tasks_completion_timeout() {
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Active);
+        let repo = MockTaskRepository::with_query_data(vec![task], 1);
+
+        let result = wait_for_tasks_completion(&repo, &[task_id], Uuid::nil(), 50, 500).await;
+
+        assert!(result.is_ok(), "should return Ok on timeout");
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_tasks_completion_query_error() {
+        let task_id = Uuid::new_v4();
+        let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
+            anyhow::anyhow!("poll query failed"),
+        ));
+
+        let result = wait_for_tasks_completion(&repo, &[task_id], Uuid::nil(), 100, 500).await;
+
+        assert!(result.is_err(), "query error should propagate");
+    }
+
+    // ========== handle_sync_wait_and_get_status tests ==========
+
+    #[tokio::test]
+    async fn test_handle_sync_wait_and_get_status_success() {
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let repo = MockTaskRepository::with_query_data(vec![task], 1);
+
+        let result = handle_sync_wait_and_get_status(&repo, &[task_id], Uuid::nil(), 200).await;
+
+        assert!(result.is_ok());
+        let sync_result = result.unwrap();
+        assert!(!sync_result.is_timeout, "should complete before timeout");
+    }
+
+    #[tokio::test]
+    async fn test_handle_sync_wait_and_get_status_error_continues() {
+        // Even when wait_for_tasks_completion returns an error,
+        // handle_sync_wait_and_get_status catches it and returns Ok.
+        let task_id = Uuid::new_v4();
+        let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
+            anyhow::anyhow!("poll failed"),
+        ));
+
+        let result = handle_sync_wait_and_get_status(&repo, &[task_id], Uuid::nil(), 200).await;
+
+        assert!(result.is_ok(), "should return Ok even on wait error");
+    }
+
+    // ========== Direct function tests ==========
+
+    #[tokio::test]
+    async fn test_query_tasks_for_poll_success() {
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let repo = MockTaskRepository::with_query_data(vec![task], 1);
+
+        let result = query_tasks_for_poll(&repo, Uuid::nil(), &[task_id]).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_for_poll_error() {
+        let task_id = Uuid::new_v4();
+        let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
+            anyhow::anyhow!("poll failed"),
+        ));
+
+        let result = query_tasks_for_poll(&repo, Uuid::nil(), &[task_id]).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_task_query_success() {
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let repo = MockTaskRepository::with_query_data(vec![task], 1);
+        let request = TaskQueryRequestDto::default();
+
+        let result = execute_task_query(&repo, Uuid::nil(), &request, 100, 0).await;
+
+        assert!(result.is_ok());
+        let (tasks, total) = result.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(total, 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_task_query_error() {
+        let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
+            anyhow::anyhow!("exec failed"),
+        ));
+        let request = TaskQueryRequestDto::default();
+
+        let result = execute_task_query(&repo, Uuid::nil(), &request, 100, 0).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AppError::Other(msg) => assert!(msg.contains("Query failed")),
+            other => panic!("expected AppError::Other, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_sync_wait_direct() {
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Completed);
+        let repo = MockTaskRepository::with_query_data(vec![task.clone()], 1);
+
+        let result = handle_sync_wait(&repo, &[task], Uuid::nil(), 100).await;
+
+        assert!(result.is_ok());
+        let waited = result.unwrap();
+        assert!(
+            waited < 1000,
+            "waited_time_ms should be small, got {}",
+            waited
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_scrape_results_empty_tasks() {
+        let repo = make_test_scrape_result_repo();
+        let tasks: Vec<Task> = vec![];
+
+        let result = fetch_scrape_results(repo.as_ref(), &tasks).await;
+
+        assert!(result.is_ok());
+        let map = result.unwrap();
+        assert!(map.is_some());
+        assert!(map.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_scrape_results_non_empty_no_db() {
+        // With a lazy (non-connecting) pool, calling find_by_task_ids on
+        // non-empty task IDs should fail because the pool cannot connect.
+        let repo = make_test_scrape_result_repo();
+        let task_id = Uuid::new_v4();
+        let tasks = vec![make_test_task(task_id, TaskStatus::Completed)];
+
+        let result = fetch_scrape_results(repo.as_ref(), &tasks).await;
+
+        assert!(result.is_err(), "should fail without a real DB connection");
     }
 }

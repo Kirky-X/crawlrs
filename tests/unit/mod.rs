@@ -4,8 +4,10 @@
 // See LICENSE file in project root for full license information.
 
 pub mod application;
+pub mod di;
 pub mod domain;
 pub mod engines;
+pub mod infrastructure;
 pub mod presentation;
 pub mod queue;
 pub mod search;

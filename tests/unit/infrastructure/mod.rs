@@ -7,3 +7,4 @@
 ///
 /// 测试基础设施组件的功能，如缓存等
 pub mod cache;
+pub mod services;

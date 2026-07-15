@@ -3,5 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-mod audit_handler_test;
-mod crawl_handler_test;
+mod auth_middleware_test;
+
+#[cfg(feature = "rate-limiting")]
+mod limiteron_rate_limit_middleware_test;

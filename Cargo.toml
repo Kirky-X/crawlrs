@@ -259,6 +259,9 @@ criterion = { version = "0.8", features = ["html_reports"] }
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
 
+# DI 测试需要直接访问 AsyncKit / ModuleMeta（与主依赖同版本）
+trait-kit = { version = "0.3", features = ["async", "confers"] }
+
 [[test]]
 name = "integration_tests"
 path = "tests/integration/mod.rs"

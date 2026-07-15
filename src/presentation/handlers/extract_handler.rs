@@ -778,10 +778,7 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(
-            &self,
-            _crawl_id: Uuid,
-        ) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -1008,8 +1005,9 @@ mod tests {
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
             TeamGeoRestrictions::default(),
         ));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
         let payload = ExtractRequestDto {
             urls: vec![],
             prompt: Some("test".to_string()),
@@ -1043,8 +1041,9 @@ mod tests {
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
             TeamGeoRestrictions::default(),
         ));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
         let payload = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: None,
@@ -1076,8 +1075,9 @@ mod tests {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::failing_get());
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
 
         let response = extract::<MockGeoRestrictionRepository>(
             Extension(queue),
@@ -1103,8 +1103,9 @@ mod tests {
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
             TeamGeoRestrictions::default(),
         ));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
         let payload = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: Some("test".to_string()),
@@ -1143,10 +1144,13 @@ mod tests {
             ip_whitelist: None,
             domain_blacklist: None,
         };
-        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions));
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            restrictions,
+        ));
         // GeoLocation service returns "US" which is in blocked_countries
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
 
         let response = extract::<MockGeoRestrictionRepository>(
             Extension(queue),
@@ -1185,9 +1189,10 @@ mod tests {
             ip_whitelist: None,
             domain_blacklist: None,
         };
-        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::failing()));
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            restrictions,
+        ));
+        let team_service = make_team_service(Arc::new(MockGeoLocationService::failing()));
 
         let response = extract::<MockGeoRestrictionRepository>(
             Extension(queue),
@@ -1213,8 +1218,9 @@ mod tests {
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
             TeamGeoRestrictions::default(),
         ));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
         // sync_wait_ms = 0 → no waiting → CREATED
         let payload = make_valid_payload();
 
@@ -1244,8 +1250,9 @@ mod tests {
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
             TeamGeoRestrictions::default(),
         ));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
         // sync_wait_ms = 1 → wait_for_tasks_completion runs, times out → ACCEPTED
         let payload = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
@@ -1282,8 +1289,9 @@ mod tests {
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
             TeamGeoRestrictions::default(),
         ));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
 
         let response = extract::<MockGeoRestrictionRepository>(
             Extension(queue),
@@ -1314,9 +1322,12 @@ mod tests {
             ip_whitelist: None,
             domain_blacklist: None,
         };
-        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            restrictions,
+        ));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
 
         let response = extract::<MockGeoRestrictionRepository>(
             Extension(queue),
@@ -1347,11 +1358,14 @@ mod tests {
             ip_whitelist: Some(vec!["127.0.0.0/8".to_string()]),
             domain_blacklist: None,
         };
-        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(restrictions));
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            restrictions,
+        ));
         // Even though geo service returns "US" (not in allowed "CN"),
         // the IP whitelist 127.0.0.0/8 should allow 127.0.0.1 first.
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
 
         let response = extract::<MockGeoRestrictionRepository>(
             Extension(queue),
@@ -1379,8 +1393,9 @@ mod tests {
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_failing_log(
             TeamGeoRestrictions::default(),
         ));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
 
         let response = extract::<MockGeoRestrictionRepository>(
             Extension(queue),
@@ -1416,8 +1431,9 @@ mod tests {
             domain_blacklist: None,
         };
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_failing_log(restrictions));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
 
         let response = extract::<MockGeoRestrictionRepository>(
             Extension(queue),
@@ -1447,8 +1463,9 @@ mod tests {
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
             TeamGeoRestrictions::default(),
         ));
-        let team_service =
-            make_team_service(Arc::new(MockGeoLocationService::succeeding_with_country("US")));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
         let payload = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: Some("test".to_string()),

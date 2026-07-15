@@ -45,12 +45,10 @@ impl MockTaskRepository {
         tasks.push(task);
     }
 
-    #[allow(dead_code)]
     fn get_reset_count(&self) -> usize {
         self.reset_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    #[allow(dead_code)]
     fn get_expire_count(&self) -> usize {
         self.expire_count.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -394,22 +392,104 @@ async fn test_schedule_urgent_repository_error() {
 }
 
 // === Background Task Tests ===
-
-// Note: Background task tests are disabled because TaskScheduler doesn't expose
-// get_reset_count/get_expire_count methods for verification
-// #[tokio::test]
-// async fn test_scheduler_background_task() { ... }
+//
+// TaskScheduler::start() spawns a background tokio task that uses
+// `tokio::time::interval(60s)`. The first tick of a tokio interval fires
+// immediately, so reset_stuck_tasks and expire_tasks are called once shortly
+// after start() returns. Subsequent ticks happen at 60s intervals — too slow
+// for unit tests, so we only verify the first-tick behavior.
 
 #[tokio::test]
-async fn test_scheduler_start_returns_handle() {
+async fn test_scheduler_start_calls_reset_and_expire_on_first_tick() {
+    // The background task's first interval tick fires immediately and should
+    // call both reset_stuck_tasks and expire_tasks on the repository.
     let mock_repo = Arc::new(MockTaskRepository::new());
     let scheduler = TaskScheduler::new(mock_repo.clone());
 
-    // Start the background task - it should return a JoinHandle
-    let _handle = scheduler.start();
+    let handle = scheduler.start();
 
-    // Just verify that start() doesn't panic and returns a handle
-    // The handle will be dropped, which is fine for this test
+    // Allow the runtime to schedule and execute the first tick.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    assert!(
+        mock_repo.get_reset_count() >= 1,
+        "background task should call reset_stuck_tasks on first tick, got {}",
+        mock_repo.get_reset_count()
+    );
+    assert!(
+        mock_repo.get_expire_count() >= 1,
+        "background task should call expire_tasks on first tick, got {}",
+        mock_repo.get_expire_count()
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_scheduler_start_aborted_handle_stops_background_task() {
+    // After aborting the JoinHandle, the background task should stop, so
+    // reset_count and expire_count should not keep increasing.
+    let mock_repo = Arc::new(MockTaskRepository::new());
+    let scheduler = TaskScheduler::new(mock_repo.clone());
+
+    let handle = scheduler.start();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let reset_before_abort = mock_repo.get_reset_count();
+    let expire_before_abort = mock_repo.get_expire_count();
+    assert!(reset_before_abort >= 1, "first tick should have fired");
+
+    handle.abort();
+
+    // Wait long enough that a second tick would have fired if the task were
+    // still running (the interval is 60s, so no second tick would happen
+    // anyway — but we verify the counts are stable after abort).
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    assert_eq!(
+        mock_repo.get_reset_count(),
+        reset_before_abort,
+        "reset_count should not increase after abort"
+    );
+    assert_eq!(
+        mock_repo.get_expire_count(),
+        expire_before_abort,
+        "expire_count should not increase after abort"
+    );
+}
+
+#[tokio::test]
+async fn test_scheduler_start_handles_repository_errors_without_panic() {
+    // When the repository returns errors, the background task should log them
+    // and continue running (not panic). We verify start() returns a handle and
+    // the task survives the first tick even with a failing repository.
+    let mock_repo = Arc::new(MockTaskRepository {
+        tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+        should_fail: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        reset_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        expire_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    });
+    let scheduler = TaskScheduler::new(mock_repo.clone());
+
+    let handle = scheduler.start();
+
+    // If the task panicked, the handle would be resolved as JoinError. We give
+    // it time to process the first tick and then check it hasn't panicked.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // The counters still increment because the mock increments them before
+    // returning the error result — this lets us confirm the methods were called
+    // even though they returned errors.
+    assert!(
+        mock_repo.get_reset_count() >= 1,
+        "reset_stuck_tasks should have been called even with errors"
+    );
+    assert!(
+        mock_repo.get_expire_count() >= 1,
+        "expire_tasks should have been called even with errors"
+    );
+
+    handle.abort();
 }
 
 // === Edge Cases ===

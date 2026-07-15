@@ -147,8 +147,6 @@ async fn main() {
 fn try_load_settings() -> Result<AppSettings, confers::ConfigError> {
     ConfigBuilder::<AppSettings>::new()
         .file("config.toml")
-        .source(Box::new(
-            EnvSource::with_prefix("APP_").separator("_"),
-        ))
+        .source(Box::new(EnvSource::with_prefix("APP_").separator("_")))
         .build()
 }

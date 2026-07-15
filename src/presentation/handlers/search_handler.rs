@@ -1006,4 +1006,814 @@ mod tests {
         assert_eq!(parsed["crawl_results"], true);
         assert_eq!(parsed["sync_wait_ms"], 3000);
     }
+
+    // ========== Handler test infrastructure ==========
+
+    use crate::domain::auth::ApiKeyScope;
+    use crate::domain::models::{CreditsTransactionType, Task, TaskStatus, TaskType};
+    use crate::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
+    use crate::domain::services::rate_limiting_service::{
+        BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
+        QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
+        RateLimitingService,
+    };
+    use crate::domain::services::search_service::{
+        SearchResponse as DomainSearchResponse, SearchResult as DomainSearchResult,
+        SearchServiceTrait,
+    };
+    use async_trait::async_trait;
+    use dbnexus::{DbConfig, DbPool};
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    use uuid::Uuid;
+
+    /// Construct a lazy `DbPool` that does not connect to any database.
+    fn make_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    /// Build an `AuthState` suitable for handler unit tests.
+    fn make_test_auth_state() -> AuthState {
+        AuthState::new(
+            make_test_db_pool(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        )
+    }
+
+    /// Build a sample domain SearchResponse for testing.
+    fn make_search_response(crawl_id: Option<Uuid>) -> DomainSearchResponse {
+        DomainSearchResponse {
+            query: "test query".to_string(),
+            results: vec![DomainSearchResult {
+                title: "Test Result".to_string(),
+                url: "https://example.com".to_string(),
+                description: Some("Test description".to_string()),
+                engine: "google".to_string(),
+            }],
+            crawl_id,
+            credits_used: 1,
+        }
+    }
+
+    /// Build a minimal SearchRequestDto for testing.
+    fn make_search_request_dto(sync_wait_ms: Option<u32>) -> SearchRequestDto {
+        SearchRequestDto {
+            query: "test query".to_string(),
+            engine: None,
+            sources: None,
+            limit: None,
+            lang: None,
+            country: None,
+            crawl_config: None,
+            crawl_results: None,
+            sync_wait_ms,
+        }
+    }
+
+    /// Build a Task for testing with the given team_id and status.
+    fn make_test_task(team_id: Uuid, status: TaskStatus) -> Task {
+        let now = chrono::Utc::now();
+        Task {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Scrape,
+            status,
+            priority: 0,
+            team_id,
+            api_key_id: Uuid::new_v4(),
+            url: "https://example.com".to_string(),
+            payload: serde_json::Value::Null,
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: now,
+            lock_token: None,
+            lock_expires_at: None,
+        }
+    }
+
+    // ========== MockSearchService ==========
+
+    struct MockSearchService {
+        search_result: Mutex<Option<Result<DomainSearchResponse, SearchServiceError>>>,
+    }
+
+    impl MockSearchService {
+        fn new_success(response: DomainSearchResponse) -> Self {
+            Self {
+                search_result: Mutex::new(Some(Ok(response))),
+            }
+        }
+
+        fn new_error(err: SearchServiceError) -> Self {
+            Self {
+                search_result: Mutex::new(Some(Err(err))),
+            }
+        }
+
+        fn new_unused() -> Self {
+            Self {
+                search_result: Mutex::new(None),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SearchServiceTrait for MockSearchService {
+        async fn search(
+            &self,
+            _team_id: Uuid,
+            _api_key_id: Uuid,
+            _query: SearchQuery,
+        ) -> Result<DomainSearchResponse, SearchServiceError> {
+            self.search_result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("MockSearchService::search called but no result configured")
+        }
+    }
+
+    // ========== MockTaskRepository ==========
+
+    struct MockTaskRepository {
+        find_by_crawl_id_result: Mutex<Option<Result<Vec<Task>, RepositoryError>>>,
+        query_tasks_result: Mutex<Option<Result<(Vec<Task>, u64), RepositoryError>>>,
+    }
+
+    impl MockTaskRepository {
+        fn new() -> Self {
+            Self {
+                find_by_crawl_id_result: Mutex::new(None),
+                query_tasks_result: Mutex::new(None),
+            }
+        }
+
+        fn with_find_by_crawl_id(result: Result<Vec<Task>, RepositoryError>) -> Self {
+            Self {
+                find_by_crawl_id_result: Mutex::new(Some(result)),
+                query_tasks_result: Mutex::new(None),
+            }
+        }
+
+        #[allow(dead_code)]
+        fn with_query_tasks(result: Result<(Vec<Task>, u64), RepositoryError>) -> Self {
+            Self {
+                find_by_crawl_id_result: Mutex::new(None),
+                query_tasks_result: Mutex::new(Some(result)),
+            }
+        }
+
+        fn with_find_and_query(
+            find_result: Result<Vec<Task>, RepositoryError>,
+            query_result: Result<(Vec<Task>, u64), RepositoryError>,
+        ) -> Self {
+            Self {
+                find_by_crawl_id_result: Mutex::new(Some(find_result)),
+                query_tasks_result: Mutex::new(Some(query_result)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TaskRepository for MockTaskRepository {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            match self.find_by_crawl_id_result.lock().unwrap().take() {
+                Some(result) => result,
+                None => Ok(vec![]),
+            }
+        }
+
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            match self.query_tasks_result.lock().unwrap().take() {
+                Some(result) => result,
+                None => Ok((vec![], 0)),
+            }
+        }
+
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+    }
+
+    // ========== MockRateLimitingService ==========
+
+    struct MockRateLimitingService {
+        rate_limit_result: RateLimitResult,
+    }
+
+    impl MockRateLimitingService {
+        fn new_allowed() -> Self {
+            Self {
+                rate_limit_result: RateLimitResult::Allowed,
+            }
+        }
+
+        fn new_denied(reason: &str) -> Self {
+            Self {
+                rate_limit_result: RateLimitResult::Denied {
+                    reason: reason.to_string(),
+                },
+            }
+        }
+
+        fn new_retry_after(seconds: u64) -> Self {
+            Self {
+                rate_limit_result: RateLimitResult::RetryAfter {
+                    retry_after_seconds: seconds,
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RateLimitService for MockRateLimitingService {
+        async fn check_rate_limit(
+            &self,
+            _api_key: &str,
+            _endpoint: &str,
+        ) -> Result<RateLimitResult, RateLimitingError> {
+            Ok(self.rate_limit_result.clone())
+        }
+
+        async fn get_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<RateLimitConfig, RateLimitingError> {
+            Ok(RateLimitConfig::default())
+        }
+
+        async fn update_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+            _config: RateLimitConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait]
+    impl ConcurrencyControlService for MockRateLimitingService {
+        async fn check_team_concurrency(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<ConcurrencyResult, RateLimitingError> {
+            Ok(ConcurrencyResult::Allowed)
+        }
+
+        async fn release_team_concurrency_slot(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn get_team_current_concurrency(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+
+        async fn get_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<ConcurrencyConfig, RateLimitingError> {
+            Ok(ConcurrencyConfig::default())
+        }
+
+        async fn update_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+            _config: ConcurrencyConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl BacklogService for MockRateLimitingService {
+        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait]
+    impl QuotaService for MockRateLimitingService {
+        async fn check_and_deduct_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+
+        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    impl RateLimitingService for MockRateLimitingService {}
+
+    // ========== search handler success path tests ==========
+
+    #[tokio::test]
+    async fn test_search_handler_success_no_crawl_id() {
+        let search_service: Arc<dyn SearchServiceTrait> =
+            Arc::new(MockSearchService::new_success(make_search_response(None)));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_success_sync_wait_zero() {
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
+            make_search_response(Some(Uuid::new_v4())),
+        ));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        // sync_wait_ms = 0 → should skip wait_for_tasks_completion entirely
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(0))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_success_crawl_id_empty_tasks() {
+        let crawl_id = Uuid::new_v4();
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
+            make_search_response(Some(crawl_id)),
+        ));
+        // find_by_crawl_id returns empty vec → no wait_for_tasks_completion call
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_success_crawl_id_with_completed_tasks() {
+        let team_id = Uuid::new_v4();
+        let crawl_id = Uuid::new_v4();
+        let task = make_test_task(team_id, TaskStatus::Completed);
+
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
+            make_search_response(Some(crawl_id)),
+        ));
+        // find_by_crawl_id returns non-empty vec, query_tasks returns completed tasks
+        // → completion_rate >= 1.0 → wait_for_tasks_completion returns immediately
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::with_find_and_query(
+            Ok(vec![task.clone()]),
+            Ok((vec![task], 1)),
+        ));
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_success_find_by_crawl_id_error() {
+        let crawl_id = Uuid::new_v4();
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
+            make_search_response(Some(crawl_id)),
+        ));
+        // find_by_crawl_id returns error → logged, response still OK
+        let task_repo: Arc<dyn TaskRepository> =
+            Arc::new(MockTaskRepository::with_find_by_crawl_id(Err(
+                RepositoryError::Database(anyhow::anyhow!("find_by_crawl_id failed")),
+            )));
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "find_by_crawl_id error should be logged but not fail the request"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_success_wait_for_tasks_completion_error() {
+        let team_id = Uuid::new_v4();
+        let crawl_id = Uuid::new_v4();
+        let task = make_test_task(team_id, TaskStatus::Queued);
+
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
+            make_search_response(Some(crawl_id)),
+        ));
+        // find_by_crawl_id returns non-empty vec, query_tasks returns error
+        // → wait_for_tasks_completion returns Err → logged, response still OK
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::with_find_and_query(
+            Ok(vec![task]),
+            Err(RepositoryError::Database(anyhow::anyhow!(
+                "query_tasks failed"
+            ))),
+        ));
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "wait_for_tasks_completion error should be logged but not fail the request"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_success_default_sync_wait_ms() {
+        let search_service: Arc<dyn SearchServiceTrait> =
+            Arc::new(MockSearchService::new_success(make_search_response(None)));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        // sync_wait_ms = None → uses DEFAULT_TIMEOUT_MS (5000)
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(None)),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ========== search handler rate limiting tests ==========
+
+    #[tokio::test]
+    async fn test_search_handler_rate_limited_denied() {
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_unused());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_denied("too many requests"));
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_rate_limited_retry_after() {
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_unused());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_retry_after(30));
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    // ========== search handler service error tests ==========
+
+    #[tokio::test]
+    async fn test_search_handler_validation_error() {
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
+            SearchServiceError::ValidationError("invalid query".to_string()),
+        ));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_insufficient_credits() {
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
+            SearchServiceError::InsufficientCredits {
+                available: 0,
+                required: 1,
+            },
+        ));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_search_engine_error() {
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
+            SearchServiceError::SearchEngine("engine timeout".to_string()),
+        ));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_repository_error() {
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
+            SearchServiceError::Repository(RepositoryError::Database(anyhow::anyhow!(
+                "db connection failed"
+            ))),
+        ));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_credits_repository_error() {
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
+            SearchServiceError::CreditsRepository(CreditsRepositoryError::DatabaseError(
+                "credits db error".to_string(),
+            )),
+        ));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_repository_not_found_error() {
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
+            SearchServiceError::Repository(RepositoryError::NotFound),
+        ));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_search_handler_credits_not_found_error() {
+        let team_id = Uuid::new_v4();
+        let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
+            SearchServiceError::CreditsRepository(CreditsRepositoryError::CreditsNotFound(team_id)),
+        ));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
+        let rate_limit: Arc<dyn RateLimitingService> =
+            Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+
+        let response = search(
+            Extension(search_service),
+            Extension(task_repo),
+            Extension(rate_limit),
+            Extension(auth),
+            Json(make_search_request_dto(Some(5000))),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }

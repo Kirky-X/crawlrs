@@ -113,7 +113,10 @@ async fn main() {
     if crawlrs_env_vars.is_empty() {
         info!("ℹ️  当前未检测到 CRAWLRS__ 前缀的环境变量");
     } else {
-        info!("✅ 检测到 {} 个 CRAWLRS__ 环境变量：", crawlrs_env_vars.len());
+        info!(
+            "✅ 检测到 {} 个 CRAWLRS__ 环境变量：",
+            crawlrs_env_vars.len()
+        );
         for (k, v) in &crawlrs_env_vars {
             let masked = if k.contains("URL") || k.contains("KEY") || k.contains("SECRET") {
                 mask_sensitive(v)
@@ -154,8 +157,14 @@ async fn main() {
             info!("✅ 主项目配置加载成功：");
             info!("   server.host: {}", settings.server.host);
             info!("   server.port: {}", settings.server.port);
-            info!("   database.url: {}", mask_sensitive(&settings.database.url));
-            info!("   database.max_connections: {}", settings.database.max_connections);
+            info!(
+                "   database.url: {}",
+                mask_sensitive(&settings.database.url)
+            );
+            info!(
+                "   database.max_connections: {}",
+                settings.database.max_connections
+            );
         }
         Err(e) => {
             info!("ℹ️  加载主项目配置失败：{}", e);
