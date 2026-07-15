@@ -1587,16 +1587,23 @@ name = "crawlrs-examples"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "base64",
  "chrono",
+ "confers",
  "crawlrs",
+ "dbnexus 0.2.0",
+ "figment",
  "log",
  "rand 0.8.7",
  "regex",
+ "sdforge",
+ "sea-orm",
  "serde",
  "serde_json",
  "tokio",
  "uuid",
+ "validator",
 ]
 
 [[package]]

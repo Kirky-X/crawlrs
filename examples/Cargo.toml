@@ -32,6 +32,37 @@ uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["std"] }
 rand = "0.8"
 
+# 数据库示例依赖（与主项目保持版本一致）
+dbnexus = { version = "0.2", default-features = false, features = [
+    "postgres",
+    "runtime-tokio-rustls",
+    "permission",
+    "cache",
+    "migration",
+    "auto-migrate",
+    "config-toml",
+    "config-env",
+    "chrono",
+    "uuid",
+    "with-json",
+] }
+sea-orm = { version = "2.0.0-rc.37", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "macros",
+    "with-chrono",
+    "with-uuid",
+    "with-json",
+] }
+
+# 配置示例依赖
+confers = { version = "0.4", default-features = false, features = ["validation", "toml", "env"] }
+figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"] }
+validator = { version = "0.20", features = ["derive"] }
+
+# SDK 示例依赖
+sdforge = { version = "0.4", default-features = false, features = ["http"] }
+axum = "0.8"
+
 # Advanced examples
 [[bin]]
 name = "async_batch"
@@ -91,6 +122,41 @@ path = "browser/test_playwright_basic.rs"
 [[bin]]
 name = "cache_configuration"
 path = "cache/cache_configuration.rs"
+
+# Database examples
+[[bin]]
+name = "basic_crud"
+path = "database/basic_crud.rs"
+
+[[bin]]
+name = "transaction"
+path = "database/transaction.rs"
+
+[[bin]]
+name = "migration"
+path = "database/migration.rs"
+
+# Config examples
+[[bin]]
+name = "basic_config"
+path = "config/basic_config.rs"
+
+[[bin]]
+name = "env_override"
+path = "config/env_override.rs"
+
+[[bin]]
+name = "validation"
+path = "config/validation.rs"
+
+# SDK examples
+[[bin]]
+name = "basic_sdk"
+path = "sdk/basic_sdk.rs"
+
+[[bin]]
+name = "custom_middleware"
+path = "sdk/custom_middleware.rs"
 
 [[bin]]
 name = "oxcache_cache"
