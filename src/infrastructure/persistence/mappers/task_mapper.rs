@@ -10,6 +10,7 @@ use crate::common::time_utils::{
 };
 use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::infrastructure::database::entities::task;
+use sea_orm::ActiveValue::{Set, Unchanged};
 
 /// Mapper for converting between Task domain model and database entity
 pub struct TaskMapper;
@@ -70,6 +71,36 @@ impl TaskMapper {
     /// Convert multiple entities to domain models
     pub fn to_domain_list(entities: Vec<task::Model>) -> Vec<Task> {
         entities.into_iter().map(Self::to_domain).collect()
+    }
+
+    /// Convert domain model to ActiveModel for update operations
+    ///
+    /// 所有字段为 Set 状态，确保 `update()` 实际更新数据。
+    /// id 用 Unchanged（用于 WHERE 条件），created_at 用 Unchanged（不应更新）。
+    pub fn to_active_model(domain: &Task) -> task::ActiveModel {
+        let entity = Self::to_entity(domain);
+        task::ActiveModel {
+            id: Unchanged(entity.id),
+            task_type: Set(entity.task_type),
+            team_id: Set(entity.team_id),
+            api_key_id: Set(entity.api_key_id),
+            crawl_id: Set(entity.crawl_id),
+            url: Set(entity.url),
+            status: Set(entity.status),
+            priority: Set(entity.priority),
+            payload: Set(entity.payload),
+            retry_count: Set(entity.retry_count),
+            max_retries: Set(entity.max_retries),
+            scheduled_at: Set(entity.scheduled_at),
+            expires_at: Set(entity.expires_at),
+            completed_at: Set(entity.completed_at),
+            lock_token: Set(entity.lock_token),
+            lock_expires_at: Set(entity.lock_expires_at),
+            started_at: Set(entity.started_at),
+            attempt_count: Set(entity.attempt_count),
+            created_at: Unchanged(entity.created_at),
+            updated_at: Set(entity.updated_at),
+        }
     }
 
     /// Parse task type from string

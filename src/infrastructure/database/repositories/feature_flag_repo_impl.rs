@@ -235,31 +235,36 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
 
         let existing = self.find_override(feature_flag_id, api_key_id).await?;
 
-        let override_model = match existing {
+        let override_id = match existing {
             Some(ref o) => {
-                crate::infrastructure::database::entities::auth::feature_flag_override::ActiveModel {
+                // 已有记录，用 update
+                let active_model = crate::infrastructure::database::entities::auth::feature_flag_override::ActiveModel {
                     id: sea_orm::ActiveValue::Unchanged(o.id),
                     feature_flag_id: sea_orm::ActiveValue::Unchanged(feature_flag_id),
                     api_key_id: sea_orm::ActiveValue::Unchanged(api_key_id),
                     enabled: Set(enabled),
                     ..Default::default()
-                }
+                };
+                FfoEntity::update(active_model).exec(conn).await?;
+                o.id
             }
             None => {
-                crate::infrastructure::database::entities::auth::feature_flag_override::ActiveModel {
-                    id: Set(Uuid::new_v4()),
+                // 新记录，用 insert
+                let new_id = Uuid::new_v4();
+                let active_model = crate::infrastructure::database::entities::auth::feature_flag_override::ActiveModel {
+                    id: Set(new_id),
                     feature_flag_id: Set(feature_flag_id),
                     api_key_id: Set(api_key_id),
                     enabled: Set(enabled),
                     ..Default::default()
-                }
+                };
+                FfoEntity::insert(active_model).exec(conn).await?;
+                new_id
             }
         };
 
-        FfoEntity::update(override_model).exec(conn).await?;
-
         Ok(FeatureFlagOverride {
-            id: existing.map(|o| o.id).unwrap_or_else(Uuid::new_v4),
+            id: override_id,
             feature_flag_id,
             api_key_id,
             enabled,

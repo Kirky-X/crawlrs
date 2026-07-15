@@ -87,8 +87,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let entity = CrawlMapper::to_entity(crawl);
-        let active_model = crawl::ActiveModel::from(entity);
+        let active_model = CrawlMapper::to_active_model(crawl);
 
         active_model
             .update(
@@ -121,8 +120,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             let mut domain = CrawlMapper::to_domain(entity);
             domain.increment_completed_tasks();
 
-            let updated_entity = CrawlMapper::to_entity(&domain);
-            let active_model = crawl::ActiveModel::from(updated_entity);
+            let active_model = CrawlMapper::to_active_model(&domain);
 
             active_model
                 .update(conn)
@@ -152,8 +150,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             let mut domain = CrawlMapper::to_domain(entity);
             domain.increment_failed_tasks();
 
-            let updated_entity = CrawlMapper::to_entity(&domain);
-            let active_model = crawl::ActiveModel::from(updated_entity);
+            let active_model = CrawlMapper::to_active_model(&domain);
 
             active_model
                 .update(conn)
@@ -184,8 +181,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             domain.status = status;
             domain.updated_at = chrono::Utc::now();
 
-            let updated_entity = CrawlMapper::to_entity(&domain);
-            let active_model = crawl::ActiveModel::from(updated_entity);
+            let active_model = CrawlMapper::to_active_model(&domain);
 
             active_model
                 .update(conn)
@@ -215,8 +211,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             let mut domain = CrawlMapper::to_domain(entity);
             domain.increment_total_tasks();
 
-            let updated_entity = CrawlMapper::to_entity(&domain);
-            let active_model = crawl::ActiveModel::from(updated_entity);
+            let active_model = CrawlMapper::to_active_model(&domain);
 
             active_model
                 .update(conn)

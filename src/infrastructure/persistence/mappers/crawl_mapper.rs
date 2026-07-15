@@ -7,6 +7,7 @@
 
 use crate::domain::models::{Crawl, CrawlStatus};
 use crate::infrastructure::database::entities::crawl;
+use sea_orm::ActiveValue::{Set, Unchanged};
 
 /// Mapper for converting between Crawl domain model and database entity
 pub struct CrawlMapper;
@@ -53,6 +54,29 @@ impl CrawlMapper {
     /// Convert multiple entities to domain models
     pub fn to_domain_list(entities: Vec<crawl::Model>) -> Vec<Crawl> {
         entities.into_iter().map(Self::to_domain).collect()
+    }
+
+    /// Convert domain model to ActiveModel for update operations
+    ///
+    /// 所有字段为 Set 状态，确保 `update()` 实际更新数据。
+    /// id 用 Unchanged（用于 WHERE 条件），created_at 用 Unchanged（不应更新）。
+    pub fn to_active_model(domain: &Crawl) -> crawl::ActiveModel {
+        let entity = Self::to_entity(domain);
+        crawl::ActiveModel {
+            id: Unchanged(entity.id),
+            team_id: Set(entity.team_id),
+            name: Set(entity.name),
+            root_url: Set(entity.root_url),
+            url: Set(entity.url),
+            status: Set(entity.status),
+            config: Set(entity.config),
+            total_tasks: Set(entity.total_tasks),
+            completed_tasks: Set(entity.completed_tasks),
+            failed_tasks: Set(entity.failed_tasks),
+            created_at: Unchanged(entity.created_at),
+            updated_at: Set(entity.updated_at),
+            completed_at: Set(entity.completed_at),
+        }
     }
 
     /// Parse status from string

@@ -99,8 +99,7 @@ impl TaskRepository for TaskRepositoryImpl {
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let entity = TaskMapper::to_entity(task);
-        let active_model = task_entity::ActiveModel::from(entity);
+        let active_model = TaskMapper::to_active_model(task);
 
         active_model
             .update(
@@ -140,8 +139,7 @@ impl TaskRepository for TaskRepositoryImpl {
             domain.start();
             domain.acquire_lock(worker_id, self.lock_duration);
 
-            let updated_entity = TaskMapper::to_entity(&domain);
-            let active_model = task_entity::ActiveModel::from(updated_entity);
+            let active_model = TaskMapper::to_active_model(&domain);
 
             let updated = active_model
                 .update(conn)
@@ -173,8 +171,7 @@ impl TaskRepository for TaskRepositoryImpl {
             let mut domain = TaskMapper::to_domain(entity);
             domain.complete();
 
-            let updated_entity = TaskMapper::to_entity(&domain);
-            let active_model = task_entity::ActiveModel::from(updated_entity);
+            let active_model = TaskMapper::to_active_model(&domain);
 
             active_model
                 .update(conn)
@@ -204,8 +201,7 @@ impl TaskRepository for TaskRepositoryImpl {
             let mut domain = TaskMapper::to_domain(entity);
             domain.fail();
 
-            let updated_entity = TaskMapper::to_entity(&domain);
-            let active_model = task_entity::ActiveModel::from(updated_entity);
+            let active_model = TaskMapper::to_active_model(&domain);
 
             active_model
                 .update(conn)
@@ -235,8 +231,7 @@ impl TaskRepository for TaskRepositoryImpl {
             let mut domain = TaskMapper::to_domain(entity);
             domain.cancel();
 
-            let updated_entity = TaskMapper::to_entity(&domain);
-            let active_model = task_entity::ActiveModel::from(updated_entity);
+            let active_model = TaskMapper::to_active_model(&domain);
 
             active_model
                 .update(conn)

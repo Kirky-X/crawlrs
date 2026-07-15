@@ -10,6 +10,7 @@ use crate::common::time_utils::{
 };
 use crate::domain::models::{Webhook, WebhookEvent, WebhookEventType, WebhookStatus};
 use crate::infrastructure::database::entities::{webhook, webhook_event};
+use sea_orm::ActiveValue::{Set, Unchanged};
 use uuid::Uuid;
 
 /// Mapper for converting between Webhook domain model and database entity
@@ -93,6 +94,32 @@ impl WebhookEventMapper {
     /// Convert multiple entities to domain models
     pub fn to_domain_list(entities: Vec<webhook_event::Model>) -> Vec<WebhookEvent> {
         entities.into_iter().map(Self::to_domain).collect()
+    }
+
+    /// Convert domain model to ActiveModel for update operations
+    ///
+    /// 所有字段为 Set 状态，确保 `update()` 实际更新数据。
+    /// id 用 Unchanged（用于 WHERE 条件），created_at 用 Unchanged（不应更新）。
+    pub fn to_active_model(domain: &WebhookEvent) -> webhook_event::ActiveModel {
+        let entity = Self::to_entity(domain);
+        webhook_event::ActiveModel {
+            id: Unchanged(entity.id),
+            team_id: Set(entity.team_id),
+            webhook_id: Set(entity.webhook_id),
+            event_type: Set(entity.event_type),
+            status: Set(entity.status),
+            payload: Set(entity.payload),
+            webhook_url: Set(entity.webhook_url),
+            response_status: Set(entity.response_status),
+            response_body: Set(entity.response_body),
+            error_message: Set(entity.error_message),
+            attempt_count: Set(entity.attempt_count),
+            max_retries: Set(entity.max_retries),
+            next_retry_at: Set(entity.next_retry_at),
+            created_at: Unchanged(entity.created_at),
+            updated_at: Set(entity.updated_at),
+            delivered_at: Set(entity.delivered_at),
+        }
     }
 
     /// Parse event type from string

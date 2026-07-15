@@ -120,8 +120,7 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let entity = WebhookEventMapper::to_entity(event);
-        let active_model = webhook_event::ActiveModel::from(entity);
+        let active_model = WebhookEventMapper::to_active_model(event);
 
         active_model
             .update(
