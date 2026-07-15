@@ -1,0 +1,80 @@
+{
+  "roles": {
+    "admin": {
+      "tables": [
+        { "name": "teams", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "api_keys", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "tasks", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "crawls", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "scrape_results", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "webhooks", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "webhook_events", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "tasks_backlog", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "credits", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "credits_transactions", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "geo_restriction_logs", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "audit_logs", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "feature_flags", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "feature_flag_overrides", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "scopes", "operations": ["select", "insert", "update", "delete"] }
+      ]
+    },
+    "api_user": {
+      "tables": [
+        { "name": "tasks", "operations": ["select", "insert", "update"] },
+        { "name": "crawls", "operations": ["select", "insert", "update"] },
+        { "name": "scrape_results", "operations": ["select", "insert"] },
+        { "name": "webhooks", "operations": ["select", "insert", "update"] },
+        { "name": "webhook_events", "operations": ["select", "insert"] },
+        { "name": "tasks_backlog", "operations": ["select", "insert", "update"] },
+        { "name": "credits", "operations": ["select"] },
+        { "name": "credits_transactions", "operations": ["select", "insert"] },
+        { "name": "teams", "operations": ["select"] },
+        { "name": "api_keys", "operations": ["select"] }
+      ]
+    },
+    "viewer": {
+      "tables": [
+        { "name": "tasks", "operations": ["select"] },
+        { "name": "crawls", "operations": ["select"] },
+        { "name": "scrape_results", "operations": ["select"] },
+        { "name": "webhooks", "operations": ["select"] },
+        { "name": "webhook_events", "operations": ["select"] },
+        { "name": "tasks_backlog", "operations": ["select"] },
+        { "name": "credits", "operations": ["select"] },
+        { "name": "credits_transactions", "operations": ["select"] },
+        { "name": "teams", "operations": ["select"] },
+        { "name": "api_keys", "operations": ["select"] },
+        { "name": "audit_logs", "operations": ["select"] },
+        { "name": "feature_flags", "operations": ["select"] },
+        { "name": "scopes", "operations": ["select"] }
+      ]
+    },
+    "system": {
+      "tables": [
+        { "name": "tasks", "operations": ["select", "insert", "update"] },
+        { "name": "crawls", "operations": ["select", "insert", "update"] },
+        { "name": "scrape_results", "operations": ["select", "insert"] },
+        { "name": "tasks_backlog", "operations": ["select", "insert", "update"] },
+        { "name": "webhook_events", "operations": ["select", "insert"] },
+        { "name": "credits", "operations": ["select", "update"] },
+        { "name": "credits_transactions", "operations": ["insert"] },
+        { "name": "geo_restriction_logs", "operations": ["select", "insert"] },
+        { "name": "audit_logs", "operations": ["select", "insert"] },
+        { "name": "teams", "operations": ["select"] },
+        { "name": "webhooks", "operations": ["select"] }
+      ]
+    },
+    "scraper": {
+      "tables": [
+        { "name": "tasks", "operations": ["select", "insert"] },
+        { "name": "crawls", "operations": ["select", "insert"] },
+        { "name": "scrape_results", "operations": ["select", "insert", "update", "delete"] },
+        { "name": "tasks_backlog", "operations": ["select", "insert"] },
+        { "name": "credits", "operations": ["select"] },
+        { "name": "webhook_events", "operations": ["select", "insert"] },
+        { "name": "webhooks", "operations": ["select"] }
+      ]
+    }
+  }
+}

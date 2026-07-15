@@ -4,5 +4,12 @@
 // See LICENSE file in the project root for full license information.
 
 mod audit_log_repo_test;
+mod auth_scope_repo_test;
+mod crawl_repo_test;
 mod credits_repo_test;
+mod feature_flag_repo_test;
+mod scrape_result_repo_test;
+mod task_repository_test;
+mod tasks_backlog_repo_test;
+mod webhook_event_repo_test;
 mod webhook_repo_test;

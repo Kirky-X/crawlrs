@@ -5,8 +5,8 @@
 
 use super::super::helpers::{create_test_app, create_test_app_no_worker};
 use chrono::Utc;
-use crawlrs::domain::models::task_model::Task;
 use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
+use crawlrs::domain::models::task_model::Task;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::database::entities::task as task_entity;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
@@ -96,7 +96,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     // 注意：由于acquire_next不按team过滤，可能返回其他测试的任务
     let result1_ok = result1.as_ref().ok().and_then(|t| t.as_ref());
     let result2_ok = result2.as_ref().ok().and_then(|t| t.as_ref());
-    
+
     assert!(
         result1_ok.is_some() || result2_ok.is_some(),
         "Expected at least one worker to acquire a task"
@@ -104,36 +104,49 @@ async fn test_concurrent_task_acquisition_and_timeout() {
 
     // 如果两个都获取了任务，验证它们不是同一个任务（并发互斥测试）
     if let (Some(t1), Some(t2)) = (result1_ok, result2_ok) {
-        assert_ne!(
-            t1.id, t2.id,
-            "Two workers should not acquire the same task"
-        );
+        assert_ne!(t1.id, t2.id, "Two workers should not acquire the same task");
         assert_eq!(t1.status, TaskStatus::Active);
         assert_eq!(t2.status, TaskStatus::Active);
     }
 
     // 验证获取的任务状态正确
     if let Some(t) = result1_ok {
-        assert_eq!(t.status, TaskStatus::Active, "Task should be Active after acquisition");
+        assert_eq!(
+            t.status,
+            TaskStatus::Active,
+            "Task should be Active after acquisition"
+        );
     }
     if let Some(t) = result2_ok {
-        assert_eq!(t.status, TaskStatus::Active, "Task should be Active after acquisition");
+        assert_eq!(
+            t.status,
+            TaskStatus::Active,
+            "Task should be Active after acquisition"
+        );
     }
 
     // --- Lock Timeout and Re-acquisition ---
     // 尝试测试锁超时功能
-    let acquired_task_id = result1_ok.and_then(|t| Some(t.id))
+    let acquired_task_id = result1_ok
+        .and_then(|t| Some(t.id))
         .or(result2_ok.and_then(|t| Some(t.id)));
 
     if let Some(task_id) = acquired_task_id {
+        // 通过 session 获取 sea_orm 连接
+        let session = app
+            .db_pool
+            .get_session("admin")
+            .await
+            .expect("Failed to get session");
+        let conn = session.connection().expect("Failed to get connection");
+
         // 获取最新状态的任务
-        let task_model_opt = task_entity::Entity::find_by_id(task_id)
-            .one(app.db_pool.as_ref())
-            .await;
+        let task_model_opt = task_entity::Entity::find_by_id(task_id).one(conn).await;
 
         if let Ok(Some(task_model)) = task_model_opt {
             // 如果任务仍然属于当前team_id或任务处于Active状态，尝试更新
-            if task_model.team_id == team_id || task_model.status == TaskStatus::Active.to_string() {
+            if task_model.team_id == team_id || task_model.status == TaskStatus::Active.to_string()
+            {
                 let now = chrono::Utc::now();
                 let expired_time = now - chrono::Duration::seconds(1);
 
@@ -141,10 +154,8 @@ async fn test_concurrent_task_acquisition_and_timeout() {
 
                 let mut task_active: task_entity::ActiveModel = task_model.into();
                 task_active.lock_expires_at = Set(Some(expired_time.into()));
-                
-                let update_result = task_active
-                    .update(app.db_pool.as_ref())
-                    .await;
+
+                let update_result = task_active.update(conn).await;
 
                 if update_result.is_ok() {
                     // 尝试重新获取任务
@@ -152,9 +163,11 @@ async fn test_concurrent_task_acquisition_and_timeout() {
                         .acquire_next(worker2_id)
                         .await
                         .expect("Failed to reacquire task");
-                    
-                    assert!(reacquired_task.is_some(),
-                        "Should be able to reacquire a task after lock expires");
+
+                    assert!(
+                        reacquired_task.is_some(),
+                        "Should be able to reacquire a task after lock expires"
+                    );
                 } else {
                     println!("DEBUG: Could not update task lock, skipping lock timeout test");
                 }
@@ -301,9 +314,12 @@ async fn test_repository_acquire_next_task() {
         .await
         .expect("Failed to acquire task")
         .expect("No task available");
-    
-    assert_eq!(acquired_task1.status, TaskStatus::Active,
-        "Acquired task should have Active status");
+
+    assert_eq!(
+        acquired_task1.status,
+        TaskStatus::Active,
+        "Acquired task should have Active status"
+    );
 
     // Acquire second task
     let acquired_task2 = repo
@@ -311,9 +327,12 @@ async fn test_repository_acquire_next_task() {
         .await
         .expect("Failed to acquire task")
         .expect("No task available");
-    
-    assert_eq!(acquired_task2.status, TaskStatus::Active,
-        "Second acquired task should have Active status");
+
+    assert_eq!(
+        acquired_task2.status,
+        TaskStatus::Active,
+        "Second acquired task should have Active status"
+    );
 
     // No more tasks to acquire for this specific test
     // 注意：由于acquire_next不按team过滤，可能返回其他测试的任务
@@ -321,17 +340,28 @@ async fn test_repository_acquire_next_task() {
         .acquire_next(worker_id)
         .await
         .expect("Failed to acquire task");
-    
+
     // 验证获取功能正常，不关心是否真的没有任务了
     // 因为可能有其他测试的任务在队列中
-    println!("DEBUG: Additional tasks in queue: {:?}", more_tasks.is_some());
-    assert!(more_tasks.is_none() || more_tasks.unwrap().status == TaskStatus::Active,
-        "If more tasks exist, they should have Active status");
+    println!(
+        "DEBUG: Additional tasks in queue: {:?}",
+        more_tasks.is_some()
+    );
+    assert!(
+        more_tasks.is_none() || more_tasks.unwrap().status == TaskStatus::Active,
+        "If more tasks exist, they should have Active status"
+    );
 
     // 清理测试创建的任务
+    let session = app
+        .db_pool
+        .get_session("admin")
+        .await
+        .expect("Failed to get session");
+    let conn = session.connection().expect("Failed to get connection");
     task_entity::Entity::delete_many()
-        .filter(task_entity::Column::TeamId.eq(team_id))
-        .exec(app.db_pool.as_ref())
+        .filter(task_entity::Column::Url.like(format!("https://{}%", unique_prefix)))
+        .exec(conn)
         .await
         .ok();
 }
@@ -492,11 +522,8 @@ async fn test_reset_stuck_tasks() {
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
 
-    // Clean up any existing tasks
-    task_entity::Entity::delete_many()
-        .exec(app.db_pool.as_ref())
-        .await
-        .expect("Failed to delete existing tasks");
+    // 使用唯一前缀避免数据冲突
+    let unique_prefix = Uuid::new_v4().to_string();
 
     // Use fixed reference time to avoid timing issues between multiple Utc::now() calls
     let now = Utc::now();
@@ -511,7 +538,7 @@ async fn test_reset_stuck_tasks() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com/stuck".to_string(),
+        url: format!("https://{}.example.com/stuck", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -535,7 +562,7 @@ async fn test_reset_stuck_tasks() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com/recent".to_string(),
+        url: format!("https://{}.example.com/recent", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -563,7 +590,7 @@ async fn test_reset_stuck_tasks() {
         .reset_stuck_tasks(chrono::Duration::minutes(30))
         .await
         .expect("Failed to reset stuck tasks");
-    
+
     // 使用 assert! 代替 assert_eq!，因为可能有其他测试数据污染
     assert!(
         reset_count >= 1,
@@ -586,6 +613,19 @@ async fn test_reset_stuck_tasks() {
         .expect("Failed to query task")
         .expect("Task not found");
     assert_eq!(unchanged_task.status, TaskStatus::Active);
+
+    // 清理测试创建的任务
+    let session = app
+        .db_pool
+        .get_session("admin")
+        .await
+        .expect("Failed to get session");
+    let conn = session.connection().expect("Failed to get connection");
+    task_entity::Entity::delete_many()
+        .filter(task_entity::Column::Url.like(format!("https://{}%", unique_prefix)))
+        .exec(conn)
+        .await
+        .ok();
 }
 
 /// 测试按Crawl ID取消任务
@@ -736,7 +776,7 @@ async fn test_expire_tasks() {
         scheduled_at: None,
         expires_at: None,
         created_at: two_days_ago.into(),
-        started_at: Some(two_days_ago.fixed_offset()),
+        started_at: Some(two_days_ago),
         completed_at: None,
         crawl_id: None,
         updated_at: two_days_ago.into(),
@@ -784,7 +824,7 @@ async fn test_expire_tasks() {
         scheduled_at: None,
         expires_at: None,
         created_at: Utc::now().into(),
-        started_at: Some(now.fixed_offset()),
+        started_at: Some(now),
         completed_at: None,
         crawl_id: None,
         updated_at: now.into(),
@@ -807,25 +847,36 @@ async fn test_expire_tasks() {
 
     // Expire tasks older than 1 day
     let expired_count = repo.expire_tasks().await.expect("Failed to expire tasks");
-    
+
     // 验证有过期任务被处理（可能有其他测试的任务）
-    assert!(expired_count >= 2 || expired_count == 0,
-        "Expected at least 2 expired tasks or none, got: {}", expired_count);
-    
+    assert!(
+        expired_count >= 2 || expired_count == 0,
+        "Expected at least 2 expired tasks or none, got: {}",
+        expired_count
+    );
+
     // 验证创建的过期任务确实被过期了
-    let expired_task = repo.find_by_id(expired_queued_task.id)
+    let expired_task = repo
+        .find_by_id(expired_queued_task.id)
         .await
         .expect("Failed to query expired queued task")
         .expect("Expired queued task not found");
-    assert_eq!(expired_task.status, TaskStatus::Failed,
-        "Expired queued task should have Failed status");
-    
-    let expired_active = repo.find_by_id(expired_active_task.id)
+    assert_eq!(
+        expired_task.status,
+        TaskStatus::Failed,
+        "Expired queued task should have Failed status"
+    );
+
+    let expired_active = repo
+        .find_by_id(expired_active_task.id)
         .await
         .expect("Failed to query expired active task")
         .expect("Expired active task not found");
-    assert_eq!(expired_active.status, TaskStatus::Failed,
-        "Expired active task should have Failed status");
+    assert_eq!(
+        expired_active.status,
+        TaskStatus::Failed,
+        "Expired active task should have Failed status"
+    );
 
     // Verify the expired queued task was marked as failed
     let expired_queued_after = repo
@@ -1000,7 +1051,7 @@ async fn test_find_existing_urls_batch() {
         .find_existing_urls(&created_urls)
         .await
         .expect("Failed to find existing URLs");
-    
+
     // 验证所有创建的 URL 都被找到
     assert_eq!(existing_urls.len(), 10, "Should find all 10 existing URLs");
     for url in &created_urls {
@@ -1013,16 +1064,23 @@ async fn test_find_existing_urls_batch() {
 
     // 测试 2: 混合存在和不存在的 URL
     let mut mixed_urls = created_urls.clone();
-    mixed_urls.push(format!("https://{}.example.com/nonexistent/1", unique_prefix));
-    mixed_urls.push(format!("https://{}.example.com/nonexistent/2", unique_prefix));
+    mixed_urls.push(format!(
+        "https://{}.example.com/nonexistent/1",
+        unique_prefix
+    ));
+    mixed_urls.push(format!(
+        "https://{}.example.com/nonexistent/2",
+        unique_prefix
+    ));
 
     let existing_mixed = repo
         .find_existing_urls(&mixed_urls)
         .await
         .expect("Failed to find existing URLs");
-    
+
     assert_eq!(
-        existing_mixed.len(), 10,
+        existing_mixed.len(),
+        10,
         "Should find exactly 10 existing URLs from 12 total"
     );
 
@@ -1031,27 +1089,36 @@ async fn test_find_existing_urls_batch() {
         .find_existing_urls(&[])
         .await
         .expect("Failed to handle empty URL list");
-    assert!(empty_result.is_empty(), "Empty input should return empty result");
+    assert!(
+        empty_result.is_empty(),
+        "Empty input should return empty result"
+    );
 
     // 测试 4: 全部不存在的 URL
     let nonexistent_urls: Vec<String> = (0..5)
         .map(|i| format!("https://{}.example.com/nonexistent/{}", unique_prefix, i))
         .collect();
-    
+
     let existing_nonexistent = repo
         .find_existing_urls(&nonexistent_urls)
         .await
         .expect("Failed to find existing URLs");
-    
+
     assert!(
         existing_nonexistent.is_empty(),
         "Should find no existing URLs"
     );
 
     // 清理测试创建的任务
+    let session = app
+        .db_pool
+        .get_session("admin")
+        .await
+        .expect("Failed to get session");
+    let conn = session.connection().expect("Failed to get connection");
     task_entity::Entity::delete_many()
-        .filter(task_entity::Column::TeamId.eq(team_id))
-        .exec(app.db_pool.as_ref())
+        .filter(task_entity::Column::Url.like(format!("https://{}%", unique_prefix)))
+        .exec(conn)
         .await
         .ok();
 }
@@ -1127,9 +1194,15 @@ async fn test_find_existing_urls_performance() {
     );
 
     // 清理测试创建的任务
+    let session = app
+        .db_pool
+        .get_session("admin")
+        .await
+        .expect("Failed to get session");
+    let conn = session.connection().expect("Failed to get connection");
     task_entity::Entity::delete_many()
-        .filter(task_entity::Column::TeamId.eq(team_id))
-        .exec(app.db_pool.as_ref())
+        .filter(task_entity::Column::Url.like(format!("https://{}%", unique_prefix)))
+        .exec(conn)
         .await
         .ok();
 }
