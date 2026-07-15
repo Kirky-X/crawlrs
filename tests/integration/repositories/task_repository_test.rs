@@ -464,11 +464,15 @@ async fn test_exists_by_url() {
     let app = create_test_app().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
-    let test_url = "https://example.com/exists-test";
+
+    // 使用唯一前缀避免数据冲突
+    let unique_prefix = Uuid::new_v4().to_string();
+    let test_url = format!("https://{}.example.com/exists-test", unique_prefix);
+    let different_url = format!("https://{}.different-url.com", unique_prefix);
 
     // Initially, URL should not exist
     assert!(!repo
-        .exists_by_url(test_url)
+        .exists_by_url(&test_url)
         .await
         .expect("Failed to check task existence"));
 
@@ -480,7 +484,7 @@ async fn test_exists_by_url() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: test_url.to_string(),
+        url: test_url.clone(),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -500,15 +504,28 @@ async fn test_exists_by_url() {
 
     // Now URL should exist
     assert!(repo
-        .exists_by_url(test_url)
+        .exists_by_url(&test_url)
         .await
         .expect("Failed to check task existence"));
 
     // Test with different URL
     assert!(!repo
-        .exists_by_url("https://different-url.com")
+        .exists_by_url(&different_url)
         .await
         .expect("Failed to check task existence"));
+
+    // 清理测试创建的任务
+    let session = app
+        .db_pool
+        .get_session("admin")
+        .await
+        .expect("Failed to get session");
+    let conn = session.connection().expect("Failed to get connection");
+    task_entity::Entity::delete_many()
+        .filter(task_entity::Column::Url.like(format!("https://{}%", unique_prefix)))
+        .exec(conn)
+        .await
+        .ok();
 }
 
 /// 测试重置卡住的任务
