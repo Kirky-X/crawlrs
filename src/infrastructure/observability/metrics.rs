@@ -775,4 +775,104 @@ mod tests {
         assert!(cpu >= 0.0 && cpu <= 1.0);
         assert!(mem >= 0.0 && mem <= 1.0);
     }
+
+    // =========================================================================
+    // Mutex poisoning 测试：覆盖所有 mutex poisoned 错误分支
+    // 通过在另一个线程中 panic 来 poison mutex，然后验证方法不 panic
+    // =========================================================================
+
+    #[test]
+    fn test_system_monitor_component_mutex_poisoned_refresh_no_panic() {
+        let mut component = SystemMonitorComponent::new();
+        assert!(component.is_metrics_stale()); // last_update == 0
+
+        // Poison the mutex by panicking while holding the lock
+        let system_arc = component.system.clone();
+        let handle = std::thread::spawn(move || {
+            let _guard = system_arc.lock().unwrap();
+            panic!("poisoning mutex for test");
+        });
+        let _ = handle.join();
+
+        // refresh() should return early without panicking
+        component.refresh();
+        // last_update was never updated (refresh failed), so still stale
+        assert!(
+            component.is_metrics_stale(),
+            "last_update should remain 0 after poisoned refresh"
+        );
+    }
+
+    #[test]
+    fn test_system_monitor_mutex_poisoned_cpu_returns_zero() {
+        let mut monitor = SystemMonitor::new();
+        let system_arc = monitor.system.clone();
+        let handle = std::thread::spawn(move || {
+            let _guard = system_arc.lock().unwrap();
+            panic!("poisoning mutex for test");
+        });
+        let _ = handle.join();
+
+        let cpu = monitor.cpu_usage();
+        assert_eq!(cpu, 0.0, "poisoned mutex should return 0.0 for CPU usage");
+    }
+
+    #[test]
+    fn test_system_monitor_mutex_poisoned_memory_returns_zero() {
+        let mut monitor = SystemMonitor::new();
+        let system_arc = monitor.system.clone();
+        let handle = std::thread::spawn(move || {
+            let _guard = system_arc.lock().unwrap();
+            panic!("poisoning mutex for test");
+        });
+        let _ = handle.join();
+
+        let mem = monitor.memory_usage();
+        assert_eq!(
+            mem, 0.0,
+            "poisoned mutex should return 0.0 for memory usage"
+        );
+    }
+
+    #[test]
+    fn test_mutable_system_monitor_mutex_poisoned_refresh_no_panic() {
+        let mut monitor = MutableSystemMonitor::new();
+        let system_arc = monitor.system.clone();
+        let handle = std::thread::spawn(move || {
+            let _guard = system_arc.lock().unwrap();
+            panic!("poisoning mutex for test");
+        });
+        let _ = handle.join();
+
+        // refresh() should return early without panicking
+        monitor.refresh();
+    }
+
+    #[test]
+    fn test_mutable_system_monitor_mutex_poisoned_cpu_returns_zero() {
+        let monitor = MutableSystemMonitor::new();
+        let system_arc = monitor.system.clone();
+        let handle = std::thread::spawn(move || {
+            let _guard = system_arc.lock().unwrap();
+            panic!("poisoning mutex for test");
+        });
+        let _ = handle.join();
+
+        let cpu = monitor.cpu_usage();
+        assert_eq!(cpu, 0.0);
+    }
+
+    #[test]
+    fn test_mutable_system_monitor_mutex_poisoned_memory_returns_zero() {
+        let monitor = MutableSystemMonitor::new();
+        let system_arc = monitor.system.clone();
+        let handle = std::thread::spawn(move || {
+            let _guard = system_arc.lock().unwrap();
+            panic!("poisoning mutex for test");
+        });
+        let _ = handle.join();
+
+        let mem = monitor.memory_usage();
+        assert_eq!(mem, 0.0);
+    }
 }

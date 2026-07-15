@@ -412,4 +412,91 @@ mod tests {
             .unwrap();
         assert_eq!(result.status_code, 500);
     }
+
+    // =========================================================================
+    // 错误路径：ContentTooLarge 触发 process_crawled_content 返回 Err
+    // 覆盖 process_scrape_response 的 Err 分支（行 87-99）
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_process_scrape_response_content_too_large_returns_ok_with_error() {
+        let integration = CrawlTextIntegration::new(true);
+        // CrawlTextProcessor::new() 默认 max_content_size = 10 * 1024 * 1024
+        let oversized: Vec<u8> = vec![0u8; 10 * 1024 * 1024 + 1];
+        let result = integration
+            .process_scrape_response(&oversized, "http://example.com", Some("text/html"), 200)
+            .await
+            .unwrap();
+        // 错误被捕获，返回 Ok 但 processing_success=false
+        assert!(!result.processing_success);
+        assert!(result.processing_error.is_some());
+        assert_eq!(result.status_code, 200);
+        assert_eq!(result.url, "http://example.com");
+        assert_eq!(result.content_type, Some("text/html".to_string()));
+        assert!(!result.is_html);
+        assert!(result.encoding_detected.is_none());
+        assert!(result.language_detected.is_none());
+        // 原始内容应保留（from_utf8_lossy 转换 0x00 字节）
+        assert_eq!(result.original_content.len(), oversized.len());
+        assert_eq!(result.processed_content.len(), oversized.len());
+    }
+
+    // =========================================================================
+    // 错误路径：批量处理中单个项目 ContentTooLarge
+    // 覆盖 process_batch_scrape_responses 的 Err 分支（行 167-179）
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_batch_process_single_item_content_too_large() {
+        let integration = CrawlTextIntegration::new(true);
+        let oversized: Vec<u8> = vec![0u8; 10 * 1024 * 1024 + 1];
+        let responses = vec![ScrapeResponseInput {
+            content: oversized.clone(),
+            url: "http://example.com/big".to_string(),
+            content_type: Some("text/html".to_string()),
+            status_code: 200,
+        }];
+        let results = integration.process_batch_scrape_responses(responses).await;
+        assert_eq!(results.len(), 1);
+        let result = results[0].as_ref().expect("should be Ok");
+        assert!(!result.processing_success);
+        assert!(result.processing_error.is_some());
+        assert_eq!(result.url, "http://example.com/big");
+        assert_eq!(result.status_code, 200);
+    }
+
+    // =========================================================================
+    // 混合批量：一个正常 + 一个过大，验证错误隔离
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_batch_mixed_success_and_error() {
+        let integration = CrawlTextIntegration::new(true);
+        let normal_html = b"<html><body><p>Normal content</p></body></html>".to_vec();
+        let oversized: Vec<u8> = vec![0u8; 10 * 1024 * 1024 + 1];
+        let responses = vec![
+            ScrapeResponseInput {
+                content: normal_html,
+                url: "http://example.com/ok".to_string(),
+                content_type: Some("text/html".to_string()),
+                status_code: 200,
+            },
+            ScrapeResponseInput {
+                content: oversized,
+                url: "http://example.com/big".to_string(),
+                content_type: Some("text/html".to_string()),
+                status_code: 200,
+            },
+        ];
+        let results = integration.process_batch_scrape_responses(responses).await;
+        assert_eq!(results.len(), 2);
+        // 第一个应成功
+        let first = results[0].as_ref().unwrap();
+        assert!(first.processing_success);
+        assert!(first.processed_content.contains("Normal content"));
+        // 第二个应失败但返回 Ok
+        let second = results[1].as_ref().unwrap();
+        assert!(!second.processing_success);
+        assert!(second.processing_error.is_some());
+    }
 }

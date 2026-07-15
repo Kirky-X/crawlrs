@@ -384,4 +384,56 @@ mod tests {
         assert_eq!(stats.max_entries, 0);
         assert_eq!(stats.default_ttl_seconds, 0);
     }
+
+    // =========================================================================
+    // lookup_host 真实 DNS 解析路径（缓存未命中 → DNS 解析 → 存储到缓存）
+    // 覆盖行 46, 54-57, 69-70, 73, 76, 84
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_lookup_host_cache_miss_performs_real_dns_resolution() {
+        let svc = make_service(300).await;
+        // localhost 应该解析为 127.0.0.1 或 ::1
+        let result = svc.lookup_host("localhost", 80).await;
+        assert!(result.is_ok(), "localhost should resolve");
+        let ips = result.unwrap();
+        assert!(!ips.is_empty(), "should have at least one IP for localhost");
+        // 验证解析的 IP 是 loopback 地址
+        let has_loopback = ips.iter().any(|ip| ip.is_loopback());
+        assert!(
+            has_loopback,
+            "localhost should resolve to loopback: {:?}",
+            ips
+        );
+
+        // 第二次调用应命中缓存（不会再次 DNS 解析）
+        let result2 = svc.lookup_host("localhost", 80).await;
+        assert!(result2.is_ok());
+        let ips2 = result2.unwrap();
+        assert_eq!(ips2, ips, "cached result should match first resolution");
+    }
+
+    #[tokio::test]
+    async fn test_lookup_host_cache_miss_then_remove_then_miss_again() {
+        let svc = make_service(300).await;
+        // 第一次解析（缓存未命中）
+        let result1 = svc.lookup_host("localhost", 80).await;
+        assert!(result1.is_ok());
+        let ips1 = result1.unwrap();
+        assert!(!ips1.is_empty());
+
+        // 确认缓存中有条目
+        let key = generate_dns_key("localhost", 80);
+        assert!(svc.cache.get(&key).await.unwrap().is_some());
+
+        // remove 后缓存为空
+        svc.remove("localhost", 80).await;
+        assert!(svc.cache.get(&key).await.unwrap().is_none());
+
+        // 再次解析（缓存未命中，走真实 DNS）
+        let result2 = svc.lookup_host("localhost", 80).await;
+        assert!(result2.is_ok());
+        let ips2 = result2.unwrap();
+        assert!(!ips2.is_empty());
+    }
 }

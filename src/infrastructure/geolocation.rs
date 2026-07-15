@@ -860,4 +860,58 @@ mod tests {
         assert_eq!(decoded.latitude, geo.latitude);
         assert_eq!(decoded.isp, geo.isp);
     }
+
+    // =========================================================================
+    // get_locations 失败路径：使用不可达端点触发 get_location 失败
+    // 覆盖行 58-74 (get_location 请求构建 + scrape 错误处理)
+    // 覆盖行 135-142 (get_locations 循环 + Err 分支 + 默认 GeoLocation)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_get_locations_unreachable_endpoint_returns_default_on_failure() {
+        // example.invalid 是 RFC 6761 保留域名，DNS 解析必失败
+        let client = Arc::new(reqwest::Client::new());
+        let svc =
+            GeoLocationServiceImpl::with_endpoint("http://example.invalid".to_string(), client);
+        let ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let ips = vec![ip];
+        let result = svc.get_locations(&ips).await;
+        assert!(
+            result.is_ok(),
+            "get_locations should always succeed (failures → default GeoLocation)"
+        );
+        let locations = result.unwrap();
+        assert_eq!(locations.len(), 1, "should have one entry per IP");
+        // 失败的 IP 应返回默认 GeoLocation
+        let loc = &locations[0];
+        assert_eq!(loc.ip, "8.8.8.8");
+        assert_eq!(loc.country_code, "UNKNOWN");
+        assert_eq!(loc.country_name, "Unknown");
+        assert!(loc.region.is_none());
+        assert!(loc.city.is_none());
+        assert!(loc.latitude.is_none());
+        assert!(loc.longitude.is_none());
+        assert!(loc.isp.is_none());
+        assert!(loc.org.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_locations_mixed_ips_all_fail_returns_all_defaults() {
+        let client = Arc::new(reqwest::Client::new());
+        let svc =
+            GeoLocationServiceImpl::with_endpoint("http://example.invalid".to_string(), client);
+        let ips: Vec<IpAddr> = vec![
+            "8.8.8.8".parse().unwrap(),
+            "1.1.1.1".parse().unwrap(),
+            "203.0.113.42".parse().unwrap(),
+        ];
+        let result = svc.get_locations(&ips).await;
+        assert!(result.is_ok());
+        let locations = result.unwrap();
+        assert_eq!(locations.len(), 3);
+        for (i, ip) in ips.iter().enumerate() {
+            assert_eq!(locations[i].ip, ip.to_string());
+            assert_eq!(locations[i].country_code, "UNKNOWN");
+        }
+    }
 }
