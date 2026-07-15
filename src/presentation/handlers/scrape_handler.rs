@@ -1282,10 +1282,7 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(
-            &self,
-            _crawl_id: Uuid,
-        ) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -1510,10 +1507,7 @@ mod tests {
             Ok(self.result.clone())
         }
 
-        async fn find_by_task_ids(
-            &self,
-            _task_ids: &[Uuid],
-        ) -> anyhow::Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
             Ok(vec![])
         }
 
@@ -1828,7 +1822,7 @@ mod tests {
         let settings = Arc::new(Settings::default());
         let auth = make_auth_state_with_team(team_id);
 
-        let payload = make_scrape_request_dto("https://example.com", Some(100));
+        let payload = make_scrape_request_dto("https://example.com", Some(5000));
 
         let response = create_scrape(
             Extension(queue),

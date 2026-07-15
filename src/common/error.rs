@@ -823,7 +823,10 @@ mod tests {
 
     #[test]
     fn test_should_show_detailed_errors_in_dev() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("RUST_ENV");
         std::env::set_var("CRAWLRS_ENV", "development");
         assert!(should_show_detailed_errors());
         std::env::remove_var("CRAWLRS_ENV");
@@ -831,7 +834,10 @@ mod tests {
 
     #[test]
     fn test_should_show_detailed_errors_in_local() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("RUST_ENV");
         std::env::set_var("APP_ENVIRONMENT", "local");
         assert!(should_show_detailed_errors());
         std::env::remove_var("APP_ENVIRONMENT");
@@ -839,7 +845,10 @@ mod tests {
 
     #[test]
     fn test_should_hide_detailed_errors_in_prod() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("RUST_ENV");
         std::env::set_var("CRAWLRS_ENV", "production");
         assert!(!should_show_detailed_errors());
         std::env::remove_var("CRAWLRS_ENV");
@@ -847,7 +856,7 @@ mod tests {
 
     #[test]
     fn test_should_hide_detailed_errors_by_default() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // 默认应该是生产环境模式（安全优先）
         std::env::remove_var("CRAWLRS_ENV");
         std::env::remove_var("APP_ENVIRONMENT");
@@ -1109,7 +1118,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_into_response_production_env() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_ENV", "production");
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("RUST_ENV");
@@ -1135,7 +1144,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_into_response_development_env() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_ENV", "development");
 
         let err = AppError::Validation("bad input".to_string());
@@ -1159,7 +1168,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_into_response_rate_limit() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_ENV", "production");
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("RUST_ENV");
@@ -1458,7 +1467,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_error_authentication_returns_401() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_ENV");
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("RUST_ENV");
@@ -1474,7 +1483,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_error_service_unavailable_returns_503() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_ENV", "production");
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("RUST_ENV");

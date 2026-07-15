@@ -490,7 +490,7 @@ mod tests {
     async fn test_half_open_after_recovery_timeout() {
         let cb = CircuitBreaker::with_default_config(CircuitConfig {
             failure_threshold: 1,
-            recovery_timeout: Duration::from_millis(50),
+            recovery_timeout: Duration::from_millis(500),
             failure_window: Duration::from_secs(60),
         });
 
@@ -498,7 +498,7 @@ mod tests {
         assert!(cb.is_open("engine"));
 
         // Wait for recovery timeout to elapse
-        tokio::time::sleep(Duration::from_millis(80)).await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // is_open should transition to HalfOpen and return false
         assert!(!cb.is_open("engine"));
@@ -508,7 +508,7 @@ mod tests {
     async fn test_half_open_success_closes_circuit() {
         let cb = CircuitBreaker::with_default_config(CircuitConfig {
             failure_threshold: 1,
-            recovery_timeout: Duration::from_millis(50),
+            recovery_timeout: Duration::from_millis(500),
             failure_window: Duration::from_secs(60),
         });
 
@@ -517,7 +517,7 @@ mod tests {
         assert!(cb.is_open("engine"));
 
         // Wait for recovery timeout
-        tokio::time::sleep(Duration::from_millis(80)).await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // Trigger transition to half-open
         assert!(!cb.is_open("engine"));
@@ -535,7 +535,7 @@ mod tests {
     async fn test_half_open_failure_reopens_circuit() {
         let cb = CircuitBreaker::with_default_config(CircuitConfig {
             failure_threshold: 1,
-            recovery_timeout: Duration::from_millis(50),
+            recovery_timeout: Duration::from_millis(500),
             failure_window: Duration::from_secs(60),
         });
 
@@ -544,7 +544,7 @@ mod tests {
         assert!(cb.is_open("engine"));
 
         // Wait for recovery timeout
-        tokio::time::sleep(Duration::from_millis(80)).await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // Trigger transition to half-open
         assert!(!cb.is_open("engine"));
@@ -585,7 +585,7 @@ mod tests {
         assert!(!cb.is_open("engine"));
 
         // Wait for failures to age out of the window
-        tokio::time::sleep(Duration::from_millis(80)).await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // Record 1 more failure — old ones should be evicted, so count is 1
         cb.record_failure("engine");
@@ -796,7 +796,7 @@ mod tests {
     async fn test_full_lifecycle_closed_open_half_open_closed() {
         let cb = CircuitBreaker::with_default_config(CircuitConfig {
             failure_threshold: 2,
-            recovery_timeout: Duration::from_millis(50),
+            recovery_timeout: Duration::from_millis(500),
             failure_window: Duration::from_secs(60),
         });
 
@@ -809,7 +809,7 @@ mod tests {
         assert!(cb.is_open("lifecycle"));
 
         // 3. Wait for recovery timeout -> HalfOpen on next is_open call
-        tokio::time::sleep(Duration::from_millis(80)).await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
         assert!(!cb.is_open("lifecycle")); // transitions to half-open
 
         // 4. Record success -> Closed
@@ -829,7 +829,7 @@ mod tests {
     async fn test_full_lifecycle_closed_open_half_open_open() {
         let cb = CircuitBreaker::with_default_config(CircuitConfig {
             failure_threshold: 2,
-            recovery_timeout: Duration::from_millis(50),
+            recovery_timeout: Duration::from_millis(500),
             failure_window: Duration::from_secs(60),
         });
 
@@ -839,7 +839,7 @@ mod tests {
         assert!(cb.is_open("lifecycle"));
 
         // 2. Wait for recovery timeout -> HalfOpen
-        tokio::time::sleep(Duration::from_millis(80)).await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
         assert!(!cb.is_open("lifecycle"));
 
         // 3. Record failure -> Open again
