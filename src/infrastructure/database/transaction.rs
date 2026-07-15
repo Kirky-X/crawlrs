@@ -29,7 +29,7 @@
 use dbnexus::{DbPool, Session};
 use log::{debug, error, info, warn};
 use parking_lot::RwLock;
-use sea_orm::DbErr;
+use sea_orm::{ConnectionTrait, DbErr};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
@@ -401,9 +401,19 @@ impl TransactionManager {
             });
         }
 
-        // Execute SAVEPOINT command using session's execute_raw_ddl (admin role bypasses permission checks)
+        // Execute SAVEPOINT command via sea_orm ConnectionTrait::execute_unprepared.
+        // 使用 sea_orm 的 execute_unprepared 而非 dbnexus 的 execute_raw_ddl，因为
+        // SAVEPOINT/RELEASE SAVEPOINT/ROLLBACK TO SAVEPOINT 是事务控制语句（非 DDL），
+        // 不应被 dbnexus DdlGuard 的 DDL 白名单拦截。
         let sql = format!("SAVEPOINT {}", name);
-        tx_state.session.execute_raw_ddl(&sql).await.map_err(|e| {
+        let conn = tx_state.session.connection().map_err(|e| {
+            error!("Failed to get connection for savepoint '{}': {}", name, e);
+            TransactionError::SavepointFailed {
+                name: name.to_string(),
+                message: e.to_string(),
+            }
+        })?;
+        conn.execute_unprepared(&sql).await.map_err(|e| {
             error!("Failed to create savepoint '{}': {}", name, e);
             TransactionError::SavepointFailed {
                 name: name.to_string(),
@@ -452,9 +462,16 @@ impl TransactionManager {
             .position(|sp| sp.name == name)
             .ok_or_else(|| TransactionError::SavepointNotFound(name.to_string()))?;
 
-        // Execute RELEASE SAVEPOINT command
+        // Execute RELEASE SAVEPOINT command via sea_orm ConnectionTrait::execute_unprepared.
         let sql = format!("RELEASE SAVEPOINT {}", name);
-        tx_state.session.execute_raw_ddl(&sql).await.map_err(|e| {
+        let conn = tx_state.session.connection().map_err(|e| {
+            error!("Failed to get connection for release_savepoint '{}': {}", name, e);
+            TransactionError::ReleaseSavepointFailed {
+                name: name.to_string(),
+                message: e.to_string(),
+            }
+        })?;
+        conn.execute_unprepared(&sql).await.map_err(|e| {
             error!("Failed to release savepoint '{}': {}", name, e);
             TransactionError::ReleaseSavepointFailed {
                 name: name.to_string(),
@@ -494,9 +511,16 @@ impl TransactionManager {
             return Err(TransactionError::SavepointNotFound(name.to_string()));
         }
 
-        // Execute ROLLBACK TO SAVEPOINT command
+        // Execute ROLLBACK TO SAVEPOINT command via sea_orm ConnectionTrait::execute_unprepared.
         let sql = format!("ROLLBACK TO SAVEPOINT {}", name);
-        tx_state.session.execute_raw_ddl(&sql).await.map_err(|e| {
+        let conn = tx_state.session.connection().map_err(|e| {
+            error!("Failed to get connection for rollback_to_savepoint '{}': {}", name, e);
+            TransactionError::RollbackToSavepointFailed {
+                name: name.to_string(),
+                message: e.to_string(),
+            }
+        })?;
+        conn.execute_unprepared(&sql).await.map_err(|e| {
             error!("Failed to rollback to savepoint '{}': {}", name, e);
             TransactionError::RollbackToSavepointFailed {
                 name: name.to_string(),

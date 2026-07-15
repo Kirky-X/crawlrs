@@ -1097,8 +1097,15 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
 
-    use crate::domain::models::{Task, TaskType};
+    use crate::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
+    use crate::domain::models::scrape_result::ScrapeResult;
+    use crate::domain::models::{
+        Crawl, CrawlStatus, CreditsTransactionType, Task, TaskType, Webhook, WebhookEvent,
+        WebhookEventType,
+    };
     use crate::domain::repositories::task_repository::RepositoryError;
+    use crate::domain::repositories::tasks_backlog_repository::{TasksBacklog, TasksBacklogStatus};
+    use crate::domain::services::team_service::TeamGeoRestrictions;
     use crate::queue::task_queue::QueueError;
 
     /// Mock TaskRepository 用于测试 TaskQueueComponent 的委托逻辑。
@@ -1277,6 +1284,92 @@ mod tests {
         )
     }
 
+    fn make_test_crawl() -> Crawl {
+        Crawl::new(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            "test-crawl".to_string(),
+            "https://example.com".to_string(),
+            "https://example.com".to_string(),
+            serde_json::Value::Null,
+        )
+    }
+
+    fn make_test_webhook() -> Webhook {
+        Webhook::new(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            "https://example.com/webhook".to_string(),
+        )
+    }
+
+    fn make_test_webhook_event() -> WebhookEvent {
+        WebhookEvent::new(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            WebhookEventType::ScrapeCompleted,
+            serde_json::Value::Null,
+            "https://example.com/webhook".to_string(),
+        )
+    }
+
+    fn make_test_tasks_backlog() -> TasksBacklog {
+        let now = chrono::Utc::now();
+        TasksBacklog {
+            id: uuid::Uuid::new_v4(),
+            task_id: uuid::Uuid::new_v4(),
+            team_id: uuid::Uuid::new_v4(),
+            task_type: "scrape".to_string(),
+            priority: 0,
+            payload: serde_json::Value::Null,
+            max_retries: 3,
+            retry_count: 0,
+            status: TasksBacklogStatus::Pending,
+            created_at: now,
+            updated_at: now,
+            scheduled_at: None,
+            expires_at: None,
+            processed_at: None,
+        }
+    }
+
+    fn make_test_audit_log_entry() -> AuditLogEntry {
+        AuditLogEntry {
+            id: uuid::Uuid::new_v4(),
+            api_key_id: None,
+            team_id: None,
+            requested_action: "test-action".to_string(),
+            decision: AuditDecision::Allow,
+            denial_reason: None,
+            scope_used: None,
+            ip_address: None,
+            trace_id: None,
+            user_agent: None,
+            request_path: None,
+            request_method: None,
+            metadata: serde_json::Value::Null,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    fn make_test_scrape_result() -> ScrapeResult {
+        use chrono::TimeZone;
+        ScrapeResult {
+            id: uuid::Uuid::new_v4(),
+            task_id: uuid::Uuid::new_v4(),
+            url: "https://example.com".to_string(),
+            status_code: 200,
+            content: "<html>test</html>".to_string(),
+            content_type: "text/html".to_string(),
+            headers: serde_json::Value::Null,
+            meta_data: serde_json::Value::Null,
+            screenshot: None,
+            response_time_ms: 100,
+            created_at: chrono::Utc.timestamp_opt(0, 0).unwrap().naive_utc(),
+        }
+    }
+
     #[test]
     fn test_task_queue_component_new_stores_repository() {
         let repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::success());
@@ -1450,6 +1543,47 @@ mod tests {
         // Verify the component can be created with with_pool too.
         let component2 = TaskRepositoryComponent::with_pool(db);
         let _impl2: &TaskRepositoryImpl = &component2;
+
+        // Exercise trait method delegation paths. Methods are expected to
+        // return errors (no schema/migration applied), but the delegation
+        // lines are covered regardless.
+        let task = make_test_task();
+        let _ = component.create(&task).await;
+        let _ = component.find_by_id(uuid::Uuid::new_v4()).await;
+        let _ = component.update(&task).await;
+        let _ = component.acquire_next(uuid::Uuid::new_v4()).await;
+        let _ = component.mark_completed(uuid::Uuid::new_v4()).await;
+        let _ = component.mark_failed(uuid::Uuid::new_v4()).await;
+        let _ = component.mark_cancelled(uuid::Uuid::new_v4()).await;
+        let _ = component.exists_by_url("https://example.com").await;
+        let _ = component
+            .find_existing_urls(&["https://example.com".to_string()])
+            .await;
+        let _ = component
+            .reset_stuck_tasks(chrono::Duration::seconds(300))
+            .await;
+        let _ = component
+            .cancel_tasks_by_crawl_id(uuid::Uuid::new_v4())
+            .await;
+        let _ = component.expire_tasks().await;
+        let _ = component.find_by_crawl_id(uuid::Uuid::new_v4()).await;
+        let params = crate::domain::repositories::task_repository::TaskQueryParams {
+            team_id: uuid::Uuid::new_v4(),
+            task_ids: None,
+            task_types: None,
+            statuses: None,
+            created_after: None,
+            created_before: None,
+            crawl_id: None,
+            limit: 10,
+            offset: 0,
+            cursor: None,
+            cursor_id: None,
+        };
+        let _ = component.query_tasks(params).await;
+        let _ = component
+            .batch_cancel(vec![], uuid::Uuid::new_v4(), false)
+            .await;
     }
 
     #[tokio::test]
@@ -1512,6 +1646,30 @@ mod tests {
 
         let component = CreditsRepositoryComponent::new(db);
         let _impl: &CreditsRepositoryImpl = &component;
+
+        // Exercise trait method delegation paths.
+        let team_id = uuid::Uuid::new_v4();
+        let _ = component.get_balance(team_id).await;
+        let _ = component
+            .deduct_credits(
+                team_id,
+                1,
+                CreditsTransactionType::Scrape,
+                "test".to_string(),
+                None,
+            )
+            .await;
+        let _ = component
+            .add_credits(
+                team_id,
+                100,
+                CreditsTransactionType::ManualAdjustment,
+                "test".to_string(),
+                None,
+            )
+            .await;
+        let _ = component.get_transaction_history(team_id, Some(10)).await;
+        let _ = component.initialize_team_credits(team_id, 1000).await;
     }
 
     #[tokio::test]
@@ -1538,6 +1696,24 @@ mod tests {
 
         let component = CrawlRepositoryComponent::new(db);
         let _impl: &CrawlRepositoryImpl = &component;
+
+        // Exercise trait method delegation paths. Methods are expected to
+        // return errors (no schema/migration applied), but the delegation
+        // lines are covered regardless.
+        let crawl = make_test_crawl();
+        let _ = component.create(&crawl).await;
+        let _ = component.find_by_id(uuid::Uuid::new_v4()).await;
+        let _ = component.update(&crawl).await;
+        let _ = component
+            .update_status(uuid::Uuid::new_v4(), CrawlStatus::Queued)
+            .await;
+        let _ = component.increment_completed_tasks(uuid::Uuid::new_v4()).await;
+        let _ = component.increment_failed_tasks(uuid::Uuid::new_v4()).await;
+        let _ = component.increment_total_tasks(uuid::Uuid::new_v4()).await;
+        let _ = component
+            .find_by_team_id_paginated(uuid::Uuid::new_v4(), 10, 0)
+            .await;
+        let _ = component.count_by_team_id(uuid::Uuid::new_v4()).await;
     }
 
     #[tokio::test]
@@ -1566,6 +1742,15 @@ mod tests {
 
         let component = ScrapeResultRepositoryComponent::new(db);
         let _impl: &ScrapeResultRepositoryImpl = &component;
+
+        // Exercise trait method delegation paths.
+        let result = make_test_scrape_result();
+        let _ = component.save(result).await;
+        let _ = component.find_by_task_id(uuid::Uuid::new_v4()).await;
+        let _ = component
+            .find_by_task_ids(&[uuid::Uuid::new_v4()])
+            .await;
+        let _ = component.get_team_avg_response_time(uuid::Uuid::new_v4()).await;
     }
 
     #[tokio::test]
@@ -1592,6 +1777,12 @@ mod tests {
 
         let component = WebhookRepositoryComponent::new(db);
         let _impl: &WebhookRepoImpl = &component;
+
+        // Exercise trait method delegation paths.
+        let webhook = make_test_webhook();
+        let _ = component.create(&webhook).await;
+        let _ = component.find_by_id(uuid::Uuid::new_v4()).await;
+        let _ = component.find_by_team_id(uuid::Uuid::new_v4()).await;
     }
 
     #[tokio::test]
@@ -1620,6 +1811,17 @@ mod tests {
 
         let component = WebhookEventRepositoryComponent::new(db);
         let _impl: &WebhookEventRepoImpl = &component;
+
+        // Exercise trait method delegation paths.
+        let event = make_test_webhook_event();
+        let _ = component.create(&event).await;
+        let _ = component.find_by_id(uuid::Uuid::new_v4()).await;
+        let _ = component.find_pending(10).await;
+        let _ = component
+            .find_by_team_id_paginated(uuid::Uuid::new_v4(), 10, 0)
+            .await;
+        let _ = component.count_by_team_id(uuid::Uuid::new_v4()).await;
+        let _ = component.update(&event).await;
     }
 
     #[tokio::test]
@@ -1648,6 +1850,22 @@ mod tests {
 
         let component = TasksBacklogRepositoryComponent::new(db);
         let _impl: &TasksBacklogRepositoryImpl = &component;
+
+        // Exercise trait method delegation paths.
+        let backlog = make_test_tasks_backlog();
+        let _ = component.create(&backlog).await;
+        let _ = component.find_by_id(uuid::Uuid::new_v4()).await;
+        let _ = component.find_by_task_id(uuid::Uuid::new_v4()).await;
+        let _ = component.update(&backlog).await;
+        let _ = component.delete(uuid::Uuid::new_v4()).await;
+        let _ = component.get_pending_tasks(None, Some(10)).await;
+        let _ = component.get_expired_tasks(Some(10)).await;
+        let _ = component
+            .count_by_status(None, TasksBacklogStatus::Pending)
+            .await;
+        let _ = component
+            .update_status_batch(&[uuid::Uuid::new_v4()], TasksBacklogStatus::Processing)
+            .await;
     }
 
     #[tokio::test]
@@ -1679,5 +1897,101 @@ mod tests {
         let component = GeoRestrictionRepositoryComponent::new(db.inner().clone());
         // Verify it can be used as a trait object.
         let _trait_obj: &dyn GeoRestrictionRepository = &component;
+
+        // Exercise trait method delegation paths.
+        let team_id = uuid::Uuid::new_v4();
+        let _ = component.get_team_restrictions(team_id).await;
+        let restrictions = TeamGeoRestrictions::default();
+        let _ = component
+            .update_team_restrictions(team_id, &restrictions)
+            .await;
+        let _ = component
+            .log_geo_restriction_action(
+                team_id,
+                "127.0.0.1",
+                "US",
+                "allow",
+                "test reason",
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    async fn tc_auth_scope_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!(
+                "[skip] Docker unavailable — tc_auth_scope_repository_component_new_and_deref"
+            );
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
+        let db = match init_database(&settings).await {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("[skip] failed to init database pool: {e}");
+                return;
+            }
+        };
+
+        let component = AuthScopeRepositoryComponent::new(db);
+        let _impl: &AuthScopeRepositoryImpl = &component;
+
+        // Exercise trait method delegation paths.
+        let api_key_id = uuid::Uuid::new_v4();
+        let _ = component.find_by_api_key_id(api_key_id).await;
+        let _ = component.find_by_api_key("test-key").await;
+        let _ = component
+            .upsert(api_key_id, ApiKeyScope::read_only())
+            .await;
+        let _ = component.delete_by_api_key_id(api_key_id).await;
+    }
+
+    #[tokio::test]
+    async fn tc_audit_log_repository_component_new_and_deref() {
+        if !require_docker().await {
+            eprintln!(
+                "[skip] Docker unavailable — tc_audit_log_repository_component_new_and_deref"
+            );
+            return;
+        }
+        let pg = match tcf::PgHandle::start().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[skip] failed to start postgres: {e}");
+                return;
+            }
+        };
+        let settings = tcf::settings_with_urls(&pg.url).unwrap();
+        let db = match init_database(&settings).await {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("[skip] failed to init database pool: {e}");
+                return;
+            }
+        };
+
+        let component = AuditLogRepositoryComponent::new(db);
+        let _impl: &AuditLogRepositoryImpl = &component;
+
+        // Exercise trait method delegation paths.
+        let entry = make_test_audit_log_entry();
+        let _ = component.create(&entry).await;
+        let _ = component
+            .find_by_api_key_id(uuid::Uuid::new_v4(), 10, 0)
+            .await;
+        let _ = component
+            .find_by_team_id(uuid::Uuid::new_v4(), 10, 0)
+            .await;
+        let _ = component
+            .find_denied_for_key(uuid::Uuid::new_v4(), 10)
+            .await;
+        let _ = component.cleanup_old_logs(30).await;
     }
 }

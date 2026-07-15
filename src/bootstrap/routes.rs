@@ -228,11 +228,11 @@ pub fn create_v2_routes_with_state(state: &AppState) -> Router {
     task_routes()
         .layer(Extension(task_repo.clone()))
         .layer(Extension(result_repo.clone()))
-        .layer(Extension(team_semaphore))
         .layer(axum::middleware::from_fn(
             crate::presentation::middleware::auth_middleware::auth_middleware(),
         ))
         .layer(axum::middleware::from_fn(team_semaphore_middleware))
+        .layer(Extension(team_semaphore))
         .layer(Extension(task_repo.clone()))
         .layer(Extension(result_repo.clone()))
         .layer(Extension(crawl_repo.clone()))
