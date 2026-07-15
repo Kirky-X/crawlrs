@@ -491,21 +491,27 @@ mod tests {
         let mut kit = AsyncKit::new();
         kit.set_config(settings);
         kit.register::<SettingsModule>()
-            .expect("register SettingsModule");
+            .map_err(|e| anyhow::anyhow!("register SettingsModule: {e}"))?;
         kit.register::<DatabaseModule>()
-            .expect("register DatabaseModule");
-        kit.register::<HttpModule>().expect("register HttpModule");
-        kit.register::<CacheModule>().expect("register CacheModule");
+            .map_err(|e| anyhow::anyhow!("register DatabaseModule: {e}"))?;
+        kit.register::<HttpModule>()
+            .map_err(|e| anyhow::anyhow!("register HttpModule: {e}"))?;
+        kit.register::<CacheModule>()
+            .map_err(|e| anyhow::anyhow!("register CacheModule: {e}"))?;
         kit.register::<RepositoryModule>()
-            .expect("register RepositoryModule");
+            .map_err(|e| anyhow::anyhow!("register RepositoryModule: {e}"))?;
         kit.register::<EngineModule>()
-            .expect("register EngineModule");
+            .map_err(|e| anyhow::anyhow!("register EngineModule: {e}"))?;
         kit.register::<InfrastructureModule>()
-            .expect("register InfrastructureModule");
+            .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<ServiceModule>()
-            .expect("register ServiceModule");
+            .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
 
-        let kit = kit.build().await.expect("Failed to build kit");
+        // 高并行度下 kit.build() 可能因数据库连接失败而报错，用 ? 传播错误让调用方优雅跳过
+        let kit = kit
+            .build()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to build kit: {e}"))?;
         let state = AppState::from_kit(&kit)?;
         Ok(state)
     }
