@@ -1205,4 +1205,98 @@ mod tests {
         assert_eq!(ev.aggregate_type(), "Search");
         assert_eq!(ev.aggregate_id(), query_id);
     }
+
+    // ========== event_id() and occurred_at() trait method coverage ==========
+    // These tests exercise the DomainEvent trait methods that were not
+    // called by earlier per-event tests (which only checked event_type,
+    // aggregate_id, aggregate_type).
+
+    #[test]
+    fn test_task_completed_event_id_and_occurred_at() {
+        let event = TaskCompletedEvent::new(
+            Uuid::new_v4(),
+            "scrape".to_string(),
+            Uuid::new_v4(),
+            100,
+            serde_json::json!({}),
+        );
+        let dyn_event: &dyn DomainEvent = &event;
+        assert_eq!(dyn_event.event_id(), event.metadata.event_id);
+        assert_eq!(dyn_event.occurred_at(), event.metadata.occurred_at);
+        assert_ne!(dyn_event.event_id(), Uuid::nil());
+    }
+
+    #[test]
+    fn test_task_failed_event_id_and_occurred_at() {
+        let event = TaskFailedEvent::new(
+            Uuid::new_v4(),
+            "scrape".to_string(),
+            Uuid::new_v4(),
+            "err".to_string(),
+            2,
+        );
+        let dyn_event: &dyn DomainEvent = &event;
+        assert_eq!(dyn_event.event_id(), event.metadata.event_id);
+        assert_eq!(dyn_event.occurred_at(), event.metadata.occurred_at);
+        assert_ne!(dyn_event.event_id(), Uuid::nil());
+    }
+
+    #[test]
+    fn test_crawl_started_event_id_and_occurred_at() {
+        let event = CrawlStartedEvent::new(Uuid::new_v4(), Uuid::new_v4(), "url".to_string(), 50);
+        let dyn_event: &dyn DomainEvent = &event;
+        assert_eq!(dyn_event.event_id(), event.metadata.event_id);
+        assert_eq!(dyn_event.occurred_at(), event.metadata.occurred_at);
+        assert_ne!(dyn_event.event_id(), Uuid::nil());
+    }
+
+    #[test]
+    fn test_crawl_completed_event_id_and_occurred_at() {
+        let event = CrawlCompletedEvent::new(Uuid::new_v4(), Uuid::new_v4(), 10, 8, 2, 1000);
+        let dyn_event: &dyn DomainEvent = &event;
+        assert_eq!(dyn_event.event_id(), event.metadata.event_id);
+        assert_eq!(dyn_event.occurred_at(), event.metadata.occurred_at);
+        assert_ne!(dyn_event.event_id(), Uuid::nil());
+    }
+
+    #[test]
+    fn test_credits_deducted_event_id_and_occurred_at() {
+        let event = CreditsDeductedEvent::new(
+            Uuid::new_v4(),
+            5,
+            95,
+            "scrape".to_string(),
+            Uuid::new_v4(),
+            "task".to_string(),
+        );
+        let dyn_event: &dyn DomainEvent = &event;
+        assert_eq!(dyn_event.event_id(), event.metadata.event_id);
+        assert_eq!(dyn_event.occurred_at(), event.metadata.occurred_at);
+        assert_ne!(dyn_event.event_id(), Uuid::nil());
+    }
+
+    #[test]
+    fn test_credits_low_event_id_and_occurred_at() {
+        let event = CreditsLowEvent::new(Uuid::new_v4(), 10, 50);
+        let dyn_event: &dyn DomainEvent = &event;
+        assert_eq!(dyn_event.event_id(), event.metadata.event_id);
+        assert_eq!(dyn_event.occurred_at(), event.metadata.occurred_at);
+        assert_ne!(dyn_event.event_id(), Uuid::nil());
+    }
+
+    #[test]
+    fn test_search_completed_event_id_and_occurred_at() {
+        let event = SearchCompletedEvent::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "q".to_string(),
+            "google".to_string(),
+            5,
+            200,
+        );
+        let dyn_event: &dyn DomainEvent = &event;
+        assert_eq!(dyn_event.event_id(), event.metadata.event_id);
+        assert_eq!(dyn_event.occurred_at(), event.metadata.occurred_at);
+        assert_ne!(dyn_event.event_id(), Uuid::nil());
+    }
 }

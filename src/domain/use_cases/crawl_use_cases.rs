@@ -1192,4 +1192,59 @@ mod tests {
         assert_eq!(calculate_estimated_pages(1000), 10000);
         assert_eq!(calculate_estimated_pages(u32::MAX), 10000);
     }
+
+    #[tokio::test]
+    async fn test_sync_crawl_execute_validates_root_task_timestamps_and_lock_fields() {
+        let crawl_repo = Arc::new(MockCrawlRepository::default());
+        let task_repo = Arc::new(MockTaskRepository::default());
+        let credits = make_credits_service();
+        let use_case = SyncCrawlUseCase::new(crawl_repo, task_repo, credits);
+
+        let resp = use_case
+            .execute(make_sync_crawl_request(1, Some("ts test")))
+            .await
+            .expect("execute should succeed");
+
+        assert_eq!(resp.total_pages, 1);
+        assert_eq!(resp.completed_pages, 0);
+        assert!(
+            resp.response_time_ms < 5000,
+            "response_time_ms should be small, got {}",
+            resp.response_time_ms
+        );
+        let task = &resp.tasks[0];
+        assert_eq!(task.created_at, task.updated_at);
+        assert!(task.scheduled_at.is_none());
+        assert!(task.started_at.is_none());
+        assert!(task.completed_at.is_none());
+        assert!(task.lock_token.is_none());
+        assert!(task.lock_expires_at.is_none());
+        assert!(task.expires_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_crawl_status_returns_crawl_with_correct_fields() {
+        let team_id = Uuid::new_v4();
+        let crawl = Crawl::new(
+            Uuid::new_v4(),
+            team_id,
+            "test crawl".to_string(),
+            "https://example.com".to_string(),
+            "https://example.com".to_string(),
+            serde_json::json!({"key": "value"}),
+        );
+        let crawl_id = crawl.id;
+        let crawl_repo = Arc::new(MockCrawlRepository::with_crawl(crawl));
+        let task_repo = Arc::new(MockTaskRepository::default());
+
+        let resp = GetCrawlStatusUseCase::new(crawl_repo, task_repo)
+            .execute(GetCrawlStatusRequest { team_id, crawl_id })
+            .await
+            .expect("execute should succeed");
+
+        let returned = resp.crawl.expect("crawl should be Some");
+        assert_eq!(returned.id, crawl_id);
+        assert_eq!(returned.team_id, team_id);
+        assert_eq!(returned.name, "test crawl");
+    }
 }

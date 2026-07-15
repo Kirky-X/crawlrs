@@ -356,4 +356,111 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(history[0], (team_id, 1));
     }
+
+    // ========== Error path tests (failing repository) ==========
+
+    use crate::domain::models::CreditsTransaction;
+    use crate::domain::repositories::credits_repository::CreditsRepositoryError;
+    use async_trait::async_trait;
+
+    /// Mock repository that always returns errors for all operations
+    struct FailingCreditsRepository;
+
+    #[async_trait]
+    impl CreditsRepository for FailingCreditsRepository {
+        async fn deduct_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), CreditsRepositoryError> {
+            Err(CreditsRepositoryError::DatabaseError(
+                "deduct failed".to_string(),
+            ))
+        }
+
+        async fn add_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Err(CreditsRepositoryError::DatabaseError(
+                "add failed".to_string(),
+            ))
+        }
+
+        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+            Err(CreditsRepositoryError::DatabaseError(
+                "balance failed".to_string(),
+            ))
+        }
+
+        async fn get_transaction_history(
+            &self,
+            _team_id: Uuid,
+            _limit: Option<u32>,
+        ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
+            Ok(vec![])
+        }
+
+        async fn initialize_team_credits(
+            &self,
+            _team_id: Uuid,
+            _initial_balance: i64,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(100)
+        }
+    }
+
+    fn make_failing_service() -> CreditsService<FailingCreditsRepository> {
+        CreditsService::with_default_config(Arc::new(FailingCreditsRepository))
+    }
+
+    #[tokio::test]
+    async fn test_deduct_feature_credits_propagates_repo_error() {
+        let service = make_failing_service();
+        let result = service
+            .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), true, false)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("deduct failed"));
+    }
+
+    #[tokio::test]
+    async fn test_deduct_token_credits_propagates_repo_error() {
+        let service = make_failing_service();
+        let result = service
+            .deduct_token_credits(Uuid::new_v4(), Uuid::new_v4(), 500)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("deduct failed"));
+    }
+
+    #[tokio::test]
+    async fn test_get_balance_propagates_repo_error() {
+        let service = make_failing_service();
+        let result = service.get_balance(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("balance failed"));
+    }
+
+    #[tokio::test]
+    async fn test_add_credits_propagates_repo_error() {
+        let service = make_failing_service();
+        let result = service
+            .add_credits(
+                Uuid::new_v4(),
+                50,
+                CreditsTransactionType::ManualAdjustment,
+                "test".to_string(),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("add failed"));
+    }
 }

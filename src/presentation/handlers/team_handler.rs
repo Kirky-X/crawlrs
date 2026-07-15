@@ -1606,4 +1606,125 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
+
+    // ========== Test logger for covering log::error! format args ==========
+
+    use axum::body::to_bytes;
+    use log::{LevelFilter, Log, Metadata, Record};
+    use std::sync::Once;
+
+    static LOGGER_INIT: Once = Once::new();
+
+    struct CapturingLogger;
+
+    impl Log for CapturingLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= log::Level::Debug
+        }
+        fn log(&self, _record: &Record) {}
+        fn flush(&self) {}
+    }
+
+    fn ensure_debug_logger() {
+        LOGGER_INIT.call_once(|| {
+            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
+            let _ = log::set_logger(&CAPTURING_LOGGER);
+            log::set_max_level(LevelFilter::Debug);
+        });
+    }
+
+    // ========== Error response body verification tests ==========
+
+    #[tokio::test]
+    async fn test_get_team_geo_restrictions_failure_body_verified() {
+        ensure_debug_logger();
+        let repo: Arc<MockGeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::with_get_result(Err(
+                GeoRestrictionRepositoryError::Database("db error".to_string()),
+            )));
+        let auth = make_test_auth_state();
+
+        let response = get_team_geo_restrictions::<MockGeoRestrictionRepository>(
+            Extension(repo),
+            Extension(auth),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], false);
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Failed to get team geo restrictions"),
+            "error message should mention geo restrictions"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_team_geo_restrictions_repo_failure_body_verified() {
+        ensure_debug_logger();
+        let repo: Arc<MockGeoRestrictionRepository> =
+            Arc::new(MockGeoRestrictionRepository::with_update_result(Err(
+                GeoRestrictionRepositoryError::Database("update failed".to_string()),
+            )));
+        let auth = make_test_auth_state();
+
+        let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
+            Extension(repo),
+            Extension(auth),
+            Json(make_update_request()),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], false);
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Failed to update team geo restrictions"),
+            "error message should mention update failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_team_geo_restrictions_invalid_allowed_body_verified() {
+        ensure_debug_logger();
+        let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
+        let auth = make_test_auth_state();
+        let request = UpdateTeamGeoRestrictionsRequest {
+            enable_geo_restrictions: true,
+            allowed_countries: Some(vec!["USA".to_string()]),
+            blocked_countries: None,
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+
+        let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
+            Extension(repo),
+            Extension(auth),
+            Json(request),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], false);
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Country codes"),
+            "error message should mention country code format"
+        );
+    }
 }

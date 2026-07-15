@@ -239,4 +239,99 @@ mod tests {
         assert!(!config.is_port_allowed(8080));
         assert!(!config.is_port_allowed(3306));
     }
+
+    #[test]
+    fn test_ssrf_config_new_equals_default() {
+        let new_config = SsrfConfig::new();
+        let default_config = SsrfConfig::default();
+        assert_eq!(new_config.max_url_length, default_config.max_url_length);
+        assert_eq!(new_config.max_redirects, default_config.max_redirects);
+        assert_eq!(new_config.dns_cache_ttl, default_config.dns_cache_ttl);
+    }
+
+    fn make_validated_url(scheme: &str, host: &str, ips: Vec<IpAddr>) -> ValidatedUrl {
+        let url_str = format!("{}://{}/path", scheme, host);
+        ValidatedUrl {
+            url: url_str.clone(),
+            parsed_url: Url::parse(&url_str).unwrap(),
+            resolved_ips: ips,
+            port: if scheme == "https" { 443 } else { 80 },
+        }
+    }
+
+    #[test]
+    fn test_validated_url_hostname() {
+        let vu = make_validated_url("https", "example.com", vec!["8.8.8.8".parse().unwrap()]);
+        assert_eq!(vu.hostname(), Some("example.com"));
+    }
+
+    #[test]
+    fn test_validated_url_scheme() {
+        let https_vu = make_validated_url("https", "example.com", vec![]);
+        assert_eq!(https_vu.scheme(), "https");
+
+        let http_vu = make_validated_url("http", "example.com", vec![]);
+        assert_eq!(http_vu.scheme(), "http");
+    }
+
+    #[test]
+    fn test_validated_url_is_https() {
+        let https_vu = make_validated_url("https", "example.com", vec![]);
+        assert!(https_vu.is_https());
+
+        let http_vu = make_validated_url("http", "example.com", vec![]);
+        assert!(!http_vu.is_https());
+    }
+
+    #[test]
+    fn test_validated_url_primary_ip() {
+        let ips = vec![
+            "8.8.8.8".parse::<IpAddr>().unwrap(),
+            "1.1.1.1".parse().unwrap(),
+        ];
+        let vu = make_validated_url("https", "example.com", ips.clone());
+        assert_eq!(vu.primary_ip(), Some(&ips[0]));
+    }
+
+    #[test]
+    fn test_validated_url_primary_ip_empty() {
+        let vu = make_validated_url("https", "example.com", vec![]);
+        assert!(vu.primary_ip().is_none());
+    }
+
+    #[test]
+    fn test_validated_url_ips() {
+        let ips = vec![
+            "8.8.8.8".parse::<IpAddr>().unwrap(),
+            "1.1.1.1".parse().unwrap(),
+        ];
+        let vu = make_validated_url("https", "example.com", ips.clone());
+        assert_eq!(vu.ips().len(), 2);
+        assert_eq!(vu.ips()[0], ips[0]);
+        assert_eq!(vu.ips()[1], ips[1]);
+    }
+
+    #[test]
+    fn test_ssrf_validation_result_variants() {
+        // Safe variant
+        let safe = SsrfValidationResult::Safe(make_validated_url("https", "example.com", vec![]));
+        assert!(matches!(safe, SsrfValidationResult::Safe(_)));
+
+        // Blocked variant
+        let blocked = SsrfValidationResult::Blocked {
+            url: "http://localhost".to_string(),
+            reason: "internal address".to_string(),
+        };
+        assert!(matches!(blocked, SsrfValidationResult::Blocked { .. }));
+
+        // RequiresDnsResolution variant
+        let requires_dns = SsrfValidationResult::RequiresDnsResolution {
+            url: "http://example.com".to_string(),
+            hostname: "example.com".to_string(),
+        };
+        assert!(matches!(
+            requires_dns,
+            SsrfValidationResult::RequiresDnsResolution { .. }
+        ));
+    }
 }

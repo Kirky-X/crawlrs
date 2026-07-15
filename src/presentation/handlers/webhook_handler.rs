@@ -683,4 +683,57 @@ mod tests {
             other => panic!("expected AppError::Other, got {:?}", other),
         }
     }
+
+    // ========== Test logger for covering log::debug! format args ==========
+
+    use log::{LevelFilter, Log, Metadata, Record};
+    use std::sync::Once;
+
+    static LOGGER_INIT: Once = Once::new();
+
+    struct CapturingLogger;
+
+    impl Log for CapturingLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= log::Level::Debug
+        }
+        fn log(&self, _record: &Record) {}
+        fn flush(&self) {}
+    }
+
+    /// Install a global debug-level logger so `log::debug!` format arguments
+    /// (handler lines 34-37) are evaluated and counted as covered.
+    fn ensure_debug_logger() {
+        LOGGER_INIT.call_once(|| {
+            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
+            let _ = log::set_logger(&CAPTURING_LOGGER);
+            log::set_max_level(LevelFilter::Debug);
+        });
+    }
+
+    #[tokio::test]
+    async fn test_create_webhook_debug_log_evaluated() {
+        // With debug logging enabled, the log::debug! format args on lines
+        // 34-37 are evaluated (even though CapturingLogger discards them).
+        ensure_debug_logger();
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Json(payload),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let (status, webhook) = result.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(webhook.url, "https://example.com/webhook");
+    }
 }

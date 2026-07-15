@@ -470,4 +470,105 @@ mod tests {
         assert!(validator.dns_cache.is_none());
         assert_eq!(validator.config.max_url_length, MAX_URL_LENGTH);
     }
+
+    #[test]
+    fn test_ssrf_validator_with_config() {
+        let config = SsrfConfig::new().with_max_url_length(512);
+        let validator = SsrfValidator::with_config(config);
+        assert!(validator.dns_cache.is_none());
+        assert_eq!(validator.config.max_url_length, 512);
+    }
+
+    #[test]
+    fn test_validate_connection_ip_private() {
+        let validator = SsrfValidator::new();
+        // Private IPs should be blocked
+        assert!(validator
+            .validate_connection_ip("10.0.0.1".parse().unwrap())
+            .is_err());
+        assert!(validator
+            .validate_connection_ip("192.168.1.1".parse().unwrap())
+            .is_err());
+        assert!(validator
+            .validate_connection_ip("127.0.0.1".parse().unwrap())
+            .is_err());
+        assert!(validator
+            .validate_connection_ip("169.254.169.254".parse().unwrap())
+            .is_err());
+        assert!(validator
+            .validate_connection_ip("::1".parse().unwrap())
+            .is_err());
+    }
+
+    #[test]
+    fn test_validate_connection_ip_public() {
+        let validator = SsrfValidator::new();
+        // Public IPs should be allowed
+        assert!(validator
+            .validate_connection_ip("8.8.8.8".parse().unwrap())
+            .is_ok());
+        assert!(validator
+            .validate_connection_ip("1.1.1.1".parse().unwrap())
+            .is_ok());
+    }
+
+    #[test]
+    fn test_is_internal_url_sync_method() {
+        let validator = SsrfValidator::new();
+        assert!(validator.is_internal_url_sync("http://localhost"));
+        assert!(validator.is_internal_url_sync("http://10.0.0.1"));
+        assert!(validator.is_internal_url_sync("http://192.168.1.1"));
+        assert!(!validator.is_internal_url_sync("http://example.com"));
+        assert!(!validator.is_internal_url_sync("https://8.8.8.8"));
+    }
+
+    #[test]
+    fn test_validate_redirect_method_blocks_internal() {
+        let validator = SsrfValidator::new();
+        assert!(validator.validate_redirect("http://localhost").is_err());
+        assert!(validator.validate_redirect("http://192.168.1.1").is_err());
+        assert!(validator.validate_redirect("http://10.0.0.1").is_err());
+    }
+
+    #[test]
+    fn test_validate_redirect_method_allows_external() {
+        let validator = SsrfValidator::new();
+        assert!(validator.validate_redirect("http://example.com").is_ok());
+        assert!(validator.validate_redirect("https://google.com").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_url_convenience_function() {
+        // Internal URLs should be blocked
+        assert!(validate_url("http://localhost").await.is_err());
+        assert!(validate_url("http://10.0.0.1").await.is_err());
+        assert!(validate_url("file:///etc/passwd").await.is_err());
+        // URL too long
+        let long_url = format!("http://example.com/{}", "a".repeat(3000));
+        assert!(validate_url(&long_url).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_invalid_url_format() {
+        let validator = SsrfValidator::new();
+        // Unparseable URL should fail with InvalidUrl
+        let result = validator.validate("http://[invalid").await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(SsrfError::InvalidUrl { .. })));
+    }
+
+    #[test]
+    fn test_validate_domain_blacklist_invalid_url() {
+        let result = validate_domain_blacklist("not-a-valid-url", &[]);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(SsrfError::InvalidUrl { .. })));
+    }
+
+    #[test]
+    fn test_validate_domain_blacklist_missing_host() {
+        // mailto: URLs parse but have no host component
+        let result = validate_domain_blacklist("mailto:foo@bar.com", &[]);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(SsrfError::MissingHost { .. })));
+    }
 }

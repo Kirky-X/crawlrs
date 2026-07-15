@@ -409,4 +409,81 @@ mod tests {
             body_str
         );
     }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_denied_body_contains_exact_reason() {
+        // Distinct reason string to ensure format! macro line is fully executed.
+        let reason = "quota exhausted for team abc-123";
+        let service = MockRateLimitingService::new(RateLimitResult::Denied {
+            reason: reason.to_string(),
+        });
+        let result = check_rate_limit(&service, "key", "/v1/scrape").await;
+        let response = result.unwrap_err();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(
+            body_str.contains(reason),
+            "exact reason expected in body: {}",
+            body_str
+        );
+        assert!(
+            body_str.contains("Rate limit exceeded"),
+            "prefix expected: {}",
+            body_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_app_error_denied_contains_exact_reason() {
+        let reason = "per-minute limit hit";
+        let service = MockRateLimitingService::new(RateLimitResult::Denied {
+            reason: reason.to_string(),
+        });
+        let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
+        match result.expect_err("should be RateLimit") {
+            AppError::RateLimit(msg) => {
+                assert!(
+                    msg.contains(reason),
+                    "msg should contain exact reason: {}",
+                    msg
+                );
+            }
+            other => panic!("expected AppError::RateLimit, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_app_error_retry_after_contains_exact_seconds() {
+        let service = MockRateLimitingService::new(RateLimitResult::RetryAfter {
+            retry_after_seconds: 120,
+        });
+        let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
+        match result.expect_err("should be RateLimit") {
+            AppError::RateLimit(msg) => {
+                assert!(
+                    msg.contains("120 seconds"),
+                    "msg should contain seconds: {}",
+                    msg
+                );
+            }
+            other => panic!("expected AppError::RateLimit, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_with_empty_inputs() {
+        // Empty api_key and endpoint should still work (delegates to service).
+        let service = MockRateLimitingService::new(RateLimitResult::Allowed);
+        let result = check_rate_limit(&service, "", "").await;
+        assert!(result.is_ok(), "empty inputs with Allowed should return Ok");
+    }
+
+    #[tokio::test]
+    async fn test_app_error_with_empty_inputs() {
+        let service = MockRateLimitingService::new(RateLimitResult::Allowed);
+        let result = check_rate_limit_as_app_error(&service, "", "").await;
+        assert!(result.is_ok(), "empty inputs with Allowed should return Ok");
+    }
 }

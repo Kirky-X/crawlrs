@@ -2652,4 +2652,87 @@ mod tests {
             let _ = retrieved_state; // confirm Some
         }
     }
+
+    // ===== scope_middleware integration tests =====
+    // These exercise scope_middleware through a real axum Router to cover the
+    // branches: no-required-scope passthrough, missing AuthState, insufficient
+    // scope, and sufficient scope.
+
+    use axum::{middleware, routing::get, Router};
+    use tower::ServiceExt;
+
+    fn make_scope_router() -> Router {
+        Router::new()
+            .route("/v1/search", get(|| async { "ok" }))
+            .route("/api/v1/teams", get(|| async { "ok" }))
+            .layer(middleware::from_fn(scope_middleware))
+    }
+
+    #[tokio::test]
+    async fn test_scope_middleware_no_required_scope_passes_through() {
+        let app = make_scope_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/search")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_scope_middleware_admin_path_missing_authstate_returns_unauthorized() {
+        let app = make_scope_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/teams")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_scope_middleware_admin_path_insufficient_scope_returns_forbidden() {
+        let app = make_scope_router();
+        let pool = create_test_db_pool();
+        let auth_state = AuthState::new(
+            pool,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::read_only(),
+        );
+        let mut req = Request::builder()
+            .uri("/api/v1/teams")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(auth_state);
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_scope_middleware_admin_path_full_access_passes_through() {
+        let app = make_scope_router();
+        let pool = create_test_db_pool();
+        let auth_state = AuthState::new(
+            pool,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::full_access(),
+        );
+        let mut req = Request::builder()
+            .uri("/api/v1/teams")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(auth_state);
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }

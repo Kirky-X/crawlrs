@@ -2178,4 +2178,82 @@ mod tests {
 
         assert!(result.is_err(), "should fail without a real DB connection");
     }
+
+    // ========== Additional edge case tests ==========
+
+    #[tokio::test]
+    async fn test_query_tasks_handler_include_results_with_empty_tasks_skips_fetch() {
+        // include_results=true but tasks is empty → fetch_scrape_results not called
+        let repo = Arc::new(MockTaskRepository::new());
+        let auth = make_test_auth_state();
+        let scrape_repo = make_test_scrape_result_repo();
+        let request = TaskQueryRequestDto {
+            include_results: Some(true),
+            sync_wait_ms: Some(0),
+            ..TaskQueryRequestDto::default()
+        };
+
+        let result = query_tasks::<MockTaskRepository>(
+            Extension(auth),
+            Extension(repo),
+            Extension(scrape_repo),
+            Json(request),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "should succeed when tasks empty even with include_results"
+        );
+        let binding = result.unwrap();
+        let data = binding.data.as_ref().expect("data present");
+        assert!(data.tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_handler_force_true_succeeds() {
+        let task_id = Uuid::new_v4();
+        let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
+            vec![task_id],
+            vec![],
+        ))));
+        let auth = make_test_auth_state();
+        let request = TaskCancelRequestDto {
+            task_ids: vec![task_id],
+            team_id: auth.team_id,
+            force: Some(true),
+            sync_wait_ms: Some(0),
+        };
+
+        let result =
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+                .await;
+
+        assert!(result.is_ok(), "force=true should succeed");
+        let binding = result.unwrap();
+        let data = binding.data.as_ref().expect("data present");
+        assert_eq!(data.total_cancelled, 1);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_handler_force_none_uses_default_false() {
+        let task_id = Uuid::new_v4();
+        let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
+            vec![task_id],
+            vec![],
+        ))));
+        let auth = make_test_auth_state();
+        let request = TaskCancelRequestDto {
+            task_ids: vec![task_id],
+            team_id: auth.team_id,
+            force: None,
+            sync_wait_ms: Some(0),
+        };
+
+        let result =
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+                .await;
+
+        assert!(result.is_ok(), "force=None should default to false");
+    }
 }

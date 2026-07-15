@@ -499,4 +499,95 @@ mod tests {
         assert!(validator.visited_hosts.is_empty());
         assert!(validator.original_host.is_none());
     }
+
+    #[test]
+    fn test_redirect_policy_constructors() {
+        let follow = RedirectPolicy::follow_with_validation(5);
+        assert!(follow.allows_redirects());
+        assert_eq!(follow.max_redirects(), 5);
+
+        let same_host = RedirectPolicy::same_host_only(3);
+        assert!(same_host.allows_redirects());
+        assert_eq!(same_host.max_redirects(), 3);
+    }
+
+    #[test]
+    fn test_redirect_validator_with_policy() {
+        let validator = RedirectValidator::with_policy(RedirectPolicy::follow_with_validation(3));
+        assert!(validator.original_host.is_none());
+        assert!(validator.redirect_chain.is_empty());
+    }
+
+    #[test]
+    fn test_with_original_url_invalid() {
+        // Invalid URL should not set original_host (the if let Ok branch)
+        let validator = RedirectValidator::with_policy(RedirectPolicy::same_host_only(10))
+            .with_original_url("not-a-url");
+        assert!(validator.original_host.is_none());
+        assert!(validator.visited_hosts.is_empty());
+    }
+
+    #[test]
+    fn test_validate_invalid_url_returns_invalid_url_error() {
+        let mut validator = RedirectValidator::new();
+        // Unparseable URL should fail with InvalidUrl
+        let result = validator.validate("http://[invalid", 0);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(SsrfError::InvalidUrl { .. })));
+    }
+
+    #[test]
+    fn test_validate_redirects_disabled_by_policy() {
+        let mut validator = RedirectValidator::with_policy(RedirectPolicy::none());
+        let result = validator.validate("http://example.com", 0);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(SsrfError::ValidationFailed(_))));
+    }
+
+    #[test]
+    fn test_would_validate_does_not_mutate() {
+        let mut validator = RedirectValidator::new();
+        // would_validate should not change internal state
+        let _ = validator.would_validate("http://example.com", 0);
+        assert!(validator.redirect_chain.is_empty());
+
+        // Now actually validate - should succeed and update state
+        let result = validator.validate("http://example.com", 0);
+        assert!(result.is_ok());
+        assert_eq!(validator.redirect_chain.len(), 1);
+    }
+
+    #[test]
+    fn test_would_validate_rejects_internal() {
+        let validator = RedirectValidator::new();
+        assert!(validator.would_validate("http://localhost", 0).is_err());
+        assert!(validator.would_validate("http://10.0.0.1", 0).is_err());
+    }
+
+    #[test]
+    fn test_redirect_chain_and_visited_hosts_getters() {
+        let mut validator = RedirectValidator::with_policy(RedirectPolicy::same_host_only(10))
+            .with_original_url("http://example.com");
+
+        validator.validate("http://example.com/page1", 0).unwrap();
+        validator.validate("http://example.com/page2", 1).unwrap();
+
+        // redirect_chain should track URLs
+        assert_eq!(validator.redirect_chain().len(), 2);
+        assert!(validator
+            .redirect_chain()
+            .iter()
+            .any(|u| u.contains("page1")));
+
+        // visited_hosts should contain the host (set by with_original_url + validate)
+        assert!(validator.visited_hosts().contains("example.com"));
+    }
+
+    #[test]
+    fn test_validate_redirect_function_invalid_url() {
+        // Unparseable URL should fail with InvalidUrl (the else branch)
+        let result = validate_redirect("http://[invalid");
+        assert!(result.is_err());
+        assert!(matches!(result, Err(SsrfError::InvalidUrl { .. })));
+    }
 }

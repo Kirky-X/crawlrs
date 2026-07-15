@@ -711,6 +711,7 @@ mod tests {
     struct MockTaskRepository {
         created_count: AtomicU32,
         should_fail_query: bool,
+        completed_task: Mutex<Option<Task>>,
     }
 
     impl MockTaskRepository {
@@ -718,6 +719,7 @@ mod tests {
             Self {
                 created_count: AtomicU32::new(0),
                 should_fail_query: false,
+                completed_task: Mutex::new(None),
             }
         }
 
@@ -725,6 +727,15 @@ mod tests {
             Self {
                 created_count: AtomicU32::new(0),
                 should_fail_query: true,
+                completed_task: Mutex::new(None),
+            }
+        }
+
+        fn with_completed_task(task: Task) -> Self {
+            Self {
+                created_count: AtomicU32::new(0),
+                should_fail_query: false,
+                completed_task: Mutex::new(Some(task)),
             }
         }
     }
@@ -798,6 +809,10 @@ mod tests {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "query_tasks down"
                 )));
+            }
+            let guard = self.completed_task.lock().unwrap();
+            if let Some(ref task) = *guard {
+                return Ok((vec![task.clone()], 1));
             }
             Ok((vec![], 0))
         }
@@ -1497,5 +1512,71 @@ mod tests {
         let json = assert_response(response, StatusCode::CREATED).await;
         assert_eq!(json["success"], true);
         assert!(json["data"]["id"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_extract_sync_wait_completes_returns_created() {
+        // sync_wait_ms > 0 and wait_for_tasks_completion returns Ok quickly
+        // (task is already Completed on first poll) → waited_time_ms <
+        // sync_wait_ms → CREATED (not ACCEPTED). Covers the Ok arm where
+        // waited_time_ms < sync_wait_ms (handler lines 189-190, 205-209).
+        let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
+        let completed_task = Task {
+            id: Uuid::new_v4(),
+            task_type: TaskType::Extract,
+            status: TaskStatus::Completed,
+            priority: 0,
+            team_id: Uuid::new_v4(),
+            api_key_id: Uuid::new_v4(),
+            url: "https://example.com".to_string(),
+            payload: serde_json::Value::Null,
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            expires_at: None,
+            created_at: chrono::Utc::now(),
+            started_at: None,
+            completed_at: None,
+            crawl_id: None,
+            updated_at: chrono::Utc::now(),
+            lock_token: None,
+            lock_expires_at: None,
+        };
+        let task_repo: Arc<dyn TaskRepository> =
+            Arc::new(MockTaskRepository::with_completed_task(completed_task));
+        let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
+            TeamGeoRestrictions::default(),
+        ));
+        let team_service = make_team_service(Arc::new(
+            MockGeoLocationService::succeeding_with_country("US"),
+        ));
+        let payload = ExtractRequestDto {
+            urls: vec!["https://example.com".to_string()],
+            prompt: Some("test".to_string()),
+            schema: None,
+            model: None,
+            rules: None,
+            sync_wait_ms: Some(500),
+        };
+
+        let response = extract::<MockGeoRestrictionRepository>(
+            Extension(queue),
+            Extension(make_test_settings()),
+            Extension(task_repo),
+            Extension(geo_repo),
+            Extension(team_service),
+            Extension(make_test_auth_state()),
+            ConnectInfo(make_addr()),
+            Json(payload),
+        )
+        .await
+        .into_response();
+
+        // Task completes on first poll; waited_time_ms < 500 → CREATED
+        let json = assert_response(response, StatusCode::CREATED).await;
+        assert_eq!(json["success"], true);
+        assert!(json["data"]["id"].is_string());
+        assert_eq!(json["data"]["status"], "pending");
     }
 }

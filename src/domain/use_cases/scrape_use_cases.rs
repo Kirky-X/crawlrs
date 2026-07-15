@@ -631,4 +631,59 @@ mod tests {
             msg
         );
     }
+
+    #[tokio::test]
+    async fn test_async_scrape_execute_generates_unique_task_ids() {
+        let task_repo = Arc::new(MockTaskRepository::default());
+        let result_repo = Arc::new(MockScrapeResultRepository::with_result(None));
+        let credits = make_credits_service();
+        let use_case = AsyncScrapeUseCase::new(task_repo, result_repo, credits);
+
+        let make_request = || AsyncScrapeRequest {
+            team_id: Uuid::new_v4(),
+            api_key_id: Uuid::new_v4(),
+            request: make_scrape_request(),
+            engine: None,
+            priority: None,
+            max_retries: None,
+            expires_at: None,
+        };
+
+        let r1 = use_case
+            .execute(make_request())
+            .await
+            .expect("first execute should succeed");
+        let r2 = use_case
+            .execute(make_request())
+            .await
+            .expect("second execute should succeed");
+
+        assert_ne!(r1.task_id, r2.task_id, "task_ids should be unique");
+        assert_ne!(r1.task_id, Uuid::nil());
+        assert_ne!(r2.task_id, Uuid::nil());
+    }
+
+    #[tokio::test]
+    async fn test_get_scrape_result_found_validates_all_dto_fields() {
+        let result = make_scrape_result();
+        let expected_url = result.url.clone();
+        let result_repo = Arc::new(MockScrapeResultRepository::with_result(Some(result)));
+        let use_case = GetScrapeResultUseCase::new(result_repo);
+
+        let task_id = Uuid::new_v4();
+        let resp = use_case
+            .execute(GetScrapeResultRequest {
+                team_id: Uuid::new_v4(),
+                task_id,
+            })
+            .await
+            .expect("execute should succeed");
+
+        assert!(resp.is_complete);
+        assert_eq!(resp.status, "Completed");
+        let dto = resp.result.expect("result should be Some");
+        assert_eq!(dto.id, task_id);
+        assert_eq!(dto.url, expected_url);
+        assert_eq!(dto.credits_used, 1);
+    }
 }

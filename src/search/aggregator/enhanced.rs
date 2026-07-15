@@ -145,4 +145,123 @@ mod tests {
             .unwrap();
         assert!(results.is_empty());
     }
+
+    // ===== Mock engine for aggregation tests =====
+
+    struct MockAggregatorEngine {
+        name: &'static str,
+        results: Vec<SearchResult>,
+        should_error: bool,
+    }
+
+    impl MockAggregatorEngine {
+        fn ok(name: &'static str, results: Vec<SearchResult>) -> Arc<Self> {
+            Arc::new(Self {
+                name,
+                results,
+                should_error: false,
+            })
+        }
+        fn failing(name: &'static str) -> Arc<Self> {
+            Arc::new(Self {
+                name,
+                results: vec![],
+                should_error: true,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl SearchEngine for MockAggregatorEngine {
+        async fn search(
+            &self,
+            _query: &str,
+            _limit: u32,
+            _lang: Option<&str>,
+            _country: Option<&str>,
+        ) -> Result<Vec<SearchResult>, SearchError> {
+            if self.should_error {
+                Err(SearchError::EngineError(format!("{} failed", self.name)))
+            } else {
+                Ok(self.results.clone())
+            }
+        }
+        fn name(&self) -> &'static str {
+            self.name
+        }
+    }
+
+    fn make_result(title: &str, score: f64) -> SearchResult {
+        let mut r = SearchResult::new(
+            title.to_string(),
+            format!("https://example.com/{}", title),
+            None,
+            "mock".to_string(),
+        );
+        r.score = score;
+        r
+    }
+
+    #[tokio::test]
+    async fn test_search_aggregates_multiple_engines() {
+        let engine_a = MockAggregatorEngine::ok("a", vec![make_result("a1", 0.5)]);
+        let engine_b = MockAggregatorEngine::ok("b", vec![make_result("b1", 0.8)]);
+        let aggregator = EnhancedSearchAggregator::new(vec![engine_a, engine_b], 5000);
+        let results = aggregator.search("q", 10, None, None).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_search_sorts_by_score_descending() {
+        let engine = MockAggregatorEngine::ok(
+            "a",
+            vec![
+                make_result("low", 0.1),
+                make_result("high", 0.9),
+                make_result("mid", 0.5),
+            ],
+        );
+        let aggregator = EnhancedSearchAggregator::new(vec![engine], 5000);
+        let results = aggregator.search("q", 10, None, None).await.unwrap();
+        assert_eq!(results[0].title, "high");
+        assert_eq!(results[1].title, "mid");
+        assert_eq!(results[2].title, "low");
+    }
+
+    #[tokio::test]
+    async fn test_search_truncates_to_limit() {
+        let engine = MockAggregatorEngine::ok(
+            "a",
+            vec![
+                make_result("r1", 0.9),
+                make_result("r2", 0.8),
+                make_result("r3", 0.7),
+            ],
+        );
+        let aggregator = EnhancedSearchAggregator::new(vec![engine], 5000);
+        let results = aggregator.search("q", 2, None, None).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "r1");
+        assert_eq!(results[1].title, "r2");
+    }
+
+    #[tokio::test]
+    async fn test_search_failing_engine_continues_with_others() {
+        let ok_engine = MockAggregatorEngine::ok("ok", vec![make_result("ok1", 0.5)]);
+        let fail_engine = MockAggregatorEngine::failing("fail");
+        let aggregator = EnhancedSearchAggregator::new(vec![fail_engine, ok_engine], 5000);
+        let results = aggregator.search("q", 10, None, None).await.unwrap();
+        // Failing engine is skipped; ok engine results are returned
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "ok1");
+    }
+
+    #[tokio::test]
+    async fn test_search_all_engines_fail_returns_empty() {
+        let fail_a = MockAggregatorEngine::failing("a");
+        let fail_b = MockAggregatorEngine::failing("b");
+        let aggregator = EnhancedSearchAggregator::new(vec![fail_a, fail_b], 5000);
+        let results = aggregator.search("q", 10, None, None).await.unwrap();
+        assert!(results.is_empty());
+    }
 }

@@ -251,4 +251,184 @@ mod tests {
         // Verify the engine filter was passed through
         assert!(last_filter_a.load(Ordering::SeqCst) > 0);
     }
+
+    // ===== Configurable mock for health/error testing =====
+
+    struct ConfigurableEngine {
+        name: &'static str,
+        health: EngineHealth,
+        should_error: bool,
+    }
+
+    impl ConfigurableEngine {
+        fn healthy(name: &'static str) -> Arc<Self> {
+            Arc::new(Self {
+                name,
+                health: EngineHealth::Healthy,
+                should_error: false,
+            })
+        }
+        fn unhealthy(name: &'static str) -> Arc<Self> {
+            Arc::new(Self {
+                name,
+                health: EngineHealth::Unhealthy,
+                should_error: false,
+            })
+        }
+        fn failing(name: &'static str) -> Arc<Self> {
+            Arc::new(Self {
+                name,
+                health: EngineHealth::Healthy,
+                should_error: true,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl SearchEngine for ConfigurableEngine {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn engine_type(&self) -> SearchEngineType {
+            SearchEngineType::ABTest
+        }
+        fn health(&self) -> EngineHealth {
+            self.health
+        }
+        async fn search(
+            &self,
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            if self.should_error {
+                return Err(SearchError::Engine("mock failure".to_string()));
+            }
+            Ok(Response {
+                items: vec![ResponseItem {
+                    title: format!("Result from {}", self.name),
+                    url: format!("https://{}.com/result", self.name),
+                    description: format!("Description from {}", self.name),
+                    engine: SearchEngineType::ABTest,
+                }],
+                total_results: Some(1),
+                engine: SearchEngineType::ABTest,
+            })
+        }
+    }
+
+    // ===== Constructor and metadata tests =====
+
+    #[test]
+    fn test_new_clamps_weight_above_one() {
+        let (engine_a, _, _) = MockEngine::new("a");
+        let (engine_b, _, _) = MockEngine::new("b");
+        // Weight > 1.0 should clamp to 1.0 (variant_b always selected)
+        let ab = SearchABTestEngine::new(engine_a, engine_b, 2.0);
+        assert_eq!(ab.variant_b_weight, 1.0);
+    }
+
+    #[test]
+    fn test_new_clamps_weight_below_zero() {
+        let (engine_a, _, _) = MockEngine::new("a");
+        let (engine_b, _, _) = MockEngine::new("b");
+        // Weight < 0.0 should clamp to 0.0 (variant_a always selected)
+        let ab = SearchABTestEngine::new(engine_a, engine_b, -0.5);
+        assert_eq!(ab.variant_b_weight, 0.0);
+    }
+
+    #[test]
+    fn test_engine_name() {
+        let (engine_a, _, _) = MockEngine::new("a");
+        let (engine_b, _, _) = MockEngine::new("b");
+        let ab = SearchABTestEngine::new(engine_a, engine_b, 0.5);
+        assert_eq!(ab.name(), "ab_test_engine");
+    }
+
+    #[test]
+    fn test_engine_type_returns_abtest() {
+        let (engine_a, _, _) = MockEngine::new("a");
+        let (engine_b, _, _) = MockEngine::new("b");
+        let ab = SearchABTestEngine::new(engine_a, engine_b, 0.5);
+        assert_eq!(ab.engine_type(), SearchEngineType::ABTest);
+    }
+
+    // ===== Health aggregation tests =====
+
+    #[test]
+    fn test_health_both_healthy() {
+        let ab = SearchABTestEngine::new(
+            ConfigurableEngine::healthy("a"),
+            ConfigurableEngine::healthy("b"),
+            0.5,
+        );
+        assert_eq!(ab.health(), EngineHealth::Healthy);
+    }
+
+    #[test]
+    fn test_health_both_unhealthy() {
+        let ab = SearchABTestEngine::new(
+            ConfigurableEngine::unhealthy("a"),
+            ConfigurableEngine::unhealthy("b"),
+            0.5,
+        );
+        assert_eq!(ab.health(), EngineHealth::Unhealthy);
+    }
+
+    #[test]
+    fn test_health_mixed_returns_degraded() {
+        let ab = SearchABTestEngine::new(
+            ConfigurableEngine::healthy("a"),
+            ConfigurableEngine::unhealthy("b"),
+            0.5,
+        );
+        assert_eq!(ab.health(), EngineHealth::Degraded);
+    }
+
+    // ===== search() tests =====
+
+    #[tokio::test]
+    async fn test_search_returns_ok() {
+        let ab = SearchABTestEngine::new(
+            ConfigurableEngine::healthy("a"),
+            ConfigurableEngine::healthy("b"),
+            0.0, // always variant_a
+        );
+        let request = SearchRequest::new("test query");
+        let result = ab.search(&request).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_search_propagates_error() {
+        let ab = SearchABTestEngine::new(
+            ConfigurableEngine::failing("a"),
+            ConfigurableEngine::failing("b"),
+            0.0, // always variant_a which fails
+        );
+        let request = SearchRequest::new("test query");
+        let result = ab.search(&request).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_search_with_engine_uses_variant_b_at_full_weight() {
+        let (engine_a, count_a, _) = MockEngine::new("engine_a");
+        let (engine_b, count_b, _) = MockEngine::new("engine_b");
+        // Weight 1.0 → always variant_b
+        let ab = SearchABTestEngine::new(engine_a, engine_b, 1.0);
+        let result = ab
+            .search_with_engine("test", 5, None, None, None)
+            .await
+            .expect("should succeed");
+        assert!(result[0].title.contains("engine_b"));
+        assert_eq!(
+            count_a.load(Ordering::SeqCst),
+            0,
+            "variant_a should not be called"
+        );
+        assert!(
+            count_b.load(Ordering::SeqCst) >= 1,
+            "variant_b should be called"
+        );
+    }
 }

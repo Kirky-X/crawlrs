@@ -1096,4 +1096,59 @@ mod tests {
             .any(|r| r.contains("Cannot cancel task in status")));
         assert!(reasons.iter().any(|r| r.contains("Task not found")));
     }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_failed_reason_includes_specific_status_name() {
+        let team_id = Uuid::new_v4();
+        let task = make_task_with_status(TaskStatus::Completed, team_id);
+        let task_id = task.id;
+        let repo = Arc::new(MockTaskRepository::with_task(task));
+        let credits = make_credits_service();
+        let use_case = CancelTasksUseCase::new(repo, credits);
+
+        let resp = use_case
+            .execute(CancelTasksRequest {
+                team_id,
+                task_ids: vec![task_id],
+                force: Some(true),
+            })
+            .await
+            .expect("execute should succeed");
+
+        assert_eq!(resp.total_failed, 1);
+        assert!(
+            resp.failed[0].1.contains("completed"),
+            "failure reason should include status name, got: {}",
+            resp.failed[0].1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_task_execute_with_crawl_type_preserves_config() {
+        let repo = Arc::new(MockTaskRepository::default());
+        let credits = make_credits_service();
+        let use_case = CreateTaskUseCase::new(repo.clone(), credits);
+
+        let config = serde_json::json!({"depth": 3, "patterns": ["*.html"]});
+        let resp = use_case
+            .execute(CreateTaskRequest {
+                team_id: Uuid::new_v4(),
+                api_key_id: Uuid::new_v4(),
+                task_type: TaskType::Crawl,
+                url: "https://example.com".to_string(),
+                name: Some("crawl task".to_string()),
+                config: Some(config.clone()),
+                priority: Some(5),
+                max_retries: Some(2),
+                expires_at: None,
+            })
+            .await
+            .expect("execute should succeed");
+
+        assert_eq!(repo.create_count(), 1);
+        assert_eq!(resp.task.task_type, TaskType::Crawl);
+        assert_eq!(resp.task.payload, config);
+        assert_eq!(resp.task.priority, 5);
+        assert_eq!(resp.task.max_retries, 2);
+    }
 }
