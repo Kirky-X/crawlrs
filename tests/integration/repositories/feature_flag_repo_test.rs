@@ -353,6 +353,120 @@ async fn test_delete_override() {
     cleanup_feature_flags(&app, flag_id).await;
 }
 
+/// tc_find_override_returns_none_for_unknown: 查询不存在的 override 应返回 None
+#[tokio::test]
+async fn tc_find_override_returns_none_for_unknown() {
+    let app = create_test_app_no_worker().await;
+    let repo = FeatureFlagRepositoryImpl::new(app.db_pool.clone());
+    let flag_id = Uuid::new_v4();
+    let api_key_id = app.api_key_id;
+    let unique_name = format!("find_none_override_{}", Uuid::new_v4());
+
+    insert_feature_flag(&app, flag_id, &unique_name, true, 100).await;
+
+    // 未设置 override，查询应返回 None
+    let result = repo
+        .find_override(flag_id, api_key_id)
+        .await
+        .expect("Failed to find override for unknown pair");
+    assert!(
+        result.is_none(),
+        "Should return None for non-existent override"
+    );
+
+    cleanup_feature_flags(&app, flag_id).await;
+}
+
+/// tc_list_overrides_returns_empty_for_flag_without_overrides: 无 override 的 flag 返回空列表
+#[tokio::test]
+async fn tc_list_overrides_returns_empty_for_flag_without_overrides() {
+    let app = create_test_app_no_worker().await;
+    let repo = FeatureFlagRepositoryImpl::new(app.db_pool.clone());
+    let flag_id = Uuid::new_v4();
+    let unique_name = format!("empty_overrides_{}", Uuid::new_v4());
+
+    insert_feature_flag(&app, flag_id, &unique_name, true, 100).await;
+
+    let overrides = repo
+        .list_overrides(flag_id)
+        .await
+        .expect("Failed to list overrides for flag without overrides");
+
+    let matching: Vec<_> = overrides
+        .into_iter()
+        .filter(|o| o.feature_flag_id == flag_id)
+        .collect();
+    assert!(
+        matching.is_empty(),
+        "Should return empty list for flag without overrides"
+    );
+
+    cleanup_feature_flags(&app, flag_id).await;
+}
+
+/// tc_list_overrides_for_key_returns_empty_for_key_without_overrides: 无 override 的 key 返回空列表
+#[tokio::test]
+async fn tc_list_overrides_for_key_returns_empty_for_key_without_overrides() {
+    let app = create_test_app_no_worker().await;
+    let repo = FeatureFlagRepositoryImpl::new(app.db_pool.clone());
+    let unknown_api_key_id = Uuid::new_v4();
+
+    let overrides = repo
+        .list_overrides_for_key(unknown_api_key_id)
+        .await
+        .expect("Failed to list overrides for unknown api key");
+
+    assert!(
+        overrides.is_empty(),
+        "Should return empty list for api key without overrides"
+    );
+}
+
+/// tc_list_all_includes_multiple_flags: list_all 返回多条记录
+#[tokio::test]
+async fn tc_list_all_includes_multiple_flags() {
+    let app = create_test_app_no_worker().await;
+    let repo = FeatureFlagRepositoryImpl::new(app.db_pool.clone());
+
+    let flag1_id = Uuid::new_v4();
+    let flag2_id = Uuid::new_v4();
+    let name1 = format!("list_all_multi_1_{}", Uuid::new_v4());
+    let name2 = format!("list_all_multi_2_{}", Uuid::new_v4());
+
+    insert_feature_flag(&app, flag1_id, &name1, true, 100).await;
+    insert_feature_flag(&app, flag2_id, &name2, false, 50).await;
+
+    let all = repo.list_all().await.expect("Failed to list all flags");
+
+    // 验证两条都在结果中
+    assert!(
+        all.iter().any(|f| f.id == flag1_id),
+        "Flag 1 should be in list"
+    );
+    assert!(
+        all.iter().any(|f| f.id == flag2_id),
+        "Flag 2 should be in list"
+    );
+
+    // 验证字段映射正确
+    let f1 = all
+        .iter()
+        .find(|f| f.id == flag1_id)
+        .expect("flag1 missing");
+    assert!(f1.enabled, "Flag 1 should be enabled");
+    assert_eq!(f1.rollout_percentage, 100);
+
+    let f2 = all
+        .iter()
+        .find(|f| f.id == flag2_id)
+        .expect("flag2 missing");
+    assert!(!f2.enabled, "Flag 2 should be disabled");
+    assert_eq!(f2.rollout_percentage, 50);
+
+    cleanup_feature_flags(&app, flag1_id).await;
+    cleanup_feature_flags(&app, flag2_id).await;
+}
+
 /// 辅助函数：清理指定 feature_flag 及其 overrides
 async fn cleanup_feature_flags(app: &super::super::helpers::test_app::TestApp, flag_id: Uuid) {
     let session = app

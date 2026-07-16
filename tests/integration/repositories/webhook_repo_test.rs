@@ -133,6 +133,77 @@ async fn test_find_by_team_id_returns_empty_for_team_without_webhooks() {
     );
 }
 
+/// tc_create_duplicate_id_returns_error: 重复 ID 创建应返回 Database 错误
+#[tokio::test]
+async fn tc_create_duplicate_id_returns_error() {
+    let app = create_test_app_no_worker().await;
+    let repo = WebhookRepoImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let unique_prefix = Uuid::new_v4().to_string();
+    let url = format!("https://{}.example.com/dup-hook", unique_prefix);
+    let webhook_id = Uuid::new_v4();
+
+    let webhook = Webhook::new(webhook_id, team_id, url);
+
+    // 第一次创建应成功
+    repo.create(&webhook)
+        .await
+        .expect("First create should succeed");
+
+    // 第二次创建同一 ID 应失败（PK 冲突）
+    let result = repo.create(&webhook).await;
+    match result {
+        Ok(_) => panic!("Duplicate create should return error, but got Ok"),
+        Err(e) => {
+            let msg = format!("{:?}", e);
+            assert!(
+                msg.contains("Database") || msg.contains("duplicate") || msg.contains("constraint"),
+                "Error should be a database/duplicate key error, got: {}",
+                msg
+            );
+        }
+    }
+
+    cleanup_webhooks(&app, team_id).await;
+}
+
+/// tc_find_by_team_id_returns_only_team_webhooks: find_by_team_id 只返回指定团队的结果
+#[tokio::test]
+async fn tc_find_by_team_id_returns_only_team_webhooks() {
+    let app = create_test_app_no_worker().await;
+    let repo = WebhookRepoImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let unique_prefix = Uuid::new_v4().to_string();
+    let webhook = Webhook::new(
+        Uuid::new_v4(),
+        team_id,
+        format!("https://{}.example.com/isolation", unique_prefix),
+    );
+
+    repo.create(&webhook)
+        .await
+        .expect("Failed to create webhook");
+
+    let found = repo
+        .find_by_team_id(team_id)
+        .await
+        .expect("Failed to find by team id");
+
+    // 所有返回的 webhook 都应属于该团队
+    assert!(
+        found.iter().all(|w| w.team_id == team_id),
+        "All webhooks should belong to the queried team"
+    );
+    assert!(
+        found.iter().any(|w| w.id == webhook.id),
+        "Created webhook should be in results"
+    );
+
+    cleanup_webhooks(&app, team_id).await;
+}
+
 /// 辅助函数：清理指定 team_id 的 webhooks
 async fn cleanup_webhooks(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
     let session = app

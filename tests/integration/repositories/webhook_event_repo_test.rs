@@ -275,6 +275,72 @@ async fn test_find_pending_respects_limit() {
     cleanup_events(&app, team_id).await;
 }
 
+/// tc_find_pending_includes_failed_retry: find_pending 应返回 failed 且 next_retry_at 过期的事件
+#[tokio::test]
+async fn tc_find_pending_includes_failed_retry() {
+    let app = create_test_app_no_worker().await;
+    let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+    let unique_url = format!("https://{}.example.com/failed-retry", Uuid::new_v4());
+
+    // 创建一个 pending 事件
+    let mut event = make_event(team_id, &unique_url);
+    // 设置为 Failed 状态且 next_retry_at 在过去（ready for retry）
+    event.status = WebhookStatus::Failed;
+    event.next_retry_at = Some(chrono::Utc::now() - chrono::Duration::minutes(5));
+    event.attempt_count = 1;
+
+    repo.create(&event)
+        .await
+        .expect("Failed to create failed-retry event");
+
+    // find_pending 应包含 failed + next_retry_at < now 的事件
+    let pending = repo
+        .find_pending(100)
+        .await
+        .expect("Failed to find pending events");
+
+    assert!(
+        pending.iter().any(|e| e.id == event.id),
+        "Failed event with past next_retry_at should be in find_pending results"
+    );
+
+    cleanup_events(&app, team_id).await;
+}
+
+/// tc_count_by_team_id_returns_zero_for_unknown_team: 未知团队的事件计数为 0
+#[tokio::test]
+async fn tc_count_by_team_id_returns_zero_for_unknown_team() {
+    let app = create_test_app_no_worker().await;
+    let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
+
+    let unknown_team_id = Uuid::new_v4();
+    let count = repo
+        .count_by_team_id(unknown_team_id)
+        .await
+        .expect("Failed to count events for unknown team");
+
+    assert_eq!(count, 0, "Unknown team should have 0 events");
+}
+
+/// tc_find_by_team_id_paginated_offset_beyond_range: offset 超出范围返回空列表
+#[tokio::test]
+async fn tc_find_by_team_id_paginated_offset_beyond_range() {
+    let app = create_test_app_no_worker().await;
+    let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let results = repo
+        .find_by_team_id_paginated(team_id, 10, 999_999)
+        .await
+        .expect("Failed to query with large offset");
+
+    assert!(
+        results.is_empty(),
+        "Should return empty list when offset exceeds total count"
+    );
+}
+
 /// 辅助函数：清理指定 team_id 的 webhook_events
 async fn cleanup_events(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
     let session = app

@@ -365,6 +365,81 @@ async fn test_increment_on_unknown_crawl_is_noop() {
         .expect("update_status on unknown crawl should be noop");
 }
 
+/// tc_pool_returns_database_pool: pool() getter 返回与构造时相同的 pool 引用
+#[tokio::test]
+async fn tc_pool_returns_database_pool() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+
+    let pool_ref = repo.pool();
+    assert!(
+        std::ptr::eq(
+            std::sync::Arc::as_ptr(pool_ref),
+            std::sync::Arc::as_ptr(&app.db_pool)
+        ),
+        "pool() should return the same Arc<DbPool> passed to new()"
+    );
+}
+
+/// tc_create_duplicate_id_returns_error: 重复 ID 创建应返回 Database 错误
+#[tokio::test]
+async fn tc_create_duplicate_id_returns_error() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let unique_prefix = Uuid::new_v4().to_string();
+    let crawl_id = Uuid::new_v4();
+    let crawl = Crawl::new(
+        crawl_id,
+        team_id,
+        format!("Dup Crawl {}", unique_prefix),
+        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.example.com", unique_prefix),
+        serde_json::json!({}),
+    );
+
+    // 第一次创建应成功
+    repo.create(&crawl)
+        .await
+        .expect("First create should succeed");
+
+    // 第二次创建同一 ID 应失败（PK 冲突）
+    let result = repo.create(&crawl).await;
+    match result {
+        Ok(_) => panic!("Duplicate create should return error, but got Ok"),
+        Err(e) => {
+            let msg = format!("{:?}", e);
+            assert!(
+                msg.contains("Database") || msg.contains("duplicate") || msg.contains("constraint"),
+                "Error should be a database/duplicate key error, got: {}",
+                msg
+            );
+        }
+    }
+
+    cleanup_crawls(&app, team_id).await;
+}
+
+/// tc_find_by_team_id_paginated_offset_beyond_range: offset 超出范围返回空列表
+#[tokio::test]
+async fn tc_find_by_team_id_paginated_offset_beyond_range() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    // 查询极大 offset，应返回空列表
+    let results = repo
+        .find_by_team_id_paginated(team_id, 10, 999_999)
+        .await
+        .expect("Failed to query with large offset");
+
+    assert!(
+        results.is_empty(),
+        "Should return empty list when offset exceeds total count"
+    );
+}
+
 /// 辅助函数：清理指定 team_id 的 crawls
 async fn cleanup_crawls(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
     let session = app

@@ -197,6 +197,61 @@ async fn test_upsert_denied_scope() {
     cleanup_scopes(&app, api_key_id).await;
 }
 
+/// tc_upsert_with_custom_limits: upsert 设置自定义 search_limit 和 scrape_limit
+#[tokio::test]
+async fn tc_upsert_with_custom_limits() {
+    let app = create_test_app_no_worker().await;
+    let repo = AuthScopeRepositoryImpl::new(app.db_pool.clone());
+    let api_key_id = app.api_key_id;
+
+    let custom_scope = ApiKeyScope::with_custom_limits(true, false, false, 500, 100);
+
+    repo.upsert(api_key_id, custom_scope.clone())
+        .await
+        .expect("Failed to upsert custom scope");
+
+    let found = repo
+        .find_by_api_key_id(api_key_id)
+        .await
+        .expect("Failed to find custom scope");
+    let found = found.expect("Custom scope should be found");
+    assert_eq!(found, custom_scope, "Found scope should match custom");
+
+    cleanup_scopes(&app, api_key_id).await;
+}
+
+/// tc_find_by_api_key_id_returns_none_after_delete: 删除后查询返回 None
+#[tokio::test]
+async fn tc_find_by_api_key_id_returns_none_after_delete() {
+    let app = create_test_app_no_worker().await;
+    let repo = AuthScopeRepositoryImpl::new(app.db_pool.clone());
+    let api_key_id = app.api_key_id;
+
+    // 创建 scope
+    repo.upsert(api_key_id, ApiKeyScope::full_access())
+        .await
+        .expect("Failed to upsert scope");
+
+    // 确认存在
+    let before = repo
+        .find_by_api_key_id(api_key_id)
+        .await
+        .expect("Failed to find before delete");
+    assert!(before.is_some(), "Scope should exist before delete");
+
+    // 删除
+    repo.delete_by_api_key_id(api_key_id)
+        .await
+        .expect("Failed to delete scope");
+
+    // 确认已删除
+    let after = repo
+        .find_by_api_key_id(api_key_id)
+        .await
+        .expect("Failed to find after delete");
+    assert!(after.is_none(), "Scope should be None after delete");
+}
+
 /// 辅助函数：清理指定 api_key_id 的 scopes
 async fn cleanup_scopes(app: &super::super::helpers::test_app::TestApp, api_key_id: Uuid) {
     let session = app

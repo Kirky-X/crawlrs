@@ -330,6 +330,141 @@ async fn test_update_status_batch_empty_list() {
     assert_eq!(affected, 0, "Should affect 0 rows for empty list");
 }
 
+/// tc_find_by_id_returns_none_for_unknown: 通过不存在的 ID 查询应返回 None
+#[tokio::test]
+async fn tc_find_by_id_returns_none_for_unknown() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+
+    let unknown_id = Uuid::new_v4();
+    let result = repo
+        .find_by_id(unknown_id)
+        .await
+        .expect("Failed to query unknown backlog id");
+    assert!(
+        result.is_none(),
+        "Should return None for unknown backlog id"
+    );
+}
+
+/// tc_get_pending_tasks_no_team_no_limit: 不带 team_id 和 limit 查询所有 pending
+#[tokio::test]
+async fn tc_get_pending_tasks_no_team_no_limit() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let b = make_backlog(team_id, Uuid::new_v4(), 1);
+    repo.create(&b).await.expect("Failed to create backlog");
+
+    // 不带 team_id 和 limit 查询：应返回所有 pending（包含我们的）
+    let pending = repo
+        .get_pending_tasks(None, None)
+        .await
+        .expect("Failed to get pending tasks without filters");
+
+    assert!(
+        pending.iter().any(|t| t.id == b.id),
+        "Created backlog should be in unfiltered pending results"
+    );
+
+    cleanup_backlogs(&app, team_id).await;
+}
+
+/// tc_count_by_status_no_team: 不带 team_id 统计指定状态数量
+#[tokio::test]
+async fn tc_count_by_status_no_team() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let b = make_backlog(team_id, Uuid::new_v4(), 1);
+    repo.create(&b).await.expect("Failed to create backlog");
+
+    // 不带 team_id 统计 pending 数量
+    let count = repo
+        .count_by_status(None, TasksBacklogStatus::Pending)
+        .await
+        .expect("Failed to count by status without team filter");
+
+    assert!(
+        count >= 1,
+        "Global pending count should be at least 1, got {}",
+        count
+    );
+
+    cleanup_backlogs(&app, team_id).await;
+}
+
+/// tc_get_expired_tasks_with_limit: 带 limit 查询过期任务
+#[tokio::test]
+async fn tc_get_expired_tasks_with_limit() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    // 创建 3 个过期任务
+    for _ in 0..3 {
+        let mut backlog = make_backlog(team_id, Uuid::new_v4(), 1);
+        backlog.expires_at = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+        repo.create(&backlog)
+            .await
+            .expect("Failed to create expired backlog");
+    }
+
+    // 带 limit=2 查询
+    let expired = repo
+        .get_expired_tasks(Some(2))
+        .await
+        .expect("Failed to get expired tasks with limit");
+
+    assert!(
+        expired.len() <= 2,
+        "Should return at most 2 expired tasks with limit, got {}",
+        expired.len()
+    );
+
+    cleanup_backlogs(&app, team_id).await;
+}
+
+/// tc_delete_nonexistent_is_noop: 删除不存在的 ID 不报错
+#[tokio::test]
+async fn tc_delete_nonexistent_is_noop() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+
+    let unknown_id = Uuid::new_v4();
+    repo.delete(unknown_id)
+        .await
+        .expect("Deleting non-existent backlog should not error");
+}
+
+/// tc_update_status_batch_with_nonexistent: 批量更新包含不存在的 ID 只影响已存在的
+#[tokio::test]
+async fn tc_update_status_batch_with_nonexistent() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let b = make_backlog(team_id, Uuid::new_v4(), 1);
+    repo.create(&b).await.expect("Failed to create backlog");
+
+    // 包含一个存在和一个不存在的 ID
+    let unknown_id = Uuid::new_v4();
+    let affected = repo
+        .update_status_batch(&[b.id, unknown_id], TasksBacklogStatus::Processing)
+        .await
+        .expect("Failed to batch update with mixed ids");
+
+    assert_eq!(
+        affected, 1,
+        "Should only affect 1 row (the existing one), got {}",
+        affected
+    );
+
+    cleanup_backlogs(&app, team_id).await;
+}
+
 /// 辅助函数：清理指定 team_id 的 tasks_backlog
 async fn cleanup_backlogs(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
     let session = app

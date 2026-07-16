@@ -14,6 +14,7 @@ use crawlrs::domain::repositories::scrape_result_repository::ScrapeResultReposit
 use crawlrs::infrastructure::database::entities::scrape_result as db_entity;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// 创建测试用的 ScrapeResult（辅助函数）
@@ -188,6 +189,50 @@ async fn test_save_with_screenshot() {
     );
 
     cleanup_scrape_results(&app, task_id).await;
+}
+
+/// tc_pool_returns_database_pool: pool() getter 返回与构造时相同的 pool 引用
+#[tokio::test]
+async fn tc_pool_returns_database_pool() {
+    let app = create_test_app_no_worker().await;
+    let repo = ScrapeResultRepositoryImpl::new(app.db_pool.clone());
+
+    let pool_ref = repo.pool();
+    assert!(
+        std::ptr::eq(Arc::as_ptr(pool_ref), Arc::as_ptr(&app.db_pool)),
+        "pool() should return the same Arc<DbPool> passed to new()"
+    );
+}
+
+/// tc_find_by_task_ids_with_partial_match: 部分 task_id 存在部分不存在时返回已存在的
+#[tokio::test]
+async fn tc_find_by_task_ids_with_partial_match() {
+    let app = create_test_app_no_worker().await;
+    let repo = ScrapeResultRepositoryImpl::new(app.db_pool.clone());
+
+    let existing_task_id = Uuid::new_v4();
+    let missing_task_id = Uuid::new_v4();
+    let unique_url = format!("https://{}.example.com/partial", Uuid::new_v4());
+
+    let result = make_scrape_result(existing_task_id, &unique_url, 200, 120);
+    repo.save(result).await.expect("Failed to save result");
+
+    let results = repo
+        .find_by_task_ids(&[existing_task_id, missing_task_id])
+        .await
+        .expect("Failed to find by partial task_ids");
+
+    assert_eq!(
+        results.len(),
+        1,
+        "Should return only the existing task's result"
+    );
+    assert_eq!(
+        results[0].task_id, existing_task_id,
+        "Result should match the existing task"
+    );
+
+    cleanup_scrape_results(&app, existing_task_id).await;
 }
 
 /// 辅助函数：清理指定 task_id 的 scrape_results

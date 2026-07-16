@@ -354,6 +354,106 @@ async fn test_deduct_credits_with_reference_id() {
     cleanup_credits(&app, team_id).await;
 }
 
+/// tc_get_balance_returns_existing_without_reinitialize: 已有 credits 记录时直接返回余额
+#[tokio::test]
+async fn tc_get_balance_returns_existing_without_reinitialize() {
+    let app = create_test_app_no_worker().await;
+    let repo = CreditsRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    // 初始化为 500
+    repo.initialize_team_credits(team_id, 500)
+        .await
+        .expect("Failed to init credits");
+
+    // 再次查询余额——应直接返回 500，不重新初始化
+    let balance = repo
+        .get_balance(team_id)
+        .await
+        .expect("Failed to get balance for existing team");
+    assert_eq!(balance, 500, "Should return existing balance of 500");
+
+    cleanup_credits(&app, team_id).await;
+}
+
+/// tc_get_transaction_history_returns_empty_for_team_without_transactions: 无交易记录的团队返回空列表
+#[tokio::test]
+async fn tc_get_transaction_history_returns_empty_for_team_without_transactions() {
+    let app = create_test_app_no_worker().await;
+    let repo = CreditsRepositoryImpl::new(app.db_pool.clone());
+
+    // 使用一个全新的、没有交易记录的团队 ID
+    let unknown_team_id = Uuid::new_v4();
+    let history = repo
+        .get_transaction_history(unknown_team_id, Some(10))
+        .await
+        .expect("Failed to get transaction history for unknown team");
+
+    assert!(
+        history.is_empty(),
+        "Should return empty list for team without transactions"
+    );
+}
+
+/// tc_get_balance_multiple_teams_independent: 多个团队的积分互相独立
+#[tokio::test]
+async fn tc_get_balance_multiple_teams_independent() {
+    let app = create_test_app_no_worker().await;
+    let repo = CreditsRepositoryImpl::new(app.db_pool.clone());
+    let team1_id = app.team_id;
+    let team2_id = Uuid::new_v4();
+
+    // 先为 team2 创建一个 team 记录（FK 约束）
+    let session = app
+        .db_pool
+        .get_session("admin")
+        .await
+        .expect("Failed to get session");
+    let conn = session.connection().expect("Failed to get connection");
+    sea_orm::ConnectionTrait::execute_unprepared(
+        conn,
+        &format!(
+            "INSERT INTO teams (id, name) VALUES ('{}', 'Test Team 2 {}') ON CONFLICT (id) DO NOTHING",
+            team2_id, team2_id
+        ),
+    )
+    .await
+    .expect("Failed to insert team2");
+
+    // team1 初始化 1000，team2 初始化 200
+    repo.initialize_team_credits(team1_id, 1000)
+        .await
+        .expect("Failed to init team1 credits");
+    repo.initialize_team_credits(team2_id, 200)
+        .await
+        .expect("Failed to init team2 credits");
+
+    let balance1 = repo
+        .get_balance(team1_id)
+        .await
+        .expect("Failed to get team1 balance");
+    let balance2 = repo
+        .get_balance(team2_id)
+        .await
+        .expect("Failed to get team2 balance");
+
+    assert_eq!(balance1, 1000, "Team1 balance should be 1000");
+    assert_eq!(balance2, 200, "Team2 balance should be 200");
+
+    // 清理 team2
+    let _ = credits::Entity::delete_many()
+        .filter(credits::Column::TeamId.eq(team2_id))
+        .exec(conn)
+        .await;
+    sea_orm::ConnectionTrait::execute_unprepared(
+        conn,
+        &format!("DELETE FROM teams WHERE id = '{}'", team2_id),
+    )
+    .await
+    .ok();
+    cleanup_credits(&app, team1_id).await;
+}
+
 /// 辅助函数：清理指定 team_id 的 credits 和 credits_transactions
 async fn cleanup_credits(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
     let session = app
