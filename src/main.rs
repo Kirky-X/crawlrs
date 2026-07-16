@@ -23,20 +23,33 @@ enum ServiceType {
     Worker,
 }
 
+/// Parse service type from an optional argument string.
+///
+/// Pure function extracted from `from_args` for testability.
+/// - `Some("api")` or `None` → `Ok(ServiceType::Api)`
+/// - `Some("worker")` → `Ok(ServiceType::Worker)`
+/// - Other values → `Err` with descriptive message
+fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
+    let service_type = arg.unwrap_or("api");
+    match service_type {
+        "api" => Ok(ServiceType::Api),
+        "worker" => Ok(ServiceType::Worker),
+        other => Err(format!(
+            "Invalid service type: '{}'. Use 'api' or 'worker'.",
+            other
+        )),
+    }
+}
+
 impl ServiceType {
     /// Parse service type from command line arguments.
     fn from_args() -> Self {
         let args: Vec<String> = env::args().collect();
-        let service_type = args.get(1).map(String::as_str).unwrap_or("api");
-
-        match service_type {
-            "api" => ServiceType::Api,
-            "worker" => ServiceType::Worker,
-            _ => {
-                error!(
-                    "Invalid service type: '{}'. Use 'api' or 'worker'.",
-                    service_type
-                );
+        let arg = args.get(1).map(String::as_str);
+        match parse_service_type(arg) {
+            Ok(st) => st,
+            Err(msg) => {
+                error!("{}", msg);
                 process::exit(1);
             }
         }
@@ -230,4 +243,67 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tc_parse_service_type_api() {
+        let result = parse_service_type(Some("api"));
+        assert!(matches!(result, Ok(ServiceType::Api)));
+    }
+
+    #[test]
+    fn tc_parse_service_type_worker() {
+        let result = parse_service_type(Some("worker"));
+        assert!(matches!(result, Ok(ServiceType::Worker)));
+    }
+
+    #[test]
+    fn tc_parse_service_type_none_defaults_to_api() {
+        let result = parse_service_type(None);
+        assert!(matches!(result, Ok(ServiceType::Api)));
+    }
+
+    #[test]
+    fn tc_parse_service_type_invalid_returns_error() {
+        let result = parse_service_type(Some("invalid"));
+        // ServiceType 未实现 Debug，使用 match 而非 unwrap_err()
+        match result {
+            Err(msg) => {
+                assert!(msg.contains("Invalid service type"), "got: {}", msg);
+                assert!(msg.contains("invalid"), "got: {}", msg);
+                assert!(
+                    msg.contains("api") || msg.contains("worker"),
+                    "got: {}",
+                    msg
+                );
+            }
+            Ok(_) => panic!("expected error for invalid service type, got Ok"),
+        }
+    }
+
+    #[test]
+    fn tc_parse_service_type_empty_string_returns_error() {
+        let result = parse_service_type(Some(""));
+        // ServiceType 未实现 Debug，使用 match 而非 unwrap_err()
+        match result {
+            Err(msg) => {
+                assert!(msg.contains("Invalid service type"), "got: {}", msg);
+            }
+            Ok(_) => panic!("expected error for empty string, got Ok"),
+        }
+    }
+
+    #[test]
+    fn tc_parse_service_type_case_sensitive() {
+        // Service type 解析应区分大小写
+        let result = parse_service_type(Some("API"));
+        assert!(result.is_err(), "uppercase API should be invalid");
+
+        let result = parse_service_type(Some("Worker"));
+        assert!(result.is_err(), "mixed-case Worker should be invalid");
+    }
 }

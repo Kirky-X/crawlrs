@@ -590,4 +590,38 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result, Err(SsrfError::InvalidUrl { .. })));
     }
+
+    // =========================================================================
+    // create_ssrf_safe_redirect_policy 测试
+    // =========================================================================
+
+    #[test]
+    fn tc_create_ssrf_safe_redirect_policy_zero() {
+        let policy = create_ssrf_safe_redirect_policy(0);
+        let client_result = reqwest::Client::builder().redirect(policy).build();
+        assert!(
+            client_result.is_ok(),
+            "ClientBuilder with redirect policy(0) should succeed"
+        );
+    }
+
+    #[test]
+    fn tc_create_ssrf_safe_redirect_policy_default() {
+        let policy = create_ssrf_safe_redirect_policy(10);
+        let client_result = reqwest::Client::builder().redirect(policy).build();
+        assert!(
+            client_result.is_ok(),
+            "ClientBuilder with redirect policy(10) should succeed"
+        );
+    }
+
+    #[test]
+    fn tc_create_ssrf_safe_redirect_policy_max_u8() {
+        let policy = create_ssrf_safe_redirect_policy(255);
+        let client_result = reqwest::Client::builder().redirect(policy).build();
+        assert!(
+            client_result.is_ok(),
+            "ClientBuilder with redirect policy(255) should succeed"
+        );
+    }
 }
