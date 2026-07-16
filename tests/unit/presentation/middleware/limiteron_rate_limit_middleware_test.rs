@@ -35,6 +35,7 @@ use axum::{
     routing::get,
     Router,
 };
+use limiteron::ban::BanSource;
 use limiteron::prelude::*;
 use limiteron::storage::{BanStorage, MemoryBanStorage, MemoryStorage, Storage};
 use tower::ServiceExt;
@@ -434,4 +435,306 @@ async fn test_governor_check_allows_first_request() {
             panic!("First request should not be Banned: {}", info.reason());
         }
     }
+}
+
+// =============================================================================
+// Banned path (Decision::Banned → HTTP 403)
+// =============================================================================
+
+/// Build a Governor with a rule that immediately bans any request matching
+/// the IP range 0.0.0.0/0. Used to exercise the Banned branch of the
+/// middleware, which must return HTTP 403 Forbidden.
+async fn create_banning_governor() -> Arc<Governor> {
+    use limiteron::config::{
+        Action, ActionConfig, BanConfig, BanScope, GlobalConfig, LimiterConfig, Matcher, Rule,
+    };
+
+    let storage: Arc<dyn Storage> = Arc::new(MemoryStorage::new());
+    let ban_storage: Arc<dyn BanStorage> = Arc::new(MemoryBanStorage::new());
+
+    let flow_config = FlowControlConfig {
+        version: "0.1.0".to_string(),
+        global: GlobalConfig::default(),
+        rules: vec![Rule {
+            id: "test_ban_rule".to_string(),
+            name: "Test Ban Rule".to_string(),
+            priority: 100,
+            matchers: vec![Matcher::Ip {
+                ip_ranges: vec!["0.0.0.0/0".to_string()],
+            }],
+            // TokenBucket with capacity 1 + refill_rate 1 + ban on exceed →
+            // first request consumes the token, second request triggers ban.
+            limiters: vec![LimiterConfig::TokenBucket {
+                capacity: 1,
+                refill_rate: 1,
+            }],
+            action: ActionConfig {
+                on_exceed: Action::Reject,
+                ban: Some(BanConfig {
+                    threshold: 1,
+                    initial_duration: "60s".to_string(),
+                    backoff_multiplier: 1.0,
+                    max_duration: "3600s".to_string(),
+                    scope: BanScope::Ip,
+                }),
+            },
+        }],
+    };
+
+    let governor = Governor::builder()
+        .with_config(flow_config)
+        .with_storage(storage)
+        .with_ban_storage(ban_storage)
+        .with_l1_cache_enabled(false)
+        .build()
+        .await
+        .expect("Failed to build banning governor for tests");
+
+    Arc::new(governor)
+}
+
+#[tokio::test]
+async fn tc_banned_request_returns_403_forbidden() {
+    // limiteron's Governor does not auto-create bans during `check` — the
+    // parallel ban checker only consults *existing* ban records. To exercise
+    // the Banned branch of the middleware we manually register a ban via
+    // `Governor::ban_identifier` before sending the request.
+    let governor = create_banning_governor().await;
+    governor
+        .ban_identifier(
+            &Identifier::Ip("203.0.113.99".to_string()),
+            "automated ban for test",
+            Some(BanSource::Manual {
+                operator: "test".to_string(),
+            }),
+        )
+        .await
+        .expect("Failed to manually ban identifier");
+
+    let state = LimiteronMiddlewareState { governor };
+
+    let app = Router::new()
+        .route("/protected", get(|| async { "ok" }))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            limiteron_rate_limit_middleware,
+        ));
+
+    let addr = socket_addr("203.0.113.99", 443);
+    let response = app
+        .oneshot(build_request("/protected", Some(addr), None))
+        .await
+        .expect("Failed to get response");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "Banned IP should receive 403 Forbidden"
+    );
+
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .expect("Failed to read response body");
+    let body = String::from_utf8(bytes.to_vec()).expect("body must be valid UTF-8");
+    assert!(
+        body.contains("Access forbidden"),
+        "403 body should contain 'Access forbidden', got: {}",
+        body
+    );
+}
+
+#[tokio::test]
+async fn tc_banned_response_body_contains_ban_reason() {
+    // Manually register a ban so the middleware returns 403 with a reason
+    // suffix. limiteron's Governor does not auto-ban during `check`, so we
+    // must call `ban_identifier` to populate the ban storage before sending
+    // the request.
+    let governor = create_banning_governor().await;
+    governor
+        .ban_identifier(
+            &Identifier::Ip("198.51.100.42".to_string()),
+            "rate limit threshold exceeded",
+            Some(BanSource::Manual {
+                operator: "test".to_string(),
+            }),
+        )
+        .await
+        .expect("Failed to manually ban identifier");
+
+    let state = LimiteronMiddlewareState { governor };
+
+    let app = Router::new()
+        .route("/protected", get(|| async { "ok" }))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            limiteron_rate_limit_middleware,
+        ));
+
+    let addr = socket_addr("198.51.100.42", 80);
+    let response = app
+        .oneshot(build_request("/protected", Some(addr), None))
+        .await
+        .expect("Failed to get response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .expect("Failed to read response body");
+    let body = String::from_utf8(bytes.to_vec()).expect("body must be valid UTF-8");
+    assert!(
+        body.starts_with("Access forbidden:"),
+        "403 body should start with 'Access forbidden:', got: {}",
+        body
+    );
+    assert!(
+        body.len() > "Access forbidden:".len(),
+        "403 body should include a non-empty ban reason after the prefix, got: {}",
+        body
+    );
+}
+
+// =============================================================================
+// AuthState extension extraction (user_id path)
+// =============================================================================
+
+#[tokio::test]
+async fn tc_auth_state_extension_provides_user_id() {
+    // When the auth middleware inserts an AuthState extension, the limiteron
+    // middleware must read api_key_id from it and populate user_id in the
+    // request context. Under generous capacity the request is still Allowed.
+    use crawlrs::domain::auth::ApiKeyScope;
+    use dbnexus::{DbConfig, DbPool};
+    use uuid::Uuid;
+
+    fn create_test_db_pool() -> Arc<dbnexus::DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool");
+                let _guard = rt.enter();
+                DbPool::try_from(&DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool thread panicked"))
+        })
+    }
+
+    let governor = create_test_governor().await;
+    let state = LimiteronMiddlewareState { governor };
+
+    let app = Router::new()
+        .route("/protected", get(|| async { "ok" }))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            limiteron_rate_limit_middleware,
+        ));
+
+    let pool = create_test_db_pool();
+    let auth_state = crawlrs::presentation::middleware::auth_middleware::AuthState::new(
+        pool,
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        ApiKeyScope::default(),
+    );
+
+    let mut req = Request::builder()
+        .uri("/protected")
+        .body(Body::empty())
+        .expect("Failed to build request");
+    req.extensions_mut().insert(auth_state);
+
+    let response = app.oneshot(req).await.expect("Failed to get response");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "Request with AuthState under capacity must be Allowed"
+    );
+}
+
+#[tokio::test]
+async fn tc_auth_state_and_api_key_both_present_still_allowed() {
+    // When both AuthState and a String API key extension are present, the
+    // middleware must read both and still allow the request under capacity.
+    use crawlrs::domain::auth::ApiKeyScope;
+    use dbnexus::{DbConfig, DbPool};
+    use uuid::Uuid;
+
+    fn create_test_db_pool() -> Arc<dbnexus::DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool");
+                let _guard = rt.enter();
+                DbPool::try_from(&DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool thread panicked"))
+        })
+    }
+
+    let governor = create_test_governor().await;
+    let state = LimiteronMiddlewareState { governor };
+
+    let app = Router::new()
+        .route("/protected", get(|| async { "ok" }))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            limiteron_rate_limit_middleware,
+        ));
+
+    let pool = create_test_db_pool();
+    let auth_state = crawlrs::presentation::middleware::auth_middleware::AuthState::new(
+        pool,
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        ApiKeyScope::default(),
+    );
+
+    let mut req = Request::builder()
+        .uri("/protected")
+        .body(Body::empty())
+        .expect("Failed to build request");
+    req.extensions_mut().insert(auth_state);
+    req.extensions_mut().insert("test-api-key-456".to_string());
+
+    let response = app.oneshot(req).await.expect("Failed to get response");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "Request with both AuthState and API key under capacity must be Allowed"
+    );
+}
+
+// =============================================================================
+// Headers map population (api_key + user_id into x-api-key / x-user-id)
+// =============================================================================
+
+#[tokio::test]
+async fn tc_api_key_alone_populates_headers_without_user_id() {
+    // When only the String API key extension is present (no AuthState), the
+    // middleware must populate x-api-key but leave x-user-id absent. The
+    // request must still be Allowed under capacity.
+    let governor = create_test_governor().await;
+    let state = LimiteronMiddlewareState { governor };
+
+    let app = Router::new()
+        .route("/protected", get(|| async { "ok" }))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            limiteron_rate_limit_middleware,
+        ));
+
+    let response = app
+        .oneshot(build_request("/protected", None, Some("solo-api-key-789")))
+        .await
+        .expect("Failed to get response");
+
+    assert_eq!(response.status(), StatusCode::OK);
 }

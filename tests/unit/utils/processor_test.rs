@@ -17,8 +17,8 @@ use async_trait::async_trait;
 use crawlrs::utils::text_processing::encoding::TextEncodingError;
 use crawlrs::utils::text_processing::processor::{
     detect_html_structure, init_encoding_patterns, process_crawled_batch_with_processor,
-    process_crawled_content_with_processor, process_web_content_with_processor, ContentQuality,
-    CrawlProcessingError, CrawlProcessorConfig, CrawlTextProcessor, ProcessedCrawlContent,
+    process_crawled_content_with_processor, process_web_content_with_processor, CrawlProcessorConfig,
+    CrawlProcessingError, CrawlTextProcessor, ContentQuality, ProcessedCrawlContent,
     ProcessedWebContent, TextEncodingProcessorComponent, TextEncodingProcessorTrait,
     WebContentError, WebContentProcessor, WebContentProcessorComponent, WebContentProcessorTrait,
 };
@@ -134,7 +134,9 @@ fn tc_process_web_content_no_content_type() {
     let html = b"<html><body><p>No content type provided</p></body></html>";
     let result = processor.process_web_content(html, None).unwrap();
     assert!(result.is_html);
-    assert!(result.extracted_text.contains("No content type provided"));
+    assert!(result
+        .extracted_text
+        .contains("No content type provided"));
     assert_eq!(result.content_type, None);
 }
 
@@ -217,8 +219,7 @@ fn tc_html_cleaner_removes_nested_scripts_via_process_web_content() {
 #[test]
 fn tc_html_cleaner_removes_style_blocks_via_process_web_content() {
     let processor = WebContentProcessor::new();
-    let html =
-        r#"<html><head><style>.foo { color: red; }</style></head><body><p>text</p></body></html>"#;
+    let html = r#"<html><head><style>.foo { color: red; }</style></head><body><p>text</p></body></html>"#;
     let result = processor
         .process_web_content(html.as_bytes(), Some("text/html"))
         .unwrap();
@@ -454,7 +455,8 @@ fn tc_process_web_content_with_processor_fn_plain_text() {
 fn tc_process_crawled_content_with_processor_fn_success() {
     let processor = CrawlTextProcessor::new();
     let result =
-        process_crawled_content_with_processor(&processor, b"hello", "http://x.com", None).unwrap();
+        process_crawled_content_with_processor(&processor, b"hello", "http://x.com", None)
+            .unwrap();
     assert_eq!(result.url, "http://x.com");
     assert!(!result.processed_content.is_html);
 }

@@ -199,7 +199,10 @@ async fn tc_pool_returns_database_pool() {
 
     let pool_ref = repo.pool();
     assert!(
-        std::ptr::eq(Arc::as_ptr(pool_ref), Arc::as_ptr(&app.db_pool)),
+        std::ptr::eq(
+            Arc::as_ptr(pool_ref),
+            Arc::as_ptr(&app.db_pool)
+        ),
         "pool() should return the same Arc<DbPool> passed to new()"
     );
 }
@@ -228,7 +231,8 @@ async fn tc_find_by_task_ids_with_partial_match() {
         "Should return only the existing task's result"
     );
     assert_eq!(
-        results[0].task_id, existing_task_id,
+        results[0].task_id,
+        existing_task_id,
         "Result should match the existing task"
     );
 

@@ -341,10 +341,7 @@ async fn tc_find_by_id_returns_none_for_unknown() {
         .find_by_id(unknown_id)
         .await
         .expect("Failed to query unknown backlog id");
-    assert!(
-        result.is_none(),
-        "Should return None for unknown backlog id"
-    );
+    assert!(result.is_none(), "Should return None for unknown backlog id");
 }
 
 /// tc_get_pending_tasks_no_team_no_limit: 不带 team_id 和 limit 查询所有 pending

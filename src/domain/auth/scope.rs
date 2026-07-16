@@ -63,6 +63,27 @@ impl ApiKeyScope {
         }
     }
 
+    /// Create a new scope with custom permission flags and rate limits
+    ///
+    /// Allows external callers (including integration tests) to construct an
+    /// `ApiKeyScope` with custom `search_limit` / `scrape_limit` values without
+    /// directly accessing the `pub(crate)` fields.
+    pub fn with_custom_limits(
+        read: bool,
+        write: bool,
+        admin: bool,
+        search_limit: u32,
+        scrape_limit: u32,
+    ) -> Self {
+        Self {
+            read,
+            write,
+            admin,
+            search_limit,
+            scrape_limit,
+        }
+    }
+
     /// Check if the scope has permission for a required scope
     pub fn has_permission(&self, permission: ScopePermission) -> bool {
         match permission {

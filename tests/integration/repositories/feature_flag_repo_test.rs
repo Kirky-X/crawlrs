@@ -392,10 +392,7 @@ async fn tc_list_overrides_returns_empty_for_flag_without_overrides() {
         .await
         .expect("Failed to list overrides for flag without overrides");
 
-    let matching: Vec<_> = overrides
-        .into_iter()
-        .filter(|o| o.feature_flag_id == flag_id)
-        .collect();
+    let matching: Vec<_> = overrides.into_iter().filter(|o| o.feature_flag_id == flag_id).collect();
     assert!(
         matching.is_empty(),
         "Should return empty list for flag without overrides"
@@ -436,30 +433,21 @@ async fn tc_list_all_includes_multiple_flags() {
     insert_feature_flag(&app, flag1_id, &name1, true, 100).await;
     insert_feature_flag(&app, flag2_id, &name2, false, 50).await;
 
-    let all = repo.list_all().await.expect("Failed to list all flags");
+    let all = repo
+        .list_all()
+        .await
+        .expect("Failed to list all flags");
 
     // 验证两条都在结果中
-    assert!(
-        all.iter().any(|f| f.id == flag1_id),
-        "Flag 1 should be in list"
-    );
-    assert!(
-        all.iter().any(|f| f.id == flag2_id),
-        "Flag 2 should be in list"
-    );
+    assert!(all.iter().any(|f| f.id == flag1_id), "Flag 1 should be in list");
+    assert!(all.iter().any(|f| f.id == flag2_id), "Flag 2 should be in list");
 
     // 验证字段映射正确
-    let f1 = all
-        .iter()
-        .find(|f| f.id == flag1_id)
-        .expect("flag1 missing");
+    let f1 = all.iter().find(|f| f.id == flag1_id).expect("flag1 missing");
     assert!(f1.enabled, "Flag 1 should be enabled");
     assert_eq!(f1.rollout_percentage, 100);
 
-    let f2 = all
-        .iter()
-        .find(|f| f.id == flag2_id)
-        .expect("flag2 missing");
+    let f2 = all.iter().find(|f| f.id == flag2_id).expect("flag2 missing");
     assert!(!f2.enabled, "Flag 2 should be disabled");
     assert_eq!(f2.rollout_percentage, 50);
 

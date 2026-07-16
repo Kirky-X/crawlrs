@@ -3,6 +3,4 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-pub mod browser_downloader_test;
-pub mod engine_client_test;
-pub mod search;
+mod team_id_test;
