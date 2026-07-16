@@ -5,12 +5,16 @@
 
 #[cfg(test)]
 mod tests {
+    use crawlrs::config::LoggingSettings;
     use crawlrs::utils::telemetry;
 
-    #[test]
-    fn test_telemetry_initialization() {
+    #[tokio::test]
+    async fn test_telemetry_initialization() {
         // 初始化遥测系统
-        telemetry::init_telemetry();
+        let settings = LoggingSettings::default();
+        let _manager = telemetry::init_telemetry(&settings)
+            .await
+            .expect("telemetry init should succeed");
 
         // 测试不同级别的日志
         log::trace!("This is a trace message");
