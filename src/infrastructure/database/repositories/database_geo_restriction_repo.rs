@@ -176,130 +176,14 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
     }
 }
 
-#[cfg(test)]
-#[cfg(feature = "dbnexus-sqlite")]
-mod tests {
-    use super::*;
-    use crate::infrastructure::database::entities::team;
-    use dbnexus::{DbConfig, DbPool};
-    use sea_orm::{ActiveModelTrait, ConnectionTrait, Set, Statement};
-
-    async fn setup_db() -> Arc<DbPool> {
-        // SQLite in-memory 必须共享同一连接，否则每个连接有独立的数据库
-        let config = DbConfig {
-            url: "sqlite::memory:".to_string(),
-            max_connections: 1,
-            min_connections: 0,
-            ..Default::default()
-        };
-        let pool = DbPool::with_config(config)
-            .await
-            .expect("Failed to create DbPool");
-        let pool = Arc::new(pool);
-        let session = pool
-            .get_session("admin")
-            .await
-            .expect("Failed to get session");
-        let conn = session.connection().expect("Failed to get connection");
-
-        let create_teams_sql = r#"
-            CREATE TABLE IF NOT EXISTS teams (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                allowed_countries TEXT,
-                blocked_countries TEXT,
-                ip_whitelist TEXT,
-                domain_blacklist TEXT,
-                enable_geo_restrictions INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-        "#;
-        conn.execute_raw(Statement::from_string(
-            sea_orm::DatabaseBackend::Sqlite,
-            create_teams_sql.to_string(),
-        ))
-        .await
-        .expect("Failed to create teams table");
-
-        let create_logs_sql = r#"
-            CREATE TABLE IF NOT EXISTS geo_restriction_logs (
-                id TEXT PRIMARY KEY,
-                team_id TEXT NOT NULL,
-                ip_address TEXT NOT NULL,
-                country_code TEXT,
-                restriction_type TEXT NOT NULL,
-                url TEXT,
-                reason TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-        "#;
-        conn.execute_raw(Statement::from_string(
-            sea_orm::DatabaseBackend::Sqlite,
-            create_logs_sql.to_string(),
-        ))
-        .await
-        .expect("Failed to create geo_restriction_logs table");
-
-        drop(session);
-        pool
-    }
-
-    async fn create_team(db: &DbPool) -> Uuid {
-        let team_id = Uuid::new_v4();
-        let session = db
-            .get_session("admin")
-            .await
-            .expect("Failed to get session");
-        let conn = session.connection().expect("Failed to get connection");
-        let team = team::ActiveModel {
-            id: Set(team_id),
-            name: Set("Test Team".to_string()),
-            enable_geo_restrictions: Set(false),
-            created_at: Set(chrono::Utc::now().into()),
-            updated_at: Set(chrono::Utc::now().into()),
-            ..Default::default()
-        };
-        team.insert(conn).await.expect("Failed to insert team");
-        team_id
-    }
-
-    #[tokio::test]
-    async fn test_database_geo_restriction_repository() {
-        let db = setup_db().await;
-        let repo = DatabaseGeoRestrictionRepository::new(db.clone());
-        let team_id = create_team(&db).await;
-
-        // Test getting default configuration
-        let restrictions = repo.get_team_restrictions(team_id).await.unwrap();
-        assert!(!restrictions.enable_geo_restrictions);
-
-        // Test updating configuration
-        let mut new_restrictions = restrictions.clone();
-        new_restrictions.enable_geo_restrictions = true;
-        new_restrictions.allowed_countries = Some(vec!["US".to_string(), "CA".to_string()]);
-
-        repo.update_team_restrictions(team_id, &new_restrictions)
-            .await
-            .unwrap();
-
-        // Verify update
-        let updated_restrictions = repo.get_team_restrictions(team_id).await.unwrap();
-        assert!(updated_restrictions.enable_geo_restrictions);
-        assert_eq!(updated_restrictions.allowed_countries.unwrap().len(), 2);
-
-        // Test log_geo_restriction_action
-        let result = repo
-            .log_geo_restriction_action(team_id, "127.0.0.1", "US", "blocked", "Country blocked")
-            .await;
-        assert!(result.is_ok());
-    }
-}
+// 注意：原 `#[cfg(test)] #[cfg(feature = "dbnexus-sqlite")] mod tests` 块已删除
+// 原因：dbnexus-sqlite feature 已不再支持。如需 SQLite 集成测试，需重新引入
+// dbnexus-sqlite feature 并恢复此模块。下面的 error_path_tests 不依赖 SQLite，
+// 使用 lazy DbPool 测试错误路径，仍保留。
 
 /// Tests that exercise the error paths of `DatabaseGeoRestrictionRepository`
 /// using a lazy `DbPool` (no real DB connection). These run under all feature
-/// combinations — the existing `tests` module above is sqlite-gated because it
-/// needs a real SQLite database.
+/// combinations.
 #[cfg(test)]
 mod error_path_tests {
     use super::*;

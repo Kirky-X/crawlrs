@@ -11,7 +11,6 @@
 //! - 类型安全的配置解析
 //! - 内置验证
 
-use confers::Config;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
@@ -41,8 +40,9 @@ pub use super::search::{BingSearchSettings, SearchSettings};
 ///     Ok(())
 /// }
 /// ```
-#[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
-#[config(env_prefix = "CRAWLRS__", validate)]
+#[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__", validate))]
 pub struct Settings {
     /// 服务器配置
     pub server: ServerSettings,
@@ -100,11 +100,12 @@ pub struct Settings {
 /// CORS 配置设置
 ///
 /// 配置跨域资源共享（CORS）策略
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__CORS__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__CORS__"))]
 pub struct CorsSettings {
     /// 允许的跨域来源列表（逗号分隔）
-    #[config(default = "*".to_string())]
+    #[cfg_attr(feature = "config", config(default = "*".to_string()))]
     pub allowed_origins: String,
 }
 
@@ -124,19 +125,20 @@ pub struct CorsSettings {
 ///
 /// `secret` 字段包含 Webhook 签名密钥，泄露可能导致伪造请求。
 /// 该字段仅对 crate 可见，外部模块应使用 `secret()` 方法访问。
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__WEBHOOK__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__WEBHOOK__"))]
 pub struct WebhookSettings {
     /// Webhook签名密钥 (敏感信息)
     /// 注意：此字段包含敏感信息，仅 crate 内部可访问
     pub(crate) secret: String,
 
     /// 最大重试次数
-    #[config(default = 5)]
+    #[cfg_attr(feature = "config", config(default = 5))]
     pub max_retries: u32,
 
     /// 批处理大小
-    #[config(default = 1000)]
+    #[cfg_attr(feature = "config", config(default = 1000))]
     pub batch_size: usize,
 }
 
@@ -159,15 +161,16 @@ impl WebhookSettings {
 /// HTTP代理配置设置
 ///
 /// 配置HTTP代理参数，用于转发爬虫请求
-#[derive(Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__PROXY__")]
+#[derive(Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__PROXY__"))]
 pub struct ProxySettings {
     /// 代理服务器URL (可能包含认证信息)
-    #[config(default = "http://localhost:10808".to_string())]
+    #[cfg_attr(feature = "config", config(default = "http://localhost:10808".to_string()))]
     pub(crate) url: String,
 
     /// 是否启用代理
-    #[config(default = false)]
+    #[cfg_attr(feature = "config", config(default = false))]
     pub enabled: bool,
 }
 
@@ -194,8 +197,9 @@ impl ProxySettings {
 /// Worker配置设置
 ///
 /// 配置后台Worker进程的数量和类型
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__WORKERS__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__WORKERS__"))]
 pub struct WorkerSettings {
     /// Worker数量配置
     pub count: WorkerCount,
@@ -240,8 +244,9 @@ impl WorkerCount {
 /// 超时配置设置
 ///
 /// 配置各种操作的超时时间
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__TIMEOUTS__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__TIMEOUTS__"))]
 pub struct TimeoutSettings {
     /// Worker相关超时
     pub workers: WorkerTimeoutSettings,
@@ -257,58 +262,68 @@ pub struct TimeoutSettings {
 }
 
 /// Worker超时设置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__TIMEOUTS__WORKERS__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(
+    feature = "config",
+    config(env_prefix = "CRAWLRS__TIMEOUTS__WORKERS__")
+)]
 pub struct WorkerTimeoutSettings {
     /// Webhook worker处理间隔（秒）
-    #[config(default = 5)]
+    #[cfg_attr(feature = "config", config(default = 5))]
     pub webhook_interval_seconds: u64,
 
     /// Backlog worker处理间隔（秒）
-    #[config(default = 30)]
+    #[cfg_attr(feature = "config", config(default = 30))]
     pub backlog_interval_seconds: u64,
 }
 
 /// 引擎超时设置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__TIMEOUTS__ENGINES__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(
+    feature = "config",
+    config(env_prefix = "CRAWLRS__TIMEOUTS__ENGINES__")
+)]
 pub struct EngineTimeoutSettings {
     /// 默认请求超时（秒）
-    #[config(default = 30)]
+    #[cfg_attr(feature = "config", config(default = 30))]
     pub default_timeout_seconds: u64,
 
     /// Playwright引擎超时（秒）
-    #[config(default = 30)]
+    #[cfg_attr(feature = "config", config(default = 30))]
     pub playwright_timeout_seconds: u64,
 
     /// FlareSolverr超时（秒）
-    #[config(default = 30)]
+    #[cfg_attr(feature = "config", config(default = 30))]
     pub flaresolverr_timeout_seconds: u64,
 }
 
 /// 重试超时设置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__TIMEOUTS__RETRY__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__TIMEOUTS__RETRY__"))]
 pub struct RetryTimeoutSettings {
     /// 初始退避时间（秒）
-    #[config(default = 1)]
+    #[cfg_attr(feature = "config", config(default = 1))]
     pub initial_backoff_seconds: u64,
 
     /// 最大退避时间（秒）
-    #[config(default = 60)]
+    #[cfg_attr(feature = "config", config(default = 60))]
     pub max_backoff_seconds: u64,
 }
 
 /// 缓存超时设置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__TIMEOUTS__CACHE__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__TIMEOUTS__CACHE__"))]
 pub struct CacheTimeoutSettings {
     /// 默认TTL（秒）
-    #[config(default = 600)]
+    #[cfg_attr(feature = "config", config(default = 600))]
     pub default_ttl_seconds: u64,
 
     /// 内存缓存TTL（秒）
-    #[config(default = 600)]
+    #[cfg_attr(feature = "config", config(default = 600))]
     pub memory_ttl_seconds: u64,
 }
 
@@ -317,21 +332,23 @@ pub struct CacheTimeoutSettings {
 // =============================================================================
 
 /// 缓存类型配置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__CACHE__TYPES__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__CACHE__TYPES__"))]
 pub struct CacheTypeSettings {
-    #[config(default = 300)]
+    #[cfg_attr(feature = "config", config(default = 300))]
     pub ttl_seconds: u64,
-    #[config(default = 10000)]
+    #[cfg_attr(feature = "config", config(default = 10000))]
     pub max_size: u64,
 }
 
 /// 统一缓存配置（oxcache）
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__CACHE__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__CACHE__"))]
 pub struct CacheSettings {
     /// 是否启用缓存
-    #[config(default = true)]
+    #[cfg_attr(feature = "config", config(default = true))]
     pub enabled: bool,
 
     /// L1 内存缓存配置
@@ -342,20 +359,22 @@ pub struct CacheSettings {
 }
 
 /// L1 内存缓存配置（Moka）
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__CACHE__MEMORY__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__CACHE__MEMORY__"))]
 pub struct MemoryCacheSettings {
     /// 最大容量
-    #[config(default = 10000)]
+    #[cfg_attr(feature = "config", config(default = 10000))]
     pub capacity: u64,
     /// TTL（秒）
-    #[config(default = 300)]
+    #[cfg_attr(feature = "config", config(default = 300))]
     pub ttl_seconds: u64,
 }
 
 /// 各缓存类型特定配置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__CACHE__TYPES__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__CACHE__TYPES__"))]
 pub struct CacheTypeSpecificSettings {
     /// 搜索结果缓存配置
     pub search: CacheTypeSettings,
@@ -388,14 +407,15 @@ pub struct CacheTypeSpecificSettings {
 /// enabled = true
 /// proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
 /// ```
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__TRUSTED_PROXIES__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__TRUSTED_PROXIES__"))]
 pub struct TrustedProxySettings {
     /// 是否启用可信代理验证
     ///
     /// - true: 仅当请求来自可信代理时才信任转发头
     /// - false: 总是信任转发头（不安全，仅用于开发环境）
-    #[config(default = true)]
+    #[cfg_attr(feature = "config", config(default = true))]
     pub enabled: bool,
 
     /// 可信代理 IP 地址列表
@@ -408,13 +428,13 @@ pub struct TrustedProxySettings {
     /// - 192.168.0.0/16 (Class C 私有网络)
     /// - 127.0.0.1 (本地回环)
     /// - ::1 (IPv6 本地回环)
-    #[config(default = vec![
+    #[cfg_attr(feature = "config", config(default = vec![
         "10.0.0.0/8".to_string(),
         "172.16.0.0/12".to_string(),
         "192.168.0.0/16".to_string(),
         "127.0.0.1".to_string(),
         "::1".to_string(),
-    ])]
+    ]))]
     pub proxies: Vec<String>,
 }
 

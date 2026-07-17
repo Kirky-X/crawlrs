@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[cfg(any(feature = "engine-fire-cdp", feature = "engine-fire-tls"))]
+#[cfg(feature = "engine-flaresolverr")]
 use crate::engines::client::flare_solverr::FlareSolverrEngine;
 
 use crate::engines::engine_client::EngineClient;
@@ -182,7 +182,7 @@ impl SearchEngineFactory {
 
         // 注册 Fire Engine CDP（用于需要完整浏览器自动化的网站）
         // 原 FireEngineCdp 已合并到 FlareSolverrEngine with Cdp mode
-        #[cfg(feature = "engine-fire-cdp")]
+        #[cfg(feature = "engine-flaresolverr")]
         {
             let fire_engine_cdp = if let Some(ref proxy) = _proxy_url {
                 Arc::new(FlareSolverrEngine::with_cdp_mode(
@@ -207,7 +207,7 @@ impl SearchEngineFactory {
 
         // 注册 Fire Engine TLS（用于需要TLS指纹对抗的网站）
         // 原 FireEngineTls 已合并到 FlareSolverrEngine with Tls mode
-        #[cfg(feature = "engine-fire-tls")]
+        #[cfg(feature = "engine-flaresolverr")]
         {
             let fire_engine_tls = if let Some(ref proxy) = _proxy_url {
                 Arc::new(FlareSolverrEngine::with_tls_mode(

@@ -9,4 +9,5 @@
 //! 以保持向后兼容性。
 
 // Re-export from entity (Model as ScrapeResult, Entity as ScrapeResultEntity)
+#[cfg(feature = "dbnexus-postgres")]
 pub use super::scrape_result_entity::{Entity as ScrapeResultEntity, Model as ScrapeResult};

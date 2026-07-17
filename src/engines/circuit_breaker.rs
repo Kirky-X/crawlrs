@@ -310,6 +310,7 @@ impl CircuitBreaker {
     ///
     /// * `engine_name` - 引擎名称
     /// * `status` - 状态
+    #[cfg_attr(not(feature = "metrics"), allow(unused_variables))]
     fn update_status_metric(&self, engine_name: &str, status: Status) {
         let val = match status {
             Status::Closed => 0.0,

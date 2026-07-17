@@ -17,8 +17,9 @@ use serde::Serialize;
 ///
 /// 统一所有应用级别的错误，提供清晰的错误分类和上下文信息
 #[derive(Debug, thiserror::Error)]
-pub enum AppError {
+pub enum CrawlRsError {
     /// 数据库错误
+    #[cfg(feature = "dbnexus-postgres")]
     #[error("Database error: {0}")]
     Database(#[from] sea_orm::DbErr),
 
@@ -83,48 +84,50 @@ pub enum AppError {
     Other(String),
 }
 
-impl AppError {
+impl CrawlRsError {
     /// 获取错误的 HTTP 状态码
     pub fn status_code(&self) -> StatusCode {
         match self {
-            AppError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::Network(_) => StatusCode::BAD_GATEWAY,
-            AppError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::Validation(_) => StatusCode::BAD_REQUEST,
-            AppError::NotFound(_) => StatusCode::NOT_FOUND,
-            AppError::Authentication(_) => StatusCode::UNAUTHORIZED,
-            AppError::PermissionDenied(_) => StatusCode::FORBIDDEN,
-            AppError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-            AppError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
-            AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::Json(_) => StatusCode::BAD_REQUEST,
-            AppError::Engine(_) => StatusCode::BAD_GATEWAY,
-            AppError::Cache(_) => StatusCode::SERVICE_UNAVAILABLE,
-            AppError::Task(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::RateLimit(_) => StatusCode::TOO_MANY_REQUESTS,
-            AppError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            #[cfg(feature = "dbnexus-postgres")]
+            CrawlRsError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            CrawlRsError::Network(_) => StatusCode::BAD_GATEWAY,
+            CrawlRsError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            CrawlRsError::Validation(_) => StatusCode::BAD_REQUEST,
+            CrawlRsError::NotFound(_) => StatusCode::NOT_FOUND,
+            CrawlRsError::Authentication(_) => StatusCode::UNAUTHORIZED,
+            CrawlRsError::PermissionDenied(_) => StatusCode::FORBIDDEN,
+            CrawlRsError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            CrawlRsError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
+            CrawlRsError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            CrawlRsError::Json(_) => StatusCode::BAD_REQUEST,
+            CrawlRsError::Engine(_) => StatusCode::BAD_GATEWAY,
+            CrawlRsError::Cache(_) => StatusCode::SERVICE_UNAVAILABLE,
+            CrawlRsError::Task(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            CrawlRsError::RateLimit(_) => StatusCode::TOO_MANY_REQUESTS,
+            CrawlRsError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
     /// 获取错误的代码
     pub fn error_code(&self) -> &'static str {
         match self {
-            AppError::Database(_) => "DATABASE_ERROR",
-            AppError::Network(_) => "EXTERNAL_SERVICE_ERROR",
-            AppError::Config(_) => "CONFIGURATION_ERROR",
-            AppError::Validation(_) => "VALIDATION_ERROR",
-            AppError::NotFound(_) => "NOT_FOUND",
-            AppError::Authentication(_) => "AUTHENTICATION_ERROR",
-            AppError::PermissionDenied(_) => "FORBIDDEN",
-            AppError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE",
-            AppError::Timeout(_) => "TIMEOUT",
-            AppError::Io(_) => "IO_ERROR",
-            AppError::Json(_) => "JSON_ERROR",
-            AppError::Engine(_) => "ENGINE_ERROR",
-            AppError::Cache(_) => "CACHE_ERROR",
-            AppError::Task(_) => "TASK_ERROR",
-            AppError::RateLimit(_) => "RATE_LIMITED",
-            AppError::Other(_) => "INTERNAL_ERROR",
+            #[cfg(feature = "dbnexus-postgres")]
+            CrawlRsError::Database(_) => "DATABASE_ERROR",
+            CrawlRsError::Network(_) => "EXTERNAL_SERVICE_ERROR",
+            CrawlRsError::Config(_) => "CONFIGURATION_ERROR",
+            CrawlRsError::Validation(_) => "VALIDATION_ERROR",
+            CrawlRsError::NotFound(_) => "NOT_FOUND",
+            CrawlRsError::Authentication(_) => "AUTHENTICATION_ERROR",
+            CrawlRsError::PermissionDenied(_) => "FORBIDDEN",
+            CrawlRsError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE",
+            CrawlRsError::Timeout(_) => "TIMEOUT",
+            CrawlRsError::Io(_) => "IO_ERROR",
+            CrawlRsError::Json(_) => "JSON_ERROR",
+            CrawlRsError::Engine(_) => "ENGINE_ERROR",
+            CrawlRsError::Cache(_) => "CACHE_ERROR",
+            CrawlRsError::Task(_) => "TASK_ERROR",
+            CrawlRsError::RateLimit(_) => "RATE_LIMITED",
+            CrawlRsError::Other(_) => "INTERNAL_ERROR",
         }
     }
 
@@ -134,30 +137,33 @@ impl AppError {
     /// 用于生产环境中的错误响应。
     pub fn user_message(&self) -> String {
         match self {
-            AppError::Database(_) => {
+            #[cfg(feature = "dbnexus-postgres")]
+            CrawlRsError::Database(_) => {
                 "Database operation failed. Please try again later.".to_string()
             }
-            AppError::Network(_) => {
+            CrawlRsError::Network(_) => {
                 "External service unavailable. Please try again later.".to_string()
             }
-            AppError::Config(_) => "Configuration error. Please contact support.".to_string(),
-            AppError::Validation(msg) => format!("Validation error: {}", msg),
-            AppError::NotFound(msg) => format!("Resource not found: {}", msg),
-            AppError::Authentication(msg) => format!("Authentication failed: {}", msg),
-            AppError::PermissionDenied(msg) => format!("Permission denied: {}", msg),
-            AppError::ServiceUnavailable(_) => {
+            CrawlRsError::Config(_) => "Configuration error. Please contact support.".to_string(),
+            CrawlRsError::Validation(msg) => format!("Validation error: {}", msg),
+            CrawlRsError::NotFound(msg) => format!("Resource not found: {}", msg),
+            CrawlRsError::Authentication(msg) => format!("Authentication failed: {}", msg),
+            CrawlRsError::PermissionDenied(msg) => format!("Permission denied: {}", msg),
+            CrawlRsError::ServiceUnavailable(_) => {
                 "Service unavailable. Please try again later.".to_string()
             }
-            AppError::Timeout(_) => "Request timed out. Please try again later.".to_string(),
-            AppError::Io(_) => "Internal I/O error. Please try again later.".to_string(),
-            AppError::Json(_) => "Invalid JSON format. Please check your request.".to_string(),
-            AppError::Engine(e) => sanitize_engine_error(e),
-            AppError::Cache(_) => "Cache service unavailable. Please try again later.".to_string(),
-            AppError::Task(_) => "Task processing error. Please try again later.".to_string(),
-            AppError::RateLimit(_) => {
+            CrawlRsError::Timeout(_) => "Request timed out. Please try again later.".to_string(),
+            CrawlRsError::Io(_) => "Internal I/O error. Please try again later.".to_string(),
+            CrawlRsError::Json(_) => "Invalid JSON format. Please check your request.".to_string(),
+            CrawlRsError::Engine(e) => sanitize_engine_error(e),
+            CrawlRsError::Cache(_) => {
+                "Cache service unavailable. Please try again later.".to_string()
+            }
+            CrawlRsError::Task(_) => "Task processing error. Please try again later.".to_string(),
+            CrawlRsError::RateLimit(_) => {
                 "Rate limit exceeded. Please slow down your requests.".to_string()
             }
-            AppError::Other(_) => "Internal server error. Please try again later.".to_string(),
+            CrawlRsError::Other(_) => "Internal server error. Please try again later.".to_string(),
         }
     }
 
@@ -190,10 +196,10 @@ pub struct ApiErrorResponse {
 /// 应用程序结果类型
 ///
 /// 使用统一的错误类型作为 Result 的错误变体
-pub type AppResult<T> = Result<T, AppError>;
+pub type CrawlRsResult<T> = Result<T, CrawlRsError>;
 
-impl From<AppError> for ApiErrorResponse {
-    fn from(error: AppError) -> Self {
+impl From<CrawlRsError> for ApiErrorResponse {
+    fn from(error: CrawlRsError) -> Self {
         error.to_api_error_response()
     }
 }
@@ -355,12 +361,12 @@ fn sanitize_error_message(msg: &str) -> String {
 // IntoResponse 实现
 // =============================================================================
 
-/// 为 AppError 实现 IntoResponse trait
+/// 为 CrawlRsError 实现 IntoResponse trait
 ///
 /// 根据环境自动选择返回详细错误信息或脱敏后的错误信息：
 /// - 开发环境：返回详细错误信息，便于调试
 /// - 生产环境：返回脱敏后的用户友好错误信息，详细错误记录到日志
-impl IntoResponse for AppError {
+impl IntoResponse for CrawlRsError {
     fn into_response(self) -> Response {
         let status = self.status_code();
         let error_code = self.error_code();
@@ -402,46 +408,48 @@ impl IntoResponse for AppError {
     }
 }
 
-/// 从 reqwest::Error 转换为 AppError::Network
+/// 从 reqwest::Error 转换为 CrawlRsError::Network
 ///
 /// 保留 `?` 操作符对 reqwest 错误的自动转换能力。
 /// 变体 `Network(String)` 不再使用 `#[from]`，因此需要手动实现。
-impl From<reqwest::Error> for AppError {
+impl From<reqwest::Error> for CrawlRsError {
     fn from(err: reqwest::Error) -> Self {
-        AppError::Network(err.to_string())
+        CrawlRsError::Network(err.to_string())
     }
 }
 
-/// 从 EngineError 转换为 AppError
+/// 从 EngineError 转换为 CrawlRsError
 ///
 /// 统一引擎层的错误到应用层错误处理
-impl From<crate::engines::engine_client::EngineError> for AppError {
+impl From<crate::engines::engine_client::EngineError> for CrawlRsError {
     fn from(err: crate::engines::engine_client::EngineError) -> Self {
         match err {
-            crate::engines::engine_client::EngineError::RequestFailed(msg) => AppError::Engine(msg),
+            crate::engines::engine_client::EngineError::RequestFailed(msg) => {
+                CrawlRsError::Engine(msg)
+            }
             crate::engines::engine_client::EngineError::Timeout(duration) => {
-                AppError::Timeout(format!("Request timed out after {:?}", duration))
+                CrawlRsError::Timeout(format!("Request timed out after {:?}", duration))
             }
             crate::engines::engine_client::EngineError::NoEnginesAvailable => {
-                AppError::Engine("No scraping engines available".to_string())
+                CrawlRsError::Engine("No scraping engines available".to_string())
             }
             crate::engines::engine_client::EngineError::InvalidUrl(msg) => {
-                AppError::Validation(msg)
+                CrawlRsError::Validation(msg)
             }
             crate::engines::engine_client::EngineError::SsrfProtection(msg) => {
-                AppError::PermissionDenied(format!("SSRF protection triggered: {}", msg))
+                CrawlRsError::PermissionDenied(format!("SSRF protection triggered: {}", msg))
             }
             crate::engines::engine_client::EngineError::BrowserError(msg) => {
-                AppError::Engine(format!("Browser error: {}", msg))
+                CrawlRsError::Engine(format!("Browser error: {}", msg))
             }
             crate::engines::engine_client::EngineError::Expired => {
-                AppError::Timeout("Request expired".to_string())
+                CrawlRsError::Timeout("Request expired".to_string())
             }
             crate::engines::engine_client::EngineError::AllEnginesFailed(msg) => {
-                AppError::Engine(format!("All engines failed: {}", msg))
+                CrawlRsError::Engine(format!("All engines failed: {}", msg))
             }
-            crate::engines::engine_client::EngineError::Other(msg) => AppError::Engine(msg),
-            crate::engines::engine_client::EngineError::Internal(msg) => AppError::Engine(msg),
+            crate::engines::engine_client::EngineError::Other(msg) => CrawlRsError::Engine(msg),
+            crate::engines::engine_client::EngineError::Internal(msg) => CrawlRsError::Engine(msg),
         }
     }
 }
@@ -545,62 +553,64 @@ impl From<RepositoryError> for WorkerError {
 }
 
 // =============================================================================
-// From<RepositoryError> for AppError（通用仓库错误 → 应用错误）
+// From<RepositoryError> for CrawlRsError（通用仓库错误 → 应用错误）
 // =============================================================================
 
-impl From<RepositoryError> for AppError {
+impl From<RepositoryError> for CrawlRsError {
     fn from(err: RepositoryError) -> Self {
         match err {
-            RepositoryError::DatabaseError(msg) => AppError::Other(msg),
-            RepositoryError::NotFound => AppError::NotFound("Resource not found".to_string()),
+            RepositoryError::DatabaseError(msg) => CrawlRsError::Other(msg),
+            RepositoryError::NotFound => CrawlRsError::NotFound("Resource not found".to_string()),
             RepositoryError::AlreadyExists => {
-                AppError::Validation("Resource already exists".to_string())
+                CrawlRsError::Validation("Resource already exists".to_string())
             }
-            RepositoryError::InvalidParameter(msg) => AppError::Validation(msg),
-            RepositoryError::InternalError(msg) => AppError::Other(msg),
+            RepositoryError::InvalidParameter(msg) => CrawlRsError::Validation(msg),
+            RepositoryError::InternalError(msg) => CrawlRsError::Other(msg),
         }
     }
 }
 
 // =============================================================================
-// From<task_repository::RepositoryError> for AppError（任务仓库错误 → 应用错误）
+// From<task_repository::RepositoryError> for CrawlRsError（任务仓库错误 → 应用错误）
 // =============================================================================
 
-impl From<crate::domain::repositories::task_repository::RepositoryError> for AppError {
+impl From<crate::domain::repositories::task_repository::RepositoryError> for CrawlRsError {
     fn from(err: crate::domain::repositories::task_repository::RepositoryError) -> Self {
         match err {
             crate::domain::repositories::task_repository::RepositoryError::Database(db_err) => {
-                AppError::Other(db_err.to_string())
+                CrawlRsError::Other(db_err.to_string())
             }
             crate::domain::repositories::task_repository::RepositoryError::NotFound => {
-                AppError::NotFound("Resource not found".to_string())
+                CrawlRsError::NotFound("Resource not found".to_string())
             }
         }
     }
 }
 
 // =============================================================================
-// From<confers::ConfigError> for AppError
+// From<confers::ConfigError> for CrawlRsError
 // =============================================================================
 
-impl From<confers::ConfigError> for AppError {
+#[cfg(feature = "config")]
+impl From<confers::ConfigError> for CrawlRsError {
     fn from(err: confers::ConfigError) -> Self {
-        AppError::Config(err.to_string())
+        CrawlRsError::Config(err.to_string())
     }
 }
 
 // =============================================================================
-// From<RobotsCheckerError> for AppError
+// From<RobotsCheckerError> for CrawlRsError
 // =============================================================================
 
-impl From<crate::utils::robots::RobotsCheckerError> for AppError {
+#[cfg(all(feature = "engine-reqwest", feature = "oxcache-cache"))]
+impl From<crate::utils::robots::RobotsCheckerError> for CrawlRsError {
     fn from(err: crate::utils::robots::RobotsCheckerError) -> Self {
-        AppError::Other(err.to_string())
+        CrawlRsError::Other(err.to_string())
     }
 }
 
-// 为 AppError 生成 From<String> / From<&str> / From<anyhow::Error>（映射到 Other 变体）
-impl_basic_error_conversions!(AppError, Other);
+// 为 CrawlRsError 生成 From<String> / From<&str> / From<anyhow::Error>（映射到 Other 变体）
+impl_basic_error_conversions!(CrawlRsError, Other);
 
 // =============================================================================
 // RepositoryResultExt —— 消除重复的 .map_err(|e| WorkerError::RepositoryError(...))
@@ -627,42 +637,42 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let err = AppError::NotFound("User".to_string());
+        let err = CrawlRsError::NotFound("User".to_string());
         assert_eq!(err.to_string(), "Not found: User");
     }
 
     #[test]
     fn test_error_debug() {
-        let err = AppError::Validation("Invalid email".to_string());
+        let err = CrawlRsError::Validation("Invalid email".to_string());
         let debug_str = format!("{:?}", err);
         assert!(debug_str.contains("Validation"));
     }
 
     #[test]
     fn test_app_result() {
-        let result: AppResult<i32> = Ok(42);
+        let result: CrawlRsResult<i32> = Ok(42);
         assert!(result.is_ok());
 
-        let result: AppResult<i32> = Err(AppError::Config("Missing key".to_string()));
+        let result: CrawlRsResult<i32> = Err(CrawlRsError::Config("Missing key".to_string()));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_status_code_mapping() {
         assert_eq!(
-            AppError::NotFound("test".to_string()).status_code(),
+            CrawlRsError::NotFound("test".to_string()).status_code(),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
-            AppError::Validation("test".to_string()).status_code(),
+            CrawlRsError::Validation("test".to_string()).status_code(),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
-            AppError::PermissionDenied("test".to_string()).status_code(),
+            CrawlRsError::PermissionDenied("test".to_string()).status_code(),
             StatusCode::FORBIDDEN
         );
         assert_eq!(
-            AppError::RateLimit("test".to_string()).status_code(),
+            CrawlRsError::RateLimit("test".to_string()).status_code(),
             StatusCode::TOO_MANY_REQUESTS
         );
     }
@@ -671,20 +681,23 @@ mod tests {
     fn test_error_code_mapping() {
         // Use a Custom error instead of the specific Conn variant
         let db_err = sea_orm::DbErr::Custom("test connection error".to_string());
-        assert_eq!(AppError::Database(db_err).error_code(), "DATABASE_ERROR");
         assert_eq!(
-            AppError::NotFound("test".to_string()).error_code(),
+            CrawlRsError::Database(db_err).error_code(),
+            "DATABASE_ERROR"
+        );
+        assert_eq!(
+            CrawlRsError::NotFound("test".to_string()).error_code(),
             "NOT_FOUND"
         );
         assert_eq!(
-            AppError::Validation("test".to_string()).error_code(),
+            CrawlRsError::Validation("test".to_string()).error_code(),
             "VALIDATION_ERROR"
         );
     }
 
     #[test]
     fn test_to_api_error_response() {
-        let err = AppError::NotFound("User not found".to_string());
+        let err = CrawlRsError::NotFound("User not found".to_string());
         let response = err.to_api_error_response();
         assert_eq!(response.code, "NOT_FOUND");
         assert_eq!(response.message, "Not found: User not found");
@@ -697,7 +710,7 @@ mod tests {
     #[test]
     fn test_user_message_sanitization() {
         // 数据库错误应该返回通用消息
-        let db_err = AppError::Database(sea_orm::DbErr::Custom(
+        let db_err = CrawlRsError::Database(sea_orm::DbErr::Custom(
             "Connection failed to postgres://user:password123@localhost:5432".to_string(),
         ));
         let user_msg = db_err.user_message();
@@ -715,20 +728,20 @@ mod tests {
 
         // 配置错误应该返回通用消息
         let config_err =
-            AppError::Config("Missing database URL in /home/dev/crawlrs/.env".to_string());
+            CrawlRsError::Config("Missing database URL in /home/dev/crawlrs/.env".to_string());
         let user_msg = config_err.user_message();
         assert!(!user_msg.contains("/home/dev/"));
         assert!(user_msg.contains("Configuration error"));
 
         // 验证错误应该保留用户输入的错误信息
-        let validation_err = AppError::Validation("Email format is invalid".to_string());
+        let validation_err = CrawlRsError::Validation("Email format is invalid".to_string());
         let user_msg = validation_err.user_message();
         assert!(user_msg.contains("Email format is invalid"));
     }
 
     #[test]
     fn test_detailed_message_preserves_info() {
-        let err = AppError::Database(sea_orm::DbErr::Custom(
+        let err = CrawlRsError::Database(sea_orm::DbErr::Custom(
             "Connection failed to postgres://user:password123@localhost:5432".to_string(),
         ));
         let detailed = err.detailed_message();
@@ -911,54 +924,55 @@ mod tests {
     fn test_status_code_all_variants() {
         // 测试所有错误变体的状态码映射
         assert_eq!(
-            AppError::Network("conn refused".to_string()).status_code(),
+            CrawlRsError::Network("conn refused".to_string()).status_code(),
             StatusCode::BAD_GATEWAY
         );
         assert_eq!(
-            AppError::Config("missing key".to_string()).status_code(),
+            CrawlRsError::Config("missing key".to_string()).status_code(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            AppError::Timeout("timed out".to_string()).status_code(),
+            CrawlRsError::Timeout("timed out".to_string()).status_code(),
             StatusCode::GATEWAY_TIMEOUT
         );
         assert_eq!(
-            AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "io fail")).status_code(),
+            CrawlRsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "io fail"))
+                .status_code(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            AppError::Json(serde_json::from_str::<serde_json::Value>("bad").unwrap_err())
+            CrawlRsError::Json(serde_json::from_str::<serde_json::Value>("bad").unwrap_err())
                 .status_code(),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
-            AppError::Engine("engine fail".to_string()).status_code(),
+            CrawlRsError::Engine("engine fail".to_string()).status_code(),
             StatusCode::BAD_GATEWAY
         );
         assert_eq!(
-            AppError::Cache("cache down".to_string()).status_code(),
+            CrawlRsError::Cache("cache down".to_string()).status_code(),
             StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(
-            AppError::Task("task error".to_string()).status_code(),
+            CrawlRsError::Task("task error".to_string()).status_code(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
-            AppError::Other("unknown".to_string()).status_code(),
+            CrawlRsError::Other("unknown".to_string()).status_code(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         // Database also maps to INTERNAL_SERVER_ERROR
         assert_eq!(
-            AppError::Database(sea_orm::DbErr::Custom("db down".to_string())).status_code(),
+            CrawlRsError::Database(sea_orm::DbErr::Custom("db down".to_string())).status_code(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         // 新增变体：Authentication(401) / ServiceUnavailable(503)
         assert_eq!(
-            AppError::Authentication("bad token".to_string()).status_code(),
+            CrawlRsError::Authentication("bad token".to_string()).status_code(),
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            AppError::ServiceUnavailable("cache down".to_string()).status_code(),
+            CrawlRsError::ServiceUnavailable("cache down".to_string()).status_code(),
             StatusCode::SERVICE_UNAVAILABLE
         );
     }
@@ -970,57 +984,57 @@ mod tests {
     #[test]
     fn test_error_code_all_variants() {
         assert_eq!(
-            AppError::Network("test".to_string()).error_code(),
+            CrawlRsError::Network("test".to_string()).error_code(),
             "EXTERNAL_SERVICE_ERROR"
         );
         assert_eq!(
-            AppError::Config("test".to_string()).error_code(),
+            CrawlRsError::Config("test".to_string()).error_code(),
             "CONFIGURATION_ERROR"
         );
         assert_eq!(
-            AppError::PermissionDenied("test".to_string()).error_code(),
+            CrawlRsError::PermissionDenied("test".to_string()).error_code(),
             "FORBIDDEN"
         );
         assert_eq!(
-            AppError::Timeout("test".to_string()).error_code(),
+            CrawlRsError::Timeout("test".to_string()).error_code(),
             "TIMEOUT"
         );
         assert_eq!(
-            AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")).error_code(),
+            CrawlRsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")).error_code(),
             "IO_ERROR"
         );
         assert_eq!(
-            AppError::Json(serde_json::from_str::<serde_json::Value>("x").unwrap_err())
+            CrawlRsError::Json(serde_json::from_str::<serde_json::Value>("x").unwrap_err())
                 .error_code(),
             "JSON_ERROR"
         );
         assert_eq!(
-            AppError::Engine("test".to_string()).error_code(),
+            CrawlRsError::Engine("test".to_string()).error_code(),
             "ENGINE_ERROR"
         );
         assert_eq!(
-            AppError::Cache("test".to_string()).error_code(),
+            CrawlRsError::Cache("test".to_string()).error_code(),
             "CACHE_ERROR"
         );
         assert_eq!(
-            AppError::Task("test".to_string()).error_code(),
+            CrawlRsError::Task("test".to_string()).error_code(),
             "TASK_ERROR"
         );
         assert_eq!(
-            AppError::Other("test".to_string()).error_code(),
+            CrawlRsError::Other("test".to_string()).error_code(),
             "INTERNAL_ERROR"
         );
         assert_eq!(
-            AppError::RateLimit("test".to_string()).error_code(),
+            CrawlRsError::RateLimit("test".to_string()).error_code(),
             "RATE_LIMITED"
         );
         // 新增变体
         assert_eq!(
-            AppError::Authentication("test".to_string()).error_code(),
+            CrawlRsError::Authentication("test".to_string()).error_code(),
             "AUTHENTICATION_ERROR"
         );
         assert_eq!(
-            AppError::ServiceUnavailable("test".to_string()).error_code(),
+            CrawlRsError::ServiceUnavailable("test".to_string()).error_code(),
             "SERVICE_UNAVAILABLE"
         );
     }
@@ -1033,72 +1047,73 @@ mod tests {
     fn test_user_message_all_variants() {
         // 数据库、网络、配置等通用错误返回固定消息
         assert_eq!(
-            AppError::Network("http://10.0.0.1".to_string()).user_message(),
+            CrawlRsError::Network("http://10.0.0.1".to_string()).user_message(),
             "External service unavailable. Please try again later."
         );
         assert_eq!(
-            AppError::Config("/etc/crawlrs/config.toml".to_string()).user_message(),
+            CrawlRsError::Config("/etc/crawlrs/config.toml".to_string()).user_message(),
             "Configuration error. Please contact support."
         );
         assert_eq!(
-            AppError::Timeout("30s".to_string()).user_message(),
+            CrawlRsError::Timeout("30s".to_string()).user_message(),
             "Request timed out. Please try again later."
         );
         assert_eq!(
-            AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")).user_message(),
+            CrawlRsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")).user_message(),
             "Internal I/O error. Please try again later."
         );
         assert_eq!(
-            AppError::Json(serde_json::from_str::<serde_json::Value>("x").unwrap_err())
+            CrawlRsError::Json(serde_json::from_str::<serde_json::Value>("x").unwrap_err())
                 .user_message(),
             "Invalid JSON format. Please check your request."
         );
         assert_eq!(
-            AppError::Cache("cache down".to_string()).user_message(),
+            CrawlRsError::Cache("cache down".to_string()).user_message(),
             "Cache service unavailable. Please try again later."
         );
         assert_eq!(
-            AppError::Task("task failed".to_string()).user_message(),
+            CrawlRsError::Task("task failed".to_string()).user_message(),
             "Task processing error. Please try again later."
         );
         assert_eq!(
-            AppError::RateLimit("too fast".to_string()).user_message(),
+            CrawlRsError::RateLimit("too fast".to_string()).user_message(),
             "Rate limit exceeded. Please slow down your requests."
         );
         assert_eq!(
-            AppError::Other("unknown".to_string()).user_message(),
+            CrawlRsError::Other("unknown".to_string()).user_message(),
             "Internal server error. Please try again later."
         );
 
         // 携带上下文的错误保留原始信息
-        let not_found = AppError::NotFound("user 42".to_string());
+        let not_found = CrawlRsError::NotFound("user 42".to_string());
         assert!(not_found.user_message().contains("user 42"));
 
-        let perm = AppError::PermissionDenied("insufficient scope".to_string());
+        let perm = CrawlRsError::PermissionDenied("insufficient scope".to_string());
         assert!(perm.user_message().contains("insufficient scope"));
 
         // 新增变体
-        let auth = AppError::Authentication("bad token".to_string());
+        let auth = CrawlRsError::Authentication("bad token".to_string());
         assert!(auth.user_message().contains("Authentication failed"));
 
-        let svc_unavail = AppError::ServiceUnavailable("cache down".to_string());
+        let svc_unavail = CrawlRsError::ServiceUnavailable("cache down".to_string());
         assert!(svc_unavail.user_message().contains("Service unavailable"));
 
         // 引擎错误经过脱敏处理
-        let engine_err =
-            AppError::Engine("Failed at /home/dev/src/main.rs:42 with api_key=secret".to_string());
+        let engine_err = CrawlRsError::Engine(
+            "Failed at /home/dev/src/main.rs:42 with api_key=secret".to_string(),
+        );
         let msg = engine_err.user_message();
         assert!(!msg.contains("secret"));
         assert!(!msg.contains("/home/dev/"));
     }
 
     // =============================================================================
-    // From<AppError> for ApiErrorResponse 测试
+    // From<CrawlRsError> for ApiErrorResponse 测试
     // =============================================================================
 
     #[test]
     fn test_from_app_error_to_api_error_response() {
-        let err = AppError::Validation("field required".to_string());
+        let err = CrawlRsError::Validation("field required".to_string());
         let response: ApiErrorResponse = err.into();
         assert_eq!(response.code, "VALIDATION_ERROR");
         assert_eq!(response.message, "Validation error: field required");
@@ -1106,7 +1121,7 @@ mod tests {
 
     #[test]
     fn test_from_app_error_network_to_api_error_response() {
-        let err = AppError::Network("timeout".to_string());
+        let err = CrawlRsError::Network("timeout".to_string());
         let response: ApiErrorResponse = err.into();
         assert_eq!(response.code, "EXTERNAL_SERVICE_ERROR");
         assert!(response.message.contains("timeout"));
@@ -1123,7 +1138,7 @@ mod tests {
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("RUST_ENV");
 
-        let err = AppError::NotFound("resource 123".to_string());
+        let err = CrawlRsError::NotFound("resource 123".to_string());
         let response = err.into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -1147,7 +1162,7 @@ mod tests {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("CRAWLRS_ENV", "development");
 
-        let err = AppError::Validation("bad input".to_string());
+        let err = CrawlRsError::Validation("bad input".to_string());
         let response = err.into_response();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -1173,7 +1188,7 @@ mod tests {
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("RUST_ENV");
 
-        let err = AppError::RateLimit("too many requests".to_string());
+        let err = CrawlRsError::RateLimit("too many requests".to_string());
         let response = err.into_response();
 
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -1192,51 +1207,52 @@ mod tests {
 
     #[test]
     fn test_from_engine_error_request_failed() {
-        let err: AppError =
+        let err: CrawlRsError =
             crate::engines::engine_client::EngineError::RequestFailed("conn refused".to_string())
                 .into();
         match err {
-            AppError::Engine(msg) => assert!(msg.contains("conn refused")),
+            CrawlRsError::Engine(msg) => assert!(msg.contains("conn refused")),
             other => panic!("expected Engine variant, got {:?}", other),
         }
     }
 
     #[test]
     fn test_from_engine_error_timeout() {
-        let err: AppError =
+        let err: CrawlRsError =
             crate::engines::engine_client::EngineError::Timeout(Duration::from_secs(30)).into();
         match err {
-            AppError::Timeout(msg) => assert!(msg.contains("30")),
+            CrawlRsError::Timeout(msg) => assert!(msg.contains("30")),
             other => panic!("expected Timeout variant, got {:?}", other),
         }
     }
 
     #[test]
     fn test_from_engine_error_no_engines_available() {
-        let err: AppError = crate::engines::engine_client::EngineError::NoEnginesAvailable.into();
+        let err: CrawlRsError =
+            crate::engines::engine_client::EngineError::NoEnginesAvailable.into();
         match err {
-            AppError::Engine(msg) => assert!(msg.contains("No scraping engines available")),
+            CrawlRsError::Engine(msg) => assert!(msg.contains("No scraping engines available")),
             other => panic!("expected Engine variant, got {:?}", other),
         }
     }
 
     #[test]
     fn test_from_engine_error_invalid_url() {
-        let err: AppError =
+        let err: CrawlRsError =
             crate::engines::engine_client::EngineError::InvalidUrl("bad url".to_string()).into();
         match err {
-            AppError::Validation(msg) => assert_eq!(msg, "bad url"),
+            CrawlRsError::Validation(msg) => assert_eq!(msg, "bad url"),
             other => panic!("expected Validation variant, got {:?}", other),
         }
     }
 
     #[test]
     fn test_from_engine_error_ssrf_protection() {
-        let err: AppError =
+        let err: CrawlRsError =
             crate::engines::engine_client::EngineError::SsrfProtection("127.0.0.1".to_string())
                 .into();
         match err {
-            AppError::PermissionDenied(msg) => {
+            CrawlRsError::PermissionDenied(msg) => {
                 assert!(msg.contains("SSRF protection"));
                 assert!(msg.contains("127.0.0.1"));
             }
@@ -1246,10 +1262,10 @@ mod tests {
 
     #[test]
     fn test_from_engine_error_browser_error() {
-        let err: AppError =
+        let err: CrawlRsError =
             crate::engines::engine_client::EngineError::BrowserError("crashed".to_string()).into();
         match err {
-            AppError::Engine(msg) => {
+            CrawlRsError::Engine(msg) => {
                 assert!(msg.contains("Browser error"));
                 assert!(msg.contains("crashed"));
             }
@@ -1259,20 +1275,20 @@ mod tests {
 
     #[test]
     fn test_from_engine_error_expired() {
-        let err: AppError = crate::engines::engine_client::EngineError::Expired.into();
+        let err: CrawlRsError = crate::engines::engine_client::EngineError::Expired.into();
         match err {
-            AppError::Timeout(msg) => assert_eq!(msg, "Request expired"),
+            CrawlRsError::Timeout(msg) => assert_eq!(msg, "Request expired"),
             other => panic!("expected Timeout variant, got {:?}", other),
         }
     }
 
     #[test]
     fn test_from_engine_error_all_engines_failed() {
-        let err: AppError =
+        let err: CrawlRsError =
             crate::engines::engine_client::EngineError::AllEnginesFailed("all down".to_string())
                 .into();
         match err {
-            AppError::Engine(msg) => {
+            CrawlRsError::Engine(msg) => {
                 assert!(msg.contains("All engines failed"));
                 assert!(msg.contains("all down"));
             }
@@ -1282,20 +1298,20 @@ mod tests {
 
     #[test]
     fn test_from_engine_error_other() {
-        let err: AppError =
+        let err: CrawlRsError =
             crate::engines::engine_client::EngineError::Other("misc".to_string()).into();
         match err {
-            AppError::Engine(msg) => assert_eq!(msg, "misc"),
+            CrawlRsError::Engine(msg) => assert_eq!(msg, "misc"),
             other => panic!("expected Engine variant, got {:?}", other),
         }
     }
 
     #[test]
     fn test_from_engine_error_internal() {
-        let err: AppError =
+        let err: CrawlRsError =
             crate::engines::engine_client::EngineError::Internal("internal bug".to_string()).into();
         match err {
-            AppError::Engine(msg) => assert_eq!(msg, "internal bug"),
+            CrawlRsError::Engine(msg) => assert_eq!(msg, "internal bug"),
             other => panic!("expected Engine variant, got {:?}", other),
         }
     }
@@ -1311,9 +1327,9 @@ mod tests {
         let result = reqwest::Proxy::all("not a valid url");
         assert!(result.is_err(), "Proxy::all should reject invalid URL");
         let reqwest_err = result.unwrap_err();
-        let app_err: AppError = reqwest_err.into();
+        let app_err: CrawlRsError = reqwest_err.into();
         match app_err {
-            AppError::Network(msg) => assert!(!msg.is_empty()),
+            CrawlRsError::Network(msg) => assert!(!msg.is_empty()),
             other => panic!("expected Network variant, got {:?}", other),
         }
     }
@@ -1342,20 +1358,20 @@ mod tests {
 
     #[test]
     fn test_app_error_from_string_via_macro() {
-        let err: AppError = "boom".to_string().into();
-        assert!(matches!(err, AppError::Other(msg) if msg == "boom"));
+        let err: CrawlRsError = "boom".to_string().into();
+        assert!(matches!(err, CrawlRsError::Other(msg) if msg == "boom"));
     }
 
     #[test]
     fn test_app_error_from_str_via_macro() {
-        let err: AppError = "crash".into();
-        assert!(matches!(err, AppError::Other(msg) if msg == "crash"));
+        let err: CrawlRsError = "crash".into();
+        assert!(matches!(err, CrawlRsError::Other(msg) if msg == "crash"));
     }
 
     #[test]
     fn test_app_error_from_anyhow_via_macro() {
-        let err: AppError = anyhow::anyhow!("db timeout").into();
-        assert!(matches!(err, AppError::Other(msg) if msg.contains("db timeout")));
+        let err: CrawlRsError = anyhow::anyhow!("db timeout").into();
+        assert!(matches!(err, CrawlRsError::Other(msg) if msg.contains("db timeout")));
     }
 
     // ========== From<RepositoryError> for WorkerError ==========
@@ -1390,62 +1406,62 @@ mod tests {
         assert!(matches!(err, WorkerError::InternalError(msg) if msg == "oops"));
     }
 
-    // ========== From<RepositoryError> for AppError ==========
+    // ========== From<RepositoryError> for CrawlRsError ==========
 
     #[test]
     fn test_app_error_from_repository_database_error() {
-        let err: AppError = RepositoryError::DatabaseError("conn refused".to_string()).into();
-        assert!(matches!(err, AppError::Other(msg) if msg == "conn refused"));
+        let err: CrawlRsError = RepositoryError::DatabaseError("conn refused".to_string()).into();
+        assert!(matches!(err, CrawlRsError::Other(msg) if msg == "conn refused"));
     }
 
     #[test]
     fn test_app_error_from_repository_not_found() {
-        let err: AppError = RepositoryError::NotFound.into();
-        assert!(matches!(err, AppError::NotFound(msg) if msg.contains("not found")));
+        let err: CrawlRsError = RepositoryError::NotFound.into();
+        assert!(matches!(err, CrawlRsError::NotFound(msg) if msg.contains("not found")));
     }
 
     #[test]
     fn test_app_error_from_repository_already_exists() {
-        let err: AppError = RepositoryError::AlreadyExists.into();
-        assert!(matches!(err, AppError::Validation(msg) if msg.contains("already exists")));
+        let err: CrawlRsError = RepositoryError::AlreadyExists.into();
+        assert!(matches!(err, CrawlRsError::Validation(msg) if msg.contains("already exists")));
     }
 
     #[test]
     fn test_app_error_from_repository_invalid_parameter() {
-        let err: AppError = RepositoryError::InvalidParameter("bad input".to_string()).into();
-        assert!(matches!(err, AppError::Validation(msg) if msg == "bad input"));
+        let err: CrawlRsError = RepositoryError::InvalidParameter("bad input".to_string()).into();
+        assert!(matches!(err, CrawlRsError::Validation(msg) if msg == "bad input"));
     }
 
     #[test]
     fn test_app_error_from_repository_internal_error() {
-        let err: AppError = RepositoryError::InternalError("oops".to_string()).into();
-        assert!(matches!(err, AppError::Other(msg) if msg == "oops"));
+        let err: CrawlRsError = RepositoryError::InternalError("oops".to_string()).into();
+        assert!(matches!(err, CrawlRsError::Other(msg) if msg == "oops"));
     }
 
-    // ========== From<task_repository::RepositoryError> for AppError ==========
+    // ========== From<task_repository::RepositoryError> for CrawlRsError ==========
 
     #[test]
     fn test_app_error_from_task_repo_database_error() {
         use crate::domain::repositories::task_repository::RepositoryError as TaskRepoError;
-        let err: AppError = TaskRepoError::Database(anyhow::anyhow!("pool exhausted")).into();
-        assert!(matches!(err, AppError::Other(msg) if msg.contains("pool exhausted")));
+        let err: CrawlRsError = TaskRepoError::Database(anyhow::anyhow!("pool exhausted")).into();
+        assert!(matches!(err, CrawlRsError::Other(msg) if msg.contains("pool exhausted")));
     }
 
     #[test]
     fn test_app_error_from_task_repo_not_found() {
         use crate::domain::repositories::task_repository::RepositoryError as TaskRepoError;
-        let err: AppError = TaskRepoError::NotFound.into();
-        assert!(matches!(err, AppError::NotFound(msg) if msg.contains("not found")));
+        let err: CrawlRsError = TaskRepoError::NotFound.into();
+        assert!(matches!(err, CrawlRsError::NotFound(msg) if msg.contains("not found")));
     }
 
-    // ========== From<RobotsCheckerError> for AppError ==========
+    // ========== From<RobotsCheckerError> for CrawlRsError ==========
 
     #[test]
     fn test_app_error_from_robots_checker_error() {
         let robots_err =
             crate::utils::robots::RobotsCheckerError::ValidationError("blocked".to_string());
-        let err: AppError = robots_err.into();
-        assert!(matches!(err, AppError::Other(msg) if msg.contains("blocked")));
+        let err: CrawlRsError = robots_err.into();
+        assert!(matches!(err, CrawlRsError::Other(msg) if msg.contains("blocked")));
     }
 
     // ========== RepositoryResultExt ==========
@@ -1471,7 +1487,7 @@ mod tests {
         std::env::remove_var("CRAWLRS_ENV");
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("RUST_ENV");
-        let response = AppError::Authentication("bad token".to_string()).into_response();
+        let response = CrawlRsError::Authentication("bad token".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -1487,7 +1503,7 @@ mod tests {
         std::env::set_var("CRAWLRS_ENV", "production");
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("RUST_ENV");
-        let response = AppError::ServiceUnavailable("cache down".to_string()).into_response();
+        let response = CrawlRsError::ServiceUnavailable("cache down".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await

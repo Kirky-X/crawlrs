@@ -86,7 +86,7 @@ Compared to Node.js implementations:
 |--------|----------|------------|-------|
 | **Reqwest** | Static HTML, API responses | ⚡ Fastest | 💰 Lowest |
 | **Playwright** | JavaScript-heavy SPAs, interactions | 🐢 Slower | 💳 Higher |
-| **Fire** (Planned) | Anti-bot protected sites | 🚀 Variable | 💎 Variable |
+| **FlareSolverr** | Anti-bot protected sites | 🚀 Variable | 💎 Variable |
 
 ### 🔎 Unified Search
 
@@ -127,7 +127,6 @@ Compared to Node.js implementations:
 |-------------|------------------|---------------|
 | Rust | 1.70+ | Latest stable |
 | PostgreSQL | 14+ | Latest stable |
-| SQLite | 3.x | 3.35+ |
 | Docker | 20+ | Latest |
 
 ### Build from Source
@@ -137,37 +136,34 @@ Compared to Node.js implementations:
 git clone https://github.com/your-org/crawlrs.git
 cd crawlrs
 
-# Install with default features (PostgreSQL + oxcache)
-cargo build --release
+# Install with the `standard` preset (lite preset + Playwright + metrics)
+cargo build --release --features standard
 
-# Install with all features (SQLite + all engines)
+# Install with all features (PostgreSQL + all engines + api-sdk)
 cargo build --release --features full
 
 # Install with custom features
-cargo build --release --features "engine-playwright,dbnexus-sqlite,metrics"
+cargo build --release --features "engine-playwright,dbnexus-postgres,metrics"
 ```
 
 ### Feature Flags
 
+> **Note:** `default = []` — no features are enabled by default. Use a preset (`lite` / `standard` / `full`) or list features explicitly.
+
 | Feature | Description | Default |
 |---------|-------------|----------|
-| `engine-reqwest` | Basic HTTP client | ✅ Yes |
+| `engine-reqwest` | Basic HTTP client | ❌ No |
 | `engine-playwright` | Browser automation with Chromium | ❌ No |
-| `engine-fire-cdp` | Fire Engine CDP support | ❌ No |
-| `engine-fire-tls` | Fire Engine TLS support | ❌ No |
-| `engine-flaresolverr` | FlareSolverr anti-bot protection | ❌ No |
-| `rate-limiting` | Rate limiting with limiteron | ✅ Yes |
-| `metrics` | Prometheus metrics export | ✅ Yes |
-| `dbnexus-postgres` | PostgreSQL database (via dbnexus) | ✅ Yes |
-| `dbnexus-sqlite` | SQLite database (via dbnexus) | ❌ No |
-| `oxcache-cache` | oxcache multi-backend cache | ✅ Yes |
-| `logging` | inklog structured logging | ✅ Yes |
-| `config` | confers configuration management | ✅ Yes |
+| `engine-flaresolverr` | FlareSolverr anti-bot protection (covers Full/Cdp/Tls modes) | ❌ No |
+| `rate-limiting` | Rate limiting with limiteron | ❌ No |
+| `metrics` | Prometheus metrics export | ❌ No |
+| `dbnexus-postgres` | PostgreSQL database (via dbnexus) — the only DB backend | ❌ No |
+| `oxcache-cache` | oxcache multi-backend cache | ❌ No |
+| `logging` | inklog structured logging | ❌ No |
+| `config` | confers configuration management | ❌ No |
 | `api-sdk` | sdforge SDK interface layer | ❌ No |
-| `search-google` | Google search integration | ✅ Yes |
-| `search-bing` | Bing search integration | ✅ Yes |
-| `search-baidu` | Baidu search integration | ✅ Yes |
-| `search-sogou` | Sogou search integration | ✅ Yes |
+| `genai-llm` | LLM extraction via genai | ❌ No |
+| `browser-download` | Auto-download browser for Playwright | ❌ No |
 
 ---
 
@@ -179,16 +175,17 @@ cargo build --release --features "engine-playwright,dbnexus-sqlite,metrics"
 
 | 配置 | 特性组合 | 二进制大小 | 适用场景 |
 |-----|---------|-----------|---------|
-| lite | `engine-reqwest, dbnexus-sqlite, rate-limiting, oxcache-cache` | ~30MB | 简单爬取，资源受限环境 |
-| default | `engine-reqwest, rate-limiting, metrics, dbnexus-postgres, oxcache-cache` | ~27MB | 默认生产环境 |
-| standard | `default + engine-playwright` | ~35MB | 需要 JS 渲染 |
-| full | `standard + fire 系列 + search-all + api-sdk` | ~52MB | 所有功能 |
+| lite | `engine-reqwest, dbnexus-postgres, rate-limiting, logging, config, oxcache-cache` | ~30MB | 简单爬取，资源受限环境 |
+| standard | `lite + engine-playwright + metrics` | ~35MB | 需要 JS 渲染 |
+| full | `standard + engine-flaresolverr + api-sdk` | ~52MB | 所有功能 |
+
+> **Note:** `default = []` 不出现在预设表中，因为它不启用任何特性，仅用于按需显式启用场景。
 
 ### 自定义组合
 
 ```bash
 # 自定义组合
-cargo build --release --features "engine-reqwest,dbnexus-sqlite,oxcache-cache"
+cargo build --release --features "engine-reqwest,dbnexus-postgres,oxcache-cache"
 ```
 
 ### 特性参考
@@ -197,14 +194,16 @@ cargo build --release --features "engine-reqwest,dbnexus-sqlite,oxcache-cache"
 |------|------|------|
 | `engine-reqwest` | HTTP 客户端引擎（基础，始终可用） | 基础 |
 | `engine-playwright` | Playwright JS 渲染引擎 | +8MB |
-| `engine-fire-cdp` | Fire CDP 引擎（远程 FlareSolverr） | - |
-| `engine-fire-tls` | Fire TLS 引擎（远程 FlareSolverr） | - |
-| `engine-flaresolverr` | FlareSolverr 引擎 | - |
-| `rate-limiting` | limiteron 限流 | - |
+| `engine-flaresolverr` | FlareSolverr 引擎（合并原 fire-cdp / fire-tls / flaresolverr 三引擎，通过 `FlareSolverrMode` 枚举区分 Full/Cdp/Tls 模式） | - |
+| `rate-limiting` | limiteron 限流（仅 postgres） | - |
 | `metrics` | 指标监控 | - |
-| `dbnexus-postgres` | PostgreSQL 数据库（默认） | 基础 |
-| `dbnexus-sqlite` | SQLite 数据库 | - |
-| `search-all` | 所有搜索引擎 | - |
+| `dbnexus-postgres` | PostgreSQL 数据库（唯一支持的 DB 后端） | 基础 |
+| `oxcache-cache` | oxcache 内存缓存 | - |
+| `logging` | inklog 结构化日志 | - |
+| `config` | confers 配置管理 | - |
+| `api-sdk` | sdforge SDK 接口层 | - |
+| `genai-llm` | genai LLM 抽取 | - |
+| `browser-download` | 自动下载 Playwright 浏览器 | - |
 
 ---
 
@@ -379,7 +378,7 @@ flowchart TD
 | Web Framework | Axum | 0.8 |
 | Async Runtime | Tokio | 1.48 |
 | Database ORM | Sea-ORM 2.0.0-rc (via dbnexus 0.2) | - |
-| Database | PostgreSQL / SQLite | 14+ / 3.x |
+| Database | PostgreSQL | 14+ |
 | Cache | oxcache (moka memory backend) | 0.3 |
 | HTTP Client | Reqwest | 0.12 |
 | Browser Automation | Playwright | 0.40+ |
@@ -456,7 +455,7 @@ cargo fmt
 
 | Feature | Status |
 |---------|--------|
-| Fire Engine (TLS/CDP) implementation | 🔄 In Progress |
+| FlareSolverr engine (Full/Cdp/Tls modes via `FlareSolverrMode`) | ✅ Implemented |
 | WebSocket real-time subscriptions | 📅 Planned |
 | Advanced proxy rotation | 📅 Planned |
 | Machine learning-based proxy selection | 📅 Planned |

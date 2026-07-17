@@ -8,7 +8,7 @@
 //! This module provides trait-kit-compatible state management for Axum,
 //! enabling clean dependency injection in HTTP handlers.
 //!
-//! [`AppState::from_kit`] is the canonical entry point: after building all
+//! [`CrawlRsState::from_kit`] is the canonical entry point: after building all
 //! trait-kit modules via `AsyncKit::build()`, call `from_kit()` to extract
 //! capabilities and populate the runtime state consumed by Axum handlers.
 
@@ -46,11 +46,11 @@ use dbnexus::DbPool;
 
 /// Runtime state extracted from a built `AsyncKit<Ready>` for use in Axum handlers.
 ///
-/// Construct via [`AppState::from_kit`] after registering and building all
-/// trait-kit modules. Once created, `AppState` is a plain `Clone` struct
+/// Construct via [`CrawlRsState::from_kit`] after registering and building all
+/// trait-kit modules. Once created, `CrawlRsState` is a plain `Clone` struct
 /// with no connection to the DI container — it is cheap to clone per-request.
 #[derive(Clone)]
-pub struct AppState {
+pub struct CrawlRsState {
     /// Database pool (dbnexus DbPool for repositories that need it)
     pub db_pool: Arc<DbPool>,
     /// Task repository
@@ -111,14 +111,14 @@ pub struct AppState {
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 
-impl AppState {
-    /// Construct an [`AppState`] from a built `AsyncKit<Ready>`.
+impl CrawlRsState {
+    /// Construct an [`CrawlRsState`] from a built `AsyncKit<Ready>`.
     ///
     /// This is the canonical entry point for wiring the application at startup:
     /// register all trait-kit modules, call `AsyncKit::build()`, then pass the
     /// ready kit here. The method extracts the three top-level capability
     /// bundles (infrastructure, engines, services) and maps them onto the
-    /// flat `AppState` fields consumed by Axum handlers.
+    /// flat `CrawlRsState` fields consumed by Axum handlers.
     ///
     /// # Errors
     ///
@@ -130,7 +130,7 @@ impl AppState {
 
         let search_client = Arc::new(SearchClient::new(engines.engine_client.clone()));
 
-        Ok(AppState {
+        Ok(CrawlRsState {
             db_pool: infra.db.inner().clone(),
             task_repo: infra.repositories.task_repo.clone(),
             credits_repo: infra.repositories.credits_repo.clone(),
@@ -164,11 +164,11 @@ impl AppState {
     }
 }
 
-/// Trait for extracting dependencies from AppState
+/// Trait for extracting dependencies from CrawlRsState
 ///
 /// This trait provides convenient accessors for commonly used dependencies
 /// in Axum handlers.
-pub trait AppStateExt {
+pub trait CrawlRsStateExt {
     /// Get task repository
     fn task_repo(&self) -> Arc<dyn TaskRepository>;
     /// Get credits repository
@@ -229,7 +229,7 @@ pub trait AppStateExt {
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
 }
 
-impl AppStateExt for AppState {
+impl CrawlRsStateExt for CrawlRsState {
     fn task_repo(&self) -> Arc<dyn TaskRepository> {
         self.task_repo.clone()
     }
@@ -347,7 +347,7 @@ impl AppStateExt for AppState {
     }
 }
 
-impl AppStateExt for Arc<AppState> {
+impl CrawlRsStateExt for Arc<CrawlRsState> {
     fn task_repo(&self) -> Arc<dyn TaskRepository> {
         self.as_ref().task_repo()
     }
@@ -479,12 +479,12 @@ mod tests {
         tcf::docker_available().await
     }
 
-    /// Build a full AppState via `AsyncKit` + `AppState::from_kit()`.
+    /// Build a full CrawlRsState via `AsyncKit` + `CrawlRsState::from_kit()`.
     ///
     /// Registers all trait-kit modules against a testcontainers-provided
-    /// PostgreSQL pair, builds the kit, then constructs `AppState`
+    /// PostgreSQL pair, builds the kit, then constructs `CrawlRsState`
     /// through the canonical `from_kit` entry point.
-    async fn build_app_state() -> anyhow::Result<AppState> {
+    async fn build_app_state() -> anyhow::Result<CrawlRsState> {
         let handle = tcf::DbHandle::start().await?;
         let settings = Arc::new(tcf::settings_with_urls(&handle.pg.url)?);
 
@@ -512,7 +512,7 @@ mod tests {
             .build()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to build kit: {e}"))?;
-        let state = AppState::from_kit(&kit)?;
+        let state = CrawlRsState::from_kit(&kit)?;
         Ok(state)
     }
 
@@ -525,12 +525,12 @@ mod tests {
         let state = match build_app_state().await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[skip] failed to build AppState: {e}");
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
                 return;
             }
         };
 
-        // Exercise every AppStateExt accessor on &AppState.
+        // Exercise every CrawlRsStateExt accessor on &CrawlRsState.
         let task_repo: Arc<dyn TaskRepository> = state.task_repo();
         assert!(Arc::strong_count(&task_repo) >= 1);
 
@@ -628,14 +628,14 @@ mod tests {
         let state = match build_app_state().await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[skip] failed to build AppState: {e}");
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
                 return;
             }
         };
-        let state_arc: Arc<AppState> = Arc::new(state);
+        let state_arc: Arc<CrawlRsState> = Arc::new(state);
 
-        // The `impl AppStateExt for Arc<AppState>` should delegate to the
-        // inner `&AppState` impl. Verify a few accessors produce equivalent
+        // The `impl CrawlRsStateExt for Arc<CrawlRsState>` should delegate to the
+        // inner `&CrawlRsState` impl. Verify a few accessors produce equivalent
         // strong counts (i.e. the Arc is properly cloned).
         let task_repo_a = state_arc.task_repo();
         let task_repo_b = state_arc.task_repo();
@@ -658,11 +658,11 @@ mod tests {
         let state = match build_app_state().await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[skip] failed to build AppState: {e}");
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
                 return;
             }
         };
-        // AppState derives Clone; verify clone produces an equivalent instance.
+        // CrawlRsState derives Clone; verify clone produces an equivalent instance.
         let cloned = state.clone();
         // Both should return valid Arcs from accessors.
         let _ = state.task_repo();

@@ -10,6 +10,7 @@
 pub mod browser_downloader; // 新增：浏览器自动下载管理器
 pub mod circuit_breaker;
 pub mod client;
+#[cfg(feature = "oxcache-cache")]
 pub mod enhanced_validators;
 pub mod health_monitor;
 pub mod router;

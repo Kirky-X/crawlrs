@@ -7,22 +7,22 @@
 //!
 //! 提供统一的错误转换和处理辅助函数
 
-use crate::common::error::AppError;
+use crate::common::error::CrawlRsError;
 use std::fmt::Display;
 
-/// 将错误转换为 AppError::Other
-pub fn map_to_other_error<E: Display>(error: E) -> AppError {
-    AppError::Other(error.to_string())
+/// 将错误转换为 CrawlRsError::Other
+pub fn map_to_other_error<E: Display>(error: E) -> CrawlRsError {
+    CrawlRsError::Other(error.to_string())
 }
 
-/// 将错误转换为 AppError::Database
-pub fn map_to_database_error<E: Display>(error: E) -> AppError {
-    AppError::Database(sea_orm::DbErr::Custom(error.to_string()))
+/// 将错误转换为 CrawlRsError::Database
+pub fn map_to_database_error<E: Display>(error: E) -> CrawlRsError {
+    CrawlRsError::Database(sea_orm::DbErr::Custom(error.to_string()))
 }
 
-/// 将错误转换为 AppError::Network
-pub fn map_to_network_error<E: Display>(error: E) -> AppError {
-    AppError::Network(error.to_string())
+/// 将错误转换为 CrawlRsError::Network
+pub fn map_to_network_error<E: Display>(error: E) -> CrawlRsError {
+    CrawlRsError::Network(error.to_string())
 }
 
 #[cfg(test)]
@@ -32,18 +32,18 @@ mod tests {
     #[test]
     fn test_map_to_other_error() {
         let error = map_to_other_error("test error");
-        assert!(matches!(error, AppError::Other(_)));
+        assert!(matches!(error, CrawlRsError::Other(_)));
     }
 
     #[test]
     fn test_map_to_database_error() {
         let error = map_to_database_error("db error");
-        assert!(matches!(error, AppError::Database(_)));
+        assert!(matches!(error, CrawlRsError::Database(_)));
     }
 
     #[test]
     fn test_map_to_network_error() {
         let error = map_to_network_error("network failure");
-        assert!(matches!(error, AppError::Network(_)));
+        assert!(matches!(error, CrawlRsError::Network(_)));
     }
 }

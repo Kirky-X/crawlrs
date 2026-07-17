@@ -5,7 +5,7 @@
 
 //! Service for audit logging
 
-use crate::common::error::AppError;
+use crate::common::error::CrawlRsError;
 use crate::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
 use crate::domain::repositories::audit_log_repository::{AuditLogRepository, AuditRepositoryError};
 use log::debug;
@@ -21,15 +21,15 @@ pub enum AuditServiceError {
     RepositoryError(#[from] AuditRepositoryError),
 }
 
-impl From<AuditServiceError> for AppError {
+impl From<AuditServiceError> for CrawlRsError {
     fn from(error: AuditServiceError) -> Self {
         match error {
-            AuditServiceError::DatabaseError(db_err) => AppError::Database(db_err),
+            AuditServiceError::DatabaseError(db_err) => CrawlRsError::Database(db_err),
             AuditServiceError::RepositoryError(repo_err) => {
-                // 尝试将 RepositoryError 转换为更具体的 AppError
+                // 尝试将 RepositoryError 转换为更具体的 CrawlRsError
                 match repo_err {
-                    AuditRepositoryError::DatabaseError(db_err) => AppError::Database(db_err),
-                    _ => AppError::Other(repo_err.to_string()),
+                    AuditRepositoryError::DatabaseError(db_err) => CrawlRsError::Database(db_err),
+                    _ => CrawlRsError::Other(repo_err.to_string()),
                 }
             }
         }
@@ -831,10 +831,10 @@ mod tests {
     fn test_audit_service_error_from_db_err_to_app_error() {
         let db_err = sea_orm::DbErr::Custom("db failure".to_string());
         let service_err: AuditServiceError = db_err.into();
-        let app_err: AppError = service_err.into();
+        let app_err: CrawlRsError = service_err.into();
         match app_err {
-            AppError::Database(_) => {}
-            other => panic!("expected AppError::Database, got {:?}", other),
+            CrawlRsError::Database(_) => {}
+            other => panic!("expected CrawlRsError::Database, got {:?}", other),
         }
     }
 
@@ -844,11 +844,11 @@ mod tests {
             "repo db failure".to_string(),
         ));
         let service_err: AuditServiceError = repo_err.into();
-        let app_err: AppError = service_err.into();
-        // DatabaseError variant of AuditRepositoryError should map to AppError::Database
+        let app_err: CrawlRsError = service_err.into();
+        // DatabaseError variant of AuditRepositoryError should map to CrawlRsError::Database
         match app_err {
-            AppError::Database(_) => {}
-            other => panic!("expected AppError::Database, got {:?}", other),
+            CrawlRsError::Database(_) => {}
+            other => panic!("expected CrawlRsError::Database, got {:?}", other),
         }
     }
 
@@ -856,13 +856,13 @@ mod tests {
     fn test_audit_service_error_from_repository_not_found_to_app_error_other() {
         let repo_err = AuditRepositoryError::NotFound;
         let service_err: AuditServiceError = repo_err.into();
-        let app_err: AppError = service_err.into();
-        // NotFound variant should map to AppError::Other (string)
+        let app_err: CrawlRsError = service_err.into();
+        // NotFound variant should map to CrawlRsError::Other (string)
         match app_err {
-            AppError::Other(msg) => {
+            CrawlRsError::Other(msg) => {
                 assert!(msg.contains("Audit log not found"), "msg was: {}", msg);
             }
-            other => panic!("expected AppError::Other, got {:?}", other),
+            other => panic!("expected CrawlRsError::Other, got {:?}", other),
         }
     }
 

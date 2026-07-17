@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[cfg(feature = "engine-fire-cdp")]
+#[cfg(feature = "engine-flaresolverr")]
 use super::helpers::google_helpers::{create_google_engine, get_chrome_ws_url, set_chrome_ws_url};
 use crawlrs::common::constants::testing::{CRAWL_TASK_TIMEOUT, QUICK_TEST_TIMEOUT};
 use crawlrs::search::client::google::GoogleSearchEngine;

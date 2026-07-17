@@ -10,6 +10,7 @@
 use crate::config::settings::Settings;
 use crate::infrastructure::security::env_var_security::{EnvVarSecurityMonitor, EnvVarValidator};
 use anyhow::Result;
+#[cfg(feature = "config")]
 use confers::{ConfigBuilder, EnvSource};
 use log::{debug, error, info, warn};
 
@@ -19,6 +20,7 @@ use log::{debug, error, info, warn};
 /// environment variables prefixed by `CRAWLRS__` (nested via `__`).
 /// Note: confers 0.4's `load_sync()` only applies field-level defaults and env
 /// vars; it no longer auto-discovers config files (breaking change from 0.2.2).
+#[cfg(feature = "config")]
 pub fn load_settings() -> Result<Settings> {
     let settings = ConfigBuilder::<Settings>::new()
         .file("config/default.toml")
@@ -196,6 +198,7 @@ pub fn detect_available_port(settings: &mut Settings) -> Result<u16> {
 /// # Returns
 ///
 /// Returns a tuple of the configured settings and the port to use.
+#[cfg(feature = "config")]
 pub fn load_and_configure(is_production: bool) -> Result<(Settings, u16)> {
     debug!("Starting application configuration...");
 

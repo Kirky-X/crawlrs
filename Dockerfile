@@ -24,15 +24,16 @@ WORKDIR /build
 # Cache dependencies: copy manifests first, build deps, then copy source
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
-RUN cargo build --features default --release || true
+RUN cargo build --features lite --release || true
 
 # Copy real source and build the actual binary
 COPY src/ src/
 COPY config/ config/
 
 # Feature set is parameterizable via BUILD_FEATURES build arg
-# Default: standard deployment (postgres + oxcache + all engines except playwright/fire)
-ARG BUILD_FEATURES=default
+# Default: lite preset (postgres + oxcache + rate-limiting + logging + config + engine-reqwest)
+# Note: `default = []` 产出不可用二进制，故预设为 `lite` 保证可运行
+ARG BUILD_FEATURES=lite
 RUN cargo build --features ${BUILD_FEATURES} --release --bin crawlrs
 
 # ---------- Runtime ----------

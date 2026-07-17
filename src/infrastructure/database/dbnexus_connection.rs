@@ -295,7 +295,9 @@ mod tests {
                     .build()
                     .expect("failed to build tokio runtime for DbPool construction");
                 let _guard = rt.enter();
-                dbnexus::DbPool::try_from(&dbnexus::DbConfig::default())
+                let mut cfg = dbnexus::DbConfig::default();
+                cfg.url = "postgres://localhost:5432/crawlrs_test".to_string();
+                rt.block_on(dbnexus::DbPool::with_config(cfg))
                     .expect("failed to create lazy DbPool for test")
             });
             Arc::new(handle.join().expect("DbPool construction thread panicked"))

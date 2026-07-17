@@ -7,7 +7,7 @@
 
 use crate::config::settings::Settings;
 use crate::di::infrastructure_module::GeoRestrictionRepositoryComponent;
-use crate::di::{AppState, AppStateExt};
+use crate::di::{CrawlRsState, CrawlRsStateExt};
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
@@ -89,7 +89,7 @@ fn create_cors_layer(settings: &Settings) -> CorsLayer {
 }
 
 /// Create public API routes (no authentication required).
-pub fn create_public_routes(state: &AppState) -> Router {
+pub fn create_public_routes(state: &CrawlRsState) -> Router {
     Router::new()
         .route("/health", get(routes::health_check))
         .route("/metrics", get(metrics_handler::metrics))
@@ -97,13 +97,13 @@ pub fn create_public_routes(state: &AppState) -> Router {
         .with_state(Arc::new(state.clone()))
 }
 
-/// Create the protected API routes using AppState.
+/// Create the protected API routes using CrawlRsState.
 ///
 /// # Arguments
 ///
 /// * `state` - Application state with resolved dependencies
 /// * `settings` - Application settings
-pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settings>) -> Router {
+pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
     let team_semaphore = state.team_semaphore.clone();
     let queue = state.task_queue.clone();
     let task_repo = state.task_repo.clone();
@@ -131,7 +131,7 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
     let webhook_repo_impl: Arc<WebhookRepoImpl> =
         Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
 
-    // Create Arc<AppState> for handlers that need unified state, and derive
+    // Create Arc<CrawlRsState> for handlers that need unified state, and derive
     // CrawlHandlerState from it for crawl handlers (decoupled for testability).
     let app_state_arc = Arc::new(state.clone());
     let crawl_handler_state = Arc::new(CrawlHandlerState::from_app_state(&app_state_arc));
@@ -207,12 +207,12 @@ pub fn create_protected_routes_with_state(state: &AppState, settings: Arc<Settin
     app
 }
 
-/// Create v2 task routes using AppState.
+/// Create v2 task routes using CrawlRsState.
 ///
 /// # Arguments
 ///
 /// * `state` - Application state with resolved dependencies
-pub fn create_v2_routes_with_state(state: &AppState) -> Router {
+pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
     let task_repo = state.task_repo.clone();
     let result_repo = state.result_repo.clone();
     let crawl_repo = state.crawl_repo.clone();
@@ -240,7 +240,7 @@ pub fn create_v2_routes_with_state(state: &AppState) -> Router {
         .layer(Extension(webhook_event_repo.clone()))
 }
 
-/// Build the complete API application router using AppState.
+/// Build the complete API application router using CrawlRsState.
 ///
 /// # Arguments
 ///
@@ -250,7 +250,7 @@ pub fn create_v2_routes_with_state(state: &AppState) -> Router {
 /// # Returns
 ///
 /// Returns the configured API router.
-pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Router {
+pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
     let public_routes = create_public_routes(state);
     let protected_routes = create_protected_routes_with_state(state, settings.clone());
     let v2_routes = create_v2_routes_with_state(state);
@@ -316,7 +316,7 @@ pub fn build_api_app_with_state(state: &AppState, settings: Arc<Settings>) -> Ro
 
 // Note: create_public_routes, create_protected_routes_with_state,
 // create_v2_routes_with_state, and build_api_app_with_state are not unit-tested
-// here because they require a fully constructed AppState (trait-kit AsyncKit with
+// here because they require a fully constructed CrawlRsState (trait-kit AsyncKit with
 // real DatabasePool and ~30 Arc<dyn Trait> dependencies). These
 // functions are integration-tested via the test harness with Docker-provided
 // PostgreSQL. See tests/integration/ for coverage of route wiring.

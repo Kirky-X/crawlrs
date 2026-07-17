@@ -287,16 +287,10 @@ impl ExtractionService {
                         result.insert(key.clone(), Value::Array(values));
                     } else {
                         // Single element extraction - 复用 extract_element_value
-                        let value = document
-                            .select(&selector)
-                            .next()
-                            .and_then(|element| {
-                                Self::extract_element_value(element, &rule.attr, base.as_ref())
-                            });
-                        result.insert(
-                            key.clone(),
-                            value.map(Value::String).unwrap_or(Value::Null),
-                        );
+                        let value = document.select(&selector).next().and_then(|element| {
+                            Self::extract_element_value(element, &rule.attr, base.as_ref())
+                        });
+                        result.insert(key.clone(), value.map(Value::String).unwrap_or(Value::Null));
                     }
                 }
             }

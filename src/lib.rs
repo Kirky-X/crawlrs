@@ -3,9 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-/// 编译时特性检查：确保至少启用一个数据库后端
-#[cfg(not(any(feature = "dbnexus-postgres", feature = "dbnexus-sqlite")))]
-compile_error!("Must enable at least one database feature: dbnexus-postgres or dbnexus-sqlite");
+// 数据库后端特性说明：
+// - 当前仅支持 PostgreSQL（通过 dbnexus-postgres 特性启用）
+// - 原 dbnexus-sqlite 特性已删除（不再支持 SQLite）
+// - 若未来需要重新支持 SQLite，需重新引入 dbnexus-sqlite 特性并恢复相关测试
+// 注意：未启用任何 db 特性时，依赖 Settings/仓储的代码将不可用，
+// 但 lib 本身仍可编译（用于仅使用 engine/search 等子模块的场景）
 
 /// 通用模块
 ///

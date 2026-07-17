@@ -5,8 +5,11 @@
 
 //! Telemetry and metrics initialization.
 
+#[cfg(feature = "logging")]
 use crate::config::LoggingSettings;
+#[cfg(feature = "logging")]
 use inklog::LoggerManager;
+#[cfg(any(feature = "logging", feature = "metrics"))]
 use log::info;
 
 /// Initialize telemetry (inklog logging infrastructure).
@@ -20,6 +23,7 @@ use log::info;
 /// # Parameters
 ///
 /// * `settings` - 日志配置
+#[cfg(feature = "logging")]
 pub async fn init_telemetry(
     settings: &LoggingSettings,
 ) -> Result<LoggerManager, inklog::InklogError> {
@@ -46,6 +50,7 @@ pub fn init_metrics() {
 /// # Parameters
 ///
 /// * `settings` - 日志配置
+#[cfg(feature = "logging")]
 pub async fn init_all(settings: &LoggingSettings) -> Result<LoggerManager, inklog::InklogError> {
     let manager = init_telemetry(settings).await?;
     #[cfg(feature = "metrics")]
@@ -53,7 +58,7 @@ pub async fn init_all(settings: &LoggingSettings) -> Result<LoggerManager, inklo
     Ok(manager)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "logging"))]
 mod tests {
     use super::*;
     use crate::config::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};

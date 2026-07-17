@@ -741,7 +741,12 @@ async fn auth_middleware_inner(req: axum::http::Request<Body>, next: Next) -> Re
     };
 
     // Hash the token for lookup using SHA-256
-    let token_hash = format!("sha256:{:x}", Sha256::digest(token_str.as_bytes()));
+    // 注意：sha2 0.10 的 Sha256::digest 返回 Array<u8, U32>，新版 Array 不实现 LowerHex。
+    // 使用 hex::encode 替代 format!("{:x}")。
+    let token_hash = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(token_str.as_bytes()))
+    );
 
     // Check cache first before database query
     if let Some(auth_state) = try_get_cached_auth(&state, &token_hash).await {
@@ -896,11 +901,11 @@ fn verify_key_hash(key: &api_key::Model, token_str: &str) -> bool {
         } else if stored_hash.starts_with("sha256:") {
             // SHA256 hash format (for testing)
             let stored_sha256 = stored_hash.trim_start_matches("sha256:");
-            let input_sha256 = format!("{:x}", Sha256::digest(token_str.as_bytes()));
+            let input_sha256 = hex::encode(Sha256::digest(token_str.as_bytes()));
             stored_sha256 == input_sha256
         } else if stored_hash.len() == 64 && stored_hash.chars().all(|c| c.is_ascii_hexdigit()) {
             // Pure SHA-256 hash (64 character hex)
-            let input_sha256 = format!("{:x}", Sha256::digest(token_str.as_bytes()));
+            let input_sha256 = hex::encode(Sha256::digest(token_str.as_bytes()));
             *stored_hash == input_sha256
         } else {
             // Other formats, try bcrypt verification
@@ -956,12 +961,12 @@ async fn create_and_cache_auth_state(
     key: &api_key::Model,
     token_hash: &str,
 ) -> Result<AuthState, StatusCode> {
-    // Get AuthScopeService from AppState
+    // Get AuthScopeService from CrawlRsState
     let auth_scope_service = match state.auth_scope_service.clone() {
         Some(service) => service,
         None => {
             log::error!(
-                "FATAL: AuthScopeService not initialized in AppState. \
+                "FATAL: AuthScopeService not initialized in CrawlRsState. \
                 This indicates a startup configuration error."
             );
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -1638,7 +1643,7 @@ mod tests {
     #[test]
     fn test_verify_key_hash_sha256_prefix_match() {
         let token = "test_token_123";
-        let hash = format!("sha256:{:x}", Sha256::digest(token.as_bytes()));
+        let hash = format!("sha256:{}", hex::encode(Sha256::digest(token.as_bytes())));
         let key = make_key_model(Some(hash), Some(0));
         assert!(verify_key_hash(&key, token));
     }
@@ -1646,7 +1651,7 @@ mod tests {
     #[test]
     fn test_verify_key_hash_sha256_prefix_mismatch() {
         let token = "test_token_123";
-        let hash = format!("sha256:{:x}", Sha256::digest(token.as_bytes()));
+        let hash = format!("sha256:{}", hex::encode(Sha256::digest(token.as_bytes())));
         let key = make_key_model(Some(hash), Some(0));
         assert!(!verify_key_hash(&key, "wrong_token"));
     }
@@ -1654,7 +1659,7 @@ mod tests {
     #[test]
     fn test_verify_key_hash_pure_sha256_match() {
         let token = "test_token_456";
-        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        let hash = hex::encode(Sha256::digest(token.as_bytes()));
         let key = make_key_model(Some(hash), Some(0));
         assert!(verify_key_hash(&key, token));
     }
@@ -1662,7 +1667,7 @@ mod tests {
     #[test]
     fn test_verify_key_hash_pure_sha256_mismatch() {
         let token = "test_token_456";
-        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        let hash = hex::encode(Sha256::digest(token.as_bytes()));
         let key = make_key_model(Some(hash), Some(0));
         assert!(!verify_key_hash(&key, "wrong_token"));
     }
@@ -3124,7 +3129,10 @@ mod tests {
         };
 
         let token_str = "test_token_cache_hit_path";
-        let token_hash = format!("sha256:{:x}", Sha256::digest(token_str.as_bytes()));
+        let token_hash = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(token_str.as_bytes()))
+        );
         let team_id = Uuid::new_v4();
         let api_key_id = Uuid::new_v4();
         let cached_scope = ApiKeyScope::full_access();

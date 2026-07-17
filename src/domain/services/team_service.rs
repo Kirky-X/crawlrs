@@ -458,7 +458,10 @@ mod extract_host_tests {
 
     #[test]
     fn test_url_with_scheme_and_path() {
-        assert_eq!(extract_host("https://www.example.com/path"), "www.example.com");
+        assert_eq!(
+            extract_host("https://www.example.com/path"),
+            "www.example.com"
+        );
     }
 
     #[test]

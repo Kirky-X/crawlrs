@@ -12,7 +12,7 @@ pub mod error;
 pub mod time_utils;
 
 pub use constants::*;
-pub use error::{AppError, AppResult};
+pub use error::{CrawlRsError, CrawlRsResult};
 pub use time_utils::{
     from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt, UTC_OFFSET,
 };

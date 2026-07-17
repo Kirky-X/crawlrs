@@ -11,7 +11,7 @@
 //! # Module Structure
 //!
 //! - [`modules`](modules) — trait-kit module definitions (Settings, Database, Http, Cache, etc.)
-//! - [`axum_state`](axum_state::AppState) — Axum integration; `AppState::from_kit` is the
+//! - [`axum_state`](axum_state::CrawlRsState) — Axum integration; `CrawlRsState::from_kit` is the
 //!   canonical entry point after building the `AsyncKit`
 //! - [`infrastructure_module`](infrastructure_module) - Legacy infrastructure components
 //!   - [`database_module`](database_module) - Database components
@@ -23,19 +23,28 @@
 //! - [`engines_module`](engines_module) - Engine components
 
 // Core DI modules
+#[cfg(feature = "dbnexus-postgres")]
 pub mod axum_state;
 pub mod engines_module;
+#[cfg(feature = "dbnexus-postgres")]
 pub mod modules;
+#[cfg(feature = "engine-reqwest")]
 pub mod search_module;
+#[cfg(feature = "dbnexus-postgres")]
 pub mod service_module;
 
 // Infrastructure sub-modules (organized separately for maintainability)
+#[cfg(feature = "oxcache-cache")]
 pub mod cache_module;
+#[cfg(feature = "dbnexus-postgres")]
 pub mod database_module;
 pub mod infrastructure_module;
 pub mod infrastructure_service_module;
+#[cfg(feature = "dbnexus-postgres")]
 pub mod repository_module;
 
 // Re-exports for convenience
-pub use axum_state::{AppState, AppStateExt};
+#[cfg(feature = "dbnexus-postgres")]
+pub use axum_state::{CrawlRsState, CrawlRsStateExt};
+#[cfg(feature = "dbnexus-postgres")]
 pub use modules::ModuleBuildError;

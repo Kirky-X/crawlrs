@@ -5,12 +5,12 @@
 
 //! 日志配置
 
-use confers::Config;
 use serde::{Deserialize, Serialize};
 
 /// 日志配置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__LOGGING__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__LOGGING__"))]
 pub struct LoggingSettings {
     /// 控制台输出配置
     pub console: ConsoleLoggingSettings,
@@ -20,32 +20,34 @@ pub struct LoggingSettings {
 }
 
 /// 控制台日志配置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__LOGGING__CONSOLE__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__LOGGING__CONSOLE__"))]
 pub struct ConsoleLoggingSettings {
     /// 是否启用控制台输出
-    #[config(default = true)]
+    #[cfg_attr(feature = "config", config(default = true))]
     pub enabled: bool,
 }
 
 /// 文件日志配置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__LOGGING__FILE__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__LOGGING__FILE__"))]
 pub struct FileLoggingSettings {
     /// 是否启用文件输出
-    #[config(default = false)]
+    #[cfg_attr(feature = "config", config(default = false))]
     pub enabled: bool,
 
     /// 日志文件路径
-    #[config(default = "logs/crawlrs.log".to_string())]
+    #[cfg_attr(feature = "config", config(default = "logs/crawlrs.log".to_string()))]
     pub path: String,
 
     /// 单个日志文件最大大小（MB）
-    #[config(default = 100)]
+    #[cfg_attr(feature = "config", config(default = 100))]
     pub max_file_size_mb: u64,
 
     /// 保留的日志文件数量
-    #[config(default = 10)]
+    #[cfg_attr(feature = "config", config(default = 10))]
     pub file_count: usize,
 }
 

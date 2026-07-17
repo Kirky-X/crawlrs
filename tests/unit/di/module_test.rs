@@ -21,7 +21,7 @@ use crawlrs::di::modules::{
     CacheComponents, CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule,
     ModuleBuildError, RepositoryModule, ServiceModule, SettingsModule,
 };
-use crawlrs::di::AppState;
+use crawlrs::di::CrawlRsState;
 
 // =============================================================================
 // ModuleMeta::NAME 常量校验
@@ -426,10 +426,10 @@ fn traitkit_error_converts_to_dependency_missing() {
 }
 
 // =============================================================================
-// AppState::from_kit() 错误路径（非 Docker 依赖）
+// CrawlRsState::from_kit() 错误路径（非 Docker 依赖）
 // =============================================================================
 //
-// T054: R-di-007 要求"测试覆盖 AppStateExt trait 方法"。28 个 accessor 方法
+// T054: R-di-007 要求"测试覆盖 CrawlRsStateExt trait 方法"。28 个 accessor 方法
 // 已由 src/di/axum_state.rs 内联 3 个 tc_ 测试覆盖（Docker 依赖）。这里补充
 // 非 Docker 路径：from_kit() 在 InfrastructureModule 未注册时返回错误。
 //
@@ -443,7 +443,7 @@ fn traitkit_error_converts_to_dependency_missing() {
 async fn from_kit_empty_kit_returns_dependency_missing_error() {
     let kit = AsyncKit::new();
     let built = kit.build().await.expect("empty kit should build");
-    let result = AppState::from_kit(&built);
+    let result = CrawlRsState::from_kit(&built);
     let err = match result {
         Err(e) => e,
         Ok(_) => panic!("from_kit should fail with empty kit"),
@@ -470,7 +470,7 @@ async fn from_kit_only_settings_returns_dependency_missing_error() {
         .build()
         .await
         .expect("kit with only SettingsModule should build");
-    let result = AppState::from_kit(&built);
+    let result = CrawlRsState::from_kit(&built);
     let err = match result {
         Err(e) => e,
         Ok(_) => panic!("from_kit should fail without InfrastructureModule"),
@@ -501,7 +501,7 @@ async fn from_kit_non_docker_modules_only_returns_dependency_missing_error() {
         .build()
         .await
         .expect("kit with non-Docker modules should build");
-    let result = AppState::from_kit(&built);
+    let result = CrawlRsState::from_kit(&built);
     let err = match result {
         Err(e) => e,
         Ok(_) => panic!("from_kit should fail without InfrastructureModule"),

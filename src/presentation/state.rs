@@ -6,12 +6,12 @@
 //! Handler state management module.
 //!
 //! This module provides the `HandlerState` trait for type-safe state access in handlers.
-//! The main `AppState` is defined in `crate::di::axum_state` and provides centralized
+//! The main `CrawlRsState` is defined in `crate::di::axum_state` and provides centralized
 //! dependency management through the trait-kit AsyncKit container.
 //!
 //! # Architecture
 //!
-//! The application uses a single unified `AppState` (defined in `di::axum_state`) that
+//! The application uses a single unified `CrawlRsState` (defined in `di::axum_state`) that
 //! contains all dependencies. This module provides:
 //!
 //! - `HandlerState` trait: A marker trait for handlers that need state access
@@ -20,7 +20,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use crate::di::{AppState, AppStateExt};
+//! use crate::di::{CrawlRsState, CrawlRsStateExt};
 //! use crate::presentation::state::HandlerState;
 //!
 //! async fn my_handler(state: HandlerState) {
@@ -32,7 +32,7 @@
 use std::sync::Arc;
 
 use crate::application::use_cases::crawl_use_case::CrawlUseCase;
-use crate::di::{AppState, AppStateExt};
+use crate::di::{CrawlRsState, CrawlRsStateExt};
 use crate::domain::repositories::{
     crawl_repository::CrawlRepository, geo_restriction_repository::GeoRestrictionRepository,
     scrape_result_repository::ScrapeResultRepository, task_repository::TaskRepository,
@@ -44,7 +44,7 @@ use crate::domain::services::team_service::TeamService;
 /// Trait for handler state access.
 ///
 /// This trait provides type-safe access to application state for HTTP handlers.
-/// It is implemented by `Arc<AppState>` and provides ergonomic accessors for
+/// It is implemented by `Arc<CrawlRsState>` and provides ergonomic accessors for
 /// commonly used dependencies.
 ///
 /// # Type Safety
@@ -74,33 +74,33 @@ pub trait HandlerState: Clone + Send + Sync + 'static {
     fn rate_limiting_service(&self) -> Arc<dyn RateLimitingService>;
 }
 
-impl HandlerState for Arc<AppState> {
+impl HandlerState for Arc<CrawlRsState> {
     fn task_repo(&self) -> Arc<dyn TaskRepository> {
-        AppStateExt::task_repo(self)
+        CrawlRsStateExt::task_repo(self)
     }
 
     fn crawl_repo(&self) -> Arc<dyn CrawlRepository> {
-        AppStateExt::crawl_repo(self)
+        CrawlRsStateExt::crawl_repo(self)
     }
 
     fn result_repo(&self) -> Arc<dyn ScrapeResultRepository> {
-        AppStateExt::result_repo(self)
+        CrawlRsStateExt::result_repo(self)
     }
 
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
-        AppStateExt::webhook_repo(self)
+        CrawlRsStateExt::webhook_repo(self)
     }
 
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
-        AppStateExt::geo_restriction_repo(self)
+        CrawlRsStateExt::geo_restriction_repo(self)
     }
 
     fn team_service(&self) -> Arc<TeamService> {
-        AppStateExt::team_service(self)
+        CrawlRsStateExt::team_service(self)
     }
 
     fn rate_limiting_service(&self) -> Arc<dyn RateLimitingService> {
-        AppStateExt::rate_limiting_service(self)
+        CrawlRsStateExt::rate_limiting_service(self)
     }
 }
 
@@ -113,10 +113,10 @@ impl HandlerState for Arc<AppState> {
 /// # Usage
 ///
 /// ```ignore
-/// use crate::di::AppState;
+/// use crate::di::CrawlRsState;
 /// use crate::presentation::state::CrawlHandlerState;
 ///
-/// async fn crawl_handler(state: Arc<AppState>) {
+/// async fn crawl_handler(state: Arc<CrawlRsState>) {
 ///     let crawl_state = CrawlHandlerState::from_app_state(&state);
 ///     let use_case = crawl_state.create_use_case();
 ///     // ... use the use case
@@ -163,11 +163,11 @@ impl CrawlHandlerState {
         }
     }
 
-    /// Create CrawlHandlerState from AppState.
+    /// Create CrawlHandlerState from CrawlRsState.
     ///
     /// This is the preferred way to create CrawlHandlerState as it
     /// ensures consistency with the main application state.
-    pub fn from_app_state(app_state: &Arc<AppState>) -> Self {
+    pub fn from_app_state(app_state: &Arc<CrawlRsState>) -> Self {
         Self {
             crawl_repo: app_state.crawl_repo.clone(),
             task_repo: app_state.task_repo.clone(),

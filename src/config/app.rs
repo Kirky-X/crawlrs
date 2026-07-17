@@ -7,7 +7,6 @@
 //!
 //! 包含数据库、缓存（oxcache）、服务器、速率限制和并发控制等核心配置项
 
-use confers::Config;
 use serde::{Deserialize, Serialize};
 
 /// 数据库配置设置
@@ -29,39 +28,40 @@ use serde::{Deserialize, Serialize};
 ///
 /// `url` 字段包含数据库连接字符串，可能包含敏感信息（密码等）。
 /// 该字段仅对 crate 可见，外部模块应使用 `url()` 方法访问。
-#[derive(Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__DATABASE__")]
+#[derive(Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__DATABASE__"))]
 pub struct DatabaseSettings {
     /// 数据库连接URL (敏感信息)
     /// 注意：此字段包含敏感信息，仅 crate 内部可访问
     pub(crate) url: String,
 
     /// 最大连接数
-    #[config(default = Some(150))]
+    #[cfg_attr(feature = "config", config(default = Some(150)))]
     pub max_connections: Option<u32>,
 
     /// 最小连接数
-    #[config(default = Some(20))]
+    #[cfg_attr(feature = "config", config(default = Some(20)))]
     pub min_connections: Option<u32>,
 
     /// 连接超时时间（秒）
-    #[config(default = Some(15))]
+    #[cfg_attr(feature = "config", config(default = Some(15)))]
     pub connect_timeout: Option<u64>,
 
     /// 空闲连接超时时间（秒）
-    #[config(default = Some(300))]
+    #[cfg_attr(feature = "config", config(default = Some(300)))]
     pub idle_timeout: Option<u64>,
 
     /// 连接最大存活时间（秒）
-    #[config(default = Some(1800))]
+    #[cfg_attr(feature = "config", config(default = Some(1800)))]
     pub max_lifetime: Option<u64>,
 
     /// 连接存活检查间隔（秒）
-    #[config(default = Some(30))]
+    #[cfg_attr(feature = "config", config(default = Some(30)))]
     pub connection_keepalive: Option<u64>,
 
     /// 健康检查间隔（秒）
-    #[config(default = Some(60))]
+    #[cfg_attr(feature = "config", config(default = Some(60)))]
     pub health_check_interval: Option<u64>,
 }
 
@@ -101,19 +101,20 @@ impl DatabaseSettings {
 /// * `host` - 服务器监听的主机地址，通常为 "0.0.0.0" 或 "127.0.0.1"
 /// * `port` - 服务器监听的端口号，默认 3000
 /// * `enable_port_detection` - 是否开启端口嗅探功能
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__SERVER__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__SERVER__"))]
 pub struct ServerSettings {
     /// 服务器监听主机地址
-    #[config(default = "0.0.0.0".to_string())]
+    #[cfg_attr(feature = "config", config(default = "0.0.0.0".to_string()))]
     pub host: String,
 
     /// 服务器监听端口
-    #[config(default = 8899)]
+    #[cfg_attr(feature = "config", config(default = 8899))]
     pub port: u16,
 
     /// 是否开启端口嗅探功能
-    #[config(default = true)]
+    #[cfg_attr(feature = "config", config(default = true))]
     pub enable_port_detection: bool,
 }
 
@@ -125,23 +126,24 @@ pub struct ServerSettings {
 ///
 /// * `enabled` - 是否启用速率限制，默认 true
 /// * `default_rpm` - 默认每分钟请求数限制，默认 100
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__RATE_LIMITING__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__RATE_LIMITING__"))]
 pub struct RateLimitingSettings {
     /// 是否启用速率限制
-    #[config(default = true)]
+    #[cfg_attr(feature = "config", config(default = true))]
     pub enabled: bool,
 
     /// 默认每分钟请求数限制
-    #[config(default = 100)]
+    #[cfg_attr(feature = "config", config(default = 100))]
     pub default_rpm: u32,
 
     /// 默认速率限制（别名，兼容旧代码）
-    #[config(default = 100)]
+    #[cfg_attr(feature = "config", config(default = 100))]
     pub default_limit: u32,
 
     /// 突发请求数大小
-    #[config(default = 20)]
+    #[cfg_attr(feature = "config", config(default = 20))]
     pub burst_size: u32,
 }
 
@@ -153,15 +155,16 @@ pub struct RateLimitingSettings {
 ///
 /// * `default_team_limit` - 每个团队的最大并发任务数，默认 10
 /// * `task_lock_duration_seconds` - 任务锁持续时间，防止重复处理，默认 300 秒（5 分钟）
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__CONCURRENCY__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__CONCURRENCY__"))]
 pub struct ConcurrencySettings {
     /// 默认团队并发限制
-    #[config(default = 10)]
+    #[cfg_attr(feature = "config", config(default = 10))]
     pub default_team_limit: i64,
 
     /// 任务锁持续时间（秒）
-    #[config(default = 300)]
+    #[cfg_attr(feature = "config", config(default = 300))]
     pub task_lock_duration_seconds: i64,
 }
 

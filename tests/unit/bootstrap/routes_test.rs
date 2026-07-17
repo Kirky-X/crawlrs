@@ -11,11 +11,11 @@
 //! - [`create_v2_routes_with_state`]
 //! - [`build_api_app_with_state`]
 //!
-//! Building a real `AppState` requires ~30 `Arc<dyn Trait>` dependencies wired
+//! Building a real `CrawlRsState` requires ~30 `Arc<dyn Trait>` dependencies wired
 //! through `trait_kit::AsyncKit`. Following the project convention
 //! ("No mock library — tests use real trait impls" per AGENTS.md), we boot a
-//! real PostgreSQL container via `testcontainers` and construct `AppState`
-//! through the canonical `AsyncKit::build()` + `AppState::from_kit()` path —
+//! real PostgreSQL container via `testcontainers` and construct `CrawlRsState`
+//! through the canonical `AsyncKit::build()` + `CrawlRsState::from_kit()` path —
 //! identical to `src/main.rs` startup.
 //!
 //! Tests skip gracefully when Docker is unavailable.
@@ -43,7 +43,7 @@ use crawlrs::di::modules::{
     CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule, RepositoryModule,
     ServiceModule, SettingsModule,
 };
-use crawlrs::di::{AppState, AppStateExt};
+use crawlrs::di::{CrawlRsState, CrawlRsStateExt};
 use trait_kit::AsyncKit;
 
 // =============================================================================
@@ -115,13 +115,13 @@ fn settings_with_db_url(db_url: &str) -> anyhow::Result<Arc<crawlrs::config::Set
     Ok(Arc::new(settings))
 }
 
-/// Build a full `AppState` via `AsyncKit` + `AppState::from_kit()`.
+/// Build a full `CrawlRsState` via `AsyncKit` + `CrawlRsState::from_kit()`.
 ///
 /// Registers every trait-kit module against the testcontainers PostgreSQL
 /// instance — identical to the production startup sequence in `src/main.rs`.
 async fn build_app_state(
     db_url: &str,
-) -> anyhow::Result<(AppState, Arc<crawlrs::config::Settings>)> {
+) -> anyhow::Result<(CrawlRsState, Arc<crawlrs::config::Settings>)> {
     let settings = settings_with_db_url(db_url)?;
 
     let mut kit = AsyncKit::new();
@@ -147,14 +147,14 @@ async fn build_app_state(
         .build()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to build kit: {e}"))?;
-    let state = AppState::from_kit(&kit)?;
+    let state = CrawlRsState::from_kit(&kit)?;
     Ok((state, settings))
 }
 
-/// Test fixture: boot PostgreSQL, build AppState, return both.
+/// Test fixture: boot PostgreSQL, build CrawlRsState, return both.
 ///
 /// Callers should call `docker_available()` first and skip on `false`.
-async fn setup_state() -> Option<(AppState, Arc<crawlrs::config::Settings>, PgContainer)> {
+async fn setup_state() -> Option<(CrawlRsState, Arc<crawlrs::config::Settings>, PgContainer)> {
     let pg = match PgContainer::start().await {
         Ok(p) => p,
         Err(e) => {
@@ -165,7 +165,7 @@ async fn setup_state() -> Option<(AppState, Arc<crawlrs::config::Settings>, PgCo
     match build_app_state(&pg.url).await {
         Ok((state, settings)) => Some((state, settings, pg)),
         Err(e) => {
-            eprintln!("[skip] failed to build AppState: {e}");
+            eprintln!("[skip] failed to build CrawlRsState: {e}");
             None
         }
     }
@@ -1025,9 +1025,9 @@ async fn test_full_app_body_limit_accepts_normal_payload() {
 }
 
 // =============================================================================
-// AppState wiring sanity checks (proves the AppState passed to route builders
+// CrawlRsState wiring sanity checks (proves the CrawlRsState passed to route builders
 // has all required Arc<dyn Trait> fields populated, exercising the
-// AppStateExt trait methods used inside the route builders).
+// CrawlRsStateExt trait methods used inside the route builders).
 // =============================================================================
 
 #[tokio::test]

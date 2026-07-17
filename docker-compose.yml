@@ -11,9 +11,9 @@
 #   docker compose up -d crawlrs            # Start crawlrs only (needs db)
 #   docker compose --profile worker up -d   # Start with separate worker process
 #
-# Feature set is controlled via BUILD_FEATURES (default: "default").
-# For minimal build:  docker compose build --build-arg BUILD_FEATURES=lite
-# For full build:     docker compose build --build-arg BUILD_FEATURES=full
+# Feature set is controlled via BUILD_FEATURES (default: "lite").
+# For standard build:  docker compose build --build-arg BUILD_FEATURES=standard
+# For full build:      docker compose build --build-arg BUILD_FEATURES=full
 
 services:
   db:
@@ -38,7 +38,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BUILD_FEATURES: ${BUILD_FEATURES:-default}
+        BUILD_FEATURES: ${BUILD_FEATURES:-lite}
     depends_on:
       db:
         condition: service_healthy
@@ -60,7 +60,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BUILD_FEATURES: ${BUILD_FEATURES:-default}
+        BUILD_FEATURES: ${BUILD_FEATURES:-lite}
     depends_on:
       db:
         condition: service_healthy

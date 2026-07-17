@@ -3,12 +3,15 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+#[cfg(feature = "dbnexus-postgres")]
 pub mod handlers;
+#[cfg(feature = "dbnexus-postgres")]
 pub mod task;
 
+#[cfg(feature = "dbnexus-postgres")]
 pub use handlers::{health_check, routes, version};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "dbnexus-postgres"))]
 mod tests {
     use super::*;
     use axum::body::Body;

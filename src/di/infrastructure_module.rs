@@ -24,12 +24,15 @@
 //! for frequently accessed repositories.
 
 // Re-export all components from sub-modules for backward compatibility
+#[cfg(feature = "oxcache-cache")]
 pub use super::cache_module::{OxCacheComponent, OxCacheTrait};
+#[cfg(feature = "dbnexus-postgres")]
 pub use super::database_module::{
     DatabasePoolComponent, DatabasePoolTrait, HttpClientComponent, HttpClientTrait,
     SettingsComponent, SettingsTrait, TransactionManagerComponent, TransactionManagerTrait,
 };
 pub use super::infrastructure_service_module::{WebhookSenderComponent, WebhookSenderTrait};
+#[cfg(feature = "dbnexus-postgres")]
 pub use super::repository_module::{
     AuditLogRepositoryComponent, AuthScopeRepositoryComponent, CrawlRepositoryComponent,
     CreditsRepositoryComponent, GeoRestrictionRepositoryComponent, ScrapeResultRepositoryComponent,

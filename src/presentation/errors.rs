@@ -7,4 +7,4 @@
 //!
 //! Re-exports the unified error types from common::error.
 
-pub use crate::common::error::AppError;
+pub use crate::common::error::CrawlRsError;

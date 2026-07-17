@@ -25,7 +25,7 @@ use crawlrs::domain::models::{Task, TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::{
     RepositoryError, TaskQueryParams, TaskRepository,
 };
-use crawlrs::presentation::errors::AppError;
+use crawlrs::presentation::errors::CrawlRsError;
 use crawlrs::presentation::handlers::task_handler::{
     handle_sync_wait_and_get_status, wait_for_tasks_completion, SyncWaitResult,
     TaskQueryResponseMeta,
@@ -338,7 +338,7 @@ async fn tc_handle_sync_wait_queued_tasks_timeout() {
 
 #[tokio::test]
 async fn tc_wait_for_tasks_completion_repo_error_propagates() {
-    // Repository error → AppError returned to caller.
+    // Repository error → CrawlRsError returned to caller.
     let repo =
         MockTaskRepository::failing(RepositoryError::Database(anyhow::anyhow!("poll failure")));
     let task_id = Uuid::new_v4();

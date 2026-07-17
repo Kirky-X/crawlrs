@@ -85,7 +85,7 @@
 |--------|----------|------------|-------|
 | **Reqwest** | 静态 HTML、API 响应 | ⚡ 最快 | 💰 最低 |
 | **Playwright** | JavaScript 密集的 SPA、交互 | 🐢 较慢 | 💳 较高 |
-| **Fire** (计划中) | 反爬虫保护网站 | 🚀 可变 | 💎 可变 |
+| **FlareSolverr** | 反爬虫保护网站 | 🚀 可变 | 💎 可变 |
 
 ### 🔎 统一搜索
 
@@ -126,7 +126,6 @@
 |-------------|------------------|---------------|
 | Rust | 1.70+ | 最新稳定版 |
 | PostgreSQL | 14+ | 最新稳定版 |
-| SQLite | 3.x | 3.35+ |
 | Docker | 20+ | 最新版 |
 
 ### 从源码构建
@@ -136,37 +135,34 @@
 git clone https://github.com/your-org/crawlrs.git
 cd crawlrs
 
-# 使用默认特性安装（PostgreSQL + oxcache）
-cargo build --release
+# 使用 standard 预设安装（lite 预设 + Playwright + metrics）
+cargo build --release --features standard
 
-# 安装所有特性（SQLite + 所有引擎）
+# 安装所有特性（PostgreSQL + 所有引擎 + api-sdk）
 cargo build --release --features full
 
 # 使用自定义特性安装
-cargo build --release --features "engine-playwright,dbnexus-sqlite,metrics"
+cargo build --release --features "engine-playwright,dbnexus-postgres,metrics"
 ```
 
 ### 特性标志
 
+> **注意：** `default = []` — 默认不启用任何特性。使用预设（`lite` / `standard` / `full`）或显式列出所需特性。
+
 | 特性 | 描述 | 默认 |
 |---------|-------------|----------|
-| `engine-reqwest` | 基础 HTTP 客户端 | ✅ 是 |
+| `engine-reqwest` | 基础 HTTP 客户端 | ❌ 否 |
 | `engine-playwright` | 基于 Chromium 的浏览器自动化 | ❌ 否 |
-| `engine-fire-cdp` | Fire 引擎 CDP 支持 | ❌ 否 |
-| `engine-fire-tls` | Fire 引擎 TLS 支持 | ❌ 否 |
-| `engine-flaresolverr` | FlareSolverr 反爬虫保护 | ❌ 否 |
-| `rate-limiting` | 基于 limiteron 的速率限制 | ✅ 是 |
-| `metrics` | Prometheus 指标导出 | ✅ 是 |
-| `dbnexus-postgres` | PostgreSQL 数据库（通过 dbnexus） | ✅ 是 |
-| `dbnexus-sqlite` | SQLite 数据库（通过 dbnexus） | ❌ 否 |
-| `oxcache-cache` | oxcache 多后端缓存 | ✅ 是 |
-| `logging` | inklog 结构化日志 | ✅ 是 |
-| `config` | confers 配置管理 | ✅ 是 |
+| `engine-flaresolverr` | FlareSolverr 反爬虫保护（涵盖 Full/Cdp/Tls 模式） | ❌ 否 |
+| `rate-limiting` | 基于 limiteron 的速率限制 | ❌ 否 |
+| `metrics` | Prometheus 指标导出 | ❌ 否 |
+| `dbnexus-postgres` | PostgreSQL 数据库（通过 dbnexus）— 唯一 DB 后端 | ❌ 否 |
+| `oxcache-cache` | oxcache 多后端缓存 | ❌ 否 |
+| `logging` | inklog 结构化日志 | ❌ 否 |
+| `config` | confers 配置管理 | ❌ 否 |
 | `api-sdk` | sdforge SDK 接口层 | ❌ 否 |
-| `search-google` | Google 搜索集成 | ✅ 是 |
-| `search-bing` | Bing 搜索集成 | ✅ 是 |
-| `search-baidu` | 百度搜索集成 | ✅ 是 |
-| `search-sogou` | 搜狗搜索集成 | ✅ 是 |
+| `genai-llm` | 基于 genai 的 LLM 抽取 | ❌ 否 |
+| `browser-download` | 自动下载 Playwright 浏览器 | ❌ 否 |
 
 ---
 
@@ -338,7 +334,7 @@ flowchart TB
 | Web 框架 | Axum | 0.8 |
 | 异步运行时 | Tokio | 1.48 |
 | 数据库 ORM | Sea-ORM 2.0.0-rc（通过 dbnexus 0.2） | - |
-| 数据库 | PostgreSQL / SQLite | 14+ / 3.x |
+| 数据库 | PostgreSQL | 14+ |
 | 缓存 | oxcache (moka) | 0.3 |
 | HTTP 客户端 | Reqwest | 0.12 |
 | 浏览器自动化 | Playwright | 0.40+ |
@@ -415,7 +411,7 @@ cargo fmt
 
 | 特性 | 状态 |
 |---------|--------|
-| Fire 引擎（TLS/CDP）实现 | 🔄 进行中 |
+| FlareSolverr 引擎（通过 `FlareSolverrMode` 区分 Full/Cdp/Tls 模式） | ✅ 已实现 |
 | WebSocket 实时订阅 | 📅 已计划 |
 | 高级代理轮换 | 📅 已计划 |
 | 基于机器学习的代理选择 | 📅 已计划 |

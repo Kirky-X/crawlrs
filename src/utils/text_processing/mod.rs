@@ -24,13 +24,17 @@
 //! }
 //! ```
 
+#[cfg(feature = "engine-reqwest")]
 pub mod encoding;
+#[cfg(feature = "engine-reqwest")]
 pub mod processor;
 
+#[cfg(feature = "engine-reqwest")]
 pub use encoding::{
     process_batch_with_processor, process_with_processor, EncodingDetection, TextEncodingError,
     TextEncodingProcessor, TextProcessorStats,
 };
+#[cfg(feature = "engine-reqwest")]
 pub use processor::{
     detect_html_structure, init_encoding_patterns, process_crawled_batch_with_processor,
     process_crawled_content_with_processor, process_web_content_with_processor, ContentQuality,
@@ -46,6 +50,7 @@ pub fn init_text_processing() {
 }
 
 /// 模块健康检查
+#[cfg(feature = "engine-reqwest")]
 pub fn health_check() -> Result<(), String> {
     let test_content = "健康检查测试内容";
     match TextEncodingProcessor::new().process_text(test_content.as_bytes()) {
@@ -54,7 +59,7 @@ pub fn health_check() -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "engine-reqwest"))]
 mod tests {
     use super::*;
 

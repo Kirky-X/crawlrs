@@ -11,9 +11,9 @@ use crate::engines::engine_client::{EngineClient, HttpMethod, ScrapeOptions, Scr
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-#[cfg(feature = "experimental")]
+#[cfg(feature = "genai-llm")]
 use genai::chat::{ChatMessage, ChatRequest};
-#[cfg(feature = "experimental")]
+#[cfg(feature = "genai-llm")]
 use genai::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -141,7 +141,7 @@ pub trait LLMServiceTrait: Send + Sync {
 pub struct LLMService {
     engine_client: Arc<EngineClient>,
     /// LLM 客户端
-    #[cfg(feature = "experimental")]
+    #[cfg(feature = "genai-llm")]
     client: Client,
     /// 使用的模型
     model: String,
@@ -197,7 +197,7 @@ impl LLMService {
 
         Self {
             engine_client,
-            #[cfg(feature = "experimental")]
+            #[cfg(feature = "genai-llm")]
             client: Client::default(),
             model,
             provider,
@@ -230,7 +230,7 @@ impl LLMService {
 
         Self {
             engine_client,
-            #[cfg(feature = "experimental")]
+            #[cfg(feature = "genai-llm")]
             client: Client::default(),
             model,
             provider: "openai".to_string(),
@@ -255,7 +255,7 @@ impl LLMService {
 
         Self {
             engine_client,
-            #[cfg(feature = "experimental")]
+            #[cfg(feature = "genai-llm")]
             client: Client::default(),
             model,
             provider: "openai".to_string(),
@@ -354,7 +354,7 @@ impl LLMService {
 
             (content, usage)
         } else {
-            #[cfg(feature = "experimental")]
+            #[cfg(feature = "genai-llm")]
             {
                 // 否则使用 genai 默认逻辑
                 let chat_req = ChatRequest::new(vec![ChatMessage::user(prompt)]);
@@ -386,11 +386,11 @@ impl LLMService {
 
                 (content, usage)
             }
-            #[cfg(not(feature = "experimental"))]
+            #[cfg(not(feature = "genai-llm"))]
             {
                 return Err(anyhow::anyhow!(
-                    "LLM provider requires 'experimental' feature to be enabled. \
-                     Please rebuild with --features experimental"
+                    "LLM provider requires 'genai-llm' feature to be enabled. \
+                     Please rebuild with --features genai-llm"
                 ));
             }
         };
@@ -731,8 +731,8 @@ json = "J"
     }
 
     #[tokio::test]
-    async fn test_extract_data_internal_no_api_base_url_without_experimental_returns_error() {
-        // In default feature (no experimental), api_base_url=None should return error.
+    async fn test_extract_data_internal_no_api_base_url_without_genai_llm_returns_error() {
+        // In default feature (no genai-llm), api_base_url=None should return error.
         let http_client = Arc::new(reqwest::Client::new());
         let mut service = LLMService::new_with_config(
             "k".to_string(),
@@ -748,8 +748,8 @@ json = "J"
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(
-            msg.contains("experimental") || msg.contains("experimental"),
-            "should mention experimental feature, got: {}",
+            msg.contains("genai-llm"),
+            "should mention genai-llm feature, got: {}",
             msg
         );
     }

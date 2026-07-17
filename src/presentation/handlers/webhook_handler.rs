@@ -11,7 +11,7 @@ use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::use_cases::create_webhook::CreateWebhookUseCase;
 use crate::engines::validators::validate_url;
-use crate::presentation::errors::AppError;
+use crate::presentation::errors::CrawlRsError;
 use crate::presentation::handlers::response_builder::ApiResponse;
 use crate::presentation::helpers::rate_limit_helper::check_rate_limit_as_app_error;
 use crate::presentation::middleware::auth_middleware::AuthState;
@@ -23,7 +23,7 @@ pub async fn create_webhook<R: WebhookRepository>(
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
     Json(payload): Json<CreateWebhookRequest>,
-) -> Result<(StatusCode, Json<Webhook>), AppError> {
+) -> Result<(StatusCode, Json<Webhook>), CrawlRsError> {
     let team_id = auth_state.team_id;
     let api_key = auth_state.api_key_id.to_string();
 
@@ -39,7 +39,7 @@ pub async fn create_webhook<R: WebhookRepository>(
         }
         Err(e) => {
             log::warn!("SSRF attack attempt blocked via webhook URL url={} team_id={} api_key_id={} error={}", payload.url, team_id, auth_state.api_key_id, e);
-            return Err(AppError::Validation(
+            return Err(CrawlRsError::Validation(
                 "Invalid webhook URL: potential security risk detected".to_string(),
             ));
         }
@@ -57,7 +57,7 @@ pub async fn create_webhook<R: WebhookRepository>(
 pub async fn list_webhooks<R: WebhookRepository>(
     Extension(repo): Extension<Arc<R>>,
     Extension(auth_state): Extension<AuthState>,
-) -> Result<Json<ApiResponse<WebhookListResponse>>, AppError> {
+) -> Result<Json<ApiResponse<WebhookListResponse>>, CrawlRsError> {
     let team_id = auth_state.team_id;
     let webhooks = repo.find_by_team_id(team_id).await?;
     let webhook_responses: Vec<WebhookResponse> = webhooks
@@ -534,14 +534,14 @@ mod tests {
 
         assert!(result.is_err(), "SSRF URL should be rejected");
         match result.unwrap_err() {
-            AppError::Validation(msg) => {
+            CrawlRsError::Validation(msg) => {
                 assert!(
                     msg.contains("Invalid webhook URL"),
                     "expected SSRF validation message, got: {}",
                     msg
                 );
             }
-            other => panic!("expected AppError::Validation, got {:?}", other),
+            other => panic!("expected CrawlRsError::Validation, got {:?}", other),
         }
     }
 
@@ -564,14 +564,14 @@ mod tests {
 
         assert!(result.is_err(), "rate-limited request should fail");
         match result.unwrap_err() {
-            AppError::RateLimit(msg) => {
+            CrawlRsError::RateLimit(msg) => {
                 assert!(
                     msg.contains("Rate limit exceeded"),
                     "expected rate limit message, got: {}",
                     msg
                 );
             }
-            other => panic!("expected AppError::RateLimit, got {:?}", other),
+            other => panic!("expected CrawlRsError::RateLimit, got {:?}", other),
         }
     }
 
@@ -596,14 +596,14 @@ mod tests {
 
         assert!(result.is_err(), "repo failure should propagate");
         match result.unwrap_err() {
-            AppError::Other(msg) => {
+            CrawlRsError::Other(msg) => {
                 assert!(
                     msg.contains("repo down"),
                     "expected repo failure message, got: {}",
                     msg
                 );
             }
-            other => panic!("expected AppError::Other, got {:?}", other),
+            other => panic!("expected CrawlRsError::Other, got {:?}", other),
         }
     }
 
@@ -673,14 +673,14 @@ mod tests {
 
         assert!(result.is_err(), "repo failure should propagate");
         match result.unwrap_err() {
-            AppError::Other(msg) => {
+            CrawlRsError::Other(msg) => {
                 assert!(
                     msg.contains("find_by_team_id failed"),
                     "expected repo failure message, got: {}",
                     msg
                 );
             }
-            other => panic!("expected AppError::Other, got {:?}", other),
+            other => panic!("expected CrawlRsError::Other, got {:?}", other),
         }
     }
 

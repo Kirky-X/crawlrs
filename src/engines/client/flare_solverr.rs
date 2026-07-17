@@ -35,12 +35,13 @@ use std::sync::Arc;
 /// - `support_score`：不同模式的优先级策略
 /// - `name`：用于路由器注册和日志
 /// - `scrape`：Tls 模式拒绝截图请求
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FlareSolverrMode {
     /// 完整模式（原 FlareSolverrEngine）
     ///
     /// 支持完整功能：JS 渲染、session 管理、CAPTCHA 检测、截图返回。
     /// 最适合 needs_js 请求（score=100）。
+    #[default]
     Full,
     /// CDP 模式（原 FireEngineCdp）
     ///
@@ -52,12 +53,6 @@ pub enum FlareSolverrMode {
     /// 专注于 TLS 指纹对抗，速度较快，不支持截图和复杂 JS 交互。
     /// 拒绝 needs_screenshot 请求。
     Tls,
-}
-
-impl Default for FlareSolverrMode {
-    fn default() -> Self {
-        Self::Full
-    }
 }
 
 impl FlareSolverrMode {
@@ -104,8 +99,10 @@ impl Default for FlareSolverrConfig {
             .unwrap_or_else(|_| "http://localhost:8191".to_string());
 
         // Validate URL format and protocol
-        let validated_url = validate_flaresolverr_url(&url)
-            .expect("Invalid FLARESOLVERR_URL: must be http:// or https:// with valid format");
+        // 与其他构造函数保持一致的失败降级策略：无效 URL 不 panic，fallback 到 localhost
+        // （避免配置错误导致进程崩溃，符合规则 12 失败显性化但不破坏服务可用性）
+        let validated_url =
+            validate_flaresolverr_url(&url).unwrap_or_else(|_| "http://localhost:8191".to_string());
 
         Self {
             url: validated_url,
@@ -134,11 +131,14 @@ fn validate_flaresolverr_url(url: &str) -> Result<String, String> {
 /// 脱敏代理 URL 中的凭证信息
 ///
 /// 若代理 URL 含 `user:pass@host` 形式的 userinfo，将其替换为 `***@host`，
-/// 防止日志泄露凭证。无法解析的 URL 原样返回（不阻塞日志）。
+/// 防止日志泄露凭证。
+///
+/// 失败降级策略：URL 解析失败时返回 `[INVALID-PROXY-URL]` 占位符，绝不
+/// 原样返回可能携带凭证的输入字符串，避免日志泄露风险。
 fn redact_proxy_url(proxy_url: &str) -> String {
     let parsed = match url::Url::parse(proxy_url) {
         Ok(u) => u,
-        Err(_) => return proxy_url.to_string(),
+        Err(_) => return "[INVALID-PROXY-URL]".to_string(),
     };
 
     let username = parsed.username();
@@ -160,7 +160,12 @@ fn redact_proxy_url(proxy_url: &str) -> String {
     if let Some(port) = parsed.port() {
         redacted.push_str(&format!(":{}", port));
     }
-    redacted.push_str(parsed.path());
+    // 仅在 path 非空且非默认 "/" 时追加（url::Url::parse 会将无路径 URL
+    // 规范化为带尾 "/"，追加它会污染脱敏输出，例如 "host:8080/"）
+    let path = parsed.path();
+    if !path.is_empty() && path != "/" {
+        redacted.push_str(path);
+    }
     if let Some(query) = parsed.query() {
         redacted.push_str(&format!("?{}", query));
     }
@@ -203,9 +208,10 @@ mod redact_proxy_url_tests {
     }
 
     #[test]
-    fn test_redact_proxy_url_invalid_url_returned_as_is() {
-        // 无法解析的 URL 原样返回（不 panic，不阻塞日志）
-        assert_eq!(redact_proxy_url("not a url at all"), "not a url at all");
+    fn test_redact_proxy_url_invalid_url_returns_placeholder() {
+        // 安全要求：解析失败的 URL 绝不原样返回（防止泄露凭证），
+        // 必须返回 [INVALID-PROXY-URL] 占位符
+        assert_eq!(redact_proxy_url("not a url at all"), "[INVALID-PROXY-URL]");
     }
 
     #[test]
@@ -215,6 +221,58 @@ mod redact_proxy_url_tests {
             redact_proxy_url("http://user:pass@proxy.example.com:8080/path?q=1"),
             "http://***@proxy.example.com:8080/path?q=1"
         );
+    }
+
+    // ========== 边界用例（覆盖 tiangang M1 缺失场景） ==========
+
+    #[test]
+    fn test_redact_proxy_url_https() {
+        // HTTPS 协议应正确处理
+        // 注意：url::Url::parse 会规范化掉默认端口（443 for https）
+        assert_eq!(
+            redact_proxy_url("https://user:pass@proxy.example.com:443"),
+            "https://***@proxy.example.com"
+        );
+    }
+
+    #[test]
+    fn test_redact_proxy_url_ipv6() {
+        // IPv6 主机应保留方括号格式
+        assert_eq!(
+            redact_proxy_url("http://user:pass@[::1]:8080"),
+            "http://***@[::1]:8080"
+        );
+    }
+
+    #[test]
+    fn test_redact_proxy_url_url_encoded_credentials() {
+        // URL 编码的凭证（含特殊字符）应被脱敏（不保留原始编码值）
+        assert_eq!(
+            redact_proxy_url("http://us%40er:p%40ss@proxy.example.com:8080"),
+            "http://***@proxy.example.com:8080"
+        );
+    }
+
+    #[test]
+    fn test_redact_proxy_url_preserves_fragment() {
+        // 脱敏后应保留 fragment
+        // 注意：path "/" 是 url::Url::parse 自动补全的，已在 redact_proxy_url 中过滤掉
+        assert_eq!(
+            redact_proxy_url("http://user:pass@proxy.example.com:8080/#section"),
+            "http://***@proxy.example.com:8080#section"
+        );
+    }
+
+    #[test]
+    fn test_redact_proxy_url_empty_string() {
+        // 空字符串应返回 [INVALID-PROXY-URL]（不 panic）
+        assert_eq!(redact_proxy_url(""), "[INVALID-PROXY-URL]");
+    }
+
+    #[test]
+    fn test_redact_proxy_url_only_userinfo_no_host() {
+        // 无 host 的格式错误 URL 应返回 [INVALID-PROXY-URL]
+        assert_eq!(redact_proxy_url("http://user:pass@"), "[INVALID-PROXY-URL]");
     }
 }
 
@@ -239,9 +297,13 @@ impl FlareSolverrEngine {
     }
 
     /// Create a new FlareSolverrEngine from configuration URL (Full mode)
+    ///
+    /// URL 必须为 http/https 协议，否则使用默认占位符（避免 SSRF 风险）。
     pub fn with_url(client: Arc<Client>, url: impl Into<String>) -> Self {
+        let validated = validate_flaresolverr_url(&url.into())
+            .unwrap_or_else(|_| "http://localhost:8191".to_string());
         let config = FlareSolverrConfig {
-            url: url.into(),
+            url: validated,
             timeout_seconds: 60,
             session_id: None,
             mode: FlareSolverrMode::Full,
@@ -272,13 +334,16 @@ impl FlareSolverrEngine {
     /// Create a FlareSolverrEngine in CDP mode with URL and proxy
     ///
     /// 取代原 `FireEngineCdp::with_url_and_proxy`。
+    /// URL 必须为 http/https 协议，否则使用默认占位符。
     pub fn with_cdp_mode_and_url(
         client: Arc<Client>,
         base_url: &str,
         proxy_url: Option<&str>,
     ) -> Self {
+        let validated = validate_flaresolverr_url(base_url)
+            .unwrap_or_else(|_| "http://localhost:8191".to_string());
         let config = FlareSolverrConfig {
-            url: base_url.to_string(),
+            url: validated,
             timeout_seconds: 60,
             session_id: None,
             mode: FlareSolverrMode::Cdp,
@@ -297,13 +362,16 @@ impl FlareSolverrEngine {
     /// Create a FlareSolverrEngine in TLS mode with URL and proxy
     ///
     /// 取代原 `FireEngineTls::with_url_and_proxy`。
+    /// URL 必须为 http/https 协议，否则使用默认占位符。
     pub fn with_tls_mode_and_url(
         client: Arc<Client>,
         base_url: &str,
         proxy_url: Option<&str>,
     ) -> Self {
+        let validated = validate_flaresolverr_url(base_url)
+            .unwrap_or_else(|_| "http://localhost:8191".to_string());
         let config = FlareSolverrConfig {
-            url: base_url.to_string(),
+            url: validated,
             timeout_seconds: 60,
             session_id: None,
             mode: FlareSolverrMode::Tls,
@@ -318,9 +386,13 @@ impl FlareSolverrEngine {
         mode: FlareSolverrMode,
         proxy_url: Option<&str>,
     ) -> Self {
+        // 环境变量 URL 也需校验协议，避免 SSRF 风险
+        let raw_url = std::env::var("FLARESOLVERR_URL")
+            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let validated = validate_flaresolverr_url(&raw_url)
+            .unwrap_or_else(|_| "http://localhost:8191".to_string());
         let config = FlareSolverrConfig {
-            url: std::env::var("FLARESOLVERR_URL")
-                .unwrap_or_else(|_| "http://localhost:8191".to_string()),
+            url: validated,
             timeout_seconds: 60,
             session_id: None,
             mode,

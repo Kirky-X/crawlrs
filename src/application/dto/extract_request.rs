@@ -3,9 +3,11 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+#[cfg(feature = "engine-reqwest")]
 use crate::domain::services::extraction_service::ExtractionRule;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(feature = "engine-reqwest")]
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -15,6 +17,7 @@ pub struct ExtractRequestDto {
     pub schema: Option<Value>,
     pub model: Option<String>,
     /// 提取规则（用于复杂提取场景）
+    #[cfg(feature = "engine-reqwest")]
     pub rules: Option<HashMap<String, ExtractionRule>>,
     /// 同步等待时长（毫秒，默认 5000，最大 30000）
     pub sync_wait_ms: Option<u32>,

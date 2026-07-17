@@ -11,7 +11,7 @@
 //! constants, and status code selection logic.
 //!
 //! Handler function bodies (create_crawl, get_crawl, get_crawl_results,
-//! cancel_crawl) require full AppState DI and are not tested here — they
+//! cancel_crawl) require full CrawlRsState DI and are not tested here — they
 //! need a running database and complete service wiring.
 
 use std::collections::HashMap;

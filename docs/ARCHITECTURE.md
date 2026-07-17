@@ -491,16 +491,14 @@ infrastructure/
 **Database Layer:**
 
 **Technology:**
-- **PostgreSQL** (default) - Production-grade RDBMS
-- **SQLite** (optional) - Embedded database for development
+- **PostgreSQL** - Production-grade RDBMS (the only supported backend)
 
 **ORM:** dbnexus 0.2 (builds on Sea-ORM 2.0.0-rc)
 
 Database access is now provided through **dbnexus 0.2**, which builds on top of Sea-ORM 2.0.0-rc. dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access, query builder, and migration management.
 
-**Feature Flags:**
-- `dbnexus-postgres` (default) - PostgreSQL backend
-- `dbnexus-sqlite` - SQLite backend
+**Feature Flag:**
+- `dbnexus-postgres` - PostgreSQL backend (the only supported backend; SQLite support has been removed)
 
 **Key Tables:**
 
@@ -519,7 +517,7 @@ Database access is now provided through **dbnexus 0.2**, which builds on top of 
 
 **Technology:** oxcache 0.3 (memory backend)
 
-Caching is provided through **oxcache 0.3**, an in-memory cache layer gated behind the `oxcache-cache` feature flag (enabled by default). oxcache supports the following features:
+Caching is provided through **oxcache 0.3**, an in-memory cache layer gated behind the `oxcache-cache` feature flag (enabled by the `lite`, `standard`, and `full` meta-features). oxcache supports the following features:
 - moka (in-memory)
 - Serialization
 - Batch-write
@@ -824,8 +822,8 @@ pub struct EngineRouter {
     reqwest_engine: ReqwestEngine,
     #[cfg(feature = "engine-playwright")]
     playwright_engine: PlaywrightEngine,
-    #[cfg(feature = "engine-fire-cdp")]
-    fire_cdp_engine: FireEngineCdp,
+    #[cfg(feature = "engine-flaresolverr")]
+    flaresolverr_engine: FlareSolverrEngine,
 }
 
 impl EngineRouter {
@@ -833,7 +831,7 @@ impl EngineRouter {
         match request.options.engine_type {
             EngineType::Reqwest => self.reqwest_engine.scrape(request).await,
             EngineType::Playwright => self.playwright_engine.scrape(request).await,
-            EngineType::FireCdp => self.fire_cdp_engine.scrape(request).await,
+            EngineType::FlareSolverr => self.flaresolverr_engine.scrape(request).await,
         }
     }
 }

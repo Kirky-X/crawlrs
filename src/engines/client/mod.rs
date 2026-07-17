@@ -20,19 +20,11 @@ pub mod playwright_pool;
 /// - `Full`：完整 FlareSolverr 客户端（原 flaresolverr）
 /// - `Cdp`：CDP 模式（原 fire_cdp）
 /// - `Tls`：TLS 指纹模式（原 fire_tls）
-#[cfg(any(
-    feature = "engine-fire-cdp",
-    feature = "engine-fire-tls",
-    feature = "engine-flaresolverr"
-))]
+#[cfg(feature = "engine-flaresolverr")]
 pub mod flare_solverr;
 
 /// 共享的 FlareSolverr 类型定义
-#[cfg(any(
-    feature = "engine-fire-cdp",
-    feature = "engine-fire-tls",
-    feature = "engine-flaresolverr"
-))]
+#[cfg(feature = "engine-flaresolverr")]
 pub mod flaresolverr_types;
 
 // Re-exports
@@ -61,9 +53,7 @@ pub use self::playwright_pool::{
 /// - `FlareSolverrEngine::new()` — Full 模式（原 FlareSolverrEngine）
 /// - `FlareSolverrEngine::with_cdp_mode()` — Cdp 模式（原 FireEngineCdp）
 /// - `FlareSolverrEngine::with_tls_mode()` — Tls 模式（原 FireEngineTls）
-#[cfg(any(
-    feature = "engine-fire-cdp",
-    feature = "engine-fire-tls",
-    feature = "engine-flaresolverr"
-))]
-pub use self::flare_solverr::{FlareSolverrConfig, FlareSolverrEngine, FlareSolverrEngineBuilder, FlareSolverrMode};
+#[cfg(feature = "engine-flaresolverr")]
+pub use self::flare_solverr::{
+    FlareSolverrConfig, FlareSolverrEngine, FlareSolverrEngineBuilder, FlareSolverrMode,
+};

@@ -7,13 +7,13 @@
 //!
 //! 提供应用运行时配置，包括worker数量、时间间隔等可调参数
 
-use confers::Config;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// 运行时配置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__RUNTIME__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__RUNTIME__"))]
 pub struct RuntimeConfig {
     /// Worker相关配置
     pub worker: WorkerConfig,
@@ -23,40 +23,45 @@ pub struct RuntimeConfig {
 }
 
 /// Worker配置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__RUNTIME__WORKER__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__RUNTIME__WORKER__"))]
 pub struct WorkerConfig {
     /// 初始worker数量
-    #[config(default = 5)]
+    #[cfg_attr(feature = "config", config(default = 5))]
     pub initial_count: usize,
 
     /// 最大worker数量
-    #[config(default = 20)]
+    #[cfg_attr(feature = "config", config(default = 20))]
     pub max_count: usize,
 
     /// 每个worker的队列大小
-    #[config(default = 100)]
+    #[cfg_attr(feature = "config", config(default = 100))]
     pub queue_size: usize,
 }
 
 /// 后台任务配置
-#[derive(Debug, Clone, Deserialize, Serialize, Config)]
-#[config(env_prefix = "CRAWLRS__RUNTIME__BACKGROUND_TASKS__")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "config", derive(confers::Config))]
+#[cfg_attr(
+    feature = "config",
+    config(env_prefix = "CRAWLRS__RUNTIME__BACKGROUND_TASKS__")
+)]
 pub struct BackgroundTaskConfig {
     /// Webhook处理间隔（秒）
-    #[config(default = 5)]
+    #[cfg_attr(feature = "config", config(default = 5))]
     pub webhook_interval_secs: u64,
 
     /// 积压任务处理间隔（秒）
-    #[config(default = 30)]
+    #[cfg_attr(feature = "config", config(default = 30))]
     pub backlog_interval_secs: u64,
 
     /// 缓存清理间隔（秒）
-    #[config(default = 60)]
+    #[cfg_attr(feature = "config", config(default = 60))]
     pub cache_cleanup_interval_secs: u64,
 
     /// DNS缓存TTL（秒）
-    #[config(default = 300)]
+    #[cfg_attr(feature = "config", config(default = 300))]
     pub dns_cache_ttl_secs: u64,
 }
 

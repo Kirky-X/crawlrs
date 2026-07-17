@@ -459,10 +459,7 @@ impl SearchEngineRouter {
             }
         }
 
-        warn!(
-            "所有搜索引擎都失败了，最后一个错误: {:?}",
-            last_error
-        );
+        warn!("所有搜索引擎都失败了，最后一个错误: {:?}", last_error);
 
         Err(last_error.unwrap_or_else(|| SearchError::Engine("所有搜索引擎都失败".to_string())))
     }
@@ -502,10 +499,7 @@ impl SearchEngineRouter {
                             m.record_failure();
                         }
                     }
-                    warn!(
-                        "默认搜索引擎 {} 失败: {}，回退到全引擎搜索",
-                        name, e
-                    );
+                    warn!("默认搜索引擎 {} 失败: {}，回退到全引擎搜索", name, e);
                 }
                 Err(elapsed) => {
                     {

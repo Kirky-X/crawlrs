@@ -6,11 +6,7 @@
 //! Scraper engines initialization and configuration.
 
 use crate::config::engines::EngineSettings;
-#[cfg(any(
-    feature = "engine-fire-cdp",
-    feature = "engine-fire-tls",
-    feature = "engine-flaresolverr"
-))]
+#[cfg(feature = "engine-flaresolverr")]
 use crate::engines::client::flare_solverr::FlareSolverrEngine;
 #[cfg(feature = "engine-playwright")]
 use crate::engines::client::playwright::PlaywrightEngine;
@@ -61,7 +57,7 @@ pub fn init_engines(
     #[cfg(feature = "engine-playwright")]
     engines.push(Arc::new(PlaywrightEngine::new()));
 
-    #[cfg(feature = "engine-fire-tls")]
+    #[cfg(feature = "engine-flaresolverr")]
     if engine_config.fire_tls.enabled {
         log::info!(
             "Fire Engine TLS enabled with URL: {}",
@@ -74,7 +70,7 @@ pub fn init_engines(
         )));
     }
 
-    #[cfg(feature = "engine-fire-cdp")]
+    #[cfg(feature = "engine-flaresolverr")]
     if engine_config.fire_cdp.enabled {
         log::info!(
             "Fire Engine CDP enabled with URL: {}",
@@ -170,7 +166,8 @@ mod tests {
     #[test]
     fn test_init_engines_default_has_at_least_one_engine() {
         // With default features, only reqwest engine is available.
-        // Other engines (playwright, fire-cdp, fire-tls, flaresolverr) are behind feature flags.
+        // Other engines (playwright, flaresolverr) are behind feature flags.
+        // flaresolverr 引擎通过 FlareSolverrMode 枚举区分 Full / Cdp / Tls 三种模式。
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
         let engines = init_engines(http_client, "http://localhost:10808", &engine_config);

@@ -37,6 +37,7 @@ pub struct ScrapeRequestDto {
     /// 回调Webhook地址
     pub webhook: Option<String>,
     /// 提取规则
+    #[cfg(feature = "engine-reqwest")]
     pub extraction_rules: Option<
         std::collections::HashMap<
             String,

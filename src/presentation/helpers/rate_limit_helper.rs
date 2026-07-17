@@ -9,7 +9,7 @@
 //! Eliminates code duplication in crawl, scrape, search, and webhook handlers.
 
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
-use crate::presentation::errors::AppError;
+use crate::presentation::errors::CrawlRsError;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -66,9 +66,9 @@ pub async fn check_rate_limit<T: RateLimitingService + ?Sized>(
     }
 }
 
-/// Check rate limit for an API key and endpoint, returning AppError.
+/// Check rate limit for an API key and endpoint, returning CrawlRsError.
 ///
-/// This variant is for handlers that return `Result<T, AppError>`.
+/// This variant is for handlers that return `Result<T, CrawlRsError>`.
 ///
 /// # Arguments
 ///
@@ -79,20 +79,20 @@ pub async fn check_rate_limit<T: RateLimitingService + ?Sized>(
 /// # Returns
 ///
 /// * `Ok(())` - Rate limit check passed
-/// * `Err(AppError::RateLimit)` - Rate limit exceeded
+/// * `Err(CrawlRsError::RateLimit)` - Rate limit exceeded
 pub async fn check_rate_limit_as_app_error<T: RateLimitingService + ?Sized>(
     service: &T,
     api_key: &str,
     endpoint: &str,
-) -> Result<(), AppError> {
+) -> Result<(), CrawlRsError> {
     match service.check_rate_limit(api_key, endpoint).await {
-        Ok(RateLimitResult::Denied { reason }) => Err(AppError::RateLimit(format!(
+        Ok(RateLimitResult::Denied { reason }) => Err(CrawlRsError::RateLimit(format!(
             "Rate limit exceeded: {}",
             reason
         ))),
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
-        }) => Err(AppError::RateLimit(format!(
+        }) => Err(CrawlRsError::RateLimit(format!(
             "Rate limit exceeded, please retry after {} seconds",
             retry_after_seconds
         ))),
@@ -349,15 +349,15 @@ mod tests {
             reason: "Too many requests".to_string(),
         });
         let result = check_rate_limit_as_app_error(&service, "test-key", "/v1/test").await;
-        let err = result.expect_err("Denied should map to AppError::RateLimit");
+        let err = result.expect_err("Denied should map to CrawlRsError::RateLimit");
         assert_eq!(err.status_code(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(err.error_code(), "RATE_LIMITED");
         match err {
-            AppError::RateLimit(msg) => {
+            CrawlRsError::RateLimit(msg) => {
                 assert!(msg.contains("Rate limit exceeded"));
                 assert!(msg.contains("Too many requests"));
             }
-            other => panic!("expected AppError::RateLimit, got {:?}", other),
+            other => panic!("expected CrawlRsError::RateLimit, got {:?}", other),
         }
     }
 
@@ -367,20 +367,20 @@ mod tests {
             retry_after_seconds: 60,
         });
         let result = check_rate_limit_as_app_error(&service, "test-key", "/v1/test").await;
-        let err = result.expect_err("RetryAfter should map to AppError::RateLimit");
+        let err = result.expect_err("RetryAfter should map to CrawlRsError::RateLimit");
         assert_eq!(err.status_code(), StatusCode::TOO_MANY_REQUESTS);
         match err {
-            AppError::RateLimit(msg) => {
+            CrawlRsError::RateLimit(msg) => {
                 assert!(msg.contains("retry after"));
                 assert!(msg.contains("60 seconds"));
             }
-            other => panic!("expected AppError::RateLimit, got {:?}", other),
+            other => panic!("expected CrawlRsError::RateLimit, got {:?}", other),
         }
     }
 
     #[tokio::test]
     async fn test_app_error_service_error_fails_open() {
-        // Fail-open: service error returns Ok, not AppError.
+        // Fail-open: service error returns Ok, not CrawlRsError.
         let service = MockRateLimitingService::with_error();
         let result = check_rate_limit_as_app_error(&service, "test-key", "/v1/test").await;
         assert!(
@@ -472,14 +472,14 @@ mod tests {
         });
         let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
         match result.expect_err("should be RateLimit") {
-            AppError::RateLimit(msg) => {
+            CrawlRsError::RateLimit(msg) => {
                 assert!(
                     msg.contains(reason),
                     "msg should contain exact reason: {}",
                     msg
                 );
             }
-            other => panic!("expected AppError::RateLimit, got {:?}", other),
+            other => panic!("expected CrawlRsError::RateLimit, got {:?}", other),
         }
     }
 
@@ -490,14 +490,14 @@ mod tests {
         });
         let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
         match result.expect_err("should be RateLimit") {
-            AppError::RateLimit(msg) => {
+            CrawlRsError::RateLimit(msg) => {
                 assert!(
                     msg.contains("120 seconds"),
                     "msg should contain seconds: {}",
                     msg
                 );
             }
-            other => panic!("expected AppError::RateLimit, got {:?}", other),
+            other => panic!("expected CrawlRsError::RateLimit, got {:?}", other),
         }
     }
 
@@ -636,20 +636,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_error_denied_with_empty_reason() {
-        // Empty reason should still map to AppError::RateLimit with the prefix.
+        // Empty reason should still map to CrawlRsError::RateLimit with the prefix.
         let service = MockRateLimitingService::new(RateLimitResult::Denied {
             reason: String::new(),
         });
         let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
         match result.expect_err("should be RateLimit") {
-            AppError::RateLimit(msg) => {
+            CrawlRsError::RateLimit(msg) => {
                 assert!(
                     msg.contains("Rate limit exceeded"),
                     "prefix expected: {}",
                     msg
                 );
             }
-            other => panic!("expected AppError::RateLimit, got {:?}", other),
+            other => panic!("expected CrawlRsError::RateLimit, got {:?}", other),
         }
     }
 
@@ -661,14 +661,14 @@ mod tests {
         });
         let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
         match result.expect_err("should be RateLimit") {
-            AppError::RateLimit(msg) => {
+            CrawlRsError::RateLimit(msg) => {
                 assert!(
                     msg.contains("0 seconds"),
                     "zero seconds expected in msg: {}",
                     msg
                 );
             }
-            other => panic!("expected AppError::RateLimit, got {:?}", other),
+            other => panic!("expected CrawlRsError::RateLimit, got {:?}", other),
         }
     }
 
@@ -748,7 +748,7 @@ mod tests {
             retry_after_seconds: 7,
         });
         let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
-        let err = result.expect_err("RetryAfter should map to AppError::RateLimit");
+        let err = result.expect_err("RetryAfter should map to CrawlRsError::RateLimit");
         assert_eq!(err.status_code(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(err.error_code(), "RATE_LIMITED");
     }

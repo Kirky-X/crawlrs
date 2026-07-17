@@ -14,10 +14,19 @@ publish = false
 
 [dependencies]
 # crawlrs 主项目 - 从父目录引用
-crawlrs = { path = "..", default-features = true }
+# 主项目 default = []，因此必须显式列出所需 features（与原 default 行为一致）
+crawlrs = { path = "..", default-features = false, features = [
+    "engine-reqwest",
+    "rate-limiting",
+    "metrics",
+    "dbnexus-postgres",
+    "logging",
+    "config",
+    "oxcache-cache",
+] }
 
 # 异步运行时
-tokio = { version = "1.49", features = ["full"] }
+tokio = { version = "1.52", features = ["full"] }
 
 # 日志记录（使用 log facade，inklog 在 crawlrs 主项目中初始化）
 log = "0.4"
@@ -28,12 +37,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 regex = "1.12"
 base64 = "0.22"
-uuid = { version = "1.0", features = ["v4"] }
+uuid = { version = "1.23", features = ["v4"] }
 chrono = { version = "0.4", features = ["std"] }
-rand = "0.8"
+rand = "0.9"
 
 # 数据库示例依赖（与主项目保持版本一致）
-dbnexus = { version = "0.2", default-features = false, features = [
+dbnexus = { version = "0.4", default-features = false, features = [
     "postgres",
     "runtime-tokio-rustls",
     "permission",
@@ -46,7 +55,7 @@ dbnexus = { version = "0.2", default-features = false, features = [
     "uuid",
     "with-json",
 ] }
-sea-orm = { version = "2.0.0-rc.37", default-features = false, features = [
+sea-orm = { version = "2.0.0-rc.43", default-features = false, features = [
     "runtime-tokio-rustls",
     "macros",
     "with-chrono",

@@ -54,11 +54,13 @@ pub use types::{SsrfConfig, SsrfValidationResult, ValidatedUrl};
 
 use crate::engines::shared::{is_blocked_hostname, is_private_ip};
 use std::net::IpAddr;
-use std::sync::Arc;
 use tokio::net::lookup_host;
 use url::Url;
 
+#[cfg(feature = "oxcache-cache")]
 use crate::infrastructure::dns::DnsCacheService;
+#[cfg(feature = "oxcache-cache")]
+use std::sync::Arc;
 
 /// Maximum URL length to prevent resource exhaustion
 #[allow(dead_code)]
@@ -67,6 +69,21 @@ const MAX_URL_LENGTH: usize = 2048;
 /// Maximum number of redirects to follow
 #[allow(dead_code)]
 const MAX_REDIRECTS: u8 = 10;
+
+/// Direct DNS resolution helper (no cache). Used when oxcache-cache feature is disabled
+/// or when SsrfValidator is constructed without a DNS cache.
+async fn resolve_dns_direct(hostname: &str, port: u16) -> Result<Vec<IpAddr>, SsrfError> {
+    let addr_str = format!("{}:{}", hostname, port);
+    let addrs: Vec<IpAddr> = lookup_host(&addr_str)
+        .await
+        .map_err(|e| SsrfError::DnsResolutionFailed {
+            hostname: hostname.to_string(),
+            reason: e.to_string(),
+        })?
+        .map(|socket_addr| socket_addr.ip())
+        .collect();
+    Ok(addrs)
+}
 
 /// Default DNS cache TTL in seconds
 #[allow(dead_code)]
@@ -79,6 +96,7 @@ const DEFAULT_DNS_CACHE_TTL: u64 = 300;
 #[derive(Clone, Default)]
 pub struct SsrfValidator {
     /// DNS cache for resolution results
+    #[cfg(feature = "oxcache-cache")]
     dns_cache: Option<Arc<DnsCacheService>>,
     /// Configuration options
     config: SsrfConfig,
@@ -91,6 +109,7 @@ impl SsrfValidator {
     }
 
     /// Create a new SSRF validator with DNS caching support.
+    #[cfg(feature = "oxcache-cache")]
     pub fn with_dns_cache(dns_cache: Arc<DnsCacheService>) -> Self {
         Self {
             dns_cache: Some(dns_cache),
@@ -101,12 +120,14 @@ impl SsrfValidator {
     /// Create a new SSRF validator with custom configuration.
     pub fn with_config(config: SsrfConfig) -> Self {
         Self {
+            #[cfg(feature = "oxcache-cache")]
             dns_cache: None,
             config,
         }
     }
 
     /// Create a new SSRF validator with DNS cache and custom configuration.
+    #[cfg(feature = "oxcache-cache")]
     pub fn with_dns_cache_and_config(dns_cache: Arc<DnsCacheService>, config: SsrfConfig) -> Self {
         Self {
             dns_cache: Some(dns_cache),
@@ -200,27 +221,23 @@ impl SsrfValidator {
         hostname: &str,
         port: u16,
     ) -> Result<Vec<IpAddr>, SsrfError> {
-        // Use DNS cache if available
-        let ips = if let Some(cache) = &self.dns_cache {
-            cache
-                .lookup_host(hostname, port)
-                .await
-                .map_err(|e| SsrfError::DnsResolutionFailed {
-                    hostname: hostname.to_string(),
-                    reason: e.to_string(),
+        // Use DNS cache if available (requires oxcache-cache feature)
+        let ips = {
+            #[cfg(feature = "oxcache-cache")]
+            if let Some(cache) = &self.dns_cache {
+                cache.lookup_host(hostname, port).await.map_err(|e| {
+                    SsrfError::DnsResolutionFailed {
+                        hostname: hostname.to_string(),
+                        reason: e.to_string(),
+                    }
                 })?
-        } else {
-            // Direct DNS resolution
-            let addr_str = format!("{}:{}", hostname, port);
-            let addrs: Vec<IpAddr> = lookup_host(&addr_str)
-                .await
-                .map_err(|e| SsrfError::DnsResolutionFailed {
-                    hostname: hostname.to_string(),
-                    reason: e.to_string(),
-                })?
-                .map(|socket_addr| socket_addr.ip())
-                .collect();
-            addrs
+            } else {
+                resolve_dns_direct(hostname, port).await?
+            }
+            #[cfg(not(feature = "oxcache-cache"))]
+            {
+                resolve_dns_direct(hostname, port).await?
+            }
         };
 
         // Check if any IPs were resolved

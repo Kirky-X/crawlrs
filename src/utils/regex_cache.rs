@@ -46,10 +46,7 @@ impl RegexCache {
 
         // Use std::sync::RwLock for sync access (no async block_on needed).
         // Poisoning is ignored because the cache state remains usable even after a panic.
-        let compiled_read = self
-            .compiled
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let compiled_read = self.compiled.read().unwrap_or_else(|e| e.into_inner());
         if let Some(regex) = compiled_read.get(&key) {
             return Ok((**regex).clone());
         }
@@ -57,10 +54,7 @@ impl RegexCache {
 
         let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
 
-        let mut compiled_write = self
-            .compiled
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut compiled_write = self.compiled.write().unwrap_or_else(|e| e.into_inner());
         compiled_write.insert(key.clone(), Arc::new(regex.clone()));
 
         // Best-effort persistence to oxcache. Fire-and-forget via tokio::spawn
@@ -84,10 +78,7 @@ impl RegexCache {
 
         // Use std::sync::RwLock for sync access (no async block_on needed).
         // Poisoning is ignored because the cache state remains usable even after a panic.
-        let compiled_read = self
-            .compiled
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let compiled_read = self.compiled.read().unwrap_or_else(|e| e.into_inner());
         if let Some(regex) = compiled_read.get(&key) {
             return Ok(regex.clone());
         }
@@ -96,10 +87,7 @@ impl RegexCache {
         let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
         let regex_arc = Arc::new(regex);
 
-        let mut compiled_write = self
-            .compiled
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut compiled_write = self.compiled.write().unwrap_or_else(|e| e.into_inner());
         compiled_write.insert(key.clone(), regex_arc.clone());
 
         // Best-effort persistence (see get_or_insert for rationale).
@@ -125,11 +113,11 @@ impl RegexCache {
             // Spawn a detached task — fire-and-forget.
             // Works in both async and spawn_blocking contexts because Handle::spawn
             // only requires a Handle to the runtime, not active async execution.
-            let _ = handle.spawn(async move {
+            drop(handle.spawn(async move {
                 if let Err(e) = cache.set(&key, &value).await {
                     warn!("Failed to cache regex pattern: {}", e);
                 }
-            });
+            }));
         }
         // If not in tokio runtime (rare for this codebase), skip persistence silently.
         // The in-memory `compiled` cache still provides correct results.

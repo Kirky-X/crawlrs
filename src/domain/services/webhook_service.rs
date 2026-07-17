@@ -17,7 +17,7 @@ use crate::domain::services::webhook_sender::WebhookSender;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Utc;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use log::{error, info};
 use serde_json::json;
 use sha2::Sha256;

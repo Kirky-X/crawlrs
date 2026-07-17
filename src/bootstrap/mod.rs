@@ -19,7 +19,10 @@
 
 pub mod config;
 pub mod engines;
+#[cfg(feature = "dbnexus-postgres")]
 pub mod infrastructure;
+#[cfg(feature = "dbnexus-postgres")]
 pub mod routes;
+#[cfg(feature = "dbnexus-postgres")]
 pub mod services;
 pub mod telemetry;

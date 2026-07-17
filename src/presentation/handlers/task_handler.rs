@@ -17,7 +17,7 @@ use crate::domain::models::TaskStatus;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
 use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
-use crate::presentation::errors::AppError;
+use crate::presentation::errors::CrawlRsError;
 use crate::presentation::handlers::extract_task_ids;
 use crate::presentation::handlers::response_builder::ApiResponse;
 use crate::presentation::middleware::auth_middleware::AuthState;
@@ -40,7 +40,7 @@ use validator::Validate;
 ///
 /// # 返回值
 /// * `Ok(())` - 所有任务完成或超时
-/// * `Err(AppError)` - 查询失败
+/// * `Err(CrawlRsError)` - 查询失败
 ///
 /// # 智能轮询逻辑
 /// - 初始轮询间隔：base_poll_interval_ms
@@ -54,7 +54,7 @@ pub async fn wait_for_tasks_completion(
     team_id: uuid::Uuid,
     sync_wait_ms: u32,
     base_poll_interval_ms: u64,
-) -> Result<(), AppError> {
+) -> Result<(), CrawlRsError> {
     let start_time = Instant::now();
     let timeout_duration = Duration::from_millis(sync_wait_ms as u64);
     let min_interval = 500u64;
@@ -114,7 +114,7 @@ async fn query_tasks_for_poll(
     task_repo: &dyn TaskRepository,
     team_id: uuid::Uuid,
     task_ids: &[uuid::Uuid],
-) -> Result<Vec<crate::domain::models::Task>, AppError> {
+) -> Result<Vec<crate::domain::models::Task>, CrawlRsError> {
     let (tasks, _) = task_repo
         .query_tasks(TaskQueryParams {
             team_id,
@@ -187,7 +187,7 @@ pub async fn query_tasks<T: TaskRepository>(
     Extension(task_repo): Extension<Arc<T>>,
     Extension(scrape_result_repo): Extension<Arc<ScrapeResultRepositoryImpl>>,
     Json(request): Json<TaskQueryRequestDto>,
-) -> Result<Json<ApiResponse<TaskQueryDataDto>>, AppError> {
+) -> Result<Json<ApiResponse<TaskQueryDataDto>>, CrawlRsError> {
     let team_id = auth_state.team_id;
     let start_time = Instant::now();
 
@@ -241,9 +241,9 @@ pub async fn query_tasks<T: TaskRepository>(
 }
 
 /// 验证请求参数
-fn validate_request(request: &TaskQueryRequestDto) -> Result<(), AppError> {
+fn validate_request(request: &TaskQueryRequestDto) -> Result<(), CrawlRsError> {
     if let Err(errors) = request.validate() {
-        Err(AppError::from(anyhow::anyhow!(
+        Err(CrawlRsError::from(anyhow::anyhow!(
             "Validation error: {:?}",
             errors
         )))
@@ -274,7 +274,7 @@ async fn execute_task_query<T: TaskRepository>(
     request: &TaskQueryRequestDto,
     limit: u32,
     offset: u32,
-) -> Result<(Vec<crate::domain::models::Task>, u64), AppError> {
+) -> Result<(Vec<crate::domain::models::Task>, u64), CrawlRsError> {
     task_repo
         .query_tasks(TaskQueryParams {
             team_id,
@@ -290,7 +290,7 @@ async fn execute_task_query<T: TaskRepository>(
             cursor_id: None,
         })
         .await
-        .map_err(|e| AppError::from(anyhow::anyhow!("Query failed: {:?}", e)))
+        .map_err(|e| CrawlRsError::from(anyhow::anyhow!("Query failed: {:?}", e)))
 }
 
 /// 处理同步等待模式
@@ -299,7 +299,7 @@ async fn handle_sync_wait<T: TaskRepository>(
     tasks: &[crate::domain::models::Task],
     team_id: uuid::Uuid,
     sync_wait_ms: u32,
-) -> Result<u64, AppError> {
+) -> Result<u64, CrawlRsError> {
     let task_ids = extract_task_ids(tasks);
     let wait_start = Instant::now();
 
@@ -335,13 +335,13 @@ pub struct SyncWaitResult {
 ///
 /// # 返回值
 /// * `Ok(SyncWaitResult)` - 同步等待结果
-/// * `Err(AppError)` - 等待失败
+/// * `Err(CrawlRsError)` - 等待失败
 pub async fn handle_sync_wait_and_get_status(
     task_repo: &dyn TaskRepository,
     task_ids: &[uuid::Uuid],
     team_id: uuid::Uuid,
     sync_wait_ms: u32,
-) -> Result<SyncWaitResult, AppError> {
+) -> Result<SyncWaitResult, CrawlRsError> {
     if sync_wait_ms == 0 || task_ids.is_empty() {
         return Ok(SyncWaitResult {
             waited_time_ms: 0,
@@ -387,7 +387,7 @@ async fn fetch_scrape_results(
     Option<
         std::collections::HashMap<uuid::Uuid, crate::domain::models::scrape_result::ScrapeResult>,
     >,
-    AppError,
+    CrawlRsError,
 > {
     let task_ids = extract_task_ids(tasks);
     let results = scrape_result_repo.find_by_task_ids(&task_ids).await?;
@@ -471,12 +471,12 @@ pub async fn cancel_tasks<T: TaskRepository>(
     Extension(auth_state): Extension<AuthState>,
     Extension(task_repo): Extension<Arc<T>>,
     Json(request): Json<TaskCancelRequestDto>,
-) -> Result<Json<ApiResponse<TaskCancelDataDto>>, AppError> {
+) -> Result<Json<ApiResponse<TaskCancelDataDto>>, CrawlRsError> {
     let team_id = auth_state.team_id;
 
     // 验证请求参数
     if let Err(errors) = request.validate() {
-        return Err(AppError::from(anyhow::anyhow!(
+        return Err(CrawlRsError::from(anyhow::anyhow!(
             "Validation error: {:?}",
             errors
         )));
@@ -484,7 +484,9 @@ pub async fn cancel_tasks<T: TaskRepository>(
 
     // 验证任务ID列表不为空
     if request.task_ids.is_empty() {
-        return Err(AppError::Validation("Task IDs cannot be empty".to_string()));
+        return Err(CrawlRsError::Validation(
+            "Task IDs cannot be empty".to_string(),
+        ));
     }
 
     let force = request.force.unwrap_or(false);
@@ -1789,8 +1791,8 @@ mod tests {
 
         assert!(result.is_err(), "repo error should propagate");
         match result.unwrap_err() {
-            AppError::Other(msg) => assert!(msg.contains("Query failed")),
-            other => panic!("expected AppError::Other, got {:?}", other),
+            CrawlRsError::Other(msg) => assert!(msg.contains("Query failed")),
+            other => panic!("expected CrawlRsError::Other, got {:?}", other),
         }
     }
 
@@ -1905,10 +1907,10 @@ mod tests {
 
         assert!(result.is_err(), "empty task_ids should fail");
         match result.unwrap_err() {
-            AppError::Validation(msg) => {
+            CrawlRsError::Validation(msg) => {
                 assert!(msg.contains("Task IDs cannot be empty"), "got: {}", msg);
             }
-            other => panic!("expected AppError::Validation, got {:?}", other),
+            other => panic!("expected CrawlRsError::Validation, got {:?}", other),
         }
     }
 
@@ -2131,8 +2133,8 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            AppError::Other(msg) => assert!(msg.contains("Query failed")),
-            other => panic!("expected AppError::Other, got {:?}", other),
+            CrawlRsError::Other(msg) => assert!(msg.contains("Query failed")),
+            other => panic!("expected CrawlRsError::Other, got {:?}", other),
         }
     }
 

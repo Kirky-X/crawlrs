@@ -17,9 +17,11 @@
 //! Infrastructure Layer (database entities)
 //! ```
 
+#[cfg(feature = "dbnexus-postgres")]
 pub mod mappers;
 
 // Re-export mappers for convenience
+#[cfg(feature = "dbnexus-postgres")]
 pub use mappers::{
     CrawlMapper, CreditsMapper, CreditsTransactionMapper, TaskMapper, WebhookEventMapper,
     WebhookMapper,

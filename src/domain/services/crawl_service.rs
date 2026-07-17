@@ -7,9 +7,11 @@
 
 #![allow(unused_variables)]
 
-/// Load degradation thresholds
+#[cfg(feature = "metrics")]
 const HIGH_LOAD_THRESHOLD: f64 = 0.8;
+#[cfg(feature = "metrics")]
 const MEDIUM_LOAD_THRESHOLD: f64 = 0.6;
+#[cfg(feature = "metrics")]
 const MEDIUM_LOAD_DEPTH_FACTOR: f64 = 0.75;
 
 use crate::domain::models::{DomainError, Task, TaskStatus};
