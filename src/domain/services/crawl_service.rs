@@ -927,6 +927,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_extract_links_invalid_href_skipped_silently() {
+        // Cover the Err branch of base.join() (lines 414-417): when an href
+        // is syntactically invalid (e.g. an unterminated IPv6 literal), the
+        // error is logged at debug level and the link is silently dropped
+        // instead of aborting the whole extraction.
+        let html = r#"<a href="http://[">bad</a><a href="https://valid.com/">good</a>"#;
+        let links = LinkDiscoverer::extract_links(html, "https://example.com/").unwrap();
+        assert!(
+            links.contains("https://valid.com/"),
+            "valid link should still be extracted when a sibling href is invalid"
+        );
+        assert!(
+            !links.iter().any(|l| l.contains("http://[")),
+            "invalid href must be filtered out, got: {:?}",
+            links
+        );
+    }
+
     // ========== LinkDiscoverer::filter_links tests ==========
 
     #[test]

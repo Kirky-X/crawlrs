@@ -121,10 +121,7 @@ async fn tc_from_headers_non_ascii_value_error_message() {
         .await
         .expect("body must be readable");
     let json: serde_json::Value = serde_json::from_slice(&bytes).expect("body must be JSON");
-    assert_eq!(
-        json["error"],
-        "Invalid header value in X-Team-Id header"
-    );
+    assert_eq!(json["error"], "Invalid header value in X-Team-Id header");
 }
 
 // =============================================================================
@@ -149,10 +146,7 @@ async fn tc_from_headers_invalid_uuid_error_message() {
         .await
         .expect("body must be readable");
     let json: serde_json::Value = serde_json::from_slice(&bytes).expect("body must be JSON");
-    assert_eq!(
-        json["error"],
-        "Invalid UUID format in X-Team-Id header"
-    );
+    assert_eq!(json["error"], "Invalid UUID format in X-Team-Id header");
 }
 
 #[tokio::test]
@@ -214,10 +208,7 @@ fn tc_as_string_returns_canonical_lowercase_form() {
 #[test]
 fn tc_as_string_for_nil_uuid() {
     let team_id = TeamId(Uuid::nil());
-    assert_eq!(
-        team_id.as_string(),
-        "00000000-0000-0000-0000-000000000000"
-    );
+    assert_eq!(team_id.as_string(), "00000000-0000-0000-0000-000000000000");
 }
 
 #[test]
@@ -225,10 +216,7 @@ fn tc_as_string_for_uppercase_input_normalizes_to_lowercase() {
     let headers = make_team_id_header("550E8400-E29B-41D4-A716-446655440000");
     let team_id = TeamId::from_headers(&headers).expect("uppercase UUID must parse");
     // as_string must return the canonical lowercase form regardless of input case.
-    assert_eq!(
-        team_id.as_string(),
-        "550e8400-e29b-41d4-a716-446655440000"
-    );
+    assert_eq!(team_id.as_string(), "550e8400-e29b-41d4-a716-446655440000");
 }
 
 // =============================================================================

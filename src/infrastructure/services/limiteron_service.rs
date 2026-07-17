@@ -623,4 +623,1136 @@ mod tests {
             }
         }
     }
+
+    // ========== Mock repositories for trait impl tests ==========
+
+    use crate::domain::models::credits_model::{CreditsTransaction, CreditsTransactionType};
+    use crate::domain::models::task_domain::{TaskStatus, TaskType};
+    use crate::domain::models::task_model::Task;
+    use crate::domain::repositories::credits_repository::{
+        CreditsRepository, CreditsRepositoryError,
+    };
+    use crate::domain::repositories::task_repository::{
+        RepositoryError, TaskQueryParams, TaskRepository,
+    };
+    use crate::domain::repositories::tasks_backlog_repository::{
+        TasksBacklog, TasksBacklogRepository, TasksBacklogStatus,
+    };
+    use crate::domain::services::rate_limiting_service::{
+        BacklogService, ConcurrencyControlService, QuotaService, RateLimitService,
+    };
+    use chrono::Utc;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    use uuid::Uuid;
+
+    /// Configurable mock TaskRepository1
+    struct MockTaskRepository {
+        /// Behavior mode for find_by_id (avoids needing RepositoryError: Clone)
+        find_mode: FindByIdMode,
+        /// Task to return when find_mode == ReturnTask
+        task: Option<Task>,
+        /// Whether update() should fail
+        update_should_fail: bool,
+        /// Number of times update() was called
+        update_calls: Mutex<u32>,
+    }
+
+    enum FindByIdMode {
+        ReturnTask,
+        ReturnNone,
+        ReturnError,
+    }
+
+    impl MockTaskRepository {
+        fn with_task(task: Task) -> Self {
+            Self {
+                find_mode: FindByIdMode::ReturnTask,
+                task: Some(task),
+                update_should_fail: false,
+                update_calls: Mutex::new(0),
+            }
+        }
+        fn with_no_task() -> Self {
+            Self {
+                find_mode: FindByIdMode::ReturnNone,
+                task: None,
+                update_should_fail: false,
+                update_calls: Mutex::new(0),
+            }
+        }
+        fn with_db_error() -> Self {
+            Self {
+                find_mode: FindByIdMode::ReturnError,
+                task: None,
+                update_should_fail: false,
+                update_calls: Mutex::new(0),
+            }
+        }
+        fn with_failing_update(task: Task) -> Self {
+            Self {
+                find_mode: FindByIdMode::ReturnTask,
+                task: Some(task),
+                update_should_fail: true,
+                update_calls: Mutex::new(0),
+            }
+        }
+        fn update_call_count(&self) -> u32 {
+            *self.update_calls.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl TaskRepository for MockTaskRepository {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            match self.find_mode {
+                FindByIdMode::ReturnTask => Ok(self.task.clone()),
+                FindByIdMode::ReturnNone => Ok(None),
+                FindByIdMode::ReturnError => {
+                    Err(RepositoryError::Database(anyhow::anyhow!("mock db error")))
+                }
+            }
+        }
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            *self.update_calls.lock().unwrap() += 1;
+            if self.update_should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "mock update failed"
+                )));
+            }
+            Ok(task.clone())
+        }
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            Ok((vec![], 0))
+        }
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+    }
+
+    /// Configurable mock TasksBacklogRepository
+    struct MockBacklogRepository {
+        /// Pending tasks to return from get_pending_tasks
+        pending_tasks: Mutex<Vec<TasksBacklog>>,
+        /// Whether create() should fail
+        create_should_fail: bool,
+        /// Whether update() should fail
+        update_should_fail: bool,
+        /// Whether get_pending_tasks() should fail
+        get_pending_should_fail: bool,
+        /// Created backlogs (for assertion)
+        created_backlogs: Mutex<Vec<TasksBacklog>>,
+        /// Updated backlogs (for assertion)
+        updated_backlogs: Mutex<Vec<TasksBacklog>>,
+    }
+
+    impl MockBacklogRepository {
+        fn new() -> Self {
+            Self {
+                pending_tasks: Mutex::new(vec![]),
+                create_should_fail: false,
+                update_should_fail: false,
+                get_pending_should_fail: false,
+                created_backlogs: Mutex::new(vec![]),
+                updated_backlogs: Mutex::new(vec![]),
+            }
+        }
+        fn with_pending(tasks: Vec<TasksBacklog>) -> Self {
+            Self {
+                pending_tasks: Mutex::new(tasks),
+                create_should_fail: false,
+                update_should_fail: false,
+                get_pending_should_fail: false,
+                created_backlogs: Mutex::new(vec![]),
+                updated_backlogs: Mutex::new(vec![]),
+            }
+        }
+        fn with_failing_create() -> Self {
+            Self {
+                pending_tasks: Mutex::new(vec![]),
+                create_should_fail: true,
+                update_should_fail: false,
+                get_pending_should_fail: false,
+                created_backlogs: Mutex::new(vec![]),
+                updated_backlogs: Mutex::new(vec![]),
+            }
+        }
+        fn with_failing_update() -> Self {
+            Self {
+                pending_tasks: Mutex::new(vec![]),
+                create_should_fail: false,
+                update_should_fail: true,
+                get_pending_should_fail: false,
+                created_backlogs: Mutex::new(vec![]),
+                updated_backlogs: Mutex::new(vec![]),
+            }
+        }
+        fn with_failing_get_pending() -> Self {
+            Self {
+                pending_tasks: Mutex::new(vec![]),
+                create_should_fail: false,
+                update_should_fail: false,
+                get_pending_should_fail: true,
+                created_backlogs: Mutex::new(vec![]),
+                updated_backlogs: Mutex::new(vec![]),
+            }
+        }
+        fn created_backlogs(&self) -> Vec<TasksBacklog> {
+            self.created_backlogs.lock().unwrap().clone()
+        }
+        fn updated_backlogs(&self) -> Vec<TasksBacklog> {
+            self.updated_backlogs.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl TasksBacklogRepository for MockBacklogRepository {
+        async fn create(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
+            if self.create_should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "mock create failed"
+                )));
+            }
+            self.created_backlogs.lock().unwrap().push(backlog.clone());
+            Ok(backlog.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
+            Ok(None)
+        }
+        async fn find_by_task_id(
+            &self,
+            _task_id: Uuid,
+        ) -> Result<Option<TasksBacklog>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
+            if self.update_should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "mock update failed"
+                )));
+            }
+            self.updated_backlogs.lock().unwrap().push(backlog.clone());
+            Ok(backlog.clone())
+        }
+        async fn delete(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn get_pending_tasks(
+            &self,
+            _team_id: Option<Uuid>,
+            _limit: Option<u64>,
+        ) -> Result<Vec<TasksBacklog>, RepositoryError> {
+            if self.get_pending_should_fail {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "mock get_pending failed"
+                )));
+            }
+            Ok(self.pending_tasks.lock().unwrap().clone())
+        }
+        async fn get_expired_tasks(
+            &self,
+            _limit: Option<u64>,
+        ) -> Result<Vec<TasksBacklog>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn count_by_status(
+            &self,
+            _team_id: Option<Uuid>,
+            _status: TasksBacklogStatus,
+        ) -> Result<i64, RepositoryError> {
+            Ok(0)
+        }
+        async fn update_status_batch(
+            &self,
+            _ids: &[Uuid],
+            _status: TasksBacklogStatus,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+    }
+
+    /// Configurable mock CreditsRepository
+    struct MockCreditsRepository {
+        balance: Mutex<i64>,
+        get_balance_should_fail: bool,
+        deduct_should_fail: bool,
+        deduct_calls: Mutex<u32>,
+    }
+
+    impl MockCreditsRepository {
+        fn with_balance(balance: i64) -> Self {
+            Self {
+                balance: Mutex::new(balance),
+                get_balance_should_fail: false,
+                deduct_should_fail: false,
+                deduct_calls: Mutex::new(0),
+            }
+        }
+        fn with_failing_get_balance() -> Self {
+            Self {
+                balance: Mutex::new(0),
+                get_balance_should_fail: true,
+                deduct_should_fail: false,
+                deduct_calls: Mutex::new(0),
+            }
+        }
+        fn with_failing_deduct(balance: i64) -> Self {
+            Self {
+                balance: Mutex::new(balance),
+                get_balance_should_fail: false,
+                deduct_should_fail: true,
+                deduct_calls: Mutex::new(0),
+            }
+        }
+        fn deduct_call_count(&self) -> u32 {
+            *self.deduct_calls.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl CreditsRepository for MockCreditsRepository {
+        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+            if self.get_balance_should_fail {
+                return Err(CreditsRepositoryError::DatabaseError("mock".to_string()));
+            }
+            Ok(*self.balance.lock().unwrap())
+        }
+        async fn deduct_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), CreditsRepositoryError> {
+            *self.deduct_calls.lock().unwrap() += 1;
+            if self.deduct_should_fail {
+                return Err(CreditsRepositoryError::DatabaseError("mock".to_string()));
+            }
+            Ok(())
+        }
+        async fn add_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(0)
+        }
+        async fn get_transaction_history(
+            &self,
+            _team_id: Uuid,
+            _limit: Option<u32>,
+        ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
+            Ok(vec![])
+        }
+        async fn initialize_team_credits(
+            &self,
+            _team_id: Uuid,
+            initial_balance: i64,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(initial_balance)
+        }
+    }
+
+    /// Build a LimiteronService with configurable mocks
+    async fn make_service_with_mocks(
+        task_repo: Arc<MockTaskRepository>,
+        backlog_repo: Arc<MockBacklogRepository>,
+        credits_repo: Arc<MockCreditsRepository>,
+        config: RateLimitingConfig,
+    ) -> LimiteronService {
+        LimiteronService::new(
+            task_repo as Arc<dyn TaskRepository>,
+            backlog_repo as Arc<dyn TasksBacklogRepository>,
+            credits_repo as Arc<dyn CreditsRepository>,
+            config,
+        )
+        .await
+        .expect("Failed to build LimiteronService")
+    }
+
+    fn make_task(task_id: Uuid, team_id: Uuid, status: TaskStatus) -> Task {
+        let mut task = Task::new(
+            task_id,
+            TaskType::Scrape,
+            team_id,
+            Uuid::new_v4(),
+            "https://example.com".to_string(),
+            serde_json::json!({}),
+        );
+        task.status = status;
+        task
+    }
+
+    fn make_pending_backlog(task_id: Uuid, team_id: Uuid) -> TasksBacklog {
+        TasksBacklog::new(
+            task_id,
+            team_id,
+            "scrape".to_string(),
+            1,
+            serde_json::json!({}),
+            None,
+        )
+    }
+
+    fn make_expired_backlog(task_id: Uuid, team_id: Uuid) -> TasksBacklog {
+        TasksBacklog::new(
+            task_id,
+            team_id,
+            "scrape".to_string(),
+            1,
+            serde_json::json!({}),
+            Some(Utc::now() - chrono::Duration::hours(1)),
+        )
+    }
+
+    // ========== RateLimitService trait tests ==========
+
+    #[tokio::test]
+    async fn test_check_rate_limit_disabled_short_circuits_to_allowed() {
+        let mut config = RateLimitingConfig::default();
+        config.rate_limit.enabled = false;
+
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            config,
+        )
+        .await;
+
+        let result = service.check_rate_limit("k", "/v1/extract").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), RateLimitResult::Allowed);
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_enabled_fails_open_to_allowed() {
+        // SOURCE LIMITATION: build_request_context sets ip=None, client_ip=None,
+        // empty headers → Governor cannot extract identifier → Err → fail-open → Allowed.
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.check_rate_limit("k", "/v1/extract").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), RateLimitResult::Allowed);
+    }
+
+    #[tokio::test]
+    async fn test_get_team_rate_limit_config_returns_clone() {
+        let config = RateLimitingConfig::default();
+        let expected = config.rate_limit.clone();
+
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            config,
+        )
+        .await;
+
+        let result = service.get_team_rate_limit_config(Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        let got = result.unwrap();
+        // RateLimitConfig doesn't derive PartialEq — compare key fields instead
+        assert_eq!(got.enabled, expected.enabled);
+        assert_eq!(got.requests_per_second, expected.requests_per_second);
+        assert_eq!(got.requests_per_minute, expected.requests_per_minute);
+        assert_eq!(got.requests_per_hour, expected.requests_per_hour);
+        assert_eq!(got.bucket_capacity, expected.bucket_capacity);
+    }
+
+    #[tokio::test]
+    async fn test_update_team_rate_limit_config_returns_ok() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .update_team_rate_limit_config(Uuid::new_v4(), RateLimitConfig::default())
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_rate_limits_returns_zero() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.cleanup_expired_rate_limits().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    // ========== ConcurrencyControlService trait tests ==========
+
+    #[tokio::test]
+    async fn test_check_team_concurrency_disabled_returns_allowed() {
+        let mut config = RateLimitingConfig::default();
+        config.concurrency.enabled = false;
+
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            config,
+        )
+        .await;
+
+        let result = service
+            .check_team_concurrency(Uuid::new_v4(), Uuid::new_v4())
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ConcurrencyResult::Allowed);
+    }
+
+    #[tokio::test]
+    async fn test_check_team_concurrency_task_not_found_returns_db_error() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .check_team_concurrency(Uuid::new_v4(), Uuid::new_v4())
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RateLimitingError::DatabaseError
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_check_team_concurrency_find_by_id_db_error_returns_db_error() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_db_error()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .check_team_concurrency(Uuid::new_v4(), Uuid::new_v4())
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RateLimitingError::DatabaseError
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_check_team_concurrency_under_limit_returns_allowed() {
+        // get_team_current_concurrency returns 0, max_concurrent_per_team default 10 → Allowed
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_task(make_task(
+                task_id,
+                team_id,
+                TaskStatus::Queued,
+            ))),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.check_team_concurrency(team_id, task_id).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ConcurrencyResult::Allowed);
+    }
+
+    #[tokio::test]
+    async fn test_check_team_concurrency_at_limit_queues_backlog() {
+        // Force current_concurrency >= max_concurrent_per_team by setting max=0
+        let mut config = RateLimitingConfig::default();
+        config.concurrency.max_concurrent_per_team = 0;
+
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let backlog_repo = Arc::new(MockBacklogRepository::new());
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_task(make_task(
+                task_id,
+                team_id,
+                TaskStatus::Queued,
+            ))),
+            backlog_repo.clone(),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            config,
+        )
+        .await;
+
+        let result = service.check_team_concurrency(team_id, task_id).await;
+        assert!(result.is_ok());
+        match result.unwrap() {
+            ConcurrencyResult::Queued { backlog_id } => {
+                // Verify backlog was created with our task
+                let created = backlog_repo.created_backlogs();
+                assert_eq!(created.len(), 1);
+                assert_eq!(created[0].task_id, task_id);
+                assert_eq!(created[0].team_id, team_id);
+                assert_eq!(created[0].id, backlog_id);
+            }
+            other => panic!("Expected Queued, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_team_concurrency_at_limit_backlog_create_fails_returns_db_error() {
+        let mut config = RateLimitingConfig::default();
+        config.concurrency.max_concurrent_per_team = 0;
+
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_task(make_task(
+                task_id,
+                team_id,
+                TaskStatus::Queued,
+            ))),
+            Arc::new(MockBacklogRepository::with_failing_create()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            config,
+        )
+        .await;
+
+        let result = service.check_team_concurrency(team_id, task_id).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RateLimitingError::DatabaseError
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_release_team_concurrency_slot_calls_process_backlog() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .release_team_concurrency_slot(Uuid::new_v4(), Uuid::new_v4())
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_release_team_concurrency_slot_backlog_error_propagates() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::with_failing_get_pending()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .release_team_concurrency_slot(Uuid::new_v4(), Uuid::new_v4())
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RateLimitingError::DatabaseError
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_get_team_current_concurrency_returns_zero() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.get_team_current_concurrency(Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_team_concurrency_config_returns_clone() {
+        let config = RateLimitingConfig::default();
+        let expected = config.concurrency.clone();
+
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            config,
+        )
+        .await;
+
+        let result = service.get_team_concurrency_config(Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        let got = result.unwrap();
+        // ConcurrencyConfig doesn't derive PartialEq — compare key fields instead
+        assert_eq!(got.enabled, expected.enabled);
+        assert_eq!(got.max_concurrent_tasks, expected.max_concurrent_tasks);
+        assert_eq!(
+            got.max_concurrent_per_team,
+            expected.max_concurrent_per_team
+        );
+        assert_eq!(got.lock_timeout_seconds, expected.lock_timeout_seconds);
+        assert_eq!(got.strategy, expected.strategy);
+    }
+
+    #[tokio::test]
+    async fn test_update_team_concurrency_config_returns_ok() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .update_team_concurrency_config(Uuid::new_v4(), ConcurrencyConfig::default())
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // ========== BacklogService trait tests ==========
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_get_pending_fails_returns_db_error() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::with_failing_get_pending()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.process_backlog_tasks(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RateLimitingError::DatabaseError
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_empty_returns_zero() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.process_backlog_tasks(Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_expired_marks_expired_and_updates() {
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let expired = make_expired_backlog(task_id, team_id);
+        let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![expired]));
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            backlog_repo.clone(),
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.process_backlog_tasks(team_id).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0); // expired branch doesn't increment processed_count
+
+        // Verify the expired backlog was updated
+        let updated = backlog_repo.updated_backlogs();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].status, TasksBacklogStatus::Expired);
+    }
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_expired_update_failure_continues() {
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let expired = make_expired_backlog(task_id, team_id);
+        let backlog_repo = Arc::new(MockBacklogRepository::with_failing_update());
+        *backlog_repo.pending_tasks.lock().unwrap() = vec![expired];
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            backlog_repo,
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        // Should not propagate error (logged and continue)
+        let result = service.process_backlog_tasks(team_id).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_task_find_by_id_err_continues() {
+        // Pending (non-expired) backlog, but find_by_id returns Err
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let backlog = make_pending_backlog(task_id, team_id);
+        let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_db_error()),
+            backlog_repo,
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.process_backlog_tasks(team_id).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_task_not_found_skips_update() {
+        // Pending backlog, find_by_id returns Ok(None) → skip task update branch
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let backlog = make_pending_backlog(task_id, team_id);
+        // NOTE: source bug — mark_completed() on a Pending backlog fails, so
+        // processed_count never increments. We assert the observed behavior.
+        let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
+        let task_repo = Arc::new(MockTaskRepository::with_no_task());
+        let service = make_service_with_mocks(
+            task_repo,
+            backlog_repo,
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.process_backlog_tasks(team_id).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0); // mark_completed fails on Pending → 0
+    }
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_task_not_queued_skips_status_update() {
+        // Task found but status != Queued → skip the update-task branch
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let backlog = make_pending_backlog(task_id, team_id);
+        let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
+        let task_repo = Arc::new(MockTaskRepository::with_task(make_task(
+            task_id,
+            team_id,
+            TaskStatus::Active,
+        )));
+        let service = make_service_with_mocks(
+            task_repo.clone(),
+            backlog_repo,
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.process_backlog_tasks(team_id).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0); // mark_completed still fails on Pending → 0
+        assert_eq!(task_repo.update_call_count(), 0); // task.update not called
+    }
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_task_queued_calls_task_update() {
+        // Task is Queued → task.update called (succeeds) → mark_completed fails → 0
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let backlog = make_pending_backlog(task_id, team_id);
+        let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
+        let task_repo = Arc::new(MockTaskRepository::with_task(make_task(
+            task_id,
+            team_id,
+            TaskStatus::Queued,
+        )));
+        let service = make_service_with_mocks(
+            task_repo.clone(),
+            backlog_repo,
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.process_backlog_tasks(team_id).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0); // mark_completed fails on Pending → 0
+        assert_eq!(task_repo.update_call_count(), 1); // task.update WAS called
+    }
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_task_update_failure_continues() {
+        // Task is Queued, but task.update fails → continue (no increment)
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let backlog = make_pending_backlog(task_id, team_id);
+        let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
+        let task_repo = Arc::new(MockTaskRepository::with_failing_update(make_task(
+            task_id,
+            team_id,
+            TaskStatus::Queued,
+        )));
+        let service = make_service_with_mocks(
+            task_repo.clone(),
+            backlog_repo,
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.process_backlog_tasks(team_id).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+        assert_eq!(task_repo.update_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_process_backlog_tasks_concurrency_at_limit_breaks() {
+        // Force break branch: max_concurrent_per_team = 0 so 0 < 0 is false → break immediately
+        let mut config = RateLimitingConfig::default();
+        config.concurrency.max_concurrent_per_team = 0;
+
+        let task_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let backlog = make_pending_backlog(task_id, team_id);
+        let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            backlog_repo,
+            Arc::new(MockCreditsRepository::with_balance(100)),
+            config,
+        )
+        .await;
+
+        let result = service.process_backlog_tasks(team_id).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0); // break before any processing
+    }
+
+    // ========== QuotaService trait tests ==========
+
+    #[tokio::test]
+    async fn test_check_and_deduct_quota_get_balance_fails_returns_credits_error() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_failing_get_balance()),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .check_and_deduct_quota(
+                Uuid::new_v4(),
+                10,
+                CreditsTransactionType::Scrape,
+                "test".to_string(),
+                None,
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RateLimitingError::CreditsError
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_check_and_deduct_quota_insufficient_balance_returns_exceeded() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(5)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .check_and_deduct_quota(
+                Uuid::new_v4(),
+                10,
+                CreditsTransactionType::Scrape,
+                "test".to_string(),
+                None,
+            )
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RateLimitingError::RateLimitExceeded(msg) => {
+                assert!(msg.contains("Insufficient credits"));
+                assert!(msg.contains("required 10"));
+                assert!(msg.contains("available 5"));
+            }
+            other => panic!("Expected RateLimitExceeded, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_and_deduct_quota_exact_balance_succeeds() {
+        let credits_repo = Arc::new(MockCreditsRepository::with_balance(10));
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            credits_repo.clone(),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .check_and_deduct_quota(
+                Uuid::new_v4(),
+                10,
+                CreditsTransactionType::Scrape,
+                "test".to_string(),
+                None,
+            )
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(credits_repo.deduct_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_check_and_deduct_quota_deduct_fails_returns_credits_error() {
+        let credits_repo = Arc::new(MockCreditsRepository::with_failing_deduct(100));
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            credits_repo.clone(),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service
+            .check_and_deduct_quota(
+                Uuid::new_v4(),
+                10,
+                CreditsTransactionType::Scrape,
+                "test".to_string(),
+                None,
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RateLimitingError::CreditsError
+        ));
+        assert_eq!(credits_repo.deduct_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_quota_balance_get_balance_fails_returns_credits_error() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_failing_get_balance()),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.get_quota_balance(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            RateLimitingError::CreditsError
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_get_quota_balance_success_returns_balance() {
+        let service = make_service_with_mocks(
+            Arc::new(MockTaskRepository::with_no_task()),
+            Arc::new(MockBacklogRepository::new()),
+            Arc::new(MockCreditsRepository::with_balance(42)),
+            RateLimitingConfig::default(),
+        )
+        .await;
+
+        let result = service.get_quota_balance(Uuid::new_v4()).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+    }
 }

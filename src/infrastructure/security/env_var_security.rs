@@ -1605,4 +1605,36 @@ mod tests {
             _ => panic!("Expected Forbidden"),
         }
     }
+
+    // ========== EnvVarValidator::validate success path ==========
+    // This test covers line 718: when validate_required passes, no forbidden
+    // variables are detected, and security_score >= 50, validate returns Ok(report).
+    // Uses a custom whitelist with empty forbidden_vars so the test is
+    // environment-independent (tarpaulin/cargo set RUSTFLAGS/CARGO_INCREMENTAL
+    // which the default whitelist forbids, causing validate() to return Err).
+
+    #[test]
+    fn test_env_var_validator_validate_success_returns_report() {
+        let whitelist = EnvVarWhitelist {
+            allowed_prefixes: vec![],
+            allowed_names: HashSet::new(),
+            sensitive_vars: HashSet::new(),
+            forbidden_vars: HashSet::new(),
+        };
+        let monitor = EnvVarSecurityMonitor::new(whitelist);
+        // Empty required_vars means validate_required always passes.
+        let validator = EnvVarValidator::new(monitor, vec![]);
+        let result = validator.validate();
+        assert!(
+            result.is_ok(),
+            "validate should succeed with no required vars and no forbidden vars"
+        );
+        let report = result.unwrap();
+        // With empty forbidden_vars and all vars unknown, score = 100 - 20 = 80.
+        assert!(
+            report.security_score >= 50,
+            "security_score should be >= 50, got {}",
+            report.security_score
+        );
+    }
 }

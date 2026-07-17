@@ -211,4 +211,20 @@ mod tests {
 
         assert_eq!(next_retry, expected);
     }
+
+    #[test]
+    fn test_calculate_backoff_non_exponential_returns_initial_backoff() {
+        // Cover line 77: when exponential_backoff is false, the function
+        // returns initial_backoff immediately without exponential calculation.
+        let mut policy = RetryPolicy::standard();
+        policy.exponential_backoff = false;
+        policy.enable_jitter = false;
+        policy.initial_backoff = Duration::from_secs(3);
+
+        let backoff1 = policy.calculate_backoff(1);
+        let backoff5 = policy.calculate_backoff(5);
+
+        assert_eq!(backoff1, Duration::from_secs(3));
+        assert_eq!(backoff5, Duration::from_secs(3));
+    }
 }

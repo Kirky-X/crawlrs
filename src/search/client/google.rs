@@ -613,4 +613,328 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Valid Result");
     }
+
+    // ========== search() test fallback path ==========
+
+    /// Mutex to serialize tests that mutate process-level environment
+    /// variables (std::env::set_var is not thread-safe across tests).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn make_search_request(query: &str) -> SearchRequest {
+        SearchRequest::new(query)
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_returns_hardcoded_results_in_dev_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "true");
+        std::env::set_var("CRAWLRS_ENV", "development");
+
+        let engine = create_engine();
+        let request = make_search_request("rust programming");
+
+        let response = engine.search(&request).await;
+
+        // Clean up env vars ASAP to minimize cross-test interference
+        std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
+        std::env::remove_var("CRAWLRS_ENV");
+
+        let response = response.expect("fallback should return Ok in dev env");
+        assert_eq!(response.items.len(), 2, "fallback should return 2 items");
+        assert_eq!(response.engine, SearchEngineType::Google);
+        assert_eq!(response.total_results, Some(2));
+        assert!(response.items[0].title.contains("rust programming"));
+        assert_eq!(response.items[0].url, "https://google.com/1");
+        assert_eq!(response.items[1].url, "https://google.com/2");
+        assert_eq!(response.items[0].engine, SearchEngineType::Google);
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_returns_hardcoded_results_in_test_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "true");
+        std::env::set_var("APP_ENVIRONMENT", "test");
+
+        let engine = create_engine();
+        let request = make_search_request("test query");
+
+        let response = engine.search(&request).await;
+
+        std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
+        std::env::remove_var("APP_ENVIRONMENT");
+
+        let response = response.expect("fallback should return Ok in test env");
+        assert_eq!(response.items.len(), 2);
+        assert!(response.items[0].title.contains("test query"));
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_returns_hardcoded_results_with_empty_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "true");
+        // No CRAWLRS_ENV or APP_ENVIRONMENT set — should default to "development"
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::remove_var("APP_ENVIRONMENT");
+
+        let engine = create_engine();
+        let request = make_search_request("default env test");
+
+        let response = engine.search(&request).await;
+
+        std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
+
+        let response = response
+            .expect("fallback should return Ok when env vars unset (defaults to development)");
+        assert_eq!(response.items.len(), 2);
+        assert!(response.items[0].title.contains("default env test"));
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_escapes_query_in_title() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "true");
+        std::env::set_var("CRAWLRS_ENV", "dev");
+
+        let engine = create_engine();
+        // Query with HTML special characters that should be escaped
+        let request = make_search_request("<script>alert(1)</script>");
+
+        let response = engine.search(&request).await;
+
+        std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
+        std::env::remove_var("CRAWLRS_ENV");
+
+        let response = response.expect("fallback should return Ok");
+        // The title should contain the escaped query, not raw HTML
+        assert!(response.items[0].title.contains("&lt;script&gt;"));
+        assert!(!response.items[0].title.contains("<script>"));
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_with_dev_alias_env_values() {
+        // Test all accepted dev environment aliases: "development", "dev", "test", "testing", ""
+        let aliases = ["dev", "testing"];
+
+        for alias in aliases {
+            let _lock = ENV_LOCK.lock().unwrap();
+            std::env::set_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS", "true");
+            std::env::set_var("CRAWLRS_ENV", alias);
+
+            let engine = create_engine();
+            let request = make_search_request("alias test");
+
+            let response = engine.search(&request).await;
+
+            std::env::remove_var("GOOGLE_HTTP_FALLBACK_TEST_RESULTS");
+            std::env::remove_var("CRAWLRS_ENV");
+
+            assert!(
+                response.is_ok(),
+                "fallback should succeed for CRAWLRS_ENV={}",
+                alias
+            );
+            assert_eq!(response.unwrap().items.len(), 2);
+        }
+    }
+
+    // ========== force_refresh_arc_id tests ==========
+
+    #[tokio::test]
+    async fn test_force_refresh_arc_id_changes_id() {
+        let engine = create_engine();
+        let arc_id_before = engine.get_arc_id(0).await;
+        engine.force_refresh_arc_id().await;
+        let arc_id_after = engine.get_arc_id(0).await;
+        assert_ne!(
+            arc_id_before, arc_id_after,
+            "ARC_ID should change after force_refresh_arc_id"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_force_refresh_arc_id_preserves_format() {
+        let engine = create_engine();
+        engine.force_refresh_arc_id().await;
+        let arc_id = engine.get_arc_id(5).await;
+        assert!(arc_id.contains("arc_id:srp_"));
+        assert!(arc_id.contains("_1"));
+        assert!(arc_id.contains("use_ac:true"));
+        assert!(arc_id.contains("_fmt:prog"));
+    }
+
+    // ========== safe_parse_selector tests ==========
+
+    #[test]
+    fn test_safe_parse_selector_valid_simple() {
+        assert!(safe_parse_selector("div").is_some());
+        assert!(safe_parse_selector("a").is_some());
+        assert!(safe_parse_selector("h3").is_some());
+    }
+
+    #[test]
+    fn test_safe_parse_selector_valid_complex() {
+        assert!(safe_parse_selector("a[href]").is_some());
+        assert!(safe_parse_selector("div[class='test']").is_some());
+        assert!(safe_parse_selector("h3, a h3").is_some());
+        assert!(safe_parse_selector("div[jscontroller*='SC7lYd']").is_some());
+        assert!(safe_parse_selector("div[data-sncf='1'], div[data-snc]").is_some());
+    }
+
+    #[test]
+    fn test_safe_parse_selector_invalid() {
+        assert!(safe_parse_selector("<<<").is_none());
+        assert!(safe_parse_selector("").is_none());
+        assert!(safe_parse_selector("div[").is_none());
+        assert!(safe_parse_selector("div[").is_none());
+    }
+
+    // ========== parse_results additional edge cases ==========
+
+    #[test]
+    fn test_parse_results_empty_title_skipped() {
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/1"><h3>   </h3></a>
+            </div>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/2"><h3>Valid</h3></a>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Valid");
+    }
+
+    #[test]
+    fn test_parse_results_missing_link_node_skipped() {
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <h3>Title Without Link</h3>
+            </div>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/valid"><h3>Valid</h3></a>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Valid");
+    }
+
+    #[test]
+    fn test_parse_results_empty_href_skipped() {
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href=""><h3>Empty Href</h3></a>
+            </div>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/valid"><h3>Valid</h3></a>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/valid");
+    }
+
+    #[test]
+    fn test_parse_results_url_q_without_ampersand() {
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="/url?q=https://example.com/clean"><h3>Clean</h3></a>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/clean");
+    }
+
+    #[test]
+    fn test_parse_results_protocol_relative_url_skipped() {
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="//example.com/protocol-relative"><h3>Protocol Relative</h3></a>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert!(
+            results.is_empty(),
+            "protocol-relative URL should be skipped (not http prefix)"
+        );
+    }
+
+    #[test]
+    fn test_parse_results_data_snc_selector() {
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/1"><h3>With SNC</h3></a>
+                <div data-snc="1">SNC snippet</div>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].description, "SNC snippet");
+    }
+
+    #[test]
+    fn test_parse_results_no_snippet_defaults_empty() {
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/1"><h3>No Snippet</h3></a>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].description, "");
+    }
+
+    #[test]
+    fn test_parse_results_html_entities_in_title_escaped() {
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="https://example.com/1"><h3>A &amp; B</h3></a>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].title.contains("&amp;"));
+        assert!(!results[0].title.contains(" & "));
+    }
+
+    #[test]
+    fn test_parse_results_relative_url_with_path() {
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div jscontroller="SC7lYd">
+                <a href="/search?q=test"><h3>Relative Path</h3></a>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://www.google.com/search?q=test");
+    }
 }

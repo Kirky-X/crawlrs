@@ -146,3 +146,390 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
         Ok(result.rows_affected > 0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::auth::ApiKeyScope;
+
+    /// Build a lazy DbPool that does not actually connect; `get_session()` will
+    /// fail at runtime, allowing us to exercise every error path in this
+    /// repository without a real database.
+    fn create_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&dbnexus::DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    fn sample_scope() -> ApiKeyScope {
+        ApiKeyScope {
+            read: true,
+            write: false,
+            admin: false,
+            search_limit: 100,
+            scrape_limit: 50,
+        }
+    }
+
+    // ========== construction ==========
+
+    #[test]
+    fn test_new_creates_repository_instance() {
+        let pool = create_test_db_pool();
+        let repo = AuthScopeRepositoryImpl::new(pool);
+        // Repository should be constructible without a real database connection
+        let _clone = repo.clone();
+    }
+
+    // ========== error paths (lazy pool: get_session fails) ==========
+
+    #[tokio::test]
+    async fn test_find_by_api_key_id_returns_db_error_without_real_db() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_api_key_id(Uuid::new_v4()).await;
+        assert!(result.is_err(), "should fail without a real database");
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_api_key_returns_db_error_without_real_db() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_api_key("sk-test-key").await;
+        assert!(result.is_err(), "should fail without a real database");
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_api_key_with_empty_key_returns_db_error() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_api_key("").await;
+        assert!(
+            result.is_err(),
+            "should fail without a real database even for empty key"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_upsert_returns_db_error_without_real_db() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let result = repo.upsert(Uuid::new_v4(), sample_scope()).await;
+        assert!(result.is_err(), "should fail without a real database");
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_by_api_key_id_returns_db_error_without_real_db() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let result = repo.delete_by_api_key_id(Uuid::new_v4()).await;
+        assert!(result.is_err(), "should fail without a real database");
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    // ========== RepositoryError variants ==========
+
+    #[test]
+    fn test_repository_error_database_display() {
+        let err = RepositoryError::Database(sea_orm::DbErr::RecordNotFound(
+            "scope not found".to_string(),
+        ));
+        assert!(format!("{}", err).contains("Database error"));
+        assert!(format!("{}", err).contains("scope not found"));
+    }
+
+    #[test]
+    fn test_repository_error_not_found_display() {
+        let err = RepositoryError::NotFound("api key".to_string());
+        assert_eq!(format!("{}", err), "Not found: api key");
+    }
+
+    #[test]
+    fn test_repository_error_from_dberr() {
+        let db_err =
+            sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    // ========== From<dbnexus::DbError> exhaustive coverage ==========
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_connection() {
+        use sea_orm::ConnAcquireErr;
+        let inner = sea_orm::DbErr::ConnectionAcquire(ConnAcquireErr::Timeout);
+        let db_err = dbnexus::DbError::Connection(inner);
+        let repo_err: RepositoryError = db_err.into();
+        // Connection variant should map to Database variant preserving the inner DbErr
+        match repo_err {
+            RepositoryError::Database(sea_orm::DbErr::ConnectionAcquire(_)) => {}
+            other => panic!("expected Database(ConnectionAcquire), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_config() {
+        let db_err = dbnexus::DbError::Config("invalid url".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(sea_orm::DbErr::Custom(msg)) => {
+                assert!(msg.contains("Config"));
+                assert!(msg.contains("invalid url"));
+            }
+            other => panic!("expected Database(Custom), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_permission() {
+        let db_err = dbnexus::DbError::Permission("forbidden".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(sea_orm::DbErr::Custom(msg)) => {
+                assert!(msg.contains("Permission"));
+                assert!(msg.contains("forbidden"));
+            }
+            other => panic!("expected Database(Custom), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_transaction() {
+        let db_err = dbnexus::DbError::Transaction("deadlock".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(sea_orm::DbErr::Custom(msg)) => {
+                assert!(msg.contains("Transaction"));
+                assert!(msg.contains("deadlock"));
+            }
+            other => panic!("expected Database(Custom), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_migration() {
+        let db_err = dbnexus::DbError::Migration("schema mismatch".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(sea_orm::DbErr::Custom(msg)) => {
+                assert!(msg.contains("Migration"));
+                assert!(msg.contains("schema mismatch"));
+            }
+            other => panic!("expected Database(Custom), got {:?}", other),
+        }
+    }
+
+    // ========== sample_scope construction & ApiKeyScope boundaries ==========
+
+    #[test]
+    fn test_sample_scope_construction() {
+        let scope = sample_scope();
+        assert!(scope.read);
+        assert!(!scope.write);
+        assert!(!scope.admin);
+        assert_eq!(scope.search_limit, 100);
+        assert_eq!(scope.scrape_limit, 50);
+    }
+
+    #[test]
+    fn test_api_key_scope_all_permissions_enabled() {
+        let scope = ApiKeyScope {
+            read: true,
+            write: true,
+            admin: true,
+            search_limit: u32::MAX,
+            scrape_limit: u32::MAX,
+        };
+        assert!(scope.read && scope.write && scope.admin);
+        assert_eq!(scope.search_limit, u32::MAX);
+        assert_eq!(scope.scrape_limit, u32::MAX);
+    }
+
+    #[test]
+    fn test_api_key_scope_all_permissions_disabled() {
+        let scope = ApiKeyScope {
+            read: false,
+            write: false,
+            admin: false,
+            search_limit: 0,
+            scrape_limit: 0,
+        };
+        assert!(!scope.read && !scope.write && !scope.admin);
+        assert_eq!(scope.search_limit, 0);
+        assert_eq!(scope.scrape_limit, 0);
+    }
+
+    #[test]
+    fn test_api_key_scope_admin_only() {
+        let scope = ApiKeyScope {
+            read: false,
+            write: false,
+            admin: true,
+            search_limit: 0,
+            scrape_limit: 0,
+        };
+        assert!(!scope.read && !scope.write && scope.admin);
+    }
+
+    // ========== additional error path variants ==========
+
+    #[tokio::test]
+    async fn test_find_by_api_key_with_unicode_key_returns_db_error() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_api_key("sk-测试-キー-🔑").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_api_key_with_long_key_returns_db_error() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let long_key = "sk-".to_string() + &"a".repeat(10_000);
+        let result = repo.find_by_api_key(&long_key).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_upsert_with_admin_scope_returns_db_error() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let admin_scope = ApiKeyScope {
+            read: true,
+            write: true,
+            admin: true,
+            search_limit: 1000,
+            scrape_limit: 500,
+        };
+        let result = repo.upsert(Uuid::new_v4(), admin_scope).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_upsert_with_zero_limits_returns_db_error() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let zero_scope = ApiKeyScope {
+            read: false,
+            write: false,
+            admin: false,
+            search_limit: 0,
+            scrape_limit: 0,
+        };
+        let result = repo.upsert(Uuid::new_v4(), zero_scope).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_by_api_key_id_with_nil_uuid_returns_db_error() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let result = repo.delete_by_api_key_id(Uuid::nil()).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_api_key_id_with_nil_uuid_returns_db_error() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_api_key_id(Uuid::nil()).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database error, got {:?}", other),
+        }
+    }
+
+    // ========== additional From<sea_orm::DbErr> variant coverage ==========
+
+    #[test]
+    fn test_repository_error_from_dberr_record_not_found() {
+        let db_err = sea_orm::DbErr::RecordNotFound("scope not found".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dberr_connection_acquire() {
+        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dberr_record_not_inserted() {
+        let db_err = sea_orm::DbErr::RecordNotInserted;
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dberr_custom_display() {
+        let db_err = sea_orm::DbErr::Custom("custom failure".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        let msg = format!("{}", repo_err);
+        assert!(msg.contains("Database error"));
+        assert!(msg.contains("custom failure"));
+    }
+
+    // ========== RepositoryError::NotFound with various messages ==========
+
+    #[test]
+    fn test_repository_error_not_found_with_empty_message() {
+        let err = RepositoryError::NotFound("".to_string());
+        assert_eq!(format!("{}", err), "Not found: ");
+    }
+
+    #[test]
+    fn test_repository_error_not_found_with_long_message() {
+        let long_msg = "x".repeat(1000);
+        let err = RepositoryError::NotFound(long_msg.clone());
+        let msg = format!("{}", err);
+        assert!(msg.contains(&long_msg));
+    }
+}

@@ -341,7 +341,10 @@ async fn tc_find_by_id_returns_none_for_unknown() {
         .find_by_id(unknown_id)
         .await
         .expect("Failed to query unknown backlog id");
-    assert!(result.is_none(), "Should return None for unknown backlog id");
+    assert!(
+        result.is_none(),
+        "Should return None for unknown backlog id"
+    );
 }
 
 /// tc_get_pending_tasks_no_team_no_limit: 不带 team_id 和 limit 查询所有 pending
@@ -457,6 +460,231 @@ async fn tc_update_status_batch_with_nonexistent() {
         affected, 1,
         "Should only affect 1 row (the existing one), got {}",
         affected
+    );
+
+    cleanup_backlogs(&app, team_id).await;
+}
+
+/// tc_create_with_all_optional_fields_set: 覆盖 create 中 scheduled_at/expires_at 的 Some 分支
+///
+/// make_backlog 默认 scheduled_at=None，test_get_expired_tasks 只设了 expires_at，
+/// 这里同时设 scheduled_at 和 expires_at，覆盖 create 中两个 Option.map(|dt| dt.into()) 的 Some 分支。
+#[tokio::test]
+async fn tc_create_with_all_optional_fields_set() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+    let task_id = Uuid::new_v4();
+
+    let mut backlog = make_backlog(team_id, task_id, 1);
+    let now = chrono::Utc::now();
+    let scheduled = now + chrono::Duration::minutes(30);
+    let expires = now + chrono::Duration::hours(2);
+    backlog.scheduled_at = Some(scheduled);
+    backlog.expires_at = Some(expires);
+    // processed_at 在新 backlog 上为 None，mark_completed 会设置它
+
+    let created = repo
+        .create(&backlog)
+        .await
+        .expect("create with all optional fields failed");
+    assert_eq!(created.id, backlog.id);
+    assert_eq!(created.task_id, task_id);
+    assert_eq!(created.team_id, team_id);
+    assert_eq!(created.status, TasksBacklogStatus::Pending);
+    // 验证 Some 字段被持久化
+    assert!(
+        created.scheduled_at.is_some(),
+        "scheduled_at should be Some"
+    );
+    assert!(created.expires_at.is_some(), "expires_at should be Some");
+    assert!(
+        created.processed_at.is_none(),
+        "processed_at should be None for new backlog"
+    );
+
+    // 从 DB 重新查询，验证字段映射
+    let found = repo
+        .find_by_id(backlog.id)
+        .await
+        .expect("find_by_id failed")
+        .expect("backlog should be found");
+    assert!(
+        found.scheduled_at.is_some(),
+        "scheduled_at should be Some from DB"
+    );
+    assert!(
+        found.expires_at.is_some(),
+        "expires_at should be Some from DB"
+    );
+    assert!(
+        found.processed_at.is_none(),
+        "processed_at should be None from DB"
+    );
+
+    cleanup_backlogs(&app, team_id).await;
+}
+
+/// tc_update_with_all_optional_fields_set: 覆盖 update 中 scheduled_at/expires_at/processed_at 的 Some 分支
+///
+/// test_update_backlog 只调用 mark_processing，processed_at 仍为 None，
+/// 这里走 mark_processing -> mark_completed 路径，使 processed_at 被设为 Some，
+/// 同时手动设 scheduled_at，覆盖 update 中三个 Option.map(|dt| dt.into()) 的 Some 分支。
+#[tokio::test]
+async fn tc_update_with_all_optional_fields_set() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+    let task_id = Uuid::new_v4();
+
+    let mut backlog = make_backlog(team_id, task_id, 1);
+    let now = chrono::Utc::now();
+    backlog.scheduled_at = Some(now + chrono::Duration::minutes(15));
+    backlog.expires_at = Some(now + chrono::Duration::hours(1));
+
+    repo.create(&backlog).await.expect("create backlog failed");
+
+    // 状态流转：Pending -> Processing -> Completed
+    // mark_completed 会设置 processed_at = Some(now)
+    backlog
+        .mark_processing()
+        .expect("mark_processing should succeed");
+    backlog
+        .mark_completed()
+        .expect("mark_completed should succeed");
+    assert_eq!(backlog.status, TasksBacklogStatus::Completed);
+    assert!(
+        backlog.processed_at.is_some(),
+        "processed_at should be Some after mark_completed"
+    );
+    assert!(
+        backlog.scheduled_at.is_some(),
+        "scheduled_at should still be Some"
+    );
+    assert!(
+        backlog.expires_at.is_some(),
+        "expires_at should still be Some"
+    );
+
+    // update 路径会进入三个 Option.map 的 Some 分支
+    let updated = repo
+        .update(&backlog)
+        .await
+        .expect("update with all optional fields failed");
+    assert_eq!(updated.id, backlog.id);
+    assert_eq!(updated.status, TasksBacklogStatus::Completed);
+    assert!(
+        updated.scheduled_at.is_some(),
+        "scheduled_at should be Some after update"
+    );
+    assert!(
+        updated.expires_at.is_some(),
+        "expires_at should be Some after update"
+    );
+    assert!(
+        updated.processed_at.is_some(),
+        "processed_at should be Some after update"
+    );
+
+    // 从 DB 验证字段被正确持久化
+    let found = repo
+        .find_by_id(backlog.id)
+        .await
+        .expect("find_by_id failed")
+        .expect("backlog should be found");
+    assert_eq!(found.status, TasksBacklogStatus::Completed);
+    assert!(
+        found.scheduled_at.is_some(),
+        "scheduled_at should be Some from DB"
+    );
+    assert!(
+        found.expires_at.is_some(),
+        "expires_at should be Some from DB"
+    );
+    assert!(
+        found.processed_at.is_some(),
+        "processed_at should be Some from DB"
+    );
+
+    cleanup_backlogs(&app, team_id).await;
+}
+
+/// tc_update_status_to_failed_via_update: 覆盖 update 中 status=Failed/Expired 路径
+///
+/// test_update_backlog 只测了 Processing，这里测 Failed 和 Expired 两种状态转换，
+/// 验证 update 在不同 status 字符串下都能正确序列化。
+#[tokio::test]
+async fn tc_update_status_to_failed_via_update() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+    let task_id = Uuid::new_v4();
+
+    let mut backlog = make_backlog(team_id, task_id, 1);
+    repo.create(&backlog).await.expect("create backlog failed");
+
+    // 转为 Failed 状态再 update
+    backlog.mark_failed().expect("mark_failed should succeed");
+    assert_eq!(backlog.status, TasksBacklogStatus::Failed);
+    repo.update(&backlog)
+        .await
+        .expect("update to Failed failed");
+
+    let found = repo
+        .find_by_id(backlog.id)
+        .await
+        .expect("find_by_id failed")
+        .expect("backlog should be found");
+    assert_eq!(found.status, TasksBacklogStatus::Failed);
+
+    // 转为 Expired 状态再 update
+    backlog.mark_expired().expect("mark_expired should succeed");
+    assert_eq!(backlog.status, TasksBacklogStatus::Expired);
+    repo.update(&backlog)
+        .await
+        .expect("update to Expired failed");
+
+    let found = repo
+        .find_by_id(backlog.id)
+        .await
+        .expect("find_by_id failed")
+        .expect("backlog should be found");
+    assert_eq!(found.status, TasksBacklogStatus::Expired);
+
+    cleanup_backlogs(&app, team_id).await;
+}
+
+/// tc_get_pending_tasks_with_team_and_limit: 覆盖 get_pending_tasks (Some, Some) 组合分支
+///
+/// 已有测试覆盖 (Some, None)、(None, Some)、(None, None)，但 (Some, Some) 组合未测，
+/// 该路径同时进入两个 if let 分支，构造完整的 limit+team 过滤场景。
+#[tokio::test]
+async fn tc_get_pending_tasks_with_team_and_limit() {
+    let app = create_test_app_no_worker().await;
+    let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    // 创建 3 个 pending 任务
+    for _ in 0..3 {
+        let b = make_backlog(team_id, Uuid::new_v4(), 1);
+        repo.create(&b).await.expect("create backlog failed");
+    }
+
+    // (Some team_id, Some limit) 组合：同时进入两个 if let 分支
+    let pending = repo
+        .get_pending_tasks(Some(team_id), Some(2))
+        .await
+        .expect("get_pending_tasks with team and limit failed");
+
+    assert!(
+        pending.len() <= 2,
+        "Should return at most 2 pending tasks, got {}",
+        pending.len()
+    );
+    // 所有返回的任务都属于该 team
+    assert!(
+        pending.iter().all(|b| b.team_id == team_id),
+        "all returned backlogs should belong to the queried team"
     );
 
     cleanup_backlogs(&app, team_id).await;

@@ -1113,4 +1113,49 @@ mod tests {
             "database_password_weak"
         );
     }
+
+    #[test]
+    fn test_validate_security_production_short_password_returns_error() {
+        // Cover lines 505-510: production environment + short password path.
+        // In dev mode, `is_production` is false and the block is skipped; this
+        // test forces production mode and supplies a URL whose password length
+        // (as computed by extract_password_length) is < 16 to trigger the
+        // `database_password_short_production` validation error.
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_app = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_crawlrs = std::env::var("CRAWLRS_ENV").ok();
+        std::env::set_var("APP_ENVIRONMENT", "production");
+        std::env::remove_var("CRAWLRS_ENV");
+
+        let mut settings = build_test_settings();
+        // URL password "shortpwd" → extract_password_length returns 14
+        // (distance from first ':' to '@'), which is < 16.
+        settings.database = DatabaseSettings {
+            url: "postgresql://user:shortpwd@localhost/db".to_string(),
+            max_connections: Some(100),
+            min_connections: Some(10),
+            connect_timeout: Some(10),
+            idle_timeout: Some(300),
+            max_lifetime: Some(1800),
+            connection_keepalive: Some(30),
+            health_check_interval: Some(60),
+        };
+        let result = validate_security(&settings);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code.to_string(),
+            "database_password_short_production"
+        );
+
+        if let Some(v) = saved_app {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_crawlrs {
+            std::env::set_var("CRAWLRS_ENV", v);
+        } else {
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+    }
 }

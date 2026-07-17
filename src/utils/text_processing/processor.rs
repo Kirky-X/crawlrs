@@ -1649,4 +1649,638 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|r| r.is_ok()));
     }
+
+    // ========== Supplementary tests: boundary cases and edge paths ==========
+
+    #[test]
+    fn test_calculate_repetitive_ratio_all_same_words() {
+        // All identical words: ratio should be 1.0 (max_count == total_words).
+        let processor = CrawlTextProcessor::new();
+        let text = "word word word word word word word word word word";
+        let ratio = processor.calculate_repetitive_ratio(text);
+        assert_eq!(ratio, 1.0);
+    }
+
+    #[test]
+    fn test_calculate_repetitive_ratio_case_insensitive() {
+        // Words are lowercased before counting, so "Word" and "word" are the same.
+        let processor = CrawlTextProcessor::new();
+        let text = "Word word WORD word word word word word word word";
+        let ratio = processor.calculate_repetitive_ratio(text);
+        assert_eq!(ratio, 1.0);
+    }
+
+    #[test]
+    fn test_calculate_repetitive_ratio_exactly_ten_words() {
+        // Boundary: exactly 10 words (the minimum for ratio calculation).
+        let processor = CrawlTextProcessor::new();
+        let text = "a b c d e f g h i j";
+        let ratio = processor.calculate_repetitive_ratio(text);
+        assert_eq!(ratio, 0.1, "each word appears once, ratio = 1/10");
+    }
+
+    #[test]
+    fn test_calculate_repetitive_ratio_eleven_words() {
+        // Just above the boundary: 11 words.
+        let processor = CrawlTextProcessor::new();
+        let text = "a b c d e f g h i j a";
+        let ratio = processor.calculate_repetitive_ratio(text);
+        assert!(
+            (ratio - (2.0 / 11.0)).abs() < 0.001,
+            "ratio should be 2/11, got {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_validate_content_quality_text_length_boundary() {
+        // Text length exactly 50 should not trigger the "too short" branch.
+        let processor = CrawlTextProcessor::new();
+        // 50 characters, 10 distinct words.
+        let text = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+                   bb cc dd ee ff gg hh ii jj kk";
+        let result = processor
+            .process_crawled_content(text.as_bytes(), "http://x.com", None)
+            .unwrap();
+        let quality = processor.validate_content_quality(&result);
+        // Should not be Poor due to short text (length >= 50, words >= 10).
+        match quality {
+            ContentQuality::Excellent | ContentQuality::Good => {}
+            ContentQuality::Poor(msg) => {
+                // May still be Poor for other reasons (e.g. repetitive),
+                // but not for "文本内容过短" or "单词数量过少".
+                assert!(
+                    !msg.contains("过短") && !msg.contains("过少"),
+                    "should not be too short/few words: {}",
+                    msg
+                );
+            }
+            ContentQuality::Fair => panic!("Fair is never returned"),
+        }
+    }
+
+    #[test]
+    fn test_validate_content_quality_word_count_boundary() {
+        // Exactly 10 words should not trigger the "too few words" branch.
+        let processor = CrawlTextProcessor::new();
+        // 10 distinct words, each long enough to make text_length >= 50.
+        let words: Vec<String> = (0..10).map(|i| format!("word{}", i)).collect();
+        let text = words.join(" ");
+        // Ensure text length >= 50.
+        assert!(
+            text.len() >= 50,
+            "test text must be >= 50 chars, got {}",
+            text.len()
+        );
+        let result = processor
+            .process_crawled_content(text.as_bytes(), "http://x.com", None)
+            .unwrap();
+        let quality = processor.validate_content_quality(&result);
+        match quality {
+            ContentQuality::Excellent | ContentQuality::Good => {}
+            ContentQuality::Poor(msg) => {
+                assert!(
+                    !msg.contains("过短") && !msg.contains("过少"),
+                    "should not be too short/few: {}",
+                    msg
+                );
+            }
+            ContentQuality::Fair => panic!("Fair is never returned"),
+        }
+    }
+
+    #[test]
+    fn test_process_simple_text_with_unicode_escapes() {
+        // process_simple_text should preserve unicode escape normalization
+        // (delegates to TextEncodingProcessor).
+        let processor = CrawlTextProcessor::new();
+        let text = r"Hello \u4e16\u754c";
+        let result = processor.process_simple_text(text).unwrap();
+        assert!(
+            result.contains("世界"),
+            "unicode escapes should be normalized: got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_process_simple_text_with_backslash_n() {
+        // A literal backslash followed by 'n' is not a unicode escape;
+        // it should be preserved as-is.
+        let processor = CrawlTextProcessor::new();
+        let text = r"line1\nline2";
+        let result = processor.process_simple_text(text).unwrap();
+        assert_eq!(result, r"line1\nline2");
+    }
+
+    #[test]
+    fn test_process_batch_with_one_too_large_entry() {
+        // Batch with a single too-large entry should produce one error result.
+        let mut processor = CrawlTextProcessor::new();
+        processor.update_config(CrawlProcessorConfig {
+            max_processing_time_secs: 30,
+            max_content_size_mb: 0,
+        });
+        let batch = vec![(b"too large content here".as_slice(), "http://x.com", None)];
+        let results = processor.process_batch(batch);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_err());
+    }
+
+    #[test]
+    fn test_update_config_with_minimum_values() {
+        // Update config with minimum allowed values (1 second, 1 MB).
+        let mut processor = CrawlTextProcessor::new();
+        processor.update_config(CrawlProcessorConfig {
+            max_processing_time_secs: 1,
+            max_content_size_mb: 1,
+        });
+        let config = processor.get_config();
+        assert_eq!(config.max_processing_time_secs, 1);
+        assert_eq!(config.max_content_size_mb, 1);
+    }
+
+    #[test]
+    fn test_process_crawled_content_preserves_content_type() {
+        // The content_type field should be preserved in the processed result.
+        let processor = CrawlTextProcessor::new();
+        let result = processor
+            .process_crawled_content(b"hello", "http://x.com", Some("text/plain"))
+            .unwrap();
+        assert_eq!(
+            result.processed_content.content_type.as_deref(),
+            Some("text/plain")
+        );
+    }
+
+    #[test]
+    fn test_process_crawled_content_with_none_content_type() {
+        // content_type=None should produce None in the result.
+        let processor = CrawlTextProcessor::new();
+        let result = processor
+            .process_crawled_content(b"hello", "http://x.com", None)
+            .unwrap();
+        assert!(result.processed_content.content_type.is_none());
+    }
+
+    #[test]
+    fn test_processed_crawl_content_fields() {
+        // Verify all fields of ProcessedCrawlContent are correctly populated.
+        let processor = CrawlTextProcessor::new();
+        let result = processor
+            .process_crawled_content(b"test data", "http://example.com", Some("text/plain"))
+            .unwrap();
+        assert_eq!(result.url, "http://example.com");
+        assert_eq!(result.original_size, 9);
+        assert_eq!(
+            result.processed_size,
+            result.processed_content.extracted_text.len()
+        );
+        assert!(!result.processing_time.is_zero());
+    }
+
+    #[test]
+    fn test_crawl_processing_error_text_encoding_from() {
+        // Verify From<TextEncodingError> for CrawlProcessingError.
+        let encoding_err = TextEncodingError::ConversionFailed("conv fail".to_string());
+        let crawl_err: CrawlProcessingError = encoding_err.into();
+        match crawl_err {
+            CrawlProcessingError::TextEncodingError(_) => {}
+            other => panic!("expected TextEncodingError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_crawl_processing_error_web_content_from() {
+        // Verify From<WebContentError> for CrawlProcessingError.
+        let web_err = WebContentError::ContentExtractionError("extract fail".to_string());
+        let crawl_err: CrawlProcessingError = web_err.into();
+        match crawl_err {
+            CrawlProcessingError::WebContentError(_) => {}
+            other => panic!("expected WebContentError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_crawl_processor_config_default_values() {
+        // Verify the default config matches the processor's default config.
+        let processor = CrawlTextProcessor::new();
+        let processor_config = processor.get_config();
+        let default_config = CrawlProcessorConfig::default();
+        assert_eq!(
+            processor_config.max_processing_time_secs,
+            default_config.max_processing_time_secs
+        );
+        assert_eq!(
+            processor_config.max_content_size_mb,
+            default_config.max_content_size_mb
+        );
+    }
+
+    #[test]
+    fn test_content_quality_debug_format() {
+        // Verify ContentQuality implements Debug.
+        let excellent = ContentQuality::Excellent;
+        let debug = format!("{:?}", excellent);
+        assert!(debug.contains("Excellent"));
+    }
+
+    #[test]
+    fn test_processed_crawl_content_debug_contains_url() {
+        // The Debug output should contain the URL for traceability.
+        let processor = CrawlTextProcessor::new();
+        let result = processor
+            .process_crawled_content(b"data", "http://trace.example.com", None)
+            .unwrap();
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("http://trace.example.com"));
+    }
+
+    #[test]
+    fn test_crawl_text_processor_process_batch_preserves_order() {
+        // Batch results should preserve the order of inputs.
+        let processor = CrawlTextProcessor::new();
+        let batch = vec![
+            (b"first".as_slice(), "http://a.com", None),
+            (b"second".as_slice(), "http://b.com", None),
+            (b"third".as_slice(), "http://c.com", None),
+        ];
+        let results = processor.process_batch(batch);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].as_ref().unwrap().url, "http://a.com");
+        assert_eq!(results[1].as_ref().unwrap().url, "http://b.com");
+        assert_eq!(results[2].as_ref().unwrap().url, "http://c.com");
+    }
+
+    #[test]
+    fn test_validate_content_quality_with_empty_extracted_text() {
+        // Empty extracted text should be Poor (too short).
+        let processor = CrawlTextProcessor::new();
+        // Construct a ProcessedCrawlContent with empty extracted text.
+        let processed = ProcessedCrawlContent {
+            url: "http://x.com".to_string(),
+            processed_content: ProcessedWebContent {
+                original_content: String::new(),
+                extracted_text: String::new(),
+                is_html: false,
+                declared_encoding: None,
+                detected_language: None,
+                content_type: None,
+                content_length: 0,
+            },
+            processing_time: std::time::Duration::from_millis(1),
+            original_size: 0,
+            processed_size: 0,
+        };
+        let quality = processor.validate_content_quality(&processed);
+        match quality {
+            ContentQuality::Poor(msg) => assert!(msg.contains("过短")),
+            other => panic!("expected Poor (too short), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_crawl_processor_config_clone_and_debug() {
+        // Verify Clone and Debug traits work for CrawlProcessorConfig.
+        let config = CrawlProcessorConfig {
+            max_processing_time_secs: 45,
+            max_content_size_mb: 15,
+        };
+        let cloned = config.clone();
+        assert_eq!(cloned.max_processing_time_secs, 45);
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("45"));
+    }
+
+    #[test]
+    fn test_web_content_processor_clean_text_trims_whitespace() {
+        // clean_text should trim leading/trailing whitespace.
+        let processor = WebContentProcessor::new();
+        let cleaned = processor.clean_text("  hello  ");
+        assert_eq!(cleaned, "hello");
+    }
+
+    #[test]
+    fn test_web_content_processor_clean_text_preserves_inner_whitespace() {
+        // Inner whitespace should be normalized but not removed.
+        let processor = WebContentProcessor::new();
+        let cleaned = processor.clean_text("hello   world");
+        // trim_newlines joins lines with space; multiple spaces may be preserved
+        // or collapsed depending on the path. Verify it contains both words.
+        assert!(cleaned.contains("hello"));
+        assert!(cleaned.contains("world"));
+    }
+
+    #[test]
+    fn test_html_cleaner_extract_text_from_empty_html() {
+        // Empty HTML should produce empty text.
+        let processor = WebContentProcessor::new();
+        let result = processor.extract_text_from_html("").unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_html_cleaner_extract_text_only_tags() {
+        // HTML with only tags (no text content) should produce empty/whitespace.
+        let processor = WebContentProcessor::new();
+        let result = processor
+            .extract_text_from_html("<div></div><span></span>")
+            .unwrap();
+        assert!(result.trim().is_empty());
+    }
+
+    #[test]
+    fn test_web_content_processor_process_web_content_with_meta_charset() {
+        // HTML with meta charset should detect the encoding and extract text.
+        let processor = WebContentProcessor::new();
+        let html = b"<html><head><meta charset=\"utf-8\"><title>Test</title></head><body><p>Content</p></body></html>";
+        let result = processor
+            .process_web_content(html, Some("text/html"))
+            .unwrap();
+        assert!(result.is_html);
+        assert_eq!(result.declared_encoding, Some("utf-8".to_string()));
+        assert!(result.extracted_text.contains("Content"));
+    }
+
+    // ========== 超时路径测试 ==========
+    // 覆盖 process_crawled_content 的 near-dead timeout 检查（行 540-542）
+    // 和 process_content_with_timeout 的 recv_timeout 超时分支（行 575-578）
+
+    #[test]
+    fn test_process_crawled_content_near_dead_timeout_with_zero_max_time() {
+        // 设置 max_processing_time_secs=0，start_time.elapsed() > Duration::ZERO
+        // 几乎立即为 true，触发 near-dead timeout 检查。
+        let mut processor = CrawlTextProcessor::new();
+        processor.update_config(CrawlProcessorConfig {
+            max_processing_time_secs: 0,
+            max_content_size_mb: 10,
+        });
+        let content = b"hello world";
+        let result = processor.process_crawled_content(content, "http://x.com", None);
+        assert!(
+            result.is_err(),
+            "should fail with ProcessingTimeout when max_processing_time is zero"
+        );
+        match result.unwrap_err() {
+            CrawlProcessingError::ProcessingTimeout => {}
+            other => panic!("expected ProcessingTimeout, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_process_crawled_content_near_dead_timeout_with_html_content() {
+        // near-dead timeout with HTML content（验证 content_size 检查通过后触发 timeout）
+        let mut processor = CrawlTextProcessor::new();
+        processor.update_config(CrawlProcessorConfig {
+            max_processing_time_secs: 0,
+            max_content_size_mb: 10,
+        });
+        let html = b"<html><body><p>test content</p></body></html>";
+        let result = processor.process_crawled_content(html, "http://x.com", Some("text/html"));
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CrawlProcessingError::ProcessingTimeout => {}
+            other => panic!("expected ProcessingTimeout, got {:?}", other),
+        }
+    }
+
+    // ========== WebContentProcessorComponent detect_language 覆盖 ==========
+
+    #[test]
+    fn test_web_content_processor_component_detect_language_chinese() {
+        // 纯中文字符（无标点/ASCII），chinese_ratio = N/(3N) = 0.333 > 0.3 → "zh"
+        let component = WebContentProcessorComponent::default();
+        let chinese_text = "你好世界测试文本".as_bytes();
+        let result = component
+            .process_web_content(chinese_text, Some("text/plain"))
+            .expect("processing Chinese text should succeed");
+        assert_eq!(
+            result.detected_language,
+            Some("zh".to_string()),
+            "pure Chinese text should be detected as zh"
+        );
+    }
+
+    #[test]
+    fn test_web_content_processor_component_detect_language_unknown() {
+        // 非 ASCII 非中文（西里尔字母），chinese_ratio=0, ASCII ratio<0.8 → "unknown"
+        let component = WebContentProcessorComponent::default();
+        let unknown_text = "Привet мир".as_bytes();
+        let result = component
+            .process_web_content(unknown_text, Some("text/plain"))
+            .expect("processing unknown-language text should succeed");
+        assert_eq!(
+            result.detected_language,
+            Some("unknown".to_string()),
+            "non-ASCII non-Chinese text should be detected as unknown"
+        );
+    }
+
+    // ========== WebContentProcessorComponent extract_declared_encoding xml_declaration 分支覆盖 ==========
+
+    #[test]
+    fn test_web_content_processor_component_extract_declared_encoding_xml() {
+        // 用 WebContentProcessorComponent 处理 XML 内容（无 html meta charset），
+        // 覆盖 extract_declared_encoding 的 xml_declaration 分支（行 226-227）。
+        let component = WebContentProcessorComponent::default();
+        let xml = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><root><item>test</item></root>";
+        let result = component
+            .process_web_content(xml, Some("application/xml"))
+            .expect("processing XML should succeed");
+        // XML 声明的 encoding 应被检测到
+        assert_eq!(
+            result.declared_encoding,
+            Some("utf-8".to_string()),
+            "XML declaration encoding should be detected"
+        );
+    }
+
+    #[test]
+    fn test_web_content_processor_component_extract_declared_encoding_xml_iso_8859() {
+        // 另一个 XML 编码声明，确保 xml_declaration 分支对不同编码值工作。
+        let component = WebContentProcessorComponent::default();
+        let xml = b"<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><root/>";
+        let result = component
+            .process_web_content(xml, None)
+            .expect("processing XML with ISO-8859-1 should succeed");
+        assert_eq!(
+            result.declared_encoding,
+            Some("iso-8859-1".to_string()),
+            "XML declaration encoding should be lowercased"
+        );
+    }
+
+    // ========== WebContentProcessorComponent detect_language 空文本分支覆盖 ==========
+
+    #[test]
+    fn test_web_content_processor_component_detect_language_empty_text() {
+        // 用 WebContentProcessorComponent 处理空内容，
+        // clean_text 后为空字符串，覆盖 detect_language 的空文本分支（行 250）。
+        let component = WebContentProcessorComponent::default();
+        let result = component
+            .process_web_content(b"", None)
+            .expect("processing empty content should succeed");
+        assert_eq!(
+            result.detected_language, None,
+            "empty text should return None for detected_language"
+        );
+        assert_eq!(result.extracted_text, "");
+    }
+
+    #[test]
+    fn test_web_content_processor_component_detect_language_whitespace_only() {
+        // 仅包含空白的内容，clean_text 后为空字符串，
+        // 覆盖 detect_language 的空文本分支。
+        let component = WebContentProcessorComponent::default();
+        let result = component
+            .process_web_content(b"   \n\t  ", None)
+            .expect("processing whitespace-only content should succeed");
+        assert_eq!(
+            result.detected_language, None,
+            "whitespace-only text should return None for detected_language"
+        );
+    }
+
+    // ========== validate_content_quality 分支覆盖 ==========
+
+    #[test]
+    fn test_validate_content_quality_word_count_less_than_10() {
+        // 构造 text_length >= 50 但 word_count < 10 的内容，
+        // 覆盖 validate_content_quality 的 word_count < 10 分支（行 615）。
+        let processor = CrawlTextProcessor::new();
+        // 50 个 'a' 无空格：text_length=50, word_count=1
+        let extracted_text = "a".repeat(50);
+        let processed = ProcessedCrawlContent {
+            url: "http://x.com".to_string(),
+            processed_content: ProcessedWebContent {
+                original_content: extracted_text.clone(),
+                extracted_text,
+                is_html: false,
+                declared_encoding: None,
+                detected_language: Some("en".to_string()),
+                content_type: None,
+                content_length: 50,
+            },
+            processing_time: std::time::Duration::from_millis(1),
+            original_size: 50,
+            processed_size: 50,
+        };
+        let quality = processor.validate_content_quality(&processed);
+        match quality {
+            ContentQuality::Poor(msg) => {
+                assert!(
+                    msg.contains("过少"),
+                    "expected Poor (too few words), got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected Poor (word_count < 10), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_content_quality_low_text_ratio() {
+        // 构造 text_length >= 50, word_count >= 10, original_size > 1000,
+        // 但 text_ratio < 0.01 的内容，覆盖行 619。
+        let processor = CrawlTextProcessor::new();
+        // 10 个不同的单词，长度 >= 50
+        let words: Vec<String> = (0..10).map(|i| format!("word{}", i)).collect();
+        let extracted_text = words.join(" ");
+        assert!(extracted_text.len() >= 50);
+        let text_len = extracted_text.len();
+        let original_size = 100_000; // 很大的 original_size
+        let processed = ProcessedCrawlContent {
+            url: "http://x.com".to_string(),
+            processed_content: ProcessedWebContent {
+                original_content: extracted_text.clone(),
+                extracted_text,
+                is_html: false,
+                declared_encoding: None,
+                detected_language: Some("en".to_string()),
+                content_type: None,
+                content_length: text_len,
+            },
+            processing_time: std::time::Duration::from_millis(1),
+            original_size,
+            processed_size: text_len,
+        };
+        let quality = processor.validate_content_quality(&processed);
+        match quality {
+            ContentQuality::Poor(msg) => {
+                assert!(
+                    msg.contains("比例"),
+                    "expected Poor (low text ratio), got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected Poor (text_ratio < 0.01), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_content_quality_good_when_processing_time_exceeds_10s() {
+        // 构造 processing_time > 10 秒的 ProcessedCrawlContent，
+        // 覆盖 validate_content_quality 的 processing_time > 10s 分支（行 627）。
+        let processor = CrawlTextProcessor::new();
+        // 满足前面的检查：text_length >= 50, word_count >= 10,
+        // text_ratio >= 0.01, repetitive_ratio <= 0.8
+        let diverse_text = "The quick brown fox jumps over the lazy dog near the river bank. \
+             Birds sing loudly in the morning while cats sleep peacefully on warm rooftops. \
+             Children play games outside enjoying sunny weather with friends and neighbors.";
+        let text_len = diverse_text.len();
+        let processed = ProcessedCrawlContent {
+            url: "http://x.com".to_string(),
+            processed_content: ProcessedWebContent {
+                original_content: diverse_text.to_string(),
+                extracted_text: diverse_text.to_string(),
+                is_html: false,
+                declared_encoding: None,
+                detected_language: Some("en".to_string()),
+                content_type: None,
+                content_length: text_len,
+            },
+            // processing_time = 11 秒，触发 Good 分支
+            processing_time: std::time::Duration::from_secs(11),
+            original_size: text_len,
+            processed_size: text_len,
+        };
+        let quality = processor.validate_content_quality(&processed);
+        assert_eq!(
+            quality,
+            ContentQuality::Good,
+            "processing_time > 10s should return Good"
+        );
+    }
+
+    #[test]
+    fn test_validate_content_quality_excellent_when_processing_time_under_10s() {
+        // 构造 processing_time <= 10 秒的 ProcessedCrawlContent，
+        // 验证返回 Excellent（与 Good 分支对比）。
+        let processor = CrawlTextProcessor::new();
+        let diverse_text = "The quick brown fox jumps over the lazy dog near the river bank. \
+             Birds sing loudly in the morning while cats sleep peacefully on warm rooftops. \
+             Children play games outside enjoying sunny weather with friends and neighbors.";
+        let text_len = diverse_text.len();
+        let processed = ProcessedCrawlContent {
+            url: "http://x.com".to_string(),
+            processed_content: ProcessedWebContent {
+                original_content: diverse_text.to_string(),
+                extracted_text: diverse_text.to_string(),
+                is_html: false,
+                declared_encoding: None,
+                detected_language: Some("en".to_string()),
+                content_type: None,
+                content_length: text_len,
+            },
+            processing_time: std::time::Duration::from_secs(5),
+            original_size: text_len,
+            processed_size: text_len,
+        };
+        let quality = processor.validate_content_quality(&processed);
+        assert_eq!(
+            quality,
+            ContentQuality::Excellent,
+            "processing_time <= 10s should return Excellent"
+        );
+    }
 }

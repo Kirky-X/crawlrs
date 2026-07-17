@@ -1707,7 +1707,9 @@ mod tests {
         let _ = component
             .update_status(uuid::Uuid::new_v4(), CrawlStatus::Queued)
             .await;
-        let _ = component.increment_completed_tasks(uuid::Uuid::new_v4()).await;
+        let _ = component
+            .increment_completed_tasks(uuid::Uuid::new_v4())
+            .await;
         let _ = component.increment_failed_tasks(uuid::Uuid::new_v4()).await;
         let _ = component.increment_total_tasks(uuid::Uuid::new_v4()).await;
         let _ = component
@@ -1747,10 +1749,10 @@ mod tests {
         let result = make_test_scrape_result();
         let _ = component.save(result).await;
         let _ = component.find_by_task_id(uuid::Uuid::new_v4()).await;
+        let _ = component.find_by_task_ids(&[uuid::Uuid::new_v4()]).await;
         let _ = component
-            .find_by_task_ids(&[uuid::Uuid::new_v4()])
+            .get_team_avg_response_time(uuid::Uuid::new_v4())
             .await;
-        let _ = component.get_team_avg_response_time(uuid::Uuid::new_v4()).await;
     }
 
     #[tokio::test]
@@ -1906,13 +1908,7 @@ mod tests {
             .update_team_restrictions(team_id, &restrictions)
             .await;
         let _ = component
-            .log_geo_restriction_action(
-                team_id,
-                "127.0.0.1",
-                "US",
-                "allow",
-                "test reason",
-            )
+            .log_geo_restriction_action(team_id, "127.0.0.1", "US", "allow", "test reason")
             .await;
     }
 
@@ -1947,9 +1943,7 @@ mod tests {
         let api_key_id = uuid::Uuid::new_v4();
         let _ = component.find_by_api_key_id(api_key_id).await;
         let _ = component.find_by_api_key("test-key").await;
-        let _ = component
-            .upsert(api_key_id, ApiKeyScope::read_only())
-            .await;
+        let _ = component.upsert(api_key_id, ApiKeyScope::read_only()).await;
         let _ = component.delete_by_api_key_id(api_key_id).await;
     }
 
@@ -1986,9 +1980,7 @@ mod tests {
         let _ = component
             .find_by_api_key_id(uuid::Uuid::new_v4(), 10, 0)
             .await;
-        let _ = component
-            .find_by_team_id(uuid::Uuid::new_v4(), 10, 0)
-            .await;
+        let _ = component.find_by_team_id(uuid::Uuid::new_v4(), 10, 0).await;
         let _ = component
             .find_denied_for_key(uuid::Uuid::new_v4(), 10)
             .await;

@@ -201,12 +201,8 @@ fn tc_handler_extract_response_dto_serialization() {
 #[test]
 fn tc_handler_extract_response_dto_deserialization() {
     let id = Uuid::new_v4();
-    let json = format!(
-        r#"{{"id":"{}","status":"completed"}}"#,
-        id
-    );
-    let dto: HandlerExtractResponseDto =
-        serde_json::from_str(&json).expect("must deserialize");
+    let json = format!(r#"{{"id":"{}","status":"completed"}}"#, id);
+    let dto: HandlerExtractResponseDto = serde_json::from_str(&json).expect("must deserialize");
     assert_eq!(dto.id, id);
     assert_eq!(dto.status, "completed");
 }

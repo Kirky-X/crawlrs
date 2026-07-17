@@ -1329,4 +1329,134 @@ mod tests {
             crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Expired
         );
     }
+
+    // ========== cleanup_expired_tasks: process_expired_backlog error is caught and continues ==========
+    // Covers the Err(e) => error!("清理过期积压任务失败: {}", e) branch in cleanup_expired_tasks.
+    // When process_expired_backlog returns Err (e.g. backlog update fails), cleanup_expired_tasks
+    // must log the error and continue processing remaining backlogs, ultimately returning Ok.
+
+    /// Mock backlog repo whose update() always fails, used to trigger the error path
+    /// in process_expired_backlog so that cleanup_expired_tasks exercises its catch branch.
+    struct FailingUpdateBacklogRepo {
+        expired: Mutex<Vec<TasksBacklog>>,
+    }
+
+    impl FailingUpdateBacklogRepo {
+        fn new_with_expired(expired: Vec<TasksBacklog>) -> Self {
+            Self {
+                expired: Mutex::new(expired),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TasksBacklogRepository for FailingUpdateBacklogRepo {
+        async fn create(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
+            Ok(backlog.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
+            Ok(None)
+        }
+        async fn find_by_task_id(
+            &self,
+            _task_id: Uuid,
+        ) -> Result<Option<TasksBacklog>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(&self, _backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
+            Err(RepositoryError::Database(anyhow::anyhow!("update failed")))
+        }
+        async fn delete(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn get_pending_tasks(
+            &self,
+            _team_id: Option<Uuid>,
+            _limit: Option<u64>,
+        ) -> Result<Vec<TasksBacklog>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn get_expired_tasks(
+            &self,
+            _limit: Option<u64>,
+        ) -> Result<Vec<TasksBacklog>, RepositoryError> {
+            Ok(self.expired.lock().unwrap().drain(..).collect())
+        }
+        async fn count_by_status(
+            &self,
+            _team_id: Option<Uuid>,
+            _status: crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus,
+        ) -> Result<i64, RepositoryError> {
+            Ok(0)
+        }
+        async fn update_status_batch(
+            &self,
+            _ids: &[Uuid],
+            _status: crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_tasks_continues_after_process_error() {
+        // When process_expired_backlog returns Err (backlog update fails), cleanup_expired_tasks
+        // should log the error and continue, ultimately returning Ok so process() stays Completed.
+        let team_id = Uuid::new_v4();
+        let task_id1 = Uuid::new_v4();
+        let task_id2 = Uuid::new_v4();
+        // Two expired backlogs: both will fail on update, but cleanup must continue past the first
+        let expired1 = make_expired_backlog(team_id, task_id1);
+        let expired2 = make_expired_backlog(team_id, task_id2);
+        let repo = Arc::new(FailingUpdateBacklogRepo::new_with_expired(vec![
+            expired1, expired2,
+        ]));
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new()),
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        // cleanup_cycle_counter starts at 0; 0.is_multiple_of(10) is true, so the first
+        // process() call triggers cleanup_expired_tasks immediately.
+        let result = worker.process().await;
+        // cleanup_expired_tasks catches individual errors and returns Ok, so process() is Completed
+        assert_eq!(result, ProcessResult::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_tasks_single_failure_returns_completed() {
+        // Single expired backlog whose processing fails: cleanup_expired_tasks should still
+        // return Ok (the error is logged, not propagated), so process() stays Completed.
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let expired = make_expired_backlog(team_id, task_id);
+        let repo = Arc::new(FailingUpdateBacklogRepo::new_with_expired(vec![expired]));
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new()),
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+    }
+
+    // ========== cleanup_expired_tasks: empty expired list returns Ok early ==========
+    // Covers the early-return Ok path when there are no expired backlogs.
+
+    #[tokio::test]
+    async fn test_cleanup_expired_tasks_empty_returns_completed() {
+        // No expired backlogs: cleanup_expired_tasks returns Ok immediately after logging
+        // "没有过期的积压任务". process() should stay Completed.
+        let repo = Arc::new(FailingUpdateBacklogRepo::new_with_expired(vec![]));
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new()),
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+    }
 }

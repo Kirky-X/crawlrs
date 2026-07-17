@@ -1592,4 +1592,511 @@ mod tests {
         let engines = client.registered_engines();
         assert!(engines.is_empty());
     }
+
+    // === Mock EngineRouter for scrape/health_check tests ===
+
+    use crate::engines::router::EngineStats;
+    use async_trait::async_trait;
+
+    enum MockRouteResult {
+        Success(InternalScrapeResponse),
+        Timeout,
+        AllEnginesFailed(String),
+    }
+
+    struct MockEngineRouter {
+        result: MockRouteResult,
+        engines: Vec<String>,
+    }
+
+    impl MockEngineRouter {
+        fn new_success() -> Self {
+            Self {
+                result: MockRouteResult::Success(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "test content".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 100,
+                }),
+                engines: vec!["mock-engine".to_string()],
+            }
+        }
+
+        fn new_timeout() -> Self {
+            Self {
+                result: MockRouteResult::Timeout,
+                engines: vec![],
+            }
+        }
+
+        fn new_all_failed(msg: &str) -> Self {
+            Self {
+                result: MockRouteResult::AllEnginesFailed(msg.to_string()),
+                engines: vec![],
+            }
+        }
+    }
+
+    #[async_trait]
+    impl EngineRouterTrait for MockEngineRouter {
+        async fn route(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            match &self.result {
+                MockRouteResult::Success(resp) => Ok(resp.clone()),
+                MockRouteResult::Timeout => Err(EngineError::Timeout(Duration::from_secs(30))),
+                MockRouteResult::AllEnginesFailed(msg) => {
+                    Err(EngineError::AllEnginesFailed(msg.clone()))
+                }
+            }
+        }
+
+        async fn aggregate(
+            &self,
+            request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            self.route(request).await
+        }
+
+        fn get_engine_stats(&self) -> HashMap<String, EngineStats> {
+            HashMap::new()
+        }
+
+        fn reset_engine_stats(&self, _engine_name: &str) {}
+
+        fn registered_engines(&self) -> Vec<String> {
+            self.engines.clone()
+        }
+    }
+
+    // === EngineClient::scrape success path ===
+
+    #[tokio::test]
+    async fn test_engine_client_scrape_success() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new_success());
+        let client = EngineClient::with_router(router);
+
+        let request = ScrapeRequest::new("https://example.com");
+        let result = client.scrape(&request).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.content, "test content");
+        assert_eq!(response.content_type, "text/html");
+        assert_eq!(response.response_time_ms, 100);
+        assert_eq!(response.final_url, Some("https://example.com".to_string()));
+    }
+
+    // === EngineClient::scrape SSRF rejection ===
+
+    #[tokio::test]
+    async fn test_engine_client_scrape_ssrf_rejected() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new_success());
+        let client = EngineClient::with_router(router);
+
+        // SSRF: localhost / private IP should be rejected by validate_url
+        let request = ScrapeRequest::new("http://127.0.0.1:8080");
+        let result = client.scrape(&request).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::SsrfProtection(_) => {}
+            other => panic!("Expected SsrfProtection, got {:?}", other),
+        }
+    }
+
+    // === EngineClient::scrape router error propagation ===
+
+    #[tokio::test]
+    async fn test_engine_client_scrape_router_error() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new_timeout());
+        let client = EngineClient::with_router(router);
+
+        let request = ScrapeRequest::new("https://example.com");
+        let result = client.scrape(&request).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::Timeout(d) => assert_eq!(d, Duration::from_secs(30)),
+            other => panic!("Expected Timeout, got {:?}", other),
+        }
+    }
+
+    // === EngineClient::scrape no engines available error ===
+
+    #[tokio::test]
+    async fn test_engine_client_scrape_no_engines_error() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new_all_failed(
+            "No suitable engines available",
+        ));
+        let client = EngineClient::with_router(router);
+
+        let request = ScrapeRequest::new("https://example.com");
+        let result = client.scrape(&request).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::NoEnginesAvailable => {}
+            other => panic!("Expected NoEnginesAvailable, got {:?}", other),
+        }
+    }
+
+    // === EngineClient::with_engines ===
+
+    #[test]
+    fn test_engine_client_with_engines() {
+        struct MockEngine;
+        #[async_trait]
+        impl ScraperEngine for MockEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "ok".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 50,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "mock-engine"
+            }
+        }
+
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(MockEngine)];
+        let client = EngineClient::with_engines(engines);
+        assert_eq!(client.engine_count(), 1);
+        assert_eq!(client.registered_engines(), vec!["mock-engine".to_string()]);
+    }
+
+    // === EngineClientTrait trait impl tests ===
+
+    #[tokio::test]
+    async fn test_engine_client_trait_scrape_success() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new_success());
+        let client: Arc<dyn EngineClientTrait> = Arc::new(EngineClient::with_router(router));
+
+        let request = ScrapeRequest::new("https://example.com");
+        let result = client.scrape(&request).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn test_engine_client_trait_health_check_healthy() {
+        let client = EngineClient::new();
+        let status = client.health_check().await;
+        // With no engines, health should be Healthy
+        assert_eq!(status, EngineHealthStatus::Healthy);
+    }
+
+    #[tokio::test]
+    async fn test_engine_client_trait_health_check_with_router() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new_success());
+        let client = EngineClient::with_router(router);
+        let status = client.health_check().await;
+        // health_monitor has no engines (with_router passes empty), so Healthy
+        assert_eq!(status, EngineHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn test_engine_client_trait_engine_count_and_registered_engines() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new_success());
+        let client: Arc<dyn EngineClientTrait> = Arc::new(EngineClient::with_router(router));
+        assert_eq!(client.engine_count(), 1);
+        assert_eq!(client.registered_engines(), vec!["mock-engine".to_string()]);
+    }
+
+    // === skip_tls_verification branch coverage ===
+    // Tests all branches: development (allow), production (deny), prod (deny), false (no-op).
+
+    #[test]
+    fn test_skip_tls_verification_all_branches() {
+        // Branch 1: skip=false (no warning, sets to false)
+        let options = ScrapeOptions::builder()
+            .skip_tls_verification(false)
+            .build();
+        assert!(!options.skip_tls_verification);
+
+        // Branch 2: skip=true in development (warning, sets to true)
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("CRAWLRS_ENV");
+        let options = ScrapeOptions::builder().skip_tls_verification(true).build();
+        assert!(
+            options.skip_tls_verification,
+            "skip_tls_verification should be true in development"
+        );
+
+        // Branch 3: skip=true in production (denied, remains false)
+        std::env::set_var("APP_ENVIRONMENT", "production");
+        let options = ScrapeOptions::builder().skip_tls_verification(true).build();
+        assert!(
+            !options.skip_tls_verification,
+            "skip_tls_verification should be denied in production"
+        );
+
+        // Branch 4: skip=true in prod (denied, remains false)
+        std::env::set_var("APP_ENVIRONMENT", "prod");
+        let options = ScrapeOptions::builder().skip_tls_verification(true).build();
+        assert!(
+            !options.skip_tls_verification,
+            "skip_tls_verification should be denied in prod"
+        );
+
+        // Branch 5: CRAWLRS_ENV also checked for production
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::set_var("CRAWLRS_ENV", "production");
+        let options = ScrapeOptions::builder().skip_tls_verification(true).build();
+        assert!(
+            !options.skip_tls_verification,
+            "skip_tls_verification should be denied via CRAWLRS_ENV=production"
+        );
+
+        // Cleanup
+        std::env::remove_var("APP_ENVIRONMENT");
+        std::env::remove_var("CRAWLRS_ENV");
+    }
+
+    // === ScrapeOptions builder with all remaining fields ===
+
+    #[test]
+    fn test_scrape_options_builder_body_sync_wait_tls_fingerprint() {
+        let options = ScrapeOptions::builder()
+            .body("request body")
+            .sync_wait_ms(500)
+            .needs_tls_fingerprint(true)
+            .use_fire_engine(true)
+            .build();
+
+        assert_eq!(options.body, Some("request body".to_string()));
+        assert_eq!(options.sync_wait_ms, 500);
+        assert!(options.needs_tls_fingerprint);
+        assert!(options.use_fire_engine);
+    }
+
+    // === HttpMethod default test ===
+
+    #[test]
+    fn test_http_method_default_is_get() {
+        assert_eq!(HttpMethod::default(), HttpMethod::Get);
+    }
+
+    // === ScrollDirection tests ===
+
+    #[test]
+    fn test_scroll_direction_default_is_down() {
+        assert_eq!(ScrollDirection::default(), ScrollDirection::Down);
+    }
+
+    #[test]
+    fn test_scroll_direction_variants() {
+        assert_eq!(ScrollDirection::Down, ScrollDirection::Down);
+        assert_eq!(ScrollDirection::Up, ScrollDirection::Up);
+        assert_eq!(ScrollDirection::Bottom, ScrollDirection::Bottom);
+        assert_eq!(ScrollDirection::Top, ScrollDirection::Top);
+        assert_ne!(ScrollDirection::Down, ScrollDirection::Up);
+    }
+
+    // === EngineClient Clone ===
+
+    #[test]
+    fn test_engine_client_clone() {
+        let client = EngineClient::new();
+        let cloned = client.clone();
+        assert_eq!(client.engine_count(), cloned.engine_count());
+        assert_eq!(client.registered_engines(), cloned.registered_engines());
+    }
+
+    // === ScraperEngine trait default method coverage ===
+
+    #[test]
+    fn test_scraper_engine_default_supports_tls_fingerprint_returns_false() {
+        // Cover lines 605-606: the ScraperEngine trait provides a default
+        // implementation of `supports_tls_fingerprint` that returns false.
+        // An engine that does NOT override it should report false.
+        struct BasicEngine;
+        #[async_trait]
+        impl ScraperEngine for BasicEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "ok".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 1,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "basic"
+            }
+        }
+
+        let engine = BasicEngine;
+        assert!(
+            !engine.supports_tls_fingerprint(),
+            "default supports_tls_fingerprint should return false"
+        );
+    }
+
+    // === EngineClient::health_check Degraded/Unavailable branch coverage ===
+    // The public constructors (new / with_router / with_engines) all build the
+    // internal health_monitor with either an empty engine list or an empty
+    // health_monitor, so the Degraded/Unavailable branches of health_check
+    // are unreachable through the public API. We construct EngineClient
+    // directly here (test module has access to private fields) and inject a
+    // health_monitor that wraps real engines whose scrape outcomes we control.
+
+    /// Mock engine that always succeeds; used as the "healthy" engine in a
+    /// mixed-engine scenario to trigger AggregateHealthStatus::Degraded.
+    struct HealthyMockEngine {
+        engine_name: &'static str,
+    }
+
+    #[async_trait]
+    impl ScraperEngine for HealthyMockEngine {
+        async fn scrape(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            Ok(InternalScrapeResponse {
+                status_code: 200,
+                content: "ok".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 1,
+            })
+        }
+        fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+            100
+        }
+        fn name(&self) -> &'static str {
+            self.engine_name
+        }
+    }
+
+    /// Mock engine that always fails; used to make the health monitor mark
+    /// the engine as Degraded (after 1 failure) or Unhealthy (after
+    /// `max_consecutive_failures` failures).
+    struct FailingMockEngine {
+        engine_name: &'static str,
+    }
+
+    #[async_trait]
+    impl ScraperEngine for FailingMockEngine {
+        async fn scrape(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            Err(EngineError::RequestFailed("connection refused".to_string()))
+        }
+        fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+            100
+        }
+        fn name(&self) -> &'static str {
+            self.engine_name
+        }
+    }
+
+    #[tokio::test]
+    async fn test_engine_client_health_check_returns_degraded() {
+        // Cover lines 738-743: when health_monitor reports Degraded status
+        // (some engines unhealthy but at least one healthy), EngineClient
+        // should convert that into EngineHealthStatus::Degraded with the
+        // unhealthy engine names and a "N engines degraded" message.
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(HealthyMockEngine {
+                engine_name: "healthy-engine",
+            }),
+            Arc::new(FailingMockEngine {
+                engine_name: "failing-engine",
+            }),
+        ];
+
+        // Construct EngineClient directly so we can inject a health_monitor
+        // that actually owns the engines. with_router/with_engines leave the
+        // monitor empty, which would always report Healthy.
+        let client = EngineClient {
+            router: Arc::new(EngineRouter::new(engines.clone())),
+            health_monitor: Arc::new(EngineHealthMonitor::new(engines)),
+        };
+
+        let status = client.health_check().await;
+        match status {
+            EngineHealthStatus::Degraded {
+                unhealthy_engines,
+                message,
+            } => {
+                assert!(
+                    unhealthy_engines.contains(&"failing-engine".to_string()),
+                    "failing-engine should be listed as unhealthy: {:?}",
+                    unhealthy_engines
+                );
+                assert!(
+                    message.contains("engines degraded"),
+                    "message should mention 'engines degraded': {}",
+                    message
+                );
+            }
+            other => panic!("Expected Degraded, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_engine_client_health_check_returns_unavailable() {
+        // Cover lines 745-747: when health_monitor reports Unavailable
+        // (all engines unhealthy), EngineClient should convert that into
+        // EngineHealthStatus::Unavailable with the canonical message.
+        use crate::engines::health_monitor::HealthCheckConfig;
+
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(FailingMockEngine {
+            engine_name: "failing-engine",
+        })];
+
+        // Configure max_consecutive_failures = 1 so a single health check
+        // pass is enough to mark the engine Unhealthy (otherwise we'd need
+        // three passes with the default config).
+        let config = HealthCheckConfig {
+            check_interval: Duration::from_secs(60),
+            timeout: Duration::from_secs(10),
+            max_consecutive_failures: 1,
+            degraded_threshold_ms: 2000,
+            unhealthy_threshold_ms: 5000,
+            target_url: "https://example.com".to_string(),
+        };
+
+        let client = EngineClient {
+            router: Arc::new(EngineRouter::new(engines.clone())),
+            health_monitor: Arc::new(EngineHealthMonitor::new_with_config(engines, config)),
+        };
+
+        let status = client.health_check().await;
+        match status {
+            EngineHealthStatus::Unavailable { message } => {
+                assert_eq!(
+                    message, "All engines unavailable",
+                    "Unavailable message should be canonical"
+                );
+            }
+            other => panic!("Expected Unavailable, got {:?}", other),
+        }
+    }
 }

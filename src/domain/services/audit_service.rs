@@ -909,6 +909,65 @@ mod tests {
         assert!(entry.request_path().is_none());
         assert!(entry.request_method().is_none());
     }
+
+    // ---- logger initialization to cover debug! macro argument lines ----
+
+    use std::sync::Once;
+
+    static TEST_LOGGER_INIT: Once = Once::new();
+
+    struct TestLogger;
+    impl log::Log for TestLogger {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, _: &log::Record) {}
+        fn flush(&self) {}
+    }
+
+    static TEST_LOGGER: TestLogger = TestLogger;
+
+    fn ensure_test_logger() {
+        TEST_LOGGER_INIT.call_once(|| {
+            let _ = log::set_logger(&TEST_LOGGER);
+            log::set_max_level(log::LevelFilter::Debug);
+        });
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_log_with_logger_covers_debug_macro_args() {
+        ensure_test_logger();
+        let repo = Arc::new(MockAuditLogRepository::new());
+        let service = AuditService::new(repo.clone());
+        let entry = sample_entry("search", AuditDecision::Allow);
+        let result = service.log(entry).await;
+        assert!(result.is_ok());
+        let created = repo.created.lock().expect("lock");
+        assert_eq!(created.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_audit_service_log_deny_with_logger_covers_debug_macro_args() {
+        ensure_test_logger();
+        let repo = Arc::new(MockAuditLogRepository::new());
+        let service = AuditService::new(repo.clone());
+        let api_key_id = Uuid::new_v4();
+        let team_id = Uuid::new_v4();
+        let scope = ApiKeyScope::read_only();
+        service
+            .log_deny(
+                "scrape.create".to_string(),
+                Some(api_key_id),
+                Some(team_id),
+                "denied for test".to_string(),
+                Some(scope),
+            )
+            .await
+            .expect("log_deny should succeed");
+        let created = repo.created.lock().expect("lock");
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].decision, AuditDecision::Deny);
+    }
 }
 
 /// Trait for AuditService - enables dependency injection

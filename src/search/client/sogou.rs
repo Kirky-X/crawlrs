@@ -448,16 +448,22 @@ mod tests {
         assert_eq!(engine.health(), EngineHealth::Healthy);
     }
 
-    // ========== search 方法测试（SOGOU_TEST_RESULTS 环境变量） ==========
+    // ========== search() test fallback path ==========
+
+    /// Mutex to serialize tests that mutate process-level environment
+    /// variables (std::env::set_var is not thread-safe across tests).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn make_search_request(query: &str) -> SearchRequest {
+        SearchRequest::new(query)
+    }
 
     #[tokio::test]
     async fn test_search_with_test_results_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("SOGOU_TEST_RESULTS", "true");
         let engine = make_engine();
-        let request = SearchRequest {
-            query: "test query".to_string(),
-            ..Default::default()
-        };
+        let request = make_search_request("test query");
         let result = engine.search(&request).await;
         std::env::remove_var("SOGOU_TEST_RESULTS");
 
@@ -467,5 +473,48 @@ mod tests {
         assert!(response.items[0].title.contains("test query"));
         assert_eq!(response.engine, SearchEngineType::Sogou);
         assert_eq!(response.total_results, Some(2));
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_returns_correct_urls_and_engine() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SOGOU_TEST_RESULTS", "true");
+
+        let engine = make_engine();
+        let request = make_search_request("url check");
+
+        let response = engine.search(&request).await;
+
+        std::env::remove_var("SOGOU_TEST_RESULTS");
+
+        let response = response.expect("fallback should return Ok");
+        assert_eq!(response.items.len(), 2);
+        assert_eq!(response.items[0].url, "https://sogou.com/1");
+        assert_eq!(response.items[1].url, "https://sogou.com/2");
+        assert_eq!(response.items[0].engine, SearchEngineType::Sogou);
+        assert_eq!(response.items[1].engine, SearchEngineType::Sogou);
+        assert_eq!(response.items[0].description, "Test description 1");
+        assert_eq!(response.items[1].description, "Test description 2");
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_escapes_query_in_title() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SOGOU_TEST_RESULTS", "true");
+
+        let engine = make_engine();
+        // Query with HTML special characters that should be escaped
+        let request = make_search_request("<script>alert(1)</script>");
+
+        let response = engine.search(&request).await;
+
+        std::env::remove_var("SOGOU_TEST_RESULTS");
+
+        let response = response.expect("fallback should return Ok");
+        // The title should contain the escaped query, not raw HTML
+        assert!(response.items[0].title.contains("&lt;script&gt;"));
+        assert!(!response.items[0].title.contains("<script>"));
+        assert!(response.items[1].title.contains("&lt;script&gt;"));
+        assert!(!response.items[1].title.contains("<script>"));
     }
 }

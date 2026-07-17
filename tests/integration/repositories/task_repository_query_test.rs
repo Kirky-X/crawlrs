@@ -77,10 +77,7 @@ async fn tc_query_tasks_by_team_only_success() {
         offset: 0,
         ..Default::default()
     };
-    let (tasks, total) = repo
-        .query_tasks(params)
-        .await
-        .expect("query_tasks failed");
+    let (tasks, total) = repo.query_tasks(params).await.expect("query_tasks failed");
 
     assert!(total >= 2, "total should be >= 2, got {}", total);
     assert!(
@@ -120,8 +117,12 @@ async fn tc_query_tasks_filter_by_status_success() {
     active_task.url = format!("{}a.example.com", cleanup_prefix);
     active_task.status = TaskStatus::Active;
 
-    repo.create(&queued_task).await.expect("create queued failed");
-    repo.create(&active_task).await.expect("create active failed");
+    repo.create(&queued_task)
+        .await
+        .expect("create queued failed");
+    repo.create(&active_task)
+        .await
+        .expect("create active failed");
 
     let params = TaskQueryParams {
         team_id,
@@ -172,7 +173,9 @@ async fn tc_query_tasks_filter_by_task_type_success() {
     crawl_task.url = format!("{}c.example.com", cleanup_prefix);
     crawl_task.task_type = TaskType::Crawl;
 
-    repo.create(&scrape_task).await.expect("create scrape failed");
+    repo.create(&scrape_task)
+        .await
+        .expect("create scrape failed");
     repo.create(&crawl_task).await.expect("create crawl failed");
 
     let params = TaskQueryParams {
@@ -535,7 +538,9 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
     // 创建属于当前团队的任务
     let mut own_task = make_task(team_id, api_key_id, "");
     own_task.url = format!("{}own.example.com", cleanup_prefix);
-    repo.create(&own_task).await.expect("create own_task failed");
+    repo.create(&own_task)
+        .await
+        .expect("create own_task failed");
 
     // 创建属于另一个团队的任务
     let other_team_id = Uuid::new_v4();
@@ -563,7 +568,9 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
     }
     let mut other_task = make_task(other_team_id, other_api_key_id, "");
     other_task.url = format!("{}other.example.com", cleanup_prefix);
-    repo.create(&other_task).await.expect("create other_task failed");
+    repo.create(&other_task)
+        .await
+        .expect("create other_task failed");
 
     // 用当前 team_id 批量取消 [own_task, other_task]
     let (cancelled, errors) = repo
@@ -572,7 +579,10 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
         .expect("batch_cancel mixed teams failed");
 
     assert_eq!(cancelled.len(), 1, "only own_task should be cancelled");
-    assert!(cancelled.contains(&own_task.id), "own_task should be cancelled");
+    assert!(
+        cancelled.contains(&own_task.id),
+        "own_task should be cancelled"
+    );
     assert_eq!(errors.len(), 1, "1 error for other_task");
     assert!(
         errors.iter().any(|(id, _)| *id == other_task.id),

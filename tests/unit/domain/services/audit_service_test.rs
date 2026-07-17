@@ -88,10 +88,7 @@ impl Default for MockAuditLogRepository {
 
 #[async_trait]
 impl AuditLogRepository for MockAuditLogRepository {
-    async fn create(
-        &self,
-        entry: &AuditLogEntry,
-    ) -> Result<AuditLogEntry, AuditRepositoryError> {
+    async fn create(&self, entry: &AuditLogEntry) -> Result<AuditLogEntry, AuditRepositoryError> {
         if self.fail_all {
             return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
                 "mock create failure".to_string(),
@@ -145,10 +142,7 @@ impl AuditLogRepository for MockAuditLogRepository {
         Ok(self.find_results.lock().expect("find lock").clone())
     }
 
-    async fn cleanup_old_logs(
-        &self,
-        _retention_days: i64,
-    ) -> Result<u64, AuditRepositoryError> {
+    async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditRepositoryError> {
         if self.fail_all {
             return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
                 "mock cleanup failure".to_string(),
@@ -169,7 +163,10 @@ fn sample_entry(action: &str, decision: AuditDecision) -> AuditLogEntry {
         .build()
 }
 
-fn make_service() -> (AuditService<MockAuditLogRepository>, Arc<MockAuditLogRepository>) {
+fn make_service() -> (
+    AuditService<MockAuditLogRepository>,
+    Arc<MockAuditLogRepository>,
+) {
     let repo = Arc::new(MockAuditLogRepository::new());
     let service = AuditService::new(repo.clone());
     (service, repo)
@@ -239,7 +236,10 @@ async fn test_audit_service_log_deny_with_all_fields() {
     assert_eq!(entries[0].decision, AuditDecision::Deny);
     assert_eq!(entries[0].api_key_id, Some(api_key_id));
     assert_eq!(entries[0].team_id, Some(team_id));
-    assert_eq!(entries[0].denial_reason.as_deref(), Some("insufficient scope"));
+    assert_eq!(
+        entries[0].denial_reason.as_deref(),
+        Some("insufficient scope")
+    );
     assert_eq!(entries[0].scope_used, Some(scope));
 }
 

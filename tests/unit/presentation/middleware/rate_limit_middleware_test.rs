@@ -25,12 +25,11 @@ use tower::ServiceExt;
 
 use crawlrs::domain::models::CreditsTransactionType;
 use crawlrs::domain::services::rate_limiting_service::{
-    BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
-    QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
-    RateLimitingService,
+    BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult, QuotaService,
+    RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError, RateLimitingService,
 };
 use crawlrs::presentation::middleware::rate_limit_middleware::{
-    rate_limit_middleware, RateLimiter, RateLimitMiddleware,
+    rate_limit_middleware, RateLimitMiddleware, RateLimiter,
 };
 
 // =============================================================================
@@ -174,9 +173,7 @@ impl QuotaService for MockRateLimitingService {
 impl RateLimitingService for MockRateLimitingService {}
 
 fn mock_arc(behavior: MockBehavior) -> Arc<dyn RateLimitingService> {
-    Arc::new(MockRateLimitingService {
-        behavior: behavior,
-    })
+    Arc::new(MockRateLimitingService { behavior: behavior })
 }
 
 async fn middleware_wrapper(
@@ -538,8 +535,7 @@ async fn tc_middleware_no_bearer_uses_ip_rate_limit_first_request_allowed() {
     // 429 — the important assertion is that the middleware does not panic and
     // returns one of these two statuses.
     assert!(
-        response.status() == StatusCode::OK
-            || response.status() == StatusCode::TOO_MANY_REQUESTS,
+        response.status() == StatusCode::OK || response.status() == StatusCode::TOO_MANY_REQUESTS,
         "expected OK or TOO_MANY_REQUESTS, got {}",
         response.status()
     );
@@ -605,8 +601,7 @@ async fn tc_middleware_basic_auth_falls_back_to_ip_limit() {
         .expect("router must respond");
 
     assert!(
-        response.status() == StatusCode::OK
-            || response.status() == StatusCode::TOO_MANY_REQUESTS,
+        response.status() == StatusCode::OK || response.status() == StatusCode::TOO_MANY_REQUESTS,
         "Basic auth should fall back to IP rate limit"
     );
 }
@@ -626,8 +621,7 @@ async fn tc_middleware_empty_bearer_token_falls_back_to_ip_limit() {
         .expect("router must respond");
 
     assert!(
-        response.status() == StatusCode::OK
-            || response.status() == StatusCode::TOO_MANY_REQUESTS,
+        response.status() == StatusCode::OK || response.status() == StatusCode::TOO_MANY_REQUESTS,
         "Empty Bearer token should fall back to IP rate limit"
     );
 }

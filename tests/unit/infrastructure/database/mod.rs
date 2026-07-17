@@ -5,6 +5,6 @@
 
 // 数据库基础设施层单元测试
 // 测试事务管理器等数据库组件的功能
-pub mod connection_test;
+// connection_test migrated to src/ inline tests
+// transaction_test migrated to src/ inline tests
 pub mod dbnexus_connection_test;
-pub mod transaction_test;

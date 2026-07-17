@@ -223,5 +223,197 @@ mod tests {
 
         // 验证日志记录成功（可以通过后续的数据库查询来验证）
         // 目前主要是确保不抛出错误
+        let logs = repo.audit_logs.read().await;
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].team_id, team_id);
+        assert_eq!(logs[0].ip_address, "192.168.1.100");
+        assert_eq!(logs[0].country_code, "US");
+        assert_eq!(logs[0].action, "allowed");
+        assert_eq!(logs[0].reason, "IP in whitelist");
+    }
+
+    // ========== Default trait ==========
+
+    #[tokio::test]
+    async fn test_default_creates_empty_repository() {
+        let repo = InMemoryGeoRestrictionRepository::default();
+        let restrictions = repo.restrictions.read().await;
+        assert!(
+            restrictions.is_empty(),
+            "default repo should have no seed data"
+        );
+        let logs = repo.audit_logs.read().await;
+        assert!(logs.is_empty(), "default repo should have no audit logs");
+    }
+
+    #[test]
+    fn test_new_and_default_are_equivalent() {
+        let new_repo = InMemoryGeoRestrictionRepository::new();
+        let default_repo = InMemoryGeoRestrictionRepository::default();
+        // Both should start empty (synchronous check via try_read would block;
+        // use blocking_read since these are fresh RwLocks with no writers)
+        let new_restrictions = new_repo.restrictions.blocking_read();
+        let default_restrictions = default_repo.restrictions.blocking_read();
+        assert_eq!(new_restrictions.len(), default_restrictions.len());
+    }
+
+    // ========== seed_test_data ==========
+
+    #[tokio::test]
+    async fn test_seed_test_data_populates_two_teams() {
+        let repo = InMemoryGeoRestrictionRepository::new();
+        repo.seed_test_data().await;
+        let restrictions = repo.restrictions.read().await;
+        assert_eq!(
+            restrictions.len(),
+            2,
+            "seed_test_data should insert exactly 2 teams"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_seed_test_data_teams_have_geo_restrictions_enabled() {
+        let repo = InMemoryGeoRestrictionRepository::new();
+        repo.seed_test_data().await;
+        let restrictions = repo.restrictions.read().await;
+        // Both seeded teams should have geo restrictions enabled
+        for (_, team_geo) in restrictions.iter() {
+            assert!(
+                team_geo.enable_geo_restrictions,
+                "seeded team should have geo restrictions enabled"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_seed_test_data_first_team_has_full_config() {
+        let repo = InMemoryGeoRestrictionRepository::new();
+        repo.seed_test_data().await;
+        let restrictions = repo.restrictions.read().await;
+        // Exactly one team should have both allowed and blocked countries
+        let teams_with_both = restrictions
+            .iter()
+            .filter(|(_, g)| g.allowed_countries.is_some() && g.blocked_countries.is_some())
+            .count();
+        assert_eq!(
+            teams_with_both, 1,
+            "one seeded team should have full config"
+        );
+
+        // That team should also have ip_whitelist and domain_blacklist
+        let full_team = restrictions
+            .iter()
+            .find(|(_, g)| g.allowed_countries.is_some() && g.blocked_countries.is_some())
+            .map(|(_, g)| g)
+            .expect("full config team should exist");
+        assert!(full_team.ip_whitelist.is_some());
+        assert!(full_team.domain_blacklist.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_seed_test_data_second_team_is_whitelist_only() {
+        let repo = InMemoryGeoRestrictionRepository::new();
+        repo.seed_test_data().await;
+        let restrictions = repo.restrictions.read().await;
+        // Exactly one team should have ip_whitelist but no country lists
+        let whitelist_only = restrictions
+            .iter()
+            .filter(|(_, g)| {
+                g.ip_whitelist.is_some()
+                    && g.allowed_countries.is_none()
+                    && g.blocked_countries.is_none()
+                    && g.domain_blacklist.is_none()
+            })
+            .count();
+        assert_eq!(
+            whitelist_only, 1,
+            "one seeded team should be whitelist-only"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_seed_test_data_does_not_clear_existing_data() {
+        let repo = InMemoryGeoRestrictionRepository::new();
+        // Insert a team before seeding
+        let pre_team_id = Uuid::new_v4();
+        repo.update_team_restrictions(
+            pre_team_id,
+            &TeamGeoRestrictions {
+                enable_geo_restrictions: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        repo.seed_test_data().await;
+
+        let restrictions = repo.restrictions.read().await;
+        // Pre-existing team should still be there + 2 seeded = 3 total
+        assert_eq!(
+            restrictions.len(),
+            3,
+            "seed should add to, not replace, existing data"
+        );
+        assert!(restrictions.contains_key(&pre_team_id));
+    }
+
+    #[tokio::test]
+    async fn test_seed_test_data_can_be_called_multiple_times() {
+        let repo = InMemoryGeoRestrictionRepository::new();
+        repo.seed_test_data().await;
+        repo.seed_test_data().await;
+        let restrictions = repo.restrictions.read().await;
+        // Each call adds 2 unique teams (random Uuids), so 2 calls = 4 teams
+        assert_eq!(
+            restrictions.len(),
+            4,
+            "seed_test_data should be idempotent-safe (additive)"
+        );
+    }
+
+    // ========== audit log accumulation ==========
+
+    #[tokio::test]
+    async fn test_multiple_log_actions_accumulate() {
+        let repo = InMemoryGeoRestrictionRepository::new();
+        let team_id = Uuid::new_v4();
+
+        repo.log_geo_restriction_action(team_id, "1.1.1.1", "US", "allowed", "reason 1")
+            .await
+            .unwrap();
+        repo.log_geo_restriction_action(team_id, "2.2.2.2", "CN", "denied", "reason 2")
+            .await
+            .unwrap();
+        repo.log_geo_restriction_action(Uuid::new_v4(), "3.3.3.3", "RU", "denied", "reason 3")
+            .await
+            .unwrap();
+
+        let logs = repo.audit_logs.read().await;
+        assert_eq!(logs.len(), 3, "all log actions should accumulate");
+        assert_eq!(logs[0].action, "allowed");
+        assert_eq!(logs[1].action, "denied");
+        assert_eq!(logs[2].action, "denied");
+    }
+
+    #[tokio::test]
+    async fn test_get_team_restrictions_for_seeded_team_returns_seeded_data() {
+        let repo = InMemoryGeoRestrictionRepository::new();
+        repo.seed_test_data().await;
+
+        // Pick any seeded team and verify get_team_restrictions returns the
+        // seeded config (not the default).
+        let restrictions = repo.restrictions.read().await;
+        let seeded_id = *restrictions
+            .keys()
+            .next()
+            .expect("should have seeded teams");
+        drop(restrictions);
+
+        let fetched = repo.get_team_restrictions(seeded_id).await.unwrap();
+        assert!(
+            fetched.enable_geo_restrictions,
+            "seeded team should return enabled geo restrictions"
+        );
     }
 }

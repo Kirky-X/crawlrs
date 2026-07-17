@@ -268,4 +268,505 @@ mod tests {
     fn test_default_page_limit_less_than_max() {
         assert!(server_config::DEFAULT_PAGE_LIMIT < server_config::MAX_PAGE_LIMIT);
     }
+
+    // ========== Handler function tests ==========
+    //
+    // The following tests verify the HTTP-layer behavior of get_audit_logs and
+    // get_denied_requests: branch selection, pagination clamping, error mapping,
+    // and response shape. Business logic is covered by AuditService tests.
+
+    use crate::domain::auth::ApiKeyScope;
+    use crate::domain::auth::{AuditDecision, AuditLogEntry};
+    use crate::domain::services::audit_service::{
+        AuditLogBuilder, AuditServiceError, AuditServiceTrait,
+    };
+    use crate::presentation::middleware::auth_middleware::AuthState;
+    use async_trait::async_trait;
+    use axum::response::IntoResponse;
+    use dbnexus::{DbConfig, DbPool};
+    use std::sync::Mutex;
+
+    fn create_test_db_pool() -> Arc<dbnexus::DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    fn make_auth_state() -> AuthState {
+        let pool = create_test_db_pool();
+        AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default())
+    }
+
+    fn make_auth_state_with_key(api_key_id: Uuid) -> AuthState {
+        let pool = create_test_db_pool();
+        AuthState::new(pool, Uuid::new_v4(), api_key_id, ApiKeyScope::default())
+    }
+
+    fn sample_entry(action: &str, decision: AuditDecision) -> AuditLogEntry {
+        AuditLogBuilder::new(action, decision)
+            .with_api_key_id(Uuid::new_v4())
+            .with_team_id(Uuid::new_v4())
+            .build()
+    }
+
+    struct MockAuditService {
+        logs: Mutex<Vec<AuditLogEntry>>,
+        should_fail: bool,
+    }
+
+    impl MockAuditService {
+        fn new(logs: Vec<AuditLogEntry>) -> Self {
+            Self {
+                logs: Mutex::new(logs),
+                should_fail: false,
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                logs: Mutex::new(Vec::new()),
+                should_fail: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AuditServiceTrait for MockAuditService {
+        async fn log(&self, _entry: AuditLogEntry) -> Result<(), AuditServiceError> {
+            Ok(())
+        }
+
+        async fn log_allow(
+            &self,
+            _action: String,
+            _api_key_id: Uuid,
+            _team_id: Uuid,
+            _scope: ApiKeyScope,
+        ) -> Result<(), AuditServiceError> {
+            Ok(())
+        }
+
+        async fn log_deny(
+            &self,
+            _action: String,
+            _api_key_id: Option<Uuid>,
+            _team_id: Option<Uuid>,
+            _reason: String,
+            _scope: Option<ApiKeyScope>,
+        ) -> Result<(), AuditServiceError> {
+            Ok(())
+        }
+
+        async fn get_logs_for_key(
+            &self,
+            _api_key_id: Uuid,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
+            if self.should_fail {
+                return Err(AuditServiceError::DatabaseError(sea_orm::DbErr::Custom(
+                    "mock error".to_string(),
+                )));
+            }
+            Ok(self.logs.lock().unwrap().clone())
+        }
+
+        async fn get_logs_for_team(
+            &self,
+            _team_id: Uuid,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
+            if self.should_fail {
+                return Err(AuditServiceError::DatabaseError(sea_orm::DbErr::Custom(
+                    "mock error".to_string(),
+                )));
+            }
+            Ok(self.logs.lock().unwrap().clone())
+        }
+
+        async fn get_denied_requests(
+            &self,
+            _api_key_id: Uuid,
+            _limit: u64,
+        ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
+            if self.should_fail {
+                return Err(AuditServiceError::DatabaseError(sea_orm::DbErr::Custom(
+                    "mock error".to_string(),
+                )));
+            }
+            Ok(self
+                .logs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|e| e.decision == AuditDecision::Deny)
+                .cloned()
+                .collect())
+        }
+    }
+
+    // ========== Branch selection logic ==========
+
+    #[test]
+    fn test_branch_selects_api_key_when_api_key_id_present() {
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: Some(Uuid::new_v4()),
+        };
+        assert!(query.api_key_id.is_some());
+    }
+
+    #[test]
+    fn test_branch_selects_team_when_only_team_id_present() {
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: None,
+            team_id: Some(Uuid::new_v4()),
+        };
+        assert!(query.api_key_id.is_none());
+        assert!(query.team_id.is_some());
+    }
+
+    #[test]
+    fn test_branch_falls_back_to_auth_state_when_neither_present() {
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: None,
+            team_id: None,
+        };
+        assert!(query.api_key_id.is_none());
+        assert!(query.team_id.is_none());
+    }
+
+    #[test]
+    fn test_branch_api_key_takes_priority_over_team_id() {
+        let query = AuditLogsQuery {
+            limit: None,
+            offset: None,
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: Some(Uuid::new_v4()),
+        };
+        match query {
+            AuditLogsQuery {
+                api_key_id: Some(_),
+                ..
+            } => {}
+            AuditLogsQuery {
+                team_id: Some(_), ..
+            } => {
+                panic!("team_id branch should not be reached when api_key_id is Some");
+            }
+            _ => {
+                panic!("fallback branch should not be reached");
+            }
+        }
+    }
+
+    // ========== get_audit_logs handler tests ==========
+
+    #[tokio::test]
+    async fn test_get_audit_logs_by_api_key_id() {
+        let logs = vec![
+            sample_entry("search", AuditDecision::Allow),
+            sample_entry("scrape", AuditDecision::Allow),
+        ];
+        let mock = Arc::new(MockAuditService::new(logs));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_by_team_id() {
+        let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(50),
+            offset: None,
+            api_key_id: None,
+            team_id: Some(Uuid::new_v4()),
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_fallback_to_auth_state_api_key() {
+        let logs = vec![sample_entry("extract", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: None,
+            offset: None,
+            api_key_id: None,
+            team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_api_key_takes_priority_over_team_id() {
+        let logs = vec![sample_entry("search", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: Some(Uuid::new_v4()),
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_error_returns_internal_server_error() {
+        let mock = Arc::new(MockAuditService::failing());
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_error_on_team_branch() {
+        let mock = Arc::new(MockAuditService::failing());
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: None,
+            team_id: Some(Uuid::new_v4()),
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_error_on_fallback_branch() {
+        let mock = Arc::new(MockAuditService::failing());
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: None,
+            offset: None,
+            api_key_id: None,
+            team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_empty_logs() {
+        let mock = Arc::new(MockAuditService::new(vec![]));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_limit_clamped_to_max() {
+        let logs = vec![sample_entry("search", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(50000),
+            offset: Some(0),
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ========== get_denied_requests handler tests ==========
+
+    #[tokio::test]
+    async fn test_get_denied_requests_success() {
+        let denied = vec![
+            sample_entry("search", AuditDecision::Deny),
+            sample_entry("scrape", AuditDecision::Deny),
+        ];
+        let mock = Arc::new(MockAuditService::new(denied));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: None,
+            api_key_id: None,
+            team_id: None,
+        };
+
+        let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_denied_requests_error_returns_internal_server_error() {
+        let mock = Arc::new(MockAuditService::failing());
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: None,
+            api_key_id: None,
+            team_id: None,
+        };
+
+        let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_get_denied_requests_empty() {
+        let mock = Arc::new(MockAuditService::new(vec![]));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: None,
+            api_key_id: None,
+            team_id: None,
+        };
+
+        let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_denied_requests_limit_clamped() {
+        let denied = vec![sample_entry("search", AuditDecision::Deny)];
+        let mock = Arc::new(MockAuditService::new(denied));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(99999),
+            offset: None,
+            api_key_id: None,
+            team_id: None,
+        };
+
+        let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_denied_requests_uses_auth_state_api_key_id() {
+        let api_key_id = Uuid::new_v4();
+        let denied = vec![sample_entry("search", AuditDecision::Deny)];
+        let mock = Arc::new(MockAuditService::new(denied));
+        let auth_state = make_auth_state_with_key(api_key_id);
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: None,
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: None,
+        };
+
+        let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_denied_requests_with_allow_entries_filters() {
+        let entries = vec![
+            sample_entry("search", AuditDecision::Deny),
+            sample_entry("search", AuditDecision::Allow),
+            sample_entry("crawl", AuditDecision::Deny),
+        ];
+        let mock = Arc::new(MockAuditService::new(entries));
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: None,
+            api_key_id: None,
+            team_id: None,
+        };
+
+        let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }

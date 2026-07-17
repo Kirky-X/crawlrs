@@ -15,9 +15,9 @@
 use uuid::Uuid;
 
 use crawlrs::presentation::sdk::{
-    build_sdk_router, SdkCreateCrawlRequest, SdkCreateTaskRequest, SdkCreateTaskResponse,
-    SdkCrawlResponse, SdkScrapeRequest, SdkScrapeResponse, SdkSearchRequest, SdkSearchResponse,
-    SdkSearchResult,
+    build_sdk_router, SdkCrawlResponse, SdkCreateCrawlRequest, SdkCreateTaskRequest,
+    SdkCreateTaskResponse, SdkScrapeRequest, SdkScrapeResponse, SdkSearchRequest,
+    SdkSearchResponse, SdkSearchResult,
 };
 
 // =============================================================================
@@ -87,7 +87,9 @@ fn tc_sdk_search_response_with_results() {
         results: vec![SdkSearchResult {
             title: "Rust Programming Language".to_string(),
             url: "https://www.rust-lang.org/".to_string(),
-            description: Some("A language empowering everyone to build reliable software.".to_string()),
+            description: Some(
+                "A language empowering everyone to build reliable software.".to_string(),
+            ),
             engine: "google".to_string(),
         }],
         credits_used: 1,

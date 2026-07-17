@@ -284,6 +284,474 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
 mod tests {
     use super::*;
 
+    /// Build a lazy DbPool that does not establish a real database connection.
+    /// `get_session()` calls will fail at runtime, allowing us to exercise every
+    /// error path in this module without requiring a running PostgreSQL instance.
+    fn create_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                dbnexus::DbPool::try_from(&dbnexus::DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    /// Build DatabaseSettings with the given URL and sensible defaults.
+    fn make_settings(url: &str) -> DatabaseSettings {
+        DatabaseSettings {
+            url: url.to_string(),
+            max_connections: Some(10),
+            min_connections: Some(1),
+            connect_timeout: Some(30),
+            idle_timeout: Some(600),
+            max_lifetime: Some(1800),
+            connection_keepalive: Some(30),
+            health_check_interval: Some(60),
+        }
+    }
+
+    // ============================================================
+    // DatabasePool construction & trait impls (lazy pool, no DB)
+    // ============================================================
+
+    #[test]
+    fn test_database_pool_from_arc_dbpool_yields_inner_reference() {
+        let pool = create_test_db_pool();
+        let db_pool = DatabasePool::from(pool.clone());
+        assert!(
+            Arc::ptr_eq(db_pool.inner(), &pool),
+            "From<Arc<DbPool>> should preserve inner Arc identity"
+        );
+    }
+
+    #[test]
+    fn test_database_pool_into_arc_dbpool_preserves_identity() {
+        let pool = create_test_db_pool();
+        let db_pool = DatabasePool::from(pool.clone());
+        let arc: Arc<DbPool> = db_pool.into();
+        assert!(
+            Arc::ptr_eq(&arc, &pool),
+            "From<DatabasePool> for Arc<DbPool> should preserve inner Arc identity"
+        );
+    }
+
+    #[test]
+    fn test_database_pool_clone_inner_returns_arc_clone() {
+        let pool = create_test_db_pool();
+        let db_pool = DatabasePool::from(pool.clone());
+        let cloned_inner = db_pool.clone_inner();
+        assert!(
+            Arc::ptr_eq(&cloned_inner, &pool),
+            "clone_inner() should return an Arc clone of inner"
+        );
+    }
+
+    #[test]
+    fn test_database_pool_inner_returns_reference_to_same_arc() {
+        let pool = create_test_db_pool();
+        let db_pool = DatabasePool::from(pool.clone());
+        let inner_ref = db_pool.inner();
+        assert!(Arc::ptr_eq(inner_ref, &pool));
+    }
+
+    #[test]
+    fn test_database_pool_stats_default_is_zero() {
+        let pool = create_test_db_pool();
+        let db_pool = DatabasePool::from(pool);
+        let stats = db_pool.stats();
+        // DatabasePool::from(Arc<DbPool>) uses PoolStats::default()
+        assert_eq!(stats.active_connections, 0);
+        assert_eq!(stats.idle_connections, 0);
+        assert_eq!(stats.total_connections, 0);
+    }
+
+    #[test]
+    fn test_database_pool_stats_returns_clone_of_inner_stats() {
+        let pool = create_test_db_pool();
+        let custom_stats = PoolStats {
+            active_connections: 7,
+            idle_connections: 4,
+            total_connections: 11,
+        };
+        let db_pool = DatabasePool {
+            inner: pool,
+            stats: custom_stats.clone(),
+        };
+        let stats1 = db_pool.stats();
+        let stats2 = db_pool.stats();
+        assert_eq!(stats1.active_connections, custom_stats.active_connections);
+        assert_eq!(stats1.idle_connections, custom_stats.idle_connections);
+        assert_eq!(stats1.total_connections, custom_stats.total_connections);
+        assert_eq!(stats2.active_connections, stats1.active_connections);
+        assert_eq!(stats2.idle_connections, stats1.idle_connections);
+        assert_eq!(stats2.total_connections, stats1.total_connections);
+    }
+
+    #[test]
+    fn test_database_pool_clone_preserves_inner_and_stats() {
+        let pool = create_test_db_pool();
+        let db_pool = DatabasePool {
+            inner: pool.clone(),
+            stats: PoolStats {
+                active_connections: 1,
+                idle_connections: 2,
+                total_connections: 3,
+            },
+        };
+        let cloned = db_pool.clone();
+        assert!(Arc::ptr_eq(db_pool.inner(), cloned.inner()));
+        assert_eq!(
+            db_pool.stats().active_connections,
+            cloned.stats().active_connections
+        );
+        assert_eq!(
+            db_pool.stats().idle_connections,
+            cloned.stats().idle_connections
+        );
+        assert_eq!(
+            db_pool.stats().total_connections,
+            cloned.stats().total_connections
+        );
+    }
+
+    #[test]
+    fn test_database_pool_deref_targets_inner_dbpool() {
+        let pool = create_test_db_pool();
+        let db_pool = DatabasePool::from(pool.clone());
+        let derefed: &DbPool = &*db_pool;
+        let inner: &DbPool = db_pool.inner();
+        let deref_ptr = derefed as *const DbPool;
+        let inner_ptr = inner as *const DbPool;
+        assert_eq!(
+            deref_ptr, inner_ptr,
+            "Deref should return reference to the same inner DbPool"
+        );
+    }
+
+    #[test]
+    fn test_database_pool_as_ref_targets_inner_dbpool() {
+        let pool = create_test_db_pool();
+        let db_pool = DatabasePool::from(pool.clone());
+        let as_ref: &DbPool = AsRef::as_ref(&db_pool);
+        let inner: &DbPool = db_pool.inner();
+        let as_ref_ptr = as_ref as *const DbPool;
+        let inner_ptr = inner as *const DbPool;
+        assert_eq!(
+            as_ref_ptr, inner_ptr,
+            "AsRef should return reference to the same inner DbPool"
+        );
+    }
+
+    // ============================================================
+    // DatabasePool session methods — all should fail with lazy pool
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_get_session_returns_error_without_real_db() {
+        let db_pool = DatabasePool::from(create_test_db_pool());
+        let result = db_pool.get_session("admin").await;
+        assert!(
+            matches!(result, Err(sea_orm::DbErr::ConnectionAcquire(_))),
+            "expected ConnectionAcquire error, got {:?}",
+            result.as_ref().err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_admin_session_returns_error_without_real_db() {
+        let db_pool = DatabasePool::from(create_test_db_pool());
+        let result = db_pool.get_admin_session().await;
+        assert!(matches!(result, Err(sea_orm::DbErr::ConnectionAcquire(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_system_session_returns_error_without_real_db() {
+        let db_pool = DatabasePool::from(create_test_db_pool());
+        let result = db_pool.get_system_session().await;
+        assert!(matches!(result, Err(sea_orm::DbErr::ConnectionAcquire(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_readonly_session_returns_error_without_real_db() {
+        let db_pool = DatabasePool::from(create_test_db_pool());
+        let result = db_pool.get_readonly_session().await;
+        assert!(matches!(result, Err(sea_orm::DbErr::ConnectionAcquire(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_session_with_empty_role_returns_error_without_real_db() {
+        let db_pool = DatabasePool::from(create_test_db_pool());
+        let result = db_pool.get_session("").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_session_with_unicode_role_returns_error_without_real_db() {
+        let db_pool = DatabasePool::from(create_test_db_pool());
+        let result = db_pool.get_session("管理员").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_pool_stats_returns_status_from_lazy_pool() {
+        // get_pool_stats reads status from inner DbPool; lazy pool should
+        // report 0 for all fields (no connections established).
+        let db_pool = DatabasePool::from(create_test_db_pool());
+        let stats = db_pool.get_pool_stats().await;
+        assert_eq!(stats.active_connections, 0);
+        assert_eq!(stats.idle_connections, 0);
+        assert_eq!(stats.total_connections, 0);
+    }
+
+    // ============================================================
+    // create_pool — error paths (no real DB needed)
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_create_pool_invalid_url_returns_error() {
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool(&settings).await;
+        assert!(
+            result.is_err(),
+            "create_pool with invalid URL should return error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_unreachable_host_returns_error() {
+        // Valid format but unreachable host (port 1 triggers connection failure)
+        let settings = make_settings("postgres://postgres:postgres@127.0.0.1:1/postgres");
+        let result = create_pool(&settings).await;
+        assert!(
+            result.is_err(),
+            "create_pool with unreachable host should return error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_all_none_settings_uses_defaults_and_fails() {
+        // 覆盖 max_connections/unwrap_or(100)、min_connections/unwrap_or(10)、
+        // idle_timeout/unwrap_or(300)、acquire_timeout/unwrap_or(30000)、
+        // connect_timeout/unwrap_or(30)、max_lifetime/unwrap_or(1800) 等分支
+        let settings = DatabaseSettings {
+            url: "not-a-valid-url".to_string(),
+            max_connections: None,
+            min_connections: None,
+            connect_timeout: None,
+            idle_timeout: None,
+            max_lifetime: None,
+            connection_keepalive: None,
+            health_check_interval: None,
+        };
+        let result = create_pool(&settings).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_postgresql_url_format_returns_error() {
+        // 覆盖 settings.url.starts_with("postgresql") 分支
+        let settings = make_settings("postgresql://user:pass@127.0.0.1:1/db");
+        let result = create_pool(&settings).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_postgres_url_format_returns_error() {
+        // 覆盖 settings.url.starts_with("postgres") 分支
+        let settings = make_settings("postgres://user:pass@127.0.0.1:1/db");
+        let result = create_pool(&settings).await;
+        assert!(result.is_err());
+    }
+
+    // ============================================================
+    // create_pool_with_retry — error paths
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_create_pool_with_retry_invalid_url_fails_all_retries() {
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool_with_retry(&settings, 3, 0).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_retry_zero_retries_returns_timeout_error() {
+        // 0 retries means loop body never executes, falls through to
+        // last_error.unwrap_or_else(Timeout) — covers the Timeout fallback branch.
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool_with_retry(&settings, 0, 0).await;
+        match result {
+            Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout)) => {}
+            Err(e) => panic!("expected ConnectionAcquire(Timeout), got: {:?}", e),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_retry_one_retry_invalid_url_fails() {
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool_with_retry(&settings, 1, 0).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_retry_two_retries_invalid_url_fails() {
+        // Two retries: covers warn! branch on attempt 1 and the final failure path.
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool_with_retry(&settings, 2, 0).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_retry_unreachable_host_fails() {
+        let settings = make_settings("postgres://postgres:postgres@127.0.0.1:1/postgres");
+        let result = create_pool_with_retry(&settings, 2, 0).await;
+        assert!(result.is_err());
+    }
+
+    // ============================================================
+    // PoolStats — Default / Clone / Debug
+    // ============================================================
+
+    #[test]
+    fn test_pool_stats_default_is_zero() {
+        let stats = PoolStats::default();
+        assert_eq!(stats.active_connections, 0);
+        assert_eq!(stats.idle_connections, 0);
+        assert_eq!(stats.total_connections, 0);
+    }
+
+    #[test]
+    fn test_pool_stats_clone_preserves_values() {
+        let stats = PoolStats {
+            active_connections: 5,
+            idle_connections: 3,
+            total_connections: 8,
+        };
+        let cloned = stats.clone();
+        assert_eq!(cloned.active_connections, 5);
+        assert_eq!(cloned.idle_connections, 3);
+        assert_eq!(cloned.total_connections, 8);
+    }
+
+    #[test]
+    fn test_pool_stats_debug_format_works() {
+        let stats = PoolStats {
+            active_connections: 1,
+            idle_connections: 2,
+            total_connections: 3,
+        };
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("active_connections: 1"));
+        assert!(debug_str.contains("idle_connections: 2"));
+        assert!(debug_str.contains("total_connections: 3"));
+    }
+
+    #[test]
+    fn test_pool_stats_zero_values() {
+        let stats = PoolStats {
+            active_connections: 0,
+            idle_connections: 0,
+            total_connections: 0,
+        };
+        assert_eq!(stats.active_connections, 0);
+        assert_eq!(stats.idle_connections, 0);
+        assert_eq!(stats.total_connections, 0);
+    }
+
+    #[test]
+    fn test_pool_stats_max_u32_values() {
+        let stats = PoolStats {
+            active_connections: u32::MAX,
+            idle_connections: u32::MAX,
+            total_connections: u32::MAX,
+        };
+        assert_eq!(stats.active_connections, u32::MAX);
+        assert_eq!(stats.idle_connections, u32::MAX);
+        assert_eq!(stats.total_connections, u32::MAX);
+    }
+
+    // ============================================================
+    // Environment variable branches (create_pool sqlx_logging toggle)
+    // ============================================================
+
+    /// RAII guard that restores an environment variable on drop.
+    struct EnvVarGuard {
+        key: &'static str,
+        old_value: Option<std::string::String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let old_value = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, old_value }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.old_value {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_crawlrs_env_production_disables_sql_logging() {
+        let _guard = EnvVarGuard::set("CRAWLRS_ENV", "production");
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool(&settings).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_crawlrs_env_prod_disables_sql_logging() {
+        let _guard = EnvVarGuard::set("CRAWLRS_ENV", "prod");
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool(&settings).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_app_environment_production_disables_sql_logging() {
+        // 覆盖 or_else 分支：CRAWLRS_ENV 未设置时回退到 APP_ENVIRONMENT
+        let _guard1 = EnvVarGuard::set("CRAWLRS_ENV", "");
+        let _guard2 = EnvVarGuard::set("APP_ENVIRONMENT", "production");
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool(&settings).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_app_environment_prod_disables_sql_logging() {
+        let _guard1 = EnvVarGuard::set("CRAWLRS_ENV", "");
+        let _guard2 = EnvVarGuard::set("APP_ENVIRONMENT", "prod");
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool(&settings).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_with_development_env_enables_sql_logging() {
+        // 覆盖 development 默认分支（is_production = false）
+        let _guard = EnvVarGuard::set("CRAWLRS_ENV", "development");
+        let settings = make_settings("not-a-valid-url");
+        let result = create_pool(&settings).await;
+        assert!(result.is_err());
+    }
+
+    // ============================================================
+    // Original ignored tests requiring a real PostgreSQL instance
+    // ============================================================
+
     #[tokio::test]
     #[ignore = "requires running PostgreSQL; run with: cargo test test_create_pool -- --ignored"]
     async fn test_create_pool() {

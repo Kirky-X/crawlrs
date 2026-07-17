@@ -404,4 +404,514 @@ mod tests {
             "redirect to private IP (10.0.0.1) should be blocked"
         );
     }
+
+    // ========== Supplementary tests: edge cases and parameter coverage ==========
+
+    #[tokio::test]
+    async fn test_ssrf_safe_redirect_policy_blocks_redirect_to_172_16() {
+        // Another private IP range (172.16.0.0/12) should also be blocked.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-172"))
+            .respond_with(
+                ResponseTemplate::new(301).insert_header("Location", "http://172.16.0.1:80/dest"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-172", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response.status().as_u16(),
+            301,
+            "redirect to 172.16.0.0/12 should be blocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_safe_redirect_policy_blocks_redirect_to_192_168() {
+        // The 192.168.0.0/16 private range should also be blocked.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-192"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("Location", "http://192.168.1.1:80/dest"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-192", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "redirect to 192.168.0.0/16 should be blocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_safe_redirect_policy_blocks_redirect_to_ipv6_loopback() {
+        // IPv6 loopback [::1] should also be blocked.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-ipv6"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("Location", "http://[::1]:80/dest"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-ipv6", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "redirect to [::1] should be blocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_safe_redirect_policy_blocks_redirect_to_169_254() {
+        // Link-local address 169.254.0.0/16 should be blocked (cloud metadata).
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-link-local"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("Location", "http://169.254.169.254/latest/meta-data/"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-link-local", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "redirect to 169.254.169.254 should be blocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_safe_redirect_policy_blocks_redirect_to_0_0_0_0() {
+        // 0.0.0.0 should be blocked.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-zero"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("Location", "http://0.0.0.0:80/dest"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-zero", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "redirect to 0.0.0.0 should be blocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_safe_redirect_policy_blocks_non_http_scheme() {
+        // A redirect to a non-HTTP scheme (file://) should be blocked.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-file"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("Location", "file:///etc/passwd"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-file", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "redirect to file:// scheme should be blocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_redirect_client_returns_redirect_response() {
+        // The no-redirect client should return the redirect response as-is,
+        // without following it.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("Location", "http://127.0.0.1:1/dest"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_no_redirects();
+        let url = format!("{}/redirect", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        // The no-redirect client should NOT follow the redirect.
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "no-redirect client should return 302 without following"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_client_with_ssrf_policy_handles_post_request() {
+        // Verify the SSRF-safe client handles POST requests without redirect issues.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/submit"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("accepted"))
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/submit", mock_server.uri());
+        let response = client
+            .post(&url)
+            .body("data")
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status().as_u16(), 200);
+        assert_eq!(response.text().await.unwrap(), "accepted");
+    }
+
+    #[tokio::test]
+    async fn test_client_with_ssrf_policy_follows_safe_redirect_to_mock_server() {
+        // NOTE: This test requires network access. The SSRF-safe policy allows
+        // redirects to non-internal URLs. We use the mock server's own address
+        // as the redirect target, but 127.0.0.1 is internal, so the redirect
+        // is blocked. This test documents that behavior: even a redirect to
+        // the mock server (127.0.0.1) is blocked by SSRF protection.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        // Set up a destination endpoint on the mock server.
+        Mock::given(method("GET"))
+            .and(path("/destination"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("reached"))
+            .mount(&mock_server)
+            .await;
+
+        // Redirect to the mock server's own /destination endpoint.
+        Mock::given(method("GET"))
+            .and(path("/redirect-to-dest"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("Location", format!("{}/destination", mock_server.uri())),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-to-dest", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        // The redirect target is 127.0.0.1 (mock server), which is_internal_url
+        // returns true, so the redirect is blocked and the 302 is returned.
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "redirect to 127.0.0.1 (mock server) should be blocked by SSRF policy"
+        );
+    }
+
+    #[test]
+    fn test_default_user_agent_is_chrome_like() {
+        // Verify the default User-Agent contains Chrome identifiers.
+        assert!(DEFAULT_USER_AGENT.contains("Chrome"));
+        assert!(DEFAULT_USER_AGENT.contains("Mozilla"));
+    }
+
+    #[test]
+    fn test_create_ssrf_safe_redirect_policy_with_different_limits() {
+        // Verify policies can be created for a range of redirect limits.
+        for limit in [1u8, 2, 5, 10, 20, 50, 100, 200] {
+            let _policy = create_ssrf_safe_redirect_policy(limit);
+        }
+    }
+
+    #[test]
+    fn test_http_client_functions_return_usable_clients() {
+        // Smoke test: all factory functions must return usable clients.
+        let c1 = create_http_client_with_timeout(10);
+        let c2 = create_http_client();
+        let c3 = create_http_client_no_redirects();
+        let c4 = create_http_client_with_redirects(10, 5);
+        // Verify they can be cloned without panic.
+        let _ = c1.clone();
+        let _ = c2.clone();
+        let _ = c3.clone();
+        let _ = c4.clone();
+    }
+
+    // ========== Test logger for covering log::warn!/log::debug! in redirect policy ==========
+
+    use log::{LevelFilter, Log, Metadata, Record};
+    use std::sync::Once;
+
+    static LOGGER_INIT: Once = Once::new();
+
+    struct CapturingLogger;
+
+    impl Log for CapturingLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= log::Level::Debug
+        }
+        fn log(&self, _record: &Record) {}
+        fn flush(&self) {}
+    }
+
+    fn ensure_debug_logger() {
+        LOGGER_INIT.call_once(|| {
+            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
+            let _ = log::set_logger(&CAPTURING_LOGGER);
+            log::set_max_level(LevelFilter::Debug);
+        });
+    }
+
+    // ========== log::warn! coverage tests for SSRF redirect policy ==========
+
+    #[tokio::test]
+    async fn test_ssrf_block_logs_warning_with_logger_initialized() {
+        // With logger initialized, the log::warn! for SSRF block should execute.
+        ensure_debug_logger();
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-logged"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("Location", "http://127.0.0.1:1/destination"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-logged", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "redirect to internal URL should be blocked (302 returned)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_redirect_limit_exceeded_logs_warning_with_logger() {
+        // With max_redirects=0 and logger initialized, the log::warn! for
+        // redirect limit exceeded should execute.
+        ensure_debug_logger();
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-limit-logged"))
+            .respond_with(
+                ResponseTemplate::new(301).insert_header("Location", "http://127.0.0.1:1/dest"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 0);
+        let url = format!("{}/redirect-limit-logged", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response.status().as_u16(),
+            301,
+            "with max_redirects=0, redirect should not be followed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_block_localhost_logs_warning_with_logger() {
+        // With logger initialized, blocking redirect to localhost logs warning.
+        ensure_debug_logger();
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-localhost-logged"))
+            .respond_with(
+                ResponseTemplate::new(301)
+                    .insert_header("Location", "http://localhost:1/destination"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-localhost-logged", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status().as_u16(), 301);
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_block_private_ip_logs_warning_with_logger() {
+        // With logger initialized, blocking redirect to private IP logs warning.
+        ensure_debug_logger();
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-private-logged"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("Location", "http://10.0.0.1:8080/internal"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let url = format!("{}/redirect-private-logged", mock_server.uri());
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status().as_u16(), 302);
+    }
+
+    // ========== redirect follow 分支覆盖测试 ==========
+
+    #[tokio::test]
+    async fn test_ssrf_safe_redirect_policy_follows_external_redirect() {
+        // 当 redirect 目标是外部 URL（is_internal_url 返回 false）时，
+        // policy 应执行 log::debug!（行 141-149）和 attempt.follow()（行 152）。
+        // 使用 TEST-NET-1 (192.0.2.1, RFC 5737) 端口 1，确保不可达，
+        // 触发 attempt.follow() 后连接失败返回错误。
+        ensure_debug_logger();
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/redirect-external-follow"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("Location", "http://192.0.2.1:1/destination"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        // 使用短超时（2 秒），避免测试等待过久
+        let client = create_http_client_with_redirects(2, 10);
+        let url = format!("{}/redirect-external-follow", mock_server.uri());
+        let result = client.get(&url).send().await;
+
+        // redirect 目标不可达，send() 应返回错误（覆盖 attempt.follow() 分支）
+        assert!(
+            result.is_err(),
+            "redirect to unreachable external URL should fail after attempt.follow()"
+        );
+    }
 }

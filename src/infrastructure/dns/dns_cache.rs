@@ -436,4 +436,59 @@ mod tests {
         let ips2 = result2.unwrap();
         assert!(!ips2.is_empty());
     }
+
+    // =========================================================================
+    // logger 初始化：覆盖 debug! 宏参数行（line 76, 103, 117, 127）
+    // =========================================================================
+
+    use std::sync::Once;
+
+    static TEST_LOGGER_INIT: Once = Once::new();
+
+    struct TestLogger;
+    impl log::Log for TestLogger {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, _: &log::Record) {}
+        fn flush(&self) {}
+    }
+
+    static TEST_LOGGER: TestLogger = TestLogger;
+
+    fn ensure_test_logger() {
+        TEST_LOGGER_INIT.call_once(|| {
+            let _ = log::set_logger(&TEST_LOGGER);
+            log::set_max_level(log::LevelFilter::Debug);
+        });
+    }
+
+    #[tokio::test]
+    async fn test_set_remove_clear_with_logger_covers_debug_macros() {
+        ensure_test_logger();
+        let svc = make_service(300).await;
+
+        let ips: Vec<IpAddr> = vec!["203.0.113.10".parse().unwrap()];
+        // set → 覆盖 line 117 debug! 宏
+        svc.set("logger-test.example", 443, ips.clone(), 60).await;
+
+        // remove → 覆盖 line 127 debug! 宏
+        svc.remove("logger-test.example", 443).await;
+
+        // clear → 覆盖 line 103 debug! 宏
+        svc.clear().await;
+    }
+
+    #[tokio::test]
+    async fn test_lookup_host_with_logger_covers_cache_store_debug_macro() {
+        ensure_test_logger();
+        let svc = make_service(300).await;
+        // localhost 解析（缓存未命中 → DNS 解析 → set 成功 → line 76 debug! 宏）
+        let result = svc.lookup_host("localhost", 80).await;
+        assert!(result.is_ok(), "localhost should resolve");
+        let ips = result.unwrap();
+        assert!(!ips.is_empty());
+        let has_loopback = ips.iter().any(|ip| ip.is_loopback());
+        assert!(has_loopback, "localhost should resolve to loopback");
+    }
 }

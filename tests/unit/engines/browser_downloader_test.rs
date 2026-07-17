@@ -274,7 +274,10 @@ mod browser_downloader_tests {
         assert!(result.is_ok(), "cleanup should succeed");
 
         // Verify dir was removed
-        assert!(!temp_path.exists(), "download_dir should be removed after cleanup");
+        assert!(
+            !temp_path.exists(),
+            "download_dir should be removed after cleanup"
+        );
 
         // Verify status is NotDownloaded
         let status = manager.get_status().await;

@@ -134,26 +134,14 @@ async fn tc_inmemory_log_geo_restriction_action_succeeds() {
     let repo = InMemoryGeoRestrictionRepository::new();
     let team_id = Uuid::new_v4();
 
-    repo.log_geo_restriction_action(
-        team_id,
-        "192.168.1.100",
-        "US",
-        "allowed",
-        "IP in whitelist",
-    )
-    .await
-    .expect("log action should succeed");
+    repo.log_geo_restriction_action(team_id, "192.168.1.100", "US", "allowed", "IP in whitelist")
+        .await
+        .expect("log action should succeed");
 
     // 多次记录应都成功
-    repo.log_geo_restriction_action(
-        team_id,
-        "10.0.0.50",
-        "CN",
-        "denied",
-        "Country in blocklist",
-    )
-    .await
-    .expect("second log action should succeed");
+    repo.log_geo_restriction_action(team_id, "10.0.0.50", "CN", "denied", "Country in blocklist")
+        .await
+        .expect("second log action should succeed");
 }
 
 /// tc_inmemory_overwrite_restrictions: 同一团队多次更新应覆盖旧值
@@ -190,8 +178,7 @@ async fn tc_inmemory_overwrite_restrictions() {
         .expect("get after overwrite should succeed");
 
     assert_eq!(
-        retrieved.enable_geo_restrictions,
-        false,
+        retrieved.enable_geo_restrictions, false,
         "should reflect second update"
     );
     assert!(
@@ -223,10 +210,7 @@ async fn tc_database_get_unknown_team_returns_team_not_found() {
                 "TeamNotFound error should carry the queried team_id"
             );
         }
-        Err(e) => panic!(
-            "expected TeamNotFound error, got different error: {:?}",
-            e
-        ),
+        Err(e) => panic!("expected TeamNotFound error, got different error: {:?}", e),
         Ok(_) => panic!("expected TeamNotFound error, got Ok"),
     }
 }
@@ -246,16 +230,15 @@ async fn tc_database_update_unknown_team_returns_team_not_found() {
         domain_blacklist: None,
     };
 
-    let result = repo.update_team_restrictions(unknown_team, &restrictions).await;
+    let result = repo
+        .update_team_restrictions(unknown_team, &restrictions)
+        .await;
 
     match result {
         Err(GeoRestrictionRepositoryError::TeamNotFound(id)) => {
             assert_eq!(id, unknown_team);
         }
-        Err(e) => panic!(
-            "expected TeamNotFound error, got different error: {:?}",
-            e
-        ),
+        Err(e) => panic!("expected TeamNotFound error, got different error: {:?}", e),
         Ok(_) => panic!("expected TeamNotFound error, got Ok"),
     }
 }
@@ -425,11 +408,7 @@ async fn tc_database_log_multiple_actions_all_persist() {
                 && l.restriction_type == *action
                 && l.reason == *reason
         });
-        assert!(
-            found,
-            "log entry for ip={} should be persisted",
-            ip
-        );
+        assert!(found, "log entry for ip={} should be persisted", ip);
     }
 
     // 清理
@@ -463,10 +442,7 @@ async fn tc_database_update_partial_restrictions() {
         .await
         .expect("get after partial update should succeed");
 
-    assert!(
-        retrieved.enable_geo_restrictions,
-        "geo should be enabled"
-    );
+    assert!(retrieved.enable_geo_restrictions, "geo should be enabled");
     assert!(
         retrieved.allowed_countries.is_none(),
         "allowed_countries should be None"

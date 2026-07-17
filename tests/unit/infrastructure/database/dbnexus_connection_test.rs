@@ -55,7 +55,8 @@ async fn docker_available() -> bool {
 /// 但结构体 derive 了 `Deserialize`，可通过 JSON 反序列化绕过可见性限制。
 fn make_settings(url: &str) -> DatabaseSettings {
     let json = format!(r#"{{"url":"{}"}}"#, url);
-    serde_json::from_str(&json).unwrap_or_else(|e| panic!("failed to parse DatabaseSettings JSON: {e}"))
+    serde_json::from_str(&json)
+        .unwrap_or_else(|e| panic!("failed to parse DatabaseSettings JSON: {e}"))
 }
 
 /// 创建一个 lazy（非连接）DbPool，用于不需要真实数据库连接的纯逻辑测试。
@@ -70,8 +71,7 @@ fn create_lazy_pool() -> Arc<DbPool> {
                 .build()
                 .expect("failed to build tokio runtime for DbPool construction");
             let _guard = rt.enter();
-            DbPool::try_from(&DbConfig::default())
-                .expect("failed to create lazy DbPool for test")
+            DbPool::try_from(&DbConfig::default()).expect("failed to create lazy DbPool for test")
         });
         Arc::new(handle.join().expect("DbPool construction thread panicked"))
     })
@@ -221,7 +221,8 @@ async fn test_create_pool_with_retry_zero_retries_returns_timeout_error() {
     // 验证错误类型为 ConnectionAcquire(Timeout)（因为 last_error 为 None 时的默认值）
     // 使用 match 而非 unwrap_err()，因为 DbPool 未实现 Debug
     match result {
-        Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout)) => { /* expected */ }
+        Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout)) => { /* expected */
+        }
         Err(e) => panic!("expected ConnectionAcquire(Timeout), got: {:?}", e),
         Ok(_) => panic!("expected error, got Ok"),
     }
@@ -320,7 +321,10 @@ fn test_database_pool_deref_to_dbpool() {
     // DbPool 没有简单的等价比较方法，验证指针地址一致
     let inner_ptr = db_pool.inner().as_ref() as *const DbPool;
     let deref_ptr = derefed as *const DbPool;
-    assert_eq!(inner_ptr, deref_ptr, "Deref should return reference to inner DbPool");
+    assert_eq!(
+        inner_ptr, deref_ptr,
+        "Deref should return reference to inner DbPool"
+    );
 }
 
 #[test]
@@ -332,7 +336,10 @@ fn test_database_pool_as_ref_dbpool() {
     // 验证 as_ref 返回的是 inner pool 的引用
     let inner_ptr = db_pool.inner().as_ref() as *const DbPool;
     let as_ref_ptr = as_ref as *const DbPool;
-    assert_eq!(inner_ptr, as_ref_ptr, "AsRef should return reference to inner DbPool");
+    assert_eq!(
+        inner_ptr, as_ref_ptr,
+        "AsRef should return reference to inner DbPool"
+    );
 }
 
 #[test]
@@ -432,7 +439,8 @@ async fn tc_database_pool_get_readonly_session_without_permissions_returns_error
     // 错误被映射为 ConnectionAcquire(ConnectionClosed)。
     // 使用 match 而非 unwrap_err()，因为 Session 未实现 Debug。
     match session {
-        Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed)) => { /* expected */ }
+        Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed)) => { /* expected */
+        }
         Err(e) => panic!("expected ConnectionAcquire(ConnectionClosed), got: {:?}", e),
         Ok(_) => {
             // 如果 permissions 配置恰好可用，readonly session 也可能成功。
@@ -478,7 +486,8 @@ async fn test_database_pool_get_session_lazy_pool_returns_error() {
     // 验证错误类型为 ConnectionAcquire(ConnectionClosed)
     // 使用 match 而非 unwrap_err()，因为 Session 未实现 Debug
     match session {
-        Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed)) => { /* expected */ }
+        Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed)) => { /* expected */
+        }
         Err(e) => panic!("expected ConnectionAcquire(ConnectionClosed), got: {:?}", e),
         Ok(_) => panic!("expected error, got Ok"),
     }
@@ -489,7 +498,10 @@ async fn test_database_pool_get_admin_session_lazy_pool_returns_error() {
     let lazy_pool = create_lazy_pool();
     let db_pool: DatabasePool = lazy_pool.into();
     let session = db_pool.get_admin_session().await;
-    assert!(session.is_err(), "get_admin_session on lazy pool should return error");
+    assert!(
+        session.is_err(),
+        "get_admin_session on lazy pool should return error"
+    );
 }
 
 #[tokio::test]
@@ -497,7 +509,10 @@ async fn test_database_pool_get_system_session_lazy_pool_returns_error() {
     let lazy_pool = create_lazy_pool();
     let db_pool: DatabasePool = lazy_pool.into();
     let session = db_pool.get_system_session().await;
-    assert!(session.is_err(), "get_system_session on lazy pool should return error");
+    assert!(
+        session.is_err(),
+        "get_system_session on lazy pool should return error"
+    );
 }
 
 #[tokio::test]
@@ -521,9 +536,18 @@ async fn test_database_pool_get_pool_stats_lazy_pool_returns_zeros() {
     let db_pool: DatabasePool = lazy_pool.into();
     let stats = db_pool.get_pool_stats().await;
     // lazy pool 没有连接，所有计数应为 0
-    assert_eq!(stats.active_connections, 0, "lazy pool should have 0 active connections");
-    assert_eq!(stats.idle_connections, 0, "lazy pool should have 0 idle connections");
-    assert_eq!(stats.total_connections, 0, "lazy pool should have 0 total connections");
+    assert_eq!(
+        stats.active_connections, 0,
+        "lazy pool should have 0 active connections"
+    );
+    assert_eq!(
+        stats.idle_connections, 0,
+        "lazy pool should have 0 idle connections"
+    );
+    assert_eq!(
+        stats.total_connections, 0,
+        "lazy pool should have 0 total connections"
+    );
 }
 
 // ============================================================

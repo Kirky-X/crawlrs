@@ -272,4 +272,117 @@ mod tests {
             "worker should process even when result is Empty"
         );
     }
+
+    // ========== AbstractWorker::run 全路径覆盖测试 ==========
+    //
+    // 覆盖 lines 78-79 (info! + interval 构造), 82 (tick().await),
+    // 84 (match process()), 86 (Completed debug!), 88-89 (Error error!),
+    // 92 (Empty debug!)。使用 spawn + sleep + abort 模式确保 loop 内
+    // 所有三个 match 分支均被执行多次，便于覆盖率工具记录。
+
+    /// 处理器在 Completed / Error / Empty 之间循环返回，确保 run() 的
+    /// 三个 match 分支都被触发。
+    struct CyclingProcessor {
+        name: &'static str,
+        call_count: AtomicU32,
+        completed_count: AtomicU32,
+        error_count: AtomicU32,
+        empty_count: AtomicU32,
+    }
+
+    impl CyclingProcessor {
+        fn new() -> Self {
+            Self {
+                name: "cycling-worker",
+                call_count: AtomicU32::new(0),
+                completed_count: AtomicU32::new(0),
+                error_count: AtomicU32::new(0),
+                empty_count: AtomicU32::new(0),
+            }
+        }
+
+        fn completed_count(&self) -> u32 {
+            self.completed_count.load(Ordering::SeqCst)
+        }
+
+        fn error_count(&self) -> u32 {
+            self.error_count.load(Ordering::SeqCst)
+        }
+
+        fn empty_count(&self) -> u32 {
+            self.empty_count.load(Ordering::SeqCst)
+        }
+
+        fn calls(&self) -> u32 {
+            self.call_count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl WorkerProcess for CyclingProcessor {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        async fn process(&self) -> ProcessResult {
+            let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+            // 0 → Completed, 1 → Error, 2 → Empty, 3 → Completed, ...
+            match n % 3 {
+                0 => {
+                    self.completed_count.fetch_add(1, Ordering::SeqCst);
+                    ProcessResult::Completed
+                }
+                1 => {
+                    self.error_count.fetch_add(1, Ordering::SeqCst);
+                    ProcessResult::Error("cycling error".to_string())
+                }
+                _ => {
+                    self.empty_count.fetch_add(1, Ordering::SeqCst);
+                    ProcessResult::Empty
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_abstract_worker_run_executes_all_match_arms_via_spawn() {
+        // 使用 spawn + sleep + abort 模式，确保 run() 内的 loop 至少执行
+        // 6 次以上（每个 match 分支至少 2 次），覆盖率工具能稳定记录
+        // lines 78-79, 82, 84, 86, 88-89, 92。
+        let processor = Arc::new(CyclingProcessor::new());
+        let processor_clone = processor.clone();
+        let worker = AbstractWorker::new(processor_clone, Duration::from_millis(5));
+
+        // 在独立任务中运行 worker.run()（无限循环）
+        let handle = tokio::spawn(async move {
+            worker.run().await;
+        });
+
+        // 等待足够时间让 interval 触发至少 6 次 tick（5ms × 6 = 30ms + 调度开销）
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        // 中止 worker 任务（run() 是无限循环，必须主动中止）
+        handle.abort();
+        // 让 abort 生效
+        tokio::task::yield_now().await;
+
+        // 验证三个 match 分支都被执行过
+        assert!(
+            processor.calls() >= 6,
+            "worker should have processed at least 6 cycles, got {}",
+            processor.calls()
+        );
+        assert!(
+            processor.completed_count() >= 1,
+            "Completed branch (line 86) should fire at least once"
+        );
+        assert!(
+            processor.error_count() >= 1,
+            "Error branch (lines 88-89) should fire at least once"
+        );
+        assert!(
+            processor.empty_count() >= 1,
+            "Empty branch (line 92) should fire at least once"
+        );
+    }
 }

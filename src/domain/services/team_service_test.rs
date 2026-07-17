@@ -879,6 +879,7 @@ struct ConfigurableCreditsRepository {
     add_count: std::sync::atomic::AtomicU32,
     deduct_count: std::sync::atomic::AtomicU32,
     should_fail_deduct: bool,
+    should_fail_get_balance: bool,
 }
 
 use std::sync::atomic::Ordering;
@@ -897,6 +898,11 @@ impl ConfigurableCreditsRepository {
 #[async_trait]
 impl CreditsRepository for ConfigurableCreditsRepository {
     async fn get_balance(&self, team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+        if self.should_fail_get_balance {
+            return Err(CreditsRepositoryError::DatabaseError(
+                "get_balance failed".to_string(),
+            ));
+        }
         Ok(*self.balances.lock().unwrap().get(&team_id).unwrap_or(&0))
     }
 
@@ -1259,6 +1265,28 @@ async fn test_update_credits_repo_failure_propagates() {
     assert!(
         err.contains("Failed to add credits"),
         "should report add failure, got: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_update_credits_get_balance_failure_propagates() {
+    // Cover team_service.rs line 384: when add_credits succeeds but
+    // get_balance fails, the error "Failed to get balance" is returned.
+    let team_id = Uuid::new_v4();
+    let mut credits_repo = ConfigurableCreditsRepository::with_balance(team_id, 100);
+    credits_repo.should_fail_get_balance = true;
+    let credits_repo: Arc<dyn CreditsRepository> = Arc::new(credits_repo);
+    let team_repo = Arc::new(MockTeamRepository::default());
+    let service = make_management_service(team_repo, credits_repo);
+
+    let result = service.update_credits(team_id, 50, "add".to_string()).await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Failed to get balance"),
+        "should report get_balance failure, got: {}",
         err
     );
 }

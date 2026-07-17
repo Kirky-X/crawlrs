@@ -1169,4 +1169,338 @@ mod tests {
             "engine should NOT be called after 3 failures (circuit breaker open)"
         );
     }
+
+    // ========== Supplementary tests: health() branches, cache truncation, recovery ==========
+
+    /// Helper: create a mock engine with a custom health value.
+    fn make_engine_with_health(
+        name: &'static str,
+        engine_type: SearchEngineType,
+        health: EngineHealth,
+    ) -> Arc<dyn SearchEngine> {
+        Arc::new(MockAggEngine {
+            name,
+            engine_type,
+            items: Vec::new(),
+            health,
+            fail: false,
+            slow: false,
+            call_count: Mutex::new(0),
+        })
+    }
+
+    #[test]
+    fn test_health_with_degraded_engine_is_degraded() {
+        // A single engine with Degraded health → unhealthy_count=1, total=1,
+        // 1 >= 1/2=0 → Degraded.
+        let engines = make_engines(vec![make_engine_with_health(
+            "google",
+            SearchEngineType::Google,
+            EngineHealth::Degraded,
+        )]);
+        let agg = SearchAggregator::new(engines, 5000);
+        assert_eq!(agg.health(), EngineHealth::Degraded);
+    }
+
+    #[test]
+    fn test_health_with_isolated_engine_counts_as_unhealthy() {
+        // Isolated health is treated as unhealthy in the health() aggregation.
+        let engines = make_engines(vec![make_engine_with_health(
+            "google",
+            SearchEngineType::Google,
+            EngineHealth::Isolated,
+        )]);
+        let agg = SearchAggregator::new(engines, 5000);
+        assert_eq!(agg.health(), EngineHealth::Degraded);
+    }
+
+    #[test]
+    fn test_health_with_unknown_engine_is_healthy() {
+        // Unknown health is treated as healthy in the health() aggregation.
+        let engines = make_engines(vec![make_engine_with_health(
+            "google",
+            SearchEngineType::Google,
+            EngineHealth::Unknown,
+        )]);
+        let agg = SearchAggregator::new(engines, 5000);
+        assert_eq!(agg.health(), EngineHealth::Healthy);
+    }
+
+    #[test]
+    fn test_health_mixed_degraded_and_healthy_majority_healthy() {
+        // 1 Degraded out of 4 → 1 < 4/2=2 → Healthy.
+        let engines = make_engines(vec![
+            make_engine_with_health("google", SearchEngineType::Google, EngineHealth::Healthy),
+            make_engine_with_health("bing", SearchEngineType::Bing, EngineHealth::Healthy),
+            make_engine_with_health("baidu", SearchEngineType::Baidu, EngineHealth::Healthy),
+            make_engine_with_health("sogou", SearchEngineType::Sogou, EngineHealth::Degraded),
+        ]);
+        let agg = SearchAggregator::new(engines, 5000);
+        assert_eq!(agg.health(), EngineHealth::Healthy);
+    }
+
+    #[test]
+    fn test_health_all_unknown_is_healthy() {
+        let engines = make_engines(vec![
+            make_engine_with_health("google", SearchEngineType::Google, EngineHealth::Unknown),
+            make_engine_with_health("bing", SearchEngineType::Bing, EngineHealth::Unknown),
+        ]);
+        let agg = SearchAggregator::new(engines, 5000);
+        assert_eq!(agg.health(), EngineHealth::Healthy);
+    }
+
+    #[tokio::test]
+    async fn test_cache_hit_truncates_to_limit() {
+        // The cache stores ALL results from deduplicate_and_rank (without
+        // applying the limit). On a cache hit, the cached results are truncated
+        // to the request limit. To trigger this, the engine must return more
+        // items than the limit, and the same cache key (same query+limit+...)
+        // must be used for both searches.
+        // Use distinct titles to avoid Jaro-Winkler deduplication.
+        let items: Vec<ResponseItem> = vec![
+            make_item("Alpha", "https://alpha.com", SearchEngineType::Google),
+            make_item("Beta", "https://beta.com", SearchEngineType::Google),
+            make_item("Gamma", "https://gamma.com", SearchEngineType::Google),
+            make_item("Delta", "https://delta.com", SearchEngineType::Google),
+            make_item("Epsilon", "https://epsilon.com", SearchEngineType::Google),
+        ];
+        let mock = Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            items,
+        ));
+        let engines = make_engines(vec![mock.clone()]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        // First search with limit=3: engine returns 5 items, cache stores 5.
+        let req1 = SearchRequest::new("trunc").with_limit(3);
+        let resp1 = agg
+            .search(&req1)
+            .await
+            .expect("first search should succeed");
+        // First search returns ALL 5 results (limit not applied on first search).
+        assert_eq!(resp1.items.len(), 5);
+        assert_eq!(mock.call_count(), 1);
+
+        // Second search with SAME limit=3: cache hit, truncated to 3.
+        let req2 = SearchRequest::new("trunc").with_limit(3);
+        let resp2 = agg
+            .search(&req2)
+            .await
+            .expect("second search should hit cache");
+        assert_eq!(
+            resp2.items.len(),
+            3,
+            "cached results should be truncated to the request limit"
+        );
+        assert_eq!(
+            mock.call_count(),
+            1,
+            "engine should NOT be called again on cache hit"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inherent_search_with_engine_not_found_falls_back() {
+        // Inherent search_with_engine with a non-existent engine name should
+        // fall back to aggregator search (search all engines).
+        let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            vec![make_item(
+                "G Result",
+                "https://g.com",
+                SearchEngineType::Google,
+            )],
+        ))]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let request = SearchRequest::new("test").with_limit(10);
+        let results = agg
+            .search_with_engine(&request, Some("nonexistent"))
+            .await
+            .expect("fallback to aggregator should succeed");
+        assert_eq!(
+            results.len(),
+            1,
+            "fallback should search all engines and return their results"
+        );
+        assert_eq!(results[0].title, "G Result");
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_resets_on_success() {
+        // Engine fails once (failure count=1), then succeeds on the next call.
+        // The success should reset the failure count to 0.
+        // We use a mock that fails on the first call and succeeds afterward.
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct FlakyEngine {
+            name: &'static str,
+            engine_type: SearchEngineType,
+            items: Vec<ResponseItem>,
+            should_fail: AtomicBool,
+            call_count: Mutex<u32>,
+        }
+
+        #[async_trait]
+        impl SearchEngine for FlakyEngine {
+            fn name(&self) -> &'static str {
+                self.name
+            }
+            fn engine_type(&self) -> SearchEngineType {
+                self.engine_type
+            }
+            fn health(&self) -> EngineHealth {
+                EngineHealth::Healthy
+            }
+            async fn search(
+                &self,
+                _request: &SearchRequest,
+            ) -> Result<Response<ResponseItem>, SearchError> {
+                {
+                    let mut c = self.call_count.lock().unwrap();
+                    *c += 1;
+                }
+                if self.should_fail.load(Ordering::SeqCst) {
+                    return Err(SearchError::NoEngineAvailable);
+                }
+                Ok(Response {
+                    items: self.items.clone(),
+                    total_results: Some(self.items.len() as u64),
+                    engine: self.engine_type,
+                })
+            }
+        }
+
+        let flaky = Arc::new(FlakyEngine {
+            name: "flaky",
+            engine_type: SearchEngineType::Google,
+            items: vec![make_item(
+                "Flaky Result",
+                "https://flaky.com",
+                SearchEngineType::Google,
+            )],
+            should_fail: AtomicBool::new(true),
+            call_count: Mutex::new(0),
+        });
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![flaky.clone()];
+        let agg = SearchAggregator::new(engines, 5000);
+
+        // First call: fails, failure count becomes 1.
+        let req1 = SearchRequest::new("q1").with_limit(10);
+        let r1 = agg.search(&req1).await.unwrap();
+        assert!(r1.items.is_empty(), "first call should fail → empty");
+        assert_eq!(*flaky.call_count.lock().unwrap(), 1);
+
+        // Make the engine succeed for subsequent calls.
+        flaky.should_fail.store(false, Ordering::SeqCst);
+
+        // Second call with a different query: should succeed and reset failure count.
+        let req2 = SearchRequest::new("q2").with_limit(10);
+        let r2 = agg.search(&req2).await.unwrap();
+        assert_eq!(r2.items.len(), 1, "second call should succeed");
+        assert_eq!(*flaky.call_count.lock().unwrap(), 2);
+
+        // Third call with yet another query: should still call the engine
+        // (failure count was reset, circuit breaker not tripped).
+        let req3 = SearchRequest::new("q3").with_limit(10);
+        let r3 = agg.search(&req3).await.unwrap();
+        assert_eq!(r3.items.len(), 1, "third call should succeed");
+        assert_eq!(
+            *flaky.call_count.lock().unwrap(),
+            3,
+            "engine should be called again (failure count was reset on success)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_with_slow_engine_times_out() {
+        // A slow engine that sleeps longer than the aggregator timeout should
+        // trigger the timeout branch, incrementing the failure count.
+        let engines = make_engines(vec![Arc::new(MockAggEngine::slow(
+            "slow-google",
+            SearchEngineType::Google,
+        ))]);
+        // Use a very short timeout (1ms) so the slow engine (5s sleep) times out.
+        let agg = SearchAggregator::new(engines, 1);
+
+        let request = SearchRequest::new("slow-test").with_limit(10);
+        let response = agg
+            .search(&request)
+            .await
+            .expect("search should succeed (timeout returns None, not error)");
+        assert!(
+            response.items.is_empty(),
+            "timed-out engine should yield no results"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_with_lang_and_country_in_cache_key() {
+        // The cache key includes lang and country. Same query with different
+        // lang/country should bypass the cache and call the engine again.
+        let mock = Arc::new(MockAggEngine::healthy(
+            "google",
+            SearchEngineType::Google,
+            vec![make_item("R", "https://r.com", SearchEngineType::Google)],
+        ));
+        let engines = make_engines(vec![mock.clone()]);
+        let agg = SearchAggregator::new(engines, 5000);
+
+        let req1 = SearchRequest::new("query").with_limit(10);
+        req1.clone(); // just to use req1
+        let mut req1 = SearchRequest::new("query").with_limit(10);
+        req1.lang = Some("en".to_string());
+        agg.search(&req1).await.unwrap();
+        assert_eq!(mock.call_count(), 1);
+
+        let mut req2 = SearchRequest::new("query").with_limit(10);
+        req2.lang = Some("zh".to_string());
+        agg.search(&req2).await.unwrap();
+        assert_eq!(mock.call_count(), 2, "different lang should bypass cache");
+    }
+
+    // ========== deduplicate_and_rank with published date extraction ==========
+    // These tests cover lines 180, 183, 189: extract_published_date_with_parser
+    // returns Some when the combined title+description text contains a date,
+    // and calculate_freshness_score is applied using the extracted date.
+
+    #[test]
+    fn test_deduplicate_and_rank_extracts_published_date_from_description() {
+        let agg = SearchAggregator::new(vec![], 5000);
+        let results = vec![SearchResult {
+            title: "Rust 2024 release notes".to_string(),
+            url: "https://example.com/rust-2024".to_string(),
+            description: Some("Published on 2024-01-15 by the Rust team".to_string()),
+            engine: "google".to_string(),
+            score: 0.0,
+            published_time: None,
+        }];
+        let ranked = agg.deduplicate_and_rank(results, "rust");
+        assert_eq!(ranked.len(), 1);
+        assert!(
+            ranked[0].published_time.is_some(),
+            "published_time should be extracted from description containing date"
+        );
+    }
+
+    #[test]
+    fn test_deduplicate_and_rank_extracts_published_date_from_title() {
+        let agg = SearchAggregator::new(vec![], 5000);
+        let results = vec![SearchResult {
+            title: "Rust 1.75 released on 2024-01-15".to_string(),
+            url: "https://example.com/rust-1-75".to_string(),
+            description: None,
+            engine: "bing".to_string(),
+            score: 0.0,
+            published_time: None,
+        }];
+        let ranked = agg.deduplicate_and_rank(results, "rust");
+        assert_eq!(ranked.len(), 1);
+        assert!(
+            ranked[0].published_time.is_some(),
+            "published_time should be extracted from title containing date"
+        );
+    }
 }

@@ -119,7 +119,9 @@ fn settings_with_db_url(db_url: &str) -> anyhow::Result<Arc<crawlrs::config::Set
 ///
 /// Registers every trait-kit module against the testcontainers PostgreSQL
 /// instance — identical to the production startup sequence in `src/main.rs`.
-async fn build_app_state(db_url: &str) -> anyhow::Result<(AppState, Arc<crawlrs::config::Settings>)> {
+async fn build_app_state(
+    db_url: &str,
+) -> anyhow::Result<(AppState, Arc<crawlrs::config::Settings>)> {
     let settings = settings_with_db_url(db_url)?;
 
     let mut kit = AsyncKit::new();
@@ -354,7 +356,9 @@ async fn test_protected_routes_scrape_post_is_registered() {
 #[tokio::test]
 async fn test_protected_routes_scrape_get_by_id_is_registered() {
     if !docker_available().await {
-        eprintln!("[skip] Docker unavailable — test_protected_routes_scrape_get_by_id_is_registered");
+        eprintln!(
+            "[skip] Docker unavailable — test_protected_routes_scrape_get_by_id_is_registered"
+        );
         return;
     }
     let (state, settings, _pg) = match setup_state().await {
@@ -472,11 +476,7 @@ async fn test_protected_routes_team_endpoints_registered() {
     // GET /v1/teams/me
     let (s1, _, _) = send(app.clone(), request(Method::GET, "/v1/teams/me")).await;
     // GET /v1/teams/me/usage
-    let (s2, _, _) = send(
-        app.clone(),
-        request(Method::GET, "/v1/teams/me/usage"),
-    )
-    .await;
+    let (s2, _, _) = send(app.clone(), request(Method::GET, "/v1/teams/me/usage")).await;
     // GET /v1/teams/geo-restrictions
     let (s3, _, _) = send(
         app.clone(),
@@ -484,11 +484,7 @@ async fn test_protected_routes_team_endpoints_registered() {
     )
     .await;
     // PUT /v1/teams/geo-restrictions
-    let (s4, _, _) = send(
-        app,
-        request(Method::PUT, "/v1/teams/geo-restrictions"),
-    )
-    .await;
+    let (s4, _, _) = send(app, request(Method::PUT, "/v1/teams/geo-restrictions")).await;
 
     assert_ne!(s1, StatusCode::NOT_FOUND);
     assert_ne!(s2, StatusCode::NOT_FOUND);
@@ -557,7 +553,9 @@ async fn test_protected_routes_search_get_rejected_by_auth_before_method_check()
 #[tokio::test]
 async fn test_protected_routes_unknown_path_rejected_by_auth() {
     if !docker_available().await {
-        eprintln!("[skip] Docker unavailable — test_protected_routes_unknown_path_rejected_by_auth");
+        eprintln!(
+            "[skip] Docker unavailable — test_protected_routes_unknown_path_rejected_by_auth"
+        );
         return;
     }
     let (state, settings, _pg) = match setup_state().await {
@@ -1004,9 +1002,7 @@ async fn test_full_app_body_limit_rejects_oversized_payload() {
 #[tokio::test]
 async fn test_full_app_body_limit_accepts_normal_payload() {
     if !docker_available().await {
-        eprintln!(
-            "[skip] Docker unavailable — test_full_app_body_limit_accepts_normal_payload"
-        );
+        eprintln!("[skip] Docker unavailable — test_full_app_body_limit_accepts_normal_payload");
         return;
     }
     let (state, settings, _pg) = match setup_state().await {

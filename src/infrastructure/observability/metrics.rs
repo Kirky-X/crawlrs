@@ -875,4 +875,13 @@ mod tests {
         let mem = monitor.memory_usage();
         assert_eq!(mem, 0.0);
     }
+
+    // ---- init_metrics: 覆盖 tokio::spawn + interval 注册路径 ----
+
+    #[tokio::test]
+    async fn test_init_metrics_does_not_panic() {
+        // init_metrics 会尝试绑定 9100 端口；若端口被占用则 warn 并 return，
+        // 若端口可用则 spawn 后台任务并注册指标。两种情况都不应 panic。
+        init_metrics();
+    }
 }

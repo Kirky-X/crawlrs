@@ -914,4 +914,52 @@ mod tests {
             assert_eq!(locations[i].country_code, "UNKNOWN");
         }
     }
+
+    // =========================================================================
+    // get_location 错误路径测试
+    //
+    // 注：get_location 的成功路径（行 77-117）在单元测试中无法覆盖。
+    // 原因：GeoLocationServiceImpl 内部直接创建 EngineClient（具体类型，非 trait），
+    // 而 EngineClient::scrape 硬编码先调用 validate_url 进行 SSRF 检查，
+    // 拦截所有 127.0.0.1/localhost/私有 IP。本地 mock HTTP 服务器路径走不通，
+    // 外部真实端点又会让测试依赖网络。行 77-117 需要集成测试或重构
+    // GeoLocationServiceImpl 接受 EngineClientTrait 才能覆盖。
+    //
+    // 以下测试覆盖行 72-75：scrape 错误 → map_err → anyhow 错误
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_get_location_ssrf_blocked_returns_scrape_error() {
+        // 用 127.0.0.1 触发 EngineClient 的 SSRF 保护，
+        // 覆盖行 72-75 的 scrape 错误处理路径（map_err → anyhow!）
+        let client = Arc::new(reqwest::Client::new());
+        let svc = GeoLocationServiceImpl::with_endpoint("http://127.0.0.1:1".to_string(), client);
+        let ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let result = svc.get_location(&ip).await;
+        assert!(result.is_err(), "should fail with SSRF error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Failed to fetch geolocation"),
+            "error should be wrapped scrape failure, got: {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_location_unreachable_dns_returns_scrape_error() {
+        // 用不可达域名（RFC 6761 保留）触发 DNS 解析失败，
+        // 覆盖行 72-75 的 scrape 错误处理路径
+        let client = Arc::new(reqwest::Client::new());
+        let svc =
+            GeoLocationServiceImpl::with_endpoint("http://example.invalid".to_string(), client);
+        let ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let result = svc.get_location(&ip).await;
+        assert!(result.is_err(), "should fail with DNS error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Failed to fetch geolocation"),
+            "error should be wrapped scrape failure, got: {}",
+            err_msg
+        );
+    }
 }

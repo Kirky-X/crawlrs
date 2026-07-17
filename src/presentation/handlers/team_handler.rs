@@ -1727,4 +1727,72 @@ mod tests {
             "error message should mention country code format"
         );
     }
+
+    #[tokio::test]
+    async fn test_update_team_geo_restrictions_invalid_blocked_body_verified() {
+        ensure_debug_logger();
+        let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
+        let auth = make_test_auth_state();
+        let request = UpdateTeamGeoRestrictionsRequest {
+            enable_geo_restrictions: true,
+            allowed_countries: None,
+            blocked_countries: Some(vec!["X".to_string()]),
+            ip_whitelist: None,
+            domain_blacklist: None,
+        };
+
+        let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
+            Extension(repo),
+            Extension(auth),
+            Json(request),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], false);
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Country codes"),
+            "error message should mention country code format"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_team_geo_restrictions_invalid_ip_body_verified() {
+        ensure_debug_logger();
+        let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
+        let auth = make_test_auth_state();
+        let request = UpdateTeamGeoRestrictionsRequest {
+            enable_geo_restrictions: true,
+            allowed_countries: None,
+            blocked_countries: None,
+            ip_whitelist: Some(vec!["not-an-ip".to_string()]),
+            domain_blacklist: None,
+        };
+
+        let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
+            Extension(repo),
+            Extension(auth),
+            Json(request),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], false);
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Invalid IP address"),
+            "error message should mention invalid IP address"
+        );
+    }
 }

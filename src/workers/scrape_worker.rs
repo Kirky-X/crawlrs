@@ -4203,6 +4203,28 @@ mod tests {
         }
     }
 
+    /// TaskQueue whose dequeue always returns Err — exercises run() Err branch.
+    struct FailingTaskQueue;
+
+    #[async_trait::async_trait]
+    impl TaskQueue for FailingTaskQueue {
+        async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
+            Ok(task)
+        }
+        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+            Err(QueueError::Empty)
+        }
+        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+    }
+
     /// Mock ExtractionService that returns non-zero TokenUsage, exercising
     /// the token-credit deduction code paths.
     struct MockExtractionServiceWithTokens;
@@ -4778,10 +4800,13 @@ mod tests {
         fail_mark_failed: AtomicBool,
         fail_update: AtomicBool,
         fail_find_by_id: AtomicBool,
+        fail_find_existing_urls: AtomicBool,
         find_by_id_result: std::sync::Mutex<Option<Task>>,
+        existing_urls_result: std::sync::Mutex<HashSet<String>>,
         mark_failed_count: AtomicU32,
         update_count: AtomicU32,
         create_count: AtomicU32,
+        mark_completed_count: AtomicU32,
     }
 
     impl ConfigurableTaskRepo {
@@ -4790,11 +4815,18 @@ mod tests {
                 fail_mark_failed: AtomicBool::new(false),
                 fail_update: AtomicBool::new(false),
                 fail_find_by_id: AtomicBool::new(false),
+                fail_find_existing_urls: AtomicBool::new(false),
                 find_by_id_result: std::sync::Mutex::new(None),
+                existing_urls_result: std::sync::Mutex::new(HashSet::new()),
                 mark_failed_count: AtomicU32::new(0),
                 update_count: AtomicU32::new(0),
                 create_count: AtomicU32::new(0),
+                mark_completed_count: AtomicU32::new(0),
             }
+        }
+
+        fn mark_completed_count(&self) -> u32 {
+            self.mark_completed_count.load(Ordering::SeqCst)
         }
 
         fn mark_failed_count(&self) -> u32 {
@@ -4807,6 +4839,10 @@ mod tests {
 
         fn create_count(&self) -> u32 {
             self.create_count.load(Ordering::SeqCst)
+        }
+
+        fn set_existing_urls(&self, urls: HashSet<String>) {
+            *self.existing_urls_result.lock().unwrap() = urls;
         }
     }
 
@@ -4838,6 +4874,7 @@ mod tests {
             Ok(None)
         }
         async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            self.mark_completed_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
         async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
@@ -4859,7 +4896,12 @@ mod tests {
             &self,
             _urls: &[String],
         ) -> Result<HashSet<String>, RepositoryError> {
-            Ok(HashSet::new())
+            if self.fail_find_existing_urls.load(Ordering::SeqCst) {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "Mock find_existing_urls error"
+                )));
+            }
+            Ok(self.existing_urls_result.lock().unwrap().clone())
         }
         async fn reset_stuck_tasks(
             &self,
@@ -4900,6 +4942,7 @@ mod tests {
         crawl: std::sync::Mutex<Option<Crawl>>,
         fail_find_by_id: AtomicBool,
         fail_increment_completed: AtomicBool,
+        fail_increment_failed: AtomicBool,
         fail_update_status: AtomicBool,
         update_status_count: AtomicU32,
     }
@@ -4910,6 +4953,7 @@ mod tests {
                 crawl: std::sync::Mutex::new(None),
                 fail_find_by_id: AtomicBool::new(false),
                 fail_increment_completed: AtomicBool::new(false),
+                fail_increment_failed: AtomicBool::new(false),
                 fail_update_status: AtomicBool::new(false),
                 update_status_count: AtomicU32::new(0),
             }
@@ -4949,6 +4993,11 @@ mod tests {
             Ok(())
         }
         async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            if self.fail_increment_failed.load(Ordering::SeqCst) {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "Mock increment_failed error"
+                )));
+            }
             Ok(())
         }
         async fn update_status(
@@ -5037,7 +5086,10 @@ mod tests {
             _description: String,
             _reference_id: Option<Uuid>,
         ) -> Result<(), CreditsRepositoryError> {
-            Err(CreditsRepositoryError::InsufficientCredits { available: 0, required: 1 })
+            Err(CreditsRepositoryError::InsufficientCredits {
+                available: 0,
+                required: 1,
+            })
         }
         async fn add_credits(
             &self,
@@ -5416,7 +5468,11 @@ mod tests {
         let mut task = make_task(json!({"url": "https://example.com"}));
         // Set up find_by_id to return the task so the timeout path can update it
         task.status = TaskStatus::Active;
-        task_repo.find_by_id_result.lock().unwrap().replace(task.clone());
+        task_repo
+            .find_by_id_result
+            .lock()
+            .unwrap()
+            .replace(task.clone());
 
         let result = worker.process_scrape_task(task).await;
         assert!(result.is_ok(), "timeout error should be handled internally");
@@ -5466,9 +5522,8 @@ mod tests {
     #[tokio::test]
     async fn test_process_scrape_task_expired_error_marks_failed() {
         // Use a mock EngineRouter that returns EngineError::Expired
-        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new(
-            EngineError::Expired,
-        ));
+        let router: Arc<dyn EngineRouterTrait> =
+            Arc::new(MockEngineRouter::new(EngineError::Expired));
         let engine_client = Arc::new(EngineClient::with_router(router));
 
         let task_repo = Arc::new(ConfigurableTaskRepo::new());
@@ -5581,9 +5636,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_crawl_completion_status_crawl_repo_error() {
         let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
-        crawl_repo
-            .fail_find_by_id
-            .store(true, Ordering::SeqCst);
+        crawl_repo.fail_find_by_id.store(true, Ordering::SeqCst);
         let crawl_id = Uuid::new_v4();
 
         let worker = build_configurable_worker(
@@ -5663,26 +5716,25 @@ mod tests {
     async fn test_builder_build_missing_credits_repository() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -5695,63 +5747,58 @@ mod tests {
     async fn test_builder_build_missing_create_scrape_use_case() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_team_semaphore(team_semaphore)
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
 
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "create_scrape_use_case is required"
-        );
+        assert_eq!(result.unwrap_err(), "create_scrape_use_case is required");
     }
 
     #[tokio::test]
     async fn test_builder_build_missing_robots_checker() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let result = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
-                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+                Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
             )
             .with_crawl_repository(Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>)
             .with_webhook_service(Arc::new(MockWebhookService) as Arc<dyn WebhookService>)
             .with_credits_repository(
-                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>
             )
             .with_engine_client(engine_client)
             .with_create_scrape_use_case(
-                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>
             )
             .with_team_semaphore(team_semaphore)
             .with_settings(Arc::new(settings))
             .with_extraction_service(
-                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
             .build();
@@ -5873,7 +5920,12 @@ mod tests {
         };
         // Should not panic — error is just logged
         worker
-            .deduct_token_credits(Uuid::new_v4(), Uuid::new_v4(), &usage, "test failing deduct")
+            .deduct_token_credits(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                &usage,
+                "test failing deduct",
+            )
             .await;
     }
 
@@ -5883,8 +5935,7 @@ mod tests {
     async fn test_handle_crawl_success_save_result_failure_propagates_error() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let worker = ScrapeWorker::new(
@@ -5930,8 +5981,7 @@ mod tests {
     async fn test_handle_crawl_success_increment_completed_error_does_not_propagate() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
@@ -5984,8 +6034,7 @@ mod tests {
     async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let worker = ScrapeWorker::new(
@@ -6029,8 +6078,7 @@ mod tests {
         let task_repo = Arc::new(ConfigurableTaskRepo::new());
         let regex_cache = make_regex_cache().await;
         let engine_client = Arc::new(EngineClient::new());
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
         let worker = ScrapeWorker::new(
@@ -6064,6 +6112,877 @@ mod tests {
             task_repo.mark_failed_count(),
             1,
             "mark_failed should be called when robots.txt denies access"
+        );
+    }
+
+    // ========== Success-path mocks for process_scrape_task / run() coverage ==========
+
+    // --- SuccessEngineRouter ---
+
+    /// EngineRouter that returns a configurable successful InternalScrapeResponse.
+    struct SuccessEngineRouter {
+        response: crate::engines::engine_client::InternalScrapeResponse,
+    }
+
+    impl SuccessEngineRouter {
+        fn new() -> Self {
+            use crate::engines::engine_client::InternalScrapeResponse;
+            Self {
+                response: InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body><h1>Hello</h1></body></html>".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                },
+            }
+        }
+
+        fn with_screenshot(mut self, screenshot: String) -> Self {
+            self.response.screenshot = Some(screenshot);
+            self
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EngineRouterTrait for SuccessEngineRouter {
+        async fn route(
+            &self,
+            _request: &crate::engines::engine_client::InternalScrapeRequest,
+        ) -> Result<crate::engines::engine_client::InternalScrapeResponse, EngineError> {
+            Ok(self.response.clone())
+        }
+        async fn aggregate(
+            &self,
+            _request: &crate::engines::engine_client::InternalScrapeRequest,
+        ) -> Result<crate::engines::engine_client::InternalScrapeResponse, EngineError> {
+            Ok(self.response.clone())
+        }
+        fn get_engine_stats(&self) -> std::collections::HashMap<String, EngineStats> {
+            std::collections::HashMap::new()
+        }
+        fn reset_engine_stats(&self, _engine_name: &str) {}
+        fn registered_engines(&self) -> Vec<String> {
+            vec!["mock-success-engine".to_string()]
+        }
+    }
+
+    // --- FailingExtractionService ---
+
+    /// ExtractionService that always returns an error on extract().
+    struct FailingExtractionService;
+
+    #[async_trait::async_trait]
+    impl ExtractionServiceTrait for FailingExtractionService {
+        async fn extract(
+            &self,
+            _html_content: &str,
+            _rules: &HashMap<String, ExtractionRule>,
+            _base_url: Option<&str>,
+        ) -> Result<(Value, TokenUsage)> {
+            Err(anyhow::anyhow!("Mock extraction failure"))
+        }
+        async fn extract_with_schema(
+            &self,
+            _html_content: &str,
+            _schema: &Value,
+        ) -> Result<(Value, TokenUsage)> {
+            Err(anyhow::anyhow!("Mock extraction failure"))
+        }
+        fn extract_with_selectors(
+            &self,
+            _html_content: &str,
+            _rules: &HashMap<String, ExtractionRule>,
+            _base_url: Option<&str>,
+        ) -> Result<Value> {
+            Err(anyhow::anyhow!("Mock extraction failure"))
+        }
+    }
+
+    // --- Helper: build worker with configurable credits + extraction ---
+
+    async fn build_worker_for_success_tests(
+        task_repo: Arc<dyn TaskRepository>,
+        engine_client: Arc<EngineClient>,
+        credits_repo: Arc<dyn CreditsRepository>,
+        extraction_service: Arc<dyn ExtractionServiceTrait>,
+    ) -> ScrapeWorker {
+        let regex_cache = make_regex_cache().await;
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings for success tests");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
+
+        ScrapeWorker::new(
+            task_repo,
+            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            credits_repo,
+            engine_client,
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            team_semaphore,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            Arc::new(settings),
+            10,
+            extraction_service,
+            regex_cache,
+        )
+    }
+
+    // ========== process_scrape_task: success path ==========
+
+    #[tokio::test]
+    async fn test_process_scrape_task_success_path_marks_completed() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        let task = make_task(json!({"url": "https://example.com"}));
+        let result = worker.process_scrape_task(task).await;
+        assert!(result.is_ok(), "success path should return Ok(())");
+
+        // mark_completed should be called by handle_scrape_success
+        assert_eq!(
+            task_repo.mark_completed_count(),
+            1,
+            "mark_completed should be called once for successful scrape"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_success_with_screenshot_and_proxy_deducts_credits() {
+        // Engine returns a response with screenshot
+        let router: Arc<dyn EngineRouterTrait> =
+            Arc::new(SuccessEngineRouter::new().with_screenshot("base64data".to_string()));
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let credits_repo = Arc::new(MockCreditsRepo::default());
+        // Share the deducted log so we can inspect after
+        let deducted_log = credits_repo.deducted.clone();
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            credits_repo as Arc<dyn CreditsRepository>,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        // Payload includes proxy option → deduct_feature_credits should charge 2 (screenshot) + 1 (proxy) = 3
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "options": {
+                "proxy": "http://proxy.example.com:8080"
+            }
+        }));
+        let result = worker.process_scrape_task(task).await;
+        assert!(result.is_ok());
+
+        // At least one deduct_credits call (extra credits for screenshot + proxy)
+        let deductions = deducted_log.lock().unwrap();
+        assert!(
+            !deductions.is_empty(),
+            "deduct_credits should be called for screenshot + proxy"
+        );
+        // The extra-credits call should be 3 (screenshot=2 + proxy=1)
+        let has_extra_credits = deductions.iter().any(|(_, amount)| *amount == 3);
+        assert!(
+            has_extra_credits,
+            "expected a deduct_credits call with amount 3 (screenshot + proxy), got {:?}",
+            deductions
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_success_handle_scrape_failure_calls_handle_failure() {
+        // Engine succeeds but save_result fails → handle_scrape_success returns Err
+        // → process_scrape_task calls handle_failure
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let regex_cache = make_regex_cache().await;
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
+
+        let worker = ScrapeWorker::new(
+            task_repo.clone(),
+            Arc::new(FailingScrapeResultRepo) as Arc<dyn ScrapeResultRepository>,
+            Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            engine_client,
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            team_semaphore,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            Arc::new(settings),
+            10,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            regex_cache,
+        );
+
+        let task = make_task(json!({"url": "https://example.com"}));
+        let result = worker.process_scrape_task(task).await;
+        // handle_failure path returns Ok(()) after retry handling
+        assert!(result.is_ok(), "handle_failure path should return Ok(())");
+    }
+
+    // ========== run() infinite loop coverage ==========
+
+    #[tokio::test]
+    async fn test_run_with_empty_queue_loops_and_sleeps() {
+        let worker = build_mock_worker().await;
+        let queue = Arc::new(MockTaskQueue) as Arc<dyn TaskQueue>;
+
+        // run() is an infinite loop; with empty queue it sleeps 1s per iteration.
+        // Use timeout to verify it enters the loop without returning.
+        let result =
+            tokio::time::timeout(Duration::from_millis(150), worker.run(Arc::clone(&queue))).await;
+
+        // Timeout means run() was still looping (expected behavior)
+        assert!(
+            result.is_err(),
+            "run() should loop indefinitely; timeout expected"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_processes_task_then_continues_looping() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        let task = make_task(json!({"url": "https://example.com"}));
+        let queue = Arc::new(TaskQueueWithTask::new(task)) as Arc<dyn TaskQueue>;
+
+        // run() processes the task then loops (sleeping on empty queue)
+        let result = tokio::time::timeout(Duration::from_millis(500), worker.run(queue)).await;
+
+        // Timeout means run() processed the task and continued looping
+        assert!(
+            result.is_err(),
+            "run() should loop indefinitely after processing"
+        );
+
+        // mark_completed should have been called for the scrape task
+        assert!(
+            task_repo.mark_completed_count() >= 1,
+            "mark_completed should be called after processing scrape task in run()"
+        );
+    }
+
+    // ========== extract_and_queue_links: find_existing_urls failure path ==========
+
+    #[tokio::test]
+    async fn test_extract_and_queue_links_find_existing_urls_failure_returns_err() {
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        // Configure find_existing_urls to fail
+        task_repo
+            .fail_find_existing_urls
+            .store(true, Ordering::SeqCst);
+
+        let worker = build_configurable_worker(
+            task_repo,
+            Arc::new(ConfigurableCrawlRepo::new()),
+            Arc::new(MockRobotsChecker),
+            Arc::new(EngineClient::new()),
+        )
+        .await;
+
+        let mut task = make_task(json!({}));
+        task.url = "https://example.com".to_string();
+        let html = r#"<html><body>
+            <a href="https://example.com/page1">Page 1</a>
+            <a href="https://example.com/page2">Page 2</a>
+        </body></html>"#;
+        let response = ScrapeResponse {
+            content: html.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+        };
+        let config = make_crawl_config(None, None);
+        let result = worker
+            .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+            .await;
+
+        assert!(
+            result.is_err(),
+            "extract_and_queue_links should return Err when find_existing_urls fails"
+        );
+    }
+
+    // ========== handle_scrape_success: extraction failure path ==========
+
+    #[tokio::test]
+    async fn test_handle_scrape_success_extraction_failure_continues_and_marks_completed() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(FailingExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        // Payload includes extraction_rules → extraction will be attempted and fail,
+        // but handle_scrape_success should continue and still mark_completed.
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "extraction_rules": {
+                "title": {
+                    "selector": "h1",
+                    "attr": null,
+                    "is_array": false,
+                    "use_llm": null,
+                    "llm_prompt": null,
+                    "output_format": null
+                }
+            }
+        }));
+        let response = ScrapeResponse {
+            content: "<html><body><h1>Title</h1></body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+        };
+
+        let result = worker.handle_scrape_success(&task, &response).await;
+        assert!(
+            result.is_ok(),
+            "handle_scrape_success should not fail when extraction fails"
+        );
+
+        // mark_completed should still be called
+        assert_eq!(
+            task_repo.mark_completed_count(),
+            1,
+            "mark_completed should be called even when extraction fails"
+        );
+    }
+
+    // ========== process_scrape_task: success path without screenshot/proxy (no extra credits) ==========
+
+    #[tokio::test]
+    async fn test_process_scrape_task_success_without_screenshot_proxy_no_extra_credits() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let credits_repo = Arc::new(MockCreditsRepo::default());
+        let deducted_log = credits_repo.deducted.clone();
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            credits_repo as Arc<dyn CreditsRepository>,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        // No screenshot, no proxy → deduct_feature_credits does nothing (extra_credits == 0)
+        let task = make_task(json!({"url": "https://example.com"}));
+        let result = worker.process_scrape_task(task).await;
+        assert!(result.is_ok());
+
+        // No deduct_credits calls for feature credits (extraction also returns 0 tokens)
+        let deductions = deducted_log.lock().unwrap();
+        assert!(
+            deductions.is_empty(),
+            "no deduct_credits calls expected without screenshot/proxy/token-usage, got {:?}",
+            deductions
+        );
+    }
+
+    // ========== run() Err path: FailingTaskQueue exercises lines 138-140 ==========
+
+    #[tokio::test]
+    async fn test_run_with_failing_queue_logs_error_and_sleeps() {
+        let worker = build_mock_worker().await;
+        let queue = Arc::new(FailingTaskQueue) as Arc<dyn TaskQueue>;
+
+        // run() is an infinite loop; with FailingTaskQueue, dequeue returns Err
+        // → process_next_task returns Err → run() hits the Err branch (lines 138-140)
+        // and sleeps 1s per iteration. Use timeout to verify it enters the loop.
+        let result =
+            tokio::time::timeout(Duration::from_millis(150), worker.run(Arc::clone(&queue))).await;
+
+        // Timeout means run() was still looping (expected behavior)
+        assert!(
+            result.is_err(),
+            "run() should loop indefinitely on queue errors; timeout expected"
+        );
+    }
+
+    // ========== process_crawl_task success path: exercises lines 372-374 ==========
+
+    #[tokio::test]
+    async fn test_process_crawl_task_success_calls_handle_crawl_success() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_configurable_worker(
+            task_repo.clone(),
+            Arc::new(ConfigurableCrawlRepo::new()),
+            Arc::new(MockRobotsChecker),
+            engine_client,
+        )
+        .await;
+
+        let crawl_id = Uuid::new_v4();
+        // max_depth: 0 → depth 0 < max_depth 0 is false → no link extraction
+        let task = make_task(json!({
+            "crawl_id": crawl_id.to_string(),
+            "depth": 0,
+            "config": {"max_depth": 0}
+        }));
+
+        let result = worker.process_crawl_task(task).await;
+        assert!(result.is_ok(), "success path should return Ok(())");
+
+        // mark_completed should be called by handle_crawl_success
+        assert_eq!(
+            task_repo.mark_completed_count(),
+            1,
+            "mark_completed should be called once for successful crawl"
+        );
+    }
+
+    // ========== extract_data_with_rules failure path: exercises lines 509-511 ==========
+
+    #[tokio::test]
+    async fn test_extract_data_with_rules_failure_returns_none_and_logs() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let worker = build_worker_for_success_tests(
+            Arc::new(ConfigurableTaskRepo::new()),
+            engine_client,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(FailingExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        let task = make_task(json!({}));
+        let response = ScrapeResponse {
+            content: "<html><body><h1>Title</h1></body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+        };
+        let mut rules = HashMap::new();
+        rules.insert(
+            "title".to_string(),
+            ExtractionRule {
+                selector: Some("h1".to_string()),
+                attr: None,
+                is_array: false,
+                use_llm: None,
+                llm_prompt: None,
+                output_format: None,
+            },
+        );
+        let config = CrawlConfigDto {
+            max_depth: 1,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: None,
+            extraction_rules: Some(rules),
+        };
+
+        // FailingExtractionService.extract returns Err → lines 509-511
+        let result = worker
+            .extract_data_with_rules(&task, &response, &config)
+            .await;
+        assert!(
+            result.is_none(),
+            "extract_data_with_rules should return None when extraction fails"
+        );
+    }
+
+    // ========== handle_crawl_failure: increment_failed_tasks error (line 540) ==========
+
+    #[tokio::test]
+    async fn test_handle_crawl_failure_increment_failed_error_logs_and_continues() {
+        let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+        crawl_repo
+            .fail_increment_failed
+            .store(true, Ordering::SeqCst);
+
+        let worker = build_configurable_worker(
+            Arc::new(ConfigurableTaskRepo::new()),
+            crawl_repo,
+            Arc::new(MockRobotsChecker),
+            Arc::new(EngineClient::new()),
+        )
+        .await;
+
+        let mut task = make_task(json!({}));
+        let config = make_crawl_config(None, None);
+        let request = worker.build_crawl_request(&task, &config);
+        let result = worker
+            .handle_crawl_failure(
+                &mut task,
+                anyhow::anyhow!("Network error"),
+                Uuid::new_v4(),
+                &request,
+            )
+            .await;
+
+        // Should succeed — increment_failed_tasks error is just logged (line 540)
+        assert!(
+            result.is_ok(),
+            "handle_crawl_failure should not fail when increment_failed_tasks errors"
+        );
+    }
+
+    // ========== update_crawl_completion_status: update_status error (line 569) ==========
+
+    #[tokio::test]
+    async fn test_update_crawl_completion_status_update_status_error_logs_and_continues() {
+        let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
+        crawl_repo.fail_update_status.store(true, Ordering::SeqCst);
+
+        let crawl_id = Uuid::new_v4();
+        // completed + failed == total → enters the update_status branch
+        let crawl = Crawl::with_all_fields(
+            crawl_id,
+            Uuid::new_v4(),
+            "test".to_string(),
+            "https://example.com".to_string(),
+            "https://example.com".to_string(),
+            CrawlStatus::Processing,
+            json!({}),
+            10,
+            8,
+            2,
+            Utc::now(),
+            Utc::now(),
+            None,
+        );
+        crawl_repo.set_crawl(crawl);
+
+        let worker = build_configurable_worker(
+            Arc::new(ConfigurableTaskRepo::new()),
+            crawl_repo.clone(),
+            Arc::new(MockRobotsChecker),
+            Arc::new(EngineClient::new()),
+        )
+        .await;
+
+        // update_status returns Err → line 569 error log
+        worker.update_crawl_completion_status(crawl_id).await;
+
+        // update_status was called (and failed)
+        assert_eq!(
+            crawl_repo.update_status_count(),
+            1,
+            "update_status should be called once even when it errors"
+        );
+    }
+
+    // ========== process_extract_task: rules path (lines 622, 630-634, 644-647) ==========
+
+    #[tokio::test]
+    async fn test_process_extract_task_with_rules_calls_handle_rules_extraction() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        // payload.rules = Some → line 622 (debug! rules_count) + lines 644-647 (handle_rules_extraction)
+        let task = make_task(json!({
+            "urls": ["https://example.com/page"],
+            "rules": {
+                "title": {
+                    "selector": "h1",
+                    "attr": null,
+                    "is_array": false,
+                    "use_llm": null,
+                    "llm_prompt": null,
+                    "output_format": null
+                }
+            }
+        }));
+
+        let result = worker.process_extract_task(task).await;
+        assert!(
+            result.is_ok(),
+            "process_extract_task with rules should return Ok(())"
+        );
+        // save_extract_result calls repository.update (mark as Completed)
+        assert!(
+            task_repo.update_count() >= 1,
+            "update should be called to mark task as Completed"
+        );
+    }
+
+    // ========== process_extract_task: prompt path (lines 650-653) ==========
+
+    #[tokio::test]
+    async fn test_process_extract_task_with_prompt_calls_handle_prompt_extraction() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        // payload.prompt = Some (no rules) → lines 650-653 (handle_prompt_extraction)
+        let task = make_task(json!({
+            "urls": ["https://example.com/page"],
+            "prompt": "Extract the title"
+        }));
+
+        let result = worker.process_extract_task(task).await;
+        assert!(
+            result.is_ok(),
+            "process_extract_task with prompt should return Ok(())"
+        );
+        assert!(
+            task_repo.update_count() >= 1,
+            "update should be called to mark task as Completed"
+        );
+    }
+
+    // ========== process_extract_task: schema path (lines 656-659) ==========
+
+    #[tokio::test]
+    async fn test_process_extract_task_with_schema_calls_handle_schema_extraction() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        // payload.schema = Some (no rules, no prompt) → lines 656-659 (handle_schema_extraction)
+        let task = make_task(json!({
+            "urls": ["https://example.com/page"],
+            "schema": {"type": "object", "properties": {"title": {"type": "string"}}}
+        }));
+
+        let result = worker.process_extract_task(task).await;
+        assert!(
+            result.is_ok(),
+            "process_extract_task with schema should return Ok(())"
+        );
+        assert!(
+            task_repo.update_count() >= 1,
+            "update should be called to mark task as Completed"
+        );
+    }
+
+    // ========== process_extract_task: fallback path (lines 663-664) ==========
+
+    #[tokio::test]
+    async fn test_process_extract_task_fallback_saves_raw_result() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        // No rules, no prompt, no schema → lines 663-664 (save_extract_result fallback)
+        let task = make_task(json!({
+            "urls": ["https://example.com/page"]
+        }));
+
+        let result = worker.process_extract_task(task).await;
+        assert!(
+            result.is_ok(),
+            "process_extract_task fallback should return Ok(())"
+        );
+        assert!(
+            task_repo.update_count() >= 1,
+            "update should be called to mark task as Completed"
+        );
+    }
+
+    // ========== extract_and_queue_links: skip existing URLs (line 849) ==========
+
+    #[tokio::test]
+    async fn test_extract_and_queue_links_skips_existing_urls() {
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        // Pre-populate existing URLs: page1 already crawled → should be skipped
+        let mut existing = HashSet::new();
+        existing.insert("https://example.com/page1".to_string());
+        task_repo.set_existing_urls(existing);
+
+        let worker = build_configurable_worker(
+            task_repo.clone(),
+            Arc::new(ConfigurableCrawlRepo::new()),
+            Arc::new(MockRobotsChecker),
+            Arc::new(EngineClient::new()),
+        )
+        .await;
+
+        let task = make_task(json!({}));
+        // task.url = "https://example.com" (from make_task default)
+        let html = r#"<html><body>
+            <a href="/page1">Page 1</a>
+            <a href="/page2">Page 2</a>
+        </body></html>"#;
+        let response = ScrapeResponse {
+            content: html.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+        };
+        let config = make_crawl_config(None, None);
+        let result = worker
+            .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+            .await;
+        assert!(result.is_ok());
+
+        // page1 was skipped (existing), page2 was created → create_count == 1
+        assert_eq!(
+            task_repo.create_count(),
+            1,
+            "only non-existing URLs should be created (page1 skipped, page2 created)"
+        );
+    }
+
+    // ========== handle_scrape_success: token deduct failure (line 994) ==========
+
+    #[tokio::test]
+    async fn test_handle_scrape_success_token_deduct_failure_logs_error() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(SuccessEngineRouter::new());
+        let engine_client = Arc::new(EngineClient::with_router(router));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        // FailingCreditsRepo + MockExtractionServiceWithTokens → deduct fails → line 994
+        let worker = build_worker_for_success_tests(
+            task_repo.clone(),
+            engine_client,
+            Arc::new(FailingCreditsRepo) as Arc<dyn CreditsRepository>,
+            Arc::new(MockExtractionServiceWithTokens) as Arc<dyn ExtractionServiceTrait>,
+        )
+        .await;
+
+        // Payload includes extraction_rules → extraction succeeds with tokens > 0
+        // → deduct_credits fails → line 994 error log
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "extraction_rules": {
+                "title": {
+                    "selector": "h1",
+                    "attr": null,
+                    "is_array": false,
+                    "use_llm": null,
+                    "llm_prompt": null,
+                    "output_format": null
+                }
+            }
+        }));
+        let response = ScrapeResponse {
+            content: "<html><body><h1>Title</h1></body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+        };
+
+        let result = worker.handle_scrape_success(&task, &response).await;
+        // Should still succeed — credit deduction failure is just logged
+        assert!(
+            result.is_ok(),
+            "handle_scrape_success should not fail when credit deduction fails"
+        );
+        assert_eq!(
+            task_repo.mark_completed_count(),
+            1,
+            "mark_completed should still be called"
+        );
+    }
+
+    // ========== handle_failure: Failed branch (line 1130) ==========
+
+    #[tokio::test]
+    async fn test_handle_failure_failed_branch_returns_ok() {
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+
+        let worker = build_configurable_worker(
+            task_repo,
+            Arc::new(ConfigurableCrawlRepo::new()),
+            Arc::new(MockRobotsChecker),
+            Arc::new(EngineClient::new()),
+        )
+        .await;
+
+        let mut task = make_task(json!({}));
+        // attempt_count exceeds max_retries → Failed branch (not Retried)
+        // fail_update is false (default) → update succeeds → Failed → Ok(())
+        task.attempt_count = 100;
+        task.max_retries = 1;
+
+        let result = worker.handle_failure(&mut task).await;
+        // Failed branch returns Ok(()) — line 1130
+        assert!(
+            result.is_ok(),
+            "handle_failure should return Ok(()) when task exceeds max_retries"
         );
     }
 }

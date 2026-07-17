@@ -229,8 +229,14 @@ fn tc_team_geo_restrictions_response_empty_lists() {
     };
     let json = serde_json::to_string(&response).expect("must serialize");
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("must parse JSON");
-    assert_eq!(parsed["allowed_countries"], serde_json::Value::Array(vec![]));
-    assert_eq!(parsed["blocked_countries"], serde_json::Value::Array(vec![]));
+    assert_eq!(
+        parsed["allowed_countries"],
+        serde_json::Value::Array(vec![])
+    );
+    assert_eq!(
+        parsed["blocked_countries"],
+        serde_json::Value::Array(vec![])
+    );
 }
 
 // =============================================================================
@@ -239,9 +245,9 @@ fn tc_team_geo_restrictions_response_empty_lists() {
 
 #[test]
 fn tc_update_team_geo_restrictions_request_valid() {
-    let json = r#"{"enable_geo_restrictions":true,"allowed_countries":["US"],"blocked_countries":["CN"]}"#;
-    let req: UpdateTeamGeoRestrictionsRequest =
-        serde_json::from_str(json).expect("must parse");
+    let json =
+        r#"{"enable_geo_restrictions":true,"allowed_countries":["US"],"blocked_countries":["CN"]}"#;
+    let req: UpdateTeamGeoRestrictionsRequest = serde_json::from_str(json).expect("must parse");
     assert_eq!(req.allowed_countries, Some(vec!["US".to_string()]));
     assert_eq!(req.blocked_countries, Some(vec!["CN".to_string()]));
     assert!(req.enable_geo_restrictions);
@@ -250,8 +256,7 @@ fn tc_update_team_geo_restrictions_request_valid() {
 #[test]
 fn tc_update_team_geo_restrictions_request_empty_optional_fields() {
     let json = r#"{"enable_geo_restrictions":false}"#;
-    let req: UpdateTeamGeoRestrictionsRequest =
-        serde_json::from_str(json).expect("must parse");
+    let req: UpdateTeamGeoRestrictionsRequest = serde_json::from_str(json).expect("must parse");
     assert!(req.allowed_countries.is_none());
     assert!(req.blocked_countries.is_none());
     assert!(!req.enable_geo_restrictions);
@@ -260,8 +265,7 @@ fn tc_update_team_geo_restrictions_request_empty_optional_fields() {
 #[test]
 fn tc_update_team_geo_restrictions_request_only_allowed() {
     let json = r#"{"enable_geo_restrictions":true,"allowed_countries":["US","CA","MX"]}"#;
-    let req: UpdateTeamGeoRestrictionsRequest =
-        serde_json::from_str(json).expect("must parse");
+    let req: UpdateTeamGeoRestrictionsRequest = serde_json::from_str(json).expect("must parse");
     assert_eq!(req.allowed_countries.unwrap().len(), 3);
     assert!(req.blocked_countries.is_none());
 }
@@ -269,8 +273,7 @@ fn tc_update_team_geo_restrictions_request_only_allowed() {
 #[test]
 fn tc_update_team_geo_restrictions_request_only_blocked() {
     let json = r#"{"enable_geo_restrictions":true,"blocked_countries":["RU"]}"#;
-    let req: UpdateTeamGeoRestrictionsRequest =
-        serde_json::from_str(json).expect("must parse");
+    let req: UpdateTeamGeoRestrictionsRequest = serde_json::from_str(json).expect("must parse");
     assert!(req.allowed_countries.is_none());
     assert_eq!(req.blocked_countries.unwrap(), vec!["RU".to_string()]);
 }
@@ -278,8 +281,7 @@ fn tc_update_team_geo_restrictions_request_only_blocked() {
 #[test]
 fn tc_update_team_geo_restrictions_request_empty_arrays() {
     let json = r#"{"enable_geo_restrictions":true,"allowed_countries":[],"blocked_countries":[]}"#;
-    let req: UpdateTeamGeoRestrictionsRequest =
-        serde_json::from_str(json).expect("must parse");
+    let req: UpdateTeamGeoRestrictionsRequest = serde_json::from_str(json).expect("must parse");
     assert_eq!(req.allowed_countries, Some(vec![]));
     assert_eq!(req.blocked_countries, Some(vec![]));
 }

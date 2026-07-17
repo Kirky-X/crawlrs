@@ -667,4 +667,183 @@ mod tests {
         // Should contain "BrowserDownloadManager"
         assert!(debug_str.contains("BrowserDownloadManager"));
     }
+
+    // === download_browser: is_browser_downloaded early-return path ===
+    // Covers the branch where the browser executable already exists in the download dir
+    // (line 156-161): is_browser_downloaded() returns true, download_browser returns the
+    // cached path without attempting to download.
+
+    #[tokio::test]
+    async fn test_download_browser_returns_cached_executable() {
+        // Create the expected executable path under the download dir so that
+        // is_browser_downloaded() returns true.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let exe_path = get_browser_executable_path(temp_dir.path());
+        if let Some(parent) = exe_path.parent() {
+            tokio::fs::create_dir_all(parent).await.unwrap();
+        }
+        tokio::fs::write(&exe_path, "fake browser binary")
+            .await
+            .unwrap();
+
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 5,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        let result = manager.download_browser().await;
+        assert!(result.is_ok());
+        let status = manager.get_status().await;
+        assert_eq!(status, DownloadStatus::Downloaded);
+    }
+
+    #[tokio::test]
+    async fn test_is_browser_downloaded_true_when_executable_exists() {
+        // Directly verify is_browser_downloaded returns true when the executable file exists.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let exe_path = get_browser_executable_path(temp_dir.path());
+        if let Some(parent) = exe_path.parent() {
+            tokio::fs::create_dir_all(parent).await.unwrap();
+        }
+        tokio::fs::write(&exe_path, "binary").await.unwrap();
+
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 5,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+        assert!(manager.is_browser_downloaded().await);
+    }
+
+    // === download_browser: create_dir_all failure path ===
+    // Covers the branch where tokio::fs::create_dir_all fails (line 164-169).
+    // We make the download_dir a child of a regular file, which causes create_dir_all to
+    // return an error (NotADirectory).
+
+    #[tokio::test]
+    async fn test_download_browser_create_dir_failure() {
+        // Create a regular file, then set download_dir to a sub-path of it.
+        // create_dir_all will fail because the parent is a file, not a directory.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let blocking_file = temp_dir.path().join("blocking_file");
+        tokio::fs::write(&blocking_file, "block").await.unwrap();
+
+        let impossible_dir = blocking_file.join("subdir");
+        let config = BrowserDownloadConfig {
+            download_dir: impossible_dir,
+            timeout_seconds: 5,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        let result = manager.download_browser().await;
+        match result {
+            Ok(_) => {
+                // find_system_browser() found a system browser before create_dir_all was
+                // reached. The status should be Downloaded.
+                let status = manager.get_status().await;
+                assert_eq!(status, DownloadStatus::Downloaded);
+            }
+            Err(BrowserDownloadError::DirectoryCreationFailed(msg)) => {
+                // create_dir_all failed as expected
+                assert!(msg.contains("创建下载目录失败"));
+                let status = manager.get_status().await;
+                match status {
+                    DownloadStatus::Failed(s) => assert!(!s.is_empty()),
+                    other => panic!("Expected Failed status, got {:?}", other),
+                }
+            }
+            Err(other) => panic!("Expected DirectoryCreationFailed or Ok, got {:?}", other),
+        }
+    }
+
+    // === download_browser: status transitions ===
+    // Verify the Downloading status is set at the start of download_browser.
+
+    #[tokio::test]
+    async fn test_download_browser_sets_downloading_then_terminal_status() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 5,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        let _ = manager.download_browser().await;
+        let status = manager.get_status().await;
+        // After download_browser completes, status should be Downloaded or Failed,
+        // never NotDownloaded or Downloading.
+        assert_ne!(status, DownloadStatus::NotDownloaded);
+        assert_ne!(status, DownloadStatus::Downloading);
+    }
+
+    // === try_fetcher_download: returns error when browser-download feature is disabled ===
+    // When the browser-download feature is not enabled, try_fetcher_download always returns
+    // Err(DownloadFailed("Fetcher 不可用")). This is the default configuration.
+
+    #[tokio::test]
+    async fn test_download_browser_fetcher_unavailable_falls_through_to_error() {
+        // With no system browser, no cached executable, and no browser-download feature,
+        // download_browser should return DownloadFailed with an instructional message.
+        // We use a temp dir with no executable to ensure is_browser_downloaded is false.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = BrowserDownloadConfig {
+            download_dir: temp_dir.path().to_path_buf(),
+            timeout_seconds: 5,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        let result = manager.download_browser().await;
+        match result {
+            Ok(path) => {
+                // System browser was found
+                assert!(path.exists());
+                let status = manager.get_status().await;
+                assert_eq!(status, DownloadStatus::Downloaded);
+            }
+            Err(BrowserDownloadError::DownloadFailed(msg)) => {
+                // No system browser, fetcher unavailable
+                assert!(msg.contains("Chrome") || msg.contains("Chromium"));
+                let status = manager.get_status().await;
+                match status {
+                    DownloadStatus::Failed(s) => assert!(!s.is_empty()),
+                    other => panic!("Expected Failed status, got {:?}", other),
+                }
+            }
+            Err(other) => panic!("Expected DownloadFailed or Ok, got {:?}", other),
+        }
+    }
+
+    // === cleanup: error when removal fails ===
+    // Covers the error path in cleanup() when remove_dir_all fails.
+
+    #[tokio::test]
+    async fn test_cleanup_error_on_non_directory_path() {
+        // If download_dir is a file (not a directory), remove_dir_all will fail.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("not_a_dir");
+        tokio::fs::write(&file_path, "file").await.unwrap();
+
+        let config = BrowserDownloadConfig {
+            download_dir: file_path,
+            timeout_seconds: 5,
+            auto_download: false,
+        };
+        let manager = BrowserDownloadManager::new(config);
+
+        let result = manager.cleanup().await;
+        // remove_dir_all on a file should return an error
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            BrowserDownloadError::DownloadFailed(msg) => {
+                assert!(msg.contains("清理失败"));
+            }
+            other => panic!("Expected DownloadFailed, got {:?}", other),
+        }
+    }
 }

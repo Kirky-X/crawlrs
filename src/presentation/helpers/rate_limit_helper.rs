@@ -116,11 +116,20 @@ mod tests {
     use std::sync::Arc;
     use uuid::Uuid;
 
+    /// Which error variant the mock should return from `check_rate_limit`.
+    #[derive(Clone, Copy)]
+    enum MockError {
+        Database,
+        Credits,
+        Configuration,
+        Other,
+    }
+
     struct MockRateLimitingService {
         call_count: Arc<AtomicUsize>,
         result: RateLimitResult,
-        /// When `true`, `check_rate_limit` returns a `DatabaseError` instead of `result`.
-        should_error: bool,
+        /// When `Some`, `check_rate_limit` returns the corresponding error.
+        error: Option<MockError>,
     }
 
     impl MockRateLimitingService {
@@ -128,7 +137,7 @@ mod tests {
             Self {
                 call_count: Arc::new(AtomicUsize::new(0)),
                 result,
-                should_error: false,
+                error: None,
             }
         }
 
@@ -136,7 +145,27 @@ mod tests {
             Self {
                 call_count: Arc::new(AtomicUsize::new(0)),
                 result: RateLimitResult::Allowed,
-                should_error: true,
+                error: Some(MockError::Database),
+            }
+        }
+
+        /// Build a mock that returns the specified error variant from `check_rate_limit`.
+        fn with_error_kind(kind: MockError) -> Self {
+            Self {
+                call_count: Arc::new(AtomicUsize::new(0)),
+                result: RateLimitResult::Allowed,
+                error: Some(kind),
+            }
+        }
+
+        fn make_error(kind: MockError) -> RateLimitingError {
+            match kind {
+                MockError::Database => RateLimitingError::DatabaseError,
+                MockError::Credits => RateLimitingError::CreditsError,
+                MockError::Configuration => {
+                    RateLimitingError::ConfigurationError("mock config error".to_string())
+                }
+                MockError::Other => RateLimitingError::Other(anyhow::anyhow!("mock other error")),
             }
         }
     }
@@ -149,8 +178,8 @@ mod tests {
             _endpoint: &str,
         ) -> Result<RateLimitResult, RateLimitingError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
-            if self.should_error {
-                return Err(RateLimitingError::DatabaseError);
+            if let Some(kind) = self.error {
+                return Err(Self::make_error(kind));
             }
             Ok(self.result.clone())
         }
@@ -251,7 +280,7 @@ mod tests {
         let service = MockRateLimitingService {
             call_count: call_count.clone(),
             result: RateLimitResult::Allowed,
-            should_error: false,
+            error: None,
         };
         let result = check_rate_limit(&service, "test-key", "/v1/test").await;
         assert!(result.is_ok());
@@ -265,7 +294,7 @@ mod tests {
             result: RateLimitResult::Denied {
                 reason: "Too many requests".to_string(),
             },
-            should_error: false,
+            error: None,
         };
         let result = check_rate_limit(&service, "test-key", "/v1/test").await;
         assert!(result.is_err());
@@ -280,7 +309,7 @@ mod tests {
             result: RateLimitResult::RetryAfter {
                 retry_after_seconds: 30,
             },
-            should_error: false,
+            error: None,
         };
         let result = check_rate_limit(&service, "test-key", "/v1/test").await;
         assert!(result.is_err());
@@ -485,5 +514,242 @@ mod tests {
         let service = MockRateLimitingService::new(RateLimitResult::Allowed);
         let result = check_rate_limit_as_app_error(&service, "", "").await;
         assert!(result.is_ok(), "empty inputs with Allowed should return Ok");
+    }
+
+    // ===== Supplementary tests: error variant coverage and boundary cases =====
+
+    #[tokio::test]
+    async fn test_check_rate_limit_fail_open_on_credits_error() {
+        // Fail-open must hold for all RateLimitingError variants, not just DatabaseError.
+        let service = MockRateLimitingService::with_error_kind(MockError::Credits);
+        let result = check_rate_limit(&service, "k", "/v1/test").await;
+        assert!(result.is_ok(), "CreditsError should fail-open");
+        assert_eq!(
+            service.call_count.load(Ordering::SeqCst),
+            1,
+            "service should be called once"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_fail_open_on_configuration_error() {
+        let service = MockRateLimitingService::with_error_kind(MockError::Configuration);
+        let result = check_rate_limit(&service, "k", "/v1/test").await;
+        assert!(result.is_ok(), "ConfigurationError should fail-open");
+    }
+
+    #[tokio::test]
+    async fn test_check_rate_limit_fail_open_on_other_error() {
+        let service = MockRateLimitingService::with_error_kind(MockError::Other);
+        let result = check_rate_limit(&service, "k", "/v1/test").await;
+        assert!(result.is_ok(), "Other error should fail-open");
+    }
+
+    #[tokio::test]
+    async fn test_app_error_fail_open_on_credits_error() {
+        // check_rate_limit_as_app_error must also fail-open on non-DatabaseError variants.
+        let service = MockRateLimitingService::with_error_kind(MockError::Credits);
+        let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
+        assert!(
+            result.is_ok(),
+            "CreditsError should fail-open in app_error path"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_app_error_fail_open_on_other_error() {
+        let service = MockRateLimitingService::with_error_kind(MockError::Other);
+        let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
+        assert!(
+            result.is_ok(),
+            "Other error should fail-open in app_error path"
+        );
+    }
+
+    // ===== Boundary values: empty reason / zero / max seconds =====
+
+    #[tokio::test]
+    async fn test_denied_with_empty_reason() {
+        // Empty reason string should not panic; JSON body should still contain the prefix.
+        let service = MockRateLimitingService::new(RateLimitResult::Denied {
+            reason: String::new(),
+        });
+        let result = check_rate_limit(&service, "k", "/v1/test").await;
+        let response = result.unwrap_err();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(
+            body_str.contains("Rate limit exceeded"),
+            "prefix expected even with empty reason: {}",
+            body_str
+        );
+        assert!(
+            body_str.contains("\"success\":false"),
+            "success=false expected: {}",
+            body_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_retry_after_with_zero_seconds() {
+        // Zero seconds is a boundary value; the response must still be 429.
+        let service = MockRateLimitingService::new(RateLimitResult::RetryAfter {
+            retry_after_seconds: 0,
+        });
+        let result = check_rate_limit(&service, "k", "/v1/test").await;
+        let response = result.unwrap_err();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(
+            body_str.contains("\"retry_after_seconds\":0"),
+            "zero seconds expected in body: {}",
+            body_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_retry_after_with_max_seconds() {
+        // Maximum seconds boundary; ensure it appears verbatim in the body.
+        let max_secs = u64::MAX;
+        let service = MockRateLimitingService::new(RateLimitResult::RetryAfter {
+            retry_after_seconds: max_secs,
+        });
+        let result = check_rate_limit(&service, "k", "/v1/test").await;
+        let response = result.unwrap_err();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(
+            body_str.contains(&max_secs.to_string()),
+            "max seconds expected in body: {}",
+            body_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_app_error_denied_with_empty_reason() {
+        // Empty reason should still map to AppError::RateLimit with the prefix.
+        let service = MockRateLimitingService::new(RateLimitResult::Denied {
+            reason: String::new(),
+        });
+        let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
+        match result.expect_err("should be RateLimit") {
+            AppError::RateLimit(msg) => {
+                assert!(
+                    msg.contains("Rate limit exceeded"),
+                    "prefix expected: {}",
+                    msg
+                );
+            }
+            other => panic!("expected AppError::RateLimit, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_app_error_retry_after_with_zero_seconds() {
+        // Zero seconds boundary; message should still mention retry-after.
+        let service = MockRateLimitingService::new(RateLimitResult::RetryAfter {
+            retry_after_seconds: 0,
+        });
+        let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
+        match result.expect_err("should be RateLimit") {
+            AppError::RateLimit(msg) => {
+                assert!(
+                    msg.contains("0 seconds"),
+                    "zero seconds expected in msg: {}",
+                    msg
+                );
+            }
+            other => panic!("expected AppError::RateLimit, got {:?}", other),
+        }
+    }
+
+    // ===== Multiple calls counter =====
+
+    #[tokio::test]
+    async fn test_multiple_calls_increment_counter() {
+        // Verify the helper does not cache results; each call hits the service.
+        let service = MockRateLimitingService::new(RateLimitResult::Allowed);
+        for _ in 0..5 {
+            let result = check_rate_limit(&service, "k", "/v1/test").await;
+            assert!(result.is_ok(), "Allowed should always return Ok");
+        }
+        assert_eq!(
+            service.call_count.load(Ordering::SeqCst),
+            5,
+            "service should be called 5 times"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multiple_calls_app_error_increment_counter() {
+        let service = MockRateLimitingService::new(RateLimitResult::Allowed);
+        for _ in 0..3 {
+            let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
+            assert!(result.is_ok(), "Allowed should always return Ok");
+        }
+        assert_eq!(
+            service.call_count.load(Ordering::SeqCst),
+            3,
+            "service should be called 3 times"
+        );
+    }
+
+    // ===== Response JSON structure completeness =====
+
+    #[tokio::test]
+    async fn test_denied_response_json_has_success_false_and_error_key() {
+        // Verify the JSON structure has both success and error keys.
+        let service = MockRateLimitingService::new(RateLimitResult::Denied {
+            reason: "limit hit".to_string(),
+        });
+        let result = check_rate_limit(&service, "k", "/v1/test").await;
+        let response = result.unwrap_err();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("body should be valid JSON");
+        assert_eq!(json["success"], serde_json::Value::Bool(false));
+        assert!(json["error"].is_string());
+        assert!(json["error"].as_str().unwrap().contains("limit hit"));
+    }
+
+    #[tokio::test]
+    async fn test_retry_after_response_json_has_all_three_keys() {
+        // Verify the JSON structure has success, error, and retry_after_seconds keys.
+        let service = MockRateLimitingService::new(RateLimitResult::RetryAfter {
+            retry_after_seconds: 99,
+        });
+        let result = check_rate_limit(&service, "k", "/v1/test").await;
+        let response = result.unwrap_err();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("body should be valid JSON");
+        assert_eq!(json["success"], serde_json::Value::Bool(false));
+        assert!(json["error"].is_string());
+        assert_eq!(json["retry_after_seconds"], serde_json::json!(99));
+    }
+
+    #[tokio::test]
+    async fn test_app_error_status_code_and_error_code_for_retry_after() {
+        // Verify error_code is RATE_LIMITED for RetryAfter (same as Denied).
+        let service = MockRateLimitingService::new(RateLimitResult::RetryAfter {
+            retry_after_seconds: 7,
+        });
+        let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
+        let err = result.expect_err("RetryAfter should map to AppError::RateLimit");
+        assert_eq!(err.status_code(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(err.error_code(), "RATE_LIMITED");
     }
 }

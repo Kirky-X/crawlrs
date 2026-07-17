@@ -290,3 +290,380 @@ impl AdaptiveConcurrencyController {
         &self.base_controller
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! controller.rs 自身的测试块。
+    //! mod.rs 中已有大量集成测试，这里聚焦 controller.rs 内部实现路径：
+    //! - ConcurrencyPermit / ConcurrencyGuard 的 Drop 计数器递减
+    //! - acquire() 的 Closed 错误路径（通过 Semaphore::close() 触发）
+    //! - AdaptiveConcurrencyController::start_adaptive_adjustment 的 spawn 路径
+    //! - ConcurrencyStrategy::default()
+    use super::*;
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    // ========== ConcurrencyStrategy::default ==========
+
+    #[test]
+    fn test_controller_strategy_default_is_global_100_1000() {
+        let strategy = ConcurrencyStrategy::default();
+        match strategy {
+            ConcurrencyStrategy::Global {
+                max_concurrent,
+                queue_size,
+            } => {
+                assert_eq!(max_concurrent, 100);
+                assert_eq!(queue_size, 1000);
+            }
+            _ => panic!("expected Global default strategy"),
+        }
+    }
+
+    // ========== ConcurrencyPermit Drop 减计数 ==========
+
+    #[tokio::test]
+    async fn test_controller_permit_drop_decrements_counters() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 3,
+            queue_size: 10,
+        });
+        let permit = controller
+            .acquire(None)
+            .await
+            .expect("acquire should succeed");
+        assert_eq!(controller.active_count(), 1);
+        // global_counter 也应该 +1（通过 stats 间接验证）
+        drop(permit);
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_controller_multiple_permits_drop_in_order() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 5,
+            queue_size: 10,
+        });
+        let p1 = controller.acquire(None).await.unwrap();
+        let p2 = controller.acquire(None).await.unwrap();
+        let p3 = controller.acquire(None).await.unwrap();
+        assert_eq!(controller.active_count(), 3);
+
+        drop(p1);
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 2);
+
+        drop(p2);
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 1);
+
+        drop(p3);
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 0);
+    }
+
+    // ========== ConcurrencyGuard Drop 减计数 ==========
+
+    #[tokio::test]
+    async fn test_controller_guard_drop_decrements_counters() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 3,
+            queue_size: 10,
+        });
+        let guard = controller
+            .try_acquire()
+            .expect("try_acquire should succeed when slots available");
+        assert_eq!(controller.active_count(), 1);
+        drop(guard);
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_controller_multiple_guards_drop_all() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 3,
+            queue_size: 10,
+        });
+        let g1 = controller.try_acquire().unwrap();
+        let g2 = controller.try_acquire().unwrap();
+        assert_eq!(controller.active_count(), 2);
+
+        drop(g1);
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 1);
+
+        drop(g2);
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 0);
+    }
+
+    // ========== try_acquire 失败路径 ==========
+
+    #[tokio::test]
+    async fn test_controller_try_acquire_returns_none_at_limit() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 10,
+        });
+        let _g = controller.try_acquire().expect("first acquire ok");
+        // 第二次 try_acquire 应该失败（已达到限制）
+        assert!(
+            controller.try_acquire().is_none(),
+            "try_acquire should return None at limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_controller_try_acquire_after_release_succeeds() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 10,
+        });
+        {
+            let _g = controller.try_acquire().unwrap();
+            assert_eq!(controller.active_count(), 1);
+        }
+        tokio::task::yield_now().await;
+        assert_eq!(controller.active_count(), 0);
+        // 释放后应该可以再次获取
+        let g = controller.try_acquire();
+        assert!(g.is_some());
+    }
+
+    // ========== acquire Closed 错误路径（关键未覆盖） ==========
+
+    #[tokio::test]
+    async fn test_controller_acquire_returns_closed_when_semaphore_closed() {
+        // 关闭信号量后，acquire(None) 应返回 ConcurrencyError::Closed
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 10,
+        });
+        // controller.global_semaphore 是 mod.rs 中的私有字段，但子模块可访问
+        controller.global_semaphore.close();
+        let result = controller.acquire(None).await;
+        assert!(
+            matches!(result, Err(ConcurrencyError::Closed)),
+            "expected Closed error after semaphore close, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_controller_acquire_with_timeout_returns_closed_when_semaphore_closed() {
+        // 关闭信号量后，acquire(Some(timeout)) 也应返回 Closed（不是 Timeout）
+        // 因为 acquire_owned() 立即返回 Err(AcquireError::Closed)
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 1,
+            queue_size: 10,
+        });
+        controller.global_semaphore.close();
+        let result = controller.acquire(Some(Duration::from_secs(1))).await;
+        assert!(
+            matches!(result, Err(ConcurrencyError::Closed)),
+            "expected Closed error (not Timeout) after semaphore close, got {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_controller_acquire_closed_with_permits_outstanding() {
+        // 即使信号量有可用许可，close 后 acquire 也会返回 Closed
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 5,
+            queue_size: 10,
+        });
+        // 不获取任何 permit，直接 close
+        controller.global_semaphore.close();
+        let result = controller.acquire(None).await;
+        assert!(matches!(result, Err(ConcurrencyError::Closed)));
+    }
+
+    // ========== ConcurrencyStats::from ==========
+
+    #[test]
+    fn test_controller_stats_from_empty_controller() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 10,
+            queue_size: 100,
+        });
+        let stats = ConcurrencyStats::from(&controller);
+        assert_eq!(stats.active_concurrent, 0);
+        assert_eq!(stats.utilization_percent, 0.0);
+        assert!(!stats.is_at_limit);
+        assert!(stats.strategy.contains("Global"));
+    }
+
+    #[test]
+    fn test_controller_stats_from_per_team_strategy() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTeam {
+            max_per_team: 5,
+            queue_size: 10,
+        });
+        let stats = ConcurrencyStats::from(&controller);
+        assert!(stats.strategy.contains("PerTeam"));
+        assert!(!stats.is_at_limit);
+    }
+
+    #[test]
+    fn test_controller_stats_from_per_task_type_strategy() {
+        let type_limits = std::collections::HashMap::new();
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::PerTaskType {
+            max_per_type: 8,
+            type_limits,
+        });
+        let stats = ConcurrencyStats::from(&controller);
+        assert!(stats.strategy.contains("PerTaskType"));
+    }
+
+    #[test]
+    fn test_controller_stats_from_hierarchical_strategy() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Hierarchical {
+            global_max: 50,
+            per_team_max: 10,
+            per_task_type_max: 5,
+        });
+        let stats = ConcurrencyStats::from(&controller);
+        assert!(stats.strategy.contains("Hierarchical"));
+    }
+
+    // ========== utilization / is_at_limit / wait_count ==========
+
+    #[test]
+    fn test_controller_utilization_zero_when_no_active() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 10,
+            queue_size: 100,
+        });
+        assert_eq!(controller.utilization(), 0.0);
+    }
+
+    #[test]
+    fn test_controller_is_at_limit_false_when_no_active() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 10,
+            queue_size: 100,
+        });
+        assert!(!controller.is_at_limit());
+    }
+
+    #[test]
+    fn test_controller_wait_count_starts_zero() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 5,
+            queue_size: 10,
+        });
+        assert_eq!(controller.wait_count(), 0);
+    }
+
+    // ========== AdaptiveConcurrencyController ==========
+
+    #[test]
+    fn test_controller_adaptive_new_constructs_base() {
+        let controller = AdaptiveConcurrencyController::new(1, 100, 0.7, Duration::from_secs(60));
+        assert_eq!(controller.base().active_count(), 0);
+        assert_eq!(controller.base().wait_count(), 0);
+        assert!(!controller.base().is_at_limit());
+    }
+
+    #[test]
+    fn test_controller_adaptive_base_utilization_zero() {
+        let controller = AdaptiveConcurrencyController::new(2, 50, 0.6, Duration::from_secs(30));
+        assert_eq!(controller.base().utilization(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_controller_adaptive_start_adjustment_runs_tick() {
+        // 启动自适应调整任务，让它至少执行一次 tick（不 panic）
+        let controller = AdaptiveConcurrencyController::new(1, 100, 0.7, Duration::from_millis(10));
+        controller.start_adaptive_adjustment();
+        // 等待足够时间让 interval 触发至少一次
+        sleep(Duration::from_millis(30)).await;
+        // base controller 仍然可用
+        assert!(controller.base().active_count() < 100);
+    }
+
+    #[tokio::test]
+    async fn test_controller_adaptive_base_acquires_and_releases() {
+        let controller = AdaptiveConcurrencyController::new(1, 10, 0.8, Duration::from_secs(60));
+        let base = controller.base();
+        let permit = base.acquire(None).await.expect("acquire should succeed");
+        assert_eq!(base.active_count(), 1);
+        drop(permit);
+        tokio::task::yield_now().await;
+        assert_eq!(base.active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_controller_adaptive_adjustment_high_utilization_logs_warning() {
+        // 覆盖 lines 277-281: utilization > target * 1.2 分支的 warn! 日志路径。
+        // 通过 acquire 持有 permit 使 utilization = 1.0 > target(0.5) * 1.2 = 0.6，
+        // 启动自适应调整后等待 tick 触发，验证高利用率分支被执行（无 panic）。
+        let controller = AdaptiveConcurrencyController::new(1, 1, 0.5, Duration::from_millis(10));
+        // 持有 1 个 permit 使 utilization 达到 1.0（max=1）
+        let _permit = controller
+            .base()
+            .acquire(None)
+            .await
+            .expect("acquire should succeed");
+        assert_eq!(controller.base().active_count(), 1);
+        assert!(
+            (controller.base().utilization() - 1.0).abs() < 0.001,
+            "utilization should be 1.0 when 1/1 permit held"
+        );
+
+        controller.start_adaptive_adjustment();
+        // 等待足够时间让 interval 触发至少 2 次 tick，确保 warn! 分支被执行
+        sleep(Duration::from_millis(50)).await;
+
+        // permit 仍然持有，utilization 仍为 1.0；测试通过即证明高利用率分支无 panic
+        assert_eq!(controller.base().active_count(), 1);
+    }
+
+    // ========== acquire 成功路径（带 timeout） ==========
+
+    #[tokio::test]
+    async fn test_controller_acquire_with_timeout_succeeds_when_slot_available() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 2,
+            queue_size: 10,
+        });
+        let result = controller.acquire(Some(Duration::from_secs(1))).await;
+        assert!(result.is_ok());
+        assert_eq!(controller.active_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_controller_acquire_multiple_with_timeout() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 3,
+            queue_size: 10,
+        });
+        let _p1 = controller
+            .acquire(Some(Duration::from_secs(1)))
+            .await
+            .unwrap();
+        let _p2 = controller
+            .acquire(Some(Duration::from_secs(1)))
+            .await
+            .unwrap();
+        assert_eq!(controller.active_count(), 2);
+    }
+
+    // ========== 跨控制器 clone 共享状态 ==========
+
+    #[tokio::test]
+    async fn test_controller_clone_shares_semaphore_state() {
+        let controller = FineGrainedConcurrencyController::new(ConcurrencyStrategy::Global {
+            max_concurrent: 2,
+            queue_size: 10,
+        });
+        let clone = controller.clone();
+        let _p = clone.acquire(None).await.unwrap();
+        // 原 controller 应看到 active_count = 1
+        assert_eq!(controller.active_count(), 1);
+        assert_eq!(clone.active_count(), 1);
+    }
+}

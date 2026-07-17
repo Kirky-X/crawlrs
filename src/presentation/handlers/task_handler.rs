@@ -2256,4 +2256,67 @@ mod tests {
 
         assert!(result.is_ok(), "force=None should default to false");
     }
+
+    // ========== Test logger for covering log::debug!/log::error! ==========
+
+    use log::{LevelFilter, Log, Metadata, Record};
+    use std::sync::Once;
+
+    static LOGGER_INIT: Once = Once::new();
+
+    struct CapturingLogger;
+
+    impl Log for CapturingLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= log::Level::Debug
+        }
+        fn log(&self, _record: &Record) {}
+        fn flush(&self) {}
+    }
+
+    fn ensure_debug_logger() {
+        LOGGER_INIT.call_once(|| {
+            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
+            let _ = log::set_logger(&CAPTURING_LOGGER);
+            log::set_max_level(LevelFilter::Debug);
+        });
+    }
+
+    // ========== log::debug!/log::error! coverage tests ==========
+
+    #[test]
+    fn test_poll_count_exceeded_logs_debug_with_logger() {
+        ensure_debug_logger();
+        // When count >= max_count, log::debug! should execute
+        assert!(poll_count_exceeded(60, 60));
+        assert!(poll_count_exceeded(100, 60));
+    }
+
+    #[tokio::test]
+    async fn test_handle_sync_wait_error_logs_error_with_logger() {
+        ensure_debug_logger();
+        // When wait_for_tasks_completion returns an error, log::error! should execute
+        let task_id = Uuid::new_v4();
+        let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
+            anyhow::anyhow!("poll failed for logging test"),
+        ));
+
+        let result = handle_sync_wait_and_get_status(&repo, &[task_id], Uuid::nil(), 200).await;
+
+        assert!(result.is_ok(), "should return Ok even on wait error");
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_tasks_completion_logs_debug_poll_count_with_logger() {
+        ensure_debug_logger();
+        // Trigger poll_count_exceeded path (poll_count >= MAX_POLL_COUNT)
+        // Use a very short timeout and active tasks to ensure polling occurs
+        let task_id = Uuid::new_v4();
+        let task = make_test_task(task_id, TaskStatus::Active);
+        let repo = MockTaskRepository::with_query_data(vec![task], 1);
+
+        let result = wait_for_tasks_completion(&repo, &[task_id], Uuid::nil(), 50, 500).await;
+
+        assert!(result.is_ok(), "should return Ok on timeout");
+    }
 }

@@ -6,5 +6,4 @@
 mod auth_middleware_test;
 mod rate_limit_middleware_test;
 
-#[cfg(feature = "rate-limiting")]
-mod limiteron_rate_limit_middleware_test;
+// limiteron_rate_limit_middleware_test migrated to src/ inline tests

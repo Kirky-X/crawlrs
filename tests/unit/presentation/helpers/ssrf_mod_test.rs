@@ -70,7 +70,10 @@ async fn tc_ssrf_validator_with_dns_cache_and_config_constructor() {
     // 验证 config 生效：超过 512 字符的 URL 应返回 UrlTooLong
     let long_url = format!("http://example.com/{}", "a".repeat(600));
     let result = validator.validate(&long_url).await;
-    assert!(result.is_err(), "URL exceeding config max_url_length should fail");
+    assert!(
+        result.is_err(),
+        "URL exceeding config max_url_length should fail"
+    );
     match result {
         Err(SsrfError::UrlTooLong { max, .. }) => assert_eq!(max, 512),
         Err(e) => panic!("expected UrlTooLong, got: {:?}", e),
@@ -173,11 +176,7 @@ async fn tc_validate_with_dns_cache_multiple_public_ips() {
         result.err()
     );
     let validated = result.unwrap();
-    assert_eq!(
-        validated.resolved_ips.len(),
-        2,
-        "should resolve to 2 IPs"
-    );
+    assert_eq!(validated.resolved_ips.len(), 2, "should resolve to 2 IPs");
 }
 
 // ============================================================
@@ -216,9 +215,7 @@ async fn tc_validate_with_dns_cache_and_config_applies_config() {
 
     let config = SsrfConfig::new().with_max_url_length(2048);
     let validator = SsrfValidator::with_dns_cache_and_config(Arc::new(dns_cache), config);
-    let result = validator
-        .validate(&format!("https://{}", test_host))
-        .await;
+    let result = validator.validate(&format!("https://{}", test_host)).await;
     assert!(
         result.is_ok(),
         "validate with DNS cache and config should succeed for public IP, got error: {:?}",

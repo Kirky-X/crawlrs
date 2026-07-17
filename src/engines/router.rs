@@ -2247,6 +2247,423 @@ mod tests {
             EngineError::AllEnginesFailed(_)
         ));
     }
+
+    // === EngineRouterTrait method coverage ===
+    // These tests call methods through the trait interface (not the public
+    // wrapper methods) to cover the trait impl at lines 1028-1055.
+
+    #[tokio::test]
+    async fn test_trait_aggregate_delegates_to_impl() {
+        struct SucceedingEngine;
+        #[async_trait]
+        impl ScraperEngine for SucceedingEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "ok".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "succeeding"
+            }
+        }
+        let engine: Arc<dyn ScraperEngine> = Arc::new(SucceedingEngine);
+        let router = EngineRouter::new(vec![engine]);
+        let request = make_request();
+
+        // Call through the trait, not the public wrapper method
+        let result = EngineRouterTrait::aggregate(&router, &request).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_trait_route_delegates_to_impl() {
+        // Also cover the trait route method (line 1030-1034)
+        struct SucceedingEngine;
+        #[async_trait]
+        impl ScraperEngine for SucceedingEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "ok".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "succeeding"
+            }
+        }
+        let engine: Arc<dyn ScraperEngine> = Arc::new(SucceedingEngine);
+        let router = EngineRouter::new(vec![engine]);
+        let request = make_request();
+
+        let result = EngineRouterTrait::route(&router, &request).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_feature_filter_excludes_low_score_engine_for_screenshot() {
+        // Cover the feature_filter_enabled branch (line 407-411):
+        // When needs_screenshot=true and engine support_score < 50,
+        // the engine should be filtered out.
+        struct LowScoreEngine;
+        #[async_trait]
+        impl ScraperEngine for LowScoreEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "ok".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                10 // Below the 50 threshold
+            }
+            fn name(&self) -> &'static str {
+                "low-score"
+            }
+        }
+        let engine: Arc<dyn ScraperEngine> = Arc::new(LowScoreEngine);
+        let mut router = EngineRouter::new(vec![engine]);
+        // feature_filter_enabled defaults to true, but set explicitly for clarity
+        router.set_feature_filter_enabled(true);
+
+        let request = InternalScrapeRequest {
+            url: "http://example.com".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: true, // This triggers the feature filter
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+
+        // The low-score engine should be filtered out, leaving no candidates
+        let result = router.route(&request).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            EngineError::AllEnginesFailed(_)
+        ));
+    }
+
+    // === circuit breaker open branch (line 402-404) ===
+
+    #[tokio::test]
+    async fn test_route_skips_engine_when_circuit_breaker_open() {
+        // Cover line 403: when the circuit breaker for an engine is open,
+        // select_optimal_engines should `continue` past it, leaving no
+        // candidates and producing AllEnginesFailed.
+        use crate::engines::circuit_breaker::CircuitConfig;
+
+        struct CountingEngine {
+            name: &'static str,
+            calls: Arc<std::sync::atomic::AtomicU32>,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for CountingEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "ok".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 1,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let engine: Arc<dyn ScraperEngine> = Arc::new(CountingEngine {
+            name: "guarded",
+            calls: calls.clone(),
+        });
+        let router = EngineRouter::new(vec![engine]);
+
+        // Force the circuit breaker open for this engine: a config with
+        // failure_threshold = 1 plus a single recorded failure flips it to
+        // Open immediately.
+        router.circuit_breaker.set_config(
+            "guarded",
+            CircuitConfig {
+                failure_threshold: 1,
+                recovery_timeout: Duration::from_secs(60),
+                failure_window: Duration::from_secs(60),
+            },
+        );
+        router.circuit_breaker.record_failure("guarded");
+        assert!(
+            router.circuit_breaker.is_open("guarded"),
+            "circuit breaker should be open after 1 failure"
+        );
+
+        let request = make_request();
+        let result = router.route(&request).await;
+        assert!(
+            result.is_err(),
+            "route should fail when the only engine is open"
+        );
+        assert!(
+            matches!(result.unwrap_err(), EngineError::AllEnginesFailed(_)),
+            "expected AllEnginesFailed when circuit breaker blocks the only engine"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "engine must not be invoked when its circuit breaker is open"
+        );
+    }
+
+    // === route_internal remaining=0 branch (line 690-692) ===
+
+    #[tokio::test]
+    async fn test_route_returns_timeout_when_remaining_time_zero() {
+        // Cover line 691: after one engine attempt burns the full request
+        // timeout, the next iteration computes `remaining = 0` and short-
+        // circuits with EngineError::Timeout.
+        struct SlowTimeoutEngine;
+        #[async_trait]
+        impl ScraperEngine for SlowTimeoutEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                // Sleep longer than the request timeout so that, after this
+                // attempt, `start_time.elapsed()` exceeds `request.timeout`.
+                tokio::time::sleep(Duration::from_millis(120)).await;
+                Err(EngineError::Timeout(Duration::from_millis(120)))
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "slow-timeout"
+            }
+        }
+
+        let e1: Arc<dyn ScraperEngine> = Arc::new(SlowTimeoutEngine);
+        let e2: Arc<dyn ScraperEngine> = Arc::new(SlowTimeoutEngine);
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        // Need at least 2 attempts so the loop iterates after the first
+        // failure; otherwise the first Timeout would propagate directly.
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(5);
+
+        let mut request = make_request();
+        request.timeout = Duration::from_millis(10);
+
+        let result = router.route(&request).await;
+        assert!(result.is_err(), "route should fail with Timeout");
+        match result.unwrap_err() {
+            EngineError::Timeout(d) => {
+                assert_eq!(
+                    d,
+                    Duration::from_millis(10),
+                    "should report the original request timeout"
+                );
+            }
+            other => panic!("Expected Timeout, got {:?}", other),
+        }
+    }
+
+    // === route_race_mode remaining=0 branch (line 796-798) ===
+
+    #[tokio::test]
+    async fn test_route_race_mode_returns_timeout_when_remaining_zero() {
+        // Cover line 797: when race_mode is enabled and `remaining` is
+        // already zero by the time route_race_mode is entered, the function
+        // should immediately return EngineError::Timeout(request.timeout).
+        struct NeverCalledEngine;
+        #[async_trait]
+        impl ScraperEngine for NeverCalledEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                panic!("engine must not be called when remaining time is zero");
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "never-called"
+            }
+        }
+
+        let e1: Arc<dyn ScraperEngine> = Arc::new(NeverCalledEngine);
+        let e2: Arc<dyn ScraperEngine> = Arc::new(NeverCalledEngine);
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_race_mode_enabled(true);
+
+        let mut request = make_request();
+        // Zero timeout forces `remaining = 0` immediately inside
+        // route_race_mode, before any engine future is polled.
+        request.timeout = Duration::from_millis(0);
+
+        let result = router.route(&request).await;
+        assert!(result.is_err(), "race_mode with zero remaining should fail");
+        match result.unwrap_err() {
+            EngineError::Timeout(_) => {}
+            other => panic!("Expected Timeout, got {:?}", other),
+        }
+    }
+
+    // === route_race_mode non-retryable error branch (line 884-886) ===
+
+    #[tokio::test]
+    async fn test_route_race_mode_non_retryable_error_returns_err() {
+        // Cover line 885: when the first race future resolves to a non-
+        // retryable error, route_race_mode should return that error as-is
+        // instead of recording a circuit-breaker failure.
+        struct InvalidUrlEngine;
+        #[async_trait]
+        impl ScraperEngine for InvalidUrlEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                Err(EngineError::InvalidUrl("malformed url".to_string()))
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "invalid-url"
+            }
+        }
+
+        let e1: Arc<dyn ScraperEngine> = Arc::new(InvalidUrlEngine);
+        let e2: Arc<dyn ScraperEngine> = Arc::new(InvalidUrlEngine);
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_race_mode_enabled(true);
+
+        let request = make_request();
+        let result = router.route(&request).await;
+        assert!(
+            result.is_err(),
+            "race_mode with non-retryable error should fail"
+        );
+        match result.unwrap_err() {
+            EngineError::InvalidUrl(msg) => {
+                assert_eq!(msg, "malformed url");
+            }
+            other => panic!("Expected InvalidUrl, got {:?}", other),
+        }
+    }
+
+    // === route_race_mode select_all timeout branch (line 890-897) ===
+
+    #[tokio::test]
+    async fn test_route_race_mode_returns_timeout_on_select_all_timeout() {
+        // Cover lines 892 & 896: when every racing engine takes longer than
+        // `timeout_duration` to resolve, time::timeout fires the Err(_)
+        // branch and route_race_mode returns EngineError::Timeout with the
+        // timeout_duration it actually waited.
+        struct SlowOkEngine;
+        #[async_trait]
+        impl ScraperEngine for SlowOkEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                // Sleep much longer than the race timeout window so that
+                // select_all never resolves in time.
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "ok".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 5000,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "slow-ok"
+            }
+        }
+
+        let e1: Arc<dyn ScraperEngine> = Arc::new(SlowOkEngine);
+        let e2: Arc<dyn ScraperEngine> = Arc::new(SlowOkEngine);
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_race_mode_enabled(true);
+
+        let mut request = make_request();
+        // Pick a request.timeout that is comfortably larger than the time
+        // route_internal spends before entering route_race_mode (so that
+        // `remaining` is non-zero and we don't hit the early-return at
+        // line 797), but smaller than the 5s engine sleep so that
+        // time::timeout fires the Err(_) branch.
+        // timeout_duration = remaining.max(100ms) ≈ 1s here.
+        request.timeout = Duration::from_secs(1);
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_err(),
+            "race_mode with all-slow engines should time out"
+        );
+        match result.unwrap_err() {
+            EngineError::Timeout(d) => {
+                // timeout_duration = max(remaining, 100ms). Since
+                // request.timeout = 1s and elapsed before route_race_mode
+                // is negligible, d should be ~1s, and at minimum 100ms.
+                assert!(
+                    d >= Duration::from_millis(100),
+                    "timeout duration should be at least 100ms, got {:?}",
+                    d
+                );
+            }
+            other => panic!("Expected Timeout, got {:?}", other),
+        }
+    }
 }
 
 #[cfg(test)]

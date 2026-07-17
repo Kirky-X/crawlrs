@@ -736,6 +736,105 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_map_dto_to_request_with_screenshot_options_builds_config() {
+        // Cover lines 270-275: when `screenshot_options` is provided, the
+        // mapping must construct a ScreenshotConfig (Some) instead of None.
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                headers: None,
+                wait_for: None,
+                timeout: None,
+                js_rendering: None,
+                screenshot: Some(true),
+                screenshot_options: Some(
+                    crate::application::dto::scrape_request::ScreenshotOptionsDto {
+                        full_page: Some(true),
+                        selector: Some("main".to_string()),
+                        quality: Some(85),
+                        format: Some("png".to_string()),
+                    },
+                ),
+                mobile: None,
+                proxy: None,
+                skip_tls_verification: None,
+                needs_tls_fingerprint: None,
+                use_fire_engine: None,
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let request = map_dto_to_request(dto).expect("dto with screenshot_options should map");
+        let cfg = request
+            .options
+            .screenshot_config
+            .expect("screenshot_config must be Some when screenshot_options is provided");
+        assert!(cfg.full_page, "full_page should unwrap_or(false) -> true");
+        assert_eq!(cfg.selector.as_deref(), Some("main"));
+        assert_eq!(cfg.quality, Some(85));
+        assert_eq!(cfg.format.as_deref(), Some("png"));
+    }
+
+    #[test]
+    fn test_map_dto_to_request_screenshot_options_defaults_full_page_to_false() {
+        // Cover the `unwrap_or(false)` path on line 271: when full_page is
+        // None inside screenshot_options, the resulting ScreenshotConfig
+        // should have full_page = false.
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                headers: None,
+                wait_for: None,
+                timeout: None,
+                js_rendering: None,
+                screenshot: Some(true),
+                screenshot_options: Some(
+                    crate::application::dto::scrape_request::ScreenshotOptionsDto {
+                        full_page: None,
+                        selector: None,
+                        quality: None,
+                        format: None,
+                    },
+                ),
+                mobile: None,
+                proxy: None,
+                skip_tls_verification: None,
+                needs_tls_fingerprint: None,
+                use_fire_engine: None,
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let request =
+            map_dto_to_request(dto).expect("dto with empty screenshot_options should map");
+        let cfg = request
+            .options
+            .screenshot_config
+            .expect("screenshot_config must be Some");
+        assert!(
+            !cfg.full_page,
+            "full_page should default to false when None"
+        );
+        assert!(cfg.selector.is_none());
+        assert!(cfg.quality.is_none());
+        assert!(cfg.format.is_none());
+    }
+
     // ============ scrape() tests ============
 
     #[tokio::test]
@@ -1032,6 +1131,59 @@ mod tests {
                 direction: ScrollDirection::Down
             }
         ));
+    }
+
+    #[test]
+    fn test_parse_actions_wait_action_maps_to_page_action() {
+        // Cover line 303: ScrapeActionDto::Wait { milliseconds } => Some(PageAction::Wait { milliseconds })
+        let actions = parse_actions(Some(vec![ScrapeActionDto::Wait { milliseconds: 750 }]));
+        assert_eq!(actions.len(), 1, "Wait action should be preserved");
+        match &actions[0] {
+            PageAction::Wait { milliseconds } => {
+                assert_eq!(*milliseconds, 750, "milliseconds should be passed through");
+            }
+            other => panic!("Expected PageAction::Wait, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_actions_input_action_maps_to_page_action() {
+        // Cover line 318: ScrapeActionDto::Input { selector, text } => Some(PageAction::Input { selector, text })
+        let actions = parse_actions(Some(vec![ScrapeActionDto::Input {
+            selector: "#search-box".to_string(),
+            text: "crawlrs".to_string(),
+        }]));
+        assert_eq!(actions.len(), 1, "Input action should be preserved");
+        match &actions[0] {
+            PageAction::Input { selector, text } => {
+                assert_eq!(selector, "#search-box");
+                assert_eq!(text, "crawlrs");
+            }
+            other => panic!("Expected PageAction::Input, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_actions_mixed_actions_preserves_order() {
+        // Cover Wait + Input + Click together to ensure the filter_map chain
+        // preserves ordering and handles all variants in one pass.
+        let actions = parse_actions(Some(vec![
+            ScrapeActionDto::Wait { milliseconds: 100 },
+            ScrapeActionDto::Click {
+                selector: "#go".to_string(),
+            },
+            ScrapeActionDto::Input {
+                selector: "input[name=q]".to_string(),
+                text: "rust".to_string(),
+            },
+            ScrapeActionDto::Screenshot { full_page: None },
+        ]));
+        assert_eq!(actions.len(), 3, "Screenshot should be filtered out");
+        assert!(matches!(&actions[0], PageAction::Wait { milliseconds } if *milliseconds == 100));
+        assert!(matches!(&actions[1], PageAction::Click { selector } if selector == "#go"));
+        assert!(
+            matches!(&actions[2], PageAction::Input { selector, text } if selector == "input[name=q]" && text == "rust")
+        );
     }
 
     // ============ parse_headers (free fn) tests ============

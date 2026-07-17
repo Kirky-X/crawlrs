@@ -182,3 +182,238 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
         Ok(count)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::models::webhook_model::{WebhookEventType, WebhookStatus};
+
+    /// Build a lazy DbPool that does not actually connect; `get_session()` will
+    /// fail at runtime, allowing us to exercise every error path in this
+    /// repository without a real database.
+    fn create_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&dbnexus::DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    fn sample_webhook_event() -> WebhookEvent {
+        WebhookEvent::with_all_fields(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            WebhookEventType::CrawlCompleted,
+            serde_json::json!({"crawl_id": "c-1"}),
+            "https://example.com/hook".to_string(),
+            WebhookStatus::Pending,
+            0,
+            3,
+            None,
+            None,
+            None,
+            None,
+            Utc::now(),
+            Utc::now(),
+            None,
+        )
+    }
+
+    // ========== construction ==========
+
+    #[test]
+    fn test_new_creates_repository_instance() {
+        let pool = create_test_db_pool();
+        let repo = WebhookEventRepoImpl::new(pool);
+        let _clone = repo.clone();
+    }
+
+    // ========== error paths (lazy pool: get_session fails) ==========
+
+    #[tokio::test]
+    async fn test_create_returns_error_without_real_db() {
+        let repo = WebhookEventRepoImpl::new(create_test_db_pool());
+        let event = sample_webhook_event();
+        let result = repo.create(&event).await;
+        assert!(
+            result.is_err(),
+            "create should fail without a real database"
+        );
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_id_returns_error_without_real_db() {
+        let repo = WebhookEventRepoImpl::new(create_test_db_pool());
+        let result = repo.find_by_id(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_pending_returns_error_without_real_db() {
+        let repo = WebhookEventRepoImpl::new(create_test_db_pool());
+        let result = repo.find_pending(10).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_returns_error_without_real_db() {
+        let repo = WebhookEventRepoImpl::new(create_test_db_pool());
+        let event = sample_webhook_event();
+        let result = repo.update(&event).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_team_id_paginated_returns_error_without_real_db() {
+        let repo = WebhookEventRepoImpl::new(create_test_db_pool());
+        let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_count_by_team_id_returns_error_without_real_db() {
+        let repo = WebhookEventRepoImpl::new(create_test_db_pool());
+        let result = repo.count_by_team_id(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    // ========== RepositoryError variant display exhaustive ==========
+
+    #[test]
+    fn test_repository_error_database_display() {
+        let err = RepositoryError::Database(anyhow::anyhow!("connection refused"));
+        let msg = format!("{}", err);
+        assert!(msg.contains("Database error"));
+        assert!(msg.contains("connection refused"));
+    }
+
+    #[test]
+    fn test_repository_error_not_found_display() {
+        let err = RepositoryError::NotFound;
+        assert_eq!(format!("{}", err), "Record not found");
+    }
+
+    // ========== From<sea_orm::DbErr> exhaustive ==========
+
+    #[test]
+    fn test_repository_error_from_dberr_record_not_found() {
+        let db_err = sea_orm::DbErr::RecordNotFound("event missing".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dberr_query_runtime() {
+        let db_err =
+            sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dberr_connection_acquire() {
+        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_repository_error_from_dberr_record_not_inserted() {
+        let db_err = sea_orm::DbErr::RecordNotInserted;
+        let repo_err: RepositoryError = db_err.into();
+        match repo_err {
+            RepositoryError::Database(_) => {}
+            other => panic!("expected Database variant, got {:?}", other),
+        }
+    }
+
+    // ========== Production conversion path: dbnexus::DbError -> anyhow -> RepositoryError ==========
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_connection_path() {
+        // Mirrors the production `.map_err(|e| RepositoryError::Database(e.into()))` path
+        let inner = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let db_err = dbnexus::DbError::Connection(inner);
+        let any_err: anyhow::Error = db_err.into();
+        let repo_err = RepositoryError::Database(any_err);
+        let msg = format!("{}", repo_err);
+        assert!(msg.contains("Database error"));
+    }
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_config_path() {
+        let db_err = dbnexus::DbError::Config("invalid url".to_string());
+        let any_err: anyhow::Error = db_err.into();
+        let repo_err = RepositoryError::Database(any_err);
+        let msg = format!("{}", repo_err);
+        assert!(msg.contains("Database error"));
+    }
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_permission_path() {
+        let db_err = dbnexus::DbError::Permission("forbidden".to_string());
+        let any_err: anyhow::Error = db_err.into();
+        let repo_err = RepositoryError::Database(any_err);
+        let msg = format!("{}", repo_err);
+        assert!(msg.contains("Database error"));
+    }
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_transaction_path() {
+        let db_err = dbnexus::DbError::Transaction("deadlock".to_string());
+        let any_err: anyhow::Error = db_err.into();
+        let repo_err = RepositoryError::Database(any_err);
+        let msg = format!("{}", repo_err);
+        assert!(msg.contains("Database error"));
+    }
+
+    #[test]
+    fn test_repository_error_from_dbnexus_db_error_migration_path() {
+        let db_err = dbnexus::DbError::Migration("schema mismatch".to_string());
+        let any_err: anyhow::Error = db_err.into();
+        let repo_err = RepositoryError::Database(any_err);
+        let msg = format!("{}", repo_err);
+        assert!(msg.contains("Database error"));
+    }
+}

@@ -440,6 +440,137 @@ async fn tc_find_by_team_id_paginated_offset_beyond_range() {
     );
 }
 
+/// tc_update_status_to_failed_on_real_crawl: 覆盖 update_status Failed 变体的 happy path
+///
+/// test_update_status 只覆盖 Processing/Completed，test_increment_on_unknown_crawl_is_noop
+/// 只覆盖 unknown crawl 的 Failed noop 路径。这里在真实 crawl 上调用 update_status
+/// 将状态切到 Failed，覆盖 to_active_model 中 status="failed" 的序列化与持久化。
+#[tokio::test]
+async fn tc_update_status_to_failed_on_real_crawl() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let unique_prefix = Uuid::new_v4().to_string();
+    let crawl_id = Uuid::new_v4();
+    let crawl = Crawl::new(
+        crawl_id,
+        team_id,
+        format!("Failed Status {}", unique_prefix),
+        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.example.com", unique_prefix),
+        serde_json::json!({}),
+    );
+    repo.create(&crawl).await.expect("Failed to create crawl");
+
+    repo.update_status(crawl_id, CrawlStatus::Failed)
+        .await
+        .expect("Failed to update status to Failed");
+    let found = repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("Failed to find crawl")
+        .expect("crawl should be found");
+    assert_eq!(
+        found.status,
+        CrawlStatus::Failed,
+        "Status should be Failed after update_status"
+    );
+
+    cleanup_crawls(&app, team_id).await;
+}
+
+/// tc_update_status_to_cancelled_on_real_crawl: 覆盖 update_status Cancelled 变体的 happy path
+///
+/// Cancelled 变体在现有 happy path 测试中完全未覆盖，这里在真实 crawl 上调用 update_status
+/// 将状态切到 Cancelled，覆盖 to_active_model 中 status="cancelled" 的序列化与持久化。
+#[tokio::test]
+async fn tc_update_status_to_cancelled_on_real_crawl() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let unique_prefix = Uuid::new_v4().to_string();
+    let crawl_id = Uuid::new_v4();
+    let crawl = Crawl::new(
+        crawl_id,
+        team_id,
+        format!("Cancelled Status {}", unique_prefix),
+        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.example.com", unique_prefix),
+        serde_json::json!({}),
+    );
+    repo.create(&crawl).await.expect("Failed to create crawl");
+
+    repo.update_status(crawl_id, CrawlStatus::Cancelled)
+        .await
+        .expect("Failed to update status to Cancelled");
+    let found = repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("Failed to find crawl")
+        .expect("crawl should be found");
+    assert_eq!(
+        found.status,
+        CrawlStatus::Cancelled,
+        "Status should be Cancelled after update_status"
+    );
+
+    cleanup_crawls(&app, team_id).await;
+}
+
+/// tc_update_status_to_queued_on_real_crawl: 覆盖 update_status Queued 变体在已存在 crawl 上的 happy path
+///
+/// Crawl::new 默认 status=Queued，但 to_active_model 在 update 路径中序列化 Queued 的分支
+/// 未在 happy path 中被显式覆盖（create 走 to_entity 而非 to_active_model）。
+/// 这里先切到 Processing 再切回 Queued，确保 update_status 在真实 crawl 上对 Queued 变体生效。
+#[tokio::test]
+async fn tc_update_status_to_queued_on_real_crawl() {
+    let app = create_test_app_no_worker().await;
+    let repo = CrawlRepositoryImpl::new(app.db_pool.clone());
+    let team_id = app.team_id;
+
+    let unique_prefix = Uuid::new_v4().to_string();
+    let crawl_id = Uuid::new_v4();
+    let crawl = Crawl::new(
+        crawl_id,
+        team_id,
+        format!("Queued Status {}", unique_prefix),
+        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.example.com", unique_prefix),
+        serde_json::json!({}),
+    );
+    repo.create(&crawl).await.expect("Failed to create crawl");
+
+    // 先切到 Processing，确保后续切回 Queued 真的有状态变化
+    repo.update_status(crawl_id, CrawlStatus::Processing)
+        .await
+        .expect("Failed to update status to Processing");
+    let intermediate = repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("Failed to find crawl")
+        .expect("crawl should be found");
+    assert_eq!(intermediate.status, CrawlStatus::Processing);
+
+    // 切回 Queued，覆盖 to_active_model 在 update 路径上的 Queued 序列化
+    repo.update_status(crawl_id, CrawlStatus::Queued)
+        .await
+        .expect("Failed to update status back to Queued");
+    let found = repo
+        .find_by_id(crawl_id)
+        .await
+        .expect("Failed to find crawl")
+        .expect("crawl should be found");
+    assert_eq!(
+        found.status,
+        CrawlStatus::Queued,
+        "Status should be Queued after update_status"
+    );
+
+    cleanup_crawls(&app, team_id).await;
+}
+
 /// 辅助函数：清理指定 team_id 的 crawls
 async fn cleanup_crawls(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
     let session = app

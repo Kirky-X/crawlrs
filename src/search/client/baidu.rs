@@ -445,4 +445,90 @@ mod tests {
         let results = engine.parse_search_results(html, "test").await.unwrap();
         assert!(results.is_empty());
     }
+
+    // ========== SearchEngine trait 方法测试 ==========
+
+    #[test]
+    fn test_engine_creation() {
+        // Verify engine construction and trait accessors
+        let engine = create_engine();
+        assert_eq!(engine.name(), "Baidu");
+        assert_eq!(engine.engine_type(), SearchEngineType::Baidu);
+        assert_eq!(engine.health(), EngineHealth::Healthy);
+    }
+
+    // ========== search() test fallback path ==========
+
+    /// Mutex to serialize tests that mutate process-level environment
+    /// variables (std::env::set_var is not thread-safe across tests).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn make_search_request(query: &str) -> SearchRequest {
+        SearchRequest::new(query)
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_returns_hardcoded_results() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("BAIDU_TEST_RESULTS", "true");
+
+        let engine = create_engine();
+        let request = make_search_request("rust programming");
+
+        let response = engine.search(&request).await;
+
+        // Clean up env var ASAP to minimize cross-test interference
+        std::env::remove_var("BAIDU_TEST_RESULTS");
+
+        let response = response.expect("fallback should return Ok");
+        assert_eq!(response.items.len(), 2, "fallback should return 2 items");
+        assert_eq!(response.engine, SearchEngineType::Baidu);
+        assert_eq!(response.total_results, Some(2));
+        assert!(response.items[0].title.contains("rust programming"));
+        assert!(response.items[1].title.contains("rust programming"));
+        assert_eq!(response.items[0].url, "https://baidu.com/1");
+        assert_eq!(response.items[1].url, "https://baidu.com/2");
+        assert_eq!(response.items[0].engine, SearchEngineType::Baidu);
+        assert_eq!(response.items[1].engine, SearchEngineType::Baidu);
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_escapes_query_in_title() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("BAIDU_TEST_RESULTS", "true");
+
+        let engine = create_engine();
+        // Query with HTML special characters that should be escaped
+        let request = make_search_request("<script>alert(1)</script>");
+
+        let response = engine.search(&request).await;
+
+        std::env::remove_var("BAIDU_TEST_RESULTS");
+
+        let response = response.expect("fallback should return Ok");
+        // The title should contain the escaped query, not raw HTML
+        assert!(response.items[0].title.contains("&lt;script&gt;"));
+        assert!(!response.items[0].title.contains("<script>"));
+        assert!(response.items[1].title.contains("&lt;script&gt;"));
+        assert!(!response.items[1].title.contains("<script>"));
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_description_and_engine_fields() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("BAIDU_TEST_RESULTS", "true");
+
+        let engine = create_engine();
+        let request = make_search_request("fields test");
+
+        let response = engine.search(&request).await;
+
+        std::env::remove_var("BAIDU_TEST_RESULTS");
+
+        let response = response.expect("fallback should return Ok");
+        assert_eq!(response.items[0].description, "Test description 1");
+        assert_eq!(response.items[1].description, "Test description 2");
+        assert_eq!(response.items[0].engine, SearchEngineType::Baidu);
+        assert_eq!(response.items[1].engine, SearchEngineType::Baidu);
+    }
 }

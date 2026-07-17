@@ -571,4 +571,113 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result, Err(SsrfError::MissingHost { .. })));
     }
+
+    // ========== Constructor tests with DNS cache ==========
+
+    async fn make_dns_cache() -> Arc<DnsCacheService> {
+        let cache: Arc<crate::infrastructure::oxcache::DnsCache> = Arc::new(
+            oxcache::Cache::builder()
+                .capacity(100)
+                .ttl(std::time::Duration::from_secs(300))
+                .build()
+                .await
+                .expect("Failed to build oxcache for test"),
+        );
+        Arc::new(DnsCacheService::new(cache, 300))
+    }
+
+    #[tokio::test]
+    async fn test_with_dns_cache_constructor() {
+        let dns_cache = make_dns_cache().await;
+        let validator = SsrfValidator::with_dns_cache(dns_cache);
+        assert!(validator.dns_cache.is_some());
+        assert_eq!(validator.config.max_url_length, MAX_URL_LENGTH);
+    }
+
+    #[tokio::test]
+    async fn test_with_dns_cache_and_config_constructor() {
+        let dns_cache = make_dns_cache().await;
+        let config = SsrfConfig::new().with_max_url_length(512);
+        let validator = SsrfValidator::with_dns_cache_and_config(dns_cache, config);
+        assert!(validator.dns_cache.is_some());
+        assert_eq!(validator.config.max_url_length, 512);
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_dns_cache_blocks_internal() {
+        let dns_cache = make_dns_cache().await;
+        let validator = SsrfValidator::with_dns_cache(dns_cache);
+
+        // Internal URLs should still be blocked even with DNS cache
+        assert!(validator.validate("http://localhost").await.is_err());
+        assert!(validator.validate("http://127.0.0.1").await.is_err());
+        assert!(validator.validate("http://10.0.0.1").await.is_err());
+        assert!(validator.validate("file:///etc/passwd").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_dns_cache_url_too_long() {
+        let dns_cache = make_dns_cache().await;
+        let validator = SsrfValidator::with_dns_cache(dns_cache);
+        let long_url = format!("http://example.com/{}", "a".repeat(3000));
+        let result = validator.validate(&long_url).await;
+        assert!(matches!(result, Err(SsrfError::UrlTooLong { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_dns_cache_invalid_url() {
+        let dns_cache = make_dns_cache().await;
+        let validator = SsrfValidator::with_dns_cache(dns_cache);
+        let result = validator.validate("http://[invalid").await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(SsrfError::InvalidUrl { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_dns_cache_invalid_scheme() {
+        let dns_cache = make_dns_cache().await;
+        let validator = SsrfValidator::with_dns_cache(dns_cache);
+        let result = validator.validate("ftp://example.com").await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(SsrfError::InvalidScheme { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_dns_cache_blocked_hostname() {
+        let dns_cache = make_dns_cache().await;
+        let validator = SsrfValidator::with_dns_cache(dns_cache);
+        // metadata.google.internal is in the blocked hostname list
+        let result = validator.validate("http://metadata.google.internal").await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(SsrfError::BlockedHostname { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_dns_cache_and_config_blocks_internal() {
+        let dns_cache = make_dns_cache().await;
+        let config = SsrfConfig::new().with_max_url_length(1024);
+        let validator = SsrfValidator::with_dns_cache_and_config(dns_cache, config);
+        assert!(validator.validate("http://10.0.0.1").await.is_err());
+        assert!(validator.validate("http://192.168.1.1").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_host_with_dns_cache() {
+        let dns_cache = make_dns_cache().await;
+        let validator = SsrfValidator::with_dns_cache(dns_cache);
+        // "http://" has no host
+        let result = validator.validate("http://").await;
+        assert!(result.is_err());
+        // Could be InvalidUrl or MissingHost depending on Url::parse behavior
+    }
+
+    #[test]
+    fn test_ssrf_validator_clone() {
+        let validator = SsrfValidator::new();
+        let cloned = validator.clone();
+        assert_eq!(
+            validator.config.max_url_length,
+            cloned.config.max_url_length
+        );
+    }
 }

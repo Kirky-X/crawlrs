@@ -581,3 +581,915 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok((cancelled, errors))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::models::TaskType;
+    use serde_json::json;
+
+    /// Create a lazy DbPool that does not establish a real database connection.
+    /// `get_session()` calls will fail, allowing us to test error paths without
+    /// requiring a running PostgreSQL instance.
+    fn create_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                dbnexus::DbPool::try_from(&dbnexus::DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    /// Build a minimal Task instance for tests that need to pass one in.
+    /// The fields don't matter because the DB call fails before the entity is used.
+    fn make_test_task() -> Task {
+        Task::new(
+            Uuid::new_v4(),
+            TaskType::Scrape,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "http://example.com".to_string(),
+            json!({}),
+        )
+    }
+
+    // ============================================================
+    // Construction tests
+    // ============================================================
+
+    #[test]
+    fn test_new_creates_repository_instance() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        // Repository should be constructible without connecting to DB
+        // (pool is lazy, no connection until get_session is called)
+        let _ = repo;
+    }
+
+    // ============================================================
+    // Error path tests — all methods should fail gracefully when
+    // the lazy pool cannot provide a real session.
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_create_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let task = make_test_task();
+        let result = repo.create(&task).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, RepositoryError::Database(_)),
+            "Expected Database, got {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_find_by_id_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.find_by_id(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_update_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let task = make_test_task();
+        let result = repo.update(&task).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_acquire_next_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.acquire_next(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_mark_completed_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.mark_completed(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_mark_failed_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.mark_failed(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_mark_cancelled_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.mark_cancelled(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_exists_by_url_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.exists_by_url("http://example.com").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_find_existing_urls_returns_empty_for_empty_input() {
+        // Empty input should short-circuit to Ok(empty set) without DB access
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.find_existing_urls(&[]).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_find_existing_urls_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let urls = vec!["http://example.com".to_string()];
+        let result = repo.find_existing_urls(&urls).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_reset_stuck_tasks_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.reset_stuck_tasks(Duration::minutes(30)).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_by_crawl_id_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_expire_tasks_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.expire_tasks().await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_find_by_crawl_id_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.find_by_crawl_id(Uuid::new_v4()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::new_v4(),
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_batch_cancel_returns_empty_for_empty_input() {
+        // Empty input should short-circuit to Ok((empty, empty)) without DB access
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let result = repo.batch_cancel(Vec::new(), Uuid::new_v4(), false).await;
+        assert!(result.is_ok());
+        let (cancelled, errors) = result.unwrap();
+        assert!(cancelled.is_empty());
+        assert!(errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_batch_cancel_returns_db_error_without_real_db() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let task_ids = vec![Uuid::new_v4()];
+        let result = repo.batch_cancel(task_ids, Uuid::new_v4(), false).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    // ============================================================
+    // RepositoryError variant tests
+    // ============================================================
+
+    #[test]
+    fn test_error_database_display() {
+        let err = RepositoryError::Database(anyhow::anyhow!("conn refused"));
+        assert!(err.to_string().contains("Database error"));
+        assert!(err.to_string().contains("conn refused"));
+    }
+
+    #[test]
+    fn test_error_not_found_display() {
+        let err = RepositoryError::NotFound;
+        assert!(err.to_string().contains("Record not found"));
+    }
+
+    #[test]
+    fn test_from_dberr_to_repository_error() {
+        let db_err = sea_orm::DbErr::Custom("query failed".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("query failed"));
+    }
+
+    // ============================================================
+    // Additional construction & accessor tests
+    // ============================================================
+
+    #[test]
+    fn test_pool_accessor_returns_reference_to_same_pool() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
+        let pool_ref = repo.pool();
+        // The accessor should return a reference to the same underlying Arc
+        assert!(Arc::ptr_eq(pool_ref, &pool));
+    }
+
+    #[test]
+    fn test_new_with_zero_lock_duration() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::zero());
+        let _ = repo;
+    }
+
+    #[test]
+    fn test_new_with_large_lock_duration() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool, Duration::days(7));
+        let _ = repo;
+    }
+
+    #[test]
+    fn test_make_test_task_construction() {
+        let task = make_test_task();
+        assert_eq!(task.task_type, TaskType::Scrape);
+        assert_eq!(task.url, "http://example.com");
+        // New tasks should be in Queued status
+        assert_eq!(task.status, TaskStatus::Queued);
+    }
+
+    #[test]
+    fn test_task_query_params_default() {
+        let params = TaskQueryParams::default();
+        // Default should have nil Uuid for team_id
+        assert_eq!(params.team_id, Uuid::nil());
+        assert!(params.crawl_id.is_none());
+        assert!(params.statuses.is_none());
+        assert!(params.task_types.is_none());
+        assert_eq!(params.limit, 0);
+        assert_eq!(params.offset, 0);
+    }
+
+    // ============================================================
+    // query_tasks — exercise optional filter branches (error path)
+    // Even though the DB call fails, the filter-building code runs
+    // before get_session in some cases; here we ensure no panic and
+    // correct error variant for every combination.
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_query_tasks_with_crawl_id_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::new_v4(),
+            crawl_id: Some(Uuid::new_v4()),
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_with_statuses_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::new_v4(),
+            statuses: Some(vec![TaskStatus::Queued, TaskStatus::Active]),
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_with_task_types_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::new_v4(),
+            task_types: Some(vec![TaskType::Scrape, TaskType::Crawl, TaskType::Extract]),
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_with_all_optional_filters_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::new_v4(),
+            crawl_id: Some(Uuid::new_v4()),
+            statuses: Some(vec![TaskStatus::Completed, TaskStatus::Failed]),
+            task_types: Some(vec![TaskType::Scrape]),
+            limit: 50,
+            offset: 10,
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    // ============================================================
+    // Additional boundary tests for existing methods
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_find_existing_urls_with_multiple_urls_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let urls = vec![
+            "http://example.com".to_string(),
+            "http://example.org".to_string(),
+            "http://example.net".to_string(),
+        ];
+        let result = repo.find_existing_urls(&urls).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_batch_cancel_with_multiple_ids_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let task_ids = vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+        let result = repo.batch_cancel(task_ids, Uuid::new_v4(), false).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_batch_cancel_with_force_true_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let task_ids = vec![Uuid::new_v4()];
+        let result = repo.batch_cancel(task_ids, Uuid::new_v4(), true).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_reset_stuck_tasks_with_zero_duration_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.reset_stuck_tasks(Duration::zero()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_reset_stuck_tasks_with_negative_duration_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        // Negative duration means cutoff is in the future; still exercises the DB path
+        let result = repo.reset_stuck_tasks(Duration::minutes(-30)).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_exists_by_url_with_empty_string_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.exists_by_url("").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    // ============================================================
+    // Additional From<sea_orm::DbErr> variant coverage
+    // ============================================================
+
+    #[test]
+    fn test_from_dberr_record_not_found_to_repository_error() {
+        let db_err = sea_orm::DbErr::RecordNotFound("task missing".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("task missing"));
+    }
+
+    #[test]
+    fn test_from_dberr_connection_acquire_to_repository_error() {
+        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_record_not_inserted_to_repository_error() {
+        let db_err = sea_orm::DbErr::RecordNotInserted;
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_query_runtime_to_repository_error() {
+        let db_err =
+            sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("syntax error"));
+    }
+
+    // ============================================================
+    // TaskType / TaskStatus display exhaustive
+    // ============================================================
+
+    #[test]
+    fn test_task_type_scrape_display() {
+        assert_eq!(format!("{}", TaskType::Scrape), "scrape");
+    }
+
+    #[test]
+    fn test_task_type_crawl_display() {
+        assert_eq!(format!("{}", TaskType::Crawl), "crawl");
+    }
+
+    #[test]
+    fn test_task_type_extract_display() {
+        assert_eq!(format!("{}", TaskType::Extract), "extract");
+    }
+
+    #[test]
+    fn test_task_status_queued_display() {
+        assert_eq!(format!("{}", TaskStatus::Queued), "queued");
+    }
+
+    #[test]
+    fn test_task_status_active_display() {
+        assert_eq!(format!("{}", TaskStatus::Active), "active");
+    }
+
+    #[test]
+    fn test_task_status_completed_display() {
+        assert_eq!(format!("{}", TaskStatus::Completed), "completed");
+    }
+
+    #[test]
+    fn test_task_status_failed_display() {
+        assert_eq!(format!("{}", TaskStatus::Failed), "failed");
+    }
+
+    #[test]
+    fn test_task_status_cancelled_display() {
+        assert_eq!(format!("{}", TaskStatus::Cancelled), "cancelled");
+    }
+
+    // ============================================================
+    // Additional From<sea_orm::DbErr> variant coverage (exhaustive)
+    // 覆盖 sea_orm::DbErr 所有未在前面测试的变体到 RepositoryError::Database 的转换
+    // ============================================================
+
+    #[test]
+    fn test_from_dberr_connection_acquire_closed_to_repository_error() {
+        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_record_not_updated_to_repository_error() {
+        let db_err = sea_orm::DbErr::RecordNotUpdated;
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_query_sqlx_error_to_repository_error() {
+        let inner = sea_orm::sqlx::Error::RowNotFound;
+        let db_err =
+            sea_orm::DbErr::Query(sea_orm::RuntimeErr::SqlxError(std::sync::Arc::new(inner)));
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_conn_runtime_to_repository_error() {
+        let db_err = sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("conn lost"));
+    }
+
+    #[test]
+    fn test_from_dberr_exec_runtime_to_repository_error() {
+        let db_err = sea_orm::DbErr::Exec(sea_orm::RuntimeErr::Internal("exec failed".to_string()));
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("exec failed"));
+    }
+
+    #[test]
+    fn test_from_dberr_type_to_repository_error() {
+        let db_err = sea_orm::DbErr::Type("invalid type".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("invalid type"));
+    }
+
+    #[test]
+    fn test_from_dberr_json_to_repository_error() {
+        let db_err = sea_orm::DbErr::Json("parse error".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("parse error"));
+    }
+
+    #[test]
+    fn test_from_dberr_attr_not_set_to_repository_error() {
+        let db_err = sea_orm::DbErr::AttrNotSet("name".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("name"));
+    }
+
+    #[test]
+    fn test_from_dberr_convert_from_u64_to_repository_error() {
+        let db_err = sea_orm::DbErr::ConvertFromU64("String");
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_unpack_insert_id_to_repository_error() {
+        let db_err = sea_orm::DbErr::UnpackInsertId;
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_update_get_primary_key_to_repository_error() {
+        let db_err = sea_orm::DbErr::UpdateGetPrimaryKey;
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_migration_to_repository_error() {
+        let db_err = sea_orm::DbErr::Migration("schema mismatch".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("schema mismatch"));
+    }
+
+    #[test]
+    fn test_from_dberr_mutex_poison_error_to_repository_error() {
+        let db_err = sea_orm::DbErr::MutexPoisonError;
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_rbac_error_to_repository_error() {
+        let db_err = sea_orm::DbErr::RbacError("forbidden".to_string());
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("forbidden"));
+    }
+
+    #[test]
+    fn test_from_dberr_access_denied_to_repository_error() {
+        let db_err = sea_orm::DbErr::AccessDenied {
+            permission: "write".to_string(),
+            resource: "task".to_string(),
+        };
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+        assert!(repo_err.to_string().contains("write"));
+        assert!(repo_err.to_string().contains("task"));
+    }
+
+    #[test]
+    fn test_from_dberr_backend_not_supported_to_repository_error() {
+        let db_err = sea_orm::DbErr::BackendNotSupported {
+            db: "mysql",
+            ctx: "not configured",
+        };
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_try_into_err_to_repository_error() {
+        let source_err: std::sync::Arc<dyn std::error::Error + Send + Sync> = std::sync::Arc::new(
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "bad value"),
+        );
+        let db_err = sea_orm::DbErr::TryIntoErr {
+            from: "String",
+            into: "i32",
+            source: source_err,
+        };
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_key_arity_mismatch_to_repository_error() {
+        let db_err = sea_orm::DbErr::KeyArityMismatch {
+            expected: 2,
+            received: 1,
+        };
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    #[test]
+    fn test_from_dberr_primary_key_not_set_to_repository_error() {
+        let db_err = sea_orm::DbErr::PrimaryKeyNotSet { ctx: "update" };
+        let repo_err: RepositoryError = db_err.into();
+        assert!(matches!(repo_err, RepositoryError::Database(_)));
+    }
+
+    // ============================================================
+    // RepositoryError Display — 精确消息内容验证
+    // ============================================================
+
+    #[test]
+    fn test_repository_error_database_display_exact() {
+        let err = RepositoryError::Database(anyhow::anyhow!("connection refused"));
+        let msg = err.to_string();
+        assert!(msg.contains("Database error"));
+        assert!(msg.contains("connection refused"));
+    }
+
+    #[test]
+    fn test_repository_error_database_display_with_empty_message() {
+        let err = RepositoryError::Database(anyhow::anyhow!(""));
+        let msg = err.to_string();
+        assert!(msg.contains("Database error"));
+    }
+
+    #[test]
+    fn test_repository_error_not_found_display_exact() {
+        let err = RepositoryError::NotFound;
+        assert_eq!(err.to_string(), "Record not found");
+    }
+
+    #[test]
+    fn test_repository_error_implements_debug() {
+        let err1 = RepositoryError::Database(anyhow::anyhow!("e"));
+        let err2 = RepositoryError::NotFound;
+        let debug1 = format!("{:?}", err1);
+        let debug2 = format!("{:?}", err2);
+        assert!(!debug1.is_empty());
+        assert!(!debug2.is_empty());
+    }
+
+    // ============================================================
+    // Additional boundary tests for URL-based methods
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_exists_by_url_with_unicode_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.exists_by_url("http://例子.com/测试").await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_exists_by_url_with_long_url_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let long_url = format!("http://example.com/{}", "a".repeat(2000));
+        let result = repo.exists_by_url(&long_url).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_find_existing_urls_with_unicode_urls_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let urls = vec![
+            "http://例子.com".to_string(),
+            "http://example.org".to_string(),
+        ];
+        let result = repo.find_existing_urls(&urls).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_find_existing_urls_with_empty_string_in_list_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let urls = vec!["".to_string()];
+        let result = repo.find_existing_urls(&urls).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_find_existing_urls_with_mixed_empty_and_nonempty_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let urls = vec!["".to_string(), "http://example.com".to_string()];
+        let result = repo.find_existing_urls(&urls).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    // ============================================================
+    // Additional boundary tests for UUID-based methods
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_find_by_id_with_nil_uuid_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.find_by_id(Uuid::nil()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_mark_completed_with_nil_uuid_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.mark_completed(Uuid::nil()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_mark_failed_with_nil_uuid_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.mark_failed(Uuid::nil()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_mark_cancelled_with_nil_uuid_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.mark_cancelled(Uuid::nil()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_acquire_next_with_nil_worker_id_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.acquire_next(Uuid::nil()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_by_crawl_id_with_nil_uuid_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.cancel_tasks_by_crawl_id(Uuid::nil()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_find_by_crawl_id_with_nil_uuid_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let result = repo.find_by_crawl_id(Uuid::nil()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_batch_cancel_with_nil_uuids_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let task_ids = vec![Uuid::nil()];
+        let result = repo.batch_cancel(task_ids, Uuid::nil(), false).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    // ============================================================
+    // query_tasks boundary — extreme limit/offset values
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_query_tasks_with_zero_limit_offset_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::new_v4(),
+            limit: 0,
+            offset: 0,
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_with_max_limit_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::new_v4(),
+            limit: u32::MAX,
+            offset: 0,
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_with_nil_team_id_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::nil(),
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_with_empty_statuses_vec_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::new_v4(),
+            statuses: Some(Vec::new()),
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_with_empty_task_types_vec_returns_db_error() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let params = TaskQueryParams {
+            team_id: Uuid::new_v4(),
+            task_types: Some(Vec::new()),
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    }
+
+    // ============================================================
+    // Repository clone — verify Clone preserves pool identity
+    // ============================================================
+
+    #[test]
+    fn test_repository_clone_preserves_pool_identity() {
+        let pool = create_test_db_pool();
+        let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
+        let cloned = repo.clone();
+        assert!(Arc::ptr_eq(&repo.pool, &cloned.pool));
+    }
+
+    #[test]
+    fn test_new_with_distinct_pools_do_not_share_identity() {
+        let pool1 = create_test_db_pool();
+        let pool2 = create_test_db_pool();
+        let repo1 = TaskRepositoryImpl::new(pool1, Duration::minutes(5));
+        let repo2 = TaskRepositoryImpl::new(pool2, Duration::minutes(5));
+        assert!(!Arc::ptr_eq(&repo1.pool, &repo2.pool));
+    }
+}

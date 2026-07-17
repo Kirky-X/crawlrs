@@ -624,4 +624,96 @@ mod tests {
     fn test_http_method_default_is_get() {
         assert_eq!(HttpMethod::default(), HttpMethod::Get);
     }
+
+    // === Test logger for covering log::debug!/log::warn! in get_client ===
+
+    use log::{LevelFilter, Log, Metadata, Record};
+    use std::sync::Once;
+
+    static LOGGER_INIT: Once = Once::new();
+
+    struct CapturingLogger;
+
+    impl Log for CapturingLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= log::Level::Debug
+        }
+        fn log(&self, _record: &Record) {}
+        fn flush(&self) {}
+    }
+
+    fn ensure_debug_logger() {
+        LOGGER_INIT.call_once(|| {
+            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
+            let _ = log::set_logger(&CAPTURING_LOGGER);
+            log::set_max_level(LevelFilter::Debug);
+        });
+    }
+
+    // === get_client private method tests ===
+    // get_client is a private method, but accessible via `use super::*` in tests.
+    // These tests only build clients without sending HTTP requests.
+
+    #[test]
+    fn test_get_client_with_no_proxy_returns_injected_client() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        // No proxy → should return the injected client
+        let _result = engine.get_client(&None);
+    }
+
+    #[test]
+    fn test_get_client_with_valid_http_proxy_returns_proxy_client() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        // Valid HTTP proxy URL → should create a new client with proxy
+        let _result = engine.get_client(&Some("http://proxy.example.com:8080".to_string()));
+    }
+
+    #[test]
+    fn test_get_client_with_invalid_proxy_falls_back_to_injected() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        // Invalid proxy URL → reqwest::Proxy::http fails → log::warn! → fall back to injected client
+        let _result = engine.get_client(&Some("://invalid".to_string()));
+    }
+
+    #[test]
+    fn test_get_client_with_global_proxy_and_no_request_proxy() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let engine = ReqwestEngine::with_proxy(client, "http://global-proxy:8080");
+        // No request proxy, but engine has global proxy → should use global proxy
+        let _result = engine.get_client(&None);
+    }
+
+    #[test]
+    fn test_get_client_request_proxy_overrides_global_proxy() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let engine = ReqwestEngine::with_proxy(client, "http://global-proxy:8080");
+        // Both request and global proxy → request proxy takes precedence
+        let _result = engine.get_client(&Some("http://request-proxy:9090".to_string()));
+    }
+
+    #[test]
+    fn test_get_client_with_invalid_global_proxy_falls_back() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let engine = ReqwestEngine::with_proxy(client, "://invalid");
+        // Invalid global proxy with no request proxy → fall back to injected client
+        let _result = engine.get_client(&None);
+    }
+
+    #[test]
+    fn test_get_client_with_valid_https_proxy() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        // Valid HTTPS proxy URL
+        let _result = engine.get_client(&Some("https://proxy.example.com:8443".to_string()));
+    }
 }

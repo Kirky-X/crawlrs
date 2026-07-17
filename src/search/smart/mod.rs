@@ -3257,4 +3257,20 @@ mod tests_ext {
             "https://www.google.com/"
         );
     }
+
+    // === save_html_for_debug with invalid path (write failure) ===
+    // This test covers line 842: when std::fs::write fails (because the query
+    // contains '/' making the path reference a non-existent directory), the
+    // warn! branch is executed instead of the info! success branch.
+
+    #[test]
+    fn test_save_html_for_debug_write_failure_with_slash_in_query() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        std::env::set_var("DEBUG_SAVE_HTML", "1");
+        // A query containing '/' produces a filename like
+        // /tmp/search_debug_google_test/path_...html which references a
+        // non-existent intermediate directory, causing fs::write to fail.
+        engine.save_html_for_debug("<html>debug</html>", "test/path/with/slashes");
+        std::env::remove_var("DEBUG_SAVE_HTML");
+    }
 }

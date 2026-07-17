@@ -431,4 +431,73 @@ mod tests {
         assert!(err.to_string().contains("Invalid URL"));
         assert!(err.to_string().contains("bad url"));
     }
+
+    // ========== Visitor::expecting 方法覆盖测试 ==========
+
+    #[test]
+    fn test_safe_url_deserialize_number_triggers_expecting() {
+        // 反序列化数字类型触发 Visitor::expecting 方法（行 111, 114-115）。
+        // serde_json 看到 number，调用 Visitor::visit_u64（未定义），
+        // 默认实现返回 invalid_type 错误，错误消息使用 expecting() 输出。
+        let json = "123";
+        let result: Result<SafeUrl, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        // expecting 输出 "a valid URL string"，应出现在错误消息中
+        assert!(
+            err_msg.contains("a valid URL string"),
+            "error should contain expecting message, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_safe_url_deserialize_object_triggers_expecting() {
+        // 反序列化对象类型触发 Visitor::expecting 方法。
+        let json = "{}";
+        let result: Result<SafeUrl, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("a valid URL string"),
+            "error should contain expecting message, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_safe_url_deserialize_array_triggers_expecting() {
+        // 反序列化数组类型触发 Visitor::expecting 方法。
+        let json = "[]";
+        let result: Result<SafeUrl, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("a valid URL string"),
+            "error should contain expecting message, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_safe_url_deserialize_bool_triggers_expecting() {
+        // 反序列化布尔类型触发 Visitor::expecting 方法。
+        let json = "true";
+        let result: Result<SafeUrl, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("a valid URL string"),
+            "error should contain expecting message, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_safe_url_deserialize_null_triggers_expecting() {
+        // 反序列化 null 类型触发 Visitor::expecting 方法。
+        let json = "null";
+        let result: Result<SafeUrl, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
 }

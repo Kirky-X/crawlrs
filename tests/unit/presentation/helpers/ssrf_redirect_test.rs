@@ -17,9 +17,7 @@
 
 #![cfg(test)]
 
-use crawlrs::presentation::helpers::ssrf::{
-    RedirectPolicy, RedirectValidator, SsrfError,
-};
+use crawlrs::presentation::helpers::ssrf::{RedirectPolicy, RedirectValidator, SsrfError};
 
 // ============================================================
 // RedirectValidator::would_validate max_redirects 超限路径
@@ -27,8 +25,7 @@ use crawlrs::presentation::helpers::ssrf::{
 
 #[test]
 fn tc_would_validate_max_redirects_exceeded() {
-    let validator =
-        RedirectValidator::with_policy(RedirectPolicy::follow_with_validation(3));
+    let validator = RedirectValidator::with_policy(RedirectPolicy::follow_with_validation(3));
     // current_count >= max_redirects 应返回 MaxRedirectsExceeded
     let result = validator.would_validate("http://example.com", 3);
     match result {
@@ -42,8 +39,7 @@ fn tc_would_validate_max_redirects_exceeded() {
 
 #[test]
 fn tc_would_validate_max_redirects_exceeded_high_count() {
-    let validator =
-        RedirectValidator::with_policy(RedirectPolicy::follow_with_validation(2));
+    let validator = RedirectValidator::with_policy(RedirectPolicy::follow_with_validation(2));
     // current_count 远超 max_redirects
     let result = validator.would_validate("http://example.com", 10);
     match result {

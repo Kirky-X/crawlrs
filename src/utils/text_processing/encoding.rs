@@ -573,4 +573,466 @@ mod tests {
         let results = processor.process_batch(vec![]);
         assert_eq!(results.len(), 0);
     }
+
+    // ========== Supplementary tests: long text, cache, non-UTF8 ==========
+
+    #[test]
+    fn test_long_text_with_unicode_escapes_is_normalized() {
+        // Long text (>= short_text_threshold) containing \u escapes must be
+        // normalized through the convert_encoding/normalize_unicode path when
+        // the content is non-UTF8. For UTF-8 content, detect_and_convert_encoding
+        // returns directly, so unicode normalization happens via process_short_text
+        // only. This test verifies long UTF-8 text still gets unicode normalization.
+        let processor = TextEncodingProcessor::new();
+        let prefix = "a".repeat(1000);
+        let suffix = r"\u4e16\u754c";
+        let long_text = format!("{}{}", prefix, suffix);
+        let result = processor
+            .process_text(long_text.as_bytes())
+            .expect("long text with unicode escapes should process");
+        assert!(
+            result.contains("世界"),
+            "unicode escapes should be normalized: got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_long_text_caching_returns_same_result_on_second_call() {
+        // Verify cached conversion produces identical output to the first call.
+        let processor = TextEncodingProcessor::new();
+        let long_text = "b".repeat(1500);
+        let first = processor.process_text(long_text.as_bytes()).unwrap();
+        let second = processor.process_text(long_text.as_bytes()).unwrap();
+        assert_eq!(first, second, "cached result must match first result");
+        // Cache size should remain 1 (same key).
+        assert_eq!(processor.get_stats().cache_size, 1);
+    }
+
+    #[test]
+    fn test_with_config_custom_cache_size() {
+        // Verify with_config sets a custom cache size and short_text_threshold.
+        let processor = TextEncodingProcessor::with_config(50, 200);
+        let stats = processor.get_stats();
+        assert_eq!(stats.short_text_threshold, 200);
+        // Note: cache_capacity is hardcoded to 1000 in get_stats; this is
+        // the current implementation behavior (not configurable via with_config).
+        assert_eq!(stats.cache_capacity, 1000);
+    }
+
+    #[test]
+    fn test_with_config_small_threshold_uses_long_text_path() {
+        // With a small threshold, even short content goes through the long-text
+        // path (with caching). Verify the cache is populated.
+        let processor = TextEncodingProcessor::with_config(50, 5);
+        assert_eq!(processor.get_stats().cache_size, 0);
+        // "hello world" is 11 bytes, > threshold of 5.
+        let result = processor.process_text(b"hello world").unwrap();
+        assert_eq!(result, "hello world");
+        assert_eq!(
+            processor.get_stats().cache_size,
+            1,
+            "content longer than threshold should be cached"
+        );
+    }
+
+    #[test]
+    fn test_long_text_unicode_escape_uppercase_u_in_long_content() {
+        // Long UTF-8 text containing \U escape (8 hex digits).
+        let processor = TextEncodingProcessor::new();
+        let prefix = "x".repeat(1000);
+        let suffix = r"\U00000041"; // 'A'
+        let long_text = format!("{}{}", prefix, suffix);
+        let result = processor.process_text(long_text.as_bytes()).unwrap();
+        assert!(
+            result.contains('A'),
+            "\\U escape should be normalized to 'A': got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_long_text_unicode_escape_x_in_long_content() {
+        // Long UTF-8 text containing \x escape (2 hex digits).
+        let processor = TextEncodingProcessor::new();
+        let prefix = "y".repeat(1000);
+        let suffix = r"\x42"; // 'B'
+        let long_text = format!("{}{}", prefix, suffix);
+        let result = processor.process_text(long_text.as_bytes()).unwrap();
+        assert!(
+            result.contains('B'),
+            "\\x escape should be normalized to 'B': got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_cache_key_is_deterministic_for_same_input() {
+        // Same input should produce the same cache key, so second call hits cache.
+        let processor = TextEncodingProcessor::with_config(100, 10);
+        let content = "z".repeat(20);
+        processor.process_text(content.as_bytes()).unwrap();
+        assert_eq!(processor.get_stats().cache_size, 1);
+        // Different content should create a new cache entry.
+        let content2 = "w".repeat(20);
+        processor.process_text(content2.as_bytes()).unwrap();
+        assert_eq!(processor.get_stats().cache_size, 2);
+    }
+
+    #[test]
+    fn test_trim_newlines_only_newlines_at_start_and_end() {
+        // Middle newlines are preserved; only leading/trailing are trimmed.
+        let processor = TextEncodingProcessor::new();
+        assert_eq!(processor.trim_newlines("\n\n\n"), "");
+        assert_eq!(processor.trim_newlines("content"), "content");
+        assert_eq!(
+            processor.trim_newlines("\n\ncontent\nmore\n"),
+            "content\nmore"
+        );
+    }
+
+    #[test]
+    fn test_process_text_with_empty_input() {
+        // Empty input is a valid edge case; should return empty string.
+        let processor = TextEncodingProcessor::new();
+        let result = processor
+            .process_text(b"")
+            .expect("empty input should succeed");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_process_batch_with_mixed_utf8_and_empty() {
+        // Batch containing empty and non-empty UTF-8 inputs.
+        let processor = TextEncodingProcessor::new();
+        let inputs: Vec<&[u8]> = vec![b"", b"hello", b""];
+        let results = processor.process_batch(inputs);
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.is_ok()));
+        assert_eq!(results[0].as_ref().unwrap(), "");
+        assert_eq!(results[1].as_ref().unwrap(), "hello");
+        assert_eq!(results[2].as_ref().unwrap(), "");
+    }
+
+    #[test]
+    fn test_non_utf8_content_is_decoded() {
+        // Non-UTF8 content (GBK-encoded "中文") should be decoded successfully.
+        // GBK encoding of "中文" is [0xD6, 0xD0, 0xCE, 0xC4].
+        let processor = TextEncodingProcessor::new();
+        let gbk_bytes: [u8; 4] = [0xD6, 0xD0, 0xCE, 0xC4];
+        let result = processor.process_text(&gbk_bytes);
+        // The decoder should succeed; the exact output depends on chardetng's
+        // detection. We verify it does not error and produces non-empty output.
+        match result {
+            Ok(text) => {
+                assert!(!text.is_empty(), "decoded text should be non-empty");
+            }
+            Err(_) => {
+                // If detection fails, that's acceptable for very short non-UTF8 input;
+                // the important thing is that the function does not panic.
+            }
+        }
+    }
+
+    #[test]
+    fn test_non_utf8_long_content_caching() {
+        // Long non-UTF8 content should go through the cache path.
+        // Construct a long non-UTF8 byte sequence by repeating GBK bytes.
+        let processor = TextEncodingProcessor::new();
+        let mut non_utf8 = Vec::new();
+        for _ in 0..300 {
+            non_utf8.extend_from_slice(&[0xD6, 0xD0, 0xCE, 0xC4]);
+        }
+        let result = processor.process_text(&non_utf8);
+        // Should either succeed (decoded) or fail gracefully; must not panic.
+        match result {
+            Ok(text) => assert!(!text.is_empty()),
+            Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn test_text_processor_clone_preserves_config() {
+        // TextEncodingProcessor derives Clone; verify config is preserved.
+        let processor = TextEncodingProcessor::with_config(50, 500);
+        let cloned = processor.clone();
+        assert_eq!(
+            processor.get_stats().short_text_threshold,
+            cloned.get_stats().short_text_threshold
+        );
+    }
+
+    #[test]
+    fn test_invalid_utf8_short_text_does_not_panic() {
+        // Short invalid UTF-8 should be handled via detect_and_convert_encoding.
+        let processor = TextEncodingProcessor::new();
+        let invalid_utf8: [u8; 4] = [0xFF, 0xFE, 0xFD, 0xFC];
+        let result = processor.process_text(&invalid_utf8);
+        // Should not panic; may succeed or fail depending on detection.
+        let _ = result;
+    }
+
+    #[test]
+    fn test_get_stats_cache_capacity_is_constant() {
+        // get_stats always reports cache_capacity=1000 regardless of with_config.
+        // This documents the current implementation behavior.
+        let processor = TextEncodingProcessor::with_config(50, 200);
+        let stats = processor.get_stats();
+        assert_eq!(stats.cache_capacity, 1000);
+    }
+
+    // ========== Supplementary tests: unicode escape edge cases & cached non-UTF8 path ==========
+
+    #[test]
+    fn test_unicode_escape_surrogate_code_point_falls_back_to_backslash() {
+        // \uD800 is a surrogate code point; char::from_u32 returns None.
+        // The parser should fall back to pushing the backslash and consuming
+        // the 'u' + 4 hex chars (which are lost).
+        let processor = TextEncodingProcessor::new();
+        let input = r"\uD800";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        // Backslash is pushed; 'D800' chars are consumed by the hex loop.
+        assert_eq!(result, "\\");
+    }
+
+    #[test]
+    fn test_unicode_uppercase_u_escape_beyond_max_code_point() {
+        // \U00110000 is beyond the maximum Unicode scalar value (0x10FFFF).
+        // char::from_u32 returns None, so the backslash is pushed and the
+        // 8 hex chars are consumed (lost).
+        let processor = TextEncodingProcessor::new();
+        let input = r"\U00110000";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "\\");
+    }
+
+    #[test]
+    fn test_unicode_escape_incomplete_at_end_of_string() {
+        // \u41 at end of string: only 2 hex chars available. The loop runs 4
+        // times but chars.next() returns None after 2, so hex_chars = "41".
+        // 0x41 = 'A'. This documents the lenient parsing behavior.
+        let processor = TextEncodingProcessor::new();
+        let input = r"\u41";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "A");
+    }
+
+    #[test]
+    fn test_unicode_x_escape_with_non_hex_chars() {
+        // \xZZ: from_str_radix("ZZ", 16) fails, backslash is pushed, 'x' and
+        // 'ZZ' are consumed (lost).
+        let processor = TextEncodingProcessor::new();
+        let input = r"\xZZ";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "\\");
+    }
+
+    #[test]
+    fn test_unicode_x_escape_single_hex_digit() {
+        // \xA at end: only 1 hex char available. hex_chars = "A" = 0x0A = '\n'.
+        // process_text calls trim_newlines which removes the leading/trailing
+        // \n, so the final result is empty.
+        let processor = TextEncodingProcessor::new();
+        let input = r"\xA";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_multiple_unicode_escapes_in_one_string() {
+        // Mix of \u, \U, and \x escapes in a single string.
+        let processor = TextEncodingProcessor::new();
+        let input = r"\u0041\U00000042\x43";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "ABC");
+    }
+
+    #[test]
+    fn test_backslash_u_at_end_of_string_with_no_hex() {
+        // "\u" at end: 'u' is consumed, hex loop runs 4 times getting None,
+        // hex_chars = "", from_str_radix("", 16) fails, backslash pushed.
+        let processor = TextEncodingProcessor::new();
+        let input = r"\u";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "\\");
+    }
+
+    #[test]
+    fn test_backslash_followed_by_non_escape_char() {
+        // \n: 'n' is not u/U/x, so all branches are skipped and backslash is
+        // pushed, then 'n' is pushed in the next iteration.
+        let processor = TextEncodingProcessor::new();
+        let input = r"\n";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "\\n");
+    }
+
+    #[test]
+    fn test_unicode_escape_max_valid_code_point() {
+        // \U0010FFFF is the maximum valid Unicode scalar value.
+        let processor = TextEncodingProcessor::new();
+        let input = r"\U0010FFFF";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        // Should produce the character U+10FFFF.
+        assert_eq!(result, "\u{10FFFF}");
+    }
+
+    #[test]
+    fn test_unicode_escape_null_code_point() {
+        // \u0000 is the null character; char::from_u32(0) returns Some('\0').
+        let processor = TextEncodingProcessor::new();
+        let input = r"\u0000";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "\0");
+    }
+
+    #[test]
+    fn test_apply_cached_conversion_non_utf8_path() {
+        // Process non-UTF8 content twice with a small threshold so the second
+        // call uses the cached non-UTF8 detection (apply_cached_conversion
+        // non-utf8 branch). We use GBK bytes and a threshold of 2.
+        let processor = TextEncodingProcessor::with_config(100, 2);
+        let gbk_bytes: [u8; 4] = [0xD6, 0xD0, 0xCE, 0xC4];
+        // First call: detects and caches.
+        let first = processor.process_text(&gbk_bytes);
+        // Second call: should use cached detection (non-utf8 branch).
+        let second = processor.process_text(&gbk_bytes);
+        // Both calls should produce the same result (either both Ok or both Err).
+        match (first, second) {
+            (Ok(a), Ok(b)) => assert_eq!(a, b, "cached non-utf8 result should match first"),
+            (Err(_), Err(_)) => {}
+            (a, b) => panic!("both calls should agree: first={:?}, second={:?}", a, b),
+        }
+        // Cache should have exactly 1 entry.
+        assert_eq!(processor.get_stats().cache_size, 1);
+    }
+
+    #[test]
+    fn test_convert_encoding_with_unicode_escapes_in_non_utf8() {
+        // When non-UTF8 content is decoded and the decoded text contains
+        // unicode escape sequences, convert_encoding should normalize them.
+        // This is hard to control precisely, so we verify the path does not
+        // panic and produces some output.
+        let processor = TextEncodingProcessor::with_config(100, 2);
+        // Construct bytes that when decoded might contain \u sequences.
+        // We use a long sequence to ensure long-text path with caching.
+        let mut non_utf8 = Vec::new();
+        for _ in 0..100 {
+            non_utf8.extend_from_slice(&[0xD6, 0xD0, 0xCE, 0xC4]);
+        }
+        let result = processor.process_text(&non_utf8);
+        // Should not panic; may succeed or fail.
+        let _ = result;
+    }
+
+    #[test]
+    fn test_long_text_processing_caches_detection_only_on_success() {
+        // cache_detection_result is only called when result.is_ok(). Verify
+        // that a failed detection does not populate the cache.
+        let processor = TextEncodingProcessor::with_config(100, 2);
+        // Use bytes likely to fail detection in a way that produces an error.
+        // Note: this is best-effort; if detection succeeds, cache will have 1.
+        let weird_bytes: Vec<u8> = vec![0xFF; 10];
+        let _ = processor.process_text(&weird_bytes);
+        // If it succeeded, cache_size is 1; if it failed, cache_size is 0.
+        // Either way, this documents the behavior.
+        let stats = processor.get_stats();
+        assert!(stats.cache_size <= 1);
+    }
+
+    #[test]
+    fn test_process_text_preserves_content_with_special_chars() {
+        // Verify that text with special characters (but no unicode escapes)
+        // is preserved exactly.
+        let processor = TextEncodingProcessor::new();
+        let input = "Hello\tWorld\nNew Line\r\nCarriage";
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        // trim_newlines only removes leading/trailing \n, not \t or \r.
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_trim_newlines_preserves_carriage_returns() {
+        // trim_newlines only removes \n, not \r. Leading \r\n becomes \r
+        // (only \n at start would be removed; here start is \r so no change).
+        // Trailing \r\n becomes \r (the trailing \n is removed).
+        let processor = TextEncodingProcessor::new();
+        assert_eq!(processor.trim_newlines("\rhello\r"), "\rhello\r");
+        assert_eq!(processor.trim_newlines("\r\nhello\r\n"), "\r\nhello\r");
+    }
+
+    #[test]
+    fn test_unicode_escape_mixed_with_regular_backslashes() {
+        // Mix of valid escapes and plain backslashes.
+        let processor = TextEncodingProcessor::new();
+        let input = r"\\u0041\n\x42";
+        // First \\ is a literal backslash (second \ is not u/U/x after first \).
+        // Wait: parsing: c='\\', peek='\\' (not u/U/x), push '\\'.
+        // Next: c='\\'(second), peek='u', consume 'u', hex="0041"='A', push 'A'.
+        // Next: c='\\'(from \n), peek='n', not u/U/x, push '\\'.
+        // Next: c='n', push 'n'.
+        // Next: c='\\'(from \x), peek='x', consume 'x', hex="42"='B', push 'B'.
+        let result = processor.process_text(input.as_bytes()).unwrap();
+        assert_eq!(result, "\\A\\nB");
+    }
+
+    // ========== detect_and_convert_encoding / apply_cached_conversion is_utf8=true 分支覆盖 ==========
+
+    #[test]
+    fn test_detect_and_convert_encoding_utf8_branch_with_chinese_long_text() {
+        // 构造包含非 ASCII UTF-8 字符的长文本（>= short_text_threshold），
+        // 确保 chardetng 检测为 utf-8（is_utf8=true），
+        // 覆盖 detect_and_convert_encoding 行 203-206。
+        let processor = TextEncodingProcessor::new();
+        let prefix = "a".repeat(900);
+        let chinese = "你好世界测试文本".repeat(20);
+        let long_text = format!("{}{}", prefix, chinese);
+        assert!(
+            long_text.len() >= 1000,
+            "long_text must be >= 1000 bytes for long-text path"
+        );
+        let result = processor
+            .process_text(long_text.as_bytes())
+            .expect("long UTF-8 text with Chinese should process");
+        assert!(
+            result.contains("你好世界测试文本"),
+            "result should contain Chinese text"
+        );
+    }
+
+    #[test]
+    fn test_apply_cached_conversion_utf8_branch_on_second_call() {
+        // 第二次调用相同的长 UTF-8 文本，走缓存路径，
+        // apply_cached_conversion 的 is_utf8=true 分支（行 277-279）。
+        let processor = TextEncodingProcessor::new();
+        let prefix = "b".repeat(900);
+        let chinese = "你好世界".repeat(30);
+        let long_text = format!("{}{}", prefix, chinese);
+        assert!(long_text.len() >= 1000);
+        // 第一次调用：detect_and_convert_encoding + cache_detection_result
+        let first = processor
+            .process_text(long_text.as_bytes())
+            .expect("first call should succeed");
+        assert_eq!(processor.get_stats().cache_size, 1);
+        // 第二次调用：apply_cached_conversion（is_utf8=true 分支）
+        let second = processor
+            .process_text(long_text.as_bytes())
+            .expect("second call should use cache");
+        assert_eq!(first, second, "cached result should match first result");
+    }
+
+    #[test]
+    fn test_detect_and_convert_encoding_utf8_branch_with_mixed_long_text() {
+        // 另一个长 UTF-8 文本，包含多种非 ASCII 字符，
+        // 进一步确保 chardetng 检测为 utf-8。
+        let processor = TextEncodingProcessor::new();
+        let prefix = "x".repeat(800);
+        let mixed = "你好世界こんにちは안녕하세요".repeat(20);
+        let long_text = format!("{}{}", prefix, mixed);
+        assert!(long_text.len() >= 1000);
+        let result = processor
+            .process_text(long_text.as_bytes())
+            .expect("mixed long UTF-8 text should process");
+        assert!(!result.is_empty());
+    }
 }

@@ -471,4 +471,112 @@ mod tests {
         let results = engine.parse_search_results(html).await.unwrap();
         assert!(results.is_empty());
     }
+
+    // ========== SearchEngine trait 方法测试 ==========
+
+    #[test]
+    fn test_engine_creation() {
+        // Verify engine construction and trait accessors
+        let engine = create_engine();
+        assert_eq!(engine.name(), "Bing");
+        assert_eq!(engine.engine_type(), SearchEngineType::Bing);
+        assert_eq!(engine.health(), EngineHealth::Healthy);
+    }
+
+    // ========== search() test fallback path ==========
+
+    /// Mutex to serialize tests that mutate process-level environment
+    /// variables (std::env::set_var is not thread-safe across tests).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn make_search_request(query: &str) -> SearchRequest {
+        SearchRequest::new(query)
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_returns_hardcoded_results() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("BING_TEST_RESULTS", "true");
+
+        let engine = create_engine();
+        let request = make_search_request("rust programming");
+
+        let response = engine.search(&request).await;
+
+        // Clean up env var ASAP to minimize cross-test interference
+        std::env::remove_var("BING_TEST_RESULTS");
+
+        let response = response.expect("fallback should return Ok");
+        assert_eq!(response.items.len(), 2, "fallback should return 2 items");
+        assert_eq!(response.engine, SearchEngineType::Bing);
+        assert_eq!(response.total_results, Some(2));
+        assert!(response.items[0].title.contains("rust programming"));
+        assert!(response.items[1].title.contains("rust programming"));
+        assert_eq!(response.items[0].url, "https://bing.com/1");
+        assert_eq!(response.items[1].url, "https://bing.com/2");
+        assert_eq!(response.items[0].engine, SearchEngineType::Bing);
+        assert_eq!(response.items[1].engine, SearchEngineType::Bing);
+    }
+
+    #[tokio::test]
+    async fn test_search_fallback_description_fields() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        std::env::set_var("BING_TEST_RESULTS", "true");
+
+        let engine = create_engine();
+        let request = make_search_request("description check");
+
+        let response = engine.search(&request).await;
+
+        std::env::remove_var("BING_TEST_RESULTS");
+
+        let response = response.expect("fallback should return Ok");
+        assert_eq!(response.items[0].description, "Test description 1");
+        assert_eq!(response.items[1].description, "Test description 2");
+    }
+
+    #[tokio::test]
+    async fn test_search_empty_query_returns_error_without_fallback() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        // Ensure fallback is disabled so we reach the empty-query guard
+        std::env::remove_var("BING_TEST_RESULTS");
+
+        let engine = create_engine();
+        // Whitespace-only query should be treated as empty
+        let request = make_search_request("   ");
+
+        let result = engine.search(&request).await;
+
+        assert!(result.is_err(), "empty query should return Err");
+        let err = result.unwrap_err();
+        match err {
+            SearchError::Parse(msg) => {
+                assert!(
+                    msg.contains("empty"),
+                    "error should mention empty query: {}",
+                    msg
+                );
+            }
+            other => panic!("expected SearchError::Parse, got {:?}", other),
+        }
+    }
+
+    // ========== decode_bing_url with non-UTF-8 Base64 payload ==========
+    // This test covers line 98: when Base64 decoding succeeds but the resulting
+    // bytes are not valid UTF-8, the original URL should be returned as-is.
+
+    #[test]
+    fn test_decode_bing_url_non_utf8_payload_returned_as_is() {
+        let engine = create_engine();
+        // Construct bytes that are NOT valid UTF-8 (0xFF 0xFE 0xFD).
+        let invalid_utf8_bytes: [u8; 3] = [0xFF, 0xFE, 0xFD];
+        let encoded = URL_SAFE.encode(invalid_utf8_bytes);
+        let url = format!("https://www.bing.com/ck/a?u=a1{}", encoded);
+
+        let decoded = engine.decode_bing_url(&url);
+        assert_eq!(
+            decoded, url,
+            "non-UTF-8 Base64 payload should return original URL"
+        );
+    }
 }

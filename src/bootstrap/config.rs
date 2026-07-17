@@ -896,4 +896,89 @@ mod tests {
             "validate_environment with CRAWLRS_ENV=test should succeed even with forbidden vars"
         );
     }
+
+    // ========== Test logger for covering log::info!/log::error! paths ==========
+
+    use log::{LevelFilter, Log, Metadata, Record};
+    use std::sync::Once;
+
+    static LOGGER_INIT: Once = Once::new();
+
+    struct CapturingLogger;
+
+    impl Log for CapturingLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= log::Level::Debug
+        }
+        fn log(&self, _record: &Record) {}
+        fn flush(&self) {}
+    }
+
+    fn ensure_debug_logger() {
+        LOGGER_INIT.call_once(|| {
+            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
+            let _ = log::set_logger(&CAPTURING_LOGGER);
+            log::set_max_level(LevelFilter::Debug);
+        });
+    }
+
+    // ========== detect_available_port: port switching path (covers lines 168-177) ==========
+
+    #[test]
+    fn test_detect_available_port_switches_when_configured_port_occupied() {
+        ensure_debug_logger();
+        // Bind a port to make it occupied, then verify detect_available_port
+        // switches to a different port when enable_port_detection is true.
+        // Covers the `result.port != settings.server.port` branch (lines 168-174)
+        // and the `for log in result.logs { info!("{}", log); }` loop (lines 175-177).
+        let listener = std::net::TcpListener::bind("0.0.0.0:0").expect("Failed to bind listener");
+        let occupied_port = listener.local_addr().unwrap().port();
+
+        let mut settings = load_settings().expect("Failed to load settings");
+        settings.server.port = occupied_port;
+        settings.server.enable_port_detection = true;
+
+        let result = detect_available_port(&mut settings);
+        assert!(
+            result.is_ok(),
+            "detect_available_port should succeed by switching ports"
+        );
+        let detected_port = result.unwrap();
+        assert_ne!(
+            detected_port, occupied_port,
+            "detected port should differ from occupied configured port"
+        );
+        assert_eq!(
+            settings.server.port, detected_port,
+            "settings.server.port should be updated to the detected port"
+        );
+        drop(listener);
+    }
+
+    #[test]
+    fn test_detect_available_port_error_at_65535_boundary() {
+        ensure_debug_logger();
+        // When port is 65535 and it's occupied, PortSniffer returns PortOutOfRange,
+        // which triggers the Err(e) branch in detect_available_port (lines 180-183)
+        // and the error!() log call.
+        // Bind 65535 to ensure it's occupied; if bind fails (already occupied by
+        // environment), the PortOutOfRange path is still triggered.
+        let _listener = std::net::TcpListener::bind("0.0.0.0:65535").ok();
+
+        let mut settings = load_settings().expect("Failed to load settings");
+        settings.server.port = 65535;
+        settings.server.enable_port_detection = true;
+
+        let result = detect_available_port(&mut settings);
+        assert!(
+            result.is_err(),
+            "detect_available_port should return error when 65535 is occupied"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Failed to find available port"),
+            "error should mention port detection failure, got: {}",
+            err_msg
+        );
+    }
 }

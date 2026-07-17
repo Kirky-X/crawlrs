@@ -747,4 +747,12 @@ mod shared_tests {
         let result = validate_result_url("https://example.com/path/to/page", &["http", "https"]);
         assert_eq!(result, Some("https://example.com/path/to/page".to_string()));
     }
+
+    #[test]
+    fn test_validate_result_url_http_no_host_returns_none() {
+        // Cover line 673: "http://" passes the starts_with check but
+        // Url::parse fails with EmptyHost, triggering the Err(_) => None branch.
+        let result = validate_result_url("http://", &["http", "https"]);
+        assert_eq!(result, None);
+    }
 }

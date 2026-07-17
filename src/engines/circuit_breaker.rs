@@ -943,4 +943,30 @@ mod tests {
         cb.record_failure("engine");
         assert!(cb_clone.is_open("engine")); // Clone sees the same state
     }
+
+    #[tokio::test]
+    async fn test_is_open_returns_false_when_already_half_open() {
+        // Cover line 202: `Status::HalfOpen => false` in is_open().
+        // Existing tests only cover the Open -> HalfOpen transition
+        // (lines 192-194) which returns false immediately. To hit line 202,
+        // is_open() must be called when the state is ALREADY HalfOpen
+        // (set by a previous is_open call after recovery timeout).
+        let cb = CircuitBreaker::with_default_config(CircuitConfig {
+            failure_threshold: 1,
+            recovery_timeout: Duration::from_millis(500),
+            failure_window: Duration::from_secs(60),
+        });
+
+        cb.record_failure("engine");
+        assert!(cb.is_open("engine")); // Open -> true
+
+        // Wait for recovery timeout to elapse
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        // First call transitions Open -> HalfOpen (lines 192-194), returns false
+        assert!(!cb.is_open("engine"));
+
+        // Second call: status is already HalfOpen, hits line 202
+        assert!(!cb.is_open("engine"));
+    }
 }

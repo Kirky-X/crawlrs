@@ -213,4 +213,101 @@ mod tests {
         // RegexCacheComponent is a type alias for RegexCache
         let _: &RegexCacheComponent = &regex_cache;
     }
+
+    // ========== cache.set 失败时 warn! 分支覆盖测试 ==========
+
+    use async_trait::async_trait;
+    use oxcache::backend::{BackendKind, CacheConnector, CacheReader, CacheWriter};
+    use oxcache::OxCacheResult;
+    use std::collections::HashMap;
+
+    /// FailingBackend: set 方法总是返回错误，用于覆盖 regex_cache.rs 行 59/88 的 warn!
+    struct FailingBackend;
+
+    #[async_trait]
+    impl CacheReader for FailingBackend {
+        async fn get(&self, _key: &str) -> OxCacheResult<Option<Vec<u8>>> {
+            Ok(None)
+        }
+        async fn exists(&self, _key: &str) -> OxCacheResult<bool> {
+            Ok(false)
+        }
+        async fn ttl(&self, _key: &str) -> OxCacheResult<Option<Duration>> {
+            Ok(None)
+        }
+        async fn len(&self) -> OxCacheResult<u64> {
+            Ok(0)
+        }
+        async fn capacity(&self) -> OxCacheResult<u64> {
+            Ok(0)
+        }
+        async fn stats(&self) -> OxCacheResult<HashMap<String, String>> {
+            Ok(HashMap::new())
+        }
+    }
+
+    #[async_trait]
+    impl CacheWriter for FailingBackend {
+        async fn set(
+            &self,
+            _key: &str,
+            _value: Vec<u8>,
+            _ttl: Option<Duration>,
+        ) -> OxCacheResult<()> {
+            Err(oxcache::OxCacheError::Operation(
+                "FailingBackend always fails".to_string(),
+            ))
+        }
+        async fn delete(&self, _key: &str) -> OxCacheResult<()> {
+            Ok(())
+        }
+        async fn clear(&self) -> OxCacheResult<()> {
+            Ok(())
+        }
+        async fn expire(&self, _key: &str, _ttl: Duration) -> OxCacheResult<bool> {
+            Ok(false)
+        }
+    }
+
+    #[async_trait]
+    impl CacheConnector for FailingBackend {
+        async fn health_check(&self) -> OxCacheResult<()> {
+            Ok(())
+        }
+        async fn shutdown(&self) {}
+        fn backend_kind(&self) -> BackendKind {
+            BackendKind::Unknown
+        }
+    }
+
+    async fn make_failing_cache() -> RegexCache {
+        let cache: RegexCacheType = oxcache::Cache::builder()
+            .backend_arc(std::sync::Arc::new(FailingBackend))
+            .build()
+            .await
+            .expect("build with FailingBackend should succeed");
+        RegexCache::new(std::sync::Arc::new(cache))
+    }
+
+    #[tokio::test]
+    async fn test_get_or_insert_warns_when_cache_set_fails() {
+        // 当 cache.set 失败时，get_or_insert 应执行 warn!（行 59），
+        // 但仍返回有效的 regex。
+        let regex_cache = make_failing_cache().await;
+        let regex = regex_cache
+            .get_or_insert(r"\d+")
+            .expect("get_or_insert should succeed even when cache.set fails");
+        assert!(regex.is_match("123"));
+    }
+
+    #[tokio::test]
+    async fn test_get_or_compile_warns_when_cache_set_fails() {
+        // 当 cache.set 失败时，get_or_compile 应执行 warn!（行 88），
+        // 但仍返回有效的 Arc<Regex>。
+        let regex_cache = make_failing_cache().await;
+        let regex = regex_cache
+            .get_or_compile(r"[a-z]+")
+            .expect("get_or_compile should succeed even when cache.set fails");
+        assert!(regex.is_match("hello"));
+    }
 }

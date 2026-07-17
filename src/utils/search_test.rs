@@ -648,4 +648,66 @@ mod tests {
             "private IP URL should not be accessible (SSRF blocked)"
         );
     }
+
+    // ========== log::info! 参数求值覆盖测试 ==========
+
+    use log::{LevelFilter, Log, Metadata, Record};
+    use std::sync::Once;
+
+    static SEARCH_LOGGER_INIT: Once = Once::new();
+
+    struct CapturingInfoLogger;
+
+    impl Log for CapturingInfoLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= log::Level::Info
+        }
+        fn log(&self, _record: &Record) {}
+        fn flush(&self) {}
+    }
+
+    fn ensure_info_logger() {
+        SEARCH_LOGGER_INIT.call_once(|| {
+            static CAPTURING_LOGGER: CapturingInfoLogger = CapturingInfoLogger;
+            let _ = log::set_logger(&CAPTURING_LOGGER);
+            log::set_max_level(LevelFilter::Info);
+        });
+    }
+
+    #[tokio::test]
+    async fn test_run_engine_test_logs_info_with_logger_initialized() {
+        // 初始化 logger 设置 max_level = Info，让 log::info! 参数被求值，
+        // 覆盖行 64-65 的 log::info! 调用。
+        ensure_info_logger();
+        let result = run_engine_test_with_output(
+            "MockEmptyLogged",
+            MockEngineEmpty,
+            Some("test query"),
+            5,
+            Some(10),
+        )
+        .await;
+
+        assert!(result.is_ok(), "search should succeed with logger init");
+        let tr = result.unwrap();
+        assert_eq!(tr.total, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_engine_test_logs_info_with_items_and_logger() {
+        // 初始化 logger，确保 log::info! 参数在有结果时也被求值。
+        ensure_info_logger();
+        let result = run_engine_test_with_output(
+            "MockWithItemsLogged",
+            MockEngineWithItems { item_count: 2 },
+            Some("test query"),
+            5,
+            Some(10),
+        )
+        .await;
+
+        assert!(result.is_ok(), "search with items should succeed");
+        let tr = result.unwrap();
+        assert_eq!(tr.total, 2);
+    }
 }

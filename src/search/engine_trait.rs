@@ -362,4 +362,67 @@ mod tests {
             .unwrap();
         assert!(items.is_empty());
     }
+
+    // ========== FailingSearchEngine for error propagation tests ==========
+
+    struct FailingSearchEngine;
+
+    #[async_trait]
+    impl SearchEngine for FailingSearchEngine {
+        fn name(&self) -> &'static str {
+            "FailingEngine"
+        }
+
+        fn engine_type(&self) -> SearchEngineType {
+            SearchEngineType::Google
+        }
+
+        fn health(&self) -> EngineHealth {
+            EngineHealth::Unhealthy
+        }
+
+        async fn search(
+            &self,
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            Err(SearchError::Engine("mock failure".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_with_engine_propagates_search_error() {
+        let engine = FailingSearchEngine;
+        let result = engine.search_with_engine("test", 3, None, None, None).await;
+        assert!(result.is_err(), "should propagate search error");
+        match result.unwrap_err() {
+            SearchError::Engine(msg) => assert!(msg.contains("mock failure")),
+            other => panic!("expected SearchError::Engine, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_with_engine_error_with_named_engine() {
+        let engine = FailingSearchEngine;
+        let result = engine
+            .search_with_engine("test", 3, None, None, Some("Google"))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_search_with_engine_error_with_lang_country() {
+        let engine = FailingSearchEngine;
+        let result = engine
+            .search_with_engine("test", 3, Some("en"), Some("US"), Some("google"))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_failing_engine_name_and_type() {
+        let engine = FailingSearchEngine;
+        assert_eq!(engine.name(), "FailingEngine");
+        assert_eq!(engine.engine_type(), SearchEngineType::Google);
+        assert_eq!(engine.health(), EngineHealth::Unhealthy);
+    }
 }

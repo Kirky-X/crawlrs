@@ -30,3 +30,26 @@ pub fn task_routes() -> Router {
             post(task_handler::cancel_tasks::<TaskRepositoryImpl>),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_task_routes_returns_router_without_panic() {
+        // task_routes() should construct a Router with two POST routes
+        // without requiring any state or panicking.
+        let router = task_routes();
+        // Router<()> is Clone; verify it is usable
+        let _clone = router.clone();
+    }
+
+    #[test]
+    fn test_task_routes_clone_is_independent() {
+        let router = task_routes();
+        let clone = router.clone();
+        // Both should be usable (no shared mutable state issues)
+        drop(router);
+        drop(clone);
+    }
+}

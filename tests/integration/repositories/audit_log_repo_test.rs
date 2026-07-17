@@ -345,9 +345,7 @@ async fn tc_cleanup_old_logs_returns_zero_when_nothing_to_delete() {
         .with_api_key_id(api_key_id)
         .with_team_id(team_id)
         .build();
-    repo.create(&entry)
-        .await
-        .expect("Failed to create entry");
+    repo.create(&entry).await.expect("Failed to create entry");
 
     // 清理 30 天前的日志——新日志不应被删除
     let _deleted = repo

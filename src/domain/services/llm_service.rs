@@ -1164,4 +1164,292 @@ json = "J"
             msg
         );
     }
+
+    // ========== Supplementary tests: markdown format, external URL, edge cases ==========
+
+    #[tokio::test]
+    async fn test_extract_data_internal_markdown_format_hits_ssrf() {
+        // Verify that markdown format also looks up the template and reaches
+        // the scrape call (SSRF error), proving the format parameter is used
+        // for template lookup.
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://127.0.0.1:9999".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "markdown")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            !msg.contains("Template not found"),
+            "markdown template should exist, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("SSRF protection") || msg.contains("Direct LLM call failed"),
+            "should reach scrape call with markdown format, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_external_url_fails_connection() {
+        // Use an external URL that passes SSRF but has no server listening.
+        // This covers the "Direct LLM call failed" error path (line 335).
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://example.com:9999".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        // Should NOT be SSRF (external URL passes SSRF check)
+        // Should be "Direct LLM call failed" (connection refused or timeout)
+        assert!(
+            !msg.contains("SSRF protection"),
+            "external URL should pass SSRF, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("Direct LLM call failed"),
+            "should fail at the scrape call, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_v1_url_with_external_fails_connection() {
+        // /v1 branch with external URL → passes SSRF, fails connection.
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://example.com:9999/v1".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            !msg.contains("SSRF protection"),
+            "external /v1 URL should pass SSRF, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("Direct LLM call failed"),
+            "should fail at scrape call, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_ollama_port_external_fails_connection() {
+        // :11434 branch with external URL → passes SSRF, fails connection.
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://example.com:11434".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            !msg.contains("SSRF protection"),
+            "external :11434 URL should pass SSRF, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("Direct LLM call failed"),
+            "should fail at scrape call, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_api_key_none_external_fails_connection() {
+        // api_key=None + external URL → passes SSRF, exercises Bearer ollama
+        // header, fails at connection.
+        let http_client = Arc::new(reqwest::Client::new());
+        let mut service = LLMService::new_with_config(
+            "key".to_string(),
+            "m".to_string(),
+            "http://example.com:9999".to_string(),
+            http_client,
+        );
+        service.api_key = None;
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "json")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            !msg.contains("SSRF protection"),
+            "external URL should pass SSRF, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("Direct LLM call failed"),
+            "should fail at scrape call with api_key=None, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_markdown_external_fails_connection() {
+        // markdown format + external URL → passes SSRF, fails connection.
+        // Verifies markdown template lookup and prompt construction work.
+        let http_client = Arc::new(reqwest::Client::new());
+        let service = LLMService::new_with_config(
+            "k".to_string(),
+            "m".to_string(),
+            "http://example.com:9999".to_string(),
+            http_client,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "markdown")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            !msg.contains("SSRF protection"),
+            "external URL should pass SSRF, got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("Direct LLM call failed"),
+            "should fail at scrape call with markdown format, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_llm_service_new_with_config_and_loader_preserves_templates() {
+        // Verify that custom templates are preserved when using
+        // new_with_config_and_loader.
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(
+            InMemoryTemplateLoader::new()
+                .with_template("custom", "Custom {{text}}")
+                .with_default_templates(),
+        );
+        let service = LLMService::new_with_config_and_loader(
+            "key".to_string(),
+            "model".to_string(),
+            "http://127.0.0.1:1".to_string(),
+            http_client,
+            loader,
+        );
+        assert_eq!(service.templates.len(), 3);
+        assert!(service.templates.contains_key("custom"));
+        assert!(service.templates.contains_key("json"));
+        assert!(service.templates.contains_key("markdown"));
+    }
+
+    #[tokio::test]
+    async fn test_new_with_template_loader_no_api_base_url_no_ollama_check() {
+        // When api_base_url is None, the ollama URL check is skipped entirely.
+        // This verifies the `if let Some(url) = &api_base_url` branch where
+        // api_base_url is None.
+        let llm = LLMSettings {
+            provider: Some("custom-provider".to_string()),
+            api_key: Some("key".to_string()),
+            model: Some("custom-model".to_string()),
+            api_base_url: None,
+        };
+        let settings = make_test_settings(llm);
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
+        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
+        // Provider should NOT be overridden to "openai" since api_base_url is None
+        assert_eq!(service.provider, "custom-provider");
+        assert_eq!(service.model, "custom-model");
+        assert!(service.api_base_url.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_custom_format_not_found_returns_error() {
+        // A custom format that doesn't exist in templates should return
+        // "Template not found" error.
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(
+            InMemoryTemplateLoader::new()
+                .with_template("custom", "Custom {{text}}")
+                .with_default_templates(),
+        );
+        let service = LLMService::new_with_config_and_loader(
+            "key".to_string(),
+            "m".to_string(),
+            "http://127.0.0.1:9999".to_string(),
+            http_client,
+            loader,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "xml")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("Template not found"),
+            "should return template not found for xml format, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_data_internal_custom_format_hits_ssrf() {
+        // A custom format that exists in templates should proceed to scrape.
+        let http_client = Arc::new(reqwest::Client::new());
+        let loader: TemplateLoader = Arc::new(
+            InMemoryTemplateLoader::new()
+                .with_template("custom", "Custom {{text}}")
+                .with_default_templates(),
+        );
+        let service = LLMService::new_with_config_and_loader(
+            "key".to_string(),
+            "m".to_string(),
+            "http://127.0.0.1:9999".to_string(),
+            http_client,
+            loader,
+        );
+
+        let result = service
+            .extract_data_internal("text", &json!({}), "custom")
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            !msg.contains("Template not found"),
+            "custom template should be found, got: {}",
+            msg
+        );
+        // custom format is not "json", so it would go to the else branch
+        // (Ok((json!({ "content": content }), usage))) on success
+        assert!(
+            msg.contains("SSRF protection") || msg.contains("Direct LLM call failed"),
+            "should reach scrape call with custom format, got: {}",
+            msg
+        );
+    }
 }

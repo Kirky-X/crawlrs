@@ -139,3 +139,284 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
         Ok(result.rows_affected as u64)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
+
+    /// Build a lazy DbPool that does not actually connect; `get_session()` will
+    /// fail at runtime, allowing us to exercise every error path in this
+    /// repository without a real database.
+    fn create_test_db_pool() -> Arc<DbPool> {
+        std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build tokio runtime for DbPool construction");
+                let _guard = rt.enter();
+                DbPool::try_from(&dbnexus::DbConfig::default())
+                    .expect("failed to create lazy DbPool for test")
+            });
+            Arc::new(handle.join().expect("DbPool construction thread panicked"))
+        })
+    }
+
+    fn sample_scope() -> ApiKeyScope {
+        ApiKeyScope {
+            read: true,
+            write: false,
+            admin: false,
+            search_limit: 100,
+            scrape_limit: 50,
+        }
+    }
+
+    fn sample_audit_log_entry() -> AuditLogEntry {
+        AuditLogEntry {
+            id: Uuid::new_v4(),
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: Some(Uuid::new_v4()),
+            requested_action: "crawl.create".to_string(),
+            decision: AuditDecision::Allow,
+            denial_reason: None,
+            scope_used: Some(sample_scope()),
+            ip_address: Some(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))),
+            trace_id: Some(Uuid::new_v4()),
+            user_agent: Some("test-agent/1.0".to_string()),
+            request_path: Some("/api/v1/crawls".to_string()),
+            request_method: Some("POST".to_string()),
+            metadata: serde_json::json!({"request_id": "req-123"}),
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    // ========== construction ==========
+
+    #[test]
+    fn test_new_creates_repository_instance() {
+        let pool = create_test_db_pool();
+        let repo = AuditLogRepositoryImpl::new(pool);
+        let _clone = repo.clone();
+    }
+
+    // ========== error paths (lazy pool: get_session fails) ==========
+
+    #[tokio::test]
+    async fn test_create_returns_error_without_real_db() {
+        let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
+        let entry = sample_audit_log_entry();
+        let result = repo.create(&entry).await;
+        assert!(
+            result.is_err(),
+            "create should fail without a real database"
+        );
+        match result.unwrap_err() {
+            AuditRepositoryError::DatabaseError(_) => {}
+            other => panic!("expected DatabaseError variant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_api_key_id_returns_error_without_real_db() {
+        let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_api_key_id(Uuid::new_v4(), 10, 0).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AuditRepositoryError::DatabaseError(_) => {}
+            other => panic!("expected DatabaseError variant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_team_id_returns_error_without_real_db() {
+        let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_team_id(Uuid::new_v4(), 10, 0).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AuditRepositoryError::DatabaseError(_) => {}
+            other => panic!("expected DatabaseError variant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_denied_for_key_returns_error_without_real_db() {
+        let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_denied_for_key(Uuid::new_v4(), 5).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AuditRepositoryError::DatabaseError(_) => {}
+            other => panic!("expected DatabaseError variant, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_old_logs_returns_error_without_real_db() {
+        let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
+        let result = repo.cleanup_old_logs(30).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AuditRepositoryError::DatabaseError(_) => {}
+            other => panic!("expected DatabaseError variant, got {:?}", other),
+        }
+    }
+
+    // ========== AuditRepositoryError variant display exhaustive ==========
+
+    #[test]
+    fn test_audit_repository_error_database_error_display() {
+        let err = AuditRepositoryError::DatabaseError(sea_orm::DbErr::RecordNotFound(
+            "audit log missing".to_string(),
+        ));
+        let msg = format!("{}", err);
+        assert!(msg.contains("Database error"));
+        assert!(msg.contains("audit log missing"));
+    }
+
+    #[test]
+    fn test_audit_repository_error_not_found_display() {
+        let err = AuditRepositoryError::NotFound;
+        assert_eq!(format!("{}", err), "Audit log not found");
+    }
+
+    // ========== From<sea_orm::DbErr> exhaustive via #[from] ==========
+
+    #[test]
+    fn test_audit_repository_error_from_dberr_record_not_found() {
+        let db_err = sea_orm::DbErr::RecordNotFound("not found".to_string());
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::DatabaseError(_) => {}
+            other => panic!("expected DatabaseError variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_audit_repository_error_from_dberr_query_runtime() {
+        let db_err =
+            sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::DatabaseError(_) => {}
+            other => panic!("expected DatabaseError variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_audit_repository_error_from_dberr_connection_acquire() {
+        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::DatabaseError(_) => {}
+            other => panic!("expected DatabaseError variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_audit_repository_error_from_dberr_record_not_inserted() {
+        let db_err = sea_orm::DbErr::RecordNotInserted;
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::DatabaseError(_) => {}
+            other => panic!("expected DatabaseError variant, got {:?}", other),
+        }
+    }
+
+    // ========== From<dbnexus::DbError> exhaustive coverage ==========
+
+    #[test]
+    fn test_audit_repository_error_from_dbnexus_db_error_connection() {
+        let inner = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let db_err = dbnexus::DbError::Connection(inner);
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::DatabaseError(sea_orm::DbErr::ConnectionAcquire(_)) => {}
+            other => panic!("expected DatabaseError(ConnectionAcquire), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_audit_repository_error_from_dbnexus_db_error_config() {
+        let db_err = dbnexus::DbError::Config("invalid url".to_string());
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(msg)) => {
+                assert!(msg.contains("Config"));
+                assert!(msg.contains("invalid url"));
+            }
+            other => panic!("expected DatabaseError(Custom), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_audit_repository_error_from_dbnexus_db_error_permission() {
+        let db_err = dbnexus::DbError::Permission("forbidden".to_string());
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(msg)) => {
+                assert!(msg.contains("Permission"));
+                assert!(msg.contains("forbidden"));
+            }
+            other => panic!("expected DatabaseError(Custom), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_audit_repository_error_from_dbnexus_db_error_transaction() {
+        let db_err = dbnexus::DbError::Transaction("deadlock".to_string());
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(msg)) => {
+                assert!(msg.contains("Transaction"));
+                assert!(msg.contains("deadlock"));
+            }
+            other => panic!("expected DatabaseError(Custom), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_audit_repository_error_from_dbnexus_db_error_migration() {
+        let db_err = dbnexus::DbError::Migration("schema mismatch".to_string());
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(msg)) => {
+                assert!(msg.contains("Migration"));
+                assert!(msg.contains("schema mismatch"));
+            }
+            other => panic!("expected DatabaseError(Custom), got {:?}", other),
+        }
+    }
+
+    // ========== AuditDecision display ==========
+
+    #[test]
+    fn test_audit_decision_allow_display() {
+        assert_eq!(format!("{}", AuditDecision::Allow), "ALLOW");
+    }
+
+    #[test]
+    fn test_audit_decision_deny_display() {
+        assert_eq!(format!("{}", AuditDecision::Deny), "DENY");
+    }
+
+    // ========== AuditLogEntry construction ==========
+
+    #[test]
+    fn test_audit_log_entry_construction_does_not_panic() {
+        let entry = sample_audit_log_entry();
+        assert_eq!(entry.decision, AuditDecision::Allow);
+        assert_eq!(entry.requested_action, "crawl.create");
+        assert!(entry.scope_used.is_some());
+        assert!(entry.ip_address.is_some());
+    }
+
+    #[test]
+    fn test_audit_log_entry_with_deny_decision() {
+        let mut entry = sample_audit_log_entry();
+        entry.decision = AuditDecision::Deny;
+        entry.denial_reason = Some("insufficient scope".to_string());
+        assert_eq!(entry.decision.to_string(), "DENY");
+        assert!(entry.denial_reason.is_some());
+    }
+}

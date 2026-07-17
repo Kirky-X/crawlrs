@@ -10,9 +10,9 @@ mod credits_repo_test;
 mod feature_flag_repo_test;
 mod geo_restriction_repo_test;
 mod scrape_result_repo_test;
-// Disabled due to pre-existing API changes - needs rewrite
-// mod task_repository_query_test;
+mod task_repository_query_test;
 mod task_repository_test;
 mod tasks_backlog_repo_test;
+mod transaction_test;
 mod webhook_event_repo_test;
 mod webhook_repo_test;

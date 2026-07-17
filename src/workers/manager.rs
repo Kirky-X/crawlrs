@@ -572,4 +572,440 @@ mod tests {
         // needs_drop is true when the type or any field requires Drop.
         assert!(std::mem::needs_drop::<WorkerManager>());
     }
+
+    // ========== WorkerManager method integration tests ==========
+    //
+    // The following tests exercise WorkerManager::new(), start_workers(),
+    // wait_for_shutdown(), and Drop by constructing a full WorkerManagerDeps
+    // with no-op mock implementations of all required traits.
+
+    use crate::application::dto::scrape_request::ScrapeRequestDto;
+    use crate::domain::models::{
+        Crawl, CrawlStatus, CreditsTransaction, CreditsTransactionType, DomainError, ScrapeResult,
+        Task, WebhookEvent,
+    };
+    use crate::domain::repositories::credits_repository::CreditsRepositoryError;
+    use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
+    use crate::domain::services::extraction_service::{ExtractionRule, ExtractionServiceTrait};
+    use crate::domain::services::llm_service::TokenUsage;
+    use crate::engines::engine_client::ScrapeResponse;
+    use crate::queue::task_queue::QueueError;
+    use async_trait::async_trait;
+    use serde_json::Value;
+    use std::collections::{HashMap, HashSet};
+    use uuid::Uuid;
+
+    // ---- No-op mock implementations ----
+
+    struct MockTaskQueue;
+
+    #[async_trait]
+    impl TaskQueue for MockTaskQueue {
+        async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
+            Ok(task)
+        }
+        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+            Ok(None)
+        }
+        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+            Ok(())
+        }
+    }
+
+    struct MockTaskRepository;
+
+    #[async_trait]
+    impl TaskRepository for MockTaskRepository {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            Ok((vec![], 0))
+        }
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+    }
+
+    struct MockScrapeResultRepository;
+
+    #[async_trait]
+    impl ScrapeResultRepository for MockScrapeResultRepository {
+        async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+            Ok(None)
+        }
+        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+            Ok(vec![])
+        }
+        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+            Ok(0.0)
+        }
+    }
+
+    struct MockCrawlRepository;
+
+    #[async_trait]
+    impl CrawlRepository for MockCrawlRepository {
+        async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            Ok(crawl.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            Ok(crawl.clone())
+        }
+        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn update_status(
+            &self,
+            _id: Uuid,
+            _status: CrawlStatus,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn find_by_team_id_paginated(
+            &self,
+            _team_id: Uuid,
+            _limit: u32,
+            _offset: u32,
+        ) -> Result<Vec<Crawl>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+    }
+
+    struct MockWebhookService;
+
+    #[async_trait]
+    impl WebhookService for MockWebhookService {
+        async fn send_webhook(&self, _event: &WebhookEvent) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn trigger_completion(&self, _task: &Task) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn trigger_failure(&self, _task: &Task, _error_msg: String) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct MockCreditsRepository;
+
+    #[async_trait]
+    impl CreditsRepository for MockCreditsRepository {
+        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+            Ok(0)
+        }
+        async fn deduct_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), CreditsRepositoryError> {
+            Ok(())
+        }
+        async fn add_credits(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(0)
+        }
+        async fn get_transaction_history(
+            &self,
+            _team_id: Uuid,
+            _limit: Option<u32>,
+        ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
+            Ok(vec![])
+        }
+        async fn initialize_team_credits(
+            &self,
+            _team_id: Uuid,
+            _initial_balance: i64,
+        ) -> Result<i64, CreditsRepositoryError> {
+            Ok(0)
+        }
+    }
+
+    struct MockCreateScrapeUseCase;
+
+    #[async_trait]
+    impl CreateScrapeUseCaseTrait for MockCreateScrapeUseCase {
+        async fn execute(
+            &self,
+            _request_dto: ScrapeRequestDto,
+        ) -> Result<ScrapeResponse, DomainError> {
+            Err(DomainError::EngineError("mock".to_string()))
+        }
+    }
+
+    struct MockRobotsChecker;
+
+    #[async_trait]
+    impl RobotsCheckerTrait for MockRobotsChecker {
+        async fn is_allowed(&self, _url_str: &str, _user_agent: &str) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+        async fn get_crawl_delay(
+            &self,
+            _url_str: &str,
+            _user_agent: &str,
+        ) -> anyhow::Result<Option<std::time::Duration>> {
+            Ok(None)
+        }
+    }
+
+    struct MockExtractionService;
+
+    #[async_trait]
+    impl ExtractionServiceTrait for MockExtractionService {
+        async fn extract(
+            &self,
+            _html_content: &str,
+            _rules: &HashMap<String, ExtractionRule>,
+            _base_url: Option<&str>,
+        ) -> anyhow::Result<(Value, TokenUsage)> {
+            Ok((Value::Null, TokenUsage::default()))
+        }
+        async fn extract_with_schema(
+            &self,
+            _html_content: &str,
+            _schema: &Value,
+        ) -> anyhow::Result<(Value, TokenUsage)> {
+            Ok((Value::Null, TokenUsage::default()))
+        }
+        fn extract_with_selectors(
+            &self,
+            _html_content: &str,
+            _rules: &HashMap<String, ExtractionRule>,
+            _base_url: Option<&str>,
+        ) -> anyhow::Result<Value> {
+            Ok(Value::Null)
+        }
+    }
+
+    // ---- Helpers ----
+
+    fn make_deps() -> WorkerManagerDeps {
+        WorkerManagerDeps {
+            queue: Arc::new(MockTaskQueue),
+            repository: Arc::new(MockTaskRepository),
+            result_repository: Arc::new(MockScrapeResultRepository),
+            crawl_repository: Arc::new(MockCrawlRepository),
+            webhook_service: Arc::new(MockWebhookService),
+            credits_repository: Arc::new(MockCreditsRepository),
+            engine_client: Arc::new(EngineClient::new()),
+            create_scrape_use_case: Arc::new(MockCreateScrapeUseCase),
+            team_semaphore: Arc::new(TeamSemaphore::new(10)),
+            robots_checker: Arc::new(MockRobotsChecker),
+            http_client: Arc::new(reqwest::Client::new()),
+            extraction_service: Arc::new(MockExtractionService),
+            regex_cache: RegexCache::new(Arc::new(
+                crate::infrastructure::oxcache::RegexCacheType::new(),
+            )),
+        }
+    }
+
+    fn make_config() -> WorkerManagerConfig {
+        WorkerManagerConfig {
+            settings: Arc::new(Settings::default()),
+            default_concurrency_limit: 10,
+        }
+    }
+
+    // ---- WorkerManager::new tests ----
+
+    #[test]
+    fn test_worker_manager_new_assigns_fields() {
+        let manager = WorkerManager::new(make_deps(), make_config());
+        assert_eq!(manager.default_concurrency_limit, 10);
+        assert!(
+            manager.handles.is_empty(),
+            "new() should start with no handles"
+        );
+    }
+
+    // ---- start_workers tests ----
+
+    #[tokio::test]
+    async fn test_start_workers_zero_count_starts_only_expiration_worker() {
+        let mut manager = WorkerManager::new(make_deps(), make_config());
+        manager.start_workers(0).await;
+        assert_eq!(
+            manager.handles.len(),
+            1,
+            "start_workers(0) should start only the expiration worker"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_start_workers_multiple_count() {
+        let mut manager = WorkerManager::new(make_deps(), make_config());
+        manager.start_workers(3).await;
+        assert_eq!(
+            manager.handles.len(),
+            4,
+            "start_workers(3) should start 1 expiration + 3 scrape workers"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_start_workers_handles_are_aborted_on_drop() {
+        let mut manager = WorkerManager::new(make_deps(), make_config());
+        manager.start_workers(1).await;
+        assert_eq!(manager.handles.len(), 2);
+
+        // Give workers a moment to start.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Verify at least one worker is still running (not finished).
+        assert!(
+            manager.handles.iter().any(|h| !h.is_finished()),
+            "at least one worker should be running before drop"
+        );
+
+        // Dropping the manager invokes Drop which aborts all handles.
+        drop(manager);
+
+        // Re-run with handles extracted to verify abort takes effect.
+        let mut manager2 = WorkerManager::new(make_deps(), make_config());
+        manager2.start_workers(1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let handles: Vec<JoinHandle<()>> = std::mem::take(&mut manager2.handles);
+        assert!(
+            handles.iter().any(|h| !h.is_finished()),
+            "workers should be running before abort"
+        );
+
+        // Manually abort (mirrors Drop impl behavior).
+        for handle in &handles {
+            handle.abort();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        for handle in &handles {
+            assert!(
+                handle.is_finished(),
+                "all handles should be finished after abort"
+            );
+        }
+    }
+
+    // ========== wait_for_shutdown: completes and aborts handles on SIGINT ==========
+    // Covers the Ok(()) => info!("Shutdown signal received") branch and the abort loop
+    // that follows ctrl_c() completing. On Unix, we send SIGINT to the current process
+    // so tokio's signal handler resolves ctrl_c().
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_wait_for_shutdown_completes_on_sigint() {
+        use std::time::Duration;
+
+        let mut manager = WorkerManager::new(make_deps(), make_config());
+        manager.start_workers(1).await;
+        assert_eq!(manager.handles.len(), 2);
+
+        // Spawn a task to send SIGINT after a short delay, giving wait_for_shutdown
+        // time to register the tokio signal handler.
+        let pid = std::process::id();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = std::process::Command::new("kill")
+                .args(["-INT", &pid.to_string()])
+                .spawn();
+        });
+
+        // wait_for_shutdown should complete after SIGINT (not time out)
+        let result =
+            tokio::time::timeout(Duration::from_secs(3), manager.wait_for_shutdown()).await;
+
+        assert!(
+            result.is_ok(),
+            "wait_for_shutdown should complete after SIGINT"
+        );
+        // After shutdown, all handles should have been aborted. Give aborted tasks
+        // a brief moment to actually finish before checking is_finished().
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        for handle in &manager.handles {
+            assert!(
+                handle.is_finished(),
+                "handles should be aborted after shutdown"
+            );
+        }
+    }
 }

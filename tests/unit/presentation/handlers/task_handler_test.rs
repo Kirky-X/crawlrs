@@ -94,10 +94,7 @@ impl TaskRepository for MockTaskRepository {
     ) -> Result<HashSet<String>, RepositoryError> {
         Ok(HashSet::new())
     }
-    async fn reset_stuck_tasks(
-        &self,
-        _timeout: chrono::Duration,
-    ) -> Result<u64, RepositoryError> {
+    async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
         Ok(0)
     }
     async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
@@ -273,13 +270,8 @@ async fn tc_handle_sync_wait_zero_ms_returns_immediately() {
     let task_ids = vec![Uuid::new_v4()];
     let team_id = Uuid::new_v4();
 
-    let result = handle_sync_wait_and_get_status(
-        &repo as &dyn TaskRepository,
-        &task_ids,
-        team_id,
-        0,
-    )
-    .await;
+    let result =
+        handle_sync_wait_and_get_status(&repo as &dyn TaskRepository, &task_ids, team_id, 0).await;
 
     assert!(result.is_ok(), "zero sync_wait_ms must return Ok");
     let sync_result = result.unwrap();
@@ -310,13 +302,9 @@ async fn tc_handle_sync_wait_all_completed_returns_quickly() {
     let task = make_completed_task(task_id, team_id);
     let repo = MockTaskRepository::new(vec![task]);
 
-    let result = handle_sync_wait_and_get_status(
-        &repo as &dyn TaskRepository,
-        &[task_id],
-        team_id,
-        3000,
-    )
-    .await;
+    let result =
+        handle_sync_wait_and_get_status(&repo as &dyn TaskRepository, &[task_id], team_id, 3000)
+            .await;
 
     assert!(result.is_ok(), "completed tasks must return Ok");
     let sync_result = result.unwrap();
@@ -336,13 +324,9 @@ async fn tc_handle_sync_wait_queued_tasks_timeout() {
     // Use a short sync_wait_ms to keep the test fast. BASE_POLL_INTERVAL_MS is
     // 1000ms, clamped to [500, 2000]. With sync_wait_ms=600 the loop runs
     // once, sleeps ~500ms, then the timeout check exits.
-    let result = handle_sync_wait_and_get_status(
-        &repo as &dyn TaskRepository,
-        &[task_id],
-        team_id,
-        600,
-    )
-    .await;
+    let result =
+        handle_sync_wait_and_get_status(&repo as &dyn TaskRepository, &[task_id], team_id, 600)
+            .await;
 
     assert!(result.is_ok(), "queued tasks must not error");
     let sync_result = result.unwrap();
@@ -355,9 +339,8 @@ async fn tc_handle_sync_wait_queued_tasks_timeout() {
 #[tokio::test]
 async fn tc_wait_for_tasks_completion_repo_error_propagates() {
     // Repository error → AppError returned to caller.
-    let repo = MockTaskRepository::failing(RepositoryError::Database(anyhow::anyhow!(
-        "poll failure"
-    )));
+    let repo =
+        MockTaskRepository::failing(RepositoryError::Database(anyhow::anyhow!("poll failure")));
     let task_id = Uuid::new_v4();
     let team_id = Uuid::new_v4();
 
@@ -443,9 +426,8 @@ async fn tc_wait_for_tasks_completion_timeout_returns_ok() {
 
 #[tokio::test]
 async fn tc_wait_for_tasks_completion_repo_error_returns_err() {
-    let repo = MockTaskRepository::failing(RepositoryError::Database(anyhow::anyhow!(
-        "query failed"
-    )));
+    let repo =
+        MockTaskRepository::failing(RepositoryError::Database(anyhow::anyhow!("query failed")));
     let task_id = Uuid::new_v4();
     let team_id = Uuid::new_v4();
 

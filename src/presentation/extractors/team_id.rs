@@ -204,4 +204,37 @@ mod tests {
     fn test_header_name_constant() {
         assert_eq!(HEADER_NAME, "x-team-id");
     }
+
+    #[test]
+    fn test_from_headers_non_ascii_header_value_returns_error() {
+        // Cover lines 32-34: header_value.to_str() fails when the value
+        // contains non-ASCII bytes (valid header bytes but not valid UTF-8).
+        let mut headers = HeaderMap::new();
+        // 0xFF is a valid header value byte (obs-text) but not valid UTF-8,
+        // so HeaderValue::to_str() returns Err(ToStrError).
+        let invalid_value = HeaderValue::try_from(&[0xFF_u8][..])
+            .expect("0xFF should be a valid header value byte");
+        headers.insert(HeaderName::from_static(HEADER_NAME), invalid_value);
+
+        let result = TeamId::from_headers(&headers);
+        assert!(result.is_err());
+        let response = *result.unwrap_err();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_from_headers_non_ascii_header_value_error_message() {
+        let mut headers = HeaderMap::new();
+        let invalid_value = HeaderValue::try_from(&[0xFF_u8][..])
+            .expect("0xFF should be a valid header value byte");
+        headers.insert(HeaderName::from_static(HEADER_NAME), invalid_value);
+
+        let result = TeamId::from_headers(&headers);
+        let response = *result.unwrap_err();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["error"], "Invalid header value in X-Team-Id header");
+    }
 }

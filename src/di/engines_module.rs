@@ -176,4 +176,241 @@ mod tests {
         // 通过 trait 对象访问，验证动态分发正常工作
         assert_eq!(trait_obj.engine_count(), 0);
     }
+
+    // ========== EngineRouterComponent::route / aggregate error & success paths ==========
+
+    use crate::engines::engine_client::{
+        EngineError, HttpMethod, InternalScrapeRequest, InternalScrapeResponse, ScrapeRequest,
+        ScraperEngine,
+    };
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    /// 构造测试用 InternalScrapeRequest，使用外部 URL 以通过 SSRF 校验
+    fn make_internal_request(url: &str) -> InternalScrapeRequest {
+        InternalScrapeRequest {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        }
+    }
+
+    /// Mock 引擎：返回固定的成功响应
+    struct SuccessMockEngine {
+        engine_name: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl ScraperEngine for SuccessMockEngine {
+        async fn scrape(
+            &self,
+            _request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            Ok(InternalScrapeResponse {
+                status_code: 200,
+                content: "mock content".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 5,
+            })
+        }
+
+        fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+            80
+        }
+
+        fn name(&self) -> &'static str {
+            self.engine_name
+        }
+    }
+
+    // --- route: SSRF error path ---
+
+    #[tokio::test]
+    async fn test_route_ssrf_protection_on_internal_url() {
+        let component = EngineRouterComponent::with_defaults();
+        let request = make_internal_request("http://localhost");
+        let result = component.route(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::SsrfProtection(_) => {}
+            other => panic!("Expected SsrfProtection, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_route_ssrf_protection_on_private_ip() {
+        let component = EngineRouterComponent::with_defaults();
+        let request = make_internal_request("http://192.168.1.1");
+        let result = component.route(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::SsrfProtection(_) => {}
+            other => panic!("Expected SsrfProtection, got {:?}", other),
+        }
+    }
+
+    // --- route: no engines available path ---
+
+    #[tokio::test]
+    async fn test_route_external_url_no_engines_returns_all_engines_failed() {
+        let component = EngineRouterComponent::with_defaults();
+        let request = make_internal_request("http://example.com");
+        let result = component.route(&request).await;
+        // 无引擎时返回 AllEnginesFailed
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::AllEnginesFailed(msg) => {
+                assert!(msg.contains("No suitable engines"));
+            }
+            other => panic!("Expected AllEnginesFailed, got {:?}", other),
+        }
+    }
+
+    // --- route: success path with mock engine ---
+
+    #[tokio::test]
+    async fn test_route_success_with_mock_engine() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(SuccessMockEngine {
+            engine_name: "mock",
+        });
+        let component = EngineRouterComponent::new(vec![engine]);
+        let request = make_internal_request("http://example.com");
+        let response = component
+            .route(&request)
+            .await
+            .expect("route should succeed with mock engine");
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.content, "mock content");
+        assert_eq!(response.content_type, "text/html");
+    }
+
+    // --- aggregate: SSRF error path ---
+
+    #[tokio::test]
+    async fn test_aggregate_ssrf_protection_on_internal_url() {
+        let component = EngineRouterComponent::with_defaults();
+        let request = make_internal_request("http://127.0.0.1");
+        let result = component.aggregate(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::SsrfProtection(_) => {}
+            other => panic!("Expected SsrfProtection, got {:?}", other),
+        }
+    }
+
+    // --- aggregate: no engines path ---
+
+    #[tokio::test]
+    async fn test_aggregate_external_url_no_engines_returns_all_engines_failed() {
+        let component = EngineRouterComponent::with_defaults();
+        let request = make_internal_request("http://example.com");
+        let result = component.aggregate(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::AllEnginesFailed(msg) => {
+                assert!(msg.contains("No suitable engines"));
+            }
+            other => panic!("Expected AllEnginesFailed, got {:?}", other),
+        }
+    }
+
+    // --- aggregate: success path ---
+
+    #[tokio::test]
+    async fn test_aggregate_success_with_mock_engine() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(SuccessMockEngine {
+            engine_name: "mock",
+        });
+        let component = EngineRouterComponent::new(vec![engine]);
+        let request = make_internal_request("http://example.com");
+        let response = component
+            .aggregate(&request)
+            .await
+            .expect("aggregate should succeed with mock engine");
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.content, "mock content");
+    }
+
+    // ========== EngineClientComponent::scrape / health_check ==========
+
+    #[tokio::test]
+    async fn test_scrape_ssrf_protection_on_internal_url() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouterComponent::with_defaults());
+        let component = EngineClientComponent::new(router);
+        let request = ScrapeRequest::new("http://localhost");
+        let result = component.scrape(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::SsrfProtection(_) => {}
+            other => panic!("Expected SsrfProtection, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_scrape_external_url_no_engines_returns_no_engines_available() {
+        // EngineClient.scrape 调用 router.route 后经过 convert_error，
+        // "No suitable engines" 的 AllEnginesFailed 会被转换为 NoEnginesAvailable
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouterComponent::with_defaults());
+        let component = EngineClientComponent::new(router);
+        let request = ScrapeRequest::new("http://example.com");
+        let result = component.scrape(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            EngineError::NoEnginesAvailable => {}
+            other => panic!("Expected NoEnginesAvailable, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_scrape_success_with_mock_engine() {
+        let engine: Arc<dyn ScraperEngine> = Arc::new(SuccessMockEngine {
+            engine_name: "mock",
+        });
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouterComponent::new(vec![engine]));
+        let component = EngineClientComponent::new(router);
+        let request = ScrapeRequest::new("http://example.com");
+        let response = component
+            .scrape(&request)
+            .await
+            .expect("scrape should succeed with mock engine");
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.content, "mock content");
+        assert!(response.is_success());
+        assert_eq!(response.final_url, Some("http://example.com".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_health_check_returns_healthy_when_no_engines() {
+        // 无引擎时 health_monitor 为空，get_aggregate_status 返回 Healthy
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouterComponent::with_defaults());
+        let component = EngineClientComponent::new(router);
+        let status = component.health_check().await;
+        assert_eq!(
+            status,
+            crate::engines::engine_client::EngineHealthStatus::Healthy
+        );
+    }
+
+    #[tokio::test]
+    async fn test_health_check_default_status() {
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouterComponent::with_defaults());
+        let component = EngineClientComponent::new(router);
+        let status = component.health_check().await;
+        // 默认状态应为 Healthy
+        assert_eq!(status, status.clone());
+    }
 }

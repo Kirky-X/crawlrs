@@ -22,16 +22,17 @@ use crawlrs::domain::models::credits_model::CreditsTransactionType;
 use crawlrs::domain::models::scrape_result::ScrapeResult;
 use crawlrs::domain::models::{Crawl, Task, Webhook};
 use crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
-use crawlrs::domain::repositories::task_repository::{RepositoryError, TaskQueryParams, TaskRepository};
+use crawlrs::domain::repositories::task_repository::{
+    RepositoryError, TaskQueryParams, TaskRepository,
+};
 use crawlrs::domain::repositories::{
     crawl_repository::CrawlRepository, scrape_result_repository::ScrapeResultRepository,
     webhook_repository::WebhookRepository,
 };
 use crawlrs::domain::services::geo_location::{GeoLocation, GeoLocationService};
 use crawlrs::domain::services::rate_limiting_service::{
-    BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
-    QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
-    RateLimitingService,
+    BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult, QuotaService,
+    RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError, RateLimitingService,
 };
 use crawlrs::domain::services::team_service::{TeamGeoRestrictions, TeamService};
 use crawlrs::presentation::state::{CrawlHandlerState, HandlerState};
@@ -114,10 +115,7 @@ impl TaskRepository for MockTaskRepository {
     ) -> Result<HashSet<String>, RepositoryError> {
         Ok(HashSet::new())
     }
-    async fn reset_stuck_tasks(
-        &self,
-        _timeout: chrono::Duration,
-    ) -> Result<u64, RepositoryError> {
+    async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
         Ok(0)
     }
     async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
@@ -264,10 +262,7 @@ impl ConcurrencyControlService for MockRateLimitingService {
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }
-    async fn get_team_current_concurrency(
-        &self,
-        _team_id: Uuid,
-    ) -> Result<u32, RateLimitingError> {
+    async fn get_team_current_concurrency(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
         Ok(0)
     }
     async fn get_team_concurrency_config(

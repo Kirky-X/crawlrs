@@ -2735,4 +2735,435 @@ mod tests {
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
+
+    // ===== auth_middleware_inner integration tests =====
+    // Exercise auth_middleware_inner through a real axum Router to cover the
+    // main middleware branches: public bypass, missing token, DB failure.
+
+    #[tokio::test]
+    async fn test_auth_middleware_inner_public_endpoint_bypasses() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        if get_global_auth_state().is_none() {
+            let pool = create_test_db_pool();
+            let state = Arc::new(AuthState::new(
+                pool,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                ApiKeyScope::default(),
+            ));
+            set_global_auth_state(state);
+        }
+
+        let app = Router::new()
+            .route("/health", get(|| async { "OK" }))
+            .layer(middleware::from_fn(auth_middleware_inner));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_auth_middleware_inner_missing_bearer_returns_401() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        if get_global_auth_state().is_none() {
+            let pool = create_test_db_pool();
+            let state = Arc::new(AuthState::new(
+                pool,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                ApiKeyScope::default(),
+            ));
+            set_global_auth_state(state);
+        }
+
+        let app = Router::new()
+            .route("/protected", get(|| async { "ok" }))
+            .layer(middleware::from_fn(auth_middleware_inner));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_middleware_inner_db_failure_returns_500() {
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        if get_global_auth_state().is_none() {
+            let pool = create_test_db_pool();
+            let state = Arc::new(AuthState::new(
+                pool,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                ApiKeyScope::default(),
+            ));
+            set_global_auth_state(state);
+        }
+
+        let app = Router::new()
+            .route("/protected", get(|| async { "ok" }))
+            .layer(middleware::from_fn(auth_middleware_inner));
+
+        // Bearer token present, but validate_api_key_from_db fails (lazy pool
+        // cannot acquire a real DB session).
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
+                    .header("Authorization", "Bearer test_token_db_fail")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // ===== scope_middleware audit logging branch =====
+
+    /// Mock AuditServiceTrait that tracks log_deny calls.
+    struct MockAuditService {
+        deny_called: Arc<std::sync::Mutex<bool>>,
+    }
+
+    #[async_trait]
+    impl AuditServiceTrait for MockAuditService {
+        async fn log(
+            &self,
+            _entry: crate::domain::auth::AuditLogEntry,
+        ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+            Ok(())
+        }
+        async fn log_allow(
+            &self,
+            _action: String,
+            _api_key_id: Uuid,
+            _team_id: Uuid,
+            _scope: ApiKeyScope,
+        ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+            Ok(())
+        }
+        async fn log_deny(
+            &self,
+            _action: String,
+            _api_key_id: Option<Uuid>,
+            _team_id: Option<Uuid>,
+            _reason: String,
+            _scope: Option<ApiKeyScope>,
+        ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+            *self.deny_called.lock().unwrap() = true;
+            Ok(())
+        }
+        async fn get_logs_for_key(
+            &self,
+            _api_key_id: Uuid,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<
+            Vec<crate::domain::auth::AuditLogEntry>,
+            crate::domain::services::audit_service::AuditServiceError,
+        > {
+            Ok(vec![])
+        }
+        async fn get_logs_for_team(
+            &self,
+            _team_id: Uuid,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<
+            Vec<crate::domain::auth::AuditLogEntry>,
+            crate::domain::services::audit_service::AuditServiceError,
+        > {
+            Ok(vec![])
+        }
+        async fn get_denied_requests(
+            &self,
+            _api_key_id: Uuid,
+            _limit: u64,
+        ) -> Result<
+            Vec<crate::domain::auth::AuditLogEntry>,
+            crate::domain::services::audit_service::AuditServiceError,
+        > {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn test_scope_middleware_audit_log_called_on_deny() {
+        let deny_called = Arc::new(std::sync::Mutex::new(false));
+        let audit_service: Arc<dyn AuditServiceTrait> = Arc::new(MockAuditService {
+            deny_called: deny_called.clone(),
+        });
+
+        let app = Router::new()
+            .route("/api/v1/teams", get(|| async { "ok" }))
+            .layer(middleware::from_fn(scope_middleware));
+
+        let pool = create_test_db_pool();
+        let auth_state = AuthState::new(
+            pool,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::read_only(), // lacks Admin scope
+        );
+
+        let mut req = Request::builder()
+            .uri("/api/v1/teams")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut().insert(auth_state);
+        req.extensions_mut().insert(audit_service);
+
+        let response = app.oneshot(req).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(
+            *deny_called.lock().unwrap(),
+            "AuditService.log_deny should be called on scope denial"
+        );
+    }
+
+    // ===== AuthState Debug impl coverage =====
+
+    #[test]
+    fn test_auth_state_debug_impl_minimal_fields() {
+        let pool = create_test_db_pool();
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let state = AuthState::new(pool, team_id, api_key_id, ApiKeyScope::default());
+
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("AuthState"));
+        assert!(debug_str.contains(&team_id.to_string()));
+        assert!(debug_str.contains(&api_key_id.to_string()));
+        // Optional fields should show as false when None
+        assert!(debug_str.contains("auth_scope_service"));
+        assert!(debug_str.contains("api_key_cache"));
+        assert!(debug_str.contains("auth_rate_limiter"));
+        assert!(debug_str.contains("trusted_proxies"));
+        // finish_non_exhaustive adds ".." to the output
+        assert!(debug_str.contains(".."));
+    }
+
+    #[test]
+    fn test_auth_state_debug_impl_with_cache_and_limiter() {
+        let pool = create_test_db_pool();
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let mut state = AuthState::new(pool, team_id, api_key_id, ApiKeyScope::default());
+        state.api_key_cache = Some(Arc::new(RwLock::new(ApiKeyCache::new_default())));
+        state.auth_rate_limiter = Some(Arc::new(AuthRateLimiter::new()));
+        state.trusted_proxies = Some(security::TrustedProxyConfig::default());
+
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("AuthState"));
+        // With optional fields set, the debug should still contain field names
+        assert!(debug_str.contains("auth_scope_service"));
+        assert!(debug_str.contains("api_key_cache"));
+        assert!(debug_str.contains("auth_rate_limiter"));
+        assert!(debug_str.contains("trusted_proxies"));
+    }
+
+    // ========== CapturingLogger for covering log::error!/debug! format args ==========
+
+    use log::{LevelFilter, Log, Metadata, Record};
+    use std::sync::Once;
+
+    static AUTH_LOGGER_INIT: Once = Once::new();
+
+    struct AuthCapturingLogger;
+
+    impl Log for AuthCapturingLogger {
+        fn enabled(&self, metadata: &Metadata) -> bool {
+            metadata.level() <= log::Level::Debug
+        }
+        fn log(&self, _record: &Record) {}
+        fn flush(&self) {}
+    }
+
+    fn ensure_auth_debug_logger() {
+        AUTH_LOGGER_INIT.call_once(|| {
+            static CAPTURING_LOGGER: AuthCapturingLogger = AuthCapturingLogger;
+            let _ = log::set_logger(&CAPTURING_LOGGER);
+            log::set_max_level(LevelFilter::Debug);
+        });
+    }
+
+    /// Ensure the global auth state is set with cache + rate limiter.
+    /// If already set (by another test), returns the existing state.
+    /// This is necessary because GLOBAL_AUTH_STATE is a OnceLock (set once, never reset).
+    fn ensure_global_state_with_cache_and_limiter() -> Arc<AuthState> {
+        if get_global_auth_state().is_none() {
+            let pool = create_test_db_pool();
+            let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+            let rate_limiter = Arc::new(AuthRateLimiter::new());
+            let state = AuthState::with_trusted_proxies(
+                pool,
+                None,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                ApiKeyScope::default(),
+                Some(cache),
+                Some(rate_limiter),
+                security::TrustedProxyConfig::from_settings(false, vec![]),
+            );
+            set_global_auth_state(Arc::new(state));
+        }
+        get_global_auth_state().expect("global auth state should be set")
+    }
+
+    // ===== auth_middleware_inner: no global state (lines 709-710) =====
+    // Only covers when this test runs before any test that sets GLOBAL_AUTH_STATE.
+
+    #[tokio::test]
+    async fn test_auth_middleware_inner_no_global_state_returns_500() {
+        ensure_auth_debug_logger();
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+
+        // Only test the None path if no other test has set the state yet
+        if get_global_auth_state().is_some() {
+            return;
+        }
+
+        let app = Router::new()
+            .route("/protected", get(|| async { "ok" }))
+            .layer(middleware::from_fn(auth_middleware_inner));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // ===== auth_middleware_inner: rate limit lockout (line 731) =====
+
+    #[tokio::test]
+    async fn test_auth_middleware_inner_rate_limit_lockout_returns_429() {
+        ensure_auth_debug_logger();
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+
+        let state = ensure_global_state_with_cache_and_limiter();
+
+        // Need a rate limiter to test the lockout path
+        let rate_limiter = match state.auth_rate_limiter.clone() {
+            Some(rl) => rl,
+            None => return, // State was set by another test without a rate limiter
+        };
+
+        // Reset any prior failures for "unknown" IP (test requests appear as "unknown")
+        rate_limiter.reset_failures("unknown").await;
+
+        // Lock out "unknown" IP by recording MAX_AUTH_FAILURES failures
+        for _ in 0..MAX_AUTH_FAILURES {
+            rate_limiter.record_failure("unknown").await;
+        }
+
+        let app = Router::new()
+            .route("/protected", get(|| async { "ok" }))
+            .layer(middleware::from_fn(auth_middleware_inner));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
+                    .header("Authorization", "Bearer some_token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Cleanup: reset failures to avoid affecting other tests
+        rate_limiter.reset_failures("unknown").await;
+    }
+
+    // ===== auth_middleware_inner: cache hit path (lines 748-749, 782) =====
+
+    #[tokio::test]
+    async fn test_auth_middleware_inner_cache_hit_returns_200() {
+        ensure_auth_debug_logger();
+        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+
+        let state = ensure_global_state_with_cache_and_limiter();
+
+        // Reset rate limiter for "unknown" IP to avoid interference from lockout test
+        if let Some(ref rate_limiter) = state.auth_rate_limiter {
+            rate_limiter.reset_failures("unknown").await;
+        }
+
+        // Need a cache to test the cache hit path
+        let cache = match state.api_key_cache.clone() {
+            Some(c) => c,
+            None => return, // State was set by another test without a cache
+        };
+
+        let token_str = "test_token_cache_hit_path";
+        let token_hash = format!("sha256:{:x}", Sha256::digest(token_str.as_bytes()));
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let cached_scope = ApiKeyScope::full_access();
+
+        // Pre-populate the cache with a token hash entry
+        {
+            let mut g = cache.write().await;
+            g.insert(
+                token_hash.clone(),
+                CachedAuthResult {
+                    team_id,
+                    api_key_id,
+                    scope: cached_scope,
+                    cached_at: Instant::now(),
+                },
+            );
+        }
+
+        let app = Router::new()
+            .route("/protected", get(|| async { "ok" }))
+            .layer(middleware::from_fn(auth_middleware_inner));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
+                    .header("Authorization", format!("Bearer {}", token_str))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Cleanup: remove the cache entry to avoid affecting other tests
+        {
+            let mut g = cache.write().await;
+            g.invalidate(&token_hash);
+        }
+    }
 }

@@ -83,7 +83,9 @@ mod engine_client_tests {
             &self,
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
-            Err(EngineError::Internal("aggregate not implemented".to_string()))
+            Err(EngineError::Internal(
+                "aggregate not implemented".to_string(),
+            ))
         }
 
         fn get_engine_stats(&self) -> HashMap<String, EngineStats> {
@@ -575,8 +577,9 @@ mod engine_client_tests {
 
     #[tokio::test]
     async fn test_engine_client_scrape_success_returns_response() {
-        let router: Arc<dyn EngineRouterTrait> =
-            Arc::new(MockEngineRouter::with_success_response(make_success_response()));
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::with_success_response(
+            make_success_response(),
+        ));
         let client = EngineClient::with_router(router);
 
         let request = ScrapeRequest::new("https://example.com");
@@ -633,8 +636,9 @@ mod engine_client_tests {
 
     #[tokio::test]
     async fn test_engine_client_scrape_router_error_timeout_propagates() {
-        let router: Arc<dyn EngineRouterTrait> =
-            Arc::new(MockEngineRouter::with_error(EngineError::Timeout(Duration::from_secs(30))));
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::with_error(
+            EngineError::Timeout(Duration::from_secs(30)),
+        ));
         let client = EngineClient::with_router(router);
 
         let request = ScrapeRequest::new("https://example.com");
@@ -735,8 +739,9 @@ mod engine_client_tests {
 
     #[tokio::test]
     async fn test_engine_client_trait_scrape_delegates_to_inherent() {
-        let router: Arc<dyn EngineRouterTrait> =
-            Arc::new(MockEngineRouter::with_success_response(make_success_response()));
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::with_success_response(
+            make_success_response(),
+        ));
         let client = EngineClient::with_router(router);
         let trait_client: Arc<dyn EngineClientTrait> = Arc::new(client);
 
@@ -771,7 +776,10 @@ mod engine_client_tests {
     #[test]
     fn test_engine_client_trait_registered_engines_delegates() {
         let router: Arc<dyn EngineRouterTrait> =
-            Arc::new(MockEngineRouter::with_engine_names(vec!["e1".to_string(), "e2".to_string()]));
+            Arc::new(MockEngineRouter::with_engine_names(vec![
+                "e1".to_string(),
+                "e2".to_string(),
+            ]));
         let client = EngineClient::with_router(router);
         let trait_client: Arc<dyn EngineClientTrait> = Arc::new(client);
 
