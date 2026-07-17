@@ -5,7 +5,6 @@
 
 use crate::domain::models::search_result::SearchResult;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
@@ -88,16 +87,24 @@ impl Default for DeduplicationConfig {
     }
 }
 
-/// 结果去重器 (优化版本)
-/// 使用 SimHash 快速相似度检测，将 O(n²) 复杂度降低到 O(n)
+/// 结果去重器
+///
+/// 使用 SimHash + 海明距离检测相似标题。
+///
+/// # 复杂度
+///
+/// - URL/标题精确匹配：O(1)（HashSet 查找）
+/// - SimHash 相似度检测：O(n) 每次查找，n = unique fingerprints 数量
+/// - 整体去重：O(n²)（每个结果都要遍历所有已见指纹）
+///
+/// 当结果集规模较大（> 10k）时，建议通过 `DeduplicationConfig`
+/// 关闭 `fingerprint_config.enabled` 或使用 `UrlAndTitle`/`UrlOnly` 策略
+/// 退化到 O(n)。
 pub struct ResultDeduplicator {
     config: DeduplicationConfig,
     seen_urls: HashSet<String>,
     seen_titles: HashSet<String>,
     seen_fingerprints: HashSet<u64>,
-    /// SimHash 指纹索引，用于快速相似度检测
-    /// key: 指纹, value: 原始标题
-    fingerprint_index: HashMap<u64, String>,
 }
 
 impl ResultDeduplicator {
@@ -108,7 +115,6 @@ impl ResultDeduplicator {
             seen_urls: HashSet::new(),
             seen_titles: HashSet::new(),
             seen_fingerprints: HashSet::new(),
-            fingerprint_index: HashMap::new(),
         }
     }
 
@@ -222,17 +228,18 @@ impl ResultDeduplicator {
         xor.count_ones() as u8
     }
 
-    /// 使用 SimHash 快速检测相似性（优化版本）
-    /// O(1) 时间复杂度检测是否与已处理结果相似
+    /// 使用 SimHash 检测相似性
+    ///
+    /// 先检查精确匹配（O(1)），未命中则遍历已见指纹计算海明距离（O(n)，n = 已见指纹数）。
+    /// 整体复杂度随结果集增长呈 O(n²)。
     #[inline]
     fn is_similar_by_fingerprint(&self, fingerprint: u64) -> bool {
-        // 检查精确匹配
+        // 检查精确匹配（O(1)）
         if self.seen_fingerprints.contains(&fingerprint) {
             return true;
         }
 
-        // 使用 SimHash 海明距离快速检测相似性
-        // 只检查索引中的指纹，避免 O(n²)
+        // SimHash 海明距离检测（O(n)，n = 已见指纹数）
         for &existing_fingerprint in self.seen_fingerprints.iter() {
             let distance = Self::hamming_distance(fingerprint, existing_fingerprint);
             if distance <= self.config.fingerprint_config.simhash_threshold {
@@ -243,13 +250,18 @@ impl ResultDeduplicator {
         false
     }
 
-    /// 过滤重复结果（优化版本）
-    /// 使用 SimHash 和指纹索引，将复杂度从 O(n²) 降低到 O(n)
+    /// 过滤重复结果
+    ///
+    /// 根据配置的 `strategy` 进行 URL/标题精确匹配（O(1)）或
+    /// SimHash 相似度检测（整体 O(n²)）。
     pub fn deduplicate(&mut self, results: Vec<SearchResult>) -> Vec<SearchResult> {
         let mut unique_results = Vec::new();
 
-        // 预分配指纹索引以提高性能
-        self.fingerprint_index.reserve(results.len().min(1000));
+        // 预分配 HashSet 容量以减少 rehash
+        let expected = results.len().min(1000);
+        self.seen_urls.reserve(expected);
+        self.seen_titles.reserve(expected);
+        self.seen_fingerprints.reserve(expected);
 
         for result in results {
             let normalized_url = self.normalize_url(&result.url);
@@ -264,18 +276,16 @@ impl ResultDeduplicator {
                 DeduplicationStrategy::UrlOnly => url_exists,
                 DeduplicationStrategy::TitleOnly => title_exists,
                 DeduplicationStrategy::UrlAndTitle => {
-                    url_exists
-                        || (self.config.fingerprint_config.enabled
-                            && self.is_similar_by_fingerprint(
-                                self.generate_fingerprint(&normalized_title),
-                            ))
+                    // 语义：URL 或标题任一精确匹配即视为重复
+                    // 不使用 fingerprint（与 Smart 策略区分）
+                    url_exists || title_exists
                 }
                 DeduplicationStrategy::Smart => {
                     // URL 完全匹配
                     url_exists
                         // 标题完全匹配
                         || title_exists
-                        // 使用 SimHash 快速检测相似标题（O(1) 替代 O(n)）
+                        // 使用 SimHash 检测相似标题（O(n²)，n = unique fingerprints）
                         || (self.config.fingerprint_config.enabled
                             && self.is_similar_by_fingerprint(
                                 self.generate_fingerprint(&normalized_title),
@@ -288,10 +298,13 @@ impl ResultDeduplicator {
                 self.seen_urls.insert(normalized_url.clone());
                 self.seen_titles.insert(normalized_title.clone());
 
-                if self.config.fingerprint_config.enabled {
+                // 仅在 Smart 策略下记录 fingerprint（其他策略从不读取 seen_fingerprints）
+                // 避免在 UrlOnly/TitleOnly/UrlAndTitle 策略下的死写入（diting-Arch HIGH 修复）
+                if matches!(self.config.strategy, DeduplicationStrategy::Smart)
+                    && self.config.fingerprint_config.enabled
+                {
                     let fingerprint = self.generate_fingerprint(&normalized_title);
                     self.seen_fingerprints.insert(fingerprint);
-                    self.fingerprint_index.insert(fingerprint, normalized_title);
                 }
 
                 unique_results.push(result);
@@ -325,7 +338,6 @@ impl ResultDeduplicator {
         self.seen_urls.clear();
         self.seen_titles.clear();
         self.seen_fingerprints.clear();
-        self.fingerprint_index.clear();
     }
 
     /// 获取去重统计信息
@@ -774,8 +786,9 @@ mod tests {
     }
 
     #[test]
-    fn test_url_and_title_strategy_hamming_distance_path() {
-        // UrlAndTitle 策略也调用 is_similar_by_fingerprint，验证其 hamming distance 路径
+    fn test_url_and_title_strategy_does_not_use_fingerprint() {
+        // UrlAndTitle 策略仅做精确匹配，不使用 fingerprint 检测相似性
+        // 即使 simhash_threshold=64，不同标题也不应被去重
         let mut dedup = ResultDeduplicator::with_default_config();
         dedup.config.strategy = DeduplicationStrategy::UrlAndTitle;
         dedup.config.fingerprint_config.simhash_threshold = 64;
@@ -788,8 +801,8 @@ mod tests {
         let deduplicated = dedup.deduplicate(results);
         assert_eq!(
             deduplicated.len(),
-            1,
-            "UrlAndTitle should also use hamming distance"
+            2,
+            "UrlAndTitle should NOT use hamming distance (only exact URL/title match)"
         );
     }
 }

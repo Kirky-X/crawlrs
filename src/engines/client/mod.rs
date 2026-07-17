@@ -53,31 +53,17 @@ pub use self::playwright_pool::{
 
 /// 统一的 FlareSolverr 引擎（合并原 FireEngineCdp / FireEngineTls / FlareSolverrEngine）
 ///
-/// 三个旧引擎名作为类型别名保留，以保持向后兼容（仅类型层面，构造方法需替换）：
-/// - `FireEngineCdp` = `FlareSolverrEngine`（Cdp 模式）
-/// - `FireEngineTls` = `FlareSolverrEngine`（Tls 模式）
-/// - `FlareSolverrEngine` = 自身（Full 模式）
+/// 原 `FireEngineCdp` / `FireEngineTls` / `FlareSolverrEngine` 三个独立引擎
+/// 已合并为 `FlareSolverrEngine` + `FlareSolverrMode` 枚举。原类型别名已删除
+/// （无生产代码使用，避免误导用户继续使用旧 API）。
 ///
-/// 使用时通过 `FlareSolverrEngine::with_cdp_mode()` / `with_tls_mode()` / `new()` 选择模式。
+/// 使用方式：
+/// - `FlareSolverrEngine::new()` — Full 模式（原 FlareSolverrEngine）
+/// - `FlareSolverrEngine::with_cdp_mode()` — Cdp 模式（原 FireEngineCdp）
+/// - `FlareSolverrEngine::with_tls_mode()` — Tls 模式（原 FireEngineTls）
 #[cfg(any(
     feature = "engine-fire-cdp",
     feature = "engine-fire-tls",
     feature = "engine-flaresolverr"
 ))]
 pub use self::flare_solverr::{FlareSolverrConfig, FlareSolverrEngine, FlareSolverrEngineBuilder, FlareSolverrMode};
-
-/// 向后兼容类型别名：FireEngineCdp 现在是 FlareSolverrEngine 的别名
-#[cfg(feature = "engine-fire-cdp")]
-#[deprecated(
-    since = "0.2.0",
-    note = "FireEngineCdp 已合并到 FlareSolverrEngine，请使用 FlareSolverrEngine::with_cdp_mode()"
-)]
-pub type FireEngineCdp = FlareSolverrEngine;
-
-/// 向后兼容类型别名：FireEngineTls 现在是 FlareSolverrEngine 的别名
-#[cfg(feature = "engine-fire-tls")]
-#[deprecated(
-    since = "0.2.0",
-    note = "FireEngineTls 已合并到 FlareSolverrEngine，请使用 FlareSolverrEngine::with_tls_mode()"
-)]
-pub type FireEngineTls = FlareSolverrEngine;

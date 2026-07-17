@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use log::{info, warn};
 use rand::Rng;
-use scraper::{Html, Selector};
+use scraper::Html;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;

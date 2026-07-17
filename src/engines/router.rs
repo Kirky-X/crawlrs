@@ -912,10 +912,17 @@ impl EngineRouter {
         &self,
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
+        // SSRF 防护：与 _route_impl 保持一致，避免 aggregate 绕过内网地址校验
+        if let Err(e) = validate_url(&request.url).await {
+            return Err(EngineError::SsrfProtection(e.to_string()));
+        }
+
         let candidates = self.select_optimal_engines(request);
         if candidates.is_empty() {
+            // 错误消息与 _route_impl 保持一致，避免 EngineRouterTrait::aggregate
+            // 与 route 行为不一致（LSP）
             return Err(EngineError::AllEnginesFailed(
-                "All engines failed".to_string(),
+                "No suitable engines available".to_string(),
             ));
         }
 

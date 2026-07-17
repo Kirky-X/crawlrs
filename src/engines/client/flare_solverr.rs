@@ -131,6 +131,93 @@ fn validate_flaresolverr_url(url: &str) -> Result<String, String> {
     }
 }
 
+/// 脱敏代理 URL 中的凭证信息
+///
+/// 若代理 URL 含 `user:pass@host` 形式的 userinfo，将其替换为 `***@host`，
+/// 防止日志泄露凭证。无法解析的 URL 原样返回（不阻塞日志）。
+fn redact_proxy_url(proxy_url: &str) -> String {
+    let parsed = match url::Url::parse(proxy_url) {
+        Ok(u) => u,
+        Err(_) => return proxy_url.to_string(),
+    };
+
+    let username = parsed.username();
+    let password = parsed.password();
+
+    if username.is_empty() && password.is_none() {
+        // 无凭证，原样返回
+        return proxy_url.to_string();
+    }
+
+    // 重建脱敏 URL：保留 scheme/host/port/path，替换 userinfo
+    let mut redacted = String::new();
+    redacted.push_str(parsed.scheme());
+    redacted.push_str("://***@");
+
+    if let Some(host_str) = parsed.host_str() {
+        redacted.push_str(host_str);
+    }
+    if let Some(port) = parsed.port() {
+        redacted.push_str(&format!(":{}", port));
+    }
+    redacted.push_str(parsed.path());
+    if let Some(query) = parsed.query() {
+        redacted.push_str(&format!("?{}", query));
+    }
+    if let Some(fragment) = parsed.fragment() {
+        redacted.push_str(&format!("#{}", fragment));
+    }
+
+    redacted
+}
+
+#[cfg(test)]
+mod redact_proxy_url_tests {
+    use super::redact_proxy_url;
+
+    #[test]
+    fn test_redact_proxy_url_no_credentials() {
+        // 无凭证的代理 URL 应原样返回
+        assert_eq!(
+            redact_proxy_url("http://proxy.example.com:8080"),
+            "http://proxy.example.com:8080"
+        );
+    }
+
+    #[test]
+    fn test_redact_proxy_url_with_user_only() {
+        // 仅有用户名的代理 URL 应脱敏用户名
+        assert_eq!(
+            redact_proxy_url("http://user@proxy.example.com:8080"),
+            "http://***@proxy.example.com:8080"
+        );
+    }
+
+    #[test]
+    fn test_redact_proxy_url_with_user_and_password() {
+        // 含 user:pass 的代理 URL 应完全脱敏 userinfo
+        assert_eq!(
+            redact_proxy_url("http://user:secret@proxy.example.com:8080"),
+            "http://***@proxy.example.com:8080"
+        );
+    }
+
+    #[test]
+    fn test_redact_proxy_url_invalid_url_returned_as_is() {
+        // 无法解析的 URL 原样返回（不 panic，不阻塞日志）
+        assert_eq!(redact_proxy_url("not a url at all"), "not a url at all");
+    }
+
+    #[test]
+    fn test_redact_proxy_url_preserves_path_and_query() {
+        // 脱敏后应保留 path 和 query
+        assert_eq!(
+            redact_proxy_url("http://user:pass@proxy.example.com:8080/path?q=1"),
+            "http://***@proxy.example.com:8080/path?q=1"
+        );
+    }
+}
+
 /// FlareSolverr HTTP client
 ///
 /// 统一的 FlareSolverr API 客户端，通过 `mode` 字段区分工作模式。
@@ -497,17 +584,36 @@ impl ScraperEngine for FlareSolverrEngine {
         // Determine proxy to use: request-level override or engine-level default
         let proxy_url = request.proxy.as_ref().or(self.config.proxy_url.as_ref());
 
-        // Prepare custom headers with proxy info if configured (合并原 FireEngineCdp/Tls 行为)
-        let custom_headers = proxy_url.map(|proxy| {
-            let mut headers = std::collections::HashMap::new();
-            headers.insert("X-Proxy-URL".to_string(), proxy.clone());
+        // Prepare custom headers:合并 proxy 信息 + 用户传入的 headers
+        // 不再静默丢弃用户 headers（B2/HIGH 修复）
+        let mut custom_headers: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
+        if let Some(proxy) = proxy_url {
+            custom_headers.insert("X-Proxy-URL".to_string(), proxy.clone());
+            // 使用脱敏后的 proxy URL 打印日志（避免凭证泄露 - 安全 HIGH 修复）
             debug!(
                 "{} using proxy: {}",
                 self.config.mode.engine_name(),
-                proxy
+                redact_proxy_url(proxy)
             );
-            headers
-        });
+        }
+
+        // 合并用户传入的 headers（用户 headers 优先级高于 X-Proxy-URL，避免冲突）
+        for (key, value) in &request.headers {
+            // 不覆盖已设置的 X-Proxy-URL（proxy 信息优先）
+            if key != "X-Proxy-URL" {
+                custom_headers.insert(key.clone(), value.clone());
+            }
+        }
+
+        if !request.headers.is_empty() {
+            debug!(
+                "{} forwarded {} custom headers to FlareSolverr",
+                self.config.mode.engine_name(),
+                request.headers.len()
+            );
+        }
 
         // Build FlareSolverr request
         let fs_request = FlareSolverrRequest {
@@ -528,17 +634,12 @@ impl ScraperEngine for FlareSolverrEngine {
             disable_media: None,
             cookies: None,
             post_data: None,
-            custom_headers,
+            custom_headers: if custom_headers.is_empty() {
+                None
+            } else {
+                Some(custom_headers)
+            },
         };
-
-        // Add custom headers if present (FlareSolverr doesn't support custom headers directly,
-        // but we can set them in the request)
-        if !request.headers.is_empty() {
-            warn!(
-                "Custom headers are not directly supported by FlareSolverr, ignoring {} headers",
-                request.headers.len()
-            );
-        }
 
         // Build the base URL for FlareSolverr API
         // Ensure no double slashes or duplicate /v1

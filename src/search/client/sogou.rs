@@ -14,7 +14,7 @@ use crate::search::{
     SearchRequest,
 };
 use async_trait::async_trait;
-use scraper::{Html, Selector};
+use scraper::Html;
 use std::collections::HashMap;
 use std::sync::Arc;
 

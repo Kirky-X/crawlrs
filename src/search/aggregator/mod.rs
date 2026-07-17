@@ -145,8 +145,8 @@ impl SearchAggregator {
 
     // Helper method for deduplication and ranking with PRD-compliant relevance scoring
     fn deduplicate_and_rank(&self, results: Vec<SearchResult>, query: &str) -> Vec<SearchResult> {
-        // 去重委托给 ResultDeduplicator（SimHash + 指纹索引，O(n) 复杂度）
-        // 替代原 O(n²) Jaro-Winkler 内联实现
+        // 去重委托给 ResultDeduplicator（SimHash + 海明距离，整体 O(n²)）
+        // 替代原 O(n²) Jaro-Winkler 内联实现（相同复杂度，但语义更准确）
         let mut dedup = ResultDeduplicator::with_default_config();
         let mut unique_results = dedup.deduplicate(results);
 

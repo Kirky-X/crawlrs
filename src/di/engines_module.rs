@@ -108,9 +108,9 @@ impl EngineRouterTrait for EngineRouterComponent {
         crate::engines::engine_client::InternalScrapeResponse,
         crate::engines::engine_client::EngineError,
     > {
-        // 保持原行为：aggregate 委托给 _route_impl（含 SSRF 检查）
-        // 而非 _aggregate_impl（不做 SSRF 检查）
-        self.router._route_impl(request).await
+        // 委托给持久化 router 的 aggregate 方法（已包含 SSRF 校验）
+        // 保持与 EngineRouterTrait::aggregate 行为一致（LSP）
+        self.router.aggregate(request).await
     }
 
     fn get_engine_stats(
