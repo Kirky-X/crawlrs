@@ -10,7 +10,6 @@ use crate::search::types::{EngineHealth, SearchEngineType};
 use async_trait::async_trait;
 use log::{info, warn};
 use parking_lot::RwLock;
-use rand::seq::SliceRandom;
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
@@ -234,19 +233,42 @@ impl SearchEngineRouter {
         self.config = config;
     }
 
-    /// 根据策略选择引擎
-    #[allow(dead_code)]
-    fn select_engine(&self, preferred: Option<&str>) -> Option<Arc<dyn SearchEngine>> {
+    /// 根据策略选择单个最优引擎
+    ///
+    /// 该方法是 `select_with_priority` 和 `select_with_load_balancing` 的对外门面：
+    /// - `enable_load_balancing=true`：调用 `select_with_load_balancing` 进行加权随机选择
+    /// - `enable_load_balancing=false`：调用 `select_with_priority` 取健康优先排序后的第一个
+    ///
+    /// 如果 `preferred` 指定的引擎可用，则优先返回该引擎。
+    pub fn select_engine(&self, preferred: Option<&str>) -> Option<Arc<dyn SearchEngine>> {
+        if self.config.enable_load_balancing {
+            self.select_with_load_balancing(preferred)
+        } else {
+            self.select_with_priority(preferred).into_iter().next()
+        }
+    }
+
+    /// 负载均衡选择（加权随机返回单个引擎）
+    ///
+    /// 权重公式：`success_rate * 0.7 + speed_weight * 0.3`
+    /// - success_rate ∈ [0.0, 1.0]，归一化为 0-100
+    /// - speed_weight：<1s=100，<5s=50，否则=10
+    pub fn select_with_load_balancing(
+        &self,
+        preferred: Option<&str>,
+    ) -> Option<Arc<dyn SearchEngine>> {
         let metrics = self.metrics.read();
-        let mut candidates: Vec<(String, Arc<dyn SearchEngine>, &EngineMetrics)> = Vec::new();
+        let mut candidates: Vec<(String, Arc<dyn SearchEngine>, EngineMetrics)> = Vec::new();
 
         for (name, engine) in &self.engines {
             if let Some(metric) = metrics.get(name) {
                 if metric.can_retry() {
-                    candidates.push((name.clone(), engine.clone(), metric));
+                    candidates.push((name.clone(), engine.clone(), metric.clone()));
                 }
             }
         }
+        // 显式释放读锁，避免在加权随机计算中持有锁
+        drop(metrics);
 
         if candidates.is_empty() {
             warn!("没有可用的搜索引擎");
@@ -255,7 +277,7 @@ impl SearchEngineRouter {
 
         // 如果有首选引擎且可用，优先使用
         if let Some(pref) = preferred {
-            if let Some((_name, engine, metric)) = candidates.iter().find(|(n, _, _)| n == pref) {
+            if let Some((_, engine, metric)) = candidates.iter().find(|(n, _, _)| n == pref) {
                 if metric.can_retry() {
                     info!("使用首选搜索引擎: {}", pref);
                     return Some(engine.clone());
@@ -263,20 +285,6 @@ impl SearchEngineRouter {
             }
         }
 
-        // 根据配置选择引擎
-        if self.config.enable_load_balancing {
-            self.select_with_load_balancing(candidates)
-        } else {
-            self.select_with_priority(candidates)
-        }
-    }
-
-    /// 负载均衡选择
-    #[allow(dead_code)]
-    fn select_with_load_balancing(
-        &self,
-        candidates: Vec<(String, Arc<dyn SearchEngine>, &EngineMetrics)>,
-    ) -> Option<Arc<dyn SearchEngine>> {
         // 基于成功率和响应时间计算权重
         let total_weight: f64 = candidates
             .iter()
@@ -320,15 +328,34 @@ impl SearchEngineRouter {
         candidates.first().map(|(_, e, _)| e.clone())
     }
 
-    /// 优先级选择（优先选择健康状态最好的）
-    #[allow(dead_code)]
-    fn select_with_priority(
-        &self,
-        candidates: Vec<(String, Arc<dyn SearchEngine>, &EngineMetrics)>,
-    ) -> Option<Arc<dyn SearchEngine>> {
-        // 按健康状态和成功率排序
-        let mut sorted: Vec<_> = candidates;
-        sorted.sort_by(|a, b| {
+    /// 健康优先排序所有可用引擎
+    ///
+    /// 排序规则：
+    /// 1. 健康状态优先级：Healthy > Degraded > Unhealthy > Isolated > Unknown
+    /// 2. 同健康状态下，响应时间短的优先
+    ///
+    /// 如果 `preferred` 指定的引擎可用，则会被交换到列表首位。
+    pub fn select_with_priority(&self, preferred: Option<&str>) -> Vec<Arc<dyn SearchEngine>> {
+        let metrics = self.metrics.read();
+        let mut candidates: Vec<(String, Arc<dyn SearchEngine>, EngineMetrics)> = Vec::new();
+
+        for (name, engine) in &self.engines {
+            if let Some(metric) = metrics.get(name) {
+                if metric.can_retry() {
+                    candidates.push((name.clone(), engine.clone(), metric.clone()));
+                }
+            }
+        }
+        // 显式释放读锁，避免在排序计算中持有锁
+        drop(metrics);
+
+        if candidates.is_empty() {
+            warn!("没有可用的搜索引擎");
+            return Vec::new();
+        }
+
+        // 按健康状态和响应时间排序
+        candidates.sort_by(|a, b| {
             let health_order = |h: &EngineHealth| match h {
                 EngineHealth::Healthy => 0,
                 EngineHealth::Degraded => 1,
@@ -343,61 +370,52 @@ impl SearchEngineRouter {
             if a_order != b_order {
                 a_order.cmp(&b_order)
             } else {
-                // 成功率相同时，选择响应时间短的
+                // 健康状态相同时，选择响应时间短的
                 b.2.avg_response_time.cmp(&a.2.avg_response_time)
             }
         });
 
-        sorted.first().map(|(_, e, _)| e.clone())
+        let mut sorted: Vec<Arc<dyn SearchEngine>> =
+            candidates.into_iter().map(|(_, e, _)| e).collect();
+
+        // Preferred engine first
+        if let Some(pref) = preferred {
+            if let Some(pos) = sorted.iter().position(|e| e.name() == pref) {
+                if pos > 0 {
+                    sorted.swap(0, pos);
+                }
+            }
+        }
+
+        sorted
     }
 
     /// 搜索（带智能路由）
+    ///
+    /// 使用 `select_with_priority` 进行健康优先排序，preferred 引擎被交换到首位。
+    /// 按排序顺序逐个尝试引擎，失败时根据 `enable_auto_failover` 决定是否继续。
     pub async fn search(
         &self,
         request: &SearchRequest,
         preferred: Option<&str>,
     ) -> Result<Response<ResponseItem>, SearchError> {
         let mut last_error: Option<SearchError> = None;
-        let attempted_engines: Vec<String> = Vec::new();
 
-        // 收集所有可用的引擎
-        let available_engines: Vec<(String, Arc<dyn SearchEngine>)> = {
-            let metrics = self.metrics.read();
-            self.engines
-                .iter()
-                .filter(|(name, _)| {
-                    if let Some(metric) = metrics.get(*name) {
-                        metric.can_retry()
-                    } else {
-                        true
-                    }
-                })
-                .map(|(n, e)| (n.clone(), e.clone()))
-                .collect()
-        };
+        // 使用智能路由选择引擎（健康优先排序）
+        let sorted_engines = self.select_with_priority(preferred);
 
-        // 按优先级尝试引擎
-        let mut sorted_engines: Vec<(String, Arc<dyn SearchEngine>)> = available_engines;
-
-        // 首选引擎优先
-        if let Some(pref) = preferred {
-            if let Some(pos) = sorted_engines.iter().position(|(n, _)| *n == pref) {
-                if pos > 0 {
-                    sorted_engines.swap(0, pos);
-                }
-            }
+        if sorted_engines.is_empty() {
+            return Err(SearchError::NoEngineAvailable);
         }
 
-        // 如果启用了负载均衡，随机打乱（除了第一个首选引擎）
-        if self.config.enable_load_balancing && sorted_engines.len() > 1 {
-            let mut rng = rand::rng();
-            if sorted_engines.len() > 1 {
-                sorted_engines[1..].shuffle(&mut rng);
-            }
-        }
+        info!(
+            "智能路由选择 {} 个候选引擎，按健康度排序: {:?}",
+            sorted_engines.len(),
+            sorted_engines.iter().map(|e| e.name()).collect::<Vec<_>>()
+        );
 
-        for (name, engine) in &sorted_engines {
-            // 为每个引擎单独计时
+        for engine in &sorted_engines {
+            let name = engine.name();
             let engine_start_time = Instant::now();
 
             // 记录请求开始
@@ -410,7 +428,6 @@ impl SearchEngineRouter {
 
             match tokio::time::timeout(self.config.request_timeout, engine.search(request)).await {
                 Ok(Ok(response)) => {
-                    // 记录成功
                     let response_time = engine_start_time.elapsed();
                     {
                         let mut metrics = self.metrics.write();
@@ -456,19 +473,71 @@ impl SearchEngineRouter {
             }
         }
 
-        // 所有引擎都失败了
         warn!(
-            "所有搜索引擎都失败了，已尝试的引擎: {:?}",
-            attempted_engines
+            "所有搜索引擎都失败了，最后一个错误: {:?}",
+            last_error
         );
 
         Err(last_error.unwrap_or_else(|| SearchError::Engine("所有搜索引擎都失败".to_string())))
     }
 
-    /// 简单的搜索方法（使用默认引擎）
+    /// 简单的搜索方法（使用单个最优引擎）
+    ///
+    /// 通过 `select_engine` 选取单个最优引擎执行，失败时回退到全引擎 `search`。
     pub async fn simple_search(&self, query: &str) -> Result<Response<ResponseItem>, SearchError> {
-        let request = SearchRequest::new(query);
-        self.search(&request, None).await
+        // 选取单个最优引擎执行
+        if let Some(engine) = self.select_engine(None) {
+            let request = SearchRequest::new(query);
+            let name = engine.name();
+            let start_time = Instant::now();
+
+            {
+                let mut metrics = self.metrics.write();
+                if let Some(m) = metrics.get_mut(name) {
+                    m.record_request_start();
+                }
+            }
+
+            match tokio::time::timeout(self.config.request_timeout, engine.search(&request)).await {
+                Ok(Ok(response)) => {
+                    let response_time = start_time.elapsed();
+                    {
+                        let mut metrics = self.metrics.write();
+                        if let Some(m) = metrics.get_mut(name) {
+                            m.record_success(response_time);
+                        }
+                    }
+                    return Ok(response);
+                }
+                Ok(Err(e)) => {
+                    {
+                        let mut metrics = self.metrics.write();
+                        if let Some(m) = metrics.get_mut(name) {
+                            m.record_failure();
+                        }
+                    }
+                    warn!(
+                        "默认搜索引擎 {} 失败: {}，回退到全引擎搜索",
+                        name, e
+                    );
+                }
+                Err(elapsed) => {
+                    {
+                        let mut metrics = self.metrics.write();
+                        if let Some(m) = metrics.get_mut(name) {
+                            m.record_failure();
+                        }
+                    }
+                    warn!(
+                        "默认搜索引擎 {} 超时: {:?}，回退到全引擎搜索",
+                        name, elapsed
+                    );
+                }
+            }
+        }
+
+        // 单引擎失败或没有引擎，回退到全引擎搜索
+        self.search(&SearchRequest::new(query), None).await
     }
 
     /// 检查引擎健康状态

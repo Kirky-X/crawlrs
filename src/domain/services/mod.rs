@@ -12,7 +12,6 @@ pub mod audit_service;
 /// 包含的服务：
 /// - 认证范围服务（auth_scope_service）：处理 API Key 权限范围管理
 /// - 审计服务（audit_service）：处理认证和授权决策的审计日志
-/// - 并发控制器（concurrency_controller）：提供统一的并发控制接口
 /// - 爬取服务（crawl_service）：处理爬取任务的调度和执行逻辑
 /// - 积分服务（credits_service）：处理爬取积分的扣减和管理逻辑
 /// - 提取服务（extraction_service）：处理内容提取和数据解析逻辑
@@ -28,10 +27,12 @@ pub mod audit_service;
 /// - Webhook服务（webhook_service）：处理 Webhook 通知逻辑
 /// - 测试工具（test_helpers）：提供可复用的测试夹具和模拟对象
 ///
+/// 并发控制统一由 `crate::infrastructure::concurrency` 提供（基于 limiteron 组件），
+/// 不再在本模块重复定义。
+///
 /// 领域服务与应用程序服务的区别在于：领域服务包含纯粹的业务逻辑，
 /// 而应用程序服务负责协调和编排，可能包含技术实现细节。
 pub mod auth_scope_service;
-pub mod concurrency_controller;
 pub mod crawl_service;
 pub mod credits_service;
 pub mod extraction_service;

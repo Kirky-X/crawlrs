@@ -21,7 +21,6 @@
 //! ```
 
 pub mod ab_test;
-pub mod adapter;
 pub mod aggregator;
 pub mod client;
 pub mod engine_trait;
@@ -33,7 +32,6 @@ pub mod smart;
 pub mod types;
 
 pub use ab_test::SearchABTestEngine;
-pub use adapter::{GenericSearchEngineAdapter, SearchEngineAdapter};
 pub use aggregator::deduplicator::ResultDeduplicator as Deduplicator;
 pub use aggregator::SearchAggregator;
 pub use engine_trait::{SearchEngine, SearchRequest};

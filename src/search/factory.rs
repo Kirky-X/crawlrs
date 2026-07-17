@@ -282,7 +282,7 @@ impl SearchEngineFactory {
         engine_type: Option<SearchEngineType>,
     ) -> Result<
         Vec<crate::domain::models::search_result::SearchResult>,
-        crate::domain::search::engine::SearchError,
+        crate::search::error::SearchError,
     > {
         let request = SearchRequest {
             query: query.to_string(),
@@ -306,7 +306,7 @@ impl SearchEngineFactory {
             .router
             .search(&request, preferred_engine)
             .await
-            .map_err(|e| crate::domain::search::engine::SearchError::EngineError(e.to_string()))?;
+            .map_err(|e| crate::search::error::SearchError::Engine(e.to_string()))?;
 
         let total_items = response.items.len();
         Ok(response
