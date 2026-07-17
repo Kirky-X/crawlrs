@@ -7,7 +7,6 @@
 ///
 /// 提供数据库连接和实体管理功能
 /// 包括数据库连接池和实体定义
-pub mod connection;
 pub mod dbnexus_connection;
 pub mod entities;
 pub mod query_monitor;

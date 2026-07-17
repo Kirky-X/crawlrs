@@ -168,6 +168,15 @@ impl ExtractionService {
     }
 
     /// 提取单个元素的属性值 - 消除深层嵌套
+    ///
+    /// 行为约定（与历史实现完全一致）：
+    /// - `attr=Some(name)`：仅取属性值；元素无该属性时返回 `None`（不走 text fallback）。
+    ///   当 attr 是 `href`/`src` 且提供 `base` 时，做相对路径解析。
+    /// - `attr=None`：返回元素归一化文本内容。
+    ///
+    /// 与 `ExtractionUtils::extract_element_value` 的差异：后者在 attr 缺失时
+    /// 会走 text fallback，本方法保持「attr=Some 则严格只取属性」的语义，
+    /// 以兼容 `test_extract_element_value_attr_missing_returns_null`。
     fn extract_element_value(
         element: ElementRef,
         attr: &Option<String>,
@@ -258,74 +267,36 @@ impl ExtractionService {
                 continue;
             }
 
-            // Traditional CSS Selector Extraction - CONSOLIDATED using ExtractionUtils
+            // Traditional CSS Selector Extraction - 委托给统一的 extract_element_value
+            // 之前是 70+ 行内联重复逻辑（与上方 extract_with_selectors 完全一致），
+            // 现在直接复用 Self::extract_element_value，行为与历史完全一致。
             if let Some(selector_str) = &rule.selector {
                 if let Ok(selector) = Selector::parse(selector_str) {
                     let document = Html::parse_document(html_content);
 
                     if rule.is_array {
-                        // Array extraction - CONSOLIDATED (previously 31 duplicate lines)
-                        let mut values = Vec::new();
-                        for element in document.select(&selector) {
-                            let value = if let Some(attr) = &rule.attr {
-                                let val = element.value().attr(attr).map(|s| s.to_string());
-                                if let (Some(v), Some(b)) = (&val, &base) {
-                                    if attr == "href" || attr == "src" {
-                                        b.join(v).map(|u| u.to_string()).ok().or(val)
-                                    } else {
-                                        val
-                                    }
-                                } else {
-                                    val
-                                }
-                            } else {
-                                Some(
-                                    element
-                                        .text()
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                        .trim()
-                                        .to_string(),
-                                )
-                            };
-
-                            if let Some(v) = value.filter(|v| !v.is_empty()) {
-                                values.push(Value::String(v));
-                            }
-                        }
+                        // Array extraction - 复用 extract_element_value（与 extract_with_selectors 一致）
+                        let values: Vec<Value> = document
+                            .select(&selector)
+                            .filter_map(|element| {
+                                Self::extract_element_value(element, &rule.attr, base.as_ref())
+                                    .filter(|v| !v.is_empty())
+                                    .map(Value::String)
+                            })
+                            .collect();
                         result.insert(key.clone(), Value::Array(values));
                     } else {
-                        // Single element extraction - CONSOLIDATED (previously 30 duplicate lines)
-                        if let Some(element) = document.select(&selector).next() {
-                            let value = if let Some(attr) = &rule.attr {
-                                let val = element.value().attr(attr).map(|s| s.to_string());
-                                if let (Some(v), Some(b)) = (&val, &base) {
-                                    if attr == "href" || attr == "src" {
-                                        b.join(v).map(|u| u.to_string()).ok().or(val)
-                                    } else {
-                                        val
-                                    }
-                                } else {
-                                    val
-                                }
-                            } else {
-                                Some(
-                                    element
-                                        .text()
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                        .trim()
-                                        .to_string(),
-                                )
-                            };
-
-                            result.insert(
-                                key.clone(),
-                                value.map(Value::String).unwrap_or(Value::Null),
-                            );
-                        } else {
-                            result.insert(key.clone(), Value::Null);
-                        }
+                        // Single element extraction - 复用 extract_element_value
+                        let value = document
+                            .select(&selector)
+                            .next()
+                            .and_then(|element| {
+                                Self::extract_element_value(element, &rule.attr, base.as_ref())
+                            });
+                        result.insert(
+                            key.clone(),
+                            value.map(Value::String).unwrap_or(Value::Null),
+                        );
                     }
                 }
             }
