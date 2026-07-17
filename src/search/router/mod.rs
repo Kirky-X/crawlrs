@@ -8,11 +8,10 @@ use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
 use crate::search::types::{EngineHealth, SearchEngineType};
 use async_trait::async_trait;
-use log::{info, warn};
+use log::{debug, info, warn};
 use parking_lot::RwLock;
 use rand::Rng;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -147,8 +146,6 @@ pub struct SearchEngineRouter {
     metrics: RwLock<HashMap<String, EngineMetrics>>,
     /// 配置
     config: SearchEngineRouterConfig,
-    /// 负载均衡索引
-    load_balance_index: AtomicUsize,
 }
 
 impl Clone for SearchEngineRouter {
@@ -157,10 +154,6 @@ impl Clone for SearchEngineRouter {
             engines: self.engines.clone(),
             metrics: RwLock::new(self.metrics.read().clone()),
             config: self.config.clone(),
-            load_balance_index: AtomicUsize::new(
-                self.load_balance_index
-                    .load(std::sync::atomic::Ordering::Relaxed),
-            ),
         }
     }
 }
@@ -178,7 +171,6 @@ impl SearchEngineRouter {
             engines: HashMap::with_capacity(8),
             metrics: RwLock::new(HashMap::with_capacity(8)),
             config: SearchEngineRouterConfig::default(),
-            load_balance_index: AtomicUsize::new(0),
         }
     }
 
@@ -188,7 +180,6 @@ impl SearchEngineRouter {
             engines: HashMap::with_capacity(8),
             metrics: RwLock::new(HashMap::with_capacity(8)),
             config,
-            load_balance_index: AtomicUsize::new(0),
         }
     }
 
@@ -258,12 +249,13 @@ impl SearchEngineRouter {
         preferred: Option<&str>,
     ) -> Option<Arc<dyn SearchEngine>> {
         let metrics = self.metrics.read();
-        let mut candidates: Vec<(String, Arc<dyn SearchEngine>, EngineMetrics)> = Vec::new();
+        // 不再 clone String，用 engine.name() 动态读取（preferred 匹配 + 日志场景）
+        let mut candidates: Vec<(Arc<dyn SearchEngine>, EngineMetrics)> = Vec::new();
 
         for (name, engine) in &self.engines {
             if let Some(metric) = metrics.get(name) {
                 if metric.can_retry() {
-                    candidates.push((name.clone(), engine.clone(), metric.clone()));
+                    candidates.push((engine.clone(), metric.clone()));
                 }
             }
         }
@@ -277,7 +269,7 @@ impl SearchEngineRouter {
 
         // 如果有首选引擎且可用，优先使用
         if let Some(pref) = preferred {
-            if let Some((_, engine, metric)) = candidates.iter().find(|(n, _, _)| n == pref) {
+            if let Some((engine, metric)) = candidates.iter().find(|(e, _)| e.name() == pref) {
                 if metric.can_retry() {
                     info!("使用首选搜索引擎: {}", pref);
                     return Some(engine.clone());
@@ -285,10 +277,10 @@ impl SearchEngineRouter {
             }
         }
 
-        // 基于成功率和响应时间计算权重
-        let total_weight: f64 = candidates
+        // 预计算权重表，避免 total_weight 和累减两次重复计算
+        let weights: Vec<f64> = candidates
             .iter()
-            .map(|(_, _, m)| {
+            .map(|(_, m)| {
                 let success_weight = m.success_rate() * 100.0;
                 let speed_weight = if m.avg_response_time.as_secs_f64() < 1.0 {
                     100.0
@@ -299,33 +291,25 @@ impl SearchEngineRouter {
                 };
                 success_weight * 0.7 + speed_weight * 0.3
             })
-            .sum();
+            .collect();
+        let total_weight: f64 = weights.iter().sum();
 
         if total_weight == 0.0 {
-            return candidates.first().map(|(_, e, _)| e.clone());
+            return candidates.first().map(|(e, _)| e.clone());
         }
 
         let mut rng = rand::rng();
         let mut random_weight = rng.random_range(0.0..total_weight);
 
-        for (_, engine, metrics_ref) in &candidates {
-            // 使用与 total_weight 一致的权重计算公式
-            let success_weight = metrics_ref.success_rate() * 100.0;
-            let speed_weight = if metrics_ref.avg_response_time.as_secs_f64() < 1.0 {
-                100.0
-            } else if metrics_ref.avg_response_time.as_secs_f64() < 5.0 {
-                50.0
-            } else {
-                10.0
-            };
-            let weight = success_weight * 0.7 + speed_weight * 0.3;
-            random_weight -= weight;
+        // 累减复用预计算的 weights，避免重复计算权重公式
+        for (i, (engine, _)) in candidates.iter().enumerate() {
+            random_weight -= weights[i];
             if random_weight <= 0.0 {
                 return Some(engine.clone());
             }
         }
 
-        candidates.first().map(|(_, e, _)| e.clone())
+        candidates.first().map(|(e, _)| e.clone())
     }
 
     /// 健康优先排序所有可用引擎
@@ -337,12 +321,13 @@ impl SearchEngineRouter {
     /// 如果 `preferred` 指定的引擎可用，则会被交换到列表首位。
     pub fn select_with_priority(&self, preferred: Option<&str>) -> Vec<Arc<dyn SearchEngine>> {
         let metrics = self.metrics.read();
-        let mut candidates: Vec<(String, Arc<dyn SearchEngine>, EngineMetrics)> = Vec::new();
+        // 不再 clone String，用 engine.name() 动态读取（preferred 匹配 + 日志场景）
+        let mut candidates: Vec<(Arc<dyn SearchEngine>, EngineMetrics)> = Vec::new();
 
         for (name, engine) in &self.engines {
             if let Some(metric) = metrics.get(name) {
                 if metric.can_retry() {
-                    candidates.push((name.clone(), engine.clone(), metric.clone()));
+                    candidates.push((engine.clone(), metric.clone()));
                 }
             }
         }
@@ -364,19 +349,19 @@ impl SearchEngineRouter {
                 EngineHealth::Unknown => 4,
             };
 
-            let a_order = health_order(&a.2.health);
-            let b_order = health_order(&b.2.health);
+            let a_order = health_order(&a.1.health);
+            let b_order = health_order(&b.1.health);
 
             if a_order != b_order {
                 a_order.cmp(&b_order)
             } else {
                 // 健康状态相同时，选择响应时间短的
-                b.2.avg_response_time.cmp(&a.2.avg_response_time)
+                b.1.avg_response_time.cmp(&a.1.avg_response_time)
             }
         });
 
         let mut sorted: Vec<Arc<dyn SearchEngine>> =
-            candidates.into_iter().map(|(_, e, _)| e).collect();
+            candidates.into_iter().map(|(e, _)| e).collect();
 
         // Preferred engine first
         if let Some(pref) = preferred {
@@ -408,7 +393,8 @@ impl SearchEngineRouter {
             return Err(SearchError::NoEngineAvailable);
         }
 
-        info!(
+        // 热路径降级到 debug 级别，避免 info! 宏急切求值导致 Vec<String> 分配
+        debug!(
             "智能路由选择 {} 个候选引擎，按健康度排序: {:?}",
             sorted_engines.len(),
             sorted_engines.iter().map(|e| e.name()).collect::<Vec<_>>()
