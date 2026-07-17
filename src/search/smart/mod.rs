@@ -26,10 +26,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// 安全解析CSS选择器，如果解析失败则记录警告并返回None
-fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
-    Selector::parse(selector_str).ok()
-}
+use crate::search::client::shared_utils::safe_parse_selector;
 
 /// 解析并验证选择器，如果所有选择器都失败则返回错误
 ///

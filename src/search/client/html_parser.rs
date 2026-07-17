@@ -9,10 +9,7 @@
 use super::{ResponseItem, SearchEngineType};
 use scraper::{Html, Selector};
 
-/// 安全解析CSS选择器，如果解析失败则返回None
-fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
-    Selector::parse(selector_str).ok()
-}
+use super::shared_utils::safe_parse_selector;
 
 /// Common HTML result parser for search engines
 pub struct HtmlParser {

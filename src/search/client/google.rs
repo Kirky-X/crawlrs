@@ -20,10 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-/// 安全解析CSS选择器，如果解析失败则返回None
-fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
-    Selector::parse(selector_str).ok()
-}
+use super::shared_utils::safe_parse_selector;
 
 /// Google Search Engine implementation
 struct ArcIdCache {

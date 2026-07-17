@@ -18,10 +18,7 @@ use scraper::{Html, Selector};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// 安全解析CSS选择器，如果解析失败则返回None
-fn safe_parse_selector(selector_str: &str) -> Option<Selector> {
-    Selector::parse(selector_str).ok()
-}
+use super::shared_utils::safe_parse_selector;
 
 /// Sogou Search Engine implementation with EngineClient support
 pub struct SogouSearchEngine {
@@ -233,19 +230,7 @@ mod tests {
         SogouSearchEngine::new(Arc::new(EngineClient::new()))
     }
 
-    // ========== safe_parse_selector 测试 ==========
-
-    #[test]
-    fn test_safe_parse_selector_valid() {
-        let result = safe_parse_selector(".vrwrap");
-        assert!(result.is_some(), "valid CSS selector should parse");
-    }
-
-    #[test]
-    fn test_safe_parse_selector_invalid() {
-        let result = safe_parse_selector(">>>invalid<<<");
-        assert!(result.is_none(), "invalid CSS selector should return None");
-    }
+    // safe_parse_selector 已统一到 shared_utils，测试见 shared_utils::tests
 
     // ========== resolve_url 测试 ==========
 

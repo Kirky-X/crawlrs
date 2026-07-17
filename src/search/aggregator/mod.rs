@@ -20,11 +20,11 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use strsim::jaro_winkler;
 
 use crate::common::constants::cache_config;
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::services::relevance_scorer::{DateParserComponent, RelevanceScorer};
+use crate::search::aggregator::deduplicator::ResultDeduplicator;
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
@@ -145,56 +145,39 @@ impl SearchAggregator {
 
     // Helper method for deduplication and ranking with PRD-compliant relevance scoring
     fn deduplicate_and_rank(&self, results: Vec<SearchResult>, query: &str) -> Vec<SearchResult> {
-        let mut unique_results: Vec<SearchResult> = Vec::new();
+        // 去重委托给 ResultDeduplicator（SimHash + 指纹索引，O(n) 复杂度）
+        // 替代原 O(n²) Jaro-Winkler 内联实现
+        let mut dedup = ResultDeduplicator::with_default_config();
+        let mut unique_results = dedup.deduplicate(results);
+
+        // 评分 + 日期提取（业务逻辑保留在 aggregator）
         let scorer = RelevanceScorer::for_query(query);
+        for result in &mut unique_results {
+            let relevance_score =
+                scorer.calculate_score(&result.title, result.description.as_deref(), &result.url);
 
-        for mut result in results {
-            let is_duplicate = unique_results.iter().any(|existing| {
-                // Check URL equality first
-                if existing.url == result.url {
-                    return true;
-                }
-
-                // Check title similarity using Jaro-Winkler
-                let similarity = jaro_winkler(&existing.title, &result.title);
-                similarity > 0.9 // Threshold
-            });
-
-            if !is_duplicate {
-                // Calculate PRD-compliant relevance score
-                let relevance_score = scorer.calculate_score(
-                    &result.title,
-                    result.description.as_deref(),
-                    &result.url,
+            if result.published_time.is_none() {
+                let combined_text = format!(
+                    "{} {}",
+                    result.title,
+                    result.description.as_deref().unwrap_or("")
                 );
-
-                // Extract publication date if not already set
-                if result.published_time.is_none() {
-                    let combined_text = format!(
-                        "{} {}",
-                        result.title,
-                        result.description.as_deref().unwrap_or("")
-                    );
-                    let parser = DateParserComponent::with_defaults();
-                    if let Some(published_date) =
-                        RelevanceScorer::extract_published_date_with_parser(&combined_text, &parser)
-                    {
-                        result.published_time = Some(published_date);
-                    }
+                let parser = DateParserComponent::with_defaults();
+                if let Some(published_date) =
+                    RelevanceScorer::extract_published_date_with_parser(&combined_text, &parser)
+                {
+                    result.published_time = Some(published_date);
                 }
-
-                // Apply freshness score if we have publication date
-                let freshness_score = if let Some(published_time) = result.published_time {
-                    RelevanceScorer::calculate_freshness_score(published_time)
-                } else {
-                    0.5 // Default freshness score for unknown dates
-                };
-
-                // Combine relevance and freshness scores (70% relevance, 30% freshness)
-                result.score = relevance_score * 0.7 + freshness_score * 0.3;
-
-                unique_results.push(result);
             }
+
+            let freshness_score = if let Some(published_time) = result.published_time {
+                RelevanceScorer::calculate_freshness_score(published_time)
+            } else {
+                0.5 // Default freshness score for unknown dates
+            };
+
+            // Combine relevance and freshness scores (70% relevance, 30% freshness)
+            result.score = relevance_score * 0.7 + freshness_score * 0.3;
         }
 
         // Sort by final score (highest first)
