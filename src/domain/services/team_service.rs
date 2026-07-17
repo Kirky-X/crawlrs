@@ -181,9 +181,20 @@ impl TeamService {
             return Ok(GeoRestrictionResult::Allowed);
         }
 
+        // Normalize input: extract host from URL/domain:port/path forms.
+        // This prevents substring false positives (e.g., "evil-example.com" matching "example.com")
+        // while still supporting URL inputs gracefully.
+        let normalized = extract_host(domain);
+
         if let Some(ref blacklist) = restrictions.domain_blacklist {
             for blocked_domain in blacklist {
-                if domain.contains(blocked_domain) {
+                // Block on exact match or proper subdomain match (suffix).
+                // Substring matching is intentionally avoided to prevent security bypass
+                // where "evil-example.com" would be blocked by "example.com" blacklist,
+                // and to prevent false positives where "example.com" blacklist blocks "evil-example.com".
+                if normalized == blocked_domain.as_str()
+                    || normalized.ends_with(&format!(".{}", blocked_domain))
+                {
                     return Ok(GeoRestrictionResult::Denied(format!(
                         "Domain {} is in the blacklist",
                         domain
@@ -398,6 +409,84 @@ impl TeamManagementService for TeamManagementServiceImpl {
             .map_err(|e| anyhow!("Failed to check credits for team {}: {}", team_id, e))?;
 
         Ok(balance)
+    }
+}
+
+/// Extract the host (domain) from a URL, domain:port, or bare domain string.
+///
+/// Handles the following input forms:
+/// - `scheme://host/path?query#fragment` → `host`
+/// - `host:port` → `host`
+/// - `host/path` → `host`
+/// - `host` → `host` (unchanged)
+///
+/// This is used by [`TeamService::validate_domain_blacklist`] to normalize inputs
+/// before matching against the blacklist, preventing substring false positives
+/// (e.g., `evil-example.com/path` must not match `example.com` blacklist entry).
+fn extract_host(input: &str) -> &str {
+    // Strip scheme if present (e.g., "https://host/path" → "host/path")
+    let after_scheme = input.split("://").last().unwrap_or(input);
+    // Strip path/query/fragment if present (e.g., "host/path" → "host")
+    let host_with_port = after_scheme.split('/').next().unwrap_or(after_scheme);
+
+    // Handle IPv6 in brackets: "[::1]:8080" → "[::1]"
+    // IPv6 addresses contain colons, so the simple `split(':')` would break them.
+    if host_with_port.starts_with('[') {
+        if let Some(end) = host_with_port.find(']') {
+            // Include both brackets: "[::1]"
+            return &host_with_port[..=end];
+        }
+    }
+
+    // Strip port if present (e.g., "host:8080" → "host")
+    host_with_port.split(':').next().unwrap_or(host_with_port)
+}
+
+#[cfg(test)]
+mod extract_host_tests {
+    use super::extract_host;
+
+    #[test]
+    fn test_bare_domain() {
+        assert_eq!(extract_host("example.com"), "example.com");
+    }
+
+    #[test]
+    fn test_subdomain() {
+        assert_eq!(extract_host("sub.example.com"), "sub.example.com");
+    }
+
+    #[test]
+    fn test_url_with_scheme_and_path() {
+        assert_eq!(extract_host("https://www.example.com/path"), "www.example.com");
+    }
+
+    #[test]
+    fn test_url_with_port() {
+        assert_eq!(extract_host("example.com:8080"), "example.com");
+    }
+
+    #[test]
+    fn test_url_with_scheme_port_path() {
+        assert_eq!(
+            extract_host("http://example.com:8080/path?q=1"),
+            "example.com"
+        );
+    }
+
+    #[test]
+    fn test_host_with_path_only() {
+        assert_eq!(extract_host("example.com/admin"), "example.com");
+    }
+
+    #[test]
+    fn test_ipv4_address() {
+        assert_eq!(extract_host("192.168.1.1"), "192.168.1.1");
+    }
+
+    #[test]
+    fn test_ipv6_address_with_brackets() {
+        assert_eq!(extract_host("[::1]:8080"), "[::1]");
     }
 }
 

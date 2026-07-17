@@ -60,9 +60,6 @@ impl Clone for AuthScopeService {
     }
 }
 
-unsafe impl Send for AuthScopeService {}
-unsafe impl Sync for AuthScopeService {}
-
 impl std::fmt::Debug for AuthScopeService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthScopeService")

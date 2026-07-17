@@ -35,8 +35,6 @@ pub mod types;
 pub use ab_test::SearchABTestEngine;
 pub use adapter::{GenericSearchEngineAdapter, SearchEngineAdapter};
 pub use aggregator::deduplicator::ResultDeduplicator as Deduplicator;
-#[cfg(feature = "search-all")]
-pub use aggregator::enhanced::EnhancedSearchAggregator;
 pub use aggregator::SearchAggregator;
 pub use engine_trait::{SearchEngine, SearchRequest};
 pub use error::SearchError;

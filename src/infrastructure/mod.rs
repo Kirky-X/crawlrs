@@ -9,17 +9,16 @@
 /// 基础设施层负责与外部系统的交互，包括数据库、缓存、存储、消息队列等。
 ///
 /// 包含的子模块：
-/// - 缓存（cache）：提供缓存功能的实现（基于 oxcache）
 /// - 并发控制（concurrency）：提供细粒度的并发控制，支持不同级别的限制策略
 /// - 数据库（database）：提供数据库连接和实体映射
 /// - 持久化（persistence）：提供领域模型与数据库实体的转换（Mappers）
 /// - 指标（metrics）：提供系统监控和性能指标收集
 /// - 队列（queue）：提供任务队列和调度功能
 /// - 安全（security）：提供安全相关的功能，如API Key哈希
+/// - 缓存（oxcache）：基于 oxcache 组件的统一缓存实现
 ///
 /// 基础设施层遵循依赖倒置原则，依赖于领域层的抽象接口，
 /// 确保领域层保持纯粹的业务逻辑，不受技术实现的影响。
-pub mod cache;
 pub mod concurrency;
 pub mod database;
 pub mod dns;

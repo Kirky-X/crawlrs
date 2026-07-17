@@ -13,7 +13,7 @@ use log::warn;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::RwLock;
 
 /// Regex cache trait
 pub trait RegexCacheTrait: Send + Sync {
@@ -44,7 +44,12 @@ impl RegexCache {
     pub fn get_or_insert(&self, pattern: &str) -> Result<Regex, String> {
         let key = format!("regex:{}", pattern);
 
-        let compiled_read = futures::executor::block_on(self.compiled.read());
+        // Use std::sync::RwLock for sync access (no async block_on needed).
+        // Poisoning is ignored because the cache state remains usable even after a panic.
+        let compiled_read = self
+            .compiled
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(regex) = compiled_read.get(&key) {
             return Ok((**regex).clone());
         }
@@ -52,12 +57,17 @@ impl RegexCache {
 
         let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
 
-        let mut compiled_write = futures::executor::block_on(self.compiled.write());
+        let mut compiled_write = self
+            .compiled
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         compiled_write.insert(key.clone(), Arc::new(regex.clone()));
 
-        if let Err(e) = futures::executor::block_on(self.cache.set(&key, &pattern.to_string())) {
-            warn!("Failed to cache regex pattern: {}", e);
-        }
+        // Best-effort persistence to oxcache. Fire-and-forget via tokio::spawn
+        // because we're in a sync method and cannot await the async cache.set.
+        // The in-memory `compiled` HashMap is the primary cache; oxcache persistence
+        // is for cross-process sharing / restart survival and is non-essential.
+        self.try_persist_to_cache(&key, pattern);
 
         Ok(regex)
     }
@@ -72,7 +82,12 @@ impl RegexCache {
     pub fn get_or_compile(&self, pattern: &str) -> Result<Arc<Regex>, String> {
         let key = format!("regex:{}", pattern);
 
-        let compiled_read = futures::executor::block_on(self.compiled.read());
+        // Use std::sync::RwLock for sync access (no async block_on needed).
+        // Poisoning is ignored because the cache state remains usable even after a panic.
+        let compiled_read = self
+            .compiled
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(regex) = compiled_read.get(&key) {
             return Ok(regex.clone());
         }
@@ -81,14 +96,43 @@ impl RegexCache {
         let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
         let regex_arc = Arc::new(regex);
 
-        let mut compiled_write = futures::executor::block_on(self.compiled.write());
+        let mut compiled_write = self
+            .compiled
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         compiled_write.insert(key.clone(), regex_arc.clone());
 
-        if let Err(e) = futures::executor::block_on(self.cache.set(&key, &pattern.to_string())) {
-            warn!("Failed to cache regex pattern: {}", e);
-        }
+        // Best-effort persistence (see get_or_insert for rationale).
+        self.try_persist_to_cache(&key, pattern);
 
         Ok(regex_arc)
+    }
+
+    /// Best-effort persistence of a regex pattern to oxcache.
+    ///
+    /// Spawns a fire-and-forget task on the current tokio runtime (if any).
+    /// This avoids the deadlock-prone `futures::executor::block_on` pattern
+    /// that previously could panic when called from `spawn_blocking` or
+    /// non-tokio threads (no tokio runtime available).
+    ///
+    /// The in-memory `compiled` HashMap is the authoritative cache; oxcache
+    /// persistence is for cross-process sharing / restart survival only.
+    fn try_persist_to_cache(&self, key: &str, value: &str) {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let cache = Arc::clone(&self.cache);
+            let key = key.to_string();
+            let value = value.to_string();
+            // Spawn a detached task — fire-and-forget.
+            // Works in both async and spawn_blocking contexts because Handle::spawn
+            // only requires a Handle to the runtime, not active async execution.
+            let _ = handle.spawn(async move {
+                if let Err(e) = cache.set(&key, &value).await {
+                    warn!("Failed to cache regex pattern: {}", e);
+                }
+            });
+        }
+        // If not in tokio runtime (rare for this codebase), skip persistence silently.
+        // The in-memory `compiled` cache still provides correct results.
     }
 }
 
@@ -309,5 +353,108 @@ mod tests {
             .get_or_compile(r"[a-z]+")
             .expect("get_or_compile should succeed even when cache.set fails");
         assert!(regex.is_match("hello"));
+    }
+
+    // ========== 并发安全回归测试 ==========
+    // 之前 bug: 同步方法用 futures::executor::block_on 访问 tokio::sync::RwLock，
+    // 在多线程并发下会死锁。修复后改用 std::sync::RwLock，无 async/block_on 调用。
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_get_or_insert_no_deadlock() {
+        // 回归测试：多个线程并发调用同步方法 get_or_insert，必须不死锁。
+        // 之前用 futures::executor::block_on(tokio::sync::RwLock.read()) 会在
+        // 异步多线程环境下死锁（block_on 阻塞当前线程，无法让持锁任务释放）。
+        //
+        // 此测试只验证「不死锁 + 编译成功」，不验证 regex 匹配语义
+        // （不同 pattern 匹配不同字符类，统一字符串会引入 false negative）。
+        use std::time::Duration;
+        let cache = Arc::new(make_cache().await);
+
+        let mut handles = Vec::new();
+        for i in 0..8u32 {
+            let c = Arc::clone(&cache);
+            handles.push(tokio::task::spawn_blocking(move || {
+                let pattern = match i % 4 {
+                    0 => r"\d+",
+                    1 => r"[a-z]+",
+                    2 => r"\w+",
+                    _ => r"[A-Z]+",
+                };
+                // 只关心 compile 是否成功（Result<Regex, String>）
+                c.get_or_insert(pattern).map(|_| ())
+            }));
+        }
+
+        // 如果死锁，5 秒后会超时
+        for handle in handles {
+            let result = tokio::time::timeout(Duration::from_secs(5), handle)
+                .await
+                .expect("concurrent get_or_insert must not deadlock (timed out)");
+            // 验证 task 未 panic 且 regex 编译成功
+            result
+                .expect("task should not panic")
+                .expect("regex should compile");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_get_or_compile_no_deadlock() {
+        // 回归测试：多线程并发调用 get_or_compile，必须不死锁。
+        use std::time::Duration;
+        let cache = Arc::new(make_cache().await);
+
+        let mut handles = Vec::new();
+        for i in 0..8u32 {
+            let c = Arc::clone(&cache);
+            handles.push(tokio::task::spawn_blocking(move || {
+                let pattern = match i % 4 {
+                    0 => r"\d+",
+                    1 => r"[a-z]+",
+                    2 => r"\w+",
+                    _ => r"[A-Z]+",
+                };
+                c.get_or_compile(pattern).map(|_| ())
+            }));
+        }
+
+        for handle in handles {
+            let result = tokio::time::timeout(Duration::from_secs(5), handle)
+                .await
+                .expect("concurrent get_or_compile must not deadlock (timed out)");
+            result
+                .expect("task should not panic")
+                .expect("regex should compile");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_mixed_operations_no_deadlock() {
+        // 回归测试：混合并发调用 get_or_insert + get_or_compile，必须不死锁。
+        use std::time::Duration;
+        let cache = Arc::new(make_cache().await);
+
+        let patterns = [r"\d+", r"[a-z]+", r"\w+", r"[A-Z]+", r"\s+"];
+
+        let mut handles = Vec::new();
+        for i in 0..16u32 {
+            let c = Arc::clone(&cache);
+            let pattern = patterns[(i % 5) as usize].to_string();
+            handles.push(tokio::task::spawn_blocking(move || {
+                if i % 2 == 0 {
+                    c.get_or_insert(&pattern).map(|_| ())
+                } else {
+                    c.get_or_compile(&pattern).map(|_| ())
+                }
+            }));
+        }
+
+        for handle in handles {
+            let result = tokio::time::timeout(Duration::from_secs(5), handle)
+                .await
+                .expect("concurrent mixed operations must not deadlock (timed out)");
+            result
+                .expect("task should not panic")
+                .expect("regex should compile");
+        }
     }
 }

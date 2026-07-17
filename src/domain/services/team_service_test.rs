@@ -703,8 +703,9 @@ async fn test_validate_domain_blacklist_empty_blacklist_returns_allowed() {
 }
 
 #[tokio::test]
-async fn test_validate_domain_blacklist_substring_match() {
-    // domain.contains(blocked_domain) is used, so partial matches should trigger
+async fn test_validate_domain_blacklist_no_substring_false_positive() {
+    // Security fix: substring matching was removed to prevent false positives.
+    // "evil" in blacklist should NOT block "www.evil-domain.com" (different domain).
     let service = make_service(
         Arc::new(MockGeoService::new("US".to_string())),
         Arc::new(MockGeoRestrictionRepository),
@@ -716,8 +717,64 @@ async fn test_validate_domain_blacklist_substring_match() {
         ..Default::default()
     };
 
-    // "evil" is a substring of "www.evil-domain.com"
+    // "evil" is NOT the same domain as "www.evil-domain.com" — must be ALLOWED.
     let result = service.validate_domain_blacklist("www.evil-domain.com", &restrictions);
+    assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+}
+
+#[tokio::test]
+async fn test_validate_domain_blacklist_security_bypass_regression() {
+    // Security regression test: ensures substring matching cannot be exploited.
+    // - "example.com" blacklist must NOT block "evil-example.com" (different domain).
+    // - "example.com" blacklist MUST block exact + subdomain matches.
+    let service = make_service(
+        Arc::new(MockGeoService::new("US".to_string())),
+        Arc::new(MockGeoRestrictionRepository),
+    );
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        domain_blacklist: Some(vec!["example.com".to_string()]),
+        ..Default::default()
+    };
+
+    // False-positive case: "evil-example.com" must be ALLOWED (different domain).
+    let result = service.validate_domain_blacklist("evil-example.com", &restrictions);
+    assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
+
+    // True-positive: exact match must be DENIED.
+    let result = service.validate_domain_blacklist("example.com", &restrictions);
+    assert!(matches!(result, Ok(GeoRestrictionResult::Denied(_))));
+
+    // True-positive: proper subdomain must be DENIED.
+    let result = service.validate_domain_blacklist("sub.example.com", &restrictions);
+    assert!(matches!(result, Ok(GeoRestrictionResult::Denied(_))));
+}
+
+#[tokio::test]
+async fn test_validate_domain_blacklist_url_input_extracts_host() {
+    // URL inputs should have their host extracted before matching.
+    let service = make_service(
+        Arc::new(MockGeoService::new("US".to_string())),
+        Arc::new(MockGeoRestrictionRepository),
+    );
+
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        domain_blacklist: Some(vec!["malicious.com".to_string()]),
+        ..Default::default()
+    };
+
+    // URL with scheme + path
+    let result = service.validate_domain_blacklist("https://www.malicious.com/path", &restrictions);
+    assert!(matches!(result, Ok(GeoRestrictionResult::Denied(_))));
+
+    // Domain with port
+    let result = service.validate_domain_blacklist("malicious.com:8080", &restrictions);
+    assert!(matches!(result, Ok(GeoRestrictionResult::Denied(_))));
+
+    // Host with path only (no scheme)
+    let result = service.validate_domain_blacklist("malicious.com/admin", &restrictions);
     assert!(matches!(result, Ok(GeoRestrictionResult::Denied(_))));
 }
 

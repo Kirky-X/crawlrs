@@ -5,29 +5,37 @@
 
 use crate::utils::text_processing::processor::{CrawlProcessingError, CrawlTextProcessor};
 use log::{debug, error, info, warn};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct CrawlTextIntegration {
     processor: Arc<RwLock<CrawlTextProcessor>>,
-    enabled: bool,
+    enabled: Arc<AtomicBool>,
 }
 
 impl CrawlTextIntegration {
     pub fn new(enabled: bool) -> Self {
         Self {
             processor: Arc::new(RwLock::new(CrawlTextProcessor::new())),
-            enabled,
+            enabled: Arc::new(AtomicBool::new(enabled)),
         }
+    }
+
+    /// Returns whether text processing is currently enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::SeqCst)
     }
 
     pub async fn enable(&self) {
         let _processor = self.processor.write().await;
+        self.enabled.store(true, Ordering::SeqCst);
         info!("启用爬虫文本处理功能");
     }
 
     pub async fn disable(&self) {
         let _processor = self.processor.write().await;
+        self.enabled.store(false, Ordering::SeqCst);
         info!("禁用爬虫文本处理功能");
     }
 
@@ -38,7 +46,7 @@ impl CrawlTextIntegration {
         content_type: Option<&str>,
         status_code: u16,
     ) -> Result<ProcessedScrapeResponse, CrawlProcessingError> {
-        if !self.enabled {
+        if !self.is_enabled() {
             debug!("文本处理功能已禁用，直接返回原始内容");
             return Ok(ProcessedScrapeResponse {
                 original_content: String::from_utf8_lossy(content).into_owned(),
@@ -106,7 +114,7 @@ impl CrawlTextIntegration {
         &self,
         responses: Vec<ScrapeResponseInput>,
     ) -> Vec<Result<ProcessedScrapeResponse, CrawlProcessingError>> {
-        if !self.enabled {
+        if !self.is_enabled() {
             debug!("文本处理功能已禁用，批量返回原始内容");
             return responses
                 .into_iter()
@@ -303,29 +311,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_enable_method_does_not_panic() {
+    async fn test_enable_actually_enables_processing() {
+        // After fix: enable() must actually set enabled=true.
+        // Bug was: enable() only logged and did not mutate the enabled flag.
         let integration = CrawlTextIntegration::new(false);
+        assert!(!integration.is_enabled());
+
         integration.enable().await;
-        // enable() only logs; enabled flag unchanged (still false)
-        let content = b"test";
+        assert!(integration.is_enabled());
+
+        // Processing should now actually happen (success=true for valid HTML)
+        let html = b"<html><body><p>Test content</p></body></html>";
         let result = integration
-            .process_scrape_response(content, "http://example.com", None, 200)
+            .process_scrape_response(html, "http://example.com", Some("text/html"), 200)
+            .await
+            .unwrap();
+        assert!(result.processing_success);
+        assert!(result.processed_content.contains("Test content"));
+    }
+
+    #[tokio::test]
+    async fn test_disable_actually_disables_processing() {
+        // After fix: disable() must actually set enabled=false.
+        // Bug was: disable() only logged and did not mutate the enabled flag.
+        let integration = CrawlTextIntegration::new(true);
+        assert!(integration.is_enabled());
+
+        integration.disable().await;
+        assert!(!integration.is_enabled());
+
+        // Processing should now skip (success=false)
+        let html = b"<html><body><p>Test</p></body></html>";
+        let result = integration
+            .process_scrape_response(html, "http://example.com", Some("text/html"), 200)
             .await
             .unwrap();
         assert!(!result.processing_success);
     }
 
     #[tokio::test]
-    async fn test_disable_method_does_not_panic() {
-        let integration = CrawlTextIntegration::new(true);
+    async fn test_is_enabled_reflects_current_state() {
+        let integration = CrawlTextIntegration::new(false);
+        assert!(!integration.is_enabled());
+
+        integration.enable().await;
+        assert!(integration.is_enabled());
+
         integration.disable().await;
-        // disable() only logs; enabled flag unchanged (still true)
-        let html = b"<html><body><p>Test</p></body></html>";
-        let result = integration
-            .process_scrape_response(html, "http://example.com", Some("text/html"), 200)
-            .await
-            .unwrap();
-        assert!(result.processing_success);
+        assert!(!integration.is_enabled());
     }
 
     #[test]

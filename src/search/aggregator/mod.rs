@@ -9,7 +9,6 @@
 //! with caching and deduplication support.
 
 pub mod deduplicator;
-pub mod enhanced;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
