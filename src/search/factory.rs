@@ -3,11 +3,8 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[cfg(feature = "engine-fire-cdp")]
-use crate::engines::client::fire_cdp::FireEngineCdp;
-
-#[cfg(feature = "engine-fire-tls")]
-use crate::engines::client::fire_tls::FireEngineTls;
+#[cfg(any(feature = "engine-fire-cdp", feature = "engine-fire-tls"))]
+use crate::engines::client::flare_solverr::FlareSolverrEngine;
 
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
@@ -184,16 +181,23 @@ impl SearchEngineFactory {
         let _proxy_url = self.config_service.get_proxy_url();
 
         // 注册 Fire Engine CDP（用于需要完整浏览器自动化的网站）
+        // 原 FireEngineCdp 已合并到 FlareSolverrEngine with Cdp mode
         #[cfg(feature = "engine-fire-cdp")]
         {
             let fire_engine_cdp = if let Some(ref proxy) = _proxy_url {
-                Arc::new(FireEngineCdp::with_proxy(self.http_client.clone(), proxy))
+                Arc::new(FlareSolverrEngine::with_cdp_mode(
+                    self.http_client.clone(),
+                    Some(proxy),
+                ))
             } else {
-                Arc::new(FireEngineCdp::new(self.http_client.clone()))
+                Arc::new(FlareSolverrEngine::with_cdp_mode(
+                    self.http_client.clone(),
+                    None,
+                ))
             };
             engines.push(fire_engine_cdp.clone() as Arc<dyn ScraperEngine>);
             info!(
-                "FireEngineCdp 已注册{}",
+                "FireEngineCdp (FlareSolverrEngine Cdp mode) 已注册{}",
                 _proxy_url
                     .as_ref()
                     .map(|p| format!("（代理: {}）", p))
@@ -202,12 +206,19 @@ impl SearchEngineFactory {
         }
 
         // 注册 Fire Engine TLS（用于需要TLS指纹对抗的网站）
+        // 原 FireEngineTls 已合并到 FlareSolverrEngine with Tls mode
         #[cfg(feature = "engine-fire-tls")]
         {
             let fire_engine_tls = if let Some(ref proxy) = _proxy_url {
-                Arc::new(FireEngineTls::with_proxy(self.http_client.clone(), proxy))
+                Arc::new(FlareSolverrEngine::with_tls_mode(
+                    self.http_client.clone(),
+                    Some(proxy),
+                ))
             } else {
-                Arc::new(FireEngineTls::new(self.http_client.clone()))
+                Arc::new(FlareSolverrEngine::with_tls_mode(
+                    self.http_client.clone(),
+                    None,
+                ))
             };
             engines.push(fire_engine_tls.clone() as Arc<dyn ScraperEngine>);
         }

@@ -6,11 +6,11 @@
 //! Scraper engines initialization and configuration.
 
 use crate::config::engines::EngineSettings;
-#[cfg(feature = "engine-fire-cdp")]
-use crate::engines::client::fire_cdp::FireEngineCdp;
-#[cfg(feature = "engine-fire-tls")]
-use crate::engines::client::fire_tls::FireEngineTls;
-#[cfg(feature = "engine-flaresolverr")]
+#[cfg(any(
+    feature = "engine-fire-cdp",
+    feature = "engine-fire-tls",
+    feature = "engine-flaresolverr"
+))]
 use crate::engines::client::flare_solverr::FlareSolverrEngine;
 #[cfg(feature = "engine-playwright")]
 use crate::engines::client::playwright::PlaywrightEngine;
@@ -67,7 +67,7 @@ pub fn init_engines(
             "Fire Engine TLS enabled with URL: {}",
             engine_config.fire_tls.url
         );
-        engines.push(Arc::new(FireEngineTls::with_url_and_proxy(
+        engines.push(Arc::new(FlareSolverrEngine::with_tls_mode_and_url(
             http_client.clone(),
             &engine_config.fire_tls.url,
             Some(proxy_url),
@@ -80,7 +80,7 @@ pub fn init_engines(
             "Fire Engine CDP enabled with URL: {}",
             engine_config.fire_cdp.url
         );
-        engines.push(Arc::new(FireEngineCdp::with_url_and_proxy(
+        engines.push(Arc::new(FlareSolverrEngine::with_cdp_mode_and_url(
             http_client.clone(),
             &engine_config.fire_cdp.url,
             Some(proxy_url),

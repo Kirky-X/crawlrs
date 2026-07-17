@@ -57,22 +57,34 @@ impl EngineClientTrait for EngineClientComponent {
 }
 
 /// EngineRouter component
+///
+/// 持有 `Arc<EngineRouter>` 持久化实例，避免每次 route / aggregate 调用时
+/// 重建 EngineRouter（原 BUG：每次方法调用都 `EngineRouter::new(self.engines.clone())`）。
+/// EngineRouter 内部所有字段均为 Arc 共享或 Copy 类型，因此可以安全地通过 Arc 共享。
 pub struct EngineRouterComponent {
-    /// List of engines
-    engines: Vec<Arc<dyn crate::engines::engine_client::ScraperEngine>>,
+    /// 持久化的 EngineRouter 实例
+    router: Arc<EngineRouter>,
 }
 
 impl EngineRouterComponent {
     /// Create a new EngineRouterComponent with explicit dependencies
+    ///
+    /// 在构造时一次性创建 EngineRouter，后续所有 EngineRouterTrait 方法
+    /// 都委托给该持久化实例，避免重复构造的性能损耗。
     pub fn new(engines: Vec<Arc<dyn crate::engines::engine_client::ScraperEngine>>) -> Self {
-        Self { engines }
+        Self {
+            router: Arc::new(EngineRouter::new(engines)),
+        }
     }
 
     /// Create with default engines (empty)
     pub fn with_defaults() -> Self {
-        Self {
-            engines: Vec::new(),
-        }
+        Self::new(Vec::new())
+    }
+
+    /// 获取底层 EngineRouter 的 Arc 引用（用于需要直接访问的场景）
+    pub fn router(&self) -> &Arc<EngineRouter> {
+        &self.router
     }
 }
 
@@ -85,8 +97,8 @@ impl EngineRouterTrait for EngineRouterComponent {
         crate::engines::engine_client::InternalScrapeResponse,
         crate::engines::engine_client::EngineError,
     > {
-        let router = EngineRouter::new(self.engines.clone());
-        router._route_impl(request).await
+        // 委托给持久化 router 实例，不再每次重建
+        self.router.route(request).await
     }
 
     async fn aggregate(
@@ -96,26 +108,23 @@ impl EngineRouterTrait for EngineRouterComponent {
         crate::engines::engine_client::InternalScrapeResponse,
         crate::engines::engine_client::EngineError,
     > {
-        let router = EngineRouter::new(self.engines.clone());
-        // For now, delegate to route
-        router._route_impl(request).await
+        // 保持原行为：aggregate 委托给 _route_impl（含 SSRF 检查）
+        // 而非 _aggregate_impl（不做 SSRF 检查）
+        self.router._route_impl(request).await
     }
 
     fn get_engine_stats(
         &self,
     ) -> std::collections::HashMap<String, crate::engines::router::EngineStats> {
-        let router = EngineRouter::new(self.engines.clone());
-        router.get_engine_stats()
+        self.router.get_engine_stats()
     }
 
     fn reset_engine_stats(&self, engine_name: &str) {
-        let router = EngineRouter::new(self.engines.clone());
-        router.reset_engine_stats(engine_name);
+        self.router.reset_engine_stats(engine_name);
     }
 
     fn registered_engines(&self) -> Vec<String> {
-        let router = EngineRouter::new(self.engines.clone());
-        router.registered_engines()
+        self.router.registered_engines()
     }
 }
 

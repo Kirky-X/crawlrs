@@ -8,6 +8,11 @@
 //! FlareSolverr is a proxy server that uses Selenium with undetected-chromedriver
 //! to bypass Cloudflare protection and other anti-bot measures.
 //!
+//! 本模块合并了原 `FireEngineCdp`（CDP 模式）和 `FireEngineTls`（TLS 模式）
+//! 两个独立引擎，统一为 `FlareSolverrEngine` + `FlareSolverrMode` 模式枚举。
+//! 三种模式（Full / Cdp / Tls）共享同一个 FlareSolverr API 客户端实现，
+//! 仅在 support_score 和 name 上有差异，Tls 模式额外拒绝截图请求。
+//!
 //! This engine is particularly useful for:
 //! - Google search (bypasses CAPTCHA)
 //! - Cloudflare-protected sites
@@ -23,6 +28,61 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// FlareSolverr 工作模式枚举
+///
+/// 合并原 `FireEngineCdp` / `FireEngineTls` / `FlareSolverrEngine` 三个引擎。
+/// 所有模式共享 FlareSolverr API 调用逻辑，仅在以下方面有差异：
+/// - `support_score`：不同模式的优先级策略
+/// - `name`：用于路由器注册和日志
+/// - `scrape`：Tls 模式拒绝截图请求
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlareSolverrMode {
+    /// 完整模式（原 FlareSolverrEngine）
+    ///
+    /// 支持完整功能：JS 渲染、session 管理、CAPTCHA 检测、截图返回。
+    /// 最适合 needs_js 请求（score=100）。
+    Full,
+    /// CDP 模式（原 FireEngineCdp）
+    ///
+    /// 支持完整浏览器自动化、JS 渲染、截图、TLS 指纹对抗。
+    /// 成本较高，速度较慢。
+    Cdp,
+    /// TLS 模式（原 FireEngineTls）
+    ///
+    /// 专注于 TLS 指纹对抗，速度较快，不支持截图和复杂 JS 交互。
+    /// 拒绝 needs_screenshot 请求。
+    Tls,
+}
+
+impl Default for FlareSolverrMode {
+    fn default() -> Self {
+        Self::Full
+    }
+}
+
+impl FlareSolverrMode {
+    /// 获取该模式下的引擎名称（用于 ScraperEngine::name()）
+    pub fn engine_name(&self) -> &'static str {
+        match self {
+            Self::Full => "flaresolverr",
+            Self::Cdp => "fire_engine_cdp",
+            Self::Tls => "fire_engine_tls",
+        }
+    }
+
+    /// 是否支持 TLS 指纹对抗
+    ///
+    /// - Full: FlareSolverr 本身不直接暴露 TLS 指纹控制（保持原行为）
+    /// - Cdp: 支持（通过浏览器自动化）
+    /// - Tls: 支持（专门为 TLS 指纹对抗设计）
+    pub fn supports_tls_fingerprint(&self) -> bool {
+        match self {
+            Self::Full => false,
+            Self::Cdp | Self::Tls => true,
+        }
+    }
+}
+
 /// FlareSolverr configuration
 #[derive(Debug, Clone)]
 pub struct FlareSolverrConfig {
@@ -32,6 +92,10 @@ pub struct FlareSolverrConfig {
     pub timeout_seconds: u64,
     /// Default session ID (optional)
     pub session_id: Option<String>,
+    /// 工作模式（默认 Full）
+    pub mode: FlareSolverrMode,
+    /// 代理 URL（用于 Cdp/Tls 模式记录到 X-Proxy-URL header）
+    pub proxy_url: Option<String>,
 }
 
 impl Default for FlareSolverrConfig {
@@ -47,6 +111,8 @@ impl Default for FlareSolverrConfig {
             url: validated_url,
             timeout_seconds: 60,
             session_id: None,
+            mode: FlareSolverrMode::default(),
+            proxy_url: None,
         }
     }
 }
@@ -66,6 +132,9 @@ fn validate_flaresolverr_url(url: &str) -> Result<String, String> {
 }
 
 /// FlareSolverr HTTP client
+///
+/// 统一的 FlareSolverr API 客户端，通过 `mode` 字段区分工作模式。
+/// 取代原 `FireEngineCdp` / `FireEngineTls` / `FlareSolverrEngine` 三个独立 struct。
 #[derive(Debug, Clone)]
 pub struct FlareSolverrEngine {
     /// HTTP client for FlareSolverr API
@@ -77,17 +146,19 @@ pub struct FlareSolverrEngine {
 }
 
 impl FlareSolverrEngine {
-    /// Create a new FlareSolverrEngine with default configuration
+    /// Create a new FlareSolverrEngine with default configuration (Full mode)
     pub fn new(client: Arc<Client>) -> Self {
         Self::with_config(client, FlareSolverrConfig::default())
     }
 
-    /// Create a new FlareSolverrEngine from configuration URL
+    /// Create a new FlareSolverrEngine from configuration URL (Full mode)
     pub fn with_url(client: Arc<Client>, url: impl Into<String>) -> Self {
         let config = FlareSolverrConfig {
             url: url.into(),
             timeout_seconds: 60,
             session_id: None,
+            mode: FlareSolverrMode::Full,
+            proxy_url: None,
         };
         Self::with_config(client, config)
     }
@@ -103,6 +174,74 @@ impl FlareSolverrEngine {
         }
     }
 
+    /// Create a FlareSolverrEngine in CDP mode with proxy
+    ///
+    /// 取代原 `FireEngineCdp::new` / `FireEngineCdp::with_proxy`。
+    /// `proxy_url` 仅用于记录到 X-Proxy-URL header 供 FlareSolverr 识别代理。
+    pub fn with_cdp_mode(client: Arc<Client>, proxy_url: Option<&str>) -> Self {
+        Self::with_mode_and_proxy(client, FlareSolverrMode::Cdp, proxy_url)
+    }
+
+    /// Create a FlareSolverrEngine in CDP mode with URL and proxy
+    ///
+    /// 取代原 `FireEngineCdp::with_url_and_proxy`。
+    pub fn with_cdp_mode_and_url(
+        client: Arc<Client>,
+        base_url: &str,
+        proxy_url: Option<&str>,
+    ) -> Self {
+        let config = FlareSolverrConfig {
+            url: base_url.to_string(),
+            timeout_seconds: 60,
+            session_id: None,
+            mode: FlareSolverrMode::Cdp,
+            proxy_url: proxy_url.map(|s| s.to_string()),
+        };
+        Self::with_config(client, config)
+    }
+
+    /// Create a FlareSolverrEngine in TLS mode with proxy
+    ///
+    /// 取代原 `FireEngineTls::new` / `FireEngineTls::with_proxy`。
+    pub fn with_tls_mode(client: Arc<Client>, proxy_url: Option<&str>) -> Self {
+        Self::with_mode_and_proxy(client, FlareSolverrMode::Tls, proxy_url)
+    }
+
+    /// Create a FlareSolverrEngine in TLS mode with URL and proxy
+    ///
+    /// 取代原 `FireEngineTls::with_url_and_proxy`。
+    pub fn with_tls_mode_and_url(
+        client: Arc<Client>,
+        base_url: &str,
+        proxy_url: Option<&str>,
+    ) -> Self {
+        let config = FlareSolverrConfig {
+            url: base_url.to_string(),
+            timeout_seconds: 60,
+            session_id: None,
+            mode: FlareSolverrMode::Tls,
+            proxy_url: proxy_url.map(|s| s.to_string()),
+        };
+        Self::with_config(client, config)
+    }
+
+    /// 通用构造：根据 mode 和 proxy_url 创建实例（base_url 用默认或环境变量）
+    fn with_mode_and_proxy(
+        client: Arc<Client>,
+        mode: FlareSolverrMode,
+        proxy_url: Option<&str>,
+    ) -> Self {
+        let config = FlareSolverrConfig {
+            url: std::env::var("FLARESOLVERR_URL")
+                .unwrap_or_else(|_| "http://localhost:8191".to_string()),
+            timeout_seconds: 60,
+            session_id: None,
+            mode,
+            proxy_url: proxy_url.map(|s| s.to_string()),
+        };
+        Self::with_config(client, config)
+    }
+
     /// Create a builder for FlareSolverrEngine
     pub fn builder() -> FlareSolverrEngineBuilder {
         FlareSolverrEngineBuilder::default()
@@ -111,6 +250,11 @@ impl FlareSolverrEngine {
     /// Get the current session ID
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
+    }
+
+    /// Get the current working mode
+    pub fn mode(&self) -> FlareSolverrMode {
+        self.config.mode
     }
 
     /// Get the API URL for FlareSolverr
@@ -227,6 +371,18 @@ impl FlareSolverrEngineBuilder {
         self
     }
 
+    /// Set working mode
+    pub fn with_mode(mut self, mode: FlareSolverrMode) -> Self {
+        self.config.mode = mode;
+        self
+    }
+
+    /// Set proxy URL (for Cdp/Tls modes)
+    pub fn with_proxy(mut self, proxy_url: &str) -> Self {
+        self.config.proxy_url = Some(proxy_url.to_string());
+        self
+    }
+
     /// Build the FlareSolverrEngine
     pub fn build(self, client: Arc<Client>) -> FlareSolverrEngine {
         FlareSolverrEngine::with_config(client, self.config)
@@ -271,6 +427,9 @@ struct FlareSolverrRequest {
     cookies: Option<Vec<Cookie>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     post_data: Option<String>,
+    /// 自定义请求头（用于 Cdp/Tls 模式传递 X-Proxy-URL 等）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    custom_headers: Option<HashMap<String, String>>,
 }
 
 /// Cookie for FlareSolverr
@@ -325,7 +484,30 @@ impl ScraperEngine for FlareSolverrEngine {
         if request.method != crate::engines::engine_client::HttpMethod::Get {
             return Err(EngineError::Other("Unsupported HTTP method".to_string()));
         }
+
+        // Tls 模式拒绝截图请求（保持原 FireEngineTls 行为）
+        if self.config.mode == FlareSolverrMode::Tls && request.needs_screenshot {
+            return Err(EngineError::Other(
+                "FireEngineTls does not support screenshots".to_string(),
+            ));
+        }
+
         let start_time = std::time::Instant::now();
+
+        // Determine proxy to use: request-level override or engine-level default
+        let proxy_url = request.proxy.as_ref().or(self.config.proxy_url.as_ref());
+
+        // Prepare custom headers with proxy info if configured (合并原 FireEngineCdp/Tls 行为)
+        let custom_headers = proxy_url.map(|proxy| {
+            let mut headers = std::collections::HashMap::new();
+            headers.insert("X-Proxy-URL".to_string(), proxy.clone());
+            debug!(
+                "{} using proxy: {}",
+                self.config.mode.engine_name(),
+                proxy
+            );
+            headers
+        });
 
         // Build FlareSolverr request
         let fs_request = FlareSolverrRequest {
@@ -333,7 +515,11 @@ impl ScraperEngine for FlareSolverrEngine {
             url: request.url.clone(),
             session: self.session_id.clone(),
             max_timeout: Some(request.timeout.as_millis() as u64),
-            return_screenshot: None,
+            return_screenshot: if request.needs_screenshot {
+                Some(true)
+            } else {
+                None
+            },
             wait_in_seconds: if request.sync_wait_ms > 0 {
                 Some(request.sync_wait_ms as u64 / 1000)
             } else {
@@ -342,6 +528,7 @@ impl ScraperEngine for FlareSolverrEngine {
             disable_media: None,
             cookies: None,
             post_data: None,
+            custom_headers,
         };
 
         // Add custom headers if present (FlareSolverr doesn't support custom headers directly,
@@ -363,8 +550,10 @@ impl ScraperEngine for FlareSolverrEngine {
         };
 
         debug!(
-            "FlareSolverr request: url={}, session={:?}",
-            request.url, fs_request.session
+            "FlareSolverr request: mode={}, url={}, session={:?}",
+            self.config.mode.engine_name(),
+            request.url,
+            fs_request.session
         );
 
         // Send request to FlareSolverr
@@ -447,7 +636,8 @@ impl ScraperEngine for FlareSolverrEngine {
         };
 
         info!(
-            "FlareSolverr success: status={}, time={}ms, content_length={}",
+            "FlareSolverr success: mode={}, status={}, time={}ms, content_length={}",
+            self.config.mode.engine_name(),
             scrape_response.status_code,
             response_time_ms,
             scrape_response.content.len()
@@ -458,37 +648,79 @@ impl ScraperEngine for FlareSolverrEngine {
 
     /// Calculate support score for the request
     ///
-    /// # Arguments
-    ///
-    /// * `request` - The scrape request
-    ///
-    /// # Returns
-    ///
-    /// Support score (0-100). FlareSolverr is best for:
-    /// - JavaScript-heavy sites (returns 100)
-    /// - Cloudflare/protected sites (returns 100)
-    /// - Static content (returns 80, slightly lower than Reqwest for performance)
+    /// 根据 `mode` 返回不同的优先级分数：
+    /// - `Full`：原 FlareSolverrEngine 行为，needs_js=100, default=80
+    /// - `Cdp`：原 FireEngineCdp 行为，全功能但成本高
+    /// - `Tls`：原 FireEngineTls 行为，TLS 指纹优先，不支持截图
     fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
         if request.method != crate::engines::engine_client::HttpMethod::Get {
             return 0;
         }
-        // FlareSolverr is excellent for JS rendering and anti-bot protection
-        if request.needs_js {
-            return 100;
-        }
 
-        // For non-JS requests, still useful for protected sites
-        // But Reqwest would be faster for simple static content
-        80
+        match self.config.mode {
+            FlareSolverrMode::Full => {
+                // FlareSolverr is excellent for JS rendering and anti-bot protection
+                if request.needs_js {
+                    return 100;
+                }
+                // For non-JS requests, still useful for protected sites
+                // But Reqwest would be faster for simple static content
+                80
+            }
+            FlareSolverrMode::Cdp => {
+                // 如果需要 TLS 指纹且需要截图，这是最佳选择
+                if request.needs_tls_fingerprint && request.needs_screenshot {
+                    return 100;
+                }
+                // 如果明确请求使用 Fire Engine
+                if request.use_fire_engine {
+                    return 100;
+                }
+                // 如果需要截图，但不需要 TLS，Playwright 可能更好，但这个也能做
+                if request.needs_screenshot {
+                    return 80;
+                }
+                // 如果需要 JS，支持
+                if request.needs_js {
+                    return 90;
+                }
+                // 如果有交互动作，支持
+                if !request.actions.is_empty() {
+                    return 90;
+                }
+                // 成本较高，默认优先级低
+                40
+            }
+            FlareSolverrMode::Tls => {
+                // 如果明确请求使用 Fire Engine (TLS 模式)
+                if request.use_fire_engine {
+                    return 95;
+                }
+                // 如果需要 TLS 指纹但不需要截图，TLS Engine 是最佳选择
+                if request.needs_tls_fingerprint {
+                    return 90;
+                }
+                // 如果需要 JS，支持
+                if request.needs_js {
+                    return 60;
+                }
+                // 如果有交互动作，支持但不是最佳
+                if !request.actions.is_empty() {
+                    return 50;
+                }
+                // 成本低，速度快，默认优先级高
+                70
+            }
+        }
     }
 
     /// Get engine name
     fn name(&self) -> &'static str {
-        "flaresolverr"
+        self.config.mode.engine_name()
     }
 
-    /// FlareSolverr doesn't support TLS fingerprinting directly
+    /// 是否支持 TLS 指纹对抗（根据 mode 返回）
     fn supports_tls_fingerprint(&self) -> bool {
-        false
+        self.config.mode.supports_tls_fingerprint()
     }
 }
