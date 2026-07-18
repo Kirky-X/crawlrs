@@ -135,34 +135,62 @@
 git clone https://github.com/your-org/crawlrs.git
 cd crawlrs
 
-# 使用 standard 预设安装（lite 预设 + Playwright + metrics）
+# 使用 standard 预设安装（核心栈 + Playwright + metrics）
 cargo build --release --features standard
 
-# 安装所有特性（PostgreSQL + 所有引擎 + api-sdk）
+# 安装所有特性（standard + engine-flaresolverr）
 cargo build --release --features full
 
 # 使用自定义特性安装
-cargo build --release --features "engine-playwright,dbnexus-postgres,metrics"
+cargo build --release --features "engine-playwright,metrics"
 ```
 
 ### 特性标志
 
-> **注意：** `default = []` — 默认不启用任何特性。使用预设（`lite` / `standard` / `full`）或显式列出所需特性。
+> **注意：** `default = []` — 默认不启用任何特性。使用预设（`standard` / `full`）或显式列出所需特性。
+
+> **核心栈自 v0.2 起为非可选。** 核心依赖（oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit + scraper / chardetng / encoding_rs / robotstxt）与 HTTP 抓取栈始终编译，不再以 feature 形式暴露。
 
 | 特性 | 描述 | 默认 |
 |---------|-------------|----------|
-| `engine-reqwest` | 基础 HTTP 客户端 | ❌ 否 |
 | `engine-playwright` | 基于 Chromium 的浏览器自动化 | ❌ 否 |
 | `engine-flaresolverr` | FlareSolverr 反爬虫保护（涵盖 Full/Cdp/Tls 模式） | ❌ 否 |
-| `rate-limiting` | 基于 limiteron 的速率限制 | ❌ 否 |
 | `metrics` | Prometheus 指标导出 | ❌ 否 |
-| `dbnexus-postgres` | PostgreSQL 数据库（通过 dbnexus）— 唯一 DB 后端 | ❌ 否 |
-| `oxcache-cache` | oxcache 多后端缓存 | ❌ 否 |
-| `logging` | inklog 结构化日志 | ❌ 否 |
-| `config` | confers 配置管理 | ❌ 否 |
-| `api-sdk` | sdforge SDK 接口层 | ❌ 否 |
 | `genai-llm` | 基于 genai 的 LLM 抽取 | ❌ 否 |
 | `browser-download` | 自动下载 Playwright 浏览器 | ❌ 否 |
+
+> **说明：** `openapi` 不是 Cargo feature——它是 `sdforge_macros` 的 `#[forge]` 宏生成的 cfg 标记，用于 OpenAPI 规范输出。用户无需显式启用；Task9 后 sdforge 总是编译，openapi 自动生效。
+
+### 预设与编译体积
+
+本项目通过 Cargo 特性控制可选功能。自 v0.2 起，核心栈（oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。
+
+| 预设 | 特性组合 | 二进制大小 | 适用场景 |
+|-----|---------|-----------|---------|
+| standard | `engine-playwright, metrics` | ~35MB | 需要 JS 渲染（核心栈默认包含） |
+| full | `standard + engine-flaresolverr` | ~52MB | 所有功能 |
+
+> **注意：** `default = []` 不出现在预设表中，因为它不启用任何可选特性，仅编译核心栈（约 ~30MB）；用于按需显式启用场景。
+
+### 自定义组合
+
+```bash
+# 自定义组合：核心栈始终编译，仅需指定可选特性
+cargo build --release --features "engine-playwright,metrics,genai-llm"
+
+# 仅核心栈（无任何可选特性）
+cargo build --release --no-default-features
+```
+
+### 特性参考
+
+| 特性 | 描述 | 影响 |
+|------|------|------|
+| `engine-playwright` | Playwright JS 渲染引擎 | +8MB |
+| `engine-flaresolverr` | FlareSolverr 引擎（合并原 fire-cdp / fire-tls / flaresolverr 三引擎，通过 `FlareSolverrMode` 枚举区分 Full/Cdp/Tls 模式） | - |
+| `metrics` | 指标监控 | - |
+| `genai-llm` | genai LLM 抽取 | - |
+| `browser-download` | 自动下载 Playwright 浏览器 | - |
 
 ---
 
@@ -333,7 +361,7 @@ flowchart TB
 |-----------|------------|---------|
 | Web 框架 | Axum | 0.8 |
 | 异步运行时 | Tokio | 1.48 |
-| 数据库 ORM | Sea-ORM 2.0.0-rc（通过 dbnexus 0.2） | - |
+| 数据库 ORM | Sea-ORM 2.0.0-rc（通过 dbnexus 0.4） | - |
 | 数据库 | PostgreSQL | 14+ |
 | 缓存 | oxcache (moka) | 0.3 |
 | HTTP 客户端 | Reqwest | 0.12 |

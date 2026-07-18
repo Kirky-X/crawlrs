@@ -32,7 +32,6 @@ pub enum FeatureFlagRepositoryError {
     },
 }
 
-#[cfg(feature = "dbnexus-postgres")]
 impl From<sea_orm::DbErr> for FeatureFlagRepositoryError {
     fn from(err: sea_orm::DbErr) -> Self {
         FeatureFlagRepositoryError::DatabaseError(err.to_string())

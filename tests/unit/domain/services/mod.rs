@@ -5,7 +5,6 @@
 
 pub mod crawl_service_test;
 pub mod llm_service_test;
-#[cfg(feature = "rate-limiting")]
 pub mod rate_limiting_service_test;
 pub mod search_service_test;
 

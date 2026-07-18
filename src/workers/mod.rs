@@ -10,9 +10,7 @@
 pub mod backlog_worker;
 pub mod errors;
 pub mod expiration_worker;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod manager;
-#[cfg(all(feature = "engine-reqwest", feature = "dbnexus-postgres"))]
 pub mod scrape_worker;
 pub mod task_state_machine;
 pub mod webhook_worker;

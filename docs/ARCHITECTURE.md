@@ -44,7 +44,7 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 2. **Scalability** - Horizontal scaling capabilities
 3. **Type Safety** - Leverage Rust's type system for compile-time safety
 4. **Flexibility** - Plugin-based architecture for engines and extensions
-5. **Observability** - Built-in metrics and inklog 0.1.2 structured logging (replaces tracing; provides console, file, compression, encryption, database, and HTTP sinks; project code uses the `log::` facade which inklog installs as an adapter)
+5. **Observability** - Built-in metrics and inklog 0.1 structured logging (replaces tracing; provides console, file, compression, encryption, database, and HTTP sinks; project code uses the `log::` facade which inklog installs as an adapter). inklog is a non-optional core dependency (Task9: 7 components are non-optional).
 
 ---
 
@@ -281,7 +281,7 @@ presentation/
 
 **SDK Interface Layer (sdforge):**
 
-The presentation layer includes an SDK interface built on **sdforge**, which wraps domain services (`SearchService`, `TaskQueue`, `CrawlRepository`) as HTTP endpoints via sdforge's `#[service_api]` macro. This SDK layer is gated behind the `api-sdk` feature flag. All SDK handlers extract authentication context from `AuthState` (populated by `auth_middleware`), never from the request body.
+The presentation layer includes an SDK interface built on **sdforge**, which wraps domain services (`SearchService`, `TaskQueue`, `CrawlRepository`) as HTTP endpoints via sdforge's `#[service_api]` macro. This SDK layer is built on sdforge 0.4, which is a non-optional core dependency since Task9. All SDK handlers extract authentication context from `AuthState` (populated by `auth_middleware`), never from the request body.
 
 **Key Responsibilities:**
 
@@ -493,12 +493,12 @@ infrastructure/
 **Technology:**
 - **PostgreSQL** - Production-grade RDBMS (the only supported backend)
 
-**ORM:** dbnexus 0.2 (builds on Sea-ORM 2.0.0-rc)
+**ORM:** dbnexus 0.4 (builds on Sea-ORM 2.0.0-rc)
 
-Database access is now provided through **dbnexus 0.2**, which builds on top of Sea-ORM 2.0.0-rc. dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access, query builder, and migration management.
+Database access is now provided through **dbnexus 0.4**, which builds on top of Sea-ORM 2.0.0-rc. dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access, query builder, and migration management.
 
-**Feature Flag:**
-- `dbnexus-postgres` - PostgreSQL backend (the only supported backend; SQLite support has been removed)
+**Backend:**
+- PostgreSQL is the only supported backend (SQLite support has been removed); dbnexus is a non-optional core dependency (Task9).
 
 **Key Tables:**
 
@@ -517,7 +517,7 @@ Database access is now provided through **dbnexus 0.2**, which builds on top of 
 
 **Technology:** oxcache 0.3 (memory backend)
 
-Caching is provided through **oxcache 0.3**, an in-memory cache layer gated behind the `oxcache-cache` feature flag (enabled by the `lite`, `standard`, and `full` meta-features). oxcache supports the following features:
+Caching is provided through **oxcache 0.3**, an in-memory cache layer and non-optional core dependency (Task9: 7 components are non-optional; the `oxcache-cache` feature flag has been removed). oxcache supports the following features:
 - moka (in-memory)
 - Serialization
 - Batch-write
@@ -1059,9 +1059,9 @@ TTL: configurable
 
 ## Rate Limiting
 
-**Technology:** limiteron 0.2.1
+**Technology:** limiteron 0.2
 
-Rate limiting is implemented using **limiteron 0.2.1**, which provides:
+Rate limiting is implemented using **limiteron 0.2**, which provides:
 - Token bucket rate limiting
 - Ban manager
 - Quota control

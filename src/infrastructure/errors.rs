@@ -15,7 +15,6 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum InfrastructureError {
     // ==================== 数据库错误 ====================
-    #[cfg(feature = "dbnexus-postgres")]
     #[error("数据库连接失败: {0}")]
     DatabaseConnection(#[from] sea_orm::DbErr),
 

@@ -3,9 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[cfg(feature = "dbnexus-postgres")]
 pub mod audit_log_repository;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod auth_scope_repository;
 pub mod crawl_repository;
 /// 仓库接口模块
@@ -29,7 +27,6 @@ pub mod crawl_repository;
 pub mod credits_repository;
 pub mod feature_flag_repository;
 pub mod geo_restriction_repository;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod scrape_result_repository;
 pub mod task_repository;
 pub mod tasks_backlog_repository;

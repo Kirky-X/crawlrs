@@ -7,23 +7,15 @@
 ///
 /// 包含各个API端点的具体处理逻辑
 /// 每个处理器负责处理特定类型的HTTP请求并返回响应
-#[cfg(feature = "dbnexus-postgres")]
 pub mod audit_handler;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod crawl_handler;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod extract_handler;
 pub mod metrics_handler;
 pub mod response_builder;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod scrape_handler;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod search_handler;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod task_handler;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod team_handler;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod webhook_handler;
 
 use crate::domain::models::Task;

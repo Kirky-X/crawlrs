@@ -44,7 +44,6 @@ pub struct CrawlConfigDto {
     pub max_concurrency: Option<u32>,
     pub proxy: Option<String>,
     pub headers: Option<serde_json::Value>,
-    #[cfg(feature = "engine-reqwest")]
     pub extraction_rules: Option<
         std::collections::HashMap<
             String,

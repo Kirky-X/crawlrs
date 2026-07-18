@@ -8,7 +8,6 @@
 /// 提供基础设施层的服务实现
 /// 包括限流服务等核心功能
 pub mod config_service;
-#[cfg(feature = "rate-limiting")]
 pub mod limiteron_service;
 pub mod webhook_sender_impl;
 

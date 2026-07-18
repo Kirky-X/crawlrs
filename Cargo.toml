@@ -13,26 +13,23 @@ exclude = []
 
 [features]
 # 默认不启用任何特性（按需显式启用）
-# 选用预设（lite/standard/full）或显式列出所需特性即可
+# 选用预设（standard/full）或显式列出所需特性即可
 default = []
 
-# 预设配置（层层递进：lite ⊂ standard ⊂ full）
-# lite: 最小可运行构建（HTTP + PostgreSQL + 限流 + 日志 + 配置 + 缓存）
-lite = ["engine-reqwest", "dbnexus-postgres", "rate-limiting", "logging", "config", "oxcache-cache"]
-# standard: lite + Playwright JS 渲染 + 指标监控（生产可用）
-standard = ["lite", "engine-playwright", "metrics"]
-# full: standard + FlareSolverr（已合并原 fire-cdp/fire-tls/flaresolverr 三引擎）+ api-sdk
+# 预设配置（层层递进：standard ⊂ full）
+# 强制组件（trait-kit/inklog/oxcache/limiteron/sdforge/confers/dbnexus + scraper/chardetng/
+# encoding_rs/robotstxt）已是非可选依赖，不再通过 feature 门禁控制。
+# 预设仅区分 JS 渲染/监控/FlareSolverr 等可选项组合。
+# standard: 核心组件默认启用 + Playwright JS 渲染 + 指标监控（生产可用）
+standard = ["engine-playwright", "metrics"]
+# full: standard + FlareSolverr（已合并原 fire-cdp/fire-tls/flaresolverr 三引擎）
 # 注意：原 search-* / dbnexus-sqlite / engine-fire-cdp / engine-fire-tls 已删除
-full = ["standard", "engine-flaresolverr", "api-sdk"]
+full = ["standard", "engine-flaresolverr"]
 
 # genai 作为独立 optional dep，通过 features 启用
 genai-llm = ["dep:genai"]
 
 # --- 引擎特性 ---
-# 基础 HTTP 引擎 (始终可用)
-# scraper/chardetng/encoding_rs/robotstxt 用于 HTTP 抓取的 HTML 解析与编码处理
-engine-reqwest = ["dep:scraper", "dep:chardetng", "dep:encoding_rs", "dep:robotstxt"]
-
 # Playwright 引擎 (引入 chromiumoxide)
 engine-playwright = ["dep:chromiumoxide"]
 
@@ -45,37 +42,15 @@ engine-flaresolverr = []
 browser-download = ["dep:chromiumoxide_fetcher"]
 
 # --- 基础设施特性 ---
-rate-limiting = ["dep:limiteron"]
+# metrics 仅控制监控指标相关依赖（metrics / prometheus / sysinfo）
+# 7 个强制组件 + HTTP 抓取栈已是非可选，不再需要 feature 门禁
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
-
-# --- 数据库特性 (使用 dbnexus) ---
-# dbnexus 负责所有数据库访问，包括连接池、权限控制、迁移等
-# 注意：sea_orm 内部使用下划线命名
-# 仅支持 PostgreSQL（SQLite 已不再支持，原 dbnexus-sqlite feature 已删除）
-#
-# 隐式依赖说明：dbnexus-postgres 启用时会自动启用 rate-limiting / oxcache-cache / engine-reqwest，
-# 因为 bootstrap::services 内部引用 RateLimitMiddleware、infrastructure::oxcache、search::client 等，
-# 拆分这些引用会破坏 services 模块的内聚性。显式声明隐式依赖比拆 gate 更清晰。
-dbnexus-postgres = ["dep:dbnexus", "dep:sea_orm", "dbnexus/postgres", "rate-limiting", "oxcache-cache", "engine-reqwest"]
-
-# --- 配置管理特性 ---
-config = ["dep:confers", "dep:figment"]
-
-# --- 日志特性 ---
-# inklog: 新一代结构化日志库（替换 tracing 的下一 phase）
-logging = ["dep:inklog"]
-
-# --- API SDK 封装特性 ---
-# sdforge: 基于 axum/tower 的接口生成器
-api-sdk = ["dep:sdforge"]
-
-# --- 缓存特性 ---
-# oxcache: 内存缓存库（moka backend）
-oxcache-cache = ["dep:oxcache"]
 
 # --- 已移除的旧数据库特性 (不再使用) ---
 # db-postgres = ["sea-orm/sqlx-postgres", "sqlx/postgres"]
 # db-sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
+# --- 已移除的 engine-reqwest feature ---
+# engine-reqwest 已是非可选依赖（scraper/chardetng/encoding_rs/robotstxt 全部非可选）
 
 [dependencies]
 # Async runtime and web framework
@@ -98,10 +73,9 @@ tower-http = { version = "0.7", features = ["trace", "cors"] }
 # Serialization and configuration
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-confers = { version = "0.4", default-features = false, features = ["validation", "watch", "toml", "env"], optional = true }
+confers = { version = "0.4", default-features = false, features = ["validation", "watch", "toml", "env"] }
 # figment: confers 的 Config derive 宏生成代码引用 figment，需作为直接依赖
-# 仅在启用 config 特性时需要（与 confers 同步门禁）
-figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"], optional = true }
+figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"] }
 
 # Error handling
 thiserror = "2.0"
@@ -129,13 +103,12 @@ dbnexus = { version = "0.4", default-features = false, features = [
     "chrono",             # chrono 时间类型支持 (crates.io 版名称)
     "uuid",               # UUID 类型支持 (crates.io 版名称)
     "with-json",          # JSON 类型支持
-], optional = true }
+] }
 
 # Sea-ORM - 需要用于实体宏定义 (dbnexus 构建在 Sea-ORM 之上)
 # 注意：版本必须与 dbnexus 0.4 保持一致 (2.0.0-rc.43)
-# 只有启用 dbnexus 特性时才需要 sea-orm
 # 使用 sea_orm 内部名 (Cargo 要求) 通过 package 属性引用实际包
-sea_orm = { version = "2.0.0-rc.43", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"], optional = true, package = "sea-orm" }
+sea_orm = { version = "2.0.0-rc.43", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"], package = "sea-orm" }
 
 # --- 已移除的旧数据库依赖 (不再使用) ---
 # sea-orm = { version = "1.1", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
@@ -158,22 +131,23 @@ dirs = "5.0"
 # inklog 内部同时安装 tracing subscriber 和 log::Log adapter，
 # 项目代码使用 log facade（log::info! 等）记录日志
 log = "0.4"
-inklog = { version = "0.1", default-features = false, features = ["cli", "http", "postgres"], optional = true }
+inklog = { version = "0.1", default-features = false, features = ["cli", "http", "postgres"] }
 # sdforge: API SDK 封装库（基于 axum/tower 的接口生成器）
 # crates.io 版 features 适配：serde/serde_json/chrono 为必需依赖非 feature
-sdforge = { version = "0.4", default-features = false, features = ["http"], optional = true }
+sdforge = { version = "0.4", default-features = false, features = ["http"] }
 metrics = { version = "0.24", optional = true }
 metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"], optional = true }
 
 # Web scraping and content processing
-scraper = { version = "0.27", optional = true }
-robotstxt = { version = "0.3", optional = true }
+# HTTP 抓取栈（scraper/robotstxt/chardetng/encoding_rs）为项目核心功能，非可选
+scraper = { version = "0.27" }
+robotstxt = { version = "0.3" }
 chromiumoxide = { version = "0.9", optional = true }
 chromiumoxide_fetcher = { version = "0.9", optional = true }
 
 # Text processing and encoding
-chardetng = { version = "1.0", optional = true }
-encoding_rs = { version = "0.8", optional = true }
+chardetng = { version = "1.0" }
+encoding_rs = { version = "0.8" }
 deunicode = "1.6"
 lru = "0.18"
 strsim = "0.11"
@@ -194,7 +168,7 @@ ipnetwork = "0.21"
 
 # Rate limiting and circuit breaking
 # 已移除 governor，替换为 limiteron
-# 注意：limiteron 仅支持 postgres（与 dbnexus-postgres 配套使用），
+# 注意：limiteron 仅支持 postgres（与 dbnexus 配套使用），
 # 不存在 sqlite 兼容路径，因此未拆分 feature
 limiteron = { version = "0.2", default-features = false, features = [
     "postgres",
@@ -205,7 +179,7 @@ limiteron = { version = "0.2", default-features = false, features = [
     "monitoring",
     "parallel-checker",
     "audit-log",
-], optional = true }
+] }
 
 # Concurrency and synchronization
 parking_lot = "0.12"
@@ -219,7 +193,7 @@ toml = "0.9"
 
 # Dependency Injection
 trait-kit = { version = "0.3", features = ["async", "confers"] }
-oxcache = { version = "0.3", default-features = false, features = ["memory", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing", "futures"], optional = true }
+oxcache = { version = "0.3", default-features = false, features = ["memory", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing", "futures"] }
 ahash = "0.8"
 
 # API Documentation
@@ -269,10 +243,11 @@ name = "integration_tests"
 path = "tests/integration/mod.rs"
 required-features = ["full"]
 
+# sdk_api_test 不再需要 required-features = ["api-sdk"]：
+# sdforge 已是非可选依赖，sdk_api_test 默认即可编译
 [[test]]
 name = "sdk_api_test"
 path = "tests/sdk_api_test.rs"
-required-features = ["api-sdk"]
 
 [[bench]]
 name = "benchmark"
@@ -335,5 +310,5 @@ members = ["examples"]
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-reqwest", "engine-playwright", "engine-flaresolverr", "browser-download", "rate-limiting", "metrics", "dbnexus-postgres", "config", "logging", "api-sdk", "oxcache-cache", "genai-llm", "lite", "standard", "full", "openapi"))',
+    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi"))',
 ]

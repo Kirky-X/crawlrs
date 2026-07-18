@@ -23,28 +23,19 @@
 //! - [`engines_module`](engines_module) - Engine components
 
 // Core DI modules
-#[cfg(feature = "dbnexus-postgres")]
 pub mod axum_state;
 pub mod engines_module;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod modules;
-#[cfg(feature = "engine-reqwest")]
 pub mod search_module;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod service_module;
 
 // Infrastructure sub-modules (organized separately for maintainability)
-#[cfg(feature = "oxcache-cache")]
 pub mod cache_module;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod database_module;
 pub mod infrastructure_module;
 pub mod infrastructure_service_module;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod repository_module;
 
 // Re-exports for convenience
-#[cfg(feature = "dbnexus-postgres")]
 pub use axum_state::{CrawlRsState, CrawlRsStateExt};
-#[cfg(feature = "dbnexus-postgres")]
 pub use modules::ModuleBuildError;

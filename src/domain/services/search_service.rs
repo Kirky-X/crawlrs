@@ -3,26 +3,16 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[cfg(feature = "engine-reqwest")]
 use crate::config::settings::Settings;
-#[cfg(feature = "engine-reqwest")]
 use crate::domain::models::Crawl;
-#[cfg(feature = "engine-reqwest")]
 use crate::domain::models::CreditsTransactionType;
-#[cfg(feature = "engine-reqwest")]
 use crate::domain::models::{Task, TaskType};
-#[cfg(feature = "engine-reqwest")]
 use crate::domain::repositories::crawl_repository::CrawlRepository;
-#[cfg(feature = "engine-reqwest")]
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::credits_repository::CreditsRepositoryError;
-#[cfg(feature = "engine-reqwest")]
 use crate::domain::repositories::task_repository::TaskRepository;
-#[cfg(feature = "engine-reqwest")]
 use chrono::Utc;
-#[cfg(feature = "engine-reqwest")]
 use serde_json::json;
-#[cfg(feature = "engine-reqwest")]
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -51,7 +41,6 @@ pub struct SearchCrawlConfig {
     pub max_concurrency: u32,
     pub headers: Option<serde_json::Value>,
     pub proxy: Option<String>,
-    #[cfg(feature = "engine-reqwest")]
     pub extraction_rules: Option<
         std::collections::HashMap<
             String,
@@ -111,7 +100,6 @@ impl From<anyhow::Error> for SearchServiceError {
     }
 }
 
-#[cfg(feature = "engine-reqwest")]
 use crate::search::client::SearchClientTrait;
 
 /// Search service trait for trait object support.
@@ -127,10 +115,6 @@ pub trait SearchServiceTrait: Send + Sync {
 }
 
 /// Concrete search service implementation.
-///
-/// This struct is only available when the `engine-reqwest` feature is enabled,
-/// as it depends on `SearchClientTrait` from `crate::search::client`.
-#[cfg(feature = "engine-reqwest")]
 pub struct SearchService {
     crawl_repo: Arc<dyn CrawlRepository>,
     task_repo: Arc<dyn TaskRepository>,
@@ -138,7 +122,6 @@ pub struct SearchService {
     search_client: Arc<dyn SearchClientTrait>,
 }
 
-#[cfg(feature = "engine-reqwest")]
 impl SearchService {
     pub fn new(
         crawl_repo: Arc<dyn CrawlRepository>,
@@ -308,7 +291,6 @@ impl SearchService {
 }
 
 /// Implement SearchServiceTrait for SearchService
-#[cfg(feature = "engine-reqwest")]
 #[async_trait::async_trait]
 impl SearchServiceTrait for SearchService {
     async fn search(
@@ -321,7 +303,7 @@ impl SearchServiceTrait for SearchService {
     }
 }
 
-#[cfg(all(test, feature = "engine-reqwest"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::models::{CrawlStatus, CreditsTransaction, CreditsTransactionType};

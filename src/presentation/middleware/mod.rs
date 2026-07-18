@@ -7,13 +7,9 @@
 ///
 /// 提供HTTP请求处理的中间件功能
 /// 包括认证、限流、信号量控制等功能
-#[cfg(feature = "dbnexus-postgres")]
 pub mod auth_middleware;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod distributed_rate_limit_middleware;
-#[cfg(feature = "rate-limiting")]
 pub mod limiteron_rate_limit_middleware;
-#[cfg(feature = "rate-limiting")]
 pub mod rate_limit_middleware;
 pub mod security_headers_middleware;
 pub mod team_semaphore;

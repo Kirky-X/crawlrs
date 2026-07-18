@@ -11,9 +11,10 @@
 #   docker compose up -d crawlrs            # Start crawlrs only (needs db)
 #   docker compose --profile worker up -d   # Start with separate worker process
 #
-# Feature set is controlled via BUILD_FEATURES (default: "lite").
-# For standard build:  docker compose build --build-arg BUILD_FEATURES=standard
+# Feature set is controlled via BUILD_FEATURES (default: "standard").
 # For full build:      docker compose build --build-arg BUILD_FEATURES=full
+# Note: `lite` preset was removed in v0.2; HTTP 抓取栈与 7 组件均为非可选依赖，
+# `standard` adds engine-playwright + metrics on top of the non-optional core.
 
 services:
   db:
@@ -38,7 +39,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BUILD_FEATURES: ${BUILD_FEATURES:-lite}
+        BUILD_FEATURES: ${BUILD_FEATURES:-standard}
     depends_on:
       db:
         condition: service_healthy
@@ -60,7 +61,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BUILD_FEATURES: ${BUILD_FEATURES:-lite}
+        BUILD_FEATURES: ${BUILD_FEATURES:-standard}
     depends_on:
       db:
         condition: service_healthy

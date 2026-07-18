@@ -12,9 +12,10 @@
 //!
 //! Per AGENTS.md: no mock library — tests use real trait impls with
 //! test-specific behavior and `Arc<AtomicBool>`/`Arc<Mutex<>>` for state.
+//!
+//! Task9: rate-limiting feature removed; limiteron is non-optional, tests always run.
 
 #![cfg(test)]
-#![cfg(feature = "rate-limiting")]
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};

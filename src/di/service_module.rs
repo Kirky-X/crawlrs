@@ -39,20 +39,17 @@ pub trait RateLimitingServiceTrait: Send + Sync {
 }
 
 /// RateLimitingService component - delegates to LimiteronService
-#[cfg(feature = "rate-limiting")]
 pub struct RateLimitingServiceComponent {
     /// Inner implementation
     inner: crate::infrastructure::services::limiteron_service::LimiteronService,
 }
 
-#[cfg(feature = "rate-limiting")]
 impl RateLimitingServiceTrait for RateLimitingServiceComponent {
     fn get_service(&self) -> &dyn RateLimitingService {
         &self.inner
     }
 }
 
-#[cfg(feature = "rate-limiting")]
 #[async_trait::async_trait]
 impl crate::domain::services::rate_limiting_service::RateLimitService
     for RateLimitingServiceComponent
@@ -95,7 +92,6 @@ impl crate::domain::services::rate_limiting_service::RateLimitService
     }
 }
 
-#[cfg(feature = "rate-limiting")]
 #[async_trait::async_trait]
 impl crate::domain::services::rate_limiting_service::ConcurrencyControlService
     for RateLimitingServiceComponent
@@ -149,7 +145,6 @@ impl crate::domain::services::rate_limiting_service::ConcurrencyControlService
     }
 }
 
-#[cfg(feature = "rate-limiting")]
 #[async_trait::async_trait]
 impl crate::domain::services::rate_limiting_service::BacklogService
     for RateLimitingServiceComponent
@@ -162,7 +157,6 @@ impl crate::domain::services::rate_limiting_service::BacklogService
     }
 }
 
-#[cfg(feature = "rate-limiting")]
 #[async_trait::async_trait]
 impl crate::domain::services::rate_limiting_service::QuotaService for RateLimitingServiceComponent {
     async fn check_and_deduct_quota(
@@ -186,7 +180,6 @@ impl crate::domain::services::rate_limiting_service::QuotaService for RateLimiti
     }
 }
 
-#[cfg(feature = "rate-limiting")]
 impl RateLimitingService for RateLimitingServiceComponent {}
 
 /// TeamService component

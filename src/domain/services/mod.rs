@@ -3,7 +3,6 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#[cfg(feature = "dbnexus-postgres")]
 pub mod audit_service;
 /// 领域服务模块
 ///
@@ -33,20 +32,15 @@ pub mod audit_service;
 ///
 /// 领域服务与应用程序服务的区别在于：领域服务包含纯粹的业务逻辑，
 /// 而应用程序服务负责协调和编排，可能包含技术实现细节。
-#[cfg(feature = "dbnexus-postgres")]
 pub mod auth_scope_service;
-#[cfg(feature = "engine-reqwest")]
 pub mod crawl_service;
 pub mod credits_service;
-#[cfg(feature = "engine-reqwest")]
 pub mod extraction_service;
-#[cfg(feature = "engine-reqwest")]
 pub mod extraction_utils;
 pub mod feature_flag_service;
 pub mod geo_location;
 pub mod llm_service;
 pub mod rate_limiting_service;
-#[cfg(feature = "oxcache-cache")]
 pub mod relevance_scorer;
 pub mod retry_handler;
 pub mod scrape_service;

@@ -515,7 +515,7 @@ impl QuotaService for LimiteronService {
 #[async_trait]
 impl RateLimitingService for LimiteronService {}
 
-#[cfg(all(test, feature = "rate-limiting"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use limiteron::config::{LimiterConfig, Matcher};

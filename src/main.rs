@@ -27,12 +27,6 @@ fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
     }
 }
 
-#[cfg(all(
-    feature = "dbnexus-postgres",
-    feature = "config",
-    feature = "logging",
-    feature = "oxcache-cache"
-))]
 impl ServiceType {
     /// Parse service type from command line arguments.
     fn from_args() -> Self {
@@ -50,26 +44,6 @@ impl ServiceType {
     }
 }
 
-// Binary entry point requires database, config, logging, and cache features.
-// When any required feature is missing, print a helpful message and exit.
-#[cfg(not(all(
-    feature = "dbnexus-postgres",
-    feature = "config",
-    feature = "logging",
-    feature = "oxcache-cache"
-)))]
-fn main() {
-    eprintln!("crawlrs binary requires the 'lite' feature set (or 'standard'/'full') to run.");
-    eprintln!("Build with: cargo run --features lite");
-    std::process::exit(1);
-}
-
-#[cfg(all(
-    feature = "dbnexus-postgres",
-    feature = "config",
-    feature = "logging",
-    feature = "oxcache-cache"
-))]
 mod app {
     use super::ServiceType;
     use crawlrs::bootstrap::routes::build_api_app_with_state;
@@ -274,12 +248,6 @@ mod app {
     }
 }
 
-#[cfg(all(
-    feature = "dbnexus-postgres",
-    feature = "config",
-    feature = "logging",
-    feature = "oxcache-cache"
-))]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     app::run().await

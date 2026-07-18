@@ -329,36 +329,6 @@ pub fn validate_redirect(redirect_url: &str) -> Result<(), SsrfError> {
     }
 }
 
-/// Create a reqwest redirect policy with SSRF protection.
-///
-/// This function creates a custom redirect policy that validates
-/// each redirect URL before following it.
-#[cfg(feature = "engine-reqwest")]
-#[allow(dead_code)]
-pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(move |attempt| {
-        // Check redirect count
-        if attempt.previous().len() >= max_redirects as usize {
-            return attempt.stop();
-        }
-
-        // Get redirect URL
-        let redirect_url = attempt.url().to_string();
-
-        // Validate redirect URL
-        if is_internal_url(&redirect_url) {
-            log::warn!(
-                "SSRF protection: Blocking redirect to internal URL: {}",
-                redirect_url
-            );
-            return attempt.stop();
-        }
-
-        // Follow the redirect
-        attempt.follow()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,40 +562,8 @@ mod tests {
     }
 
     // =========================================================================
-    // create_ssrf_safe_redirect_policy 测试
+    // Supplementary tests: validate edge cases, scheme/host validation
     // =========================================================================
-
-    #[test]
-    fn tc_create_ssrf_safe_redirect_policy_zero() {
-        let policy = create_ssrf_safe_redirect_policy(0);
-        let client_result = reqwest::Client::builder().redirect(policy).build();
-        assert!(
-            client_result.is_ok(),
-            "ClientBuilder with redirect policy(0) should succeed"
-        );
-    }
-
-    #[test]
-    fn tc_create_ssrf_safe_redirect_policy_default() {
-        let policy = create_ssrf_safe_redirect_policy(10);
-        let client_result = reqwest::Client::builder().redirect(policy).build();
-        assert!(
-            client_result.is_ok(),
-            "ClientBuilder with redirect policy(10) should succeed"
-        );
-    }
-
-    #[test]
-    fn tc_create_ssrf_safe_redirect_policy_max_u8() {
-        let policy = create_ssrf_safe_redirect_policy(255);
-        let client_result = reqwest::Client::builder().redirect(policy).build();
-        assert!(
-            client_result.is_ok(),
-            "ClientBuilder with redirect policy(255) should succeed"
-        );
-    }
-
-    // ========== Supplementary tests: validate edge cases, scheme/host validation ==========
 
     #[test]
     fn test_validate_rejects_invalid_scheme_ftp() {
@@ -823,112 +761,5 @@ mod tests {
         validator.validate("http://example.net", 2).unwrap();
         assert_eq!(validator.redirect_chain().len(), 3);
         assert_eq!(validator.visited_hosts().len(), 3);
-    }
-
-    #[tokio::test]
-    async fn test_create_ssrf_safe_redirect_policy_blocks_internal_redirect() {
-        // Test the actual redirect policy behavior by creating a local server
-        // that redirects to an internal URL. The policy should block it.
-        use tokio::io::AsyncWriteExt;
-        use tokio::net::TcpListener;
-
-        // Bind to a random port on localhost
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let port = addr.port();
-
-        // Start a server that returns a 302 redirect to localhost (internal)
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            // Send a 302 redirect to an internal URL
-            let response = format!(
-                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/internal\r\nContent-Length: 0\r\n\r\n"
-            );
-            socket.write_all(response.as_bytes()).await.unwrap();
-            // Keep connection open briefly
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        });
-
-        // Create a client with SSRF-safe redirect policy
-        let policy = create_ssrf_safe_redirect_policy(10);
-        let client = reqwest::Client::builder().redirect(policy).build().unwrap();
-
-        // Make a request to the local server
-        let url = format!("http://127.0.0.1:{}/", port);
-        let result = client.get(&url).send().await;
-
-        // The request should complete (the server returns 302), but the redirect
-        // to the internal URL should be blocked by the policy.
-        // The result will be the 302 response itself (redirect not followed).
-        if let Ok(resp) = result {
-            // Status should be 302 (redirect not followed)
-            assert!(
-                resp.status().is_redirection() || resp.status().is_client_error(),
-                "redirect to internal URL should be blocked, got status: {}",
-                resp.status()
-            );
-        }
-
-        // Clean up the server task
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn test_create_ssrf_safe_redirect_policy_follows_external_redirect() {
-        // Test that the policy follows redirects to external URLs.
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpListener;
-
-        // Create two listeners: one for the initial request, one for the redirect target
-        let listener1 = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port1 = listener1.local_addr().unwrap().port();
-
-        let listener2 = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port2 = listener2.local_addr().unwrap().port();
-
-        // Server 1: returns 302 redirect to server 2
-        let server1 = tokio::spawn(async move {
-            let (mut socket, _) = listener1.accept().await.unwrap();
-            let redirect_url = format!("http://127.0.0.1:{}/target", port2);
-            let response = format!(
-                "HTTP/1.1 302 Found\r\nLocation: {}\r\nContent-Length: 0\r\n\r\n",
-                redirect_url
-            );
-            socket.write_all(response.as_bytes()).await.unwrap();
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        });
-
-        // Server 2: returns 200 OK
-        let server2 = tokio::spawn(async move {
-            let (mut socket, _) = listener2.accept().await.unwrap();
-            // Read the request (consume it)
-            let mut buf = [0u8; 1024];
-            let _ = socket.read(&mut buf).await;
-            let response = "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nfollowed";
-            socket.write_all(response.as_bytes()).await.unwrap();
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        });
-
-        // Create a client with SSRF-safe redirect policy
-        let policy = create_ssrf_safe_redirect_policy(10);
-        let client = reqwest::Client::builder().redirect(policy).build().unwrap();
-
-        // Make a request to server 1
-        let url = format!("http://127.0.0.1:{}/", port1);
-        let result = client.get(&url).send().await;
-
-        // The redirect to 127.0.0.1:port2 is to an internal URL, so it should be
-        // blocked by SSRF protection. The result should be the 302 response.
-        if let Ok(resp) = result {
-            // Since 127.0.0.1 is internal, the redirect should be blocked
-            assert!(
-                resp.status().is_redirection(),
-                "redirect to internal 127.0.0.1 should be blocked, got status: {}",
-                resp.status()
-            );
-        }
-
-        server1.abort();
-        server2.abort();
     }
 }

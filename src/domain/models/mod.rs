@@ -25,7 +25,6 @@ pub mod task_domain;
 
 // Legacy modules kept for compatibility
 pub mod scrape_result;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod scrape_result_entity;
 pub mod search_result;
 
@@ -38,6 +37,5 @@ pub use team_model::{Team, TeamError};
 pub use webhook_model::{Webhook, WebhookError, WebhookEvent, WebhookEventType, WebhookStatus};
 
 // Legacy re-exports for backward compatibility
-#[cfg(feature = "dbnexus-postgres")]
 pub use scrape_result_entity::{Entity as ScrapeResultEntity, Model as ScrapeResult};
 pub use search_result::SearchResult;

@@ -21,24 +21,18 @@
 //! ```
 
 pub mod ab_test;
-#[cfg(feature = "oxcache-cache")]
 pub mod aggregator;
-#[cfg(feature = "engine-reqwest")]
 pub mod client;
 pub mod engine_trait;
 pub mod error;
-#[cfg(feature = "engine-reqwest")]
 pub mod factory;
 pub mod response;
 pub mod router;
-#[cfg(feature = "engine-reqwest")]
 pub mod smart;
 pub mod types;
 
 pub use ab_test::SearchABTestEngine;
-#[cfg(feature = "oxcache-cache")]
 pub use aggregator::deduplicator::ResultDeduplicator as Deduplicator;
-#[cfg(feature = "oxcache-cache")]
 pub use aggregator::SearchAggregator;
 pub use engine_trait::{SearchEngine, SearchRequest};
 pub use error::SearchError;

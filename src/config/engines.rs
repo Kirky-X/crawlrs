@@ -19,27 +19,23 @@ use serde::{Deserialize, Serialize};
 /// * `url` - FlareSolverr 服务器 URL
 /// * `timeout_seconds` - 请求超时时间（秒）
 /// * `max_retries` - 最大重试次数
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[cfg_attr(feature = "config", derive(confers::Config))]
-#[cfg_attr(
-    feature = "config",
-    config(env_prefix = "CRAWLRS__ENGINES__FLARESOLVERR__")
-)]
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ENGINES__FLARESOLVERR__")]
 pub struct FlareSolverrSettings {
     /// 是否启用 FlareSolverr 引擎
-    #[cfg_attr(feature = "config", config(default = false))]
+    #[config(default = false)]
     pub enabled: bool,
 
     /// FlareSolverr 服务器 URL
-    #[cfg_attr(feature = "config", config(default = "http://localhost:8191/v1".to_string()))]
+    #[config(default = "http://localhost:8191/v1".to_string())]
     pub url: String,
 
     /// 请求超时时间（秒）
-    #[cfg_attr(feature = "config", config(default = 30))]
+    #[config(default = 30)]
     pub timeout_seconds: u64,
 
     /// 最大重试次数
-    #[cfg_attr(feature = "config", config(default = 3))]
+    #[config(default = 3)]
     pub max_retries: u32,
 }
 
@@ -51,19 +47,15 @@ pub struct FlareSolverrSettings {
 ///
 /// * `enabled` - 是否启用 Fire Engine CDP
 /// * `url` - Fire Engine CDP 服务器 URL
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[cfg_attr(feature = "config", derive(confers::Config))]
-#[cfg_attr(
-    feature = "config",
-    config(env_prefix = "CRAWLRS__ENGINES__FIRE_CDP__")
-)]
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ENGINES__FIRE_CDP__")]
 pub struct FireCdpSettings {
     /// 是否启用 Fire Engine CDP
-    #[cfg_attr(feature = "config", config(default = false))]
+    #[config(default = false)]
     pub enabled: bool,
 
     /// Fire Engine CDP 服务器 URL
-    #[cfg_attr(feature = "config", config(default = "http://localhost:8191/v1".to_string()))]
+    #[config(default = "http://localhost:8191/v1".to_string())]
     pub url: String,
 }
 
@@ -75,28 +67,23 @@ pub struct FireCdpSettings {
 ///
 /// * `enabled` - 是否启用 Fire Engine TLS
 /// * `url` - Fire Engine TLS 服务器 URL
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[cfg_attr(feature = "config", derive(confers::Config))]
-#[cfg_attr(
-    feature = "config",
-    config(env_prefix = "CRAWLRS__ENGINES__FIRE_TLS__")
-)]
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ENGINES__FIRE_TLS__")]
 pub struct FireTlsSettings {
     /// 是否启用 Fire Engine TLS
-    #[cfg_attr(feature = "config", config(default = false))]
+    #[config(default = false)]
     pub enabled: bool,
 
     /// Fire Engine TLS 服务器 URL
-    #[cfg_attr(feature = "config", config(default = "http://localhost:8191/v1".to_string()))]
+    #[config(default = "http://localhost:8191/v1".to_string())]
     pub url: String,
 }
 
 /// 引擎配置集合
 ///
 /// 包含所有抓取引擎的配置
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[cfg_attr(feature = "config", derive(confers::Config))]
-#[cfg_attr(feature = "config", config(env_prefix = "CRAWLRS__ENGINES__"))]
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ENGINES__")]
 pub struct EngineSettings {
     /// FlareSolverr 引擎配置
     pub flaresolverr: FlareSolverrSettings,

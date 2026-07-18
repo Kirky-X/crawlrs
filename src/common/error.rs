@@ -19,7 +19,6 @@ use serde::Serialize;
 #[derive(Debug, thiserror::Error)]
 pub enum CrawlRsError {
     /// 数据库错误
-    #[cfg(feature = "dbnexus-postgres")]
     #[error("Database error: {0}")]
     Database(#[from] sea_orm::DbErr),
 
@@ -88,7 +87,6 @@ impl CrawlRsError {
     /// 获取错误的 HTTP 状态码
     pub fn status_code(&self) -> StatusCode {
         match self {
-            #[cfg(feature = "dbnexus-postgres")]
             CrawlRsError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             CrawlRsError::Network(_) => StatusCode::BAD_GATEWAY,
             CrawlRsError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -111,7 +109,6 @@ impl CrawlRsError {
     /// 获取错误的代码
     pub fn error_code(&self) -> &'static str {
         match self {
-            #[cfg(feature = "dbnexus-postgres")]
             CrawlRsError::Database(_) => "DATABASE_ERROR",
             CrawlRsError::Network(_) => "EXTERNAL_SERVICE_ERROR",
             CrawlRsError::Config(_) => "CONFIGURATION_ERROR",
@@ -137,7 +134,6 @@ impl CrawlRsError {
     /// 用于生产环境中的错误响应。
     pub fn user_message(&self) -> String {
         match self {
-            #[cfg(feature = "dbnexus-postgres")]
             CrawlRsError::Database(_) => {
                 "Database operation failed. Please try again later.".to_string()
             }
@@ -591,7 +587,6 @@ impl From<crate::domain::repositories::task_repository::RepositoryError> for Cra
 // From<confers::ConfigError> for CrawlRsError
 // =============================================================================
 
-#[cfg(feature = "config")]
 impl From<confers::ConfigError> for CrawlRsError {
     fn from(err: confers::ConfigError) -> Self {
         CrawlRsError::Config(err.to_string())
@@ -602,7 +597,6 @@ impl From<confers::ConfigError> for CrawlRsError {
 // From<RobotsCheckerError> for CrawlRsError
 // =============================================================================
 
-#[cfg(all(feature = "engine-reqwest", feature = "oxcache-cache"))]
 impl From<crate::utils::robots::RobotsCheckerError> for CrawlRsError {
     fn from(err: crate::utils::robots::RobotsCheckerError) -> Self {
         CrawlRsError::Other(err.to_string())

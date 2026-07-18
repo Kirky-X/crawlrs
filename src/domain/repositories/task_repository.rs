@@ -6,7 +6,6 @@
 use crate::domain::models::{Task, TaskStatus, TaskType};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-#[cfg(feature = "dbnexus-postgres")]
 use sea_orm::DbErr;
 use std::collections::HashSet;
 use thiserror::Error;
@@ -24,7 +23,6 @@ pub enum RepositoryError {
 }
 
 /// 实现 From<sea_orm::DbErr> trait，支持 ? 操作符自动转换
-#[cfg(feature = "dbnexus-postgres")]
 impl From<DbErr> for RepositoryError {
     fn from(err: DbErr) -> Self {
         RepositoryError::Database(anyhow::anyhow!(err))

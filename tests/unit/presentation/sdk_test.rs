@@ -9,8 +9,8 @@
 //! `build_sdk_router()` construction function. The sdforge `#[forge]` macro
 //! generates the HTTP endpoints; these tests verify the data contracts and
 //! router assembly without spinning up a full server.
-
-#![cfg(feature = "api-sdk")]
+//!
+//! Task9: api-sdk feature removed; tests always run.
 
 use uuid::Uuid;
 

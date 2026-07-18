@@ -12,8 +12,9 @@
 //! - RedirectValidator: 多次 validate 后 visited_hosts 累积
 //! - RedirectValidator: reset 后重新使用
 //!
-//! 注：create_ssrf_safe_redirect_policy 的测试在 redirect.rs 内联测试模块中
-//! （该函数未从 ssrf 模块导出，只能在同模块内测试）
+//! Task9: redirect.rs 中重复的 create_ssrf_safe_redirect_policy 函数已删除
+//! （src/utils/http_client.rs 已有同名实现并被 create_client 实际调用），
+//! 其相关内联测试一并清理。本文件仅测试 RedirectValidator/RedirectPolicy 公共 API。
 
 #![cfg(test)]
 

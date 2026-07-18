@@ -276,10 +276,9 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
         .merge(protected_routes)
         .merge(v2_routes);
 
-    // SDK routes (only when api-sdk feature is enabled)
+    // SDK routes (always enabled; sdforge is non-optional since Task9)
     // CRITICAL: auth_middleware is mandatory — SDK handlers extract team_id/api_key_id
     // from AuthState set by the middleware, never from the request body.
-    #[cfg(feature = "api-sdk")]
     let app = app.merge(
         crate::presentation::sdk::build_sdk_router()
             .layer(axum::middleware::from_fn(

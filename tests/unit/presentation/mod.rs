@@ -8,7 +8,6 @@ pub mod handlers;
 pub mod helpers;
 pub mod middleware;
 
-#[cfg(feature = "api-sdk")]
 mod sdk_test;
 
 mod state_test;

@@ -14,15 +14,10 @@ publish = false
 
 [dependencies]
 # crawlrs 主项目 - 从父目录引用
-# 主项目 default = []，因此必须显式列出所需 features（与原 default 行为一致）
+# 主项目 default = []，HTTP 抓取栈（原 engine-reqwest）已是非可选依赖，
+# 此处仅显式启用 metrics 以运行 metrics_export 示例
 crawlrs = { path = "..", default-features = false, features = [
-    "engine-reqwest",
-    "rate-limiting",
     "metrics",
-    "dbnexus-postgres",
-    "logging",
-    "config",
-    "oxcache-cache",
 ] }
 
 # 异步运行时

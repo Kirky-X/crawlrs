@@ -20,21 +20,15 @@
 /// 基础设施层遵循依赖倒置原则，依赖于领域层的抽象接口，
 /// 确保领域层保持纯粹的业务逻辑，不受技术实现的影响。
 pub mod concurrency;
-#[cfg(feature = "dbnexus-postgres")]
 pub mod database;
 pub mod dns;
 pub mod errors;
 pub mod geolocation;
 pub mod metrics;
 pub mod observability;
-// oxcache 模块已做 cfg gate（feature = "oxcache-cache"）。
-// 所有消费者（utils/regex_cache, di/modules, bootstrap/infrastructure 等）
-// 已同步加 gate 或被 dbnexus-postgres 隐式依赖传递包含。
-#[cfg(feature = "oxcache-cache")]
 pub mod oxcache;
 pub mod persistence;
 pub mod queue;
 pub mod security;
-#[cfg(feature = "dbnexus-postgres")]
 pub use database::repositories;
 pub mod services;

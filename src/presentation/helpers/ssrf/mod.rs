@@ -57,9 +57,7 @@ use std::net::IpAddr;
 use tokio::net::lookup_host;
 use url::Url;
 
-#[cfg(feature = "oxcache-cache")]
 use crate::infrastructure::dns::DnsCacheService;
-#[cfg(feature = "oxcache-cache")]
 use std::sync::Arc;
 
 /// Maximum URL length to prevent resource exhaustion
@@ -96,7 +94,6 @@ const DEFAULT_DNS_CACHE_TTL: u64 = 300;
 #[derive(Clone, Default)]
 pub struct SsrfValidator {
     /// DNS cache for resolution results
-    #[cfg(feature = "oxcache-cache")]
     dns_cache: Option<Arc<DnsCacheService>>,
     /// Configuration options
     config: SsrfConfig,
@@ -109,7 +106,6 @@ impl SsrfValidator {
     }
 
     /// Create a new SSRF validator with DNS caching support.
-    #[cfg(feature = "oxcache-cache")]
     pub fn with_dns_cache(dns_cache: Arc<DnsCacheService>) -> Self {
         Self {
             dns_cache: Some(dns_cache),
@@ -120,14 +116,12 @@ impl SsrfValidator {
     /// Create a new SSRF validator with custom configuration.
     pub fn with_config(config: SsrfConfig) -> Self {
         Self {
-            #[cfg(feature = "oxcache-cache")]
             dns_cache: None,
             config,
         }
     }
 
     /// Create a new SSRF validator with DNS cache and custom configuration.
-    #[cfg(feature = "oxcache-cache")]
     pub fn with_dns_cache_and_config(dns_cache: Arc<DnsCacheService>, config: SsrfConfig) -> Self {
         Self {
             dns_cache: Some(dns_cache),
@@ -223,7 +217,6 @@ impl SsrfValidator {
     ) -> Result<Vec<IpAddr>, SsrfError> {
         // Use DNS cache if available (requires oxcache-cache feature)
         let ips = {
-            #[cfg(feature = "oxcache-cache")]
             if let Some(cache) = &self.dns_cache {
                 cache.lookup_host(hostname, port).await.map_err(|e| {
                     SsrfError::DnsResolutionFailed {
@@ -232,10 +225,6 @@ impl SsrfValidator {
                     }
                 })?
             } else {
-                resolve_dns_direct(hostname, port).await?
-            }
-            #[cfg(not(feature = "oxcache-cache"))]
-            {
                 resolve_dns_direct(hostname, port).await?
             }
         };

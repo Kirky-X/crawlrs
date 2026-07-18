@@ -61,7 +61,7 @@ fn make_settings(url: &str) -> DatabaseSettings {
 
 /// 创建一个 lazy（非连接）DbPool，用于不需要真实数据库连接的纯逻辑测试。
 ///
-/// `DbPool::try_from(&DbConfig::default())` 不会建立实际连接，
+/// `DbPool::with_config(...)` 不会建立实际连接，
 /// `get_session()` 调用时会失败。适用于测试 DatabasePool 的结构方法。
 fn create_lazy_pool() -> Arc<DbPool> {
     std::thread::scope(|s| {
@@ -71,7 +71,12 @@ fn create_lazy_pool() -> Arc<DbPool> {
                 .build()
                 .expect("failed to build tokio runtime for DbPool construction");
             let _guard = rt.enter();
-            DbPool::try_from(&DbConfig::default()).expect("failed to create lazy DbPool for test")
+            let mut cfg = DbConfig::default();
+            cfg.url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+                "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string()
+            });
+            rt.block_on(DbPool::with_config(cfg))
+                .expect("failed to create DbPool for test")
         });
         Arc::new(handle.join().expect("DbPool construction thread panicked"))
     })
