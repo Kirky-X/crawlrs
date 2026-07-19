@@ -25,7 +25,6 @@ use crawlrs::domain::models::{Task, TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::{
     RepositoryError, TaskQueryParams, TaskRepository,
 };
-use crawlrs::presentation::errors::CrawlRsError;
 use crawlrs::presentation::handlers::task_handler::{
     handle_sync_wait_and_get_status, wait_for_tasks_completion, SyncWaitResult,
     TaskQueryResponseMeta,
@@ -527,6 +526,7 @@ fn tc_max_poll_count_is_60() {
 }
 
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn tc_base_poll_interval_within_clamp_range() {
     // The wait_for_tasks_completion function clamps the base interval to
     // [500, 2000]. BASE_POLL_INTERVAL_MS=1000 is within this range.

@@ -144,6 +144,7 @@ coverage/
 # Test environment configuration (contains passwords/secrets)
 config/test.env
 config/test.toml
+config/test_server.toml
 
 # Docker environment files
 docker/.env

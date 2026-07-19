@@ -1,0 +1,28 @@
+# Test server configuration template.
+#
+# Copy this file to config/test_server.toml and replace USER:PASSWORD with
+# real credentials. config/test_server.toml is gitignored and must NOT be
+# committed. Do NOT commit real credentials.
+
+[server]
+host = "0.0.0.0"
+port = 8899
+enable_port_detection = false
+
+[database]
+url = "postgres://USER:PASSWORD@localhost:5443/crawlrs_test"
+
+[cors]
+allowed_origins = "*"
+
+[rate_limiting]
+enabled = false
+
+[concurrency]
+default_team_limit = 10
+
+[webhook]
+secret = "test-secret"
+
+[logging]
+level = "info"

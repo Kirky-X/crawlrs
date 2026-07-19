@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_crawl_config_error_with_source() {
-        let source_err = std::io::Error::new(std::io::ErrorKind::Other, "io failed");
+        let source_err = std::io::Error::other("io failed");
         let error = DomainError::CrawlConfigError {
             message: "wrapped".to_string(),
             source: Some(Box::new(source_err)),

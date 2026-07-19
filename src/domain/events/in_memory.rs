@@ -808,7 +808,7 @@ mod tests {
 
     #[test]
     fn test_default_event_metadata_provider_default_trait() {
-        let provider = DefaultEventMetadataProvider::default();
+        let provider = DefaultEventMetadataProvider;
         assert!(provider.get_trace_id().is_none());
         assert!(provider.get_tenant_id().is_none());
     }
@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn test_event_logging_handler_default_trait() {
-        let handler = EventLoggingHandler::default();
+        let handler = EventLoggingHandler;
         assert_eq!(handler.name(), "EventLoggingHandler");
         assert_eq!(handler.subscribe_to(), &["*"]);
     }

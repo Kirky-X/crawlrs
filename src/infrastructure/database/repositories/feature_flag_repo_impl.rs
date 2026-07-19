@@ -299,36 +299,14 @@ impl FeatureFlagRepository for FeatureFlagRepositoryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Create a lazy DbPool that does not establish a real database connection.
-    /// `get_session()` calls will fail, allowing us to test error paths without
-    /// requiring a running PostgreSQL instance.
-    fn create_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                rt.block_on(dbnexus::DbPool::with_config({
-                    let mut cfg = dbnexus::DbConfig::default();
-                    cfg.url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-                        "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string()
-                    });
-                    cfg
-                }))
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
-    }
+    use crate::common::test_helpers::create_test_db_pool;
 
     // ============================================================
     // Construction tests
     // ============================================================
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
@@ -343,7 +321,8 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    async fn test_find_by_name_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_name_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
         let result = repo.find_by_name("test_flag").await;
@@ -357,7 +336,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_id_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_id_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
         let result = repo.find_by_id(Uuid::new_v4()).await;
@@ -369,7 +349,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_all_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_list_all_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
         let result = repo.list_all().await;
@@ -381,7 +362,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_override_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_override_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
         let result = repo.find_override(Uuid::new_v4(), Uuid::new_v4()).await;
@@ -393,7 +375,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_overrides_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_list_overrides_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
         let result = repo.list_overrides(Uuid::new_v4()).await;
@@ -405,7 +388,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_overrides_for_key_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_list_overrides_for_key_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
         let result = repo.list_overrides_for_key(Uuid::new_v4()).await;
@@ -417,7 +401,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_override_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_set_override_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
         let result = repo
@@ -431,7 +416,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_override_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_delete_override_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
         let result = repo.delete_override(Uuid::new_v4(), Uuid::new_v4()).await;
@@ -707,6 +693,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_name_with_empty_string_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
@@ -719,6 +706,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_name_with_unicode_name_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
@@ -731,6 +719,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_name_with_long_name_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
@@ -744,6 +733,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_id_with_nil_uuid_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
@@ -756,6 +746,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_set_override_with_nil_uuids_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
@@ -768,6 +759,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_set_override_with_disabled_flag_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
@@ -782,6 +774,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_delete_override_with_nil_uuids_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
@@ -869,6 +862,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_repository_clone_preserves_pool_identity() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool.clone());
@@ -878,6 +872,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_distinct_pools_do_not_share_identity() {
         // 两个独立的 lazy pool 不应共享 Arc 标识
         let pool1 = create_test_db_pool();

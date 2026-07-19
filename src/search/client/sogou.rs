@@ -443,6 +443,10 @@ mod tests {
         SearchRequest::new(query)
     }
 
+    // ENV_LOCK must be held across .await because engine.search() reads
+    // SOGOU_TEST_RESULTS during execution; releasing it would let other tests
+    // race-modify the env var. Single-threaded tokio runtime => no deadlock risk.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn test_search_with_test_results_env() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -460,6 +464,7 @@ mod tests {
         assert_eq!(response.total_results, Some(2));
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_fallback_returns_correct_urls_and_engine() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -482,6 +487,7 @@ mod tests {
         assert_eq!(response.items[1].description, "Test description 2");
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_fallback_escapes_query_in_title() {
         let _lock = ENV_LOCK.lock().unwrap();

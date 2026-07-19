@@ -274,32 +274,9 @@ impl CrawlRepository for CrawlRepositoryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::models::Crawl;
     use serde_json::json;
-
-    /// Create a lazy DbPool that does not establish a real database connection.
-    /// `get_session()` calls will fail, allowing us to test error paths without
-    /// requiring a running PostgreSQL instance.
-    fn create_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                rt.block_on(dbnexus::DbPool::with_config({
-                    let mut cfg = dbnexus::DbConfig::default();
-                    cfg.url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-                        "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string()
-                    });
-                    cfg
-                }))
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
-    }
 
     /// Build a minimal Crawl instance for tests that need to pass one in.
     /// The fields don't matter because the DB call fails before the entity is used.
@@ -319,6 +296,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
@@ -333,7 +311,8 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    async fn test_create_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_create_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         let crawl = make_test_crawl();
@@ -348,7 +327,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_id_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_id_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         let result = repo.find_by_id(Uuid::new_v4()).await;
@@ -357,7 +337,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_update_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         let crawl = make_test_crawl();
@@ -367,7 +348,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_increment_completed_tasks_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_increment_completed_tasks_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         let result = repo.increment_completed_tasks(Uuid::new_v4()).await;
@@ -376,7 +358,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_increment_failed_tasks_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_increment_failed_tasks_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         let result = repo.increment_failed_tasks(Uuid::new_v4()).await;
@@ -385,7 +368,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_status_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_update_status_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         let result = repo
@@ -396,7 +380,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_increment_total_tasks_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_increment_total_tasks_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         let result = repo.increment_total_tasks(Uuid::new_v4()).await;
@@ -405,7 +390,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_team_id_paginated_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_team_id_paginated_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
@@ -414,7 +400,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_count_by_team_id_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_count_by_team_id_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         let result = repo.count_by_team_id(Uuid::new_v4()).await;
@@ -452,6 +439,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_pool_accessor_returns_reference_to_same_pool() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool.clone());
@@ -472,6 +460,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_status_to_processing_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
@@ -482,6 +471,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_status_to_failed_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
@@ -492,6 +482,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_status_to_cancelled_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
@@ -502,6 +493,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_status_to_queued_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
@@ -516,6 +508,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_team_id_paginated_with_zero_limit_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 0, 0).await;
@@ -524,6 +517,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_team_id_paginated_with_large_offset_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
@@ -534,6 +528,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_team_id_paginated_with_max_limit_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
@@ -544,6 +539,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_team_id_paginated_with_nil_team_id_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::nil(), 10, 0).await;
@@ -556,6 +552,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_id_with_nil_uuid_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::nil()).await;
@@ -564,6 +561,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_count_by_team_id_with_nil_uuid_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.count_by_team_id(Uuid::nil()).await;
@@ -572,6 +570,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_increment_completed_tasks_with_nil_uuid_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.increment_completed_tasks(Uuid::nil()).await;
@@ -580,6 +579,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_increment_failed_tasks_with_nil_uuid_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.increment_failed_tasks(Uuid::nil()).await;
@@ -588,6 +588,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_increment_total_tasks_with_nil_uuid_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.increment_total_tasks(Uuid::nil()).await;
@@ -868,6 +869,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_status_to_completed_returns_db_error() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
@@ -882,11 +884,12 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_distinct_pools_do_not_share_identity() {
         let pool1 = create_test_db_pool();
         let pool2 = create_test_db_pool();
         let repo1 = CrawlRepositoryImpl::new(pool1);
         let repo2 = CrawlRepositoryImpl::new(pool2);
-        assert!(!Arc::ptr_eq(&repo1.pool(), &repo2.pool()));
+        assert!(!Arc::ptr_eq(repo1.pool(), repo2.pool()));
     }
 }

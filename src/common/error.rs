@@ -930,8 +930,7 @@ mod tests {
             StatusCode::GATEWAY_TIMEOUT
         );
         assert_eq!(
-            CrawlRsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "io fail"))
-                .status_code(),
+            CrawlRsError::Io(std::io::Error::other("io fail")).status_code(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(
@@ -994,7 +993,7 @@ mod tests {
             "TIMEOUT"
         );
         assert_eq!(
-            CrawlRsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")).error_code(),
+            CrawlRsError::Io(std::io::Error::other("x")).error_code(),
             "IO_ERROR"
         );
         assert_eq!(
@@ -1053,7 +1052,7 @@ mod tests {
             "Request timed out. Please try again later."
         );
         assert_eq!(
-            CrawlRsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")).user_message(),
+            CrawlRsError::Io(std::io::Error::other("x")).user_message(),
             "Internal I/O error. Please try again later."
         );
         assert_eq!(
@@ -1127,13 +1126,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_into_response_production_env() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("CRAWLRS_ENV", "production");
-        std::env::remove_var("APP_ENVIRONMENT");
-        std::env::remove_var("RUST_ENV");
-
-        let err = CrawlRsError::NotFound("resource 123".to_string());
-        let response = err.into_response();
+        let response = {
+            let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("CRAWLRS_ENV", "production");
+            std::env::remove_var("APP_ENVIRONMENT");
+            std::env::remove_var("RUST_ENV");
+            CrawlRsError::NotFound("resource 123".to_string()).into_response()
+        };
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -1153,11 +1152,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_into_response_development_env() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("CRAWLRS_ENV", "development");
-
-        let err = CrawlRsError::Validation("bad input".to_string());
-        let response = err.into_response();
+        let response = {
+            let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("CRAWLRS_ENV", "development");
+            CrawlRsError::Validation("bad input".to_string()).into_response()
+        };
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -1177,13 +1176,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_into_response_rate_limit() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("CRAWLRS_ENV", "production");
-        std::env::remove_var("APP_ENVIRONMENT");
-        std::env::remove_var("RUST_ENV");
-
-        let err = CrawlRsError::RateLimit("too many requests".to_string());
-        let response = err.into_response();
+        let response = {
+            let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("CRAWLRS_ENV", "production");
+            std::env::remove_var("APP_ENVIRONMENT");
+            std::env::remove_var("RUST_ENV");
+            CrawlRsError::RateLimit("too many requests".to_string()).into_response()
+        };
 
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -1477,11 +1476,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_error_authentication_returns_401() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::remove_var("CRAWLRS_ENV");
-        std::env::remove_var("APP_ENVIRONMENT");
-        std::env::remove_var("RUST_ENV");
-        let response = CrawlRsError::Authentication("bad token".to_string()).into_response();
+        let response = {
+            let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::remove_var("CRAWLRS_ENV");
+            std::env::remove_var("APP_ENVIRONMENT");
+            std::env::remove_var("RUST_ENV");
+            CrawlRsError::Authentication("bad token".to_string()).into_response()
+        };
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -1493,11 +1494,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_error_service_unavailable_returns_503() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("CRAWLRS_ENV", "production");
-        std::env::remove_var("APP_ENVIRONMENT");
-        std::env::remove_var("RUST_ENV");
-        let response = CrawlRsError::ServiceUnavailable("cache down".to_string()).into_response();
+        let response = {
+            let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("CRAWLRS_ENV", "production");
+            std::env::remove_var("APP_ENVIRONMENT");
+            std::env::remove_var("RUST_ENV");
+            let response =
+                CrawlRsError::ServiceUnavailable("cache down".to_string()).into_response();
+            std::env::remove_var("CRAWLRS_ENV");
+            response
+        };
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -1505,6 +1511,5 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["code"], "SERVICE_UNAVAILABLE");
         assert_eq!(json["error"]["status"], 503);
-        std::env::remove_var("CRAWLRS_ENV");
     }
 }

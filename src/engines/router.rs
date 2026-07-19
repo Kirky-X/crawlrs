@@ -2054,7 +2054,7 @@ mod tests {
                     screenshot: None,
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
-                    response_time_ms: self.delay_ms as u64,
+                    response_time_ms: self.delay_ms,
                 })
             }
             fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {

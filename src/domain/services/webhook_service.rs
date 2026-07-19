@@ -1733,9 +1733,10 @@ mod tests {
         let webhook = make_test_webhook(team_id, "https://example.com/hook");
         let webhook_repo = Arc::new(MockWebhookRepository::with_webhooks(vec![webhook.clone()]));
         let event_repo = Arc::new(ConfigurableWebhookEventRepository::default());
-        let mut webhook_service = MockWebhookService::default();
-        webhook_service.should_fail = true;
-        let webhook_service = Arc::new(webhook_service);
+        let webhook_service = Arc::new(MockWebhookService {
+            should_fail: true,
+            ..Default::default()
+        });
         let service = make_management_service(webhook_repo, event_repo, webhook_service);
 
         let result = service
@@ -1830,9 +1831,10 @@ mod tests {
             events.push(create_test_event());
         }
         let webhook_repo = Arc::new(MockWebhookRepository::default());
-        let mut webhook_service = MockWebhookService::default();
-        webhook_service.should_fail = true;
-        let webhook_service = Arc::new(webhook_service);
+        let webhook_service = Arc::new(MockWebhookService {
+            should_fail: true,
+            ..Default::default()
+        });
         let service =
             make_management_service(webhook_repo, event_repo.clone(), webhook_service.clone());
 

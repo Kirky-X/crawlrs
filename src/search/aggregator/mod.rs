@@ -1431,7 +1431,7 @@ mod tests {
         let agg = SearchAggregator::new(engines, 5000);
 
         let req1 = SearchRequest::new("query").with_limit(10);
-        req1.clone(); // just to use req1
+        let _ = req1.clone(); // just to use req1
         let mut req1 = SearchRequest::new("query").with_limit(10);
         req1.lang = Some("en".to_string());
         agg.search(&req1).await.unwrap();

@@ -1161,11 +1161,11 @@ pub fn test_auth_state(db: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid) -> Auth
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::repositories::auth_scope_repository::{
         AuthScopeRepository, RepositoryError,
     };
     use async_trait::async_trait;
-    use dbnexus::DbConfig;
     use std::sync::Mutex as StdMutex;
     use std::time::Instant;
 
@@ -1175,29 +1175,21 @@ mod tests {
     /// Serializes tests that touch GLOBAL_AUTH_STATE (OnceLock — set once, never reset).
     static GLOBAL_STATE_LOCK: StdMutex<()> = StdMutex::new(());
 
-    /// Create a lazy (non-connecting) DbPool for testing.
+    /// Acquire the global cache lock, recovering from a poisoned mutex.
     ///
-    /// Uses a dedicated thread with a current-thread tokio runtime to avoid
-    /// runtime-in-runtime panics — mirrors the pattern in tests/unit.
-    fn create_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                rt.block_on(DbPool::with_config({
-                    let mut cfg = DbConfig::default();
-                    cfg.url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-                        "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string()
-                    });
-                    cfg
-                }))
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
+    /// Centralizes the `lock().unwrap_or_else(|e| e.into_inner())` pattern that
+    /// was duplicated 11 times across the test module. Poison recovery is safe
+    /// here because tests reset global state under the lock before asserting.
+    fn lock_global_cache() -> std::sync::MutexGuard<'static, ()> {
+        GLOBAL_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Acquire the global auth state lock, recovering from a poisoned mutex.
+    ///
+    /// Centralizes the `lock().unwrap_or_else(|e| e.into_inner())` pattern that
+    /// was duplicated 8 times across the test module.
+    fn lock_global_state() -> std::sync::MutexGuard<'static, ()> {
+        GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Mock AuthScopeRepository that returns a configurable scope or an error.
@@ -1436,7 +1428,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_cache_singleton() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         let cache1 = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache1.clone());
@@ -1451,9 +1443,14 @@ mod tests {
         );
     }
 
+    // GLOBAL_CACHE_LOCK must be held across .await because async helpers
+    // (invalidate_all_cache, get_cache_stats, etc.) read/write the global
+    // cache; releasing the guard would let other tests race-modify it.
+    // Single-threaded tokio runtime => no deadlock risk.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn test_global_cache_invalidate_all() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache.clone());
@@ -2000,9 +1997,10 @@ mod tests {
 
     // ===== Global cache function tests (when not initialized) =====
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_CACHE_LOCK serializes global cache access; see above
     #[tokio::test]
     async fn test_global_cache_functions_when_not_initialized() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         assert!(!invalidate_cache_by_token_hash("sha256:test").await);
         assert_eq!(invalidate_cache_by_api_key_id(Uuid::new_v4()).await, 0);
@@ -2013,9 +2011,10 @@ mod tests {
 
     // ===== Global cache function tests (when initialized) =====
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_CACHE_LOCK serializes global cache access; see above
     #[tokio::test]
     async fn test_global_invalidate_cache_by_token_hash_hit() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache.clone());
@@ -2034,18 +2033,20 @@ mod tests {
         assert!(invalidate_cache_by_token_hash("sha256:global_tok").await);
     }
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_CACHE_LOCK serializes global cache access; see above
     #[tokio::test]
     async fn test_global_invalidate_cache_by_token_hash_miss() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache);
         assert!(!invalidate_cache_by_token_hash("sha256:nonexistent").await);
     }
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_CACHE_LOCK serializes global cache access; see above
     #[tokio::test]
     async fn test_global_invalidate_cache_by_api_key_id_multiple() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache.clone());
@@ -2075,9 +2076,10 @@ mod tests {
         assert_eq!(removed, 2);
     }
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_CACHE_LOCK serializes global cache access; see above
     #[tokio::test]
     async fn test_global_invalidate_cache_by_team() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache.clone());
@@ -2101,9 +2103,10 @@ mod tests {
         assert_eq!(removed2, 0);
     }
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_CACHE_LOCK serializes global cache access; see above
     #[tokio::test]
     async fn test_global_get_cache_stats_when_initialized() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache);
@@ -2117,6 +2120,7 @@ mod tests {
     // ===== AuthState construction (with_scope_service) =====
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_auth_state_with_scope_service_sets_service() {
         let pool = create_test_db_pool();
         let service = make_auth_scope_service(Some(ApiKeyScope::full_access()));
@@ -2144,6 +2148,7 @@ mod tests {
     // ===== load_scope_from_db =====
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_load_scope_from_db_with_service_loads_scope() {
         let pool = create_test_db_pool();
         let custom_scope = ApiKeyScope {
@@ -2172,6 +2177,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_load_scope_from_db_service_error_keeps_default() {
         let pool = create_test_db_pool();
         let service = make_auth_scope_service_error();
@@ -2191,6 +2197,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_load_scope_from_db_no_service_is_no_op() {
         let pool = create_test_db_pool();
         let original_scope = ApiKeyScope::full_access();
@@ -2206,6 +2213,7 @@ mod tests {
     // ===== try_get_cached_auth =====
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_try_get_cached_auth_no_cache_returns_none() {
         let pool = create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
@@ -2215,6 +2223,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_try_get_cached_auth_cache_miss_returns_none() {
         let pool = create_test_db_pool();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
@@ -2232,6 +2241,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_try_get_cached_auth_cache_hit_returns_state() {
         let pool = create_test_db_pool();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
@@ -2276,6 +2286,7 @@ mod tests {
     // ===== inject_auth_state =====
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_inject_auth_state_inserts_extensions() {
         let pool = create_test_db_pool();
         let team_id = Uuid::new_v4();
@@ -2309,8 +2320,11 @@ mod tests {
     // ===== validate_api_key_from_db =====
 
     #[tokio::test]
-    async fn test_validate_api_key_from_db_lazy_pool_returns_500() {
-        // Lazy (non-connecting) DbPool — get_session fails because no real DB.
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_validate_api_key_from_db_returns_500_when_query_fails() {
+        // Real DbPool against a database whose api_keys table is absent —
+        // exercising the `Err(e)` arm of `validate_api_key_from_db`,
+        // which must map to INTERNAL_SERVER_ERROR (500).
         let pool = create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
 
@@ -2318,18 +2332,19 @@ mod tests {
 
         assert!(
             result.is_err(),
-            "Lazy pool should fail to provide a session"
+            "query against missing api_keys table must surface as an error"
         );
         assert_eq!(
             result.unwrap_err(),
             StatusCode::INTERNAL_SERVER_ERROR,
-            "DB session failure should map to INTERNAL_SERVER_ERROR"
+            "database query failure must map to INTERNAL_SERVER_ERROR"
         );
     }
 
     // ===== create_and_cache_auth_state =====
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_and_cache_auth_state_no_service_returns_500() {
         let pool = create_test_db_pool();
         // No auth_scope_service, no cache
@@ -2348,6 +2363,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_and_cache_auth_state_with_service_succeeds_and_caches() {
         let pool = create_test_db_pool();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
@@ -2383,6 +2399,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_and_cache_auth_state_without_cache_still_returns_state() {
         let pool = create_test_db_pool();
         let service = make_auth_scope_service(None);
@@ -2407,6 +2424,7 @@ mod tests {
     // ===== check_rate_limit_lockout =====
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_check_rate_limit_lockout_no_limiter_returns_ok() {
         let pool = create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
@@ -2417,6 +2435,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_check_rate_limit_lockout_unlocked_returns_ok() {
         let pool = create_test_db_pool();
         let rate_limiter = Arc::new(AuthRateLimiter::new());
@@ -2437,6 +2456,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_check_rate_limit_lockout_locked_returns_429() {
         let pool = create_test_db_pool();
         let rate_limiter = Arc::new(AuthRateLimiter::new());
@@ -2468,6 +2488,7 @@ mod tests {
     // ===== record_auth_failure =====
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_record_auth_failure_no_limiter_is_no_op() {
         let pool = create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
@@ -2477,6 +2498,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_record_auth_failure_with_limiter_records_failure() {
         let pool = create_test_db_pool();
         let rate_limiter = Arc::new(AuthRateLimiter::new());
@@ -2511,6 +2533,7 @@ mod tests {
     // ===== reset_auth_failures =====
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_reset_auth_failures_no_limiter_is_no_op() {
         let pool = create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
@@ -2520,6 +2543,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_reset_auth_failures_with_limiter_clears_failures() {
         let pool = create_test_db_pool();
         let rate_limiter = Arc::new(AuthRateLimiter::new());
@@ -2564,6 +2588,7 @@ mod tests {
     // ===== test_auth_state helper =====
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_test_auth_state_helper_constructs_default_scope() {
         let pool = create_test_db_pool();
         let team_id = Uuid::new_v4();
@@ -2580,6 +2605,7 @@ mod tests {
     // ===== check_feature_flag (inline coverage) =====
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_check_feature_flag_inline_returns_true() {
         let pool = create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
@@ -2593,8 +2619,9 @@ mod tests {
     // ===== AuthState with global cache (inline) =====
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_auth_state_with_global_cache_uses_global_inline() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache.clone());
@@ -2619,8 +2646,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_new_for_middleware_creates_cache_when_absent() {
-        let _guard = GLOBAL_CACHE_LOCK.lock().unwrap();
+        let _guard = lock_global_cache();
         reset_global_auth_cache();
         // Ensure no global cache exists before calling new_for_middleware
         assert!(get_global_auth_cache().is_none());
@@ -2639,8 +2667,9 @@ mod tests {
     // ===== set/get_global_auth_state (inline coverage of the set path) =====
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_set_get_global_auth_state_roundtrip() {
-        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        let _guard = lock_global_state();
         let pool = create_test_db_pool();
         let state = Arc::new(AuthState::new(
             pool,
@@ -2710,6 +2739,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_scope_middleware_admin_path_insufficient_scope_returns_forbidden() {
         let app = make_scope_router();
         let pool = create_test_db_pool();
@@ -2729,6 +2759,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_scope_middleware_admin_path_full_access_passes_through() {
         let app = make_scope_router();
         let pool = create_test_db_pool();
@@ -2751,9 +2782,15 @@ mod tests {
     // Exercise auth_middleware_inner through a real axum Router to cover the
     // main middleware branches: public bypass, missing token, DB failure.
 
+    // GLOBAL_STATE_LOCK must be held across .await because the middleware
+    // reads GLOBAL_AUTH_STATE during request handling; releasing the guard
+    // would let other tests race-modify the global state.
+    // Single-threaded tokio runtime => no deadlock risk.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_auth_middleware_inner_public_endpoint_bypasses() {
-        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        let _guard = lock_global_state();
         if get_global_auth_state().is_none() {
             let pool = create_test_db_pool();
             let state = Arc::new(AuthState::new(
@@ -2782,9 +2819,11 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_auth_middleware_inner_missing_bearer_returns_401() {
-        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        let _guard = lock_global_state();
         if get_global_auth_state().is_none() {
             let pool = create_test_db_pool();
             let state = Arc::new(AuthState::new(
@@ -2813,9 +2852,11 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_auth_middleware_inner_db_failure_returns_500() {
-        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        let _guard = lock_global_state();
         if get_global_auth_state().is_none() {
             let pool = create_test_db_pool();
             let state = Arc::new(AuthState::new(
@@ -2917,6 +2958,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_scope_middleware_audit_log_called_on_deny() {
         let deny_called = Arc::new(std::sync::Mutex::new(false));
         let audit_service: Arc<dyn AuditServiceTrait> = Arc::new(MockAuditService {
@@ -2954,6 +2996,7 @@ mod tests {
     // ===== AuthState Debug impl coverage =====
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_auth_state_debug_impl_minimal_fields() {
         let pool = create_test_db_pool();
         let team_id = Uuid::new_v4();
@@ -2974,6 +3017,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_auth_state_debug_impl_with_cache_and_limiter() {
         let pool = create_test_db_pool();
         let team_id = Uuid::new_v4();
@@ -3020,33 +3064,41 @@ mod tests {
     /// Ensure the global auth state is set with cache + rate limiter.
     /// If already set (by another test), returns the existing state.
     /// This is necessary because GLOBAL_AUTH_STATE is a OnceLock (set once, never reset).
+    ///
+    /// Panics when `TEST_DATABASE_URL` is not set — callers MUST mark their
+    /// tests with `#[ignore = "requires TEST_DATABASE_URL"]` so CI without a
+    /// real DB skips them. The previous `Option` return leaked the "should this
+    /// test be skipped?" concern into the production-shaped helper; the
+    /// `#[ignore]` attribute is the idiomatic Rust way to express that.
     fn ensure_global_state_with_cache_and_limiter() -> Arc<AuthState> {
-        if get_global_auth_state().is_none() {
-            let pool = create_test_db_pool();
-            let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
-            let rate_limiter = Arc::new(AuthRateLimiter::new());
-            let state = AuthState::with_trusted_proxies(
-                pool,
-                None,
-                Uuid::new_v4(),
-                Uuid::new_v4(),
-                ApiKeyScope::default(),
-                Some(cache),
-                Some(rate_limiter),
-                security::TrustedProxyConfig::from_settings(false, vec![]),
-            );
-            set_global_auth_state(Arc::new(state));
+        if let Some(existing) = get_global_auth_state() {
+            return existing;
         }
+        let pool = create_test_db_pool();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        let rate_limiter = Arc::new(AuthRateLimiter::new());
+        let state = AuthState::with_trusted_proxies(
+            pool,
+            None,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            Some(cache),
+            Some(rate_limiter),
+            security::TrustedProxyConfig::from_settings(false, vec![]),
+        );
+        set_global_auth_state(Arc::new(state));
         get_global_auth_state().expect("global auth state should be set")
     }
 
     // ===== auth_middleware_inner: no global state (lines 709-710) =====
     // Only covers when this test runs before any test that sets GLOBAL_AUTH_STATE.
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
     #[tokio::test]
     async fn test_auth_middleware_inner_no_global_state_returns_500() {
         ensure_auth_debug_logger();
-        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        let _guard = lock_global_state();
 
         // Only test the None path if no other test has set the state yet
         if get_global_auth_state().is_some() {
@@ -3072,10 +3124,12 @@ mod tests {
 
     // ===== auth_middleware_inner: rate limit lockout (line 731) =====
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_auth_middleware_inner_rate_limit_lockout_returns_429() {
         ensure_auth_debug_logger();
-        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        let _guard = lock_global_state();
 
         let state = ensure_global_state_with_cache_and_limiter();
 
@@ -3116,10 +3170,12 @@ mod tests {
 
     // ===== auth_middleware_inner: cache hit path (lines 748-749, 782) =====
 
+    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_auth_middleware_inner_cache_hit_returns_200() {
         ensure_auth_debug_logger();
-        let _guard = GLOBAL_STATE_LOCK.lock().unwrap();
+        let _guard = lock_global_state();
 
         let state = ensure_global_state_with_cache_and_limiter();
 

@@ -300,21 +300,21 @@ services:
       dockerfile: docker/Dockerfile.test
     image: crawlrs-test:latest
     container_name: crawlrs-test
-    command: ["cargo", "test", "--features", "full", "--test", "integration_tests"]
+    command: ["cargo", "test", "--features", "full,test-mocks", "--test", "integration_tests"]
     environment:
       # 测试配置
-      - TEST_DATABASE_URL=postgres://crawlrs:password@db:5432/crawlrs_test
+      - TEST_DATABASE_URL=postgres://${DB_USER:-crawlrs}:${DB_PASSWORD:-password}@${DB_HOST:-db}:5432/${DB_NAME:-crawlrs}_test
       - SKIP_S3_TESTS=true
       - SKIP_BROWSER_TESTS=true
       - SKIP_SEARCH_TESTS=true
 
       # 数据库配置 (使用服务名)
-      - CRAWLRS__DATABASE__URL=postgres://crawlrs:password@db:5432/crawlrs_test
-      - CRAWLRS__DATABASE__HOST=db
+      - CRAWLRS__DATABASE__URL=postgres://${DB_USER:-crawlrs}:${DB_PASSWORD:-password}@${DB_HOST:-db}:5432/${DB_NAME:-crawlrs}_test
+      - CRAWLRS__DATABASE__HOST=${DB_HOST:-db}
       - CRAWLRS__DATABASE__PORT=5432
-      - CRAWLRS__DATABASE__NAME=crawlrs_test
-      - CRAWLRS__DATABASE__USER=crawlrs
-      - CRAWLRS__DATABASE__PASSWORD=password
+      - CRAWLRS__DATABASE__NAME=${DB_NAME:-crawlrs}_test
+      - CRAWLRS__DATABASE__USER=${DB_USER:-crawlrs}
+      - CRAWLRS__DATABASE__PASSWORD=${DB_PASSWORD:-password}
 
       # 服务器配置
       - CRAWLRS__SERVER__HOST=0.0.0.0

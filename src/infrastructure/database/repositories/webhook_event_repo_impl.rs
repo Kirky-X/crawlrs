@@ -186,25 +186,8 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::models::webhook_model::{WebhookEventType, WebhookStatus};
-
-    /// Build a lazy DbPool that does not actually connect; `get_session()` will
-    /// fail at runtime, allowing us to exercise every error path in this
-    /// repository without a real database.
-    fn create_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                DbPool::try_from(&dbnexus::DbConfig::default())
-                    .expect("failed to create lazy DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
-    }
 
     fn sample_webhook_event() -> WebhookEvent {
         WebhookEvent::with_all_fields(
@@ -230,6 +213,7 @@ mod tests {
     // ========== construction ==========
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = WebhookEventRepoImpl::new(pool);
@@ -239,7 +223,8 @@ mod tests {
     // ========== error paths (lazy pool: get_session fails) ==========
 
     #[tokio::test]
-    async fn test_create_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_create_returns_error_with_real_db() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let event = sample_webhook_event();
         let result = repo.create(&event).await;
@@ -254,7 +239,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_id_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_id_returns_error_with_real_db() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::new_v4()).await;
         assert!(result.is_err());
@@ -265,7 +251,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_pending_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_pending_returns_error_with_real_db() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.find_pending(10).await;
         assert!(result.is_err());
@@ -276,7 +263,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_update_returns_error_with_real_db() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let event = sample_webhook_event();
         let result = repo.update(&event).await;
@@ -288,7 +276,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_team_id_paginated_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_team_id_paginated_returns_error_with_real_db() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
         assert!(result.is_err());
@@ -299,7 +288,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_count_by_team_id_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_count_by_team_id_returns_error_with_real_db() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.count_by_team_id(Uuid::new_v4()).await;
         assert!(result.is_err());

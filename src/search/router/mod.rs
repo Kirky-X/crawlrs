@@ -885,25 +885,31 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_success_rate_with_all_success() {
-        let mut m = EngineMetrics::default();
-        m.total_requests = 10;
-        m.successful_requests = 10;
+        let m = EngineMetrics {
+            total_requests: 10,
+            successful_requests: 10,
+            ..Default::default()
+        };
         assert!((m.success_rate() - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_engine_metrics_success_rate_with_some_failures() {
-        let mut m = EngineMetrics::default();
-        m.total_requests = 10;
-        m.successful_requests = 7;
+        let m = EngineMetrics {
+            total_requests: 10,
+            successful_requests: 7,
+            ..Default::default()
+        };
         assert!((m.success_rate() - 0.7).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_engine_metrics_success_rate_with_all_failures() {
-        let mut m = EngineMetrics::default();
-        m.total_requests = 5;
-        m.successful_requests = 0;
+        let m = EngineMetrics {
+            total_requests: 5,
+            successful_requests: 0,
+            ..Default::default()
+        };
         assert!((m.success_rate() - 0.0).abs() < f64::EPSILON);
     }
 
@@ -940,9 +946,11 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_record_success_resets_consecutive_failures() {
-        let mut m = EngineMetrics::default();
-        m.consecutive_failures = 2;
-        m.health = EngineHealth::Degraded;
+        let mut m = EngineMetrics {
+            consecutive_failures: 2,
+            health: EngineHealth::Degraded,
+            ..Default::default()
+        };
         m.record_request_start();
         m.record_success(Duration::from_millis(50));
         assert_eq!(m.consecutive_failures, 0);
@@ -950,9 +958,11 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_record_success_recovers_from_degraded() {
-        let mut m = EngineMetrics::default();
-        m.health = EngineHealth::Degraded;
-        m.consecutive_failures = 0;
+        let mut m = EngineMetrics {
+            health: EngineHealth::Degraded,
+            consecutive_failures: 0,
+            ..Default::default()
+        };
         m.record_request_start();
         m.record_success(Duration::from_millis(50));
         assert_eq!(m.health, EngineHealth::Healthy);
@@ -960,8 +970,10 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_record_success_recovers_from_unhealthy_to_degraded() {
-        let mut m = EngineMetrics::default();
-        m.health = EngineHealth::Unhealthy;
+        let mut m = EngineMetrics {
+            health: EngineHealth::Unhealthy,
+            ..Default::default()
+        };
         m.record_request_start();
         m.record_success(Duration::from_millis(50));
         assert_eq!(m.health, EngineHealth::Degraded);
@@ -1002,16 +1014,20 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_can_retry_degraded() {
-        let mut m = EngineMetrics::default();
-        m.health = EngineHealth::Degraded;
+        let m = EngineMetrics {
+            health: EngineHealth::Degraded,
+            ..Default::default()
+        };
         assert!(m.can_retry(), "Degraded should be retryable");
     }
 
     #[test]
     fn test_engine_metrics_can_retry_unhealthy_without_last_success() {
-        let mut m = EngineMetrics::default();
-        m.health = EngineHealth::Unhealthy;
-        m.last_success = None;
+        let m = EngineMetrics {
+            health: EngineHealth::Unhealthy,
+            last_success: None,
+            ..Default::default()
+        };
         assert!(
             !m.can_retry(),
             "Unhealthy without last_success should not be retryable"
@@ -1020,9 +1036,11 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_can_retry_unhealthy_with_recent_last_success() {
-        let mut m = EngineMetrics::default();
-        m.health = EngineHealth::Unhealthy;
-        m.last_success = Some(Instant::now());
+        let m = EngineMetrics {
+            health: EngineHealth::Unhealthy,
+            last_success: Some(Instant::now()),
+            ..Default::default()
+        };
         assert!(
             !m.can_retry(),
             "Unhealthy with recent last_success should not be retryable"
@@ -1031,15 +1049,19 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_can_retry_isolated() {
-        let mut m = EngineMetrics::default();
-        m.health = EngineHealth::Isolated;
+        let m = EngineMetrics {
+            health: EngineHealth::Isolated,
+            ..Default::default()
+        };
         assert!(!m.can_retry(), "Isolated should not be retryable");
     }
 
     #[test]
     fn test_engine_metrics_can_retry_unknown() {
-        let mut m = EngineMetrics::default();
-        m.health = EngineHealth::Unknown;
+        let m = EngineMetrics {
+            health: EngineHealth::Unknown,
+            ..Default::default()
+        };
         assert!(m.can_retry(), "Unknown should be retryable");
     }
 
@@ -1767,10 +1789,12 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_can_retry_unhealthy_with_old_last_success() {
-        let mut m = EngineMetrics::default();
-        m.health = EngineHealth::Unhealthy;
-        // Set last_success to more than 5 minutes ago
-        m.last_success = Some(Instant::now() - Duration::from_secs(400));
+        let m = EngineMetrics {
+            health: EngineHealth::Unhealthy,
+            // Set last_success to more than 5 minutes ago
+            last_success: Some(Instant::now() - Duration::from_secs(400)),
+            ..Default::default()
+        };
         assert!(
             m.can_retry(),
             "Unhealthy with old last_success (>5min) should be retryable"
@@ -1779,8 +1803,10 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_record_success_updates_health_from_healthy() {
-        let mut m = EngineMetrics::default();
-        m.health = EngineHealth::Healthy;
+        let mut m = EngineMetrics {
+            health: EngineHealth::Healthy,
+            ..Default::default()
+        };
         m.record_request_start();
         m.record_success(Duration::from_millis(50));
         assert_eq!(m.health, EngineHealth::Healthy);
@@ -1797,11 +1823,13 @@ mod tests_ext {
 
     #[test]
     fn test_engine_metrics_clone() {
-        let mut m = EngineMetrics::default();
-        m.total_requests = 5;
-        m.successful_requests = 3;
-        m.failed_requests = 2;
-        m.health = EngineHealth::Degraded;
+        let m = EngineMetrics {
+            total_requests: 5,
+            successful_requests: 3,
+            failed_requests: 2,
+            health: EngineHealth::Degraded,
+            ..Default::default()
+        };
         let cloned = m.clone();
         assert_eq!(cloned.total_requests, 5);
         assert_eq!(cloned.successful_requests, 3);

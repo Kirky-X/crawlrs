@@ -238,6 +238,7 @@ fn tc_max_sync_wait_ms_constant_value() {
 }
 
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn tc_max_sync_wait_ms_is_positive() {
     assert!(crawl_task::MAX_SYNC_WAIT_MS > 0);
 }

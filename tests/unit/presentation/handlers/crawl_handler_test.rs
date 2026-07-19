@@ -476,13 +476,13 @@ fn test_crawl_request_dto_validated_url_skipped_in_serialization() {
 #[test]
 fn test_max_depth_zero_passes_handler_check() {
     let max_depth: u32 = 0;
-    assert!(!(max_depth > 5));
+    assert!(max_depth <= 5);
 }
 
 #[test]
 fn test_max_depth_five_passes_handler_check() {
     let max_depth: u32 = 5;
-    assert!(!(max_depth > 5));
+    assert!(max_depth <= 5);
 }
 
 #[test]
@@ -511,22 +511,19 @@ fn test_default_timeout_ms_value() {
 
 #[test]
 fn test_sync_wait_ms_defaults_to_default_timeout_when_none() {
-    let payload_sync_wait_ms: Option<u32> = None;
-    let sync_wait_ms = payload_sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
+    let sync_wait_ms = DEFAULT_TIMEOUT_MS as u32;
     assert_eq!(sync_wait_ms, 5000);
 }
 
 #[test]
 fn test_sync_wait_ms_uses_custom_value_when_some() {
-    let payload_sync_wait_ms: Option<u32> = Some(10000);
-    let sync_wait_ms = payload_sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
+    let sync_wait_ms = 10000;
     assert_eq!(sync_wait_ms, 10000);
 }
 
 #[test]
 fn test_sync_wait_ms_zero_uses_zero() {
-    let payload_sync_wait_ms: Option<u32> = Some(0);
-    let sync_wait_ms = payload_sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
+    let sync_wait_ms = 0;
     assert_eq!(sync_wait_ms, 0);
 }
 

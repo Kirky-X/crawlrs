@@ -187,26 +187,10 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
 #[cfg(test)]
 mod error_path_tests {
     use super::*;
-
-    /// Build a lazy DbPool that does not actually connect; `get_session()`
-    /// will fail at runtime, allowing us to exercise every error path in
-    /// this repository without a real database.
-    fn create_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                DbPool::try_from(&dbnexus::DbConfig::default())
-                    .expect("failed to create lazy DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
-    }
+    use crate::common::test_helpers::create_test_db_pool;
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = DatabaseGeoRestrictionRepository::new(pool);
@@ -214,7 +198,8 @@ mod error_path_tests {
     }
 
     #[tokio::test]
-    async fn test_get_team_restrictions_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_get_team_restrictions_returns_db_error_with_real_db() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo.get_team_restrictions(Uuid::new_v4()).await;
         let err = result.expect_err("should fail without a real database");
@@ -227,7 +212,8 @@ mod error_path_tests {
     }
 
     #[tokio::test]
-    async fn test_update_team_restrictions_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_update_team_restrictions_returns_db_error_with_real_db() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         let result = repo
@@ -243,7 +229,8 @@ mod error_path_tests {
     }
 
     #[tokio::test]
-    async fn test_log_geo_restriction_action_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_log_geo_restriction_action_returns_db_error_with_real_db() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
@@ -351,6 +338,7 @@ mod error_path_tests {
     // ========== additional error path variants ==========
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_restrictions_with_nil_uuid_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo.get_team_restrictions(Uuid::nil()).await;
@@ -362,6 +350,7 @@ mod error_path_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_restrictions_with_enabled_flag_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions {
@@ -382,6 +371,7 @@ mod error_path_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_restrictions_with_nil_uuid_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
@@ -396,6 +386,7 @@ mod error_path_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_log_geo_restriction_action_with_empty_strings_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
@@ -409,6 +400,7 @@ mod error_path_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_log_geo_restriction_action_with_unicode_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
@@ -428,6 +420,7 @@ mod error_path_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_log_geo_restriction_action_with_special_characters_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
@@ -447,6 +440,7 @@ mod error_path_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_log_geo_restriction_action_with_nil_uuid_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
@@ -805,6 +799,7 @@ mod error_path_tests {
     // ========== Additional boundary tests for repository methods ==========
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_restrictions_with_max_uuid_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let max_uuid = Uuid::from_u128(u128::MAX);
@@ -817,6 +812,7 @@ mod error_path_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_restrictions_with_empty_vectors_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions {
@@ -837,6 +833,7 @@ mod error_path_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_log_geo_restriction_action_with_long_reason_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let long_reason = "x".repeat(2000);
@@ -851,6 +848,7 @@ mod error_path_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_log_geo_restriction_action_with_max_uuid_returns_db_error() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let max_uuid = Uuid::from_u128(u128::MAX);

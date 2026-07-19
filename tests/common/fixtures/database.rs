@@ -20,16 +20,15 @@ pub struct DatabaseOptions {
 
 impl Default for DatabaseOptions {
     fn default() -> Self {
-        Self {
-            url: std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-                let db_password = std::env::var("TEST_DATABASE_PASSWORD")
-                    .unwrap_or_else(|_| "password".to_string());
-                format!(
-                    "postgres://crawlrs:{}@localhost:5443/crawlrs_test",
-                    db_password
-                )
-            }),
-        }
+        // 强制要求 TEST_DATABASE_URL 环境变量；不提供硬编码 fallback 以避免凭据泄露。
+        // 调用方应在集成测试起始处先调用 require_real_db_or_skip() 或显式设置该变量。
+        let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+            panic!(
+                "TEST_DATABASE_URL must be set for sea-orm integration tests; \
+                 no hardcoded fallback is provided to avoid credential leaks"
+            )
+        });
+        Self { url }
     }
 }
 

@@ -9,3 +9,4 @@ pub mod factories;
 pub mod fixtures;
 pub mod helpers;
 pub mod macros;
+pub mod mocks;

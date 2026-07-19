@@ -1,0 +1,20 @@
+[package]
+name = "opentelemetry-jaeger"
+version = "0.22.0"
+edition = "2021"
+license = "MIT"
+description = "Stub replacing deprecated opentelemetry-jaeger 0.22.0 to break the transitive chain to opentelemetry_sdk 0.23.0 (CVE-2026-48504). limiteron 0.2.6 declares this dep but its init_jaeger_tracer never calls any opentelemetry_jaeger:: API; the dependency is effectively dead."
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+rt-tokio = []
+collector = []
+isahc = []
+reqwest = []
+reqwest_blocking = []
+reqsurf = []
+surf = []
+wasm-async-executor = []

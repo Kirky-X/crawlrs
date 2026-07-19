@@ -585,32 +585,9 @@ impl TaskRepository for TaskRepositoryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::models::TaskType;
     use serde_json::json;
-
-    /// Create a lazy DbPool that does not establish a real database connection.
-    /// `get_session()` calls will fail, allowing us to test error paths without
-    /// requiring a running PostgreSQL instance.
-    fn create_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                rt.block_on(dbnexus::DbPool::with_config({
-                    let mut cfg = dbnexus::DbConfig::default();
-                    cfg.url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-                        "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string()
-                    });
-                    cfg
-                }))
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
-    }
 
     /// Build a minimal Task instance for tests that need to pass one in.
     /// The fields don't matter because the DB call fails before the entity is used.
@@ -630,6 +607,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
@@ -644,7 +622,8 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    async fn test_create_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_create_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let task = make_test_task();
@@ -659,7 +638,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_id_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_id_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.find_by_id(Uuid::new_v4()).await;
@@ -668,7 +648,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_update_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let task = make_test_task();
@@ -678,7 +659,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_acquire_next_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_acquire_next_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.acquire_next(Uuid::new_v4()).await;
@@ -687,7 +669,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mark_completed_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_mark_completed_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.mark_completed(Uuid::new_v4()).await;
@@ -696,7 +679,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mark_failed_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_mark_failed_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.mark_failed(Uuid::new_v4()).await;
@@ -705,7 +689,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mark_cancelled_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_mark_cancelled_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.mark_cancelled(Uuid::new_v4()).await;
@@ -714,7 +699,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_exists_by_url_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_exists_by_url_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.exists_by_url("http://example.com").await;
@@ -723,6 +709,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_existing_urls_returns_empty_for_empty_input() {
         // Empty input should short-circuit to Ok(empty set) without DB access
         let pool = create_test_db_pool();
@@ -733,7 +720,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_existing_urls_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_existing_urls_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let urls = vec!["http://example.com".to_string()];
@@ -743,7 +731,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reset_stuck_tasks_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_reset_stuck_tasks_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.reset_stuck_tasks(Duration::minutes(30)).await;
@@ -752,7 +741,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cancel_tasks_by_crawl_id_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_cancel_tasks_by_crawl_id_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await;
@@ -761,7 +751,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_expire_tasks_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_expire_tasks_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.expire_tasks().await;
@@ -770,7 +761,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_crawl_id_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_crawl_id_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let result = repo.find_by_crawl_id(Uuid::new_v4()).await;
@@ -779,7 +771,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_query_tasks_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_query_tasks_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let params = TaskQueryParams {
@@ -792,6 +785,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_batch_cancel_returns_empty_for_empty_input() {
         // Empty input should short-circuit to Ok((empty, empty)) without DB access
         let pool = create_test_db_pool();
@@ -804,7 +798,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_batch_cancel_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_batch_cancel_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
         let task_ids = vec![Uuid::new_v4()];
@@ -843,6 +838,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_pool_accessor_returns_reference_to_same_pool() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
@@ -852,6 +848,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_zero_lock_duration() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::zero());
@@ -859,6 +856,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_large_lock_duration() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::days(7));
@@ -894,6 +892,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_with_crawl_id_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
@@ -907,6 +906,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_with_statuses_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
@@ -920,6 +920,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_with_task_types_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
@@ -933,6 +934,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_with_all_optional_filters_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
@@ -954,6 +956,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_existing_urls_with_multiple_urls_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let urls = vec![
@@ -967,6 +970,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_batch_cancel_with_multiple_ids_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let task_ids = vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
@@ -976,6 +980,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_batch_cancel_with_force_true_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let task_ids = vec![Uuid::new_v4()];
@@ -985,6 +990,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_reset_stuck_tasks_with_zero_duration_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.reset_stuck_tasks(Duration::zero()).await;
@@ -993,6 +999,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_reset_stuck_tasks_with_negative_duration_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         // Negative duration means cutoff is in the future; still exercises the DB path
@@ -1002,6 +1009,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_exists_by_url_with_empty_string_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.exists_by_url("").await;
@@ -1293,6 +1301,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_exists_by_url_with_unicode_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.exists_by_url("http://例子.com/测试").await;
@@ -1301,6 +1310,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_exists_by_url_with_long_url_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let long_url = format!("http://example.com/{}", "a".repeat(2000));
@@ -1310,6 +1320,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_existing_urls_with_unicode_urls_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let urls = vec![
@@ -1322,6 +1333,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_existing_urls_with_empty_string_in_list_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let urls = vec!["".to_string()];
@@ -1331,6 +1343,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_existing_urls_with_mixed_empty_and_nonempty_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let urls = vec!["".to_string(), "http://example.com".to_string()];
@@ -1344,6 +1357,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_id_with_nil_uuid_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.find_by_id(Uuid::nil()).await;
@@ -1352,6 +1366,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_mark_completed_with_nil_uuid_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.mark_completed(Uuid::nil()).await;
@@ -1360,6 +1375,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_mark_failed_with_nil_uuid_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.mark_failed(Uuid::nil()).await;
@@ -1368,6 +1384,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_mark_cancelled_with_nil_uuid_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.mark_cancelled(Uuid::nil()).await;
@@ -1376,6 +1393,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_acquire_next_with_nil_worker_id_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.acquire_next(Uuid::nil()).await;
@@ -1384,6 +1402,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_tasks_by_crawl_id_with_nil_uuid_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.cancel_tasks_by_crawl_id(Uuid::nil()).await;
@@ -1392,6 +1411,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_crawl_id_with_nil_uuid_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.find_by_crawl_id(Uuid::nil()).await;
@@ -1400,6 +1420,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_batch_cancel_with_nil_uuids_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let task_ids = vec![Uuid::nil()];
@@ -1413,6 +1434,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_with_zero_limit_offset_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
@@ -1427,6 +1449,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_with_max_limit_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
@@ -1441,6 +1464,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_with_nil_team_id_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
@@ -1453,6 +1477,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_with_empty_statuses_vec_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
@@ -1466,6 +1491,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_with_empty_task_types_vec_returns_db_error() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
@@ -1483,6 +1509,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_repository_clone_preserves_pool_identity() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
@@ -1491,6 +1518,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_distinct_pools_do_not_share_identity() {
         let pool1 = create_test_db_pool();
         let pool2 = create_test_db_pool();

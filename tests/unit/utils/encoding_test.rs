@@ -104,9 +104,8 @@ fn tc_long_gbk_text_caches_detection_result() {
         "cache should grow by 1 after processing long non-UTF-8 text"
     );
 
-    match result1 {
-        Ok(text) => assert!(!text.is_empty()),
-        Err(_) => {}
+    if let Ok(text) = result1 {
+        assert!(!text.is_empty());
     }
 }
 
@@ -210,9 +209,8 @@ fn tc_process_with_processor_handles_non_utf8_gbk() {
     let processor = TextEncodingProcessor::new();
     let (gbk_bytes, _, _) = encoding_rs::GBK.encode("测试");
     let result = process_with_processor(&processor, &gbk_bytes);
-    match result {
-        Ok(text) => assert!(!text.is_empty()),
-        Err(_) => {}
+    if let Ok(text) = result {
+        assert!(!text.is_empty());
     }
 }
 

@@ -187,6 +187,7 @@ const RATE_LIMIT_FAIL_OPEN: bool = true;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_helpers::create_test_db_pool;
     use axum::body::Body;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -302,6 +303,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_rate_limit_fail_open_constant() {
         // The fail-open default must be true (availability over strictness).
         assert!(RATE_LIMIT_FAIL_OPEN);
@@ -503,28 +505,6 @@ mod tests {
             req.extensions_mut().insert(key.to_string());
         }
         req
-    }
-
-    /// Create a test DbPool for AuthState construction (lazy pool, no real DB).
-    fn create_test_db_pool() -> Arc<dbnexus::DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool");
-                let _guard = rt.enter();
-                rt.block_on(dbnexus::DbPool::with_config({
-                    let mut cfg = dbnexus::DbConfig::default();
-                    cfg.url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-                        "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string()
-                    });
-                    cfg
-                }))
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool thread panicked"))
-        })
     }
 
     #[tokio::test]
@@ -857,6 +837,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn tc_auth_state_extension_provides_user_id() {
         use crate::domain::auth::ApiKeyScope;
         use crate::presentation::middleware::auth_middleware::AuthState;
@@ -888,6 +869,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn tc_auth_state_and_api_key_both_present_still_allowed() {
         use crate::domain::auth::ApiKeyScope;
         use crate::presentation::middleware::auth_middleware::AuthState;

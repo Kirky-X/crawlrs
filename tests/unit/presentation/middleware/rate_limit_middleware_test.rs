@@ -47,6 +47,7 @@ struct MockRateLimitingService {
     behavior: MockBehavior,
 }
 
+#[allow(dead_code)]
 impl MockRateLimitingService {
     fn allowed() -> Self {
         Self {
@@ -173,7 +174,7 @@ impl QuotaService for MockRateLimitingService {
 impl RateLimitingService for MockRateLimitingService {}
 
 fn mock_arc(behavior: MockBehavior) -> Arc<dyn RateLimitingService> {
-    Arc::new(MockRateLimitingService { behavior: behavior })
+    Arc::new(MockRateLimitingService { behavior })
 }
 
 async fn middleware_wrapper(

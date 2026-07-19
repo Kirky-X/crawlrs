@@ -23,9 +23,9 @@ services:
     image: postgres:latest
     container_name: crawlrs-test-db
     environment:
-      - POSTGRES_USER=crawlrs
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=crawlrs_test
+      - POSTGRES_USER=${DB_USER:-crawlrs}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-password}
+      - POSTGRES_DB=${DB_NAME:-crawlrs}_test
     ports:
       - "5443:5432"
     volumes:
@@ -33,7 +33,7 @@ services:
       - ./init-scripts:/docker-entrypoint-initdb.d
     restart: no
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U crawlrs -d crawlrs_test"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-crawlrs} -d ${DB_NAME:-crawlrs}_test"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -98,19 +98,19 @@ services:
       dockerfile: docker/Dockerfile.test
     image: crawlrs-test:latest
     container_name: crawlrs-test-runner
-    command: ["cargo", "test", "--features", "full", "--test", "integration_tests"]
+    command: ["cargo", "test", "--features", "full,test-mocks", "--test", "integration_tests"]
     environment:
-      - CRAWLRS__DATABASE__URL=postgres://crawlrs:password@test-db:5432/crawlrs_test
-      - CRAWLRS__DATABASE__HOST=test-db
+      - CRAWLRS__DATABASE__URL=postgres://${DB_USER:-crawlrs}:${DB_PASSWORD:-password}@${DB_HOST:-test-db}:5432/${DB_NAME:-crawlrs}_test
+      - CRAWLRS__DATABASE__HOST=${DB_HOST:-test-db}
       - CRAWLRS__DATABASE__PORT=5432
-      - CRAWLRS__DATABASE__NAME=crawlrs_test
-      - CRAWLRS__DATABASE__USER=crawlrs
-      - CRAWLRS__DATABASE__PASSWORD=password
+      - CRAWLRS__DATABASE__NAME=${DB_NAME:-crawlrs}_test
+      - CRAWLRS__DATABASE__USER=${DB_USER:-crawlrs}
+      - CRAWLRS__DATABASE__PASSWORD=${DB_PASSWORD:-password}
       - CRAWLRS__DATABASE__MAX_CONNECTIONS=20
       - CRAWLRS__DATABASE__CONNECT_TIMEOUT=60
 
       # 测试配置
-      - TEST_DATABASE_URL=postgres://crawlrs:password@test-db:5432/crawlrs_test
+      - TEST_DATABASE_URL=postgres://${DB_USER:-crawlrs}:${DB_PASSWORD:-password}@${DB_HOST:-test-db}:5432/${DB_NAME:-crawlrs}_test
 
       # Webhook secret (required for tests)
       - CRAWLRS__WEBHOOK__SECRET=test-secret-key-for-testing-only

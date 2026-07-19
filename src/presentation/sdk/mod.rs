@@ -333,3 +333,13 @@ async fn sdk_create_crawl(
 pub fn build_sdk_router() -> axum::Router {
     sdforge::http::build()
 }
+
+// mocks 仅在 test build 或显式启用 `test-mocks` feature 时编译。
+// integration test 通过 `crawlrs::presentation::sdk::mocks::*` 路径复用 mock 实现，
+// 必须以 `cargo test --features test-mocks` 运行（已加入 docker-compose 与 CI）。
+// production binary 默认不启用 `test-mocks`，mocks 完全不参与编译，无 dead code 残留。
+#[cfg(any(test, feature = "test-mocks"))]
+pub mod mocks;
+
+#[cfg(test)]
+mod tests;

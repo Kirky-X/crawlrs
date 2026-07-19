@@ -235,7 +235,7 @@ fn tc_team_id_copy_preserves_uuid() {
 fn tc_team_id_clone_preserves_uuid() {
     let uuid = Uuid::new_v4();
     let team_id = TeamId(uuid);
-    let cloned = team_id.clone();
+    let cloned = team_id;
     assert_eq!(team_id.0, cloned.0);
 }
 

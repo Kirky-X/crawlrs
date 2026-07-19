@@ -745,9 +745,8 @@ mod tests {
         }
         let result = processor.process_text(&non_utf8);
         // Should either succeed (decoded) or fail gracefully; must not panic.
-        match result {
-            Ok(text) => assert!(!text.is_empty()),
-            Err(_) => {}
+        if let Ok(text) = result {
+            assert!(!text.is_empty());
         }
     }
 

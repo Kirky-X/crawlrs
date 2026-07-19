@@ -196,7 +196,7 @@ mod tests {
         let component = SearchAggregatorComponent::new(aggregator.clone());
         let retrieved = component.get_aggregator();
         // get_aggregator() 返回 &SearchAggregator，应指向 Arc 内部的同一对象
-        let aggregator_ptr = Arc::as_ptr(&aggregator) as *const SearchAggregator;
+        let aggregator_ptr = Arc::as_ptr(&aggregator);
         let retrieved_ptr = retrieved as *const SearchAggregator;
         assert_eq!(aggregator_ptr, retrieved_ptr);
     }
@@ -207,7 +207,7 @@ mod tests {
         let component = SearchAggregatorComponent::new(aggregator.clone());
         let trait_obj: &dyn SearchAggregatorTrait = &component;
         let retrieved = trait_obj.get_aggregator();
-        let aggregator_ptr = Arc::as_ptr(&aggregator) as *const SearchAggregator;
+        let aggregator_ptr = Arc::as_ptr(&aggregator);
         let retrieved_ptr = retrieved as *const SearchAggregator;
         assert_eq!(aggregator_ptr, retrieved_ptr);
     }

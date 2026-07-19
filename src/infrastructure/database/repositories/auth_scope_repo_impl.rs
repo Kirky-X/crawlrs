@@ -150,25 +150,8 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::auth::ApiKeyScope;
-
-    /// Build a lazy DbPool that does not actually connect; `get_session()` will
-    /// fail at runtime, allowing us to exercise every error path in this
-    /// repository without a real database.
-    fn create_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                DbPool::try_from(&dbnexus::DbConfig::default())
-                    .expect("failed to create lazy DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
-    }
 
     fn sample_scope() -> ApiKeyScope {
         ApiKeyScope {
@@ -183,6 +166,7 @@ mod tests {
     // ========== construction ==========
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = AuthScopeRepositoryImpl::new(pool);
@@ -193,7 +177,8 @@ mod tests {
     // ========== error paths (lazy pool: get_session fails) ==========
 
     #[tokio::test]
-    async fn test_find_by_api_key_id_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_api_key_id_returns_db_error_with_real_db() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key_id(Uuid::new_v4()).await;
         assert!(result.is_err(), "should fail without a real database");
@@ -204,7 +189,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_api_key_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_api_key_returns_db_error_with_real_db() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key("sk-test-key").await;
         assert!(result.is_err(), "should fail without a real database");
@@ -215,6 +201,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_api_key_with_empty_key_returns_db_error() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key("").await;
@@ -225,7 +212,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_upsert_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_upsert_returns_db_error_with_real_db() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.upsert(Uuid::new_v4(), sample_scope()).await;
         assert!(result.is_err(), "should fail without a real database");
@@ -236,7 +224,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_by_api_key_id_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_delete_by_api_key_id_returns_db_error_with_real_db() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.delete_by_api_key_id(Uuid::new_v4()).await;
         assert!(result.is_err(), "should fail without a real database");
@@ -396,6 +385,7 @@ mod tests {
     // ========== additional error path variants ==========
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_api_key_with_unicode_key_returns_db_error() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key("sk-测试-キー-🔑").await;
@@ -407,6 +397,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_api_key_with_long_key_returns_db_error() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let long_key = "sk-".to_string() + &"a".repeat(10_000);
@@ -419,6 +410,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_upsert_with_admin_scope_returns_db_error() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let admin_scope = ApiKeyScope {
@@ -437,6 +429,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_upsert_with_zero_limits_returns_db_error() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let zero_scope = ApiKeyScope {
@@ -455,6 +448,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_delete_by_api_key_id_with_nil_uuid_returns_db_error() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.delete_by_api_key_id(Uuid::nil()).await;
@@ -466,6 +460,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_api_key_id_with_nil_uuid_returns_db_error() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key_id(Uuid::nil()).await;

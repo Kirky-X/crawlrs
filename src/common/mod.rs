@@ -21,6 +21,10 @@ pub use time_utils::{
 #[cfg(test)]
 pub mod test_fixtures;
 
+/// Centralized test helpers shared across `src/` `#[cfg(test)] mod tests` blocks.
+#[cfg(test)]
+pub mod test_helpers;
+
 /// Test support utilities shared across modules
 #[cfg(test)]
 pub(crate) mod test_support {

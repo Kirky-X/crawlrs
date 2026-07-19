@@ -291,11 +291,11 @@ mod tests {
         assert_eq!(params.get("q"), Some(&"rust".to_string()));
         assert_eq!(params.get("pq"), Some(&"rust".to_string()));
         assert!(
-            params.get("first").is_none(),
+            !params.contains_key("first"),
             "page 1 should not have 'first'"
         );
         assert!(
-            params.get("FORM").is_none(),
+            !params.contains_key("FORM"),
             "page 1 should not have 'FORM'"
         );
     }
@@ -493,6 +493,10 @@ mod tests {
         SearchRequest::new(query)
     }
 
+    // ENV_LOCK must be held across .await because engine.search() reads
+    // BING_TEST_RESULTS during execution; releasing it would let other tests
+    // race-modify the env var. Single-threaded tokio runtime => no deadlock risk.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn test_search_fallback_returns_hardcoded_results() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -518,6 +522,7 @@ mod tests {
         assert_eq!(response.items[1].engine, SearchEngineType::Bing);
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_fallback_description_fields() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -535,6 +540,7 @@ mod tests {
         assert_eq!(response.items[1].description, "Test description 2");
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_empty_query_returns_error_without_fallback() {
         let _lock = ENV_LOCK.lock().unwrap();

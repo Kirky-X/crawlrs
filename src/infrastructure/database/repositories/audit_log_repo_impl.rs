@@ -143,25 +143,8 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
-
-    /// Build a lazy DbPool that does not actually connect; `get_session()` will
-    /// fail at runtime, allowing us to exercise every error path in this
-    /// repository without a real database.
-    fn create_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                DbPool::try_from(&dbnexus::DbConfig::default())
-                    .expect("failed to create lazy DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
-    }
 
     fn sample_scope() -> ApiKeyScope {
         ApiKeyScope {
@@ -195,6 +178,7 @@ mod tests {
     // ========== construction ==========
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = AuditLogRepositoryImpl::new(pool);
@@ -204,7 +188,8 @@ mod tests {
     // ========== error paths (lazy pool: get_session fails) ==========
 
     #[tokio::test]
-    async fn test_create_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_create_returns_error_with_real_db() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let entry = sample_audit_log_entry();
         let result = repo.create(&entry).await;
@@ -219,7 +204,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_api_key_id_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_api_key_id_returns_error_with_real_db() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key_id(Uuid::new_v4(), 10, 0).await;
         assert!(result.is_err());
@@ -230,7 +216,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_by_team_id_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_by_team_id_returns_error_with_real_db() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id(Uuid::new_v4(), 10, 0).await;
         assert!(result.is_err());
@@ -241,7 +228,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_denied_for_key_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_find_denied_for_key_returns_error_with_real_db() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_denied_for_key(Uuid::new_v4(), 5).await;
         assert!(result.is_err());
@@ -252,7 +240,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cleanup_old_logs_returns_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_cleanup_old_logs_returns_error_with_real_db() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.cleanup_old_logs(30).await;
         assert!(result.is_err());

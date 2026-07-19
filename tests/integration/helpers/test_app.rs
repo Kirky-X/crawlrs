@@ -20,13 +20,13 @@ pub struct TestApp {
 }
 
 /// Create the dbnexus DbPool connecting to the test PostgreSQL instance.
+///
+/// 强制要求 `TEST_DATABASE_URL` 环境变量；不提供硬编码 fallback 以避免凭据泄露。
 async fn create_db_pool() -> Arc<DbPool> {
     let db_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-        let db_password =
-            std::env::var("TEST_DATABASE_PASSWORD").unwrap_or_else(|_| "password".to_string());
-        format!(
-            "postgres://crawlrs:{}@localhost:5443/crawlrs_test",
-            db_password
+        panic!(
+            "TEST_DATABASE_URL must be set for integration tests requiring a real DB; \
+             no hardcoded fallback is provided to avoid credential leaks"
         )
     });
 

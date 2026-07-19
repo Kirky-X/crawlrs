@@ -303,7 +303,7 @@ mod tests {
 
         assert_eq!(url, "https://www.baidu.com/s");
         assert_eq!(params.get("wd"), Some(&"news".to_string()));
-        assert!(params.get("rn").is_none(), "fallback should not set rn");
+        assert!(!params.contains_key("rn"), "fallback should not set rn");
     }
 
     #[test]
@@ -467,6 +467,10 @@ mod tests {
         SearchRequest::new(query)
     }
 
+    // ENV_LOCK must be held across .await because engine.search() reads
+    // BAIDU_TEST_RESULTS during execution; releasing it would let other tests
+    // race-modify the env var. Single-threaded tokio runtime => no deadlock risk.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn test_search_fallback_returns_hardcoded_results() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -492,6 +496,7 @@ mod tests {
         assert_eq!(response.items[1].engine, SearchEngineType::Baidu);
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_fallback_escapes_query_in_title() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -513,6 +518,7 @@ mod tests {
         assert!(!response.items[1].title.contains("<script>"));
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_fallback_description_and_engine_fields() {
         let _lock = ENV_LOCK.lock().unwrap();

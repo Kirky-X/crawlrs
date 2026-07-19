@@ -659,15 +659,15 @@ mod tests {
     }
 
     enum FindByIdMode {
-        ReturnTask,
-        ReturnNone,
-        ReturnError,
+        Task,
+        None,
+        Error,
     }
 
     impl MockTaskRepository {
         fn with_task(task: Task) -> Self {
             Self {
-                find_mode: FindByIdMode::ReturnTask,
+                find_mode: FindByIdMode::Task,
                 task: Some(task),
                 update_should_fail: false,
                 update_calls: Mutex::new(0),
@@ -675,7 +675,7 @@ mod tests {
         }
         fn with_no_task() -> Self {
             Self {
-                find_mode: FindByIdMode::ReturnNone,
+                find_mode: FindByIdMode::None,
                 task: None,
                 update_should_fail: false,
                 update_calls: Mutex::new(0),
@@ -683,7 +683,7 @@ mod tests {
         }
         fn with_db_error() -> Self {
             Self {
-                find_mode: FindByIdMode::ReturnError,
+                find_mode: FindByIdMode::Error,
                 task: None,
                 update_should_fail: false,
                 update_calls: Mutex::new(0),
@@ -691,7 +691,7 @@ mod tests {
         }
         fn with_failing_update(task: Task) -> Self {
             Self {
-                find_mode: FindByIdMode::ReturnTask,
+                find_mode: FindByIdMode::Task,
                 task: Some(task),
                 update_should_fail: true,
                 update_calls: Mutex::new(0),
@@ -709,9 +709,9 @@ mod tests {
         }
         async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
             match self.find_mode {
-                FindByIdMode::ReturnTask => Ok(self.task.clone()),
-                FindByIdMode::ReturnNone => Ok(None),
-                FindByIdMode::ReturnError => {
+                FindByIdMode::Task => Ok(self.task.clone()),
+                FindByIdMode::None => Ok(None),
+                FindByIdMode::Error => {
                     Err(RepositoryError::Database(anyhow::anyhow!("mock db error")))
                 }
             }

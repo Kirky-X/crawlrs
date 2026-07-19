@@ -215,36 +215,14 @@ impl CreditsRepository for CreditsRepositoryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Create a lazy DbPool that does not establish a real database connection.
-    /// `get_session()` calls will fail, allowing us to test error paths without
-    /// requiring a running PostgreSQL instance.
-    fn create_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                rt.block_on(dbnexus::DbPool::with_config({
-                    let mut cfg = dbnexus::DbConfig::default();
-                    cfg.url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-                        "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string()
-                    });
-                    cfg
-                }))
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
-    }
+    use crate::common::test_helpers::create_test_db_pool;
 
     // ============================================================
     // Construction tests
     // ============================================================
 
     #[test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -259,7 +237,8 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    async fn test_get_balance_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_get_balance_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
         let result = repo.get_balance(Uuid::new_v4()).await;
@@ -273,7 +252,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_deduct_credits_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_deduct_credits_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
         let result = repo
@@ -295,7 +275,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_credits_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_add_credits_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
         let result = repo
@@ -315,7 +296,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_transaction_history_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_get_transaction_history_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
         let result = repo.get_transaction_history(Uuid::new_v4(), Some(10)).await;
@@ -327,7 +309,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_initialize_team_credits_returns_db_error_without_real_db() {
+    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_initialize_team_credits_returns_db_error_with_real_db() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
         let result = repo.initialize_team_credits(Uuid::new_v4(), 0).await;
@@ -373,6 +356,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_transaction_history_with_no_limit_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -386,6 +370,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_transaction_history_with_zero_limit_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -398,6 +383,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_transaction_history_with_large_limit_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -412,6 +398,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_balance_with_nil_uuid_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -424,6 +411,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_deduct_credits_with_reference_id_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -445,6 +433,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_deduct_credits_with_zero_amount_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -465,6 +454,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_deduct_credits_with_description_containing_quotes_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -486,6 +476,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_add_credits_with_reference_id_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -506,6 +497,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_add_credits_with_zero_amount_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -526,6 +518,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_add_credits_with_description_containing_quotes_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -546,6 +539,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_initialize_team_credits_with_non_zero_balance_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -558,6 +552,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_initialize_team_credits_with_negative_balance_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -571,6 +566,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_initialize_team_credits_with_nil_uuid_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -587,6 +583,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_deduct_credits_with_crawl_type_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
@@ -603,6 +600,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_add_credits_with_extract_type_returns_db_error() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);

@@ -621,6 +621,11 @@ mod tests {
         SearchRequest::new(query)
     }
 
+    // ENV_LOCK must be held across .await because engine.search() reads
+    // GOOGLE_HTTP_FALLBACK_TEST_RESULTS / CRAWLRS_ENV during execution;
+    // releasing it would let other tests race-modify the env var.
+    // Single-threaded tokio runtime => no deadlock risk.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn test_search_fallback_returns_hardcoded_results_in_dev_env() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -646,6 +651,7 @@ mod tests {
         assert_eq!(response.items[0].engine, SearchEngineType::Google);
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_fallback_returns_hardcoded_results_in_test_env() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -665,6 +671,7 @@ mod tests {
         assert!(response.items[0].title.contains("test query"));
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_fallback_returns_hardcoded_results_with_empty_env() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -686,6 +693,7 @@ mod tests {
         assert!(response.items[0].title.contains("default env test"));
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_fallback_escapes_query_in_title() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -707,6 +715,7 @@ mod tests {
         assert!(!response.items[0].title.contains("<script>"));
     }
 
+    #[allow(clippy::await_holding_lock)] // ENV_LOCK serializes env var access; see above
     #[tokio::test]
     async fn test_search_fallback_with_dev_alias_env_values() {
         // Test all accepted dev environment aliases: "development", "dev", "test", "testing", ""

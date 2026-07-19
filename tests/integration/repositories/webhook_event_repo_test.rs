@@ -211,7 +211,7 @@ async fn test_create_with_different_event_types() {
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let event_types = vec![
+    let event_types = [
         WebhookEventType::CrawlCompleted,
         WebhookEventType::CrawlFailed,
         WebhookEventType::ScrapeCompleted,

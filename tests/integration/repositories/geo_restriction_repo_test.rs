@@ -101,7 +101,7 @@ async fn tc_inmemory_update_then_get_roundtrip() {
         .await
         .expect("get after update should succeed");
 
-    assert_eq!(retrieved.enable_geo_restrictions, true);
+    assert!(retrieved.enable_geo_restrictions);
     assert_eq!(
         retrieved.allowed_countries.as_ref().unwrap().len(),
         3,
@@ -177,8 +177,8 @@ async fn tc_inmemory_overwrite_restrictions() {
         .await
         .expect("get after overwrite should succeed");
 
-    assert_eq!(
-        retrieved.enable_geo_restrictions, false,
+    assert!(
+        !retrieved.enable_geo_restrictions,
         "should reflect second update"
     );
     assert!(
@@ -404,7 +404,7 @@ async fn tc_database_log_multiple_actions_all_persist() {
     for (ip, country, action, reason) in &entries {
         let found = logs.iter().any(|l| {
             l.ip_address == *ip
-                && l.country_code.as_ref().map(|c| c.as_str()) == Some(*country)
+                && l.country_code.as_deref() == Some(*country)
                 && l.restriction_type == *action
                 && l.reason == *reason
         });

@@ -39,6 +39,8 @@ use crawlrs::presentation::middleware::auth_middleware::{
     AuthRateLimiter, AuthState, CacheStats,
 };
 
+use crate::common::helpers::db_pool::create_test_pool_or_panic;
+
 // ============================================================================
 // Mock Audit Service
 // ============================================================================
@@ -120,35 +122,9 @@ impl AuditServiceTrait for MockAuditService {
 // Test Helpers
 // ============================================================================
 
-/// Create a lazy (non-connecting) DbPool for testing.
-///
-/// Uses a dedicated thread with a current-thread tokio runtime to avoid
-/// runtime-in-runtime panics — see distributed_rate_limit_middleware tests.
-fn create_test_db_pool() -> Arc<dbnexus::DbPool> {
-    use dbnexus::{DbConfig, DbPool};
-    std::thread::scope(|s| {
-        let handle = s.spawn(|| {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to build tokio runtime for DbPool construction");
-            let _guard = rt.enter();
-            rt.block_on(DbPool::with_config({
-                let mut cfg = DbConfig::default();
-                cfg.url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-                    "postgres://crawlrs:password@localhost:5443/crawlrs_test".to_string()
-                });
-                cfg
-            }))
-            .expect("failed to create DbPool for test")
-        });
-        Arc::new(handle.join().expect("DbPool construction thread panicked"))
-    })
-}
-
 /// Create a test AuthState with the given scope and random IDs.
 fn make_auth_state(scope: ApiKeyScope) -> AuthState {
-    let pool = create_test_db_pool();
+    let pool = create_test_pool_or_panic();
     AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), scope)
 }
 
@@ -167,7 +143,7 @@ fn ensure_global_auth_state() -> Arc<AuthState> {
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         set_global_auth_cache(cache);
     }
-    let pool = create_test_db_pool();
+    let pool = create_test_pool_or_panic();
     let cache = get_global_auth_cache().unwrap();
     let rate_limiter = Arc::new(AuthRateLimiter::new());
     // disabled=false means X-Forwarded-For is trusted directly — allows IP control in tests
@@ -235,7 +211,7 @@ fn build_auth_test_app() -> Router {
 
 #[test]
 fn test_auth_state_new_sets_required_fields() {
-    let pool = create_test_db_pool();
+    let pool = create_test_pool_or_panic();
     let team_id = Uuid::new_v4();
     let api_key_id = Uuid::new_v4();
     let scope = ApiKeyScope::full_access();
@@ -252,7 +228,7 @@ fn test_auth_state_new_sets_required_fields() {
 
 #[test]
 fn test_auth_state_with_cache_sets_cache() {
-    let pool = create_test_db_pool();
+    let pool = create_test_pool_or_panic();
     let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
     let state = AuthState::with_cache(
         pool,
@@ -271,7 +247,7 @@ fn test_auth_state_with_cache_sets_cache() {
 
 #[test]
 fn test_auth_state_with_trusted_proxies_sets_all_fields() {
-    let pool = create_test_db_pool();
+    let pool = create_test_pool_or_panic();
     let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
     let rate_limiter = Arc::new(AuthRateLimiter::new());
     let trusted_proxies = security::TrustedProxyConfig::from_settings(false, vec![]);
@@ -300,7 +276,7 @@ async fn test_auth_state_with_global_cache_uses_global() {
     let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
     set_global_auth_cache(cache);
 
-    let pool = create_test_db_pool();
+    let pool = create_test_pool_or_panic();
     let state = AuthState::with_global_cache(
         pool,
         None,
@@ -331,7 +307,7 @@ async fn test_auth_state_new_for_middleware_initializes_global_cache() {
     let fresh_cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
     set_global_auth_cache(fresh_cache);
 
-    let pool = create_test_db_pool();
+    let pool = create_test_pool_or_panic();
     let state = AuthState::new_for_middleware(pool, None);
 
     assert!(
