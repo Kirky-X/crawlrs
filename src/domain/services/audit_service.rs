@@ -13,10 +13,13 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
+// AuditLogBuilder 已拆分到独立文件（架构 MEDIUM 1：单一职责）
+// 这里 re-export 保持外部 import 路径向后兼容：
+// `crawlrs::domain::services::audit_service::AuditLogBuilder` 仍可用
+pub use crate::domain::services::audit_log_builder::AuditLogBuilder;
+
 #[derive(Debug, Error)]
 pub enum AuditServiceError {
-    #[error("Database error: {0}")]
-    DatabaseError(#[from] sea_orm::DbErr),
     #[error("Repository error: {0}")]
     RepositoryError(#[from] AuditRepositoryError),
 }
@@ -24,7 +27,6 @@ pub enum AuditServiceError {
 impl From<AuditServiceError> for CrawlRsError {
     fn from(error: AuditServiceError) -> Self {
         match error {
-            AuditServiceError::DatabaseError(db_err) => CrawlRsError::Database(db_err),
             AuditServiceError::RepositoryError(repo_err) => {
                 // 尝试将 RepositoryError 转换为更具体的 CrawlRsError
                 match repo_err {
@@ -36,285 +38,10 @@ impl From<AuditServiceError> for CrawlRsError {
     }
 }
 
-/// Builder for creating audit log entries
-#[derive(Clone, Debug)]
-pub struct AuditLogBuilder {
-    api_key_id: Option<Uuid>,
-    team_id: Option<Uuid>,
-    requested_action: String,
-    decision: AuditDecision,
-    denial_reason: Option<String>,
-    scope_used: Option<ApiKeyScope>,
-    ip_address: Option<std::net::IpAddr>,
-    trace_id: Option<Uuid>,
-    user_agent: Option<String>,
-    request_path: Option<String>,
-    request_method: Option<String>,
-    metadata: serde_json::Value,
-}
-
-impl AuditLogBuilder {
-    /// Create a new builder
-    pub fn new(action: impl Into<String>, decision: AuditDecision) -> Self {
-        Self {
-            api_key_id: None,
-            team_id: None,
-            requested_action: action.into(),
-            decision,
-            denial_reason: None,
-            scope_used: None,
-            ip_address: None,
-            trace_id: None,
-            user_agent: None,
-            request_path: None,
-            request_method: None,
-            metadata: serde_json::Value::Object(serde_json::Map::new()),
-        }
-    }
-
-    /// Set API Key ID
-    pub fn with_api_key_id(mut self, id: Uuid) -> Self {
-        self.api_key_id = Some(id);
-        self
-    }
-
-    /// Set team ID
-    pub fn with_team_id(mut self, id: Uuid) -> Self {
-        self.team_id = Some(id);
-        self
-    }
-
-    /// Set denial reason
-    pub fn with_denial_reason(mut self, reason: impl Into<String>) -> Self {
-        self.denial_reason = Some(reason.into());
-        self
-    }
-
-    /// Set scope used
-    pub fn with_scope(mut self, scope: ApiKeyScope) -> Self {
-        self.scope_used = Some(scope);
-        self
-    }
-
-    /// Set IP address
-    pub fn with_ip_address(mut self, ip: impl Into<std::net::IpAddr>) -> Self {
-        self.ip_address = Some(ip.into());
-        self
-    }
-
-    /// Set trace ID
-    pub fn with_trace_id(mut self, id: Uuid) -> Self {
-        self.trace_id = Some(id);
-        self
-    }
-
-    /// Set user agent
-    pub fn with_user_agent(mut self, ua: impl Into<String>) -> Self {
-        self.user_agent = Some(ua.into());
-        self
-    }
-
-    /// Set request path
-    pub fn with_request_path(mut self, path: impl Into<String>) -> Self {
-        self.request_path = Some(path.into());
-        self
-    }
-
-    /// Set request method
-    pub fn with_request_method(mut self, method: impl Into<String>) -> Self {
-        self.request_method = Some(method.into());
-        self
-    }
-
-    /// Add metadata
-    pub fn with_metadata(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
-        if let serde_json::Value::Object(map) = &mut self.metadata {
-            map.insert(key.into(), value);
-        }
-        self
-    }
-
-    /// Build the audit log entry
-    pub fn build(self) -> AuditLogEntry {
-        AuditLogEntry {
-            id: Uuid::new_v4(),
-            api_key_id: self.api_key_id,
-            team_id: self.team_id,
-            requested_action: self.requested_action,
-            decision: self.decision,
-            denial_reason: self.denial_reason,
-            scope_used: self.scope_used,
-            ip_address: self.ip_address,
-            trace_id: self.trace_id,
-            user_agent: self.user_agent,
-            request_path: self.request_path,
-            request_method: self.request_method,
-            metadata: self.metadata,
-            created_at: chrono::Utc::now(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use std::net::Ipv4Addr;
-
-    #[test]
-    fn test_audit_log_builder_new() {
-        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow);
-        assert_eq!(builder.requested_action, "test_action");
-        assert_eq!(builder.decision, AuditDecision::Allow);
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_api_key_id() {
-        let api_key_id = Uuid::new_v4();
-        let builder =
-            AuditLogBuilder::new("test_action", AuditDecision::Allow).with_api_key_id(api_key_id);
-        assert_eq!(builder.api_key_id, Some(api_key_id));
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_team_id() {
-        let team_id = Uuid::new_v4();
-        let builder =
-            AuditLogBuilder::new("test_action", AuditDecision::Allow).with_team_id(team_id);
-        assert_eq!(builder.team_id, Some(team_id));
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_denial_reason() {
-        let builder = AuditLogBuilder::new("test_action", AuditDecision::Deny)
-            .with_denial_reason("insufficient permissions");
-        assert_eq!(
-            builder.denial_reason,
-            Some("insufficient permissions".to_string())
-        );
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_ip_address() {
-        let ip: std::net::IpAddr = Ipv4Addr::new(192, 168, 1, 1).into();
-        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow).with_ip_address(ip);
-        assert!(builder.ip_address.is_some());
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_trace_id() {
-        let trace_id = Uuid::new_v4();
-        let builder =
-            AuditLogBuilder::new("test_action", AuditDecision::Allow).with_trace_id(trace_id);
-        assert_eq!(builder.trace_id, Some(trace_id));
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_user_agent() {
-        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow)
-            .with_user_agent("Test Agent/1.0");
-        assert_eq!(builder.user_agent, Some("Test Agent/1.0".to_string()));
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_request_path() {
-        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow)
-            .with_request_path("/api/v1/test");
-        assert_eq!(builder.request_path, Some("/api/v1/test".to_string()));
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_request_method() {
-        let builder =
-            AuditLogBuilder::new("test_action", AuditDecision::Allow).with_request_method("POST");
-        assert_eq!(builder.request_method, Some("POST".to_string()));
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_metadata() {
-        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow)
-            .with_metadata("key1", json!("value1"))
-            .with_metadata("key2", json!(123));
-
-        match &builder.metadata {
-            serde_json::Value::Object(map) => {
-                assert_eq!(map.get("key1"), Some(&json!("value1")));
-                assert_eq!(map.get("key2"), Some(&json!(123)));
-            }
-            _ => panic!("Expected object metadata"),
-        }
-    }
-
-    #[test]
-    fn test_audit_log_builder_build_returns_entry() {
-        let api_key_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
-        let trace_id = Uuid::new_v4();
-        let ip: std::net::IpAddr = Ipv4Addr::new(10, 0, 0, 1).into();
-
-        let entry = AuditLogBuilder::new("test_action", AuditDecision::Allow)
-            .with_api_key_id(api_key_id)
-            .with_team_id(team_id)
-            .with_trace_id(trace_id)
-            .with_ip_address(ip)
-            .with_request_path("/api/test")
-            .with_request_method("GET")
-            .build();
-
-        assert_eq!(entry.requested_action, "test_action");
-        assert_eq!(entry.decision, AuditDecision::Allow);
-        assert_eq!(entry.api_key_id, Some(api_key_id));
-        assert_eq!(entry.team_id, Some(team_id));
-        assert_eq!(entry.trace_id, Some(trace_id));
-        assert_eq!(entry.request_path, Some("/api/test".to_string()));
-        assert_eq!(entry.request_method, Some("GET".to_string()));
-        assert!(entry.id != Uuid::nil());
-        assert!(entry.created_at <= chrono::Utc::now());
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_scope() {
-        let scope = ApiKeyScope::default();
-        let builder =
-            AuditLogBuilder::new("test_action", AuditDecision::Allow).with_scope(scope.clone());
-        assert_eq!(builder.scope_used, Some(scope));
-    }
-
-    #[test]
-    fn test_audit_log_builder_build_includes_metadata_and_scope() {
-        let scope = ApiKeyScope::full_access();
-        let entry = AuditLogBuilder::new("delete_resource", AuditDecision::Deny)
-            .with_denial_reason("no permission")
-            .with_scope(scope.clone())
-            .with_metadata("resource_id", json!("res-123"))
-            .with_user_agent("AuditClient/2.0")
-            .build();
-
-        assert_eq!(entry.decision, AuditDecision::Deny);
-        assert_eq!(entry.denial_reason.as_deref(), Some("no permission"));
-        assert_eq!(entry.scope_used, Some(scope));
-        assert_eq!(entry.user_agent.as_deref(), Some("AuditClient/2.0"));
-        match &entry.metadata {
-            serde_json::Value::Object(map) => {
-                assert_eq!(map.get("resource_id"), Some(&json!("res-123")));
-            }
-            _ => panic!("Expected object metadata"),
-        }
-    }
-
-    #[test]
-    fn test_audit_log_builder_with_metadata_after_non_object_is_noop() {
-        // Start with default (Object). Verify metadata insertion works.
-        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow)
-            .with_metadata("k1", json!("v1"));
-        // The builder always starts with Object metadata, so insertion should succeed
-        match &builder.metadata {
-            serde_json::Value::Object(map) => {
-                assert_eq!(map.get("k1"), Some(&json!("v1")));
-            }
-            _ => panic!("Expected object metadata"),
-        }
-    }
 
     // ============================================================
     // AuditService tests
@@ -493,7 +220,6 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             AuditServiceError::RepositoryError(_) => {}
-            other => panic!("expected RepositoryError, got {:?}", other),
         }
     }
 
@@ -568,7 +294,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_audit_service_log_deny_with_none_fields_uses_defaults() {
+    async fn test_audit_service_log_deny_with_none_fields_preserves_none() {
+        // M-2 fix: None 字段必须保留为 None（写入数据库 NULL），而非 unwrap_or_default()
+        // 转换为 nil UUID (`00000000-...`)。nil UUID 会被 find_by_api_key_id(nil_uuid) 误匹配，
+        // 混淆真实 API key 的审计日志。
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo.clone());
 
@@ -580,10 +309,10 @@ mod tests {
         let created = repo.created.lock().expect("lock");
         assert_eq!(created.len(), 1);
         assert_eq!(created[0].decision, AuditDecision::Deny);
-        // None values become Uuid::nil() / default scope
-        assert_eq!(created[0].api_key_id, Some(Uuid::nil()));
-        assert_eq!(created[0].team_id, Some(Uuid::nil()));
-        assert_eq!(created[0].scope_used, Some(ApiKeyScope::default()));
+        // None values must stay None (NULL in DB), not become nil UUID / default scope
+        assert_eq!(created[0].api_key_id, None);
+        assert_eq!(created[0].team_id, None);
+        assert_eq!(created[0].scope_used, None);
         assert_eq!(created[0].denial_reason.as_deref(), Some("auth required"));
     }
 
@@ -826,17 +555,8 @@ mod tests {
     }
 
     // ---- AuditServiceError From impls ----
-
-    #[test]
-    fn test_audit_service_error_from_db_err_to_app_error() {
-        let db_err = sea_orm::DbErr::Custom("db failure".to_string());
-        let service_err: AuditServiceError = db_err.into();
-        let app_err: CrawlRsError = service_err.into();
-        match app_err {
-            CrawlRsError::Database(_) => {}
-            other => panic!("expected CrawlRsError::Database, got {:?}", other),
-        }
-    }
+    // 注意：AuditServiceError 已不再实现 From<sea_orm::DbErr>（分层违规 HIGH 1 修复）。
+    // DbErr 必须先经 AuditRepositoryError::DatabaseError 包装，再 .into() 为 AuditServiceError。
 
     #[test]
     fn test_audit_service_error_from_repository_db_error_to_app_error() {
@@ -864,13 +584,6 @@ mod tests {
             }
             other => panic!("expected CrawlRsError::Other, got {:?}", other),
         }
-    }
-
-    #[test]
-    fn test_audit_service_error_display_database() {
-        let err = AuditServiceError::DatabaseError(sea_orm::DbErr::Custom("x".to_string()));
-        let msg = format!("{}", err);
-        assert!(msg.contains("Database error"));
     }
 
     #[test]
@@ -1032,7 +745,7 @@ impl<R: AuditLogRepository> AuditService<R> {
     }
 
     /// Create a new audit log entry
-    pub async fn _log_impl(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
+    pub async fn log_internal(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
         debug!(
             "Creating audit log: action={}, decision={}",
             entry.requested_action, entry.decision
@@ -1045,7 +758,7 @@ impl<R: AuditLogRepository> AuditService<R> {
     }
 
     /// Log an allow decision
-    pub async fn _log_allow_impl(
+    pub async fn log_allow_internal(
         &self,
         action: impl Into<String>,
         api_key_id: Uuid,
@@ -1058,11 +771,11 @@ impl<R: AuditLogRepository> AuditService<R> {
             .with_scope(scope)
             .build();
 
-        self._log_impl(entry).await
+        self.log_internal(entry).await
     }
 
     /// Log a deny decision
-    pub async fn _log_deny_impl(
+    pub async fn log_deny_internal(
         &self,
         action: impl Into<String>,
         api_key_id: Option<Uuid>,
@@ -1070,19 +783,21 @@ impl<R: AuditLogRepository> AuditService<R> {
         reason: impl Into<String>,
         scope: Option<ApiKeyScope>,
     ) -> Result<(), AuditServiceError> {
+        // 用 maybe_with_* 保留 None 语义：未认证拒绝场景下 api_key_id/team_id 为 None，
+        // 写入 NULL 而非 nil UUID，避免 find_by_api_key_id(nil_uuid) 误匹配。
         let entry = AuditLogBuilder::new(action, AuditDecision::Deny)
-            .with_api_key_id(api_key_id.unwrap_or_default())
-            .with_team_id(team_id.unwrap_or_default())
+            .maybe_with_api_key_id(api_key_id)
+            .maybe_with_team_id(team_id)
             .with_denial_reason(reason)
-            .with_scope(scope.unwrap_or_default())
+            .maybe_with_scope(scope)
             .build();
 
-        self._log_impl(entry).await
+        self.log_internal(entry).await
     }
 
     /// Create a new audit log entry (public wrapper)
     pub async fn log(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
-        self._log_impl(entry).await
+        self.log_internal(entry).await
     }
 
     /// Log an allow decision (public wrapper)
@@ -1093,7 +808,7 @@ impl<R: AuditLogRepository> AuditService<R> {
         team_id: Uuid,
         scope: ApiKeyScope,
     ) -> Result<(), AuditServiceError> {
-        self._log_allow_impl(action, api_key_id, team_id, scope)
+        self.log_allow_internal(action, api_key_id, team_id, scope)
             .await
     }
 
@@ -1106,7 +821,7 @@ impl<R: AuditLogRepository> AuditService<R> {
         reason: impl Into<String>,
         scope: Option<ApiKeyScope>,
     ) -> Result<(), AuditServiceError> {
-        self._log_deny_impl(action, api_key_id, team_id, reason, scope)
+        self.log_deny_internal(action, api_key_id, team_id, reason, scope)
             .await
     }
 
@@ -1160,7 +875,7 @@ impl<R: AuditLogRepository> AuditService<R> {
 #[async_trait::async_trait]
 impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
     async fn log(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
-        self._log_impl(entry).await
+        self.log_internal(entry).await
     }
 
     async fn log_allow(
@@ -1170,7 +885,7 @@ impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
         team_id: Uuid,
         scope: ApiKeyScope,
     ) -> Result<(), AuditServiceError> {
-        self._log_allow_impl(action, api_key_id, team_id, scope)
+        self.log_allow_internal(action, api_key_id, team_id, scope)
             .await
     }
 
@@ -1182,7 +897,7 @@ impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
         reason: String,
         scope: Option<ApiKeyScope>,
     ) -> Result<(), AuditServiceError> {
-        self._log_deny_impl(action, api_key_id, team_id, reason, scope)
+        self.log_deny_internal(action, api_key_id, team_id, reason, scope)
             .await
     }
 

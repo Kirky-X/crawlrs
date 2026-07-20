@@ -827,10 +827,13 @@ mod tests {
         };
 
         // Build engine router + client.
+        // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
+        // proxy_url=None：此处无代理配置（架构 MEDIUM 5：用 Option 替代空字符串 sentinel）
         let engines = crate::bootstrap::engines::init_engines(
             infra.http_client.clone(),
-            "",
+            None,
             &settings.engines,
+            settings.timeouts.engines.default_timeout_seconds,
         );
         let engine_router = Arc::new(EngineRouter::new(engines.clone()));
         let engine_client = Arc::new(EngineClient::with_router(engine_router.clone()));

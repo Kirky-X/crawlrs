@@ -279,6 +279,7 @@ mod tests {
     use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::auth::ApiKeyScope;
     use crate::domain::auth::{AuditDecision, AuditLogEntry};
+    use crate::domain::repositories::audit_log_repository::AuditRepositoryError;
     use crate::domain::services::audit_service::{
         AuditLogBuilder, AuditServiceError, AuditServiceTrait,
     };
@@ -359,9 +360,11 @@ mod tests {
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             if self.should_fail {
-                return Err(AuditServiceError::DatabaseError(sea_orm::DbErr::Custom(
-                    "mock error".to_string(),
-                )));
+                return Err(AuditServiceError::RepositoryError(
+                    AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
+                        "mock error".to_string(),
+                    )),
+                ));
             }
             Ok(self.logs.lock().unwrap().clone())
         }
@@ -373,9 +376,11 @@ mod tests {
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             if self.should_fail {
-                return Err(AuditServiceError::DatabaseError(sea_orm::DbErr::Custom(
-                    "mock error".to_string(),
-                )));
+                return Err(AuditServiceError::RepositoryError(
+                    AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
+                        "mock error".to_string(),
+                    )),
+                ));
             }
             Ok(self.logs.lock().unwrap().clone())
         }
@@ -386,9 +391,11 @@ mod tests {
             _limit: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             if self.should_fail {
-                return Err(AuditServiceError::DatabaseError(sea_orm::DbErr::Custom(
-                    "mock error".to_string(),
-                )));
+                return Err(AuditServiceError::RepositoryError(
+                    AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
+                        "mock error".to_string(),
+                    )),
+                ));
             }
             Ok(self
                 .logs

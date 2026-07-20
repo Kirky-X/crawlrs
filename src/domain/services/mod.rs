@@ -27,6 +27,7 @@
 //! 领域服务与应用程序服务的区别在于：领域服务包含纯粹的业务逻辑，
 //! 而应用程序服务负责协调和编排，可能包含技术实现细节。
 
+pub mod audit_log_builder;
 pub mod audit_service;
 pub mod auth_scope_service;
 pub mod extraction_service;

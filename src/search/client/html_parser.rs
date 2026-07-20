@@ -9,7 +9,7 @@
 use super::{ResponseItem, SearchEngineType};
 use scraper::{Html, Selector};
 
-use super::shared_utils::safe_parse_selector;
+use super::shared_utils::{escape_html_text, safe_parse_selector};
 
 /// Common HTML result parser for search engines
 pub struct HtmlParser {
@@ -93,7 +93,7 @@ impl HtmlParser {
     /// Parse HTML content and extract search results
     pub fn parse(&self, html: &str, engine: SearchEngineType) -> Vec<ResponseItem> {
         let document = Html::parse_document(html);
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(20);
 
         // Try each result selector until we find matches
         let result_elements = self
@@ -157,9 +157,9 @@ impl HtmlParser {
             }
 
             results.push(ResponseItem {
-                title: Self::escape_html(&title),
+                title: escape_html_text(&title),
                 url,
-                description: Self::escape_html(&description),
+                description: escape_html_text(&description),
                 engine,
             });
         }
@@ -183,8 +183,10 @@ impl HtmlParser {
     }
 
     /// Escape HTML entities to prevent XSS
+    ///
+    /// 委托到 `shared_utils::escape_html_text`（架构 MEDIUM 4：统一 XSS 防护原语）
     pub fn escape_html(text: &str) -> String {
-        html_escape::encode_text(text).trim().to_string()
+        escape_html_text(text)
     }
 }
 

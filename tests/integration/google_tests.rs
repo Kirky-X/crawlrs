@@ -209,7 +209,7 @@ impl SearchEngine for FlareSolverrGoogleEngine {
         let html = self
             .flaresolverr_request(&url)
             .await
-            .map_err(SearchError::Engine)?;
+            .map_err(|e| SearchError::EngineClient("Google".to_string(), e.to_string()))?;
 
         let items = self.parse_results(&html);
         Ok(Response {

@@ -250,7 +250,8 @@ impl SearchEngineRouter {
     ) -> Option<Arc<dyn SearchEngine>> {
         let metrics = self.metrics.read();
         // 不再 clone String，用 engine.name() 动态读取（preferred 匹配 + 日志场景）
-        let mut candidates: Vec<(Arc<dyn SearchEngine>, EngineMetrics)> = Vec::new();
+        let mut candidates: Vec<(Arc<dyn SearchEngine>, EngineMetrics)> =
+            Vec::with_capacity(self.engines.len());
 
         for (name, engine) in &self.engines {
             if let Some(metric) = metrics.get(name) {
@@ -322,7 +323,8 @@ impl SearchEngineRouter {
     pub fn select_with_priority(&self, preferred: Option<&str>) -> Vec<Arc<dyn SearchEngine>> {
         let metrics = self.metrics.read();
         // 不再 clone String，用 engine.name() 动态读取（preferred 匹配 + 日志场景）
-        let mut candidates: Vec<(Arc<dyn SearchEngine>, EngineMetrics)> = Vec::new();
+        let mut candidates: Vec<(Arc<dyn SearchEngine>, EngineMetrics)> =
+            Vec::with_capacity(self.engines.len());
 
         for (name, engine) in &self.engines {
             if let Some(metric) = metrics.get(name) {
@@ -461,7 +463,7 @@ impl SearchEngineRouter {
 
         warn!("所有搜索引擎都失败了，最后一个错误: {:?}", last_error);
 
-        Err(last_error.unwrap_or_else(|| SearchError::Engine("所有搜索引擎都失败".to_string())))
+        Err(last_error.unwrap_or_else(|| SearchError::AllEnginesFailed))
     }
 
     /// 简单的搜索方法（使用单个最优引擎）
@@ -739,7 +741,7 @@ mod tests {
             tokio::time::sleep(self.response_time).await;
 
             if self.should_fail {
-                Err(SearchError::Engine(format!("{} engine failed", self.name)))
+                Err(SearchError::EngineFailed(self.name.to_string()))
             } else {
                 Ok(Response {
                     items: vec![ResponseItem {
@@ -837,7 +839,7 @@ mod tests_ext {
                 tokio::time::sleep(self.delay).await;
             }
             if self.should_fail {
-                Err(SearchError::Engine(format!("{} failed", self.name)))
+                Err(SearchError::EngineFailed(self.name.to_string()))
             } else {
                 Ok(Response {
                     items: vec![ResponseItem {

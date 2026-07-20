@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use dbnexus::DbPool;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set, Statement,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -77,20 +77,23 @@ impl CreditsRepository for CreditsRepositoryImpl {
             .connection()
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
 
-        // Use the stored procedure for atomic deduction with row-level locking
-        // Note: Using execute_unprepared for stored procedure call
-        let sql = format!(
-            "SELECT deduct_credits_safe('{}', {}, '{}', '{}', {})",
-            team_id,
-            amount,
-            transaction_type,
-            description.replace("'", "''"),
-            reference_id
-                .map(|id| format!("'{}'", id))
-                .unwrap_or("NULL".to_string())
+        // Use the stored procedure for atomic deduction with row-level locking.
+        // 参数化查询（Statement::from_sql_and_values）避免 SQL 注入：
+        // 之前的 format! 拼接仅用 description.replace("'", "''") 转义单引号，
+        // 不完整且易被 Unicode/反斜杠等绕过。参数化查询是 SQL 注入的根本防御。
+        let stmt = Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT deduct_credits_safe($1, $2, $3, $4, $5)",
+            [
+                team_id.into(),
+                amount.into(),
+                transaction_type.to_string().into(),
+                description.into(),
+                reference_id.into(),
+            ],
         );
 
-        conn.execute_unprepared(&sql)
+        conn.execute_raw(stmt)
             .await
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
 
@@ -115,26 +118,45 @@ impl CreditsRepository for CreditsRepositoryImpl {
             .connection()
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
 
-        // Use the stored procedure for atomic addition
-        // Note: Using execute_unprepared for stored procedure call
-        let sql = format!(
-            "SELECT add_credits_safe('{}', {}, '{}', '{}', {})",
-            team_id,
-            amount,
-            transaction_type,
-            description.replace("'", "''"),
-            reference_id
-                .map(|id| format!("'{}'", id))
-                .unwrap_or("NULL".to_string())
+        // Use the stored procedure for atomic addition.
+        // 参数化查询（与 deduct_credits 一致）避免 SQL 注入。
+        // 存储过程返回新余额（RETURNS BIGINT），用 query_one_raw + try_get_by_index 提取，
+        // 而非返回 Ok(0) 占位符（违反函数契约）。
+        let stmt = Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT add_credits_safe($1, $2, $3, $4, $5) AS new_balance",
+            [
+                team_id.into(),
+                amount.into(),
+                transaction_type.to_string().into(),
+                description.into(),
+                reference_id.into(),
+            ],
         );
 
-        conn.execute_unprepared(&sql)
+        // query_one_raw 接受 Statement by value（sea-orm 2.0 中 query_one 改为接受 &S 引用）
+        let result = conn
+            .query_one_raw(stmt)
             .await
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
 
-        // Extract the new balance from the result
-        // The stored procedure returns the new balance
-        Ok(0) // Placeholder - the actual balance is handled by the stored procedure
+        match result {
+            Some(row) => {
+                // 存储过程 RETURNS BIGINT NOT NULL（migrations/001 中 add_credits_safe 定义）。
+                // 用 try_get_by_index（非 nullable 版本）提取 i64：
+                // - 列为 NULL 时返回 DbErr（违反 NOT NULL 契约 → 显性失败，规则 12）
+                // - 类型不匹配时返回 DbErr（防御性）
+                // 注意：try_get_by_index_nullable 返回 TryGetError 未实现 Display，
+                // 故使用 try_get_by_index 返回 DbErr（实现了 Display）。
+                let new_balance: i64 = row
+                    .try_get_by_index(0)
+                    .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
+                Ok(new_balance)
+            }
+            None => Err(CreditsRepositoryError::DatabaseError(
+                "add_credits_safe returned no row".to_string(),
+            )),
+        }
     }
 
     async fn get_transaction_history(

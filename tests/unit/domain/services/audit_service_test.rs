@@ -333,7 +333,6 @@ async fn test_audit_service_log_repository_error_propagates() {
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
-        other => panic!("expected RepositoryError, got {:?}", other),
     }
 }
 
@@ -484,7 +483,6 @@ async fn test_trait_log_error_propagates_repository_failure() {
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
-        other => panic!("expected RepositoryError, got {:?}", other),
     }
 }
 
@@ -503,7 +501,6 @@ async fn test_trait_log_allow_error_propagates_repository_failure() {
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
-        other => panic!("expected RepositoryError, got {:?}", other),
     }
 }
 
@@ -523,7 +520,6 @@ async fn test_trait_log_deny_error_propagates_repository_failure() {
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
-        other => panic!("expected RepositoryError, got {:?}", other),
     }
 }
 
@@ -535,7 +531,6 @@ async fn test_trait_get_logs_for_key_error_propagates_repository_failure() {
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
-        other => panic!("expected RepositoryError, got {:?}", other),
     }
 }
 
@@ -547,7 +542,6 @@ async fn test_trait_get_logs_for_team_error_propagates_repository_failure() {
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
-        other => panic!("expected RepositoryError, got {:?}", other),
     }
 }
 
@@ -559,7 +553,6 @@ async fn test_trait_get_denied_requests_error_propagates_repository_failure() {
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
-        other => panic!("expected RepositoryError, got {:?}", other),
     }
 }
 
@@ -670,22 +663,11 @@ fn test_builder_chaining_all_methods() {
 // =============================================================================
 
 #[test]
-fn test_audit_service_error_from_db_err() {
-    let db_err = sea_orm::DbErr::Custom("db failure".to_string());
-    let service_err: AuditServiceError = db_err.into();
-    match service_err {
-        AuditServiceError::DatabaseError(_) => {}
-        other => panic!("expected DatabaseError, got {:?}", other),
-    }
-}
-
-#[test]
 fn test_audit_service_error_from_repository_db_error() {
     let repo_err = AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom("x".to_string()));
     let service_err: AuditServiceError = repo_err.into();
     match service_err {
         AuditServiceError::RepositoryError(_) => {}
-        other => panic!("expected RepositoryError, got {:?}", other),
     }
 }
 
@@ -697,13 +679,6 @@ fn test_audit_service_error_from_repository_not_found() {
         AuditServiceError::RepositoryError(AuditRepositoryError::NotFound) => {}
         other => panic!("expected RepositoryError(NotFound), got {:?}", other),
     }
-}
-
-#[test]
-fn test_audit_service_error_display_database() {
-    let err = AuditServiceError::DatabaseError(sea_orm::DbErr::Custom("x".to_string()));
-    let msg = format!("{}", err);
-    assert!(msg.contains("Database error"));
 }
 
 #[test]

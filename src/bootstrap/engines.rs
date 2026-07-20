@@ -35,8 +35,11 @@ pub struct EngineComponents {
 /// # Arguments
 ///
 /// * `http_client` - Shared HTTP client
-/// * `proxy_url` - URL for the HTTP proxy (if enabled)
+/// * `proxy_url` - URL for the HTTP proxy (if enabled)。`None` 表示未配置代理，
+///   替代之前的空字符串 sentinel（架构 MEDIUM 5：API 语义明确化）
 /// * `engine_config` - Engine-specific configuration settings
+/// * `timeout_seconds` - 请求超时（秒），从 `settings.timeouts.engines.default_timeout_seconds`
+///   注入 ReqwestEngine，避免硬编码 30 秒（架构 MEDIUM 2）
 ///
 /// # Returns
 ///
@@ -45,14 +48,21 @@ pub struct EngineComponents {
 #[allow(unused_variables)]
 pub fn init_engines(
     http_client: Arc<reqwest::Client>,
-    proxy_url: &str,
+    proxy_url: Option<&str>,
     engine_config: &EngineSettings,
+    timeout_seconds: u64,
 ) -> Vec<Arc<dyn ScraperEngine>> {
+    // 将 Option<&str> 转换为 ReqwestEngine::with_proxy_and_timeout 接受的 String。
+    // None → 空字符串（ReqwestEngine 内部会将空字符串视为未配置代理）
+    let proxy_url_str = proxy_url.unwrap_or("");
     #[allow(unused_mut)]
-    let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(ReqwestEngine::with_proxy(
-        http_client.clone(),
-        proxy_url.to_string(),
-    ))];
+    let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(
+        ReqwestEngine::with_proxy_and_timeout(
+            http_client.clone(),
+            proxy_url_str.to_string(),
+            timeout_seconds,
+        ),
+    )];
 
     #[cfg(feature = "engine-playwright")]
     engines.push(Arc::new(PlaywrightEngine::new()));
@@ -106,8 +116,10 @@ pub fn init_engines(
 /// # Arguments
 ///
 /// * `http_client` - Shared HTTP client
-/// * `proxy_url` - URL for the HTTP proxy
+/// * `proxy_url` - URL for the HTTP proxy。`None` 表示未配置代理（架构 MEDIUM 5）
 /// * `engine_config` - Engine-specific configuration
+/// * `timeout_seconds` - 请求超时（秒），从 `settings.timeouts.engines.default_timeout_seconds`
+///   注入 ReqwestEngine，避免硬编码 30 秒（架构 MEDIUM 2）
 ///
 /// # Returns
 ///
@@ -115,10 +127,16 @@ pub fn init_engines(
 #[allow(deprecated)]
 pub fn init_engine_components(
     http_client: Arc<reqwest::Client>,
-    proxy_url: String,
+    proxy_url: Option<String>,
     _engine_config: &EngineSettings,
+    timeout_seconds: u64,
 ) -> EngineComponents {
-    let engines = init_engines(http_client, &proxy_url, _engine_config);
+    let engines = init_engines(
+        http_client,
+        proxy_url.as_deref(),
+        _engine_config,
+        timeout_seconds,
+    );
     let router = Arc::new(EngineRouter::new(engines.clone()));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 
@@ -143,7 +161,7 @@ mod tests {
     fn test_init_engines_returns_non_empty_vec() {
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let engines = init_engines(http_client, "http://localhost:10808", &engine_config);
+        let engines = init_engines(http_client, Some("http://localhost:10808"), &engine_config, 30);
         assert!(
             !engines.is_empty(),
             "init_engines should return at least one engine"
@@ -154,7 +172,7 @@ mod tests {
     fn test_init_engines_default_contains_reqwest_engine() {
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let engines = init_engines(http_client, "http://localhost:10808", &engine_config);
+        let engines = init_engines(http_client, Some("http://localhost:10808"), &engine_config, 30);
         let engine_names: Vec<&str> = engines.iter().map(|e| e.name()).collect();
         assert!(
             engine_names.contains(&"reqwest"),
@@ -170,7 +188,7 @@ mod tests {
         // flaresolverr 引擎通过 FlareSolverrMode 枚举区分 Full / Cdp / Tls 三种模式。
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let engines = init_engines(http_client, "http://localhost:10808", &engine_config);
+        let engines = init_engines(http_client, Some("http://localhost:10808"), &engine_config, 30);
         assert!(
             !engines.is_empty(),
             "Should have at least 1 engine with default features"
@@ -179,10 +197,10 @@ mod tests {
 
     #[test]
     fn test_init_engines_with_empty_proxy_url() {
-        // Verify init_engines works with an empty proxy URL string.
+        // Verify init_engines works with None proxy URL.
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let engines = init_engines(http_client, "", &engine_config);
+        let engines = init_engines(http_client, None, &engine_config, 30);
         assert!(!engines.is_empty());
     }
 
@@ -194,8 +212,9 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
-            "http://localhost:10808".to_string(),
+            Some("http://localhost:10808".to_string()),
             &engine_config,
+            30,
         );
         assert!(
             !components.engines.is_empty(),
@@ -212,8 +231,9 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
-            "http://localhost:10808".to_string(),
+            Some("http://localhost:10808".to_string()),
             &engine_config,
+            30,
         );
         assert!(
             !components.engines.is_empty(),
@@ -227,8 +247,9 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
-            "http://localhost:10808".to_string(),
+            Some("http://localhost:10808".to_string()),
             &engine_config,
+            30,
         );
         // The router should have registered engines matching the engines vec
         let registered = components.router.registered_engines();
@@ -244,8 +265,9 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
-            "http://localhost:10808".to_string(),
+            Some("http://localhost:10808".to_string()),
             &engine_config,
+            30,
         );
         // EngineClient should report at least 1 engine
         assert!(
@@ -260,8 +282,9 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
-            "http://localhost:10808".to_string(),
+            Some("http://localhost:10808".to_string()),
             &engine_config,
+            30,
         );
         // EngineComponents derives Clone; verify clone produces equivalent field counts
         let cloned = components.clone();

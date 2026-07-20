@@ -7,6 +7,7 @@
 
 use crate::config::settings::Settings;
 use crate::infrastructure::database::dbnexus_connection::DatabasePool;
+use crate::infrastructure::dns::DnsCacheService;
 use crate::infrastructure::oxcache::{create_cache, CacheService, OxcacheService, SearchCache};
 use crate::infrastructure::repositories::{
     crawl_repo_impl::CrawlRepositoryImpl, credits_repo_impl::CreditsRepositoryImpl,
@@ -17,6 +18,7 @@ use crate::infrastructure::repositories::{
 };
 use anyhow::Result;
 use log::info;
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -80,16 +82,32 @@ pub async fn init_database(settings: &Settings) -> Result<Arc<DatabasePool>> {
 /// # Returns
 ///
 /// Returns a configured HTTP client wrapped in Arc for sharing.
-pub fn init_http_client(settings: &Settings) -> Result<Arc<reqwest::Client>> {
+pub fn init_http_client(
+    settings: &Settings,
+    dns_cache: Option<Arc<DnsCacheService>>,
+) -> Result<Arc<reqwest::Client>> {
     // Default timeout: 30 seconds
     let timeout_secs = settings.timeouts.engines.default_timeout_seconds;
     let timeout = Duration::from_secs(timeout_secs);
 
     // Build client builder with timeout
+    // 强制 IPv4：部署环境通常无 IPv6 连通性，reqwest 默认优先 IPv6 会导致
+    // "Connection refused" 后不自动 fallback IPv4（如 people.com.cn 的 IPv6 AAAA 记录）
+    // 使用 Ipv4OnlyResolver 在 DNS 层过滤 IPv6 地址，比 local_address 更可靠
+    // 性能优化：如果传入 DnsCacheService，优先查缓存避免每次请求都走系统 DNS
+    let resolver = match dns_cache {
+        Some(cache) => {
+            info!("Using DNS cache for IPv4 resolver");
+            crate::infrastructure::dns::create_ipv4_only_resolver_with_cache(cache)
+        }
+        None => crate::infrastructure::dns::create_ipv4_only_resolver(),
+    };
     let mut client_builder = reqwest::Client::builder()
         .timeout(timeout)
         .connect_timeout(Duration::from_secs(15))
-        .pool_idle_timeout(Duration::from_secs(90));
+        .pool_idle_timeout(Duration::from_secs(90))
+        .local_address(Some(Ipv4Addr::UNSPECIFIED.into()))
+        .dns_resolver(resolver);
 
     // Configure proxy if enabled
     if settings.proxy.enabled {
@@ -100,7 +118,13 @@ pub fn init_http_client(settings: &Settings) -> Result<Arc<reqwest::Client>> {
                 info!("HTTP client configured with proxy (credentials hidden)");
             }
             Err(e) => {
-                log::warn!("Invalid proxy URL '{}', disabling proxy: {}", proxy_url, e);
+                // 安全：日志中脱敏 proxy URL（剥离 userinfo 部分），防止凭据泄露到日志
+                let safe_url = sanitize_proxy_url(proxy_url);
+                log::warn!(
+                    "Invalid proxy URL '{}', disabling proxy: {}",
+                    safe_url,
+                    e
+                );
             }
         }
     }
@@ -110,6 +134,24 @@ pub fn init_http_client(settings: &Settings) -> Result<Arc<reqwest::Client>> {
 
     info!("HTTP client initialized (timeout: {}s)", timeout_secs);
     Ok(client)
+}
+
+/// 脱敏 proxy URL：剥离 userinfo（user:pass@）部分，只保留 scheme://host:port
+/// 用于日志输出，防止 proxy 凭据泄露到日志文件
+fn sanitize_proxy_url(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(parsed) => {
+            // 重新构造不含 userinfo 的 URL
+            let scheme = parsed.scheme();
+            let host = parsed.host_str().unwrap_or("");
+            let port = parsed.port();
+            match port {
+                Some(p) => format!("{}://{}:{}", scheme, host, p),
+                None => format!("{}://{}", scheme, host),
+            }
+        }
+        Err(_) => "<unparseable>".to_string(),
+    }
 }
 
 /// Initialize all application repositories.
@@ -240,7 +282,12 @@ pub async fn init_cache_service(settings: &Settings) -> Result<Arc<dyn CacheServ
 /// Returns all initialized infrastructure components.
 pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureComponents> {
     let db = init_database(settings).await?;
-    let http_client = init_http_client(settings)?;
+
+    // 先创建 DNS cache（如果 cache enabled），用于 IPv4 resolver 性能优化
+    // 避免 HTTP 请求热路径每次都走系统 DNS 调用
+    let dns_cache = init_dns_cache_service(settings).await;
+
+    let http_client = init_http_client(settings, dns_cache)?;
     let repositories = init_repositories(db.clone(), settings);
     let oxcache = init_oxcache(settings).await?;
     let cache_service = init_cache_service(settings).await?;
@@ -254,6 +301,42 @@ pub async fn init_infrastructure(settings: &Settings) -> Result<InfrastructureCo
     })
 }
 
+/// 创建 DNS cache service（如果 cache enabled）.
+///
+/// 用于 Ipv4OnlyResolver 的 DNS 查询缓存，避免每次 HTTP 请求都走系统 DNS。
+/// cache disabled 或创建失败时返回 None，resolver 会 fallback 到系统 DNS。
+async fn init_dns_cache_service(settings: &Settings) -> Option<Arc<DnsCacheService>> {
+    if !settings.cache.enabled {
+        info!("Cache disabled, DNS cache not initialized");
+        return None;
+    }
+
+    match crate::infrastructure::oxcache::create_dns_cache(
+        settings.cache.memory.capacity,
+        settings.cache.memory.ttl_seconds,
+    )
+    .await
+    {
+        Ok(cache) => {
+            info!(
+                "DNS cache initialized for IPv4 resolver (capacity: {}, ttl: {}s)",
+                settings.cache.memory.capacity, settings.cache.memory.ttl_seconds
+            );
+            Some(Arc::new(DnsCacheService::new(
+                cache,
+                settings.cache.memory.ttl_seconds,
+            )))
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to create DNS cache: {}. Using system DNS.",
+                e
+            );
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,7 +346,7 @@ mod tests {
     #[test]
     fn test_init_http_client_returns_ok_with_default_settings() {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let result = init_http_client(&settings);
+        let result = init_http_client(&settings, None);
         assert!(
             result.is_ok(),
             "init_http_client should succeed with default settings"
@@ -273,7 +356,7 @@ mod tests {
     #[test]
     fn test_init_http_client_returns_arc_client() {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        let client = init_http_client(&settings).expect("Should create HTTP client");
+        let client = init_http_client(&settings, None).expect("Should create HTTP client");
         // Verify the client is usable (can build a request without sending)
         let _req = client.get("http://localhost");
     }
@@ -283,7 +366,7 @@ mod tests {
         let mut settings =
             crate::bootstrap::config::load_settings().expect("Failed to load settings");
         settings.proxy.enabled = false;
-        let result = init_http_client(&settings);
+        let result = init_http_client(&settings, None);
         assert!(
             result.is_ok(),
             "init_http_client should succeed with proxy disabled"
@@ -298,7 +381,7 @@ mod tests {
         // Set an invalid proxy URL to test error handling path
         settings.proxy.url = "not-a-valid-url".to_string();
         // init_http_client should handle the invalid proxy gracefully (warn + continue)
-        let result = init_http_client(&settings);
+        let result = init_http_client(&settings, None);
         assert!(
             result.is_ok(),
             "init_http_client should succeed even with invalid proxy URL (just disables proxy)"
@@ -311,7 +394,7 @@ mod tests {
             crate::bootstrap::config::load_settings().expect("Failed to load settings");
         settings.proxy.enabled = true;
         settings.proxy.url = "http://localhost:10808".to_string();
-        let result = init_http_client(&settings);
+        let result = init_http_client(&settings, None);
         assert!(
             result.is_ok(),
             "init_http_client should succeed with a valid proxy URL"

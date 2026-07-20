@@ -72,13 +72,21 @@ pub fn routes() -> Router {
         )
 }
 
-/// 健康检查端点
+/// 健康检查端点（liveness probe）
+///
+/// 这是 Kubernetes liveness probe — 总是返回 200 OK + "healthy"，
+/// 表示进程存活。不检查依赖（数据库、缓存）— 避免依赖短暂故障导致 pod 重启。
+/// 如需 readiness probe（检查依赖是否就绪），应单独实现 /ready endpoint
+/// 注入 AppState 检查数据库连接池、缓存可用性等。
 ///
 /// # 返回值
 ///
-/// 返回JSON格式的健康状态
+/// 返回JSON格式的健康状态 + 版本号
 pub async fn health_check() -> Json<serde_json::Value> {
-    Json(json!({ "status": "healthy" }))
+    Json(json!({
+        "status": "healthy",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
 }
 
 /// 版本信息端点

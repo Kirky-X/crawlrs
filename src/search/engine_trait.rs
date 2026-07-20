@@ -385,7 +385,7 @@ mod tests {
             &self,
             _request: &SearchRequest,
         ) -> Result<Response<ResponseItem>, SearchError> {
-            Err(SearchError::Engine("mock failure".to_string()))
+            Err(SearchError::EngineFailed("mock failure".to_string()))
         }
     }
 
@@ -395,8 +395,8 @@ mod tests {
         let result = engine.search_with_engine("test", 3, None, None, None).await;
         assert!(result.is_err(), "should propagate search error");
         match result.unwrap_err() {
-            SearchError::Engine(msg) => assert!(msg.contains("mock failure")),
-            other => panic!("expected SearchError::Engine, got {:?}", other),
+            SearchError::EngineFailed(msg) => assert!(msg.contains("mock failure")),
+            other => panic!("expected SearchError::EngineFailed, got {:?}", other),
         }
     }
 

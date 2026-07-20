@@ -8,6 +8,7 @@ use crate::engines::engine_client::{
 };
 use crate::search::{
     client::html_parser::HtmlParser,
+    client::shared_utils::escape_html_text,
     engine_trait::SearchEngine,
     error::SearchError,
     response::{Response, ResponseItem},
@@ -77,7 +78,7 @@ impl BaiduSearchEngine {
         let json: serde_json::Value = serde_json::from_str(json_str)
             .map_err(|e| SearchError::Parse(format!("Failed to parse Baidu JSON: {}", e)))?;
 
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(10);
 
         if let Some(entry_array) = json
             .get("feed")
@@ -103,10 +104,9 @@ impl BaiduSearchEngine {
 
                 if !title.is_empty() && !url.is_empty() {
                     results.push(ResponseItem {
-                        // Use html-escape to safely encode HTML entities, preventing XSS attacks
-                        title: html_escape::encode_text(&title).trim().to_string(),
+                        title: escape_html_text(&title),
                         url,
-                        description: html_escape::encode_text(&description).trim().to_string(),
+                        description: escape_html_text(&description),
                         engine: SearchEngineType::Baidu,
                     });
                 }
@@ -174,7 +174,7 @@ impl SearchEngine for BaiduSearchEngine {
         };
 
         // 构建请求头
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::with_capacity(4);
         headers.insert(
             "Accept".to_string(),
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
@@ -203,13 +203,13 @@ impl SearchEngine for BaiduSearchEngine {
             .engine_client
             .scrape(&engine_request)
             .await
-            .map_err(|e| SearchError::Engine(format!("EngineClient error: {}", e)))?;
+            .map_err(|e| SearchError::EngineClient("Baidu".to_string(), e.to_string()))?;
 
         if scrape_response.status_code < 200 || scrape_response.status_code >= 300 {
-            return Err(SearchError::Engine(format!(
-                "Baidu search error: {}",
-                scrape_response.status_code
-            )));
+            return Err(SearchError::BadHttpStatus(
+                "Baidu".to_string(),
+                scrape_response.status_code,
+            ));
         }
 
         let content = scrape_response.content;

@@ -274,7 +274,7 @@ impl AsyncAutoBuilder for HttpModule {
     ) -> Pin<Box<dyn Future<Output = Result<Self::Capability, Self::Error>> + Send + 'a>> {
         Box::pin(async move {
             let settings = kit.require::<SettingsModule>()?;
-            let client = crate::bootstrap::infrastructure::init_http_client(&settings)
+            let client = crate::bootstrap::infrastructure::init_http_client(&settings, None)
                 .map_err(|e| ModuleBuildError::HttpInit(e.to_string()))?;
             Ok(client)
         })
@@ -332,11 +332,21 @@ impl AsyncAutoBuilder for EngineModule {
         Box::pin(async move {
             let settings = kit.require::<SettingsModule>()?;
             let http_client = kit.require::<HttpModule>()?;
-            let proxy_url = settings.proxy.url();
+            // 仅在 proxy.enabled=true 时传递 Some(proxy_url)，否则传 None（架构 MEDIUM 5：
+            // 用 Option<String> 替代空字符串 sentinel，API 语义更明确）。
+            // 之前的 bug：直接传 settings.proxy.url() 而不检查 enabled，
+            // 导致 proxy.enabled=false 时仍尝试连接 localhost:10808 → Connection refused
+            let proxy_url: Option<String> = if settings.proxy.enabled {
+                Some(settings.proxy.url().to_string())
+            } else {
+                None
+            };
             let engines = crate::bootstrap::engines::init_engine_components(
                 http_client,
-                proxy_url.to_string(),
+                proxy_url,
                 &settings.engines,
+                // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
+                settings.timeouts.engines.default_timeout_seconds,
             );
             Ok(engines)
         })

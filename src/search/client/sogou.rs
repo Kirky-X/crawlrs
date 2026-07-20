@@ -18,7 +18,7 @@ use scraper::Html;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::shared_utils::safe_parse_selector;
+use super::shared_utils::{escape_html_text, safe_parse_selector};
 
 /// Sogou Search Engine implementation with EngineClient support
 pub struct SogouSearchEngine {
@@ -83,8 +83,11 @@ impl SogouSearchEngine {
             safe_parse_selector("h3").expect("Failed to parse Sogou title selector");
         let link_selector =
             safe_parse_selector("h3 a").expect("Failed to parse Sogou link selector");
+        // 搜狗中转链接的真实 URL 存在 data-url 属性里（参考 searxng _extract_url）。
+        let data_url_selector =
+            safe_parse_selector("[data-url]").expect("Failed to parse Sogou data-url selector");
 
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(10);
 
         for element in document.select(&result_selector) {
             // 提取标题 - 获取纯文本并清理空白
@@ -93,7 +96,7 @@ impl SogouSearchEngine {
                 Some(node) => node.text().collect::<String>(),
                 None => continue,
             };
-            let title = html_escape::encode_text(raw_title.trim()).to_string();
+            let title = escape_html_text(raw_title.trim());
 
             if title.is_empty() {
                 continue;
@@ -106,8 +109,20 @@ impl SogouSearchEngine {
                 None => continue,
             };
 
-            // 解析并补全URL
-            let resolved_url = self.resolve_url(&raw_url);
+            // 搜狗中转链接 `/link?url=XXX` 里的 XXX 是内部 ID（非 URL 编码的真实 URL），
+            // 无法直接解码。真实 URL 在同一 vrwrap 块的 `data-url` 属性里。
+            // 参考 searxng/searx/engines/sogou.py 的 `_extract_url`。
+            let resolved_url = if raw_url.starts_with("/link?url=") {
+                element
+                    .select(&data_url_selector)
+                    .next()
+                    .and_then(|n| n.value().attr("data-url"))
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_default()
+            } else {
+                self.resolve_url(&raw_url)
+            };
 
             if !resolved_url.is_empty() {
                 results.push(ResponseItem {
@@ -169,7 +184,7 @@ impl SearchEngine for SogouSearchEngine {
         );
 
         // 构建请求头
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::with_capacity(4);
         headers.insert(
             "Accept".to_string(),
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
@@ -198,13 +213,13 @@ impl SearchEngine for SogouSearchEngine {
             .engine_client
             .scrape(&engine_request)
             .await
-            .map_err(|e| SearchError::Engine(format!("EngineClient error: {}", e)))?;
+            .map_err(|e| SearchError::EngineClient("Sogou".to_string(), e.to_string()))?;
 
         if scrape_response.status_code < 200 || scrape_response.status_code >= 300 {
-            return Err(SearchError::Engine(format!(
-                "Sogou search error: {}",
-                scrape_response.status_code
-            )));
+            return Err(SearchError::BadHttpStatus(
+                "Sogou".to_string(),
+                scrape_response.status_code,
+            ));
         }
 
         let html_content = scrape_response.content;
@@ -375,16 +390,54 @@ mod tests {
 
     #[test]
     fn test_parse_search_results_sogou_redirect_link() {
+        // 真实搜狗 HTML 结构：href 是 `/link?url=内部ID`（非 URL 编码的真实 URL），
+        // 真实 URL 在同一 vrwrap 块的 `data-url` 属性里。
+        // 参考 searxng/searx/engines/sogou.py 的 `_extract_url`。
         let engine = make_engine();
-        // 搜狗中转链接应被正确解析
         let html = r#"
         <div class="vrwrap">
-            <h3><a href="/link?url=https%3A%2F%2Fwww.example.com%2Farticle">Redirect Result</a></h3>
+            <h3><a href="/link?url=hedJjaC291N0Yt4ikBP2zHNFN13gvLUJQ3i3ukpLokg.">Redirect Result</a></h3>
+            <div class="img-layout" data-url="https://www.example.com/article"></div>
         </div>
         "#;
         let results = engine.parse_search_results(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://www.example.com/article");
+        assert_eq!(results[0].title, "Redirect Result");
+    }
+
+    #[test]
+    fn test_parse_search_results_sogou_redirect_link_without_data_url_skipped() {
+        // 边界情况：`/link?url=` 中转链接但 vrwrap 块内没有 data-url 属性时，
+        // 无法获取真实 URL，应跳过该结果（而非返回中转链接）。
+        let engine = make_engine();
+        let html = r#"
+        <div class="vrwrap">
+            <h3><a href="/link?url=hedJjaC291InternalIdNoDataUrl">No Data URL</a></h3>
+        </div>
+        "#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert!(results.is_empty(), "result without data-url should be skipped");
+    }
+
+    #[test]
+    fn test_parse_search_results_mixed_redirect_and_direct_urls() {
+        // 混合场景：同一页面既有中转链接（/link?url=）又有直接 URL，
+        // 中转链接走 data-url 提取，直接 URL 走 resolve_url。
+        let engine = make_engine();
+        let html = r#"
+        <div class="vrwrap">
+            <h3><a href="/link?url=internalId1">Redirect Result</a></h3>
+            <div data-url="https://www.rust-lang.org/"></div>
+        </div>
+        <div class="vrwrap">
+            <h3><a href="https://baike.sogou.com/v12345.htm">Direct URL Result</a></h3>
+        </div>
+        "#;
+        let results = engine.parse_search_results(html).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].url, "https://www.rust-lang.org/");
+        assert_eq!(results[1].url, "https://baike.sogou.com/v12345.htm");
     }
 
     #[test]

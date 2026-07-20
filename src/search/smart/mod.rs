@@ -26,7 +26,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::search::client::shared_utils::safe_parse_selector;
+use crate::search::client::shared_utils::{build_query_string, safe_parse_selector};
 
 /// 解析并验证选择器，如果所有选择器都失败则返回错误
 ///
@@ -64,6 +64,69 @@ struct SearchResultParserConfig {
     url_attr: Option<&'static str>,
 }
 
+/// Google 结果解析的预编译依赖上下文
+///
+/// 封装 `parse_google_results` 调用期间需要复用的所有对象，避免在
+/// `extract_google_result` 热路径中重复创建（性能 LOW-1/2/3/4）。
+///
+/// **设计说明**（架构 MEDIUM 2/3）：
+/// - 选择器字段（result/title/snippet/link）是 Google HTML 解析专用
+/// - `scorer` 和 `processor` 是通用领域服务，放在此处是为了"调用级复用"
+///   （每次 `parse_google_results` 调用创建一次），而非"引擎级复用"
+///   （`SmartSearchEngine` 字段）。这样可以在不修改 `SmartSearchEngine`
+///   结构的前提下实现热路径优化。
+/// - `link_selector` 是单个 Selector（非 Vec），因为它用于"遍历所有匹配元素"
+///   而非"按优先级回退"（与 title/snippet_selectors 语义不同）
+struct GoogleParseContext {
+    /// Google 现代搜索结果容器选择器（已预编译，按优先级排序）
+    result_selectors: Vec<Selector>,
+    /// 标题选择器（已预编译，按优先级排序）
+    title_selectors: Vec<Selector>,
+    /// 描述选择器（已预编译，按优先级排序）
+    snippet_selectors: Vec<Selector>,
+    /// 链接选择器（单个，用于遍历所有 <a> 元素）
+    link_selector: Selector,
+    /// 相关性评分器
+    scorer: RelevanceScorer,
+    /// 文本编码处理器
+    processor: TextEncodingProcessor,
+}
+
+impl GoogleParseContext {
+    /// 预编译所有选择器并创建 scorer/processor
+    fn new() -> Self {
+        Self {
+            result_selectors: [
+                "div.g",
+                "div[data-sokoban-container]",
+                "div.MjjYud",
+                "div.Ww4FFb",
+                "div.v7W49e",
+            ]
+            .iter()
+            .filter_map(|s| Selector::parse(s).ok())
+            .collect(),
+            title_selectors: ["h3", "div[data-attrid='title']", "span.dvSrP", "div.v7W49e h3"]
+                .iter()
+                .filter_map(|s| Selector::parse(s).ok())
+                .collect(),
+            snippet_selectors: [
+                "span[ae30]",
+                "div[itemprop='description']",
+                "div.yXK7ld",
+                "div.zIBAzf",
+                "span[style='color:#4d5156']",
+            ]
+            .iter()
+            .filter_map(|s| Selector::parse(s).ok())
+            .collect(),
+            link_selector: Selector::parse("a").expect("\"a\" selector should always parse"),
+            scorer: RelevanceScorer::with_engine("google_search"),
+            processor: TextEncodingProcessor::new(),
+        }
+    }
+}
+
 /// 通用搜索结果解析函数 - 消除重复代码
 fn parse_search_results_common(
     html: &str,
@@ -87,8 +150,10 @@ fn parse_search_results_common(
     // 确定URL属性名（默认为href）
     let url_attr = config.url_attr.unwrap_or("href");
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(20);
     let scorer = RelevanceScorer::with_engine(config.engine_name);
+    // TextEncodingProcessor 在循环外创建一次，避免每个元素重复构造（性能 LOW-3）
+    let processor = TextEncodingProcessor::new();
 
     for element in document.select(&result_selector) {
         let raw_title = element
@@ -112,7 +177,7 @@ fn parse_search_results_common(
             .map(|el| el.text().collect::<String>().trim().to_string())
             .unwrap_or_default();
         let description = html_escape::encode_text(
-            &TextEncodingProcessor::new()
+            &processor
                 .process_text(raw_description.as_bytes())
                 .unwrap_or(raw_description.clone()),
         )
@@ -215,10 +280,7 @@ impl SmartSearchEngine {
                 }
                 Ok(RateLimitResult::Denied { reason }) => {
                     warn!("速率限制被拒绝: {}", reason);
-                    Err(SearchError::Engine(format!(
-                        "Rate limit exceeded: {}",
-                        reason
-                    )))
+                    Err(SearchError::RateLimited(reason))
                 }
                 Ok(RateLimitResult::RetryAfter {
                     retry_after_seconds,
@@ -283,11 +345,6 @@ impl SmartSearchEngine {
         }
     }
 
-    /// HTML 转义以防止 XSS 攻击
-    fn escape_html(&self, text: &str) -> String {
-        html_escape::encode_text(text).trim().to_string()
-    }
-
     /// 构建搜索URL
     fn build_search_url(&self, query: &str, lang: Option<&str>, country: Option<&str>) -> String {
         match self.config.engine_type {
@@ -327,12 +384,7 @@ impl SmartSearchEngine {
         }
 
         let mut url = "https://www.google.com/search?".to_string();
-        let query_string = query_params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        url.push_str(&query_string);
+        url.push_str(&build_query_string(&query_params));
 
         url
     }
@@ -363,12 +415,7 @@ impl SmartSearchEngine {
         }
 
         let mut url = "https://www.bing.com/search?".to_string();
-        let query_string = query_params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        url.push_str(&query_string);
+        url.push_str(&build_query_string(&query_params));
 
         url
     }
@@ -391,12 +438,7 @@ impl SmartSearchEngine {
         }
 
         let mut url = "https://www.baidu.com/s?".to_string();
-        let query_string = query_params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        url.push_str(&query_string);
+        url.push_str(&build_query_string(&query_params));
 
         url
     }
@@ -574,12 +616,7 @@ impl SmartSearchEngine {
         }
 
         let mut url = "https://www.sogou.com/web?".to_string();
-        let query_string = query_params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        url.push_str(&query_string);
+        url.push_str(&build_query_string(&query_params));
 
         url
     }
@@ -597,33 +634,26 @@ impl SmartSearchEngine {
 
     /// 解析 Google 搜索结果
     fn parse_google_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        use scraper::{Html, Selector};
+        use scraper::Html;
 
         let document = Html::parse_document(html);
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(20);
 
-        // Google 现代搜索结果容器选择器
-        let result_selectors = vec![
-            "div.g",
-            "div[data-sokoban-container]",
-            "div.MjjYud",
-            "div.Ww4FFb",
-            "div.v7W49e",
-        ];
+        // 预编译解析上下文（含 result_selectors），避免在热路径中重复创建
+        // 选择器/scorer/processor（性能 LOW-1/2/3/4）
+        let ctx = GoogleParseContext::new();
 
-        for selector_str in result_selectors {
-            if let Ok(selector) = Selector::parse(selector_str) {
-                let elements: Vec<_> = document.select(&selector).collect();
-                if !elements.is_empty() {
-                    // 使用第一个找到有效结果的选择器
-                    for element in elements {
-                        if let Some(result) = self.extract_google_result(&element) {
-                            results.push(result);
-                        }
+        // 使用预编译的 result_selectors，按优先级尝试直到找到有效结果
+        for selector in &ctx.result_selectors {
+            let elements: Vec<_> = document.select(selector).collect();
+            if !elements.is_empty() {
+                for element in elements {
+                    if let Some(result) = self.extract_google_result(&element, &ctx) {
+                        results.push(result);
                     }
-                    if !results.is_empty() {
-                        break;
-                    }
+                }
+                if !results.is_empty() {
+                    break;
                 }
             }
         }
@@ -633,33 +663,29 @@ impl SmartSearchEngine {
     }
 
     /// 从 Google 结果元素中提取信息
-    fn extract_google_result(&self, element: &scraper::ElementRef<'_>) -> Option<SearchResult> {
-        use scraper::Selector;
-
-        // 标题选择器（多个备用）
-        let title_selectors = vec![
-            "h3",
-            "div[data-attrid='title']",
-            "span.dvSrP",
-            "div.v7W49e h3",
-        ];
+    ///
+    /// 使用预编译的 `GoogleParseContext` 中的选择器/scorer/processor，
+    /// 避免在每个元素上重复 `Selector::parse` 和构造对象（性能 LOW-1/2/3）。
+    /// XSS 防护统一使用 `escape_html_text` 自由函数（架构 MEDIUM 3：依赖来源一致）
+    fn extract_google_result(
+        &self,
+        element: &scraper::ElementRef<'_>,
+        ctx: &GoogleParseContext,
+    ) -> Option<SearchResult> {
+        use crate::search::client::shared_utils::escape_html_text;
 
         let mut title = String::new();
-        for selector_str in &title_selectors {
-            if let Ok(selector) = Selector::parse(selector_str) {
-                if let Some(el) = element.select(&selector).next() {
-                    title = self.escape_html(el.text().collect::<String>().trim());
-                    if !title.is_empty() {
-                        break;
-                    }
+        for selector in &ctx.title_selectors {
+            if let Some(el) = element.select(selector).next() {
+                title = escape_html_text(el.text().collect::<String>().trim());
+                if !title.is_empty() {
+                    break;
                 }
             }
         }
 
-        // 链接选择器
-        let link_selector = Selector::parse("a").ok()?;
         let mut url = String::new();
-        for el in element.select(&link_selector) {
+        for el in element.select(&ctx.link_selector) {
             if let Some(href) = el.value().attr("href") {
                 if href.starts_with("http") && !href.contains("google.com") {
                     url = href.to_string();
@@ -668,36 +694,26 @@ impl SmartSearchEngine {
             }
         }
 
-        // 描述选择器
-        let snippet_selectors = vec![
-            "span[ae30]",
-            "div[itemprop='description']",
-            "div.yXK7ld",
-            "div.zIBAzf",
-            "span[style='color:#4d5156']",
-        ];
-
         let mut description = String::new();
-        for selector_str in &snippet_selectors {
-            if let Ok(selector) = Selector::parse(selector_str) {
-                if let Some(el) = element.select(&selector).next() {
-                    description = self.escape_html(el.text().collect::<String>().trim());
-                    description = TextEncodingProcessor::new()
-                        .process_text(description.as_bytes())
-                        .unwrap_or(description);
-                    if !description.is_empty() {
-                        break;
-                    }
+        for selector in &ctx.snippet_selectors {
+            if let Some(el) = element.select(selector).next() {
+                description = escape_html_text(el.text().collect::<String>().trim());
+                description = ctx
+                    .processor
+                    .process_text(description.as_bytes())
+                    .unwrap_or(description);
+                if !description.is_empty() {
+                    break;
                 }
             }
         }
 
         if !title.is_empty() && !url.is_empty() {
-            let scorer = RelevanceScorer::with_engine("google_search");
             let engine_name = self.get_engine_name();
             let mut result = SearchResult::new(title, url, Some(description), engine_name);
-            result.score =
-                scorer.calculate_score(&result.title, result.description.as_deref(), &result.url);
+            result.score = ctx
+                .scorer
+                .calculate_score(&result.title, result.description.as_deref(), &result.url);
             Some(result)
         } else {
             None
@@ -735,13 +751,11 @@ impl SmartSearchEngine {
         // 检测验证码页面
         if html.contains("验证码") || html.contains("seccode") || html.contains("verify") {
             warn!("Sogou returned CAPTCHA verification page");
-            return Err(SearchError::Engine(
-                "Sogou blocked the request with CAPTCHA verification. Try again later or use a different engine.".to_string(),
-            ));
+            return Err(SearchError::Captcha("Sogou".to_string()));
         }
 
         let document = Html::parse_document(html);
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(20);
 
         // 根据 temp/search.md 中的逆向工程结果
         // Sogou 的结果包裹在 class="vrwrap" 中
@@ -846,6 +860,8 @@ impl SmartSearchEngine {
     /// 应用相关性评分和新鲜度计算
     fn apply_scoring(&self, results: &mut Vec<SearchResult>, query: &str) {
         let scorer = RelevanceScorer::for_query(query);
+        // DateParserComponent 在循环外创建一次，避免每个结果重复构造（性能 LOW-2）
+        let date_parser = DateParserComponent::with_defaults();
 
         for result in &mut *results {
             // 计算相关性评分
@@ -854,9 +870,8 @@ impl SmartSearchEngine {
 
             // 从描述中提取发布日期
             if let Some(description) = &result.description {
-                let parser = DateParserComponent::with_defaults();
                 if let Some(published_date) =
-                    RelevanceScorer::extract_published_date_with_parser(description, &parser)
+                    RelevanceScorer::extract_published_date_with_parser(description, &date_parser)
                 {
                     result.published_time = Some(published_date);
                 }
@@ -1001,7 +1016,7 @@ impl SearchEngine for SmartSearchEngine {
                         self.handle_retry().await;
                         continue;
                     }
-                    break Err(SearchError::Engine(format!("Smart routing failed: {}", e)));
+                    break Err(SearchError::SmartRoutingFailed(e.to_string()));
                 }
                 Err(_) => {
                     warn!("智能路由抓取超时");
@@ -1010,10 +1025,7 @@ impl SearchEngine for SmartSearchEngine {
                         self.handle_retry().await;
                         continue;
                     }
-                    break Err(SearchError::Engine(format!(
-                        "Timeout after {} seconds",
-                        self.config.timeout_seconds
-                    )));
+                    break Err(SearchError::SmartRoutingTimeout(self.config.timeout_seconds));
                 }
             }
         }?;
@@ -1029,7 +1041,8 @@ impl SearchEngine for SmartSearchEngine {
         // 如果HTML内容太少，可能是被拦截了
         if html.len() < 1000 {
             warn!("搜索返回的HTML内容过少，可能被反爬虫拦截");
-            return Err(SearchError::Engine(
+            return Err(SearchError::InsufficientContent(
+                "smart_search".to_string(),
                 "Search returned insufficient content".to_string(),
             ));
         }
@@ -1653,38 +1666,6 @@ mod tests_ext {
         assert!(!debug_str.contains("None") || debug_str.contains("rate_limiting_service"));
     }
 
-    // === escape_html ===
-
-    #[test]
-    fn test_escape_html_plain_text() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        assert_eq!(engine.escape_html("hello world"), "hello world");
-    }
-
-    #[test]
-    fn test_escape_html_special_chars() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let escaped = engine.escape_html("<script>alert('xss')</script>");
-        assert!(!escaped.contains('<'));
-        assert!(!escaped.contains('>'));
-        assert!(escaped.contains("&lt;"));
-        assert!(escaped.contains("&gt;"));
-    }
-
-    #[test]
-    fn test_escape_html_ampersand() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let escaped = engine.escape_html("a & b");
-        assert!(escaped.contains("&amp;"));
-        assert!(!escaped.contains(" & "));
-    }
-
-    #[test]
-    fn test_escape_html_empty_string() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        assert_eq!(engine.escape_html(""), "");
-    }
-
     // === build_search_url for Baidu and Sogou (Google/Bing covered in existing tests) ===
 
     #[test]
@@ -2052,8 +2033,8 @@ mod tests_ext {
         let result = engine.parse_sogou_results(html);
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchError::Engine(msg) => assert!(msg.contains("CAPTCHA")),
-            _ => panic!("Expected SearchError::Engine with CAPTCHA"),
+            SearchError::Captcha(engine) => assert_eq!(engine, "Sogou"),
+            _ => panic!("Expected SearchError::Captcha"),
         }
     }
 
@@ -2281,8 +2262,8 @@ mod tests_ext {
         let result = engine.check_rate_limit().await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchError::Engine(msg) => assert!(msg.contains("Rate limit exceeded")),
-            _ => panic!("Expected SearchError::Engine"),
+            SearchError::RateLimited(reason) => assert!(!reason.is_empty()),
+            _ => panic!("Expected SearchError::RateLimited"),
         }
     }
 
@@ -3129,8 +3110,8 @@ mod tests_ext {
         let result = engine.search(&request).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchError::Engine(msg) => assert!(msg.contains("insufficient content")),
-            _ => panic!("Expected SearchError::Engine with insufficient content"),
+            SearchError::InsufficientContent(_, msg) => assert!(msg.contains("insufficient content")),
+            _ => panic!("Expected SearchError::InsufficientContent"),
         }
     }
 
@@ -3143,8 +3124,8 @@ mod tests_ext {
         let result = engine.search(&request).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchError::Engine(msg) => assert!(msg.contains("Smart routing failed")),
-            _ => panic!("Expected SearchError::Engine"),
+            SearchError::SmartRoutingFailed(_) => {}
+            _ => panic!("Expected SearchError::SmartRoutingFailed"),
         }
     }
 
@@ -3159,8 +3140,8 @@ mod tests_ext {
         let result = engine.search(&request).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchError::Engine(msg) => assert!(msg.contains("Smart routing failed")),
-            _ => panic!("Expected SearchError::Engine"),
+            SearchError::SmartRoutingFailed(_) => {}
+            _ => panic!("Expected SearchError::SmartRoutingFailed"),
         }
     }
 
@@ -3190,8 +3171,8 @@ mod tests_ext {
         let result = engine.search(&request).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchError::Engine(msg) => assert!(msg.contains("Timeout")),
-            _ => panic!("Expected SearchError::Engine with Timeout"),
+            SearchError::SmartRoutingTimeout(_) => {}
+            _ => panic!("Expected SearchError::SmartRoutingTimeout"),
         }
     }
 

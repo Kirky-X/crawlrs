@@ -300,7 +300,7 @@ mod tests {
             _request: &SearchRequest,
         ) -> Result<Response<ResponseItem>, SearchError> {
             if self.should_error {
-                return Err(SearchError::Engine("mock failure".to_string()));
+                return Err(SearchError::EngineFailed("mock failure".to_string()));
             }
             Ok(Response {
                 items: vec![ResponseItem {

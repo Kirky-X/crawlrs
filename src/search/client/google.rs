@@ -16,11 +16,12 @@ use chrono::Utc;
 use log::{info, warn};
 use rand::Rng;
 use scraper::Html;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-use super::shared_utils::safe_parse_selector;
+use super::shared_utils::{build_query_string, escape_html_text, safe_parse_selector};
 
 /// Google Search Engine implementation
 struct ArcIdCache {
@@ -84,7 +85,9 @@ impl GoogleSearchEngine {
     /// Parse Google HTML results with XSS protection
     pub fn parse_results(&self, html: &str) -> Result<Vec<ResponseItem>, SearchError> {
         let document = Html::parse_document(html);
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(20);
+        // 用 HashSet 跟踪已见 URL，O(1) 查找替代 O(n) 线性扫描（性能 MEDIUM：去重 O(n²) → O(n)）
+        let mut seen_urls: HashSet<String> = HashSet::new();
 
         info!("Parsing Google search results...");
 
@@ -161,15 +164,16 @@ impl GoogleSearchEngine {
                 .map(|e| e.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
 
-            // 去重
-            if results.iter().any(|r: &ResponseItem| r.url == url) {
+            // 去重：HashSet::insert 返回 false 表示 URL 已存在
+            // O(1) 查找替代之前的 O(n) 线性扫描（results.iter().any）
+            if !seen_urls.insert(url.clone()) {
                 continue;
             }
 
             results.push(ResponseItem {
-                title: Self::escape_html(&title),
+                title: escape_html_text(&title),
                 url,
-                description: Self::escape_html(&description),
+                description: escape_html_text(&description),
                 engine: SearchEngineType::Google,
             });
 
@@ -183,12 +187,6 @@ impl GoogleSearchEngine {
             results.len()
         );
         Ok(results)
-    }
-
-    /// Escape HTML entities to prevent XSS attacks
-    /// Uses encode_text to convert special characters to safe entities
-    fn escape_html(text: &str) -> String {
-        html_escape::encode_text(text).trim().to_string()
     }
 }
 
@@ -267,25 +265,27 @@ impl SearchEngine for GoogleSearchEngine {
         // Build Google search URL
         let google_url = format!(
             "https://www.google.com/search?{}",
-            query_params
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
-                .collect::<Vec<_>>()
-                .join("&")
+            build_query_string(&query_params)
         );
         info!(
             "Constructed Google Search URL (length: {})",
             google_url.len()
         );
 
-        // Use EngineClient to scrape the search result page
-        // Google requires JavaScript rendering, so we set needs_js=true
-        // The EngineClient's smart routing will automatically select the optimal engine
-        // based on support_score (Playwright/Playwright will get 100, Reqwest will get 10)
+        // Use EngineClient to scrape the search result page.
+        //
+        // Google's search results page can be scraped via plain HTTP without JS
+        // rendering — the result HTML is server-side rendered. SearXNG (the
+        // reference implementation in temp/searxng) uses the same approach:
+        // HTTP request + lxml/CSS selector parsing, no browser engine.
+        //
+        // Setting needs_js=false ensures ReqwestEngine (support_score=100) is
+        // selected by the router instead of being filtered out by feature_filter
+        // (which excludes engines with support_score < 50 for needs_js=true).
         let engine_request = EngineScrapeRequest::new(&google_url)
             .with_options(
                 crate::engines::engine_client::ScrapeOptions::builder()
-                    .needs_js(true)  // Google requires JS rendering
+                    .needs_js(false)
                     .timeout(Duration::from_secs(60))
                     .headers(
                         vec![
@@ -306,15 +306,13 @@ impl SearchEngine for GoogleSearchEngine {
             .engine_client
             .scrape(&engine_request)
             .await
-            .map_err(|e| SearchError::Engine(e.to_string()))?;
+            .map_err(|e| SearchError::EngineClient("Google".to_string(), e.to_string()))?;
 
         // Handle non-200 status codes
         if !scrape_response.is_success() {
             if scrape_response.status_code == 429 {
                 warn!("Google rate limit exceeded (429)");
-                return Err(SearchError::Engine(
-                    "Google rate limit exceeded".to_string(),
-                ));
+                return Err(SearchError::RateLimited("Google".to_string()));
             }
             warn!(
                 "Google returned status code: {}",
@@ -409,41 +407,8 @@ mod tests {
     }
 
     // ========== escape_html 测试 ==========
-
-    #[test]
-    fn test_escape_html_plain_text_unchanged() {
-        // 测试普通文本不被修改
-        let text = "Rust Programming Language";
-        assert_eq!(
-            GoogleSearchEngine::escape_html(text),
-            "Rust Programming Language"
-        );
-    }
-
-    #[test]
-    fn test_escape_html_special_chars_encoded() {
-        // 测试 HTML 特殊字符 & < > 被编码
-        let text = "<script>alert('xss')</script> & more";
-        let escaped = GoogleSearchEngine::escape_html(text);
-        assert!(!escaped.contains('<'), "should not contain raw <");
-        assert!(!escaped.contains('>'), "should not contain raw >");
-        assert!(escaped.contains("&lt;"), "should contain &lt;");
-        assert!(escaped.contains("&gt;"), "should contain &gt;");
-        assert!(escaped.contains("&amp;"), "should contain &amp;");
-    }
-
-    #[test]
-    fn test_escape_html_empty_string() {
-        // 边界情况：空字符串返回空字符串
-        assert_eq!(GoogleSearchEngine::escape_html(""), "");
-    }
-
-    #[test]
-    fn test_escape_html_trims_whitespace() {
-        // 测试首尾空白被 trim
-        let text = "  trimmed content  ";
-        assert_eq!(GoogleSearchEngine::escape_html(text), "trimmed content");
-    }
+    // escape_html 方法已迁移到 shared_utils::escape_html_text（架构 MEDIUM 4：消除重复实现）
+    // 相关测试在 shared_utils.rs 的 tests 模块中
 
     // ========== parse_results 测试 ==========
 

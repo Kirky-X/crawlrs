@@ -100,7 +100,10 @@ impl BingSearchEngine {
     }
 
     pub fn build_bing_url(&self, query: &str, page: u32) -> String {
-        let base_url = "https://www.bing.com/search";
+        // 使用 cn.bing.com：从中国大陆 IP 直连 www.bing.com 时，Bing 返回 JS 渲染壳子
+        // （无 b_algo 结果容器），而 cn.bing.com 返回完整 HTML（含 10 条 b_algo 结果）。
+        // 两者 HTML 结构一致，解析器无需改动。
+        let base_url = "https://cn.bing.com/search";
         let mut params = vec![("q", query.to_string()), ("pq", query.to_string())];
 
         if page > 1 {
@@ -175,7 +178,7 @@ impl SearchEngine for BingSearchEngine {
         let url = self.build_bing_url(&request.query, 1);
 
         // 构建请求头
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::with_capacity(8);
         headers.insert(
             "Accept".to_string(),
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
@@ -199,13 +202,13 @@ impl SearchEngine for BingSearchEngine {
             .engine_client
             .scrape(&engine_request)
             .await
-            .map_err(|e| SearchError::Engine(format!("EngineClient error: {}", e)))?;
+            .map_err(|e| SearchError::EngineClient("Bing".to_string(), e.to_string()))?;
 
         if scrape_response.status_code < 200 || scrape_response.status_code >= 300 {
-            return Err(SearchError::Engine(format!(
-                "HTTP error {}",
-                scrape_response.status_code
-            )));
+            return Err(SearchError::BadHttpStatus(
+                "Bing".to_string(),
+                scrape_response.status_code,
+            ));
         }
 
         let html = scrape_response.content;
@@ -334,11 +337,12 @@ mod tests {
 
     #[test]
     fn test_build_bing_url_page1() {
-        // 测试第一页 URL 构建，只包含 q 和 pq
+        // 测试第一页 URL 构建，只包含 q 和 pq。
+        // base_url 为 cn.bing.com（见 build_bing_url 注释）。
         let engine = create_engine();
         let url = engine.build_bing_url("rust language", 1);
 
-        assert!(url.starts_with("https://www.bing.com/search?"));
+        assert!(url.starts_with("https://cn.bing.com/search?"));
         assert!(
             url.contains("q=rust+language"),
             "URL should contain encoded query"

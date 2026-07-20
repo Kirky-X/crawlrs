@@ -313,13 +313,12 @@ impl SearchEngineFactory {
             SearchEngineType::Smart | SearchEngineType::ABTest | SearchEngineType::Auto => None,
         };
 
-        let response = self
-            .router
-            .search(&request, preferred_engine)
-            .await
-            .map_err(|e| crate::search::error::SearchError::Engine(e.to_string()))?;
+        // 直接透传 router 返回的 SearchError（架构 MEDIUM 3：避免把结构化错误降级为字符串）
+        let response = self.router.search(&request, preferred_engine).await?;
 
         let total_items = response.items.len();
+        // 提前计算分母，避免每次迭代重复计算 total_items - 1（性能 LOW-14）
+        let denom = total_items.saturating_sub(1).max(1) as f64;
         Ok(response
             .items
             .into_iter()
@@ -328,7 +327,7 @@ impl SearchEngineFactory {
                 // 基于位置计算简单分数：第一个结果得 1.0，最后一个得 0.0
                 // 保留结果间的相对排序信息
                 let score = if total_items > 1 {
-                    1.0 - (index as f64 / (total_items - 1) as f64)
+                    1.0 - (index as f64 / denom)
                 } else {
                     1.0
                 };

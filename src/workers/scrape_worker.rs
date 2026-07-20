@@ -3945,8 +3945,11 @@ mod tests {
         let infra = init_infrastructure(&settings).await?;
         let engines = crate::bootstrap::engines::init_engine_components(
             infra.http_client.clone(),
-            String::new(),
+            // proxy_url=None：此处无代理配置（架构 MEDIUM 5：用 Option 替代空字符串 sentinel）
+            None,
             &settings.engines,
+            // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
+            settings.timeouts.engines.default_timeout_seconds,
         );
         let services = init_services(
             &infra,
@@ -4100,8 +4103,11 @@ mod tests {
         };
         let engines = crate::bootstrap::engines::init_engine_components(
             infra.http_client.clone(),
-            String::new(),
+            // proxy_url=None：此处无代理配置（架构 MEDIUM 5：用 Option 替代空字符串 sentinel）
+            None,
             &settings.engines,
+            // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
+            settings.timeouts.engines.default_timeout_seconds,
         );
         let services = init_services(
             &infra,

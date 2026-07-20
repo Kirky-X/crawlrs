@@ -491,7 +491,7 @@ mod tests {
             &self,
             _request: &SearchRequest,
         ) -> Result<Response<ResponseItem>, SearchError> {
-            Err(SearchError::Engine("mock engine failure".to_string()))
+            Err(SearchError::EngineFailed("mock engine failure".to_string()))
         }
     }
 
