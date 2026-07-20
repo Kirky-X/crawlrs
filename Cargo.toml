@@ -52,6 +52,12 @@ metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
 # 这样 production binary 编译时 mocks 完全不参与编译（优于依赖 linker 优化 dead code）。
 test-mocks = []
 
+# --- 运维工具特性 ---
+# admin-tools: 暴露 tools/add_credits.rs 等运维 CLI。
+# 默认不启用 — production release 不会编译 admin 工具，避免误暴露。
+# 构建：cargo build --bin add_credits --features admin-tools
+admin-tools = []
+
 # --- 已移除的旧数据库特性 (不再使用) ---
 # db-postgres = ["sea-orm/sqlx-postgres", "sqlx/postgres"]
 # db-sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
@@ -267,6 +273,13 @@ path = "benches/benchmark.rs"
 name = "crawlrs"
 path = "src/main.rs"
 
+# Admin CLI: add credits to a team.
+# Usage: DATABASE_URL=... cargo run --bin add_credits --features admin-tools -- <team-uuid> <amount> [description]
+[[bin]]
+name = "add_credits"
+path = "tools/add_credits.rs"
+required-features = ["admin-tools"]
+
 # =============================================================================
 # Build Optimization Profiles
 # =============================================================================
@@ -319,5 +332,5 @@ members = ["examples"]
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks"))',
+    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "admin-tools"))',
 ]

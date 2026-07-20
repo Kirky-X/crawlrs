@@ -165,7 +165,7 @@ pub mod scoring_weights {
     pub const BOOST_FACTOR: f64 = 1.2;
 }
 
-/// 系统负载阈值常量 - 避免crawl_service.rs中的魔法数字
+/// 系统负载阈值常量 - 集中管理降级策略使用的阈值
 pub mod load_thresholds {
     pub const HIGH_LOAD: f64 = 0.8;
     pub const MEDIUM_LOAD: f64 = 0.6;
