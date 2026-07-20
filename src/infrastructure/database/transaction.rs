@@ -206,7 +206,8 @@ pub(crate) fn validate_savepoint_name(name: &str) -> Result<(), TransactionError
     let valid = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !valid {
         return Err(TransactionError::InvalidSavepointName(
-            "Savepoint name must contain only ASCII alphanumeric characters and underscores".to_string(),
+            "Savepoint name must contain only ASCII alphanumeric characters and underscores"
+                .to_string(),
         ));
     }
 
@@ -773,7 +774,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_manager_without_active_transaction() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -783,7 +783,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_with_config_creates_manager_with_custom_config() {
         let pool = create_test_db_pool();
         let config = TransactionConfig {
@@ -800,7 +799,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_is_active_false_when_no_transaction() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -808,7 +806,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_has_transaction_false_when_no_transaction() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -816,7 +813,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_savepoint_count_zero_when_no_transaction() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -999,7 +995,6 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_empty_name_rejected_before_active_check() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1013,7 +1008,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_too_long_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1028,7 +1022,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_max_length_accepted() {
         // 63 chars is the max allowed length
         let pool = create_test_db_pool();
@@ -1040,7 +1033,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_invalid_chars_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1055,7 +1047,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_with_space_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1067,7 +1058,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_with_special_chars_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1082,7 +1072,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_valid_name_passes_validation_but_no_tx() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1098,7 +1087,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_release_savepoint_empty_name_rejected_before_active_check() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1110,7 +1098,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_release_savepoint_invalid_name_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1122,7 +1109,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_release_savepoint_valid_name_no_tx_returns_error() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1131,7 +1117,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_rollback_to_savepoint_empty_name_rejected_before_active_check() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1143,7 +1128,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_rollback_to_savepoint_invalid_name_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1155,7 +1139,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_rollback_to_savepoint_valid_name_no_tx_returns_error() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1168,7 +1151,6 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_begin_succeeds_with_real_db() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1185,7 +1167,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_begin_with_config_succeeds_with_real_db() {
         let pool = create_test_db_pool();
         let config = TransactionConfig {
@@ -1208,7 +1189,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_commit_without_active_transaction_returns_error() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1217,7 +1197,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_rollback_without_active_transaction_returns_error() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1230,7 +1209,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_guard_new_creates_uncommitted_guard() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1242,7 +1220,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_guard_commit_without_active_tx_returns_error() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1252,7 +1229,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_guard_rollback_without_active_tx_returns_error() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1262,7 +1238,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_guard_drop_without_active_tx_does_not_panic() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1279,7 +1254,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_drop_without_active_transaction_does_not_panic() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1289,7 +1263,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_manager_can_be_cloned_via_arc() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1652,7 +1625,6 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_single_char_passes_validation_no_tx() {
         // 单字符名称应该通过校验
         let pool = create_test_db_pool();
@@ -1662,7 +1634,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_single_underscore_passes_validation_no_tx() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1671,7 +1642,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_digits_only_passes_validation_no_tx() {
         // 纯数字也应该通过校验（is_alphanumeric 接受数字）
         let pool = create_test_db_pool();
@@ -1681,18 +1651,19 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_unicode_alphanumeric_rejected_no_tx() {
         // ASCII-only whitelist: Unicode letters must be rejected by
         // validate_savepoint_name before reaching the DB layer.
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.savepoint("测试点").await;
-        assert!(matches!(result, Err(TransactionError::InvalidSavepointName(_))));
+        assert!(matches!(
+            result,
+            Err(TransactionError::InvalidSavepointName(_))
+        ));
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_tab_character_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1704,7 +1675,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_newline_character_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1716,7 +1686,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_emoji_rejected() {
         // Emoji 不属于 alphanumeric，应该被拒绝
         let pool = create_test_db_pool();
@@ -1729,7 +1698,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_at_max_boundary_passes_validation_no_tx() {
         // 63 字符是边界值，应该通过
         let pool = create_test_db_pool();
@@ -1740,7 +1708,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_savepoint_name_one_over_max_rejected() {
         // 64 字符应该被拒绝
         let pool = create_test_db_pool();
@@ -1759,7 +1726,6 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_release_savepoint_too_long_name_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1772,7 +1738,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_rollback_to_savepoint_too_long_name_rejected() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1785,23 +1750,27 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_release_savepoint_unicode_name_rejected_validation_only_for_chars() {
         // ASCII-only whitelist: Unicode letters rejected by validate_savepoint_name
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.release_savepoint("释放点").await;
-        assert!(matches!(result, Err(TransactionError::InvalidSavepointName(_))));
+        assert!(matches!(
+            result,
+            Err(TransactionError::InvalidSavepointName(_))
+        ));
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_rollback_to_savepoint_unicode_name_rejected_no_tx() {
         // ASCII-only whitelist: Unicode letters rejected by validate_savepoint_name
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.rollback_to_savepoint("回滚点").await;
-        assert!(matches!(result, Err(TransactionError::InvalidSavepointName(_))));
+        assert!(matches!(
+            result,
+            Err(TransactionError::InvalidSavepointName(_))
+        ));
     }
 
     // ============================================================
@@ -1809,7 +1778,6 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_begin_with_config_savepoints_disabled_succeeds_with_real_db() {
         let pool = create_test_db_pool();
         let config = TransactionConfig {
@@ -1833,24 +1801,27 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_begin_with_config_custom_role_fails_without_db() {
+    async fn test_begin_with_config_admin_role_succeeds() {
         let pool = create_test_db_pool();
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::Serializable,
             access_mode: TransactionAccess::ReadOnly,
             enable_savepoints: true,
-            role: "viewer".to_string(),
+            role: "admin".to_string(),
         };
         let manager = TransactionManager::with_config(pool, config.clone());
         let result = manager.begin_with_config(config).await;
-        assert!(result.is_err());
-        assert!(!manager.is_active());
+        assert!(
+            result.is_ok(),
+            "expected Ok with admin role, got {:?}",
+            result.err()
+        );
+        assert!(manager.is_active());
+        let _ = manager.rollback().await;
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_begin_with_config_empty_role_fails_without_db() {
+    async fn test_begin_with_config_empty_role_returns_error() {
         let pool = create_test_db_pool();
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::ReadCommitted,
@@ -1860,7 +1831,9 @@ mod tests {
         };
         let manager = TransactionManager::with_config(pool, config.clone());
         let result = manager.begin_with_config(config).await;
+        // Empty role should fail (dbnexus rejects empty role strings)
         assert!(result.is_err());
+        assert!(!manager.is_active());
     }
 
     // ============================================================
@@ -1868,7 +1841,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_guard_drop_in_inner_scope_does_not_panic() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1886,7 +1858,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_guard_can_be_created_and_dropped_multiple_times() {
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1898,7 +1869,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_guard_commit_called_twide_after_drop_returns_error() {
         // 第一次 commit 后 guard 被 consume（self by value），不能再调用
         // 这里测试：commit 失败后 guard 仍然 drop
@@ -1915,7 +1885,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_drop_with_configured_manager_no_active_transaction_no_panic() {
         let pool = create_test_db_pool();
         let config = TransactionConfig {
@@ -1930,7 +1899,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_drop_after_failed_begin_does_not_panic() {
         // 模拟 begin 失败后 drop manager
         let pool = create_test_db_pool();

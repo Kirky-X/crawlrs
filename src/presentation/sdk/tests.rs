@@ -134,7 +134,6 @@ fn make_server_crawl_repo_error() -> TestServer {
 /// sdk_search happy path：合法 query 应返回 200 + 搜索结果。
 /// 覆盖 SearchQuery 构造、search_service.search 调用、响应映射。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_search_happy_path() {
     if skip_if_no_db() {
         return;
@@ -158,7 +157,6 @@ async fn test_sdk_search_happy_path() {
 /// sdk_search 空 query（trim 后为空）应返回 400 InvalidInput。
 /// 覆盖 query.trim().is_empty() 分支。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_search_empty_query_returns_400() {
     if skip_if_no_db() {
         return;
@@ -171,7 +169,6 @@ async fn test_sdk_search_empty_query_returns_400() {
 
 /// sdk_search 无 query 字段应返回 400（反序列化失败，serde 拒绝缺失必填字段）。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_search_missing_query_field_returns_422() {
     if skip_if_no_db() {
         return;
@@ -191,7 +188,6 @@ async fn test_sdk_search_missing_query_field_returns_422() {
 /// sdk_search 搜索服务返回错误时应返回 500 Internal。
 /// 覆盖 map_err 分支，ApiError::Internal 构造。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_search_service_error_returns_500() {
     if skip_if_no_db() {
         return;
@@ -207,7 +203,6 @@ async fn test_sdk_search_service_error_returns_500() {
 /// sdk_create_task happy path（task_type=scrape）：应返回 200 + status=Queued。
 /// 覆盖 task_type 匹配、Task 构造、enqueue、响应映射。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_create_task_scrape_happy_path() {
     if skip_if_no_db() {
         return;
@@ -228,7 +223,6 @@ async fn test_sdk_create_task_scrape_happy_path() {
 /// sdk_create_task happy path（task_type=crawl）：应返回 200 + status=Queued。
 /// 覆盖 task_type="crawl" 分支。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_create_task_crawl_happy_path() {
     if skip_if_no_db() {
         return;
@@ -249,7 +243,6 @@ async fn test_sdk_create_task_crawl_happy_path() {
 /// sdk_create_task 空 url 应返回 400 InvalidInput。
 /// 覆盖 url.trim().is_empty() 分支。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_create_task_empty_url_returns_400() {
     if skip_if_no_db() {
         return;
@@ -263,7 +256,6 @@ async fn test_sdk_create_task_empty_url_returns_400() {
 /// sdk_create_task 无效 task_type 应返回 400 InvalidInput。
 /// 覆盖 _ => InvalidInput 分支。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_create_task_invalid_type_returns_400() {
     if skip_if_no_db() {
         return;
@@ -280,7 +272,6 @@ async fn test_sdk_create_task_invalid_type_returns_400() {
 /// sdk_create_task 队列入队失败应返回 500 Internal。
 /// 覆盖 map_err 分支，ApiError::Internal 构造。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_create_task_queue_error_returns_500() {
     if skip_if_no_db() {
         return;
@@ -299,7 +290,6 @@ async fn test_sdk_create_task_queue_error_returns_500() {
 /// sdk_scrape happy path：应返回 200 + id + url。
 /// 覆盖 Task 构造、enqueue、响应映射。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_scrape_happy_path() {
     if skip_if_no_db() {
         return;
@@ -316,7 +306,6 @@ async fn test_sdk_scrape_happy_path() {
 /// sdk_scrape 空 url 应返回 400 InvalidInput。
 /// 覆盖 url.trim().is_empty() 分支。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_scrape_empty_url_returns_400() {
     if skip_if_no_db() {
         return;
@@ -330,7 +319,6 @@ async fn test_sdk_scrape_empty_url_returns_400() {
 /// sdk_scrape 队列入队失败应返回 500 Internal。
 /// 覆盖 map_err 分支，ApiError::Internal 构造。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_scrape_queue_error_returns_500() {
     if skip_if_no_db() {
         return;
@@ -346,7 +334,6 @@ async fn test_sdk_scrape_queue_error_returns_500() {
 /// sdk_create_crawl happy path：应返回 200 + status=Queued + url。
 /// 覆盖 Crawl::new、crawl_repo.create、响应映射。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_create_crawl_happy_path() {
     if skip_if_no_db() {
         return;
@@ -368,7 +355,6 @@ async fn test_sdk_create_crawl_happy_path() {
 /// sdk_create_crawl 空 url 应返回 400 InvalidInput。
 /// 覆盖 url.trim().is_empty() 分支。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_create_crawl_empty_url_returns_400() {
     if skip_if_no_db() {
         return;
@@ -386,7 +372,6 @@ async fn test_sdk_create_crawl_empty_url_returns_400() {
 /// sdk_create_crawl 仓库创建失败应返回 500 Internal。
 /// 覆盖 map_err 分支，ApiError::Internal 构造。
 #[tokio::test]
-#[ignore = "requires TEST_DATABASE_URL"]
 async fn test_sdk_create_crawl_repo_error_returns_500() {
     if skip_if_no_db() {
         return;

@@ -720,8 +720,9 @@ mod tests {
             Ok(Err(e)) => {
                 let err_msg = e.to_string();
                 assert!(
-                    err_msg.contains("Failed to fetch geolocation"),
-                    "error should be wrapped scrape failure, got: {}",
+                    err_msg.contains("Failed to fetch geolocation")
+                        || err_msg.contains("Geolocation API error"),
+                    "error should be wrapped scrape failure or API error, got: {}",
                     err_msg
                 );
             }

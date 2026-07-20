@@ -7,6 +7,7 @@ use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use crate::engines::validators;
+use crate::utils::http_client::DEFAULT_USER_AGENT;
 use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::sync::Arc;
@@ -106,7 +107,12 @@ impl ScraperEngine for ReqwestEngine {
         // Use shared HTTP client for connection reuse, with proxy support
         let client = self.get_client(&request.proxy);
 
-        // Create request builder
+        // Create request builder.
+        //
+        // Use a real desktop browser User-Agent instead of a self-identifying
+        // `crawlrs/*` UA: major search engines (Baidu, Sogou, Bing) reject
+        // bot-identified requests with a 227-byte JS-redirect error page
+        // instead of returning actual search results.
         let mut request_builder = match request.method {
             crate::engines::engine_client::HttpMethod::Get => {
                 if request.mobile {
@@ -114,10 +120,9 @@ impl ScraperEngine for ReqwestEngine {
                         .get(&request.url)
                         .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
                 } else {
-                    client.get(&request.url).header(
-                        "User-Agent",
-                        "Mozilla/5.0 (compatible; crawlrs/1.0; +http://crawlrs.dev)",
-                    )
+                    client
+                        .get(&request.url)
+                        .header("User-Agent", DEFAULT_USER_AGENT)
                 }
             }
             crate::engines::engine_client::HttpMethod::Post => {
@@ -126,10 +131,9 @@ impl ScraperEngine for ReqwestEngine {
                         .post(&request.url)
                         .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
                 } else {
-                    client.post(&request.url).header(
-                        "User-Agent",
-                        "Mozilla/5.0 (compatible; crawlrs/1.0; +http://crawlrs.dev)",
-                    )
+                    client
+                        .post(&request.url)
+                        .header("User-Agent", DEFAULT_USER_AGENT)
                 }
             }
         };

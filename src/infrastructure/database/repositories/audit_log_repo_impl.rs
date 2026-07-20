@@ -178,77 +178,87 @@ mod tests {
     // ========== construction ==========
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = AuditLogRepositoryImpl::new(pool);
         let _clone = repo.clone();
     }
 
-    // ========== error paths (lazy pool: get_session fails) ==========
+    // ========== CRUD against real DB ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_create_returns_error_with_real_db() {
+    async fn test_create_inserts_record() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let entry = sample_audit_log_entry();
         let result = repo.create(&entry).await;
+        assert!(result.is_ok(), "create failed: {:?}", result.err());
+
+        // Verify DB state: find_by_api_key_id should return the created entry
+        let found = repo
+            .find_by_api_key_id(entry.api_key_id.unwrap(), 10, 0)
+            .await
+            .expect("find_by_api_key_id failed");
+        let matching = found.into_iter().find(|e| e.id == entry.id);
         assert!(
-            result.is_err(),
-            "create should fail without a real database"
+            matching.is_some(),
+            "created audit log entry should be findable by api_key_id"
         );
-        match result.unwrap_err() {
-            AuditRepositoryError::DatabaseError(_) => {}
-            other => panic!("expected DatabaseError variant, got {:?}", other),
-        }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_api_key_id_returns_error_with_real_db() {
+    async fn test_find_by_api_key_id_returns_empty_for_unknown() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key_id(Uuid::new_v4(), 10, 0).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AuditRepositoryError::DatabaseError(_) => {}
-            other => panic!("expected DatabaseError variant, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "find_by_api_key_id failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown api_key_id should return empty vec"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_team_id_returns_error_with_real_db() {
+    async fn test_find_by_team_id_returns_empty_for_unknown() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id(Uuid::new_v4(), 10, 0).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AuditRepositoryError::DatabaseError(_) => {}
-            other => panic!("expected DatabaseError variant, got {:?}", other),
-        }
+        assert!(result.is_ok(), "find_by_team_id failed: {:?}", result.err());
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown team_id should return empty vec"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_denied_for_key_returns_error_with_real_db() {
+    async fn test_find_denied_for_key_returns_empty_for_unknown() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_denied_for_key(Uuid::new_v4(), 5).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AuditRepositoryError::DatabaseError(_) => {}
-            other => panic!("expected DatabaseError variant, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "find_denied_for_key failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown api_key_id should return empty vec"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_cleanup_old_logs_returns_error_with_real_db() {
+    async fn test_cleanup_old_logs_returns_zero_for_no_matching_records() {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
+        // retention_days=30 means cutoff is 30 days ago; newly created records
+        // (in create test above) should not be deleted.
         let result = repo.cleanup_old_logs(30).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AuditRepositoryError::DatabaseError(_) => {}
-            other => panic!("expected DatabaseError variant, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "cleanup_old_logs failed: {:?}",
+            result.err()
+        );
+        // Result may be > 0 if pre-existing old logs exist, but the call should succeed.
+        let _count = result.unwrap();
     }
 
     // ========== AuditRepositoryError variant display exhaustive ==========

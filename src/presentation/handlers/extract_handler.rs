@@ -1022,7 +1022,6 @@ mod tests {
     // ============ Handler test cases ============
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_empty_urls_returns_bad_request() {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1059,7 +1058,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_no_extraction_method_returns_bad_request() {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1096,7 +1094,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_geo_repo_error_returns_internal_error() {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1123,7 +1120,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_sync_wait_ms_exceeds_max_returns_bad_request() {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1160,7 +1156,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_geo_denied_returns_forbidden() {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1205,7 +1200,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_geo_validation_error_returns_internal_error() {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1241,7 +1235,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_success_returns_created() {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1274,7 +1267,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_with_sync_wait_returns_accepted() {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1314,7 +1306,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_enqueue_failure_returns_internal_error() {
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::failing());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1343,7 +1334,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_allowed_country_passes_geo_check() {
         // Enable geo restrictions but the client's country is in allowed list
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1380,7 +1370,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_ip_whitelist_bypasses_country_check() {
         // IP in whitelist should be allowed regardless of country rules
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1419,7 +1408,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_allowed_with_failing_log() {
         // Allowed path where log_geo_restriction_action returns Err — covers
         // the error! branch on the Allowed arm (line 107).
@@ -1453,7 +1441,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_denied_with_failing_log() {
         // Denied path where log_geo_restriction_action returns Err — covers
         // the error! branch on the Denied arm (line 122).
@@ -1491,7 +1478,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_sync_wait_with_query_failure() {
         // sync_wait_ms > 0 but query_tasks fails → wait_for_tasks_completion
         // returns Err — covers the error! branch on the wait arm (lines 192-193).
@@ -1537,7 +1523,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_sync_wait_completes_returns_created() {
         // sync_wait_ms > 0 and wait_for_tasks_completion returns Ok quickly
         // (task is already Completed on first poll) → waited_time_ms <
@@ -1643,7 +1628,6 @@ mod tests {
     // and the surrounding error_response lines in the handler.
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_no_extraction_method_log_evaluated() {
         // Covers error_response lines 60-61 (Either prompt, schema, or rules).
         ensure_error_logger();
@@ -1682,7 +1666,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_geo_repo_error_log_evaluated() {
         // Covers error! line 72 + error_response lines 74-75.
         ensure_error_logger();
@@ -1711,7 +1694,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_sync_wait_ms_exceeds_max_log_evaluated() {
         // Covers error_response line 84 (sync_wait_ms must be <= MAX).
         ensure_error_logger();
@@ -1750,7 +1732,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_geo_denied_log_evaluated() {
         // Covers error_response line 126 (Access denied due to geographic
         // restrictions).
@@ -1789,7 +1770,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_geo_validation_error_log_evaluated() {
         // Covers error! line 131 + error_response lines 133-134.
         ensure_error_logger();
@@ -1825,7 +1805,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_sync_wait_log_evaluated() {
         // Covers line 185 (BASE_POLL_INTERVAL_MS argument) + error! line 193
         // when wait_for_tasks_completion fails. Uses a failing query repo so
@@ -1866,7 +1845,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_extract_enqueue_failure_log_evaluated() {
         // Covers error_response line 213 (enqueue failure path).
         ensure_error_logger();

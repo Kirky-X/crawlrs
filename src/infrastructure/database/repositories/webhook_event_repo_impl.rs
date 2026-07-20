@@ -213,90 +213,96 @@ mod tests {
     // ========== construction ==========
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = WebhookEventRepoImpl::new(pool);
         let _clone = repo.clone();
     }
 
-    // ========== error paths (lazy pool: get_session fails) ==========
+    // ========== CRUD against real DB ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_create_returns_error_with_real_db() {
+    async fn test_create_inserts_record() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let event = sample_webhook_event();
         let result = repo.create(&event).await;
-        assert!(
-            result.is_err(),
-            "create should fail without a real database"
-        );
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(result.is_ok(), "create failed: {:?}", result.err());
+
+        // Verify DB state: find_by_id should return the created event
+        let found = repo
+            .find_by_id(event.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("event should exist after create");
+        assert_eq!(found.id, event.id);
+        assert_eq!(found.team_id, event.team_id);
+        assert_eq!(found.event_type, event.event_type);
+        assert_eq!(found.webhook_url, event.webhook_url);
+        assert_eq!(found.status, event.status);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_id_returns_error_with_real_db() {
+    async fn test_find_by_id_returns_none_for_unknown() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "unknown id should return None");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_pending_returns_error_with_real_db() {
+    async fn test_find_pending_returns_ok() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.find_pending(10).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(result.is_ok(), "find_pending failed: {:?}", result.err());
+        // find_pending may return events from other tests; we only verify it
+        // does not error against a real DB.
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_returns_error_with_real_db() {
+    async fn test_update_modifies_record() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
-        let event = sample_webhook_event();
+        let mut event = sample_webhook_event();
+        // First create
+        repo.create(&event).await.expect("create failed");
+        // Then update with new status
+        event.status = WebhookStatus::Delivered;
         let result = repo.update(&event).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(result.is_ok(), "update failed: {:?}", result.err());
+
+        // Verify DB state: find_by_id should return updated status
+        let found = repo
+            .find_by_id(event.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("event should exist after update");
+        assert_eq!(found.status, WebhookStatus::Delivered);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_team_id_paginated_returns_error_with_real_db() {
+    async fn test_find_by_team_id_paginated_returns_empty_for_unknown() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "find_by_team_id_paginated failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown team_id should return empty vec"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_count_by_team_id_returns_error_with_real_db() {
+    async fn test_count_by_team_id_returns_zero_for_unknown() {
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.count_by_team_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "count_by_team_id failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0, "unknown team_id should return 0");
     }
 
     // ========== RepositoryError variant display exhaustive ==========

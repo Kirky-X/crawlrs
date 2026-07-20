@@ -23,7 +23,13 @@ use std::time::Duration;
 const DEFAULT_TIMEOUT: u64 = 30;
 const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 10;
 const DEFAULT_POOL_IDLE_TIMEOUT: u64 = 90;
-const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+/// Default User-Agent for HTTP requests.
+///
+/// Uses a real desktop browser UA string so that anti-bot services (e.g.
+/// Baidu search) do not return JS-redirect error pages instead of content.
+/// A `crawlrs/*` UA is intentionally avoided because major search engines
+/// reject requests identifying as bots.
+pub(crate) const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const DEFAULT_MAX_REDIRECTS: u8 = 10;
 
 /// Create an HTTP client with custom timeout.

@@ -304,7 +304,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_database_pool_from_arc_dbpool_yields_inner_reference() {
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
@@ -315,7 +314,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_database_pool_into_arc_dbpool_preserves_identity() {
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
@@ -327,7 +325,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_database_pool_clone_inner_returns_arc_clone() {
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
@@ -339,7 +336,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_database_pool_inner_returns_reference_to_same_arc() {
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
@@ -348,7 +344,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_database_pool_stats_default_is_zero() {
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool);
@@ -360,7 +355,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_database_pool_stats_returns_clone_of_inner_stats() {
         let pool = create_test_db_pool();
         let custom_stats = PoolStats {
@@ -383,7 +377,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_database_pool_clone_preserves_inner_and_stats() {
         let pool = create_test_db_pool();
         let db_pool = DatabasePool {
@@ -411,7 +404,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_database_pool_deref_targets_inner_dbpool() {
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
@@ -426,7 +418,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_database_pool_as_ref_targets_inner_dbpool() {
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
@@ -445,7 +436,6 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_session_succeeds_with_real_db() {
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_session("admin").await;
@@ -457,7 +447,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_admin_session_succeeds_with_real_db() {
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_admin_session().await;
@@ -469,7 +458,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_system_session_succeeds_with_real_db() {
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_system_session().await;
@@ -481,7 +469,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_readonly_session_returns_error_with_real_db() {
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_readonly_session().await;
@@ -489,7 +476,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_session_with_empty_role_returns_error_with_real_db() {
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_session("").await;
@@ -497,7 +483,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_session_with_unicode_role_returns_error_with_real_db() {
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_session("管理员").await;
@@ -505,7 +490,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     #[allow(unused_comparisons, clippy::absurd_extreme_comparisons)]
     async fn test_get_pool_stats_returns_status_from_real_pool() {
         // get_pool_stats reads status from inner DbPool; real pool reports

@@ -499,7 +499,6 @@ mod tests {
     // ========== create_webhook handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_webhook_success() {
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
@@ -525,7 +524,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_webhook_ssrf_blocked() {
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
@@ -556,7 +554,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_webhook_rate_limit_exceeded() {
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_denied("too many requests"));
@@ -587,7 +584,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_webhook_repo_create_failure() {
         let repo = Arc::new(MockWebhookRepository::with_create_error(
             RepositoryError::Database(anyhow::anyhow!("repo down")),
@@ -622,7 +618,6 @@ mod tests {
     // ========== list_webhooks handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_list_webhooks_empty() {
         let repo = Arc::new(MockWebhookRepository::new());
         let auth = make_test_auth_state();
@@ -643,7 +638,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_list_webhooks_with_items() {
         let team_id = Uuid::new_v4();
         let webhook1 = Webhook::new(
@@ -677,7 +671,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_list_webhooks_repo_failure() {
         let repo = Arc::new(MockWebhookRepository::with_find_result(Err(
             RepositoryError::Database(anyhow::anyhow!("find_by_team_id failed")),
@@ -727,7 +720,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_webhook_debug_log_evaluated() {
         // With debug logging enabled, the log::debug! format args on lines
         // 34-37 are evaluated (even though CapturingLogger discards them).

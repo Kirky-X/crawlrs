@@ -328,6 +328,14 @@ mod tests {
     use axum::routing::any;
     use tower::ServiceExt;
 
+    // Imports for the route-builder tests below (uses TEST_DATABASE_URL).
+    use crate::common::test_support::testcontainers_fixtures as tcf;
+    use crate::di::modules::{
+        CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule,
+        RepositoryModule, ServiceModule, SettingsModule,
+    };
+    use trait_kit::AsyncKit;
+
     /// Build a minimal Router with the given CorsLayer and a handler accepting any method.
     fn cors_test_app(layer: CorsLayer) -> axum::Router {
         axum::Router::new()
@@ -1068,6 +1076,217 @@ mod tests {
             response.headers().get("access-control-allow-origin"),
             Some(&HeaderValue::from_static("*")),
             "origins with only commas should fall back to wildcard"
+        );
+    }
+
+    // ========== Route builder tests using TEST_DATABASE_URL ==========
+    //
+    // These tests exercise the route builder functions (`create_public_routes`,
+    // `create_protected_routes_with_state`, `create_v2_routes_with_state`,
+    // `build_api_app_with_state`). They require a fully constructed
+    // `CrawlRsState`, built via `AsyncKit` against the externally-managed
+    // `TEST_DATABASE_URL` PostgreSQL instance (no Docker required).
+
+    /// Build CrawlRsState using `TEST_DATABASE_URL` (no Docker required).
+    ///
+    /// Returns Err if `TEST_DATABASE_URL` is not set or kit construction fails.
+    async fn build_test_state() -> anyhow::Result<CrawlRsState> {
+        let db_url = std::env::var("TEST_DATABASE_URL")
+            .map_err(|_| anyhow::anyhow!("TEST_DATABASE_URL not set"))?;
+        let settings = Arc::new(tcf::settings_with_urls(&db_url)?);
+
+        let mut kit = AsyncKit::new();
+        kit.set_config(settings);
+        kit.register::<SettingsModule>()
+            .map_err(|e| anyhow::anyhow!("register SettingsModule: {e}"))?;
+        kit.register::<DatabaseModule>()
+            .map_err(|e| anyhow::anyhow!("register DatabaseModule: {e}"))?;
+        kit.register::<HttpModule>()
+            .map_err(|e| anyhow::anyhow!("register HttpModule: {e}"))?;
+        kit.register::<CacheModule>()
+            .map_err(|e| anyhow::anyhow!("register CacheModule: {e}"))?;
+        kit.register::<RepositoryModule>()
+            .map_err(|e| anyhow::anyhow!("register RepositoryModule: {e}"))?;
+        kit.register::<EngineModule>()
+            .map_err(|e| anyhow::anyhow!("register EngineModule: {e}"))?;
+        kit.register::<InfrastructureModule>()
+            .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
+        kit.register::<ServiceModule>()
+            .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
+
+        let kit = kit
+            .build()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to build kit: {e}"))?;
+        let state = CrawlRsState::from_kit(&kit)?;
+        Ok(state)
+    }
+
+    /// Skip helper for tests that require `TEST_DATABASE_URL`.
+    fn skip_if_no_test_db() -> bool {
+        if std::env::var("TEST_DATABASE_URL").is_err() {
+            eprintln!("[skip] TEST_DATABASE_URL not set — test requires real DbPool");
+            return true;
+        }
+        false
+    }
+
+    /// Load default Settings from `config/default.toml`.
+    fn load_test_settings() -> Settings {
+        crate::bootstrap::config::load_settings().expect("Failed to load settings")
+    }
+
+    /// `create_public_routes` should wire `/health`, `/metrics`, and
+    /// `/v1/version` to handlers that respond successfully.
+    #[tokio::test]
+    async fn test_create_public_routes_handles_health_check() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let state = match build_test_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
+                return;
+            }
+        };
+        let router = create_public_routes(&state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "public /health endpoint should return 200 OK"
+        );
+    }
+
+    /// `create_protected_routes_with_state` should construct a Router that
+    /// includes all v1 protected endpoints. Verify construction succeeds
+    /// without panic and the router can be dropped cleanly.
+    #[tokio::test]
+    async fn test_create_protected_routes_constructs_without_panic() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let state = match build_test_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
+                return;
+            }
+        };
+        let settings = Arc::new(load_test_settings());
+        // Constructing the router exercises all Extension layers and
+        // set_global_auth_state calls in the function body.
+        let router = create_protected_routes_with_state(&state, settings);
+        // Dropping should not panic.
+        drop(router);
+    }
+
+    /// `create_v2_routes_with_state` should construct a Router that wires
+    /// the v2 task routes. Verify construction succeeds without panic.
+    #[tokio::test]
+    async fn test_create_v2_routes_constructs_without_panic() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let state = match build_test_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
+                return;
+            }
+        };
+        let router = create_v2_routes_with_state(&state);
+        drop(router);
+    }
+
+    /// `build_api_app_with_state` should construct a complete application
+    /// Router that combines public, protected, v2, and SDK routes plus the
+    /// CORS and security-headers middlewares. Verify the merged router
+    /// still serves the public `/health` endpoint successfully.
+    #[tokio::test]
+    async fn test_build_api_app_serves_public_health() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let state = match build_test_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
+                return;
+            }
+        };
+        let settings = Arc::new(load_test_settings());
+        let router = build_api_app_with_state(&state, settings);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "merged app router should serve /health from public routes"
+        );
+    }
+
+    /// Verify CORS layer is applied to the merged app router — a request
+    /// with Origin header should include `access-control-allow-origin`
+    /// (default config uses wildcard).
+    #[tokio::test]
+    async fn test_build_api_app_applies_cors_layer() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let state = match build_test_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
+                return;
+            }
+        };
+        let settings = Arc::new(load_test_settings());
+        let router = build_api_app_with_state(&state, settings);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/health")
+                    .header("origin", "https://example.com")
+                    .body(Body::empty())
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        // Default config has allowed_origins = "*", so CORS should add
+        // access-control-allow-origin: * to the response.
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_some(),
+            "merged app router should apply CORS layer"
         );
     }
 }

@@ -306,126 +306,116 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool);
-        // Repository should be constructible without connecting to DB
-        // (pool is lazy, no connection until get_session is called)
+        // Repository wraps the pool Arc; construction itself does not
+        // open a new connection — get_session on the inner DbPool does.
         let _cloned = repo.clone();
     }
 
     // ============================================================
-    // Error path tests — all methods should fail gracefully when
-    // the lazy pool cannot provide a real session.
+    // CRUD tests — verify find / list / override operations
+    // against a real PostgreSQL database.
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_name_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let result = repo.find_by_name("test_flag").await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
+    async fn test_find_by_name_returns_none_for_unknown() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        let unique_name = format!("unknown_flag_{}", Uuid::new_v4());
+        let result = repo.find_by_name(&unique_name).await;
+        assert!(result.is_ok(), "find_by_name failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "unknown name should return None");
+    }
+
+    #[tokio::test]
+    async fn test_find_by_id_returns_none_for_unknown() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_id(Uuid::new_v4()).await;
+        assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "unknown id should return None");
+    }
+
+    #[tokio::test]
+    async fn test_list_all_returns_ok() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        let result = repo.list_all().await;
+        assert!(result.is_ok(), "list_all failed: {:?}", result.err());
+        // list_all returns whatever flags exist; we only verify Ok.
+        let _flags = result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_find_override_returns_none_for_unknown() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_override(Uuid::new_v4(), Uuid::new_v4()).await;
+        assert!(result.is_ok(), "find_override failed: {:?}", result.err());
         assert!(
-            matches!(err, FeatureFlagRepositoryError::DatabaseError(_)),
-            "Expected DatabaseError, got {:?}",
-            err
+            result.unwrap().is_none(),
+            "unknown override should return None"
         );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_id_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let result = repo.find_by_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_list_all_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let result = repo.list_all().await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_override_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let result = repo.find_override(Uuid::new_v4(), Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_list_overrides_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
+    async fn test_list_overrides_returns_empty_for_unknown() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
         let result = repo.list_overrides(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "list_overrides failed: {:?}", result.err());
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown feature_flag_id should return empty"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_list_overrides_for_key_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
+    async fn test_list_overrides_for_key_returns_empty_for_unknown() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
         let result = repo.list_overrides_for_key(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+        assert!(
+            result.is_ok(),
+            "list_overrides_for_key failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown api_key_id should return empty"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_set_override_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let result = repo
-            .set_override(Uuid::new_v4(), Uuid::new_v4(), true)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+    async fn test_set_override_creates_new_override() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        let feature_flag_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let result = repo.set_override(feature_flag_id, api_key_id, true).await;
+        assert!(result.is_ok(), "set_override failed: {:?}", result.err());
+        let override_ = result.unwrap();
+        assert_eq!(override_.feature_flag_id, feature_flag_id);
+        assert_eq!(override_.api_key_id, api_key_id);
+        assert!(override_.enabled);
+
+        // Verify DB state: find_override should return the created override
+        let found = repo
+            .find_override(feature_flag_id, api_key_id)
+            .await
+            .expect("find_override failed")
+            .expect("override should exist after set_override");
+        assert_eq!(found.feature_flag_id, feature_flag_id);
+        assert_eq!(found.api_key_id, api_key_id);
+        assert!(found.enabled);
+
+        // Cleanup
+        repo.delete_override(feature_flag_id, api_key_id)
+            .await
+            .expect("delete_override failed");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_delete_override_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
+    async fn test_delete_override_returns_false_for_unknown() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
         let result = repo.delete_override(Uuid::new_v4(), Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "delete_override failed: {:?}", result.err());
+        assert!(!result.unwrap(), "unknown override should return false");
     }
 
     // ============================================================
@@ -687,103 +677,103 @@ mod tests {
     }
 
     // ============================================================
-    // Repository method error paths — additional boundary cases
-    // 即使所有方法在 lazy pool 下都返回 DatabaseError，我们仍然要验证
-    // 边界输入不会导致 panic 或非 DatabaseError 变体
+    // Repository method boundary cases — verify edge inputs
+    // don't cause panics against a real PostgreSQL database.
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_name_with_empty_string_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
+    async fn test_find_by_name_with_empty_string_returns_ok() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_name("").await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "find_by_name failed: {:?}", result.err());
+        // Empty string is unlikely to match any flag name.
+        let _found = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_name_with_unicode_name_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let result = repo.find_by_name("功能开关").await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+    async fn test_find_by_name_with_unicode_name_returns_none() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        let unique_name = format!("功能开关_{}", Uuid::new_v4());
+        let result = repo.find_by_name(&unique_name).await;
+        assert!(result.is_ok(), "find_by_name failed: {:?}", result.err());
+        assert!(
+            result.unwrap().is_none(),
+            "unique unicode name should return None"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_name_with_long_name_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let long_name = "flag_".repeat(1000);
+    async fn test_find_by_name_with_long_name_returns_none() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        let long_name = format!("flag_{}_{}", Uuid::new_v4(), "x".repeat(1000));
         let result = repo.find_by_name(&long_name).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "find_by_name failed: {:?}", result.err());
+        assert!(
+            result.unwrap().is_none(),
+            "unique long name should return None"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_id_with_nil_uuid_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
+    async fn test_find_by_id_with_nil_uuid_returns_ok() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
+        // Nil UUID is unlikely to match any flag (we generate v4 UUIDs in tests).
+        let _found = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_set_override_with_nil_uuids_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let result = repo.set_override(Uuid::nil(), Uuid::nil(), true).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+    async fn test_set_override_with_unique_uuids_creates_override() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        // feature_flag_overrides has no FK constraint, so any UUID pair works.
+        // Use new_v4 to avoid UNIQUE(feature_flag_id, api_key_id) collisions
+        // that would occur with nil UUIDs under concurrent test execution.
+        let feature_flag_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let result = repo.set_override(feature_flag_id, api_key_id, true).await;
+        assert!(result.is_ok(), "set_override failed: {:?}", result.err());
+
+        // Cleanup
+        let _ = repo.delete_override(feature_flag_id, api_key_id).await;
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_set_override_with_disabled_flag_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let result = repo
-            .set_override(Uuid::new_v4(), Uuid::new_v4(), false)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+    async fn test_set_override_with_disabled_flag_creates_override() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        let feature_flag_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let result = repo.set_override(feature_flag_id, api_key_id, false).await;
+        assert!(result.is_ok(), "set_override failed: {:?}", result.err());
+        let override_ = result.unwrap();
+        assert!(
+            !override_.enabled,
+            "override should be disabled when set to false"
+        );
+
+        // Verify DB state: find_override should return disabled override
+        let found = repo
+            .find_override(feature_flag_id, api_key_id)
+            .await
+            .expect("find_override failed")
+            .expect("override should exist");
+        assert!(!found.enabled);
+
+        // Cleanup
+        repo.delete_override(feature_flag_id, api_key_id)
+            .await
+            .expect("delete_override failed");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_delete_override_with_nil_uuids_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = FeatureFlagRepositoryImpl::new(pool);
-        let result = repo.delete_override(Uuid::nil(), Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            FeatureFlagRepositoryError::DatabaseError(_)
-        ));
+    async fn test_delete_override_with_unique_uuids_returns_false() {
+        let repo = FeatureFlagRepositoryImpl::new(create_test_db_pool());
+        // delete_override is idempotent: returns Ok(false) when no row matches.
+        // Use new_v4 to avoid collisions with leftover nil-UUID rows from
+        // previous test runs (the shared test DB may have residual data).
+        let result = repo.delete_override(Uuid::new_v4(), Uuid::new_v4()).await;
+        assert!(result.is_ok(), "delete_override failed: {:?}", result.err());
+        assert!(!result.unwrap(), "nonexistent override should return false");
     }
 
     // ============================================================
@@ -862,7 +852,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_repository_clone_preserves_pool_identity() {
         let pool = create_test_db_pool();
         let repo = FeatureFlagRepositoryImpl::new(pool.clone());
@@ -872,7 +861,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_distinct_pools_do_not_share_identity() {
         // 两个独立的 lazy pool 不应共享 Arc 标识
         let pool1 = create_test_db_pool();

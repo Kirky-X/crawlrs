@@ -185,10 +185,8 @@ limiteron = { version = "0.2", default-features = false, features = [
     "ban-manager",
     "quota-control",
     "circuit-breaker",
-    "telemetry",
     "monitoring",
     "parallel-checker",
-    "audit-log",
 ] }
 
 # Concurrency and synchronization
@@ -323,26 +321,3 @@ level = "deny"
 check-cfg = [
     'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks"))',
 ]
-
-# =============================================================================
-# Patch: opentelemetry-jaeger 0.22.0 stub (CVE-2026-48504 remediation)
-# =============================================================================
-# The upstream opentelemetry-jaeger 0.22.0 crate is deprecated and transitively
-# pulls in opentelemetry_sdk 0.23.0, which is affected by CVE-2026-48504
-# (W3C Baggage unbounded memory allocation DoS, fixed in 0.32.1).
-#
-# Root cause: limiteron 0.2.6 declares `opentelemetry-jaeger = { version = "0.22",
-# features = ["rt-tokio"] }` as an optional dependency under its `telemetry`
-# feature, but its `init_jaeger_tracer` implementation in
-# src/telemetry/telemetry_impl.rs only emits log lines and never invokes any
-# `opentelemetry_jaeger::` API. The dependency is effectively dead.
-#
-# limiteron 0.2.7 (latest at the time of writing) still ships the same
-# declaration, so a version bump alone cannot remediate the CVE. This stub
-# provides an empty crate with the required `rt-tokio` feature, breaking the
-# transitive chain and leaving only opentelemetry_sdk 0.32.1 in Cargo.lock.
-#
-# TODO(long-term): file an upstream PR against Kirky-X/limiteron to drop the
-# `opentelemetry-jaeger` dependency entirely, then remove this patch.
-[patch.crates-io]
-opentelemetry-jaeger = { path = "vendor/opentelemetry-jaeger-stub" }

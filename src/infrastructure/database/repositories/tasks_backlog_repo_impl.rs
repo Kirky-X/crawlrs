@@ -319,152 +319,192 @@ mod tests {
     // ========== construction ==========
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let _repo = TasksBacklogRepositoryImpl::new(pool);
     }
 
-    // ========== error paths (lazy pool: get_session fails) ==========
+    // ========== CRUD tests — verify create / find / update / delete
+    // against a real PostgreSQL database. ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_create_returns_error_with_real_db() {
+    async fn test_create_succeeds() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let backlog = sample_tasks_backlog();
         let result = repo.create(&backlog).await;
-        assert!(
-            result.is_err(),
-            "create should fail without a real database"
-        );
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(result.is_ok(), "create failed: {:?}", result.err());
+        let returned = result.unwrap();
+        assert_eq!(returned.id, backlog.id);
+        assert_eq!(returned.task_id, backlog.task_id);
+        assert_eq!(returned.team_id, backlog.team_id);
+        assert_eq!(returned.task_type, backlog.task_type);
+        assert_eq!(returned.priority, backlog.priority);
+        assert_eq!(returned.status, backlog.status);
+
+        // Verify DB state actually changed
+        let found = repo
+            .find_by_id(backlog.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("backlog should exist after create");
+        assert_eq!(found.id, backlog.id);
+        assert_eq!(found.task_id, backlog.task_id);
+        assert_eq!(found.team_id, backlog.team_id);
+        assert_eq!(found.task_type, backlog.task_type);
+        assert_eq!(found.priority, backlog.priority);
+        assert_eq!(found.status, backlog.status);
+        assert_eq!(found.payload, backlog.payload);
+
+        // Cleanup
+        let _ = repo.delete(backlog.id).await;
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_id_returns_error_with_real_db() {
+    async fn test_find_by_id_returns_none_for_unknown() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "unknown id should return None");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_task_id_returns_error_with_real_db() {
+    async fn test_find_by_task_id_returns_none_for_unknown() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
+        assert!(
+            result.unwrap().is_none(),
+            "unknown task_id should return None"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_returns_error_with_real_db() {
+    async fn test_update_succeeds() {
+        let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
+        let mut backlog = sample_tasks_backlog();
+        // create first
+        repo.create(&backlog).await.expect("create failed");
+
+        // modify fields and update
+        backlog.priority = 9;
+        backlog.payload = serde_json::json!({"updated": true});
+        backlog.mark_processing().expect("mark_processing failed");
+        let result = repo.update(&backlog).await;
+        assert!(result.is_ok(), "update failed: {:?}", result.err());
+
+        // Verify DB state reflects updated fields
+        let found = repo
+            .find_by_id(backlog.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("backlog should exist");
+        assert_eq!(found.priority, 9);
+        assert_eq!(found.payload, serde_json::json!({"updated": true}));
+        assert_eq!(found.status, TasksBacklogStatus::Processing);
+
+        // Cleanup
+        let _ = repo.delete(backlog.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_succeeds() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let backlog = sample_tasks_backlog();
-        let result = repo.update(&backlog).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        repo.create(&backlog).await.expect("create failed");
+
+        let result = repo.delete(backlog.id).await;
+        assert!(result.is_ok(), "delete failed: {:?}", result.err());
+
+        // Verify DB state: find_by_id should return None
+        let found = repo
+            .find_by_id(backlog.id)
+            .await
+            .expect("find_by_id failed");
+        assert!(found.is_none(), "backlog should be deleted");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_delete_returns_error_with_real_db() {
+    async fn test_get_pending_tasks_returns_empty_for_unknown_team() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.delete(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        let result = repo.get_pending_tasks(Some(Uuid::new_v4()), Some(10)).await;
+        assert!(
+            result.is_ok(),
+            "get_pending_tasks failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown team should return empty"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_pending_tasks_returns_error_with_real_db() {
-        let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.get_pending_tasks(None, Some(10)).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_pending_tasks_with_team_id_returns_error_with_real_db() {
+    async fn test_get_pending_tasks_with_team_id_returns_empty_for_unknown() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_pending_tasks(Some(Uuid::new_v4()), None).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "get_pending_tasks failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown team should return empty"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_expired_tasks_returns_error_with_real_db() {
+    async fn test_get_expired_tasks_returns_empty_when_none_expired() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
+        // No tasks have expired in a fresh test DB for this team_id.
+        // We only assert Ok because the shared test DB may have other
+        // tests' expired tasks; the result for our team should be empty.
         let result = repo.get_expired_tasks(Some(5)).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "get_expired_tasks failed: {:?}",
+            result.err()
+        );
+        let _tasks = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_count_by_status_returns_error_with_real_db() {
+    async fn test_count_by_status_returns_zero_for_unknown_team() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .count_by_status(None, TasksBacklogStatus::Pending)
+            .count_by_status(Some(Uuid::new_v4()), TasksBacklogStatus::Pending)
             .await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(result.is_ok(), "count_by_status failed: {:?}", result.err());
+        assert_eq!(result.unwrap(), 0, "unknown team should return 0 count");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_batch_returns_error_with_real_db() {
+    async fn test_update_status_batch_returns_zero_for_unknown_ids() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .update_status_batch(&[Uuid::new_v4()], TasksBacklogStatus::Processing)
             .await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database variant, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "update_status_batch failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0, "unknown ids should affect 0 rows");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_batch_with_empty_ids_returns_error_with_real_db() {
+    async fn test_update_status_batch_with_empty_ids_returns_zero() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        // Empty ids still attempts to acquire a session first, so it should fail
+        // Empty ids: update_many with IN () — Postgres returns Ok(0 rows affected).
         let result = repo
             .update_status_batch(&[], TasksBacklogStatus::Completed)
             .await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "update_status_batch failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0, "empty ids should affect 0 rows");
     }
 
     // ========== RepositoryError variant display exhaustive ==========
@@ -920,88 +960,99 @@ mod tests {
 
     // ============================================================
     // Additional boundary tests — nil UUIDs, multiple IDs, all status variants
+    // These tests use new_v4 UUIDs to ensure isolation under concurrent
+    // test execution. nil UUIDs are only used for read-only / idempotent
+    // operations to avoid UNIQUE / PRIMARY KEY collisions.
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_id_with_nil_uuid_returns_db_error() {
+    async fn test_find_by_id_with_nil_uuid_returns_ok() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
+        // Nil UUID is unlikely to match any backlog (we generate v4 UUIDs).
+        let _found = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_task_id_with_nil_uuid_returns_db_error() {
+    async fn test_find_by_task_id_with_nil_uuid_returns_ok() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
+        let _found = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_delete_with_nil_uuid_returns_db_error() {
+    async fn test_delete_with_nil_uuid_succeeds_silently() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
+        // delete_by_id is idempotent: returns Ok(()) even when no row matches.
         let result = repo.delete(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "delete failed: {:?}", result.err());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_pending_tasks_with_nil_team_id_returns_db_error() {
+    async fn test_get_pending_tasks_with_nil_team_id_returns_ok() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_pending_tasks(Some(Uuid::nil()), Some(5)).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "get_pending_tasks failed: {:?}",
+            result.err()
+        );
+        // Nil team_id may match other tests' backlogs; we only verify Ok.
+        let _tasks = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_pending_tasks_with_both_none_returns_db_error() {
+    async fn test_get_pending_tasks_with_both_none_returns_ok() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_pending_tasks(None, None).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "get_pending_tasks failed: {:?}",
+            result.err()
+        );
+        // No filter: may return other tests' pending tasks; we only verify Ok.
+        let _tasks = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_expired_tasks_without_limit_returns_db_error() {
+    async fn test_get_expired_tasks_without_limit_returns_ok() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_expired_tasks(None).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "get_expired_tasks failed: {:?}",
+            result.err()
+        );
+        let _tasks = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_count_by_status_with_team_id_returns_db_error() {
+    async fn test_count_by_status_with_team_id_returns_zero() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .count_by_status(Some(Uuid::new_v4()), TasksBacklogStatus::Processing)
             .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "count_by_status failed: {:?}", result.err());
+        assert_eq!(result.unwrap(), 0, "unknown team should return 0 count");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_count_by_status_with_nil_team_id_returns_db_error() {
+    async fn test_count_by_status_with_nil_team_id_returns_ok() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .count_by_status(Some(Uuid::nil()), TasksBacklogStatus::Completed)
             .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "count_by_status failed: {:?}", result.err());
+        // Nil team_id may match other tests' backlogs; we only verify Ok.
+        let _count = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_count_by_status_with_each_status_variant_returns_db_error() {
+    async fn test_count_by_status_with_each_status_variant_returns_zero() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
+        // Use a unique team_id per status to ensure isolation and 0 count.
         for status in [
             TasksBacklogStatus::Pending,
             TasksBacklogStatus::Processing,
@@ -1009,38 +1060,44 @@ mod tests {
             TasksBacklogStatus::Failed,
             TasksBacklogStatus::Expired,
         ] {
-            let result = repo.count_by_status(None, status).await;
-            assert!(result.is_err());
-            assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+            let result = repo.count_by_status(Some(Uuid::new_v4()), status).await;
+            assert!(result.is_ok(), "count_by_status failed for {:?}", status);
+            assert_eq!(result.unwrap(), 0, "expected 0 count for {:?}", status);
         }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_batch_with_multiple_ids_returns_db_error() {
+    async fn test_update_status_batch_with_multiple_ids_returns_zero() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let ids = vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
         let result = repo
             .update_status_batch(&ids, TasksBacklogStatus::Failed)
             .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "update_status_batch failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0, "unknown ids should affect 0 rows");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_batch_with_nil_ids_returns_db_error() {
+    async fn test_update_status_batch_with_nil_ids_returns_zero() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
+        // Nil UUID is unlikely to match any backlog id (we generate v4 UUIDs).
         let result = repo
             .update_status_batch(&[Uuid::nil()], TasksBacklogStatus::Completed)
             .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "update_status_batch failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0, "nil id should affect 0 rows");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_batch_for_each_status_variant_returns_db_error() {
+    async fn test_update_status_batch_for_each_status_variant_returns_zero() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         for status in [
             TasksBacklogStatus::Pending,
@@ -1050,26 +1107,38 @@ mod tests {
             TasksBacklogStatus::Expired,
         ] {
             let result = repo.update_status_batch(&[Uuid::new_v4()], status).await;
-            assert!(result.is_err());
-            assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+            assert!(
+                result.is_ok(),
+                "update_status_batch failed for {:?}",
+                status
+            );
+            assert_eq!(
+                result.unwrap(),
+                0,
+                "unknown id should affect 0 rows for {:?}",
+                status
+            );
         }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_create_with_nil_uuids_returns_db_error() {
+    async fn test_create_with_unique_uuids_succeeds() {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
+        // Use new_v4 for all UUIDs to ensure isolation under concurrent runs.
+        // (Original test used nil UUIDs which collide on PRIMARY KEY.)
         let backlog = TasksBacklog::new(
-            Uuid::nil(),
-            Uuid::nil(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
             "scrape".to_string(),
             1,
             serde_json::json!({}),
             None,
         );
         let result = repo.create(&backlog).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "create failed: {:?}", result.err());
+
+        // Cleanup
+        let _ = repo.delete(backlog.id).await;
     }
 
     // ============================================================

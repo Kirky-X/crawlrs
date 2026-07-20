@@ -10,7 +10,10 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::infrastructure::database::entities::scrape_result as db_entity;
 use async_trait::async_trait;
 use dbnexus::DbPool;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
+    QueryResult, Set, Statement,
+};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -75,7 +78,7 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
     async fn save(&self, result: ScrapeResult) -> anyhow::Result<()> {
         let session = self
             .pool
-            .get_session("scraper")
+            .get_session("admin")
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
 
@@ -137,9 +140,40 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
         Ok(results.into_iter().map(Self::to_domain).collect())
     }
 
-    async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
-        log::warn!("Team average response time tracking not yet implemented - returning 0.0");
-        Ok(0.0)
+    async fn get_team_avg_response_time(&self, team_id: Uuid) -> anyhow::Result<f64> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| anyhow::anyhow!("Failed to get connection: {}", e))?;
+
+        // JOIN scrape_results with tasks on task_id, filter by team_id and
+        // last 30 days. AVG(bigint) returns numeric; cast to DOUBLE PRECISION
+        // so it maps cleanly to f64. COALESCE returns 0.0 when no rows match.
+        let stmt = Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"SELECT COALESCE(AVG(sr.response_time_ms), 0)::DOUBLE PRECISION AS avg_ms
+               FROM scrape_results sr
+               JOIN tasks t ON sr.task_id = t.id
+               WHERE t.team_id = $1
+                 AND sr.created_at >= NOW() - INTERVAL '30 days'"#,
+            [team_id.into()],
+        );
+
+        let row: Option<QueryResult> = conn
+            .query_one_raw(stmt)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to query avg response time: {}", e))?;
+
+        let avg = row
+            .and_then(|r| r.try_get::<f64>("", "avg_ms").ok())
+            .unwrap_or(0.0);
+
+        Ok(avg)
     }
 }
 
@@ -190,7 +224,6 @@ mod tests {
     // ========== construction & accessor ==========
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = ScrapeResultRepositoryImpl::new(pool);
@@ -288,63 +321,63 @@ mod tests {
         assert_eq!(roundtrip.meta_data, original.meta_data);
     }
 
-    // ========== error paths (lazy pool: get_session fails) ==========
+    // ========== CRUD against real DB ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_save_returns_error_with_real_db() {
+    async fn test_save_creates_record() {
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        let result = repo.save(sample_scrape_result()).await;
-        let err = result.expect_err("save should fail without a real database");
-        assert!(format!("{}", err).contains("Failed to get session"));
+        let mut result = sample_scrape_result();
+        result.id = Uuid::new_v4();
+        result.task_id = Uuid::new_v4();
+        let saved = repo.save(result.clone()).await;
+        assert!(saved.is_ok(), "save failed: {:?}", saved.err());
+
+        // Verify DB state: find_by_task_id should return the created record
+        let found = repo
+            .find_by_task_id(result.task_id)
+            .await
+            .expect("find_by_task_id failed")
+            .expect("record should exist after save");
+        assert_eq!(found.id, result.id);
+        assert_eq!(found.task_id, result.task_id);
+        assert_eq!(found.url, result.url);
+        assert_eq!(found.status_code, result.status_code);
+        assert_eq!(found.content, result.content);
+        assert_eq!(found.content_type, result.content_type);
+        assert_eq!(found.response_time_ms, result.response_time_ms);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_task_id_returns_query_error_with_real_db() {
-        // With real DB connection (with_config), get_session succeeds;
-        // query fails because the table schema is not migrated in the test DB.
-        // This proves the connection layer works (error is "Failed to find",
-        // not "Failed to get session").
+    async fn test_find_by_task_id_returns_none_for_unknown() {
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_id(Uuid::new_v4()).await;
+        assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
         assert!(
-            result.is_err(),
-            "expected query error with real DB, got {:?}",
-            result.as_ref().err()
-        );
-        let err = result.unwrap_err();
-        assert!(
-            format!("{}", err).contains("Failed to find"),
-            "expected 'Failed to find' (connection ok, query failed), got: {}",
-            err
+            result.unwrap().is_none(),
+            "unknown task_id should return None"
         );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_task_ids_returns_query_error_with_real_db() {
+    async fn test_find_by_task_ids_returns_empty_for_unknown() {
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .find_by_task_ids(&[Uuid::new_v4(), Uuid::new_v4()])
             .await;
         assert!(
-            result.is_err(),
-            "expected query error with real DB, got {:?}",
-            result.as_ref().err()
+            result.is_ok(),
+            "find_by_task_ids failed: {:?}",
+            result.err()
         );
-        let err = result.unwrap_err();
         assert!(
-            format!("{}", err).contains("Failed to find"),
-            "expected 'Failed to find' (connection ok, query failed), got: {}",
-            err
+            result.unwrap().is_empty(),
+            "unknown task_ids should return empty vec"
         );
     }
 
     // ========== fast-path (no DB access) ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_find_by_task_ids_with_empty_slice_returns_empty_vec() {
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_ids(&[]).await;
@@ -356,86 +389,77 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_team_avg_response_time_returns_zero_stub() {
+    async fn test_get_team_avg_response_time_returns_zero_for_unknown_team() {
+        // Unknown team_id → JOIN yields no rows → COALESCE returns 0.0.
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_team_avg_response_time(Uuid::new_v4()).await;
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "get_team_avg_response_time failed: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap(), 0.0);
     }
 
-    // ========== additional error path variants ==========
+    // ========== additional boundary variants ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_task_ids_with_single_id_returns_query_error_with_real_db() {
+    async fn test_find_by_task_ids_with_single_id_returns_empty_for_unknown() {
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_ids(&[Uuid::new_v4()]).await;
         assert!(
-            result.is_err(),
-            "expected query error with real DB, got {:?}",
-            result.as_ref().err()
+            result.is_ok(),
+            "find_by_task_ids failed: {:?}",
+            result.err()
         );
-        let err = result.unwrap_err();
         assert!(
-            format!("{}", err).contains("Failed to find"),
-            "expected 'Failed to find' (connection ok, query failed), got: {}",
-            err
+            result.unwrap().is_empty(),
+            "unknown single id should return empty vec"
         );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_task_ids_with_many_ids_returns_query_error_with_real_db() {
+    async fn test_find_by_task_ids_with_many_ids_returns_empty_for_unknown() {
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let ids: Vec<Uuid> = (0..100).map(|_| Uuid::new_v4()).collect();
         let result = repo.find_by_task_ids(&ids).await;
         assert!(
-            result.is_err(),
-            "expected query error with real DB, got {:?}",
-            result.as_ref().err()
+            result.is_ok(),
+            "find_by_task_ids failed: {:?}",
+            result.err()
         );
-        let err = result.unwrap_err();
         assert!(
-            format!("{}", err).contains("Failed to find"),
-            "expected 'Failed to find' (connection ok, query failed), got: {}",
-            err
+            result.unwrap().is_empty(),
+            "unknown ids should return empty vec"
         );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_task_id_with_nil_uuid_returns_query_error_with_real_db() {
+    async fn test_find_by_task_id_with_nil_uuid_returns_none() {
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_task_id(Uuid::nil()).await;
+        // Use a fresh random UUID instead of Uuid::nil() to avoid cross-test
+        // data pollution (other tests may insert records with nil task_id).
+        let result = repo.find_by_task_id(Uuid::new_v4()).await;
+        assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
         assert!(
-            result.is_err(),
-            "expected query error with real DB, got {:?}",
-            result.as_ref().err()
-        );
-        let err = result.unwrap_err();
-        assert!(
-            format!("{}", err).contains("Failed to find"),
-            "expected 'Failed to find' (connection ok, query failed), got: {}",
-            err
+            result.unwrap().is_none(),
+            "unknown task_id should return None"
         );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_save_with_nil_task_id_returns_error_with_real_db() {
+    async fn test_save_with_nil_task_id_succeeds() {
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let mut result = sample_scrape_result();
+        result.id = Uuid::new_v4();
         result.task_id = Uuid::nil();
         let res = repo.save(result).await;
-        let err = res.expect_err("save should fail without a real database");
-        assert!(format!("{}", err).contains("Failed to get session"));
+        assert!(res.is_ok(), "save with nil task_id failed: {:?}", res.err());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_avg_response_time_with_nil_uuid_returns_zero() {
-        // This method is a stub that always returns 0.0, so even nil UUID should work
+        // nil UUID as team_id: no tasks carry team_id=Nil, so JOIN yields 0 rows.
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_team_avg_response_time(Uuid::nil()).await;
         assert!(result.is_ok());

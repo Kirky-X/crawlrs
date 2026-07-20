@@ -261,11 +261,11 @@ mod tests {
         }
 
         async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
-            unimplemented!()
+            unreachable!("MockTaskRepository::find_by_id not invoked by PostgresTaskQueue tests")
         }
 
         async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> {
-            unimplemented!()
+            unreachable!("MockTaskRepository::update not invoked by PostgresTaskQueue tests")
         }
 
         async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
@@ -305,40 +305,46 @@ mod tests {
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
-            unimplemented!()
+            unreachable!("MockTaskRepository::exists_by_url not invoked by PostgresTaskQueue tests")
         }
 
         async fn find_existing_urls(
             &self,
             _urls: &[String],
         ) -> Result<HashSet<String>, RepositoryError> {
-            unimplemented!()
+            unreachable!(
+                "MockTaskRepository::find_existing_urls not invoked by PostgresTaskQueue tests"
+            )
         }
 
         async fn reset_stuck_tasks(
             &self,
             _timeout: ChronoDuration,
         ) -> Result<u64, RepositoryError> {
-            unimplemented!()
+            unreachable!(
+                "MockTaskRepository::reset_stuck_tasks not invoked by PostgresTaskQueue tests"
+            )
         }
 
         async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
-            unimplemented!()
+            unreachable!("MockTaskRepository::cancel_tasks_by_crawl_id not invoked by PostgresTaskQueue tests")
         }
 
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
-            unimplemented!()
+            unreachable!("MockTaskRepository::expire_tasks not invoked by PostgresTaskQueue tests")
         }
 
         async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
-            unimplemented!()
+            unreachable!(
+                "MockTaskRepository::find_by_crawl_id not invoked by PostgresTaskQueue tests"
+            )
         }
 
         async fn query_tasks(
             &self,
             _params: TaskQueryParams,
         ) -> Result<(Vec<Task>, u64), RepositoryError> {
-            unimplemented!()
+            unreachable!("MockTaskRepository::query_tasks not invoked by PostgresTaskQueue tests")
         }
 
         async fn batch_cancel(
@@ -347,7 +353,7 @@ mod tests {
             _team_id: Uuid,
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
-            unimplemented!()
+            unreachable!("MockTaskRepository::batch_cancel not invoked by PostgresTaskQueue tests")
         }
     }
 

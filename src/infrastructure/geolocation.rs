@@ -13,6 +13,7 @@ use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
 use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
+use crate::utils::http_client::DEFAULT_USER_AGENT;
 use anyhow::Result;
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
@@ -64,7 +65,7 @@ impl GeoLocationService for GeoLocationServiceImpl {
 
         // 发送请求
         let mut headers = std::collections::HashMap::new();
-        headers.insert("User-Agent".to_string(), "crawlrs/0.1.0".to_string());
+        headers.insert("User-Agent".to_string(), DEFAULT_USER_AGENT.to_string());
 
         let request = ScrapeRequest::new(&url)
             .with_options(ScrapeOptions::builder().headers(headers).build());

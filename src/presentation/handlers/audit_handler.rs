@@ -465,7 +465,6 @@ mod tests {
     // ========== get_audit_logs handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_audit_logs_by_api_key_id() {
         let logs = vec![
             sample_entry("search", AuditDecision::Allow),
@@ -488,7 +487,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_audit_logs_by_team_id() {
         let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
@@ -508,7 +506,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_audit_logs_fallback_to_auth_state_api_key() {
         let logs = vec![sample_entry("extract", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
@@ -528,7 +525,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_audit_logs_api_key_takes_priority_over_team_id() {
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
@@ -548,7 +544,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_audit_logs_error_returns_internal_server_error() {
         let mock = Arc::new(MockAuditService::failing());
         let auth_state = make_auth_state();
@@ -567,7 +562,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_audit_logs_error_on_team_branch() {
         let mock = Arc::new(MockAuditService::failing());
         let auth_state = make_auth_state();
@@ -586,7 +580,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_audit_logs_error_on_fallback_branch() {
         let mock = Arc::new(MockAuditService::failing());
         let auth_state = make_auth_state();
@@ -605,7 +598,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_audit_logs_empty_logs() {
         let mock = Arc::new(MockAuditService::new(vec![]));
         let auth_state = make_auth_state();
@@ -624,7 +616,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_audit_logs_limit_clamped_to_max() {
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
@@ -646,7 +637,6 @@ mod tests {
     // ========== get_denied_requests handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_denied_requests_success() {
         let denied = vec![
             sample_entry("search", AuditDecision::Deny),
@@ -669,7 +659,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_denied_requests_error_returns_internal_server_error() {
         let mock = Arc::new(MockAuditService::failing());
         let auth_state = make_auth_state();
@@ -688,7 +677,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_denied_requests_empty() {
         let mock = Arc::new(MockAuditService::new(vec![]));
         let auth_state = make_auth_state();
@@ -707,7 +695,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_denied_requests_limit_clamped() {
         let denied = vec![sample_entry("search", AuditDecision::Deny)];
         let mock = Arc::new(MockAuditService::new(denied));
@@ -727,7 +714,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_denied_requests_uses_auth_state_api_key_id() {
         let api_key_id = Uuid::new_v4();
         let denied = vec![sample_entry("search", AuditDecision::Deny)];
@@ -748,7 +734,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_denied_requests_with_allow_entries_filters() {
         let entries = vec![
             sample_entry("search", AuditDecision::Deny),

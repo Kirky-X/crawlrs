@@ -1597,7 +1597,6 @@ mod tests {
     // ========== create_scrape tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_scrape_success_async() {
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
@@ -1622,7 +1621,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_scrape_sync_wait_ms_exceeds_max() {
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
@@ -1647,7 +1645,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_scrape_ssrf_blocked_localhost() {
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
@@ -1672,7 +1669,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_scrape_ssrf_blocked_127001() {
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
@@ -1697,7 +1693,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_scrape_rate_limited_denied() {
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
@@ -1722,7 +1717,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_scrape_rate_limited_retry_after() {
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
@@ -1747,7 +1741,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_scrape_quota_exceeded() {
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
@@ -1772,7 +1765,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_scrape_enqueue_failure() {
         let queue = Arc::new(MockTaskQueue::new_failing());
         let task_repo = Arc::new(MockTaskRepository::new());
@@ -1797,7 +1789,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_scrape_sync_mode_completed() {
         // sync_wait_ms > 0 with task becoming completed via linked queue/repo → CREATED
         // The queue and repo share the same task store, so when enqueue inserts
@@ -1832,7 +1823,6 @@ mod tests {
     // ========== cancel_scrape tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_scrape_success() {
         let team_id = Uuid::new_v4();
         let task = make_task(team_id, TaskStatus::Queued);
@@ -1848,7 +1838,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_scrape_not_found() {
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_auth_state();
@@ -1862,7 +1851,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_scrape_forbidden() {
         let task = make_task(Uuid::new_v4(), TaskStatus::Queued);
         let task_id = task.id;
@@ -1878,7 +1866,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_scrape_find_error() {
         let repo = Arc::new(MockTaskRepository::failing_find());
         let auth = make_auth_state();
@@ -1892,7 +1879,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_scrape_mark_cancelled_error() {
         let team_id = Uuid::new_v4();
         let task = make_task(team_id, TaskStatus::Queued);
@@ -1915,7 +1901,6 @@ mod tests {
     // ========== get_scrape_status tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_scrape_status_in_progress() {
         let team_id = Uuid::new_v4();
         let task = make_task(team_id, TaskStatus::Active);
@@ -1937,7 +1922,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_scrape_status_completed_with_result() {
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Completed);
@@ -1961,7 +1945,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_scrape_status_completed_no_result() {
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Completed);
@@ -1984,7 +1967,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_scrape_status_completed_result_error() {
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Completed);
@@ -2008,7 +1990,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_scrape_status_failed_task() {
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Failed);
@@ -2032,7 +2013,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_scrape_status_failed_task_no_error_field() {
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Failed);
@@ -2056,7 +2036,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_scrape_status_not_found() {
         let task_repo = Arc::new(MockTaskRepository::new());
         let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
@@ -2076,7 +2055,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_scrape_status_forbidden() {
         let task = make_task(Uuid::new_v4(), TaskStatus::Active);
         let task_id = task.id;
@@ -2098,7 +2076,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_scrape_status_find_error() {
         let task_repo = Arc::new(MockTaskRepository::failing_find());
         let result_repo = Arc::new(MockScrapeResultRepository::new_empty());

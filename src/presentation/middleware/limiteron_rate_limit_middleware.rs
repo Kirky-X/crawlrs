@@ -837,7 +837,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn tc_auth_state_extension_provides_user_id() {
         use crate::domain::auth::ApiKeyScope;
         use crate::presentation::middleware::auth_middleware::AuthState;
@@ -869,7 +868,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn tc_auth_state_and_api_key_both_present_still_allowed() {
         use crate::domain::auth::ApiKeyScope;
         use crate::presentation::middleware::auth_middleware::AuthState;

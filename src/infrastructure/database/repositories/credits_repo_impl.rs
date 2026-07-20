@@ -222,103 +222,134 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
-        // Repository should be constructible without connecting to DB
-        // (pool is lazy, no connection until get_session is called)
+        // Repository wraps the pool Arc; construction itself does not
+        // open a new connection — get_session on the inner DbPool does.
         let _ = repo;
     }
 
     // ============================================================
-    // Error path tests — all methods should fail gracefully when
-    // the lazy pool cannot provide a real session.
+    // CRUD tests — verify get_balance / deduct / add / history /
+    // initialize against a real PostgreSQL database.
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_balance_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
-        let result = repo.get_balance(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
+    async fn test_get_balance_returns_zero_for_unknown_team() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        // get_balance on unknown team auto-initializes with 0 and returns Ok(0).
+        let result = repo.get_balance(team_id).await;
+        assert!(result.is_ok(), "get_balance failed: {:?}", result.err());
+        assert_eq!(result.unwrap(), 0, "auto-initialized balance should be 0");
+        // Calling again should return the same 0 balance.
+        let result2 = repo.get_balance(team_id).await;
         assert!(
-            matches!(err, CreditsRepositoryError::DatabaseError(_)),
-            "Expected DatabaseError, got {:?}",
-            err
+            result2.is_ok(),
+            "second get_balance failed: {:?}",
+            result2.err()
         );
+        assert_eq!(result2.unwrap(), 0);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_deduct_credits_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_deduct_credits_succeeds() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        // Initialize with 200 credits first so deduction won't go negative.
+        repo.initialize_team_credits(team_id, 200)
+            .await
+            .expect("initialize failed");
         let result = repo
             .deduct_credits(
-                Uuid::new_v4(),
+                team_id,
                 100,
                 CreditsTransactionType::Search,
                 "test deduct".to_string(),
                 None,
             )
             .await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, CreditsRepositoryError::DatabaseError(_)),
-            "Expected DatabaseError, got {:?}",
-            err
-        );
+        assert!(result.is_ok(), "deduct_credits failed: {:?}", result.err());
+        // Verify DB state: balance should be 100.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 100, "balance should be 200 - 100 = 100");
+        // Verify transaction history has 1 record with negative amount.
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1, "should have 1 transaction");
+        assert_eq!(history[0].amount, -100, "transaction amount should be -100");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_add_credits_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_add_credits_succeeds() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
         let result = repo
             .add_credits(
-                Uuid::new_v4(),
+                team_id,
                 100,
                 CreditsTransactionType::Search,
                 "test add".to_string(),
                 None,
             )
             .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "add_credits failed: {:?}", result.err());
+        // Verify DB state: balance should be 100.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 100, "balance should be 100 after adding 100");
+        // Verify transaction history has 1 record with positive amount.
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1, "should have 1 transaction");
+        assert_eq!(history[0].amount, 100, "transaction amount should be 100");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_transaction_history_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_get_transaction_history_returns_empty_for_unknown_team() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_transaction_history(Uuid::new_v4(), Some(10)).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(
+            result.is_ok(),
+            "get_transaction_history failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown team should return empty history"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_initialize_team_credits_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
-        let result = repo.initialize_team_credits(Uuid::new_v4(), 0).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+    async fn test_initialize_team_credits_succeeds() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        let result = repo.initialize_team_credits(team_id, 0).await;
+        assert!(
+            result.is_ok(),
+            "initialize_team_credits failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0, "should return the initial balance");
+        // Verify DB state: get_balance should return 0.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 0);
+        // Calling initialize again on existing team should return existing balance.
+        let result2 = repo.initialize_team_credits(team_id, 500).await;
+        assert!(
+            result2.is_ok(),
+            "second initialize failed: {:?}",
+            result2.err()
+        );
+        assert_eq!(
+            result2.unwrap(),
+            0,
+            "should return existing balance, not new"
+        );
     }
 
     // ============================================================
@@ -352,268 +383,351 @@ mod tests {
     }
 
     // ============================================================
-    // Additional error path tests — cover remaining branches
+    // Additional tests — cover remaining branches (limit / nil uuid /
+    // reference_id / zero amount / quoted description / type variants)
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_transaction_history_with_no_limit_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_get_transaction_history_with_no_limit() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         // limit=None exercises the branch where no `.limit()` is applied
         let result = repo.get_transaction_history(Uuid::new_v4(), None).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(
+            result.is_ok(),
+            "get_transaction_history failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown team should return empty"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_transaction_history_with_zero_limit_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_get_transaction_history_with_zero_limit() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_transaction_history(Uuid::new_v4(), Some(0)).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(
+            result.is_ok(),
+            "get_transaction_history failed: {:?}",
+            result.err()
+        );
+        assert!(result.unwrap().is_empty(), "limit=0 should return empty");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_transaction_history_with_large_limit_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_get_transaction_history_with_large_limit() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .get_transaction_history(Uuid::new_v4(), Some(u32::MAX))
             .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(
+            result.is_ok(),
+            "get_transaction_history failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown team should return empty"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_balance_with_nil_uuid_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_get_balance_with_nil_uuid() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        // Nil UUID is a valid UUID; behavior depends on DB state (auto-init or existing).
+        // We only assert Ok because nil UUID is shared across test runs and prior
+        // runs may have mutated the balance via deduct/add.
         let result = repo.get_balance(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(
+            result.is_ok(),
+            "get_balance with nil uuid failed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_deduct_credits_with_reference_id_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_deduct_credits_with_reference_id() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        repo.initialize_team_credits(team_id, 200)
+            .await
+            .expect("initialize failed");
         // Some(reference_id) exercises the `format!("'{}'", id)` branch
+        let reference_id = Uuid::new_v4();
         let result = repo
             .deduct_credits(
-                Uuid::new_v4(),
+                team_id,
                 50,
                 CreditsTransactionType::Scrape,
                 "deduct with ref".to_string(),
-                Some(Uuid::new_v4()),
+                Some(reference_id),
             )
             .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "deduct_credits failed: {:?}", result.err());
+        // Verify balance updated.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 150, "balance should be 200 - 50 = 150");
+        // Verify transaction history recorded the reference_id.
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].reference_id, Some(reference_id));
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_deduct_credits_with_zero_amount_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_deduct_credits_with_zero_amount() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        repo.initialize_team_credits(team_id, 100)
+            .await
+            .expect("initialize failed");
         let result = repo
             .deduct_credits(
-                Uuid::new_v4(),
+                team_id,
                 0,
                 CreditsTransactionType::Search,
                 "zero deduct".to_string(),
                 None,
             )
             .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(
+            result.is_ok(),
+            "deduct_credits with 0 failed: {:?}",
+            result.err()
+        );
+        // Verify balance unchanged.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 100, "balance should remain 100");
+        // Verify transaction history recorded amount=0.
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].amount, 0);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_deduct_credits_with_description_containing_quotes_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_deduct_credits_with_description_containing_quotes() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        repo.initialize_team_credits(team_id, 100)
+            .await
+            .expect("initialize failed");
         // Description with single quotes exercises the `.replace("'", "''")` branch
+        let description = "it's a 'test' description".to_string();
         let result = repo
             .deduct_credits(
-                Uuid::new_v4(),
+                team_id,
                 10,
                 CreditsTransactionType::Extract,
-                "it's a 'test' description".to_string(),
+                description.clone(),
                 None,
             )
             .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "deduct_credits failed: {:?}", result.err());
+        // Verify the description was persisted correctly (SQL escaping worked).
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].description, description);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_add_credits_with_reference_id_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_add_credits_with_reference_id() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        let reference_id = Uuid::new_v4();
         let result = repo
             .add_credits(
-                Uuid::new_v4(),
+                team_id,
                 200,
                 CreditsTransactionType::Subscription,
                 "add with ref".to_string(),
-                Some(Uuid::new_v4()),
+                Some(reference_id),
             )
             .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "add_credits failed: {:?}", result.err());
+        // Verify balance.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 200, "balance should be 200");
+        // Verify transaction recorded reference_id.
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].reference_id, Some(reference_id));
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_add_credits_with_zero_amount_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_add_credits_with_zero_amount() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
         let result = repo
             .add_credits(
-                Uuid::new_v4(),
+                team_id,
                 0,
                 CreditsTransactionType::Refund,
                 "zero add".to_string(),
                 None,
             )
             .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(
+            result.is_ok(),
+            "add_credits with 0 failed: {:?}",
+            result.err()
+        );
+        // Verify balance is 0.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 0, "balance should be 0 after adding 0");
+        // Verify transaction recorded amount=0.
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].amount, 0);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_add_credits_with_description_containing_quotes_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_add_credits_with_description_containing_quotes() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        let description = "it's a 'test'".to_string();
         let result = repo
             .add_credits(
-                Uuid::new_v4(),
+                team_id,
                 100,
                 CreditsTransactionType::ManualAdjustment,
-                "it's a 'test'".to_string(),
+                description.clone(),
                 None,
             )
             .await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(result.is_ok(), "add_credits failed: {:?}", result.err());
+        // Verify the description was persisted correctly.
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].description, description);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_initialize_team_credits_with_non_zero_balance_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
-        let result = repo.initialize_team_credits(Uuid::new_v4(), 1000).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+    async fn test_initialize_team_credits_with_non_zero_balance() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        let result = repo.initialize_team_credits(team_id, 1000).await;
+        assert!(result.is_ok(), "initialize failed: {:?}", result.err());
+        assert_eq!(result.unwrap(), 1000, "should return the initial balance");
+        // Verify DB state.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 1000);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_initialize_team_credits_with_negative_balance_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
-        // i64 allows negative; the method should still attempt the DB call
-        let result = repo.initialize_team_credits(Uuid::new_v4(), -500).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+    async fn test_initialize_team_credits_with_negative_balance() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        // i64 allows negative; the method should still create the record.
+        let result = repo.initialize_team_credits(team_id, -500).await;
+        assert!(
+            result.is_ok(),
+            "initialize with negative failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), -500, "should return the negative balance");
+        // Verify DB state.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, -500);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_initialize_team_credits_with_nil_uuid_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_initialize_team_credits_with_nil_uuid() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        // Nil UUID is a valid UUID. Behavior depends on DB state:
+        // - If no credits row exists: creates one with balance 0, returns Ok(0)
+        // - If a row already exists: returns Ok(existing balance)
+        // We only assert Ok to avoid cross-test coupling on the shared nil UUID.
         let result = repo.initialize_team_credits(Uuid::nil(), 0).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CreditsRepositoryError::DatabaseError(_)
-        ));
+        assert!(
+            result.is_ok(),
+            "initialize with nil uuid failed: {:?}",
+            result.err()
+        );
     }
 
     // ============================================================
-    // CreditsTransactionType — every variant exercised (error path)
+    // CreditsTransactionType — every variant exercised
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_deduct_credits_with_crawl_type_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_deduct_credits_with_crawl_type() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        repo.initialize_team_credits(team_id, 100)
+            .await
+            .expect("initialize failed");
         let result = repo
             .deduct_credits(
-                Uuid::new_v4(),
+                team_id,
                 5,
                 CreditsTransactionType::Crawl,
                 "crawl deduct".to_string(),
                 None,
             )
             .await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "deduct_credits with Crawl failed: {:?}",
+            result.err()
+        );
+        // Verify balance.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 95, "balance should be 100 - 5 = 95");
+        // Verify transaction type.
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].transaction_type, CreditsTransactionType::Crawl);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_add_credits_with_extract_type_returns_db_error() {
-        let pool = create_test_db_pool();
-        let repo = CreditsRepositoryImpl::new(pool);
+    async fn test_add_credits_with_extract_type() {
+        let repo = CreditsRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
         let result = repo
             .add_credits(
-                Uuid::new_v4(),
+                team_id,
                 50,
                 CreditsTransactionType::Extract,
                 "extract add".to_string(),
                 None,
             )
             .await;
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "add_credits with Extract failed: {:?}",
+            result.err()
+        );
+        // Verify balance.
+        let balance = repo.get_balance(team_id).await.expect("get_balance failed");
+        assert_eq!(balance, 50, "balance should be 50");
+        // Verify transaction type.
+        let history = repo
+            .get_transaction_history(team_id, Some(10))
+            .await
+            .expect("get_transaction_history failed");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].transaction_type, CreditsTransactionType::Extract);
     }
 
     // ============================================================

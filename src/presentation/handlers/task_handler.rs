@@ -1638,7 +1638,6 @@ mod tests {
     // ========== query_tasks handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_handler_success() {
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
@@ -1670,7 +1669,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_handler_empty_result() {
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
@@ -1703,7 +1701,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_handler_has_more() {
         let task1 = make_test_task(Uuid::new_v4(), TaskStatus::Completed);
         let task2 = make_test_task(Uuid::new_v4(), TaskStatus::Completed);
@@ -1740,7 +1737,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_handler_validation_error_limit() {
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
@@ -1763,7 +1759,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_handler_validation_error_sync_wait() {
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
@@ -1785,7 +1780,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_handler_repo_error() {
         let repo = Arc::new(MockTaskRepository::with_query_error(
             RepositoryError::Database(anyhow::anyhow!("query failed")),
@@ -1813,7 +1807,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_handler_sync_wait_completed() {
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
@@ -1846,10 +1839,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_handler_include_results_db_error() {
-        // With include_results=true and a lazy (non-connecting) pool,
-        // fetch_scrape_results should fail because the pool cannot connect.
+    async fn test_query_tasks_handler_include_results_no_match_returns_success() {
+        // With include_results=true and a real DB pool, fetch_scrape_results
+        // queries the DB for the random task_id (no match) and returns an
+        // empty map, so the handler succeeds with empty results.
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = Arc::new(MockTaskRepository::with_query_data(vec![task], 1));
@@ -1870,15 +1863,22 @@ mod tests {
         .await;
 
         assert!(
-            result.is_err(),
-            "include_results with lazy pool should fail"
+            result.is_ok(),
+            "include_results with no matching scrape results should succeed"
         );
+        let response = result.unwrap();
+        let data = response
+            .data
+            .as_ref()
+            .expect("response data should be present");
+        assert_eq!(data.tasks.len(), 1);
+        // Task has no matching scrape_result in DB → result is None
+        assert!(data.tasks[0].result.is_none());
     }
 
     // ========== cancel_tasks handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_tasks_handler_success() {
         let task_id = Uuid::new_v4();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
@@ -1910,7 +1910,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_tasks_handler_empty_task_ids() {
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
@@ -1935,7 +1934,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_tasks_handler_validation_error_sync_wait() {
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
@@ -1954,7 +1952,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_tasks_handler_repo_error() {
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Err(
             RepositoryError::Database(anyhow::anyhow!("batch_cancel failed")),
@@ -1975,7 +1972,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_tasks_handler_with_failed_tasks() {
         let task_id1 = Uuid::new_v4();
         let task_id2 = Uuid::new_v4();
@@ -2008,7 +2004,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_tasks_handler_sync_wait() {
         let task_id = Uuid::new_v4();
         let cancelled_task = make_test_task(task_id, TaskStatus::Cancelled);
@@ -2215,7 +2210,6 @@ mod tests {
     // ========== Additional edge case tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_query_tasks_handler_include_results_with_empty_tasks_skips_fetch() {
         // include_results=true but tasks is empty → fetch_scrape_results not called
         let repo = Arc::new(MockTaskRepository::new());
@@ -2245,7 +2239,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_tasks_handler_force_true_succeeds() {
         let task_id = Uuid::new_v4();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
@@ -2271,7 +2264,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_tasks_handler_force_none_uses_default_false() {
         let task_id = Uuid::new_v4();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((

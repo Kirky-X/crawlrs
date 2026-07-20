@@ -1631,7 +1631,6 @@ mod tests {
     // ========== create_crawl tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_success_no_sync_wait() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -1656,7 +1655,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_success_sync_wait_empty_tasks() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -1682,7 +1680,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_success_sync_wait_completed() {
         let team_id = Uuid::new_v4();
         let task = make_task(Uuid::new_v4(), team_id, TaskStatus::Completed);
@@ -1711,7 +1708,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_sync_wait_timeout_returns_accepted() {
         let team_id = Uuid::new_v4();
         // Queued tasks never complete → polling loops until sync_wait_ms elapses
@@ -1740,7 +1736,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_sync_wait_find_error_returns_created() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -1766,7 +1761,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_max_depth_exceeds_returns_unprocessable_entity() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -1791,7 +1785,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_ssrf_private_ip_returns_bad_request() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -1817,7 +1810,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_rate_limited_returns_too_many_requests() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -1842,7 +1834,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_quota_exceeded_returns_payment_required() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -1867,7 +1858,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_use_case_validation_error_returns_bad_request() {
         // max_concurrency > 100 triggers use_case ValidationError (not handler check)
         let state = build_handler_state(
@@ -1893,7 +1883,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_create_crawl_use_case_repository_error_returns_internal_server_error() {
         let state = build_handler_state(
             MockCrawlRepository::failing_create(),
@@ -1920,7 +1909,6 @@ mod tests {
     // ========== get_crawl tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_crawl_success_returns_ok() {
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Queued);
@@ -1942,7 +1930,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_crawl_not_found_returns_404() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -1961,7 +1948,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_crawl_wrong_team_returns_404() {
         let crawl = make_crawl(Uuid::new_v4(), CrawlStatus::Queued);
         let crawl_id = crawl.id;
@@ -1983,7 +1969,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_crawl_repo_error_returns_internal_server_error() {
         let state = build_handler_state(
             MockCrawlRepository::failing_find(),
@@ -2004,7 +1989,6 @@ mod tests {
     // ========== get_crawl_results tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_crawl_results_success_returns_ok() {
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Completed);
@@ -2027,7 +2011,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_crawl_results_crawl_not_found_returns_404() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -2046,7 +2029,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_crawl_results_repo_error_returns_internal_server_error() {
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Completed);
@@ -2071,7 +2053,6 @@ mod tests {
     // ========== cancel_crawl tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_crawl_success_returns_no_content() {
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Queued);
@@ -2093,7 +2074,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_crawl_not_found_returns_404() {
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -2112,7 +2092,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_crawl_wrong_team_returns_404() {
         let crawl = make_crawl(Uuid::new_v4(), CrawlStatus::Queued);
         let crawl_id = crawl.id;
@@ -2133,7 +2112,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_crawl_already_completed_returns_no_content() {
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Completed);
@@ -2156,7 +2134,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_crawl_repo_error_returns_internal_server_error() {
         let state = build_handler_state(
             MockCrawlRepository::failing_find(),
@@ -2175,7 +2152,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_cancel_crawl_update_error_returns_internal_server_error() {
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Queued);

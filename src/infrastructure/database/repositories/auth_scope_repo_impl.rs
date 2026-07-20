@@ -166,73 +166,77 @@ mod tests {
     // ========== construction ==========
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = AuthScopeRepositoryImpl::new(pool);
-        // Repository should be constructible without a real database connection
+        // Repository should be constructible with a real pool
         let _clone = repo.clone();
     }
 
-    // ========== error paths (lazy pool: get_session fails) ==========
+    // ========== CRUD against real DB ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_api_key_id_returns_db_error_with_real_db() {
+    async fn test_find_by_api_key_id_returns_none_for_unknown() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key_id(Uuid::new_v4()).await;
-        assert!(result.is_err(), "should fail without a real database");
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_api_key_returns_db_error_with_real_db() {
-        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_api_key("sk-test-key").await;
-        assert!(result.is_err(), "should fail without a real database");
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_api_key_with_empty_key_returns_db_error() {
-        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_api_key("").await;
         assert!(
-            result.is_err(),
-            "should fail without a real database even for empty key"
+            result.is_ok(),
+            "find_by_api_key_id failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_none(),
+            "unknown api_key_id should return None"
         );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_upsert_returns_db_error_with_real_db() {
+    async fn test_find_by_api_key_returns_none_for_unknown() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
-        let result = repo.upsert(Uuid::new_v4(), sample_scope()).await;
-        assert!(result.is_err(), "should fail without a real database");
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        let result = repo.find_by_api_key("sk-test-key").await;
+        assert!(result.is_ok(), "find_by_api_key failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "unknown key should return None");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_delete_by_api_key_id_returns_db_error_with_real_db() {
+    async fn test_find_by_api_key_with_empty_key_returns_none() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_api_key("").await;
+        assert!(result.is_ok(), "find_by_api_key failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "empty key should return None");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_creates_new_scope() {
+        let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
+        let api_key_id = Uuid::new_v4();
+        let expected = sample_scope();
+        let result = repo.upsert(api_key_id, expected.clone()).await;
+        assert!(result.is_ok(), "upsert failed: {:?}", result.err());
+
+        // Verify DB state: find_by_api_key_id should return the created scope
+        let found = repo
+            .find_by_api_key_id(api_key_id)
+            .await
+            .expect("find_by_api_key_id failed")
+            .expect("scope should exist after upsert");
+        assert_eq!(found.read, expected.read);
+        assert_eq!(found.write, expected.write);
+        assert_eq!(found.admin, expected.admin);
+        assert_eq!(found.search_limit, expected.search_limit);
+        assert_eq!(found.scrape_limit, expected.scrape_limit);
+    }
+
+    #[tokio::test]
+    async fn test_delete_by_api_key_id_returns_false_for_unknown() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.delete_by_api_key_id(Uuid::new_v4()).await;
-        assert!(result.is_err(), "should fail without a real database");
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "delete_by_api_key_id failed: {:?}",
+            result.err()
+        );
+        assert!(!result.unwrap(), "unknown api_key_id should return false");
     }
 
     // ========== RepositoryError variants ==========
@@ -385,33 +389,24 @@ mod tests {
     // ========== additional error path variants ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_api_key_with_unicode_key_returns_db_error() {
+    async fn test_find_by_api_key_with_unicode_key_returns_none() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key("sk-测试-キー-🔑").await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(result.is_ok(), "find_by_api_key failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "unicode key should return None");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_api_key_with_long_key_returns_db_error() {
+    async fn test_find_by_api_key_with_long_key_returns_none() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let long_key = "sk-".to_string() + &"a".repeat(10_000);
         let result = repo.find_by_api_key(&long_key).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(result.is_ok(), "find_by_api_key failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "long key should return None");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_upsert_with_admin_scope_returns_db_error() {
+    async fn test_upsert_with_admin_scope_succeeds() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let admin_scope = ApiKeyScope {
             read: true,
@@ -421,16 +416,11 @@ mod tests {
             scrape_limit: 500,
         };
         let result = repo.upsert(Uuid::new_v4(), admin_scope).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(result.is_ok(), "upsert failed: {:?}", result.err());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_upsert_with_zero_limits_returns_db_error() {
+    async fn test_upsert_with_zero_limits_succeeds() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let zero_scope = ApiKeyScope {
             read: false,
@@ -440,35 +430,31 @@ mod tests {
             scrape_limit: 0,
         };
         let result = repo.upsert(Uuid::new_v4(), zero_scope).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(result.is_ok(), "upsert failed: {:?}", result.err());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_delete_by_api_key_id_with_nil_uuid_returns_db_error() {
+    async fn test_delete_by_api_key_id_with_nil_uuid_returns_false() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.delete_by_api_key_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "delete_by_api_key_id failed: {:?}",
+            result.err()
+        );
+        assert!(!result.unwrap(), "nil UUID should return false");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_api_key_id_with_nil_uuid_returns_db_error() {
+    async fn test_find_by_api_key_id_with_nil_uuid_returns_none() {
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            RepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "find_by_api_key_id failed: {:?}",
+            result.err()
+        );
+        assert!(result.unwrap().is_none(), "nil UUID should return None");
     }
 
     // ========== additional From<sea_orm::DbErr> variant coverage ==========

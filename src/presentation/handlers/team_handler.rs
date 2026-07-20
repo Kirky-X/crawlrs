@@ -1180,7 +1180,6 @@ mod tests {
     // ========== get_team_info handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_info_success() {
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(500));
@@ -1199,7 +1198,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_info_credits_failure() {
         let credits_repo: Arc<dyn CreditsRepository> = Arc::new(MockCreditsRepository::failing());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
@@ -1218,7 +1216,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_info_task_repo_failure() {
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(100));
@@ -1241,7 +1238,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_info_with_tasks() {
         let team_id = Uuid::new_v4();
         let task = Task::new(
@@ -1272,7 +1268,6 @@ mod tests {
     // ========== get_team_usage handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_usage_success() {
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(500));
@@ -1292,7 +1287,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_usage_credits_failure() {
         let credits_repo: Arc<dyn CreditsRepository> = Arc::new(MockCreditsRepository::failing());
         let scrape_result_repo: Arc<dyn ScrapeResultRepository> =
@@ -1312,7 +1306,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_usage_scrape_result_failure() {
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(100));
@@ -1333,7 +1326,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_usage_negative_balance() {
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(-500));
@@ -1355,7 +1347,6 @@ mod tests {
     // ========== get_team_geo_restrictions handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_geo_restrictions_success() {
         let restrictions = TeamGeoRestrictions {
             enable_geo_restrictions: true,
@@ -1380,7 +1371,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_geo_restrictions_empty() {
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1396,7 +1386,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_geo_restrictions_failure() {
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_get_result(Err(
@@ -1415,7 +1404,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_geo_restrictions_team_not_found() {
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_get_result(Err(
@@ -1436,7 +1424,6 @@ mod tests {
     // ========== update_team_geo_restrictions handler tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_success() {
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1453,7 +1440,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_minimal_request() {
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1477,7 +1463,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_invalid_allowed_country() {
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1501,7 +1486,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_invalid_blocked_country() {
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1525,7 +1509,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_invalid_ip() {
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1549,7 +1532,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_invalid_cidr() {
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1573,7 +1555,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_repo_failure() {
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_update_result(Err(
@@ -1593,7 +1574,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_repo_team_not_found() {
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_update_result(Err(
@@ -1613,7 +1593,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_valid_ipv6() {
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1665,7 +1644,6 @@ mod tests {
     // ========== Error response body verification tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_get_team_geo_restrictions_failure_body_verified() {
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> =
@@ -1695,7 +1673,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_repo_failure_body_verified() {
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> =
@@ -1726,7 +1703,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_invalid_allowed_body_verified() {
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
@@ -1761,7 +1737,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_invalid_blocked_body_verified() {
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
@@ -1796,7 +1771,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_update_team_geo_restrictions_invalid_ip_body_verified() {
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());

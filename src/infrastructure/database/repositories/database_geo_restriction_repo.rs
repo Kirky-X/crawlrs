@@ -190,7 +190,6 @@ mod error_path_tests {
     use crate::common::test_helpers::create_test_db_pool;
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = DatabaseGeoRestrictionRepository::new(pool);
@@ -198,39 +197,30 @@ mod error_path_tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_team_restrictions_returns_db_error_with_real_db() {
+    async fn test_get_team_restrictions_returns_team_not_found_for_unknown() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo.get_team_restrictions(Uuid::new_v4()).await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(msg) => {
-                assert!(!msg.is_empty(), "error message should not be empty");
-            }
-            other => panic!("expected Database error, got {:?}", other),
+        match result {
+            Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
+            other => panic!("expected TeamNotFound error, got {:?}", other),
         }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_team_restrictions_returns_db_error_with_real_db() {
+    async fn test_update_team_restrictions_returns_team_not_found_for_unknown() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         let result = repo
             .update_team_restrictions(Uuid::new_v4(), &restrictions)
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(msg) => {
-                assert!(!msg.is_empty());
-            }
-            other => panic!("expected Database error, got {:?}", other),
+        match result {
+            Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
+            other => panic!("expected TeamNotFound error, got {:?}", other),
         }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_log_geo_restriction_action_returns_db_error_with_real_db() {
+    async fn test_log_geo_restriction_action_succeeds() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
@@ -241,13 +231,11 @@ mod error_path_tests {
                 "test reason",
             )
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(msg) => {
-                assert!(!msg.is_empty());
-            }
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "log_geo_restriction_action failed: {:?}",
+            result.err()
+        );
     }
 
     // ========== GeoRestrictionRepositoryError variants ==========
@@ -338,20 +326,17 @@ mod error_path_tests {
     // ========== additional error path variants ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_team_restrictions_with_nil_uuid_returns_db_error() {
+    async fn test_get_team_restrictions_with_nil_uuid_returns_team_not_found() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo.get_team_restrictions(Uuid::nil()).await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
+        match result {
+            Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
+            other => panic!("expected TeamNotFound error, got {:?}", other),
         }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_team_restrictions_with_enabled_flag_returns_db_error() {
+    async fn test_update_team_restrictions_with_enabled_flag_returns_team_not_found() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions {
             enable_geo_restrictions: true,
@@ -363,45 +348,40 @@ mod error_path_tests {
         let result = repo
             .update_team_restrictions(Uuid::new_v4(), &restrictions)
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
+        match result {
+            Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
+            other => panic!("expected TeamNotFound error, got {:?}", other),
         }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_team_restrictions_with_nil_uuid_returns_db_error() {
+    async fn test_update_team_restrictions_with_nil_uuid_returns_team_not_found() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         let result = repo
             .update_team_restrictions(Uuid::nil(), &restrictions)
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
+        match result {
+            Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
+            other => panic!("expected TeamNotFound error, got {:?}", other),
         }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_log_geo_restriction_action_with_empty_strings_returns_db_error() {
+    async fn test_log_geo_restriction_action_with_empty_strings_succeeds() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(Uuid::new_v4(), "", "", "", "")
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "log_geo_restriction_action failed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_log_geo_restriction_action_with_unicode_returns_db_error() {
+    async fn test_log_geo_restriction_action_with_unicode_succeeds() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
@@ -412,16 +392,15 @@ mod error_path_tests {
                 "地理限制-测试原因",
             )
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "log_geo_restriction_action failed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_log_geo_restriction_action_with_special_characters_returns_db_error() {
+    async fn test_log_geo_restriction_action_with_special_characters_succeeds() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
@@ -432,25 +411,24 @@ mod error_path_tests {
                 "reason with 'quotes' and \"double quotes\" and; semicolon",
             )
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "log_geo_restriction_action failed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_log_geo_restriction_action_with_nil_uuid_returns_db_error() {
+    async fn test_log_geo_restriction_action_with_nil_uuid_succeeds() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(Uuid::nil(), "127.0.0.1", "US", "blocked", "test")
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "log_geo_restriction_action failed: {:?}",
+            result.err()
+        );
     }
 
     // ========== error variant edge cases ==========
@@ -799,21 +777,18 @@ mod error_path_tests {
     // ========== Additional boundary tests for repository methods ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_get_team_restrictions_with_max_uuid_returns_db_error() {
+    async fn test_get_team_restrictions_with_max_uuid_returns_team_not_found() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let max_uuid = Uuid::from_u128(u128::MAX);
         let result = repo.get_team_restrictions(max_uuid).await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
+        match result {
+            Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
+            other => panic!("expected TeamNotFound error, got {:?}", other),
         }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_team_restrictions_with_empty_vectors_returns_db_error() {
+    async fn test_update_team_restrictions_with_empty_vectors_returns_team_not_found() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions {
             enable_geo_restrictions: false,
@@ -825,40 +800,37 @@ mod error_path_tests {
         let result = repo
             .update_team_restrictions(Uuid::new_v4(), &restrictions)
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
+        match result {
+            Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
+            other => panic!("expected TeamNotFound error, got {:?}", other),
         }
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_log_geo_restriction_action_with_long_reason_returns_db_error() {
+    async fn test_log_geo_restriction_action_with_long_reason_succeeds() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let long_reason = "x".repeat(2000);
         let result = repo
             .log_geo_restriction_action(Uuid::new_v4(), "10.0.0.1", "US", "allowed", &long_reason)
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "log_geo_restriction_action failed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_log_geo_restriction_action_with_max_uuid_returns_db_error() {
+    async fn test_log_geo_restriction_action_with_max_uuid_succeeds() {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let max_uuid = Uuid::from_u128(u128::MAX);
         let result = repo
             .log_geo_restriction_action(max_uuid, "127.0.0.1", "US", "blocked", "test")
             .await;
-        let err = result.expect_err("should fail without a real database");
-        match err {
-            GeoRestrictionRepositoryError::Database(_) => {}
-            other => panic!("expected Database error, got {:?}", other),
-        }
+        assert!(
+            result.is_ok(),
+            "log_geo_restriction_action failed: {:?}",
+            result.err()
+        );
     }
 }

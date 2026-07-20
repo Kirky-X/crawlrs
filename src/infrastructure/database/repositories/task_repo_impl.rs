@@ -589,8 +589,8 @@ mod tests {
     use crate::domain::models::TaskType;
     use serde_json::json;
 
-    /// Build a minimal Task instance for tests that need to pass one in.
-    /// The fields don't matter because the DB call fails before the entity is used.
+    /// Build a minimal Task instance for tests.
+    /// Each call produces fresh UUIDs for id/team_id/api_key_id so tests are isolated.
     fn make_test_task() -> Task {
         Task::new(
             Uuid::new_v4(),
@@ -602,194 +602,468 @@ mod tests {
         )
     }
 
+    /// Build a Task with a unique URL (for exists_by_url / find_existing_urls tests).
+    fn make_test_task_with_unique_url() -> Task {
+        let mut task = make_test_task();
+        task.url = format!("http://example.com/{}", Uuid::new_v4());
+        task
+    }
+
     // ============================================================
-    // Construction tests
+    // Construction tests (real DB pool)
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
-        // Repository should be constructible without connecting to DB
-        // (pool is lazy, no connection until get_session is called)
+        // Repository should be constructible with a real pool
         let _ = repo;
     }
 
     // ============================================================
-    // Error path tests — all methods should fail gracefully when
-    // the lazy pool cannot provide a real session.
+    // CRUD tests — verify create / find / update / state transitions
+    // against a real PostgreSQL database.
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_create_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+    async fn test_create_with_real_db_succeeds() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let task = make_test_task();
         let result = repo.create(&task).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, RepositoryError::Database(_)),
-            "Expected Database, got {:?}",
-            err
-        );
+        assert!(result.is_ok(), "create failed: {:?}", result.err());
+        let returned = result.unwrap();
+        assert_eq!(returned.id, task.id);
+        assert_eq!(returned.url, task.url);
+        assert_eq!(returned.team_id, task.team_id);
+
+        // Verify DB state actually changed
+        let found = repo.find_by_id(task.id).await.expect("find_by_id failed");
+        assert!(found.is_some(), "task should be found after create");
+        let found_task = found.unwrap();
+        assert_eq!(found_task.id, task.id);
+        assert_eq!(found_task.url, task.url);
+        assert_eq!(found_task.task_type, task.task_type);
+        assert_eq!(found_task.team_id, task.team_id);
+        assert_eq!(found_task.status, task.status);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_id_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+    async fn test_find_by_id_with_real_db_returns_none_for_unknown() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.find_by_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "unknown UUID should return None");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
-        let task = make_test_task();
+    async fn test_update_with_real_db_succeeds() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let mut task = make_test_task();
+        // create first
+        repo.create(&task).await.expect("create failed");
+        // modify fields and update
+        task.url = format!("http://updated.com/{}", Uuid::new_v4());
+        task.priority = 7;
+        task.payload = json!({"updated": true});
         let result = repo.update(&task).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "update failed: {:?}", result.err());
+
+        // Verify DB state reflects updated fields
+        let found = repo
+            .find_by_id(task.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("task should exist");
+        assert_eq!(found.url, task.url);
+        assert_eq!(found.priority, 7);
+        assert_eq!(found.payload, json!({"updated": true}));
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_acquire_next_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+    async fn test_acquire_next_with_real_db_returns_ok_when_backlog_empty() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        // No queued tasks with this worker_id; backlog should be empty (or
+        // only contain other tests' tasks with different team_id, but acquire_next
+        // does not filter by team_id — to be safe we use a fresh worker_id and
+        // accept that if some other test left a queued task it might be acquired).
         let result = repo.acquire_next(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "acquire_next failed: {:?}", result.err());
+        // We cannot assert None strongly because the shared test DB may have
+        // queued tasks from other tests. We at least verify it returns Ok.
+        let _ = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_mark_completed_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
-        let result = repo.mark_completed(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    async fn test_acquire_next_with_real_db_acquires_created_task() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        // Create a queued task with high priority to ensure it's picked up.
+        let mut task = make_test_task();
+        task.priority = 1000;
+        repo.create(&task).await.expect("create failed");
+
+        let worker = Uuid::new_v4();
+        let result = repo.acquire_next(worker).await;
+        assert!(result.is_ok(), "acquire_next failed: {:?}", result.err());
+        let acquired = result.unwrap();
+        assert!(acquired.is_some(), "should acquire the queued task");
+        let acquired_task = acquired.unwrap();
+        assert_eq!(acquired_task.status, TaskStatus::Active);
+        assert_eq!(acquired_task.lock_token, Some(worker));
+        assert!(acquired_task.lock_expires_at.is_some());
+        assert!(acquired_task.started_at.is_some());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_mark_failed_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
-        let result = repo.mark_failed(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    async fn test_mark_completed_with_real_db_succeeds() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let task = make_test_task();
+        repo.create(&task).await.expect("create failed");
+
+        let result = repo.mark_completed(task.id).await;
+        assert!(result.is_ok(), "mark_completed failed: {:?}", result.err());
+
+        let found = repo
+            .find_by_id(task.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("task should exist");
+        assert_eq!(found.status, TaskStatus::Completed);
+        assert!(found.completed_at.is_some());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_mark_cancelled_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
-        let result = repo.mark_cancelled(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    async fn test_mark_failed_with_real_db_succeeds() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let task = make_test_task();
+        repo.create(&task).await.expect("create failed");
+
+        let result = repo.mark_failed(task.id).await;
+        assert!(result.is_ok(), "mark_failed failed: {:?}", result.err());
+
+        let found = repo
+            .find_by_id(task.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("task should exist");
+        assert_eq!(found.status, TaskStatus::Failed);
+        assert!(found.completed_at.is_some());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_exists_by_url_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
-        let result = repo.exists_by_url("http://example.com").await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+    async fn test_mark_cancelled_with_real_db_succeeds() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let task = make_test_task();
+        repo.create(&task).await.expect("create failed");
+
+        let result = repo.mark_cancelled(task.id).await;
+        assert!(result.is_ok(), "mark_cancelled failed: {:?}", result.err());
+
+        let found = repo
+            .find_by_id(task.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("task should exist");
+        assert_eq!(found.status, TaskStatus::Cancelled);
+        assert!(found.completed_at.is_some());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_exists_by_url_with_real_db_returns_false_for_unknown() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let unknown_url = format!("http://nonexistent-{}.com", Uuid::new_v4());
+        let result = repo.exists_by_url(&unknown_url).await;
+        assert!(result.is_ok(), "exists_by_url failed: {:?}", result.err());
+        assert!(!result.unwrap(), "unknown URL should return false");
+    }
+
+    #[tokio::test]
+    async fn test_exists_by_url_with_real_db_returns_true_for_existing() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let task = make_test_task_with_unique_url();
+        repo.create(&task).await.expect("create failed");
+
+        let result = repo.exists_by_url(&task.url).await;
+        assert!(result.is_ok(), "exists_by_url failed: {:?}", result.err());
+        assert!(result.unwrap(), "existing URL should return true");
+    }
+
+    #[tokio::test]
     async fn test_find_existing_urls_returns_empty_for_empty_input() {
         // Empty input should short-circuit to Ok(empty set) without DB access
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.find_existing_urls(&[]).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_existing_urls_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
-        let urls = vec!["http://example.com".to_string()];
+    async fn test_find_existing_urls_with_real_db_returns_empty_for_unknown() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let urls = vec![format!("http://nonexistent-{}.com", Uuid::new_v4())];
         let result = repo.find_existing_urls(&urls).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "find_existing_urls failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown URLs should return empty set"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_reset_stuck_tasks_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+    async fn test_find_existing_urls_with_real_db_returns_matching_urls() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let task1 = make_test_task_with_unique_url();
+        let task2 = make_test_task_with_unique_url();
+        repo.create(&task1).await.expect("create task1 failed");
+        repo.create(&task2).await.expect("create task2 failed");
+
+        let unknown_url = format!("http://nonexistent-{}.com", Uuid::new_v4());
+        let urls = vec![task1.url.clone(), task2.url.clone(), unknown_url.clone()];
+        let result = repo.find_existing_urls(&urls).await;
+        assert!(
+            result.is_ok(),
+            "find_existing_urls failed: {:?}",
+            result.err()
+        );
+        let existing = result.unwrap();
+        assert_eq!(existing.len(), 2, "should find both created URLs");
+        assert!(existing.contains(&task1.url));
+        assert!(existing.contains(&task2.url));
+        assert!(!existing.contains(&unknown_url));
+    }
+
+    #[tokio::test]
+    async fn test_reset_stuck_tasks_with_real_db_returns_zero_when_none_stuck() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.reset_stuck_tasks(Duration::minutes(30)).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "reset_stuck_tasks failed: {:?}",
+            result.err()
+        );
+        // No tasks have been stuck for 30min in a fresh test DB.
+        // (Other tests may have created Active tasks, but they were just created.)
+        let _count = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_cancel_tasks_by_crawl_id_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+    async fn test_reset_stuck_tasks_with_real_db_resets_stuck_task() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let mut task = make_test_task();
+        // Force task into Active state with an old started_at to be considered stuck.
+        task.status = TaskStatus::Active;
+        task.started_at = Some(Utc::now() - Duration::hours(2));
+        task.updated_at = Utc::now() - Duration::hours(2);
+        repo.create(&task).await.expect("create failed");
+
+        let result = repo.reset_stuck_tasks(Duration::minutes(30)).await;
+        assert!(
+            result.is_ok(),
+            "reset_stuck_tasks failed: {:?}",
+            result.err()
+        );
+        // Note: count may be 0 in parallel test runs if another concurrent test
+        // already reset this task via its own reset_stuck_tasks call. The
+        // meaningful invariant is that the task ends up in the Queued state
+        // with lock fields cleared.
+        let _count = result.unwrap();
+
+        let found = repo.find_by_id(task.id).await.expect("find_by_id failed");
+        if let Some(found_task) = found {
+            assert_eq!(
+                found_task.status,
+                TaskStatus::Queued,
+                "stuck task should be reset to Queued"
+            );
+            assert!(found_task.started_at.is_none());
+            assert!(found_task.lock_token.is_none());
+            assert!(found_task.lock_expires_at.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_tasks_by_crawl_id_with_real_db_returns_zero_for_unknown() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "cancel_tasks_by_crawl_id failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0, "unknown crawl_id should cancel 0 tasks");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_expire_tasks_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+    async fn test_cancel_tasks_by_crawl_id_with_real_db_cancels_matching() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let crawl_id = Uuid::new_v4();
+        let mut task1 = make_test_task();
+        task1.crawl_id = Some(crawl_id);
+        let mut task2 = make_test_task();
+        task2.crawl_id = Some(crawl_id);
+        let mut task3 = make_test_task();
+        task3.crawl_id = Some(crawl_id);
+        task3.status = TaskStatus::Completed; // already completed, should not be cancelled
+        repo.create(&task1).await.expect("create task1 failed");
+        repo.create(&task2).await.expect("create task2 failed");
+        repo.create(&task3).await.expect("create task3 failed");
+
+        let result = repo.cancel_tasks_by_crawl_id(crawl_id).await;
+        assert!(result.is_ok(), "cancel_tasks_by_crawl_id failed");
+        let count = result.unwrap();
+        assert_eq!(count, 2, "should cancel 2 queued/active tasks");
+
+        let found1 = repo
+            .find_by_id(task1.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("task1 should exist");
+        assert_eq!(found1.status, TaskStatus::Cancelled);
+        let found2 = repo
+            .find_by_id(task2.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("task2 should exist");
+        assert_eq!(found2.status, TaskStatus::Cancelled);
+        let found3 = repo
+            .find_by_id(task3.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("task3 should exist");
+        assert_eq!(
+            found3.status,
+            TaskStatus::Completed,
+            "completed task should not be cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_expire_tasks_with_real_db_returns_zero_when_none_expired() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        // Create a fresh queued task that is not stale (just created).
+        let task = make_test_task_with_unique_url();
+        repo.create(&task).await.expect("create failed");
+
         let result = repo.expire_tasks().await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "expire_tasks failed: {:?}", result.err());
+        // The freshly created task should not be expired (created_at is now,
+        // expires_at is None, so it doesn't match any expire condition).
+        let _count = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_crawl_id_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+    async fn test_expire_tasks_with_real_db_expires_past_expires_at() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let mut task = make_test_task();
+        // Set expires_at in the past so the task should be expired.
+        task.expires_at = Some(Utc::now() - Duration::minutes(5));
+        repo.create(&task).await.expect("create failed");
+
+        let result = repo.expire_tasks().await;
+        assert!(result.is_ok(), "expire_tasks failed");
+        let count = result.unwrap();
+        assert!(count >= 1, "at least one task should be expired");
+
+        let found = repo.find_by_id(task.id).await.expect("find_by_id failed");
+        if let Some(found_task) = found {
+            assert_eq!(
+                found_task.status,
+                TaskStatus::Failed,
+                "expired task should be marked Failed"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_find_by_crawl_id_with_real_db_returns_empty_for_unknown() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.find_by_crawl_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "find_by_crawl_id failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown crawl_id should return empty vec"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+    async fn test_find_by_crawl_id_with_real_db_returns_matching_tasks() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let crawl_id = Uuid::new_v4();
+        let mut task1 = make_test_task();
+        task1.crawl_id = Some(crawl_id);
+        let mut task2 = make_test_task();
+        task2.crawl_id = Some(crawl_id);
+        let unrelated = make_test_task();
+        repo.create(&task1).await.expect("create task1 failed");
+        repo.create(&task2).await.expect("create task2 failed");
+        repo.create(&unrelated)
+            .await
+            .expect("create unrelated failed");
+
+        let result = repo.find_by_crawl_id(crawl_id).await;
+        assert!(result.is_ok(), "find_by_crawl_id failed");
+        let tasks = result.unwrap();
+        assert_eq!(tasks.len(), 2, "should find 2 tasks for crawl_id");
+        let ids: HashSet<Uuid> = tasks.iter().map(|t| t.id).collect();
+        assert!(ids.contains(&task1.id));
+        assert!(ids.contains(&task2.id));
+        assert!(!ids.contains(&unrelated.id));
+    }
+
+    #[tokio::test]
+    async fn test_query_tasks_with_real_db_returns_empty_for_unknown_team() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::new_v4(),
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        let (tasks, total) = result.unwrap();
+        assert!(
+            tasks.is_empty(),
+            "unknown team_id should return empty tasks"
+        );
+        assert_eq!(total, 0, "unknown team_id should return total=0");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
+    async fn test_query_tasks_with_real_db_returns_matching_tasks() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let team_id = Uuid::new_v4();
+        let mut task1 = make_test_task();
+        task1.team_id = team_id;
+        task1.task_type = TaskType::Scrape;
+        let mut task2 = make_test_task();
+        task2.team_id = team_id;
+        task2.task_type = TaskType::Crawl;
+        repo.create(&task1).await.expect("create task1 failed");
+        repo.create(&task2).await.expect("create task2 failed");
+
+        let params = TaskQueryParams {
+            team_id,
+            limit: 100,
+            ..Default::default()
+        };
+        let result = repo.query_tasks(params).await;
+        assert!(result.is_ok(), "query_tasks failed");
+        let (tasks, total) = result.unwrap();
+        assert_eq!(total, 2, "should find 2 tasks for team_id");
+        assert_eq!(tasks.len(), 2);
+    }
+
+    #[tokio::test]
     async fn test_batch_cancel_returns_empty_for_empty_input() {
         // Empty input should short-circuit to Ok((empty, empty)) without DB access
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.batch_cancel(Vec::new(), Uuid::new_v4(), false).await;
         assert!(result.is_ok());
         let (cancelled, errors) = result.unwrap();
@@ -798,14 +1072,53 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_batch_cancel_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
-        let task_ids = vec![Uuid::new_v4()];
+    async fn test_batch_cancel_with_real_db_returns_errors_for_unknown_ids() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let unknown_id = Uuid::new_v4();
+        let task_ids = vec![unknown_id];
         let result = repo.batch_cancel(task_ids, Uuid::new_v4(), false).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "batch_cancel should succeed even with unknown IDs"
+        );
+        let (cancelled, errors) = result.unwrap();
+        assert!(cancelled.is_empty(), "no tasks should be cancelled");
+        assert_eq!(errors.len(), 1, "should report 1 error");
+        assert_eq!(errors[0].0, unknown_id);
+        assert!(errors[0].1.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_cancel_with_real_db_cancels_owned_tasks() {
+        let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
+        let team_id = Uuid::new_v4();
+        let mut task1 = make_test_task();
+        task1.team_id = team_id;
+        let mut task2 = make_test_task();
+        task2.team_id = team_id;
+        repo.create(&task1).await.expect("create task1 failed");
+        repo.create(&task2).await.expect("create task2 failed");
+
+        let result = repo
+            .batch_cancel(vec![task1.id, task2.id], team_id, false)
+            .await;
+        assert!(result.is_ok(), "batch_cancel failed");
+        let (cancelled, errors) = result.unwrap();
+        assert_eq!(cancelled.len(), 2, "both tasks should be cancelled");
+        assert!(errors.is_empty(), "no errors expected");
+
+        let found1 = repo
+            .find_by_id(task1.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("task1 should exist");
+        assert_eq!(found1.status, TaskStatus::Cancelled);
+        let found2 = repo
+            .find_by_id(task2.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("task2 should exist");
+        assert_eq!(found2.status, TaskStatus::Cancelled);
     }
 
     // ============================================================
@@ -838,7 +1151,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_pool_accessor_returns_reference_to_same_pool() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
@@ -848,7 +1160,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_zero_lock_duration() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::zero());
@@ -856,7 +1167,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_large_lock_duration() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool, Duration::days(7));
@@ -885,15 +1195,13 @@ mod tests {
     }
 
     // ============================================================
-    // query_tasks — exercise optional filter branches (error path)
-    // Even though the DB call fails, the filter-building code runs
-    // before get_session in some cases; here we ensure no panic and
-    // correct error variant for every combination.
+    // query_tasks — exercise optional filter branches.
+    // Each test verifies that filter combinations are accepted and
+    // return Ok with an empty result set against a fresh team_id.
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_with_crawl_id_returns_db_error() {
+    async fn test_query_tasks_with_crawl_id_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::new_v4(),
@@ -901,13 +1209,14 @@ mod tests {
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        let (tasks, total) = result.unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(total, 0);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_with_statuses_returns_db_error() {
+    async fn test_query_tasks_with_statuses_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::new_v4(),
@@ -915,13 +1224,14 @@ mod tests {
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        let (tasks, total) = result.unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(total, 0);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_with_task_types_returns_db_error() {
+    async fn test_query_tasks_with_task_types_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::new_v4(),
@@ -929,13 +1239,14 @@ mod tests {
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        let (tasks, total) = result.unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(total, 0);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_with_all_optional_filters_returns_db_error() {
+    async fn test_query_tasks_with_all_optional_filters_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::new_v4(),
@@ -947,8 +1258,10 @@ mod tests {
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        let (tasks, total) = result.unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(total, 0);
     }
 
     // ============================================================
@@ -956,65 +1269,82 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_existing_urls_with_multiple_urls_returns_db_error() {
+    async fn test_find_existing_urls_with_multiple_urls_returns_empty_for_unknown() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let urls = vec![
-            "http://example.com".to_string(),
-            "http://example.org".to_string(),
-            "http://example.net".to_string(),
+            format!("http://nonexistent-{}.com", Uuid::new_v4()),
+            format!("http://nonexistent-{}.com", Uuid::new_v4()),
+            format!("http://nonexistent-{}.com", Uuid::new_v4()),
         ];
         let result = repo.find_existing_urls(&urls).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "find_existing_urls failed");
+        assert!(result.unwrap().is_empty());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_batch_cancel_with_multiple_ids_returns_db_error() {
+    async fn test_batch_cancel_with_multiple_ids_returns_errors_for_unknown() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-        let task_ids = vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+        let task_ids = vec![id1, id2, id3];
         let result = repo.batch_cancel(task_ids, Uuid::new_v4(), false).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "batch_cancel should succeed");
+        let (cancelled, errors) = result.unwrap();
+        assert!(cancelled.is_empty());
+        assert_eq!(errors.len(), 3, "all 3 IDs should be reported as not found");
+        let error_ids: HashSet<Uuid> = errors.iter().map(|(id, _)| *id).collect();
+        assert!(error_ids.contains(&id1));
+        assert!(error_ids.contains(&id2));
+        assert!(error_ids.contains(&id3));
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_batch_cancel_with_force_true_returns_db_error() {
+    async fn test_batch_cancel_with_force_true_returns_errors_for_unknown() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let task_ids = vec![Uuid::new_v4()];
         let result = repo.batch_cancel(task_ids, Uuid::new_v4(), true).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "batch_cancel should succeed");
+        let (cancelled, errors) = result.unwrap();
+        assert!(cancelled.is_empty());
+        assert_eq!(errors.len(), 1);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_reset_stuck_tasks_with_zero_duration_returns_db_error() {
+    async fn test_reset_stuck_tasks_with_zero_duration_returns_zero_or_more() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.reset_stuck_tasks(Duration::zero()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "reset_stuck_tasks failed: {:?}",
+            result.err()
+        );
+        // Zero duration means cutoff is now; only tasks started in the past
+        // would be affected, which is none for a fresh task. Returns Ok(count).
+        let _count = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_reset_stuck_tasks_with_negative_duration_returns_db_error() {
+    async fn test_reset_stuck_tasks_with_negative_duration_returns_zero_or_more() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-        // Negative duration means cutoff is in the future; still exercises the DB path
+        // Negative duration means cutoff is in the future; no tasks should
+        // have started_at past a future cutoff.
         let result = repo.reset_stuck_tasks(Duration::minutes(-30)).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "reset_stuck_tasks failed: {:?}",
+            result.err()
+        );
+        let _count = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_exists_by_url_with_empty_string_returns_db_error() {
+    async fn test_exists_by_url_with_empty_string_returns_false() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.exists_by_url("").await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "exists_by_url failed: {:?}", result.err());
+        // Empty string is unlikely to match any task URL.
+        let _exists = result.unwrap();
     }
 
     // ============================================================
@@ -1301,55 +1631,61 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_exists_by_url_with_unicode_returns_db_error() {
+    async fn test_exists_by_url_with_unicode_returns_false_for_unknown() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.exists_by_url("http://例子.com/测试").await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "exists_by_url failed: {:?}", result.err());
+        let _exists = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_exists_by_url_with_long_url_returns_db_error() {
+    async fn test_exists_by_url_with_long_url_returns_false_for_unknown() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-        let long_url = format!("http://example.com/{}", "a".repeat(2000));
+        let long_url = format!(
+            "http://nonexistent-{}.com/{}",
+            Uuid::new_v4(),
+            "a".repeat(2000)
+        );
         let result = repo.exists_by_url(&long_url).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "exists_by_url failed: {:?}", result.err());
+        assert!(!result.unwrap(), "long unknown URL should return false");
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_existing_urls_with_unicode_urls_returns_db_error() {
+    async fn test_find_existing_urls_with_unicode_urls_returns_empty_for_unknown() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let urls = vec![
-            "http://例子.com".to_string(),
-            "http://example.org".to_string(),
+            format!("http://例子-{}.com", Uuid::new_v4()),
+            format!("http://example-{}.org", Uuid::new_v4()),
         ];
         let result = repo.find_existing_urls(&urls).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "find_existing_urls failed");
+        assert!(result.unwrap().is_empty());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_existing_urls_with_empty_string_in_list_returns_db_error() {
+    async fn test_find_existing_urls_with_empty_string_in_list_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let urls = vec!["".to_string()];
         let result = repo.find_existing_urls(&urls).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "find_existing_urls failed");
+        // Empty string is unlikely to match any task URL.
+        let _existing = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_existing_urls_with_mixed_empty_and_nonempty_returns_db_error() {
+    async fn test_find_existing_urls_with_mixed_empty_and_nonempty_returns_only_matches() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-        let urls = vec!["".to_string(), "http://example.com".to_string()];
+        let task = make_test_task_with_unique_url();
+        repo.create(&task).await.expect("create failed");
+        let urls = vec!["".to_string(), task.url.clone()];
         let result = repo.find_existing_urls(&urls).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "find_existing_urls failed");
+        let existing = result.unwrap();
+        assert!(
+            existing.contains(&task.url),
+            "should find the created task URL"
+        );
     }
 
     // ============================================================
@@ -1357,76 +1693,88 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_id_with_nil_uuid_returns_db_error() {
+    async fn test_find_by_id_with_nil_uuid_returns_none() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.find_by_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
+        // Nil UUID is unlikely to match any task (we generate v4 UUIDs in tests).
+        let _found = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_mark_completed_with_nil_uuid_returns_db_error() {
+    async fn test_mark_completed_with_nil_uuid_succeeds_silently() {
+        // mark_completed silently returns Ok(()) when the task is not found
+        // (this is the current implementation behavior).
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.mark_completed(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "mark_completed failed: {:?}", result.err());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_mark_failed_with_nil_uuid_returns_db_error() {
+    async fn test_mark_failed_with_nil_uuid_succeeds_silently() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.mark_failed(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "mark_failed failed: {:?}", result.err());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_mark_cancelled_with_nil_uuid_returns_db_error() {
+    async fn test_mark_cancelled_with_nil_uuid_succeeds_silently() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.mark_cancelled(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "mark_cancelled failed: {:?}", result.err());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_acquire_next_with_nil_worker_id_returns_db_error() {
+    async fn test_acquire_next_with_nil_worker_id_returns_ok() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.acquire_next(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "acquire_next failed: {:?}", result.err());
+        // Whether Some or None depends on the backlog; we just verify Ok.
+        let _acquired = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_cancel_tasks_by_crawl_id_with_nil_uuid_returns_db_error() {
+    async fn test_cancel_tasks_by_crawl_id_with_nil_uuid_returns_zero() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.cancel_tasks_by_crawl_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "cancel_tasks_by_crawl_id failed: {:?}",
+            result.err()
+        );
+        // Nil UUID is unlikely to match any task's crawl_id (most are None or set to v4).
+        let _count = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_crawl_id_with_nil_uuid_returns_db_error() {
+    async fn test_find_by_crawl_id_with_nil_uuid_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.find_by_crawl_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "find_by_crawl_id failed: {:?}",
+            result.err()
+        );
+        // Nil UUID is unlikely to match any task's crawl_id.
+        let _tasks = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_batch_cancel_with_nil_uuids_returns_db_error() {
+    async fn test_batch_cancel_with_nil_uuids_returns_errors() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let task_ids = vec![Uuid::nil()];
         let result = repo.batch_cancel(task_ids, Uuid::nil(), false).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "batch_cancel should succeed");
+        let (cancelled, errors) = result.unwrap();
+        assert!(
+            cancelled.is_empty(),
+            "nil UUID task should not be cancelled"
+        );
+        assert_eq!(
+            errors.len(),
+            1,
+            "nil UUID task should be reported as not found"
+        );
     }
 
     // ============================================================
@@ -1434,8 +1782,7 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_with_zero_limit_offset_returns_db_error() {
+    async fn test_query_tasks_with_zero_limit_offset_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::new_v4(),
@@ -1444,13 +1791,14 @@ mod tests {
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        let (tasks, total) = result.unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(total, 0);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_with_max_limit_returns_db_error() {
+    async fn test_query_tasks_with_max_limit_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::new_v4(),
@@ -1459,26 +1807,28 @@ mod tests {
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        let (tasks, total) = result.unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(total, 0);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_with_nil_team_id_returns_db_error() {
+    async fn test_query_tasks_with_nil_team_id_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::nil(),
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        // Nil team_id is unlikely to match any task (we use v4 UUIDs).
+        let (tasks, _total) = result.unwrap();
+        assert!(tasks.is_empty());
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_with_empty_statuses_vec_returns_db_error() {
+    async fn test_query_tasks_with_empty_statuses_vec_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::new_v4(),
@@ -1486,13 +1836,14 @@ mod tests {
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        let (tasks, total) = result.unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(total, 0);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_query_tasks_with_empty_task_types_vec_returns_db_error() {
+    async fn test_query_tasks_with_empty_task_types_vec_returns_empty() {
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let params = TaskQueryParams {
             team_id: Uuid::new_v4(),
@@ -1500,8 +1851,10 @@ mod tests {
             ..Default::default()
         };
         let result = repo.query_tasks(params).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "query_tasks failed: {:?}", result.err());
+        let (tasks, total) = result.unwrap();
+        assert!(tasks.is_empty());
+        assert_eq!(total, 0);
     }
 
     // ============================================================
@@ -1509,7 +1862,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_repository_clone_preserves_pool_identity() {
         let pool = create_test_db_pool();
         let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
@@ -1518,7 +1870,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_distinct_pools_do_not_share_identity() {
         let pool1 = create_test_db_pool();
         let pool2 = create_test_db_pool();

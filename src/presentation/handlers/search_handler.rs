@@ -1416,7 +1416,6 @@ mod tests {
     // ========== search handler success path tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_success_no_crawl_id() {
         let search_service: Arc<dyn SearchServiceTrait> =
             Arc::new(MockSearchService::new_success(make_search_response(None)));
@@ -1439,7 +1438,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_success_sync_wait_zero() {
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
             make_search_response(Some(Uuid::new_v4())),
@@ -1464,7 +1462,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_success_crawl_id_empty_tasks() {
         let crawl_id = Uuid::new_v4();
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
@@ -1490,7 +1487,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_success_crawl_id_with_completed_tasks() {
         let team_id = Uuid::new_v4();
         let crawl_id = Uuid::new_v4();
@@ -1523,7 +1519,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_success_find_by_crawl_id_error() {
         let crawl_id = Uuid::new_v4();
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
@@ -1556,7 +1551,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_success_wait_for_tasks_completion_error() {
         let team_id = Uuid::new_v4();
         let crawl_id = Uuid::new_v4();
@@ -1595,7 +1589,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_success_default_sync_wait_ms() {
         let search_service: Arc<dyn SearchServiceTrait> =
             Arc::new(MockSearchService::new_success(make_search_response(None)));
@@ -1621,7 +1614,6 @@ mod tests {
     // ========== search handler rate limiting tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_rate_limited_denied() {
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_unused());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
@@ -1643,7 +1635,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_rate_limited_retry_after() {
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_unused());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
@@ -1667,7 +1658,6 @@ mod tests {
     // ========== search handler service error tests ==========
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_validation_error() {
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::ValidationError("invalid query".to_string()),
@@ -1691,7 +1681,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_insufficient_credits() {
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::InsufficientCredits {
@@ -1718,7 +1707,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_search_engine_error() {
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::SearchEngine("engine timeout".to_string()),
@@ -1742,7 +1730,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_repository_error() {
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::Repository(RepositoryError::Database(anyhow::anyhow!(
@@ -1768,7 +1755,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_credits_repository_error() {
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::CreditsRepository(CreditsRepositoryError::DatabaseError(
@@ -1794,7 +1780,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_repository_not_found_error() {
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::Repository(RepositoryError::NotFound),
@@ -1818,7 +1803,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     async fn test_search_handler_credits_not_found_error() {
         let team_id = Uuid::new_v4();
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(

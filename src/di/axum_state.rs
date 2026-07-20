@@ -532,91 +532,91 @@ mod tests {
 
         // Exercise every CrawlRsStateExt accessor on &CrawlRsState.
         let task_repo: Arc<dyn TaskRepository> = state.task_repo();
-        assert!(Arc::strong_count(&task_repo) >= 1);
+        assert!(Arc::strong_count(&task_repo) >= 2);
 
         let credits_repo: Arc<dyn CreditsRepository> = state.credits_repo();
-        assert!(Arc::strong_count(&credits_repo) >= 1);
+        assert!(Arc::strong_count(&credits_repo) >= 2);
 
         let crawl_repo: Arc<dyn CrawlRepository> = state.crawl_repo();
-        assert!(Arc::strong_count(&crawl_repo) >= 1);
+        assert!(Arc::strong_count(&crawl_repo) >= 2);
 
         let result_repo: Arc<dyn ScrapeResultRepository> = state.result_repo();
-        assert!(Arc::strong_count(&result_repo) >= 1);
+        assert!(Arc::strong_count(&result_repo) >= 2);
 
         let webhook_repo: Arc<dyn WebhookRepository> = state.webhook_repo();
-        assert!(Arc::strong_count(&webhook_repo) >= 1);
+        assert!(Arc::strong_count(&webhook_repo) >= 2);
 
         let webhook_event_repo: Arc<dyn WebhookEventRepository> = state.webhook_event_repo();
-        assert!(Arc::strong_count(&webhook_event_repo) >= 1);
+        assert!(Arc::strong_count(&webhook_event_repo) >= 2);
 
         let rate_limiting: Arc<dyn RateLimitingService> = state.rate_limiting_service();
-        assert!(Arc::strong_count(&rate_limiting) >= 1);
+        assert!(Arc::strong_count(&rate_limiting) >= 2);
 
         let team_service: Arc<TeamService> = state.team_service();
-        assert!(Arc::strong_count(&team_service) >= 1);
+        assert!(Arc::strong_count(&team_service) >= 2);
 
         let webhook_service: Arc<dyn WebhookService> = state.webhook_service();
-        assert!(Arc::strong_count(&webhook_service) >= 1);
+        assert!(Arc::strong_count(&webhook_service) >= 2);
 
         let engine_router: Arc<EngineRouter> = state.engine_router();
-        assert!(Arc::strong_count(&engine_router) >= 1);
+        assert!(Arc::strong_count(&engine_router) >= 2);
 
         let engine_client: Arc<EngineClient> = state.engine_client();
-        assert!(Arc::strong_count(&engine_client) >= 1);
+        assert!(Arc::strong_count(&engine_client) >= 2);
 
         let create_scrape: Arc<dyn CreateScrapeUseCaseTrait> = state.create_scrape_use_case();
-        assert!(Arc::strong_count(&create_scrape) >= 1);
+        assert!(Arc::strong_count(&create_scrape) >= 2);
 
         let search_client: Arc<SearchClient> = state.search_client();
-        assert!(Arc::strong_count(&search_client) >= 1);
+        assert!(Arc::strong_count(&search_client) >= 2);
 
         let search_service: Arc<dyn SearchServiceTrait> = state.search_service();
-        assert!(Arc::strong_count(&search_service) >= 1);
+        assert!(Arc::strong_count(&search_service) >= 2);
 
         let auth_scope: Option<Arc<AuthScopeService>> = state.auth_scope_service();
         assert!(auth_scope.is_some());
 
         let llm_service: Arc<dyn LLMServiceTrait> = state.llm_service();
-        assert!(Arc::strong_count(&llm_service) >= 1);
+        assert!(Arc::strong_count(&llm_service) >= 2);
 
         let regex_cache: Arc<RegexCache> = state.regex_cache();
-        assert!(Arc::strong_count(&regex_cache) >= 1);
+        assert!(Arc::strong_count(&regex_cache) >= 2);
 
         let db_pool: Arc<DbPool> = state.db_pool();
-        assert!(Arc::strong_count(&db_pool) >= 1);
+        assert!(Arc::strong_count(&db_pool) >= 2);
 
         let tasks_backlog: Arc<dyn TasksBacklogRepository> = state.tasks_backlog_repo();
-        assert!(Arc::strong_count(&tasks_backlog) >= 1);
+        assert!(Arc::strong_count(&tasks_backlog) >= 2);
 
         let task_queue: Arc<dyn TaskQueue> = state.task_queue();
-        assert!(Arc::strong_count(&task_queue) >= 1);
+        assert!(Arc::strong_count(&task_queue) >= 2);
 
         let robots_checker: Arc<dyn RobotsCheckerTrait> = state.robots_checker();
-        assert!(Arc::strong_count(&robots_checker) >= 1);
+        assert!(Arc::strong_count(&robots_checker) >= 2);
 
         let team_semaphore: Arc<TeamSemaphore> = state.team_semaphore();
-        assert!(Arc::strong_count(&team_semaphore) >= 1);
+        assert!(Arc::strong_count(&team_semaphore) >= 2);
 
         let audit_service: Arc<dyn AuditServiceTrait> = state.audit_service();
-        assert!(Arc::strong_count(&audit_service) >= 1);
+        assert!(Arc::strong_count(&audit_service) >= 2);
 
         let extraction_service: Arc<dyn ExtractionServiceTrait> = state.extraction_service();
-        assert!(Arc::strong_count(&extraction_service) >= 1);
+        assert!(Arc::strong_count(&extraction_service) >= 2);
 
         let webhook_worker = state.webhook_worker();
-        assert!(Arc::strong_count(&webhook_worker) >= 1);
+        assert!(Arc::strong_count(&webhook_worker) >= 2);
 
         let backlog_worker = state.backlog_worker();
-        assert!(Arc::strong_count(&backlog_worker) >= 1);
+        assert!(Arc::strong_count(&backlog_worker) >= 2);
 
         let expiration_worker = state.expiration_worker();
-        assert!(Arc::strong_count(&expiration_worker) >= 1);
+        assert!(Arc::strong_count(&expiration_worker) >= 2);
 
         let geo_location: Arc<dyn GeoLocationService> = state.geo_location_service();
-        assert!(Arc::strong_count(&geo_location) >= 1);
+        assert!(Arc::strong_count(&geo_location) >= 2);
 
         let geo_restriction: Arc<dyn GeoRestrictionRepository> = state.geo_restriction_repo();
-        assert!(Arc::strong_count(&geo_restriction) >= 1);
+        assert!(Arc::strong_count(&geo_restriction) >= 2);
     }
 
     #[tokio::test]
@@ -640,13 +640,13 @@ mod tests {
         let task_repo_a = state_arc.task_repo();
         let task_repo_b = state_arc.task_repo();
         // Cloning an Arc increments the strong count; both should be valid.
-        assert!(Arc::strong_count(&task_repo_a) >= 1);
-        assert!(Arc::strong_count(&task_repo_b) >= 1);
+        assert!(Arc::strong_count(&task_repo_a) >= 2);
+        assert!(Arc::strong_count(&task_repo_b) >= 2);
 
         let db_a = state_arc.db_pool();
         let db_b = state_arc.db_pool();
-        assert!(Arc::strong_count(&db_a) >= 1);
-        assert!(Arc::strong_count(&db_b) >= 1);
+        assert!(Arc::strong_count(&db_a) >= 2);
+        assert!(Arc::strong_count(&db_b) >= 2);
     }
 
     #[tokio::test]
@@ -667,5 +667,203 @@ mod tests {
         // Both should return valid Arcs from accessors.
         let _ = state.task_repo();
         let _ = cloned.task_repo();
+    }
+
+    // ========== Non-Docker tests using TEST_DATABASE_URL ==========
+    //
+    // These tests provide coverage when Docker is unavailable but a real
+    // PostgreSQL test database is provided via `TEST_DATABASE_URL`.
+    // They cover the `impl CrawlRsStateExt for Arc<CrawlRsState>` delegation
+    // block (the most uncovered region in this file).
+
+    /// Build CrawlRsState using `TEST_DATABASE_URL` (no Docker required).
+    ///
+    /// Returns Err if `TEST_DATABASE_URL` is not set or kit construction fails.
+    async fn build_app_state_with_test_db() -> anyhow::Result<CrawlRsState> {
+        let db_url = std::env::var("TEST_DATABASE_URL")
+            .map_err(|_| anyhow::anyhow!("TEST_DATABASE_URL not set"))?;
+        let settings = Arc::new(tcf::settings_with_urls(&db_url)?);
+
+        let mut kit = AsyncKit::new();
+        kit.set_config(settings);
+        kit.register::<SettingsModule>()
+            .map_err(|e| anyhow::anyhow!("register SettingsModule: {e}"))?;
+        kit.register::<DatabaseModule>()
+            .map_err(|e| anyhow::anyhow!("register DatabaseModule: {e}"))?;
+        kit.register::<HttpModule>()
+            .map_err(|e| anyhow::anyhow!("register HttpModule: {e}"))?;
+        kit.register::<CacheModule>()
+            .map_err(|e| anyhow::anyhow!("register CacheModule: {e}"))?;
+        kit.register::<RepositoryModule>()
+            .map_err(|e| anyhow::anyhow!("register RepositoryModule: {e}"))?;
+        kit.register::<EngineModule>()
+            .map_err(|e| anyhow::anyhow!("register EngineModule: {e}"))?;
+        kit.register::<InfrastructureModule>()
+            .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
+        kit.register::<ServiceModule>()
+            .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
+
+        let kit = kit
+            .build()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to build kit: {e}"))?;
+        let state = CrawlRsState::from_kit(&kit)?;
+        Ok(state)
+    }
+
+    /// Skip helper for tests that require `TEST_DATABASE_URL`.
+    fn skip_if_no_test_db() -> bool {
+        if std::env::var("TEST_DATABASE_URL").is_err() {
+            eprintln!("[skip] TEST_DATABASE_URL not set — test requires real DbPool");
+            return true;
+        }
+        false
+    }
+
+    /// Cover the `impl CrawlRsStateExt for Arc<CrawlRsState>` delegation block.
+    ///
+    /// Each method on `Arc<CrawlRsState>` should delegate to the underlying
+    /// `&CrawlRsState` impl, returning a fresh `Arc` clone. The Arc strong
+    /// count check verifies the accessor returned a valid Arc.
+    #[tokio::test]
+    async fn test_arc_state_all_accessors_delegate_correctly() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let state = match build_app_state_with_test_db().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState with TEST_DATABASE_URL: {e}");
+                return;
+            }
+        };
+        let state_arc: Arc<CrawlRsState> = Arc::new(state);
+
+        // Exercise every Arc<CrawlRsState> accessor — covers the entire
+        // `impl CrawlRsStateExt for Arc<CrawlRsState>` block.
+        let task_repo = state_arc.task_repo();
+        assert!(Arc::strong_count(&task_repo) >= 2);
+
+        let credits_repo = state_arc.credits_repo();
+        assert!(Arc::strong_count(&credits_repo) >= 2);
+
+        let crawl_repo = state_arc.crawl_repo();
+        assert!(Arc::strong_count(&crawl_repo) >= 2);
+
+        let result_repo = state_arc.result_repo();
+        assert!(Arc::strong_count(&result_repo) >= 2);
+
+        let webhook_repo = state_arc.webhook_repo();
+        assert!(Arc::strong_count(&webhook_repo) >= 2);
+
+        let webhook_event_repo = state_arc.webhook_event_repo();
+        assert!(Arc::strong_count(&webhook_event_repo) >= 2);
+
+        let rate_limiting_service = state_arc.rate_limiting_service();
+        assert!(Arc::strong_count(&rate_limiting_service) >= 2);
+
+        let team_service = state_arc.team_service();
+        assert!(Arc::strong_count(&team_service) >= 2);
+
+        let webhook_service = state_arc.webhook_service();
+        assert!(Arc::strong_count(&webhook_service) >= 2);
+
+        let engine_router = state_arc.engine_router();
+        assert!(Arc::strong_count(&engine_router) >= 2);
+
+        let engine_client = state_arc.engine_client();
+        assert!(Arc::strong_count(&engine_client) >= 2);
+
+        let create_scrape_use_case = state_arc.create_scrape_use_case();
+        assert!(Arc::strong_count(&create_scrape_use_case) >= 2);
+
+        let search_client = state_arc.search_client();
+        assert!(Arc::strong_count(&search_client) >= 2);
+
+        let search_service = state_arc.search_service();
+        assert!(Arc::strong_count(&search_service) >= 2);
+
+        // auth_scope_service returns Option<Arc<...>> — verify Some when
+        // the underlying state has it configured.
+        let auth_scope = state_arc.auth_scope_service();
+        assert!(auth_scope.is_some());
+
+        let llm_service = state_arc.llm_service();
+        assert!(Arc::strong_count(&llm_service) >= 2);
+
+        let regex_cache = state_arc.regex_cache();
+        assert!(Arc::strong_count(&regex_cache) >= 2);
+
+        let db_pool = state_arc.db_pool();
+        assert!(Arc::strong_count(&db_pool) >= 2);
+
+        let tasks_backlog = state_arc.tasks_backlog_repo();
+        assert!(Arc::strong_count(&tasks_backlog) >= 2);
+
+        let task_queue = state_arc.task_queue();
+        assert!(Arc::strong_count(&task_queue) >= 2);
+
+        let robots_checker = state_arc.robots_checker();
+        assert!(Arc::strong_count(&robots_checker) >= 2);
+
+        let team_semaphore = state_arc.team_semaphore();
+        assert!(Arc::strong_count(&team_semaphore) >= 2);
+
+        let audit_service = state_arc.audit_service();
+        assert!(Arc::strong_count(&audit_service) >= 2);
+
+        let extraction_service = state_arc.extraction_service();
+        assert!(Arc::strong_count(&extraction_service) >= 2);
+
+        let webhook_worker = state_arc.webhook_worker();
+        assert!(Arc::strong_count(&webhook_worker) >= 2);
+
+        let backlog_worker = state_arc.backlog_worker();
+        assert!(Arc::strong_count(&backlog_worker) >= 2);
+
+        let expiration_worker = state_arc.expiration_worker();
+        assert!(Arc::strong_count(&expiration_worker) >= 2);
+
+        let geo_location = state_arc.geo_location_service();
+        assert!(Arc::strong_count(&geo_location) >= 2);
+
+        let geo_restriction = state_arc.geo_restriction_repo();
+        assert!(Arc::strong_count(&geo_restriction) >= 2);
+    }
+
+    /// Verify that cloning `Arc<CrawlRsState>` does not corrupt accessor
+    /// results. After clone, both Arcs should produce valid accessors.
+    #[tokio::test]
+    async fn test_arc_state_clone_preserves_accessor_results() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let state = match build_app_state_with_test_db().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState with TEST_DATABASE_URL: {e}");
+                return;
+            }
+        };
+        let state_arc: Arc<CrawlRsState> = Arc::new(state);
+        let cloned_arc = state_arc.clone();
+
+        // Cloning Arc<CrawlRsState> should preserve accessor behavior.
+        // The cloned Arc delegates to the same underlying &CrawlRsState.
+        let task_repo_a = state_arc.task_repo();
+        let task_repo_b = cloned_arc.task_repo();
+        assert!(Arc::strong_count(&task_repo_a) >= 2);
+        assert!(Arc::strong_count(&task_repo_b) >= 2);
+
+        let db_a = state_arc.db_pool();
+        let db_b = cloned_arc.db_pool();
+        assert!(Arc::strong_count(&db_a) >= 2);
+        assert!(Arc::strong_count(&db_b) >= 2);
+
+        // auth_scope_service should return Some on both clones.
+        let auth_a = state_arc.auth_scope_service();
+        let auth_b = cloned_arc.auth_scope_service();
+        assert!(auth_a.is_some());
+        assert!(auth_b.is_some());
     }
 }

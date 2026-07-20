@@ -277,9 +277,10 @@ mod tests {
     use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::models::Crawl;
     use serde_json::json;
+    use std::collections::HashSet;
 
-    /// Build a minimal Crawl instance for tests that need to pass one in.
-    /// The fields don't matter because the DB call fails before the entity is used.
+    /// Build a minimal Crawl instance for tests.
+    /// Each call produces fresh UUIDs for id/team_id so tests are isolated.
     fn make_test_crawl() -> Crawl {
         Crawl::new(
             Uuid::new_v4(),
@@ -296,117 +297,224 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_creates_repository_instance() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
-        // Repository should be constructible without connecting to DB
-        // (pool is lazy, no connection until get_session is called)
+        // Repository wraps the pool Arc; construction itself does not
+        // open a new connection — get_session on the inner DbPool does.
         let _ = repo;
     }
 
     // ============================================================
-    // Error path tests — all methods should fail gracefully when
-    // the lazy pool cannot provide a real session.
+    // CRUD tests — verify create / find / update / state transitions
+    // against a real PostgreSQL database.
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_create_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CrawlRepositoryImpl::new(pool);
+    async fn test_create_with_real_db_succeeds() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         let result = repo.create(&crawl).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
+        assert!(result.is_ok(), "create failed: {:?}", result.err());
+        let returned = result.unwrap();
+        assert_eq!(returned.id, crawl.id);
+        assert_eq!(returned.url, crawl.url);
+        assert_eq!(returned.team_id, crawl.team_id);
+
+        // Verify DB state actually changed
+        let found = repo.find_by_id(crawl.id).await.expect("find_by_id failed");
+        assert!(found.is_some(), "crawl should be found after create");
+        let found_crawl = found.unwrap();
+        assert_eq!(found_crawl.id, crawl.id);
+        assert_eq!(found_crawl.name, crawl.name);
+        assert_eq!(found_crawl.url, crawl.url);
+        assert_eq!(found_crawl.root_url, crawl.root_url);
+        assert_eq!(found_crawl.team_id, crawl.team_id);
+        assert_eq!(found_crawl.status, crawl.status);
+    }
+
+    #[tokio::test]
+    async fn test_find_by_id_with_real_db_returns_none_for_unknown() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_id(Uuid::new_v4()).await;
+        assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "unknown UUID should return None");
+    }
+
+    #[tokio::test]
+    async fn test_update_with_real_db_succeeds() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
+        let mut crawl = make_test_crawl();
+        // create first
+        repo.create(&crawl).await.expect("create failed");
+        // modify public fields and update
+        crawl.name = format!("updated crawl {}", Uuid::new_v4());
+        crawl.url = format!("http://updated.com/{}", Uuid::new_v4());
+        crawl.root_url = format!("http://root-updated.com/{}", Uuid::new_v4());
+        let result = repo.update(&crawl).await;
+        assert!(result.is_ok(), "update failed: {:?}", result.err());
+
+        // Verify DB state reflects updated fields
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.name, crawl.name);
+        assert_eq!(found.url, crawl.url);
+        assert_eq!(found.root_url, crawl.root_url);
+    }
+
+    #[tokio::test]
+    async fn test_increment_completed_tasks_with_real_db_succeeds() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
+        let crawl = make_test_crawl();
+        repo.create(&crawl).await.expect("create failed");
+
+        let result = repo.increment_completed_tasks(crawl.id).await;
         assert!(
-            matches!(err, RepositoryError::Database(_)),
-            "Expected Database, got {:?}",
-            err
+            result.is_ok(),
+            "increment_completed_tasks failed: {:?}",
+            result.err()
+        );
+
+        // Verify DB state reflects incremented counter
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.completed_tasks(), 1, "completed_tasks should be 1");
+    }
+
+    #[tokio::test]
+    async fn test_increment_failed_tasks_with_real_db_succeeds() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
+        let crawl = make_test_crawl();
+        repo.create(&crawl).await.expect("create failed");
+
+        let result = repo.increment_failed_tasks(crawl.id).await;
+        assert!(
+            result.is_ok(),
+            "increment_failed_tasks failed: {:?}",
+            result.err()
+        );
+
+        // Verify DB state reflects incremented counter
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.failed_tasks(), 1, "failed_tasks should be 1");
+    }
+
+    #[tokio::test]
+    async fn test_update_status_with_real_db_succeeds() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
+        let crawl = make_test_crawl();
+        repo.create(&crawl).await.expect("create failed");
+
+        let result = repo.update_status(crawl.id, CrawlStatus::Completed).await;
+        assert!(result.is_ok(), "update_status failed: {:?}", result.err());
+
+        // Verify DB state reflects updated status
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.status, CrawlStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_increment_total_tasks_with_real_db_succeeds() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
+        let crawl = make_test_crawl();
+        repo.create(&crawl).await.expect("create failed");
+
+        let result = repo.increment_total_tasks(crawl.id).await;
+        assert!(
+            result.is_ok(),
+            "increment_total_tasks failed: {:?}",
+            result.err()
+        );
+
+        // Verify DB state reflects incremented counter
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.total_tasks(), 1, "total_tasks should be 1");
+    }
+
+    #[tokio::test]
+    async fn test_find_by_team_id_paginated_with_real_db_returns_empty_for_unknown() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
+        let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
+        assert!(
+            result.is_ok(),
+            "find_by_team_id_paginated failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "unknown team_id should return empty vec"
         );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_id_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CrawlRepositoryImpl::new(pool);
-        let result = repo.find_by_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CrawlRepositoryImpl::new(pool);
-        let crawl = make_test_crawl();
-        let result = repo.update(&crawl).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_increment_completed_tasks_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CrawlRepositoryImpl::new(pool);
-        let result = repo.increment_completed_tasks(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_increment_failed_tasks_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CrawlRepositoryImpl::new(pool);
-        let result = repo.increment_failed_tasks(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CrawlRepositoryImpl::new(pool);
-        let result = repo
-            .update_status(Uuid::new_v4(), CrawlStatus::Completed)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_increment_total_tasks_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CrawlRepositoryImpl::new(pool);
-        let result = repo.increment_total_tasks(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_team_id_paginated_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CrawlRepositoryImpl::new(pool);
-        let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_count_by_team_id_returns_db_error_with_real_db() {
-        let pool = create_test_db_pool();
-        let repo = CrawlRepositoryImpl::new(pool);
+    async fn test_count_by_team_id_with_real_db_returns_zero_for_unknown() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.count_by_team_id(Uuid::new_v4()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "count_by_team_id failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0, "unknown team_id should return 0");
+    }
+
+    #[tokio::test]
+    async fn test_find_by_team_id_paginated_with_real_db_returns_matching_crawls() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        let mut crawl1 = make_test_crawl();
+        crawl1.team_id = team_id;
+        let mut crawl2 = make_test_crawl();
+        crawl2.team_id = team_id;
+        let unrelated = make_test_crawl();
+        repo.create(&crawl1).await.expect("create crawl1 failed");
+        repo.create(&crawl2).await.expect("create crawl2 failed");
+        repo.create(&unrelated)
+            .await
+            .expect("create unrelated failed");
+
+        let result = repo.find_by_team_id_paginated(team_id, 100, 0).await;
+        assert!(result.is_ok(), "find_by_team_id_paginated failed");
+        let crawls = result.unwrap();
+        assert_eq!(crawls.len(), 2, "should find 2 crawls for team_id");
+        let ids: HashSet<Uuid> = crawls.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&crawl1.id));
+        assert!(ids.contains(&crawl2.id));
+        assert!(!ids.contains(&unrelated.id));
+    }
+
+    #[tokio::test]
+    async fn test_count_by_team_id_with_real_db_counts_matching() {
+        let repo = CrawlRepositoryImpl::new(create_test_db_pool());
+        let team_id = Uuid::new_v4();
+        let mut crawl1 = make_test_crawl();
+        crawl1.team_id = team_id;
+        let mut crawl2 = make_test_crawl();
+        crawl2.team_id = team_id;
+        repo.create(&crawl1).await.expect("create crawl1 failed");
+        repo.create(&crawl2).await.expect("create crawl2 failed");
+
+        let result = repo.count_by_team_id(team_id).await;
+        assert!(result.is_ok(), "count_by_team_id failed");
+        assert_eq!(result.unwrap(), 2, "should count 2 crawls for team_id");
     }
 
     // ============================================================
@@ -439,7 +547,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_pool_accessor_returns_reference_to_same_pool() {
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool.clone());
@@ -456,51 +563,96 @@ mod tests {
     }
 
     // ============================================================
-    // update_status — exercise every CrawlStatus variant (error path)
+    // update_status — exercise every CrawlStatus variant against real DB
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_to_processing_returns_db_error() {
+    async fn test_update_status_to_processing_with_real_db_succeeds() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo
-            .update_status(Uuid::new_v4(), CrawlStatus::Processing)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        let crawl = make_test_crawl();
+        repo.create(&crawl).await.expect("create failed");
+
+        let result = repo.update_status(crawl.id, CrawlStatus::Processing).await;
+        assert!(
+            result.is_ok(),
+            "update_status to Processing failed: {:?}",
+            result.err()
+        );
+
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.status, CrawlStatus::Processing);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_to_failed_returns_db_error() {
+    async fn test_update_status_to_failed_with_real_db_succeeds() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo
-            .update_status(Uuid::new_v4(), CrawlStatus::Failed)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        let crawl = make_test_crawl();
+        repo.create(&crawl).await.expect("create failed");
+
+        let result = repo.update_status(crawl.id, CrawlStatus::Failed).await;
+        assert!(
+            result.is_ok(),
+            "update_status to Failed failed: {:?}",
+            result.err()
+        );
+
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.status, CrawlStatus::Failed);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_to_cancelled_returns_db_error() {
+    async fn test_update_status_to_cancelled_with_real_db_succeeds() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo
-            .update_status(Uuid::new_v4(), CrawlStatus::Cancelled)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        let crawl = make_test_crawl();
+        repo.create(&crawl).await.expect("create failed");
+
+        let result = repo.update_status(crawl.id, CrawlStatus::Cancelled).await;
+        assert!(
+            result.is_ok(),
+            "update_status to Cancelled failed: {:?}",
+            result.err()
+        );
+
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.status, CrawlStatus::Cancelled);
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_to_queued_returns_db_error() {
+    async fn test_update_status_to_queued_with_real_db_succeeds() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo
-            .update_status(Uuid::new_v4(), CrawlStatus::Queued)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        let crawl = make_test_crawl();
+        repo.create(&crawl).await.expect("create failed");
+        // First transition to Processing, then back to Queued to verify the
+        // update is not a no-op.
+        repo.update_status(crawl.id, CrawlStatus::Processing)
+            .await
+            .expect("update_status to Processing failed");
+
+        let result = repo.update_status(crawl.id, CrawlStatus::Queued).await;
+        assert!(
+            result.is_ok(),
+            "update_status to Queued failed: {:?}",
+            result.err()
+        );
+
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.status, CrawlStatus::Queued);
     }
 
     // ============================================================
@@ -508,43 +660,65 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_team_id_paginated_with_zero_limit_returns_db_error() {
+    async fn test_find_by_team_id_paginated_with_zero_limit_returns_empty() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 0, 0).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "find_by_team_id_paginated failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "limit=0 with unknown team_id should return empty"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_team_id_paginated_with_large_offset_returns_db_error() {
+    async fn test_find_by_team_id_paginated_with_large_offset_returns_empty() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .find_by_team_id_paginated(Uuid::new_v4(), 10, u32::MAX)
             .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "find_by_team_id_paginated failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "large offset with unknown team_id should return empty"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_team_id_paginated_with_max_limit_returns_db_error() {
+    async fn test_find_by_team_id_paginated_with_max_limit_returns_empty() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .find_by_team_id_paginated(Uuid::new_v4(), u32::MAX, 0)
             .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "find_by_team_id_paginated failed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_empty(),
+            "max limit with unknown team_id should return empty"
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_team_id_paginated_with_nil_team_id_returns_db_error() {
+    async fn test_find_by_team_id_paginated_with_nil_team_id_returns_empty() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::nil(), 10, 0).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "find_by_team_id_paginated failed: {:?}",
+            result.err()
+        );
+        // Nil team_id is unlikely to match any crawl (we generate v4 UUIDs).
+        let _crawls = result.unwrap();
     }
 
     // ============================================================
@@ -552,48 +726,60 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_find_by_id_with_nil_uuid_returns_db_error() {
+    async fn test_find_by_id_with_nil_uuid_returns_none() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
+        // Nil UUID is unlikely to match any crawl (we generate v4 UUIDs in tests).
+        let _found = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_count_by_team_id_with_nil_uuid_returns_db_error() {
+    async fn test_count_by_team_id_with_nil_uuid_returns_zero() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.count_by_team_id(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "count_by_team_id failed: {:?}",
+            result.err()
+        );
+        // Nil team_id is unlikely to match any crawl.
+        let _count = result.unwrap();
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_increment_completed_tasks_with_nil_uuid_returns_db_error() {
+    async fn test_increment_completed_tasks_with_nil_uuid_succeeds_silently() {
+        // increment_completed_tasks silently returns Ok(()) when the crawl is
+        // not found (this is the current implementation behavior).
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.increment_completed_tasks(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "increment_completed_tasks failed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_increment_failed_tasks_with_nil_uuid_returns_db_error() {
+    async fn test_increment_failed_tasks_with_nil_uuid_succeeds_silently() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.increment_failed_tasks(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "increment_failed_tasks failed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_increment_total_tasks_with_nil_uuid_returns_db_error() {
+    async fn test_increment_total_tasks_with_nil_uuid_succeeds_silently() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.increment_total_tasks(Uuid::nil()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        assert!(
+            result.is_ok(),
+            "increment_total_tasks failed: {:?}",
+            result.err()
+        );
     }
 
     // ============================================================
@@ -869,14 +1055,24 @@ mod tests {
     // ============================================================
 
     #[tokio::test]
-    #[ignore = "requires TEST_DATABASE_URL"]
-    async fn test_update_status_to_completed_returns_db_error() {
+    async fn test_update_status_to_completed_with_real_db_succeeds() {
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo
-            .update_status(Uuid::new_v4(), CrawlStatus::Completed)
-            .await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RepositoryError::Database(_)));
+        let crawl = make_test_crawl();
+        repo.create(&crawl).await.expect("create failed");
+
+        let result = repo.update_status(crawl.id, CrawlStatus::Completed).await;
+        assert!(
+            result.is_ok(),
+            "update_status to Completed failed: {:?}",
+            result.err()
+        );
+
+        let found = repo
+            .find_by_id(crawl.id)
+            .await
+            .expect("find_by_id failed")
+            .expect("crawl should exist");
+        assert_eq!(found.status, CrawlStatus::Completed);
     }
 
     // ============================================================
@@ -884,7 +1080,6 @@ mod tests {
     // ============================================================
 
     #[test]
-    #[ignore = "requires TEST_DATABASE_URL"]
     fn test_new_with_distinct_pools_do_not_share_identity() {
         let pool1 = create_test_db_pool();
         let pool2 = create_test_db_pool();
