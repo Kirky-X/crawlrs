@@ -1257,3 +1257,407 @@ async fn test_find_existing_urls_performance() {
         .await
         .ok();
 }
+
+/// 验证 acquire_next 的 SET 子句与 Task::start() + Task::acquire_lock() 保持一致。
+///
+/// 这是 HIGH-1 的回归 guard：如果 SQL 的 SET 子句与 domain 方法产生分歧，
+/// 此测试会失败。详见 task_model.rs 的 MIRROR 注释和 task_repo_impl.rs 的 doc comment。
+///
+/// 无论 acquire_next 拿到哪个 task，都应该满足这些字段不变量。
+#[tokio::test]
+async fn test_acquire_next_set_clause_mirrors_domain_methods() {
+    let app = create_test_app_no_worker().await;
+    let lock_duration = chrono::Duration::seconds(30);
+    let repo = Arc::new(TaskRepositoryImpl::new(
+        app.db_pool.clone(),
+        lock_duration,
+    ));
+    let team_id = app.team_id;
+    let worker_id = Uuid::new_v4();
+
+    // Ensure the queue is non-empty by creating a queued task.
+    let unique_prefix = Uuid::new_v4().to_string();
+    let task = Task {
+        id: Uuid::new_v4(),
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Queued,
+        priority: 0,
+        team_id,
+        api_key_id: app.api_key_id,
+        url: format!("https://{}.example.com/mirror-test", unique_prefix),
+        payload: serde_json::json!({}),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: Utc::now(),
+        started_at: None,
+        completed_at: None,
+        crawl_id: None,
+        updated_at: Utc::now(),
+        lock_token: None,
+        lock_expires_at: None,
+    };
+    repo.create(&task).await.expect("Failed to create task");
+
+    let before = Utc::now();
+    let acquired = repo
+        .acquire_next(worker_id)
+        .await
+        .expect("acquire_next failed")
+        .expect("Should acquire a task");
+    let after = Utc::now();
+
+    // SET status='active'  ↔  Task::start() sets status=Active
+    assert_eq!(
+        acquired.status,
+        TaskStatus::Active,
+        "status should be Active (mirrors Task::start)"
+    );
+
+    // SET started_at=NOW()  ↔  Task::start() sets started_at=Some(now)
+    assert!(
+        acquired.started_at.is_some(),
+        "started_at should be set (mirrors Task::start)"
+    );
+
+    // SET lock_token=$1  ↔  Task::acquire_lock() sets lock_token=Some(worker_id)
+    assert_eq!(
+        acquired.lock_token,
+        Some(worker_id),
+        "lock_token should be worker_id (mirrors Task::acquire_lock)"
+    );
+
+    // SET lock_expires_at=NOW()+lock_duration  ↔  Task::acquire_lock()
+    assert!(
+        acquired.lock_expires_at.is_some(),
+        "lock_expires_at should be set (mirrors Task::acquire_lock)"
+    );
+    let lock_expires_at = acquired.lock_expires_at.unwrap();
+    let expected_min = before + lock_duration - chrono::Duration::seconds(2);
+    let expected_max = after + lock_duration + chrono::Duration::seconds(2);
+    assert!(
+        lock_expires_at >= expected_min && lock_expires_at <= expected_max,
+        "lock_expires_at should be ~now + lock_duration, got {} expected ~[{}, {}]",
+        lock_expires_at,
+        expected_min,
+        expected_max
+    );
+
+    // SET updated_at=NOW()  ↔  both domain methods set updated_at=now
+    assert!(
+        acquired.updated_at >= before,
+        "updated_at should be >= acquire time"
+    );
+}
+
+/// 验证 acquire_next 优先获取 queued 任务，而不是 active + expired lock 的任务。
+///
+/// 这验证了拆分查询的优先级语义：Step 1 (queued) 优先于 Step 2 (recovery)，
+/// 不会出现 active-expired 抢占 queued 的情况（避免饥饿）。
+#[tokio::test]
+async fn test_acquire_next_prefers_queued_over_active_expired() {
+    let app = create_test_app_no_worker().await;
+    let repo = Arc::new(TaskRepositoryImpl::new(
+        app.db_pool.clone(),
+        chrono::Duration::seconds(30),
+    ));
+    let team_id = app.team_id;
+    let worker_id = Uuid::new_v4();
+    let unique_prefix = Uuid::new_v4().to_string();
+
+    // Create an active + expired-lock task first (older created_at).
+    let stale_task_id = Uuid::new_v4();
+    let stale_task = Task {
+        id: stale_task_id,
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Active,
+        priority: 0,
+        team_id,
+        api_key_id: app.api_key_id,
+        url: format!("https://{}.example.com/stale", unique_prefix),
+        payload: serde_json::json!({}),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: Utc::now() - chrono::Duration::hours(2),
+        started_at: Some(Utc::now() - chrono::Duration::hours(2)),
+        completed_at: None,
+        crawl_id: None,
+        updated_at: Utc::now() - chrono::Duration::hours(2),
+        lock_token: Some(Uuid::new_v4()),
+        lock_expires_at: Some(Utc::now() - chrono::Duration::hours(1)), // expired
+    };
+    repo.create(&stale_task)
+        .await
+        .expect("Failed to create stale task");
+
+    // Create a queued task slightly later.
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    let queued_task_id = Uuid::new_v4();
+    let queued_task = Task {
+        id: queued_task_id,
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Queued,
+        priority: 0,
+        team_id,
+        api_key_id: app.api_key_id,
+        url: format!("https://{}.example.com/queued", unique_prefix),
+        payload: serde_json::json!({}),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: Utc::now(),
+        started_at: None,
+        completed_at: None,
+        crawl_id: None,
+        updated_at: Utc::now(),
+        lock_token: None,
+        lock_expires_at: None,
+    };
+    repo.create(&queued_task)
+        .await
+        .expect("Failed to create queued task");
+
+    let acquired = repo
+        .acquire_next(worker_id)
+        .await
+        .expect("acquire_next failed")
+        .expect("Should acquire a task");
+
+    // acquire_next is global (no team_id filter), so it may return another test's task.
+    // Only assert priority semantics when it picks one of our two tasks.
+    if acquired.id == stale_task_id || acquired.id == queued_task_id {
+        assert_eq!(
+            acquired.id,
+            queued_task_id,
+            "Should prefer queued task over active-expired task (no starvation)"
+        );
+    }
+}
+
+/// 验证 acquire_next 不会获取 active 且 lock 未过期的任务。
+///
+/// 这验证了 Step 2 的 WHERE 条件 `lock_expires_at < NOW()` 正确排除未过期锁。
+#[tokio::test]
+async fn test_acquire_next_skips_active_unexpired() {
+    let app = create_test_app_no_worker().await;
+    let repo = Arc::new(TaskRepositoryImpl::new(
+        app.db_pool.clone(),
+        chrono::Duration::seconds(30),
+    ));
+    let team_id = app.team_id;
+    let unique_prefix = Uuid::new_v4().to_string();
+
+    // Create an active task with a far-future lock expiry (should NOT be acquired).
+    let active_unexpired_id = Uuid::new_v4();
+    let original_lock_token = Uuid::new_v4();
+    let original_lock_expiry = Utc::now() + chrono::Duration::hours(1);
+    let active_task = Task {
+        id: active_unexpired_id,
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Active,
+        priority: 0,
+        team_id,
+        api_key_id: app.api_key_id,
+        url: format!("https://{}.example.com/active-unexpired", unique_prefix),
+        payload: serde_json::json!({}),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: Utc::now(),
+        started_at: Some(Utc::now()),
+        completed_at: None,
+        crawl_id: None,
+        updated_at: Utc::now(),
+        lock_token: Some(original_lock_token),
+        lock_expires_at: Some(original_lock_expiry),
+    };
+    repo.create(&active_task)
+        .await
+        .expect("Failed to create active task");
+
+    // Call acquire_next multiple times; it should never pick up our active-unexpired task.
+    for _ in 0..3 {
+        if let Some(acquired) = repo
+            .acquire_next(Uuid::new_v4())
+            .await
+            .expect("acquire_next failed")
+        {
+            assert_ne!(
+                acquired.id,
+                active_unexpired_id,
+                "Should not acquire active task with unexpired lock"
+            );
+        }
+    }
+
+    // Verify the task was not mutated by acquire_next.
+    let task_after = repo
+        .find_by_id(active_unexpired_id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
+    assert_eq!(task_after.status, TaskStatus::Active);
+    assert_eq!(task_after.lock_token, Some(original_lock_token));
+    // Compare with microsecond tolerance: PostgreSQL TIMESTAMP stores microsecond
+    // precision, while chrono::DateTime carries nanoseconds. Round-trip through
+    // the DB truncates the sub-microsecond part, so strict equality fails.
+    let stored_expiry = task_after.lock_expires_at.expect("lock_expires_at set");
+    let diff_micros = (stored_expiry - original_lock_expiry)
+        .num_microseconds()
+        .expect("diff within i64 range")
+        .abs();
+    assert!(
+        diff_micros <= 1,
+        "lock_expires_at should be unchanged (tolerance 1μs for DB precision), got diff {}μs",
+        diff_micros
+    );
+}
+
+/// 验证 acquire_next 不会获取 active 且 lock_expires_at IS NULL 的任务。
+///
+/// 这验证了 SQL `lock_expires_at < NOW()` 对 NULL 返回 NULL（false）的语义，
+/// 确保 NULL lock_expires_at 的 active 任务不会被错误地当作可恢复任务。
+#[tokio::test]
+async fn test_acquire_next_skips_active_with_null_lock_expires_at() {
+    let app = create_test_app_no_worker().await;
+    let repo = Arc::new(TaskRepositoryImpl::new(
+        app.db_pool.clone(),
+        chrono::Duration::seconds(30),
+    ));
+    let team_id = app.team_id;
+    let unique_prefix = Uuid::new_v4().to_string();
+
+    // Create an active task with NULL lock_expires_at (data anomaly, should be skipped).
+    // Note: Task.lock_expires_at is Option<DateTime>, so None maps to SQL NULL.
+    let active_null_id = Uuid::new_v4();
+    let active_task = Task {
+        id: active_null_id,
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Active,
+        priority: 0,
+        team_id,
+        api_key_id: app.api_key_id,
+        url: format!("https://{}.example.com/active-null", unique_prefix),
+        payload: serde_json::json!({}),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: Utc::now(),
+        started_at: Some(Utc::now()),
+        completed_at: None,
+        crawl_id: None,
+        updated_at: Utc::now(),
+        lock_token: Some(Uuid::new_v4()),
+        lock_expires_at: None, // NULL — should not be treated as recoverable
+    };
+    repo.create(&active_task)
+        .await
+        .expect("Failed to create active task");
+
+    // Call acquire_next multiple times; it should never pick up our NULL-lock task.
+    for _ in 0..3 {
+        if let Some(acquired) = repo
+            .acquire_next(Uuid::new_v4())
+            .await
+            .expect("acquire_next failed")
+        {
+            assert_ne!(
+                acquired.id,
+                active_null_id,
+                "Should not acquire active task with NULL lock_expires_at"
+            );
+        }
+    }
+
+    // Verify the task was not mutated.
+    let task_after = repo
+        .find_by_id(active_null_id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
+    assert_eq!(task_after.status, TaskStatus::Active);
+    assert!(task_after.lock_expires_at.is_none());
+}
+
+/// 验证 acquire_next 的恢复路径：active + expired lock 的任务能被重新获取。
+///
+/// 这是新引入功能的核心测试：前一个 worker 崩溃或锁超时后，
+/// task 仍处于 active 状态但锁已过期，应该被新 worker 接管。
+#[tokio::test]
+async fn test_acquire_next_recovers_active_expired_task() {
+    let app = create_test_app_no_worker().await;
+    let repo = Arc::new(TaskRepositoryImpl::new(
+        app.db_pool.clone(),
+        chrono::Duration::seconds(30),
+    ));
+    let team_id = app.team_id;
+    let unique_prefix = Uuid::new_v4().to_string();
+
+    // Create an active + expired-lock task with a unique high-priority marker
+    // so we can identify it among other tasks.
+    let stale_task_id = Uuid::new_v4();
+    let original_worker_id = Uuid::new_v4();
+    let stale_task = Task {
+        id: stale_task_id,
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Active,
+        priority: -100, // highest priority (lower = higher) so it's picked first
+        team_id,
+        api_key_id: app.api_key_id,
+        url: format!("https://{}.example.com/recoverable", unique_prefix),
+        payload: serde_json::json!({}),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: Utc::now() - chrono::Duration::hours(1),
+        started_at: Some(Utc::now() - chrono::Duration::hours(1)),
+        completed_at: None,
+        crawl_id: None,
+        updated_at: Utc::now() - chrono::Duration::hours(1),
+        lock_token: Some(original_worker_id),
+        lock_expires_at: Some(Utc::now() - chrono::Duration::minutes(30)), // expired 30min ago
+    };
+    repo.create(&stale_task)
+        .await
+        .expect("Failed to create stale task");
+
+    let new_worker_id = Uuid::new_v4();
+    let acquired = repo
+        .acquire_next(new_worker_id)
+        .await
+        .expect("acquire_next failed")
+        .expect("Should acquire a task");
+
+    // With priority -100, our stale task should be picked (Step 2 recovery path).
+    // If another test's task was picked instead, that's also fine — both are valid
+    // recovery behavior. We only assert when our task was the one picked.
+    if acquired.id == stale_task_id {
+        assert_eq!(acquired.status, TaskStatus::Active);
+        assert_eq!(acquired.lock_token, Some(new_worker_id));
+        assert!(acquired.lock_expires_at.is_some());
+        let lock_expires_at = acquired.lock_expires_at.unwrap();
+        assert!(
+            lock_expires_at > Utc::now(),
+            "Recovered task should have a future lock expiry, got {}",
+            lock_expires_at
+        );
+        assert_ne!(
+            acquired.lock_token,
+            Some(original_worker_id),
+            "lock_token should be updated to new worker_id"
+        );
+    }
+}

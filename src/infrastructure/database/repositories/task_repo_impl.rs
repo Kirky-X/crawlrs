@@ -18,8 +18,8 @@ use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use dbnexus::DbPool;
 use sea_orm::{
-    sea_query::Expr, ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    sea_query::Expr, ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseBackend,
+    EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -113,6 +113,31 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(task.clone())
     }
 
+    /// Acquire the next available task for a worker.
+    ///
+    /// Raw SQL is required because sea-orm doesn't support `FOR UPDATE SKIP LOCKED`.
+    /// This is the only method in the trait that bypasses sea-orm ActiveModel —
+    /// all other methods use the standard `Entity::find`/`ActiveModel::update` API.
+    ///
+    /// # Architecture
+    ///
+    /// Two-step query to keep each step as an Index Scan with LIMIT 1:
+    ///   1. Normal path: fetch the highest-priority `queued` task.
+    ///   2. Recovery path: if no queued task, fetch an `active` task whose
+    ///      `lock_expires_at` has passed (previous worker crashed or lock
+    ///      timed out). Without this, such tasks would be stuck forever.
+    ///
+    /// Each step is an atomic `UPDATE ... WHERE id = (SELECT ... FOR UPDATE
+    /// SKIP LOCKED LIMIT 1) RETURNING *`, eliminating the race condition in
+    /// the original non-atomic `SELECT + UPDATE` implementation (production
+    /// observed 1 task picked up by 18 workers).
+    ///
+    /// # Mirrored Domain Logic
+    ///
+    /// The `SET` clause mirrors `Task::start()` + `Task::acquire_lock()` in
+    /// `task_model.rs`. Changes to either side must be synchronized — see
+    /// `test_acquire_next_set_clause_mirrors_domain_methods` for the
+    /// regression guard.
     async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
         let session = self
             .pool
@@ -124,32 +149,76 @@ impl TaskRepository for TaskRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        // Find next queued task with expired lock or no lock
-        let entity = task_entity::Entity::find()
-            .filter(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
-            .order_by_asc(task_entity::Column::Priority)
-            .order_by_asc(task_entity::Column::CreatedAt)
-            .limit(1)
-            .one(conn)
+        let lock_seconds = self.lock_duration.num_seconds();
+
+        // Step 1 — Normal path: highest-priority queued task.
+        // Uses partial index idx_tasks_acquire_queued for Index Scan with LIMIT 1.
+        let stmt_queued = Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"UPDATE tasks
+               SET status = 'active',
+                   started_at = NOW(),
+                   lock_token = $1,
+                   lock_expires_at = NOW() + ($2 * INTERVAL '1 second'),
+                   updated_at = NOW()
+               WHERE id = (
+                   SELECT id FROM tasks
+                   WHERE status = 'queued'
+                   ORDER BY priority ASC, created_at ASC
+                   FOR UPDATE SKIP LOCKED
+                   LIMIT 1
+               )
+               RETURNING *"#,
+            [worker_id.into(), lock_seconds.into()],
+        );
+
+        let row: Option<sea_orm::QueryResult> = conn
+            .query_one_raw(stmt_queued)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        if let Some(entity) = entity {
-            let mut domain = TaskMapper::to_domain(entity);
-            domain.start();
-            domain.acquire_lock(worker_id, self.lock_duration);
-
-            let active_model = TaskMapper::to_active_model(&domain);
-
-            let updated = active_model
-                .update(conn)
-                .await
+        if let Some(row) = row {
+            let entity = task_entity::Model::from_query_result(&row, "")
                 .map_err(|e| RepositoryError::Database(e.into()))?;
-
-            return Ok(Some(TaskMapper::to_domain(updated)));
+            return Ok(Some(TaskMapper::to_domain(entity)));
         }
 
-        Ok(None)
+        // Step 2 — Recovery path: expired-lock active task.
+        // Uses partial index idx_tasks_acquire_stale for Index Scan with LIMIT 1.
+        // Reaches here only when step 1 returned no row, so queued tasks always
+        // take priority over recovery (no starvation).
+        let stmt_stale = Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"UPDATE tasks
+               SET status = 'active',
+                   started_at = NOW(),
+                   lock_token = $1,
+                   lock_expires_at = NOW() + ($2 * INTERVAL '1 second'),
+                   updated_at = NOW()
+               WHERE id = (
+                   SELECT id FROM tasks
+                   WHERE status = 'active' AND lock_expires_at < NOW()
+                   ORDER BY priority ASC, created_at ASC
+                   FOR UPDATE SKIP LOCKED
+                   LIMIT 1
+               )
+               RETURNING *"#,
+            [worker_id.into(), lock_seconds.into()],
+        );
+
+        let row: Option<sea_orm::QueryResult> = conn
+            .query_one_raw(stmt_stale)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        match row {
+            Some(row) => {
+                let entity = task_entity::Model::from_query_result(&row, "")
+                    .map_err(|e| RepositoryError::Database(e.into()))?;
+                Ok(Some(TaskMapper::to_domain(entity)))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn mark_completed(&self, id: Uuid) -> Result<(), RepositoryError> {

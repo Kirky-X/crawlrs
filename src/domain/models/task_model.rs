@@ -117,7 +117,11 @@ impl Task {
                 .is_some_and(|expires_at| Utc::now() < expires_at)
     }
 
-    /// Mark the task as started
+    /// Mark the task as started.
+    ///
+    /// MIRROR: the `SET status='active', started_at=NOW(), updated_at=NOW()`
+    /// clause in `TaskRepositoryImpl::acquire_next` raw SQL
+    /// (`task_repo_impl.rs`). Changes here must be synchronized with the SQL.
     pub fn start(&mut self) {
         self.status = TaskStatus::Active;
         self.started_at = Some(Utc::now());
@@ -152,7 +156,11 @@ impl Task {
         self.updated_at = Utc::now();
     }
 
-    /// Acquire lock for this task
+    /// Acquire lock for this task.
+    ///
+    /// MIRROR: the `SET lock_token=$1, lock_expires_at=NOW()+($2*INTERVAL'1 second')`
+    /// clause in `TaskRepositoryImpl::acquire_next` raw SQL
+    /// (`task_repo_impl.rs`). Changes here must be synchronized with the SQL.
     pub fn acquire_lock(&mut self, worker_id: Uuid, lock_duration: chrono::Duration) {
         self.lock_token = Some(worker_id);
         self.lock_expires_at = Some(Utc::now() + lock_duration);
