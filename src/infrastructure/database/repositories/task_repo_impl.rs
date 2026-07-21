@@ -654,6 +654,7 @@ impl TaskRepository for TaskRepositoryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_helpers::acquire_next_test_mutex;
     use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::models::TaskType;
     use serde_json::json;
@@ -751,6 +752,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_acquire_next_with_real_db_returns_ok_when_backlog_empty() {
+        // 序列化 acquire_next 测试：防止并行测试间相互获取 task
+        let _guard = acquire_next_test_mutex().lock().await;
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         // No queued tasks with this worker_id; backlog should be empty (or
         // only contain other tests' tasks with different team_id, but acquire_next
@@ -765,10 +768,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_acquire_next_with_real_db_acquires_created_task() {
+        // 序列化 acquire_next 测试：防止并行测试间相互获取 task
+        let _guard = acquire_next_test_mutex().lock().await;
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-        // Create a queued task with high priority to ensure it's picked up.
+        // 创建最高优先级的 queued task（SQL ORDER BY priority ASC，0 = 最高优先级）
         let mut task = make_test_task();
-        task.priority = 1000;
+        task.priority = 0;
         repo.create(&task).await.expect("create failed");
 
         let worker = Uuid::new_v4();
@@ -1795,6 +1800,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_acquire_next_with_nil_worker_id_returns_ok() {
+        // 序列化 acquire_next 测试：防止并行测试间相互获取 task
+        let _guard = acquire_next_test_mutex().lock().await;
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let result = repo.acquire_next(Uuid::nil()).await;
         assert!(result.is_ok(), "acquire_next failed: {:?}", result.err());
