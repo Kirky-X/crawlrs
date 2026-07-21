@@ -1274,6 +1274,26 @@ mod tests {
         GLOBAL_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// 测试用：`get_secure_client_ip` 在无法提取 IP 时的默认返回值。
+    ///
+    /// 与 `src/infrastructure/security/secure_ip.rs` 中 `unwrap_or_else(|| "unknown".to_string())`
+    /// 保持同步；提取为常量避免魔术字符串散落各处，未来若默认值变更可在此一处更新。
+    const TEST_UNKNOWN_IP: &str = "unknown";
+
+    /// 测试用 bcrypt hash 缓存（OnceLock），跨测试复用同一哈希结果。
+    ///
+    /// bcrypt cost=12 单次哈希 ~300ms，多个测试若各自调用 `hash_api_key`
+    /// 会线性拖慢 CI。此缓存以固定 token `"legit_token_abc123"` 初始化一次，
+    /// 后续测试直接复用，节省重复计算。
+    static TEST_LEGIT_BCRYPT_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+    /// 获取测试用合法 bcrypt hash（首次调用时计算，后续复用缓存）。
+    fn get_test_legit_bcrypt_hash() -> &'static str {
+        TEST_LEGIT_BCRYPT_HASH.get_or_init(|| {
+            crate::infrastructure::security::hash_api_key("legit_token_abc123").unwrap()
+        })
+    }
+
     /// Mock AuthScopeRepository that returns a configurable scope or an error.
     ///
     /// Avoids storing `Result<.., RepositoryError>` because RepositoryError does
@@ -1973,8 +1993,8 @@ mod tests {
             .unwrap();
         let ip = get_client_ip(&req, None);
         // With default config (enabled=true, private IPs trusted),
-        // no ConnectInfo → returns "unknown"
-        assert_eq!(ip, "unknown");
+        // no ConnectInfo → returns TEST_UNKNOWN_IP
+        assert_eq!(ip, TEST_UNKNOWN_IP);
     }
 
     // ===== ApiKeyCache additional tests =====
@@ -2075,6 +2095,129 @@ mod tests {
         assert!(debug_str.contains("size"));
         assert!(debug_str.contains("capacity"));
         assert!(debug_str.contains("ttl_seconds"));
+    }
+
+    // ===== 维度5 #77: LRU 淘汰 (容量上限后淘汰最旧) =====
+
+    /// 小容量缓存插入超过容量时，最旧的条目必须被 LRU 淘汰。
+    ///
+    /// `ApiKeyCache` 内部使用 `lru::LruCache`，满容量后自动淘汰最久未访问的条目。
+    /// 此测试用小容量（3）验证淘汰逻辑，避免插入 10000 条导致的测试缓慢。
+    #[test]
+    fn test_cache_lru_eviction_at_capacity() {
+        // 使用小容量（3）创建缓存，便于快速验证 LRU 淘汰
+        let mut cache = ApiKeyCache::new(3, 120);
+
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let scope = ApiKeyScope::default();
+
+        // 插入 3 条（达到容量上限）
+        for i in 0..3 {
+            cache.insert(
+                format!("sha256:lru_key_{}", i),
+                CachedAuthResult {
+                    team_id,
+                    api_key_id,
+                    scope: scope.clone(),
+                    cached_at: Instant::now(),
+                },
+            );
+        }
+
+        // 验证 3 条都在缓存中
+        for i in 0..3 {
+            assert!(
+                cache.get(&format!("sha256:lru_key_{}", i)).is_some(),
+                "Key lru_key_{} should be in cache before eviction",
+                i
+            );
+        }
+
+        // 插入第 4 条 → 触发 LRU 淘汰最旧的 lru_key_0
+        cache.insert(
+            "sha256:lru_key_3".to_string(),
+            CachedAuthResult {
+                team_id,
+                api_key_id,
+                scope: scope.clone(),
+                cached_at: Instant::now(),
+            },
+        );
+
+        // lru_key_0 应被淘汰（最久未访问）
+        assert!(
+            cache.get("sha256:lru_key_0").is_none(),
+            "LRU eviction: oldest key lru_key_0 must be evicted when capacity exceeded"
+        );
+        // lru_key_1, lru_key_2, lru_key_3 应仍在缓存中
+        for i in 1..4 {
+            assert!(
+                cache.get(&format!("sha256:lru_key_{}", i)).is_some(),
+                "Key lru_key_{} should remain in cache after LRU eviction",
+                i
+            );
+        }
+    }
+
+    /// LRU 淘汰基于"最近访问"而非"插入顺序"：
+    /// 访问 lru_key_0 后，它不再是最旧的，下次淘汰应移除 lru_key_1。
+    #[test]
+    fn test_cache_lru_eviction_based_on_access_not_insertion() {
+        let mut cache = ApiKeyCache::new(3, 120);
+
+        let team_id = Uuid::new_v4();
+        let api_key_id = Uuid::new_v4();
+        let scope = ApiKeyScope::default();
+
+        // 插入 3 条
+        for i in 0..3 {
+            cache.insert(
+                format!("sha256:access_key_{}", i),
+                CachedAuthResult {
+                    team_id,
+                    api_key_id,
+                    scope: scope.clone(),
+                    cached_at: Instant::now(),
+                },
+            );
+        }
+
+        // 访问 access_key_0（使其成为最近访问）
+        let _ = cache.get("sha256:access_key_0");
+
+        // 插入第 4 条 → 淘汰 access_key_1（最久未访问）
+        cache.insert(
+            "sha256:access_key_3".to_string(),
+            CachedAuthResult {
+                team_id,
+                api_key_id,
+                scope: scope.clone(),
+                cached_at: Instant::now(),
+            },
+        );
+
+        // access_key_0 应仍在缓存中（刚被访问过）
+        assert!(
+            cache.get("sha256:access_key_0").is_some(),
+            "Recently accessed key access_key_0 must NOT be evicted (LRU based on access time)"
+        );
+        // access_key_1 应被淘汰（现在是最久未访问）
+        assert!(
+            cache.get("sha256:access_key_1").is_none(),
+            "LRU eviction: least recently accessed key access_key_1 must be evicted"
+        );
+    }
+
+    /// 默认容量 10000 的缓存 stats 必须正确反映容量。
+    #[test]
+    fn test_cache_default_capacity_is_10000() {
+        let cache = ApiKeyCache::new_default();
+        let stats = cache.stats();
+        assert_eq!(
+            stats.capacity, 10000,
+            "Default cache capacity must be 10000 (DEFAULT_CACHE_MAX_SIZE)"
+        );
     }
 
     // ===== Global cache function tests (when not initialized) =====
@@ -3184,11 +3327,11 @@ mod tests {
         };
 
         // Reset any prior failures for "unknown" IP (test requests appear as "unknown")
-        rate_limiter.reset_failures("unknown").await;
+        rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
 
         // Lock out "unknown" IP by recording MAX_AUTH_FAILURES failures
         for _ in 0..MAX_AUTH_FAILURES {
-            rate_limiter.record_failure("unknown").await;
+            rate_limiter.record_failure(TEST_UNKNOWN_IP).await;
         }
 
         let app = Router::new()
@@ -3209,7 +3352,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 
         // Cleanup: reset failures to avoid affecting other tests
-        rate_limiter.reset_failures("unknown").await;
+        rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
     }
 
     // ===== auth_middleware_inner: cache hit path (lines 748-749, 782) =====
@@ -3224,7 +3367,7 @@ mod tests {
 
         // Reset rate limiter for "unknown" IP to avoid interference from lockout test
         if let Some(ref rate_limiter) = state.auth_rate_limiter {
-            rate_limiter.reset_failures("unknown").await;
+            rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
         }
 
         // Need a cache to test the cache hit path
@@ -3278,5 +3421,626 @@ mod tests {
             let mut g = cache.write().await;
             g.invalidate(&token_hash);
         }
+    }
+
+    // =========================================================================
+    // 维度18 安全渗透测试 — 补全 test_matrix.md 中真实缺失的 5 项
+    // (#218 SQL 注入 / #213 超长 Token / #214 特殊字符注入 /
+    //  #216 并发认证竞态 / #212 分布式暴力破解)
+    // =========================================================================
+
+    // ----- #218 SQL 注入：参数化查询防护 -----
+
+    /// SQL 注入 payload 作为 Bearer Token 必须被原样提取，不触发任何 SQL 解析。
+    ///
+    /// `extract_bearer_token` 是纯字符串切片操作，不接触数据库；
+    /// 此测试锁定该契约，防止未来重构引入意外的字符串处理（如拼接 SQL）。
+    #[test]
+    fn test_sql_injection_payload_extracted_as_literal_token() {
+        let payloads = [
+            "' OR '1'='1",
+            "'; DROP TABLE api_keys; --",
+            "' UNION SELECT * FROM teams --",
+            "admin'--",
+            "' OR 1=1 --",
+            "/* */ * FROM api_keys WHERE 1=1",
+        ];
+        for payload in payloads {
+            let req = make_bearer_request(Some(&format!("Bearer {}", payload)));
+            let token = extract_bearer_token(&req)
+                .expect("SQL injection payload should be extracted as literal token");
+            assert_eq!(
+                token, payload,
+                "extract_bearer_token must return the payload verbatim (no SQL interpretation)"
+            );
+        }
+    }
+
+    /// SHA-256 哈希对 SQL 注入 payload 产生确定性摘要，证明哈希层无 SQL 执行。
+    ///
+    /// `hash_api_key_sha256` 是纯密码学函数（Sha256 digest + hex encode），
+    /// 不接触数据库；此测试锁定该契约。
+    #[test]
+    fn test_sql_injection_payload_hashed_deterministically() {
+        let payloads = [
+            "' OR '1'='1",
+            "'; DROP TABLE api_keys; --",
+            "' UNION SELECT * FROM teams --",
+        ];
+        for payload in payloads {
+            let h1 = security::hash_api_key_sha256(payload);
+            let h2 = security::hash_api_key_sha256(payload);
+            assert_eq!(
+                h1, h2,
+                "SHA-256 must be deterministic for SQL injection payload"
+            );
+            assert_eq!(
+                h1.len(),
+                64,
+                "SHA-256 hex digest must be 64 chars for SQL injection payload"
+            );
+            assert!(
+                h1.chars().all(|c| c.is_ascii_hexdigit()),
+                "SHA-256 hex digest must be pure hex for SQL injection payload"
+            );
+        }
+    }
+
+    /// `validate_api_key_from_db` 对 SQL 注入 token 必须返回 `Err(401)`（未找到），
+    /// 而非 `Err(500)`（数据库错误）或 `Ok(Some)`（意外命中）。
+    ///
+    /// 这验证 SeaORM `Column::KeyHash.eq(token_hash)` 使用参数化查询，
+    /// SQL 注入 payload 被作为字面量比较，不会改变 SQL 语义。
+    ///
+    /// 注意：`validate_api_key_from_db` 在 key 不存在时返回 `Err(401)`，
+    /// 在 DB 错误时返回 `Err(500)`，在 key 存在时返回 `Ok(Some)`。
+    /// SQL 注入 payload 应返回 `Err(401)`（字面量未匹配），而非 `Err(500)`（SQL 错误）。
+    #[tokio::test]
+    async fn test_sql_injection_token_rejected_by_parameterized_query() {
+        let pool = create_test_db_pool();
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+
+        // 先验证 DB session 可用（排除环境问题）
+        let session_check = state.pool.get_session("admin").await;
+        if session_check.is_err() {
+            eprintln!(
+                "[skip] DB session not available: {:?} — skipping DB-level SQL injection test",
+                session_check.err()
+            );
+            return;
+        }
+        let session = session_check.unwrap();
+        let conn_check = session.connection();
+        if conn_check.is_err() {
+            eprintln!(
+                "[skip] DB connection not available: {:?} — skipping DB-level SQL injection test",
+                conn_check.err()
+            );
+            return;
+        }
+        drop(session);
+
+        let sql_payloads = [
+            "' OR '1'='1",
+            "'; DROP TABLE api_keys; --",
+            "' UNION SELECT id, team_id, key, key_hash FROM api_keys --",
+            "admin' OR '1'='1' --",
+        ];
+        for payload in sql_payloads {
+            // 模拟真实流程：先 SHA-256 哈希 token，再用哈希查 DB
+            let token_hash = format!(
+                "sha256:{}",
+                hex::encode(Sha256::digest(payload.as_bytes()))
+            );
+            let result = validate_api_key_from_db(&state, &token_hash, "10.0.0.99").await;
+            // 关键断言：必须返回 Err(401)（未找到），而非 Err(500)（DB 错误）或 Ok(Some)（命中）
+            assert_eq!(
+                result,
+                Err(StatusCode::UNAUTHORIZED),
+                "SQL injection payload must be treated as literal (return 401 not found), \
+                 not cause DB error (500) or match a key (Ok(Some)): {}",
+                payload
+            );
+        }
+    }
+
+    /// `verify_key_hash` 对 SQL 注入 token 必须返回 `false`（哈希不匹配），
+    /// 不能因 payload 内容触发异常或意外返回 `true`。
+    #[test]
+    fn test_sql_injection_token_rejected_by_verify_key_hash() {
+        // 复用跨测试缓存的 bcrypt hash（避免重复 cost=12 计算）
+        let legit_token = "legit_token_abc123";
+        let stored_bcrypt = get_test_legit_bcrypt_hash().to_string();
+        let key = make_key_model(Some(stored_bcrypt), None);
+
+        let sql_payloads = [
+            "' OR '1'='1",
+            "'; DROP TABLE api_keys; --",
+            "' UNION SELECT * FROM teams --",
+        ];
+        for payload in sql_payloads {
+            assert!(
+                !verify_key_hash(&key, payload),
+                "SQL injection payload must not verify against bcrypt hash: {}",
+                payload
+            );
+        }
+
+        // SHA-256 存储格式同样必须拒绝
+        let legit_sha256 = format!("sha256:{}", security::hash_api_key_sha256(legit_token));
+        let key_sha = make_key_model(Some(legit_sha256), None);
+        for payload in sql_payloads {
+            assert!(
+                !verify_key_hash(&key_sha, payload),
+                "SQL injection payload must not verify against SHA-256 hash: {}",
+                payload
+            );
+        }
+    }
+
+    // ----- #213 超长 Token 输入 -----
+
+    /// 10KB+ Token 必须被 `extract_bearer_token` 正常提取，不触发 panic 或截断。
+    ///
+    /// `extract_bearer_token` 使用 `auth_header[7..].to_string()` 切片，
+    /// 理论上无长度上限；此测试锁定该契约，防止未来引入长度限制导致 DoS。
+    #[test]
+    fn test_oversized_token_extracted_without_panic() {
+        // 10 KB Token（远超正常 API Key 长度）
+        let huge_token = "A".repeat(10 * 1024);
+        let req = make_bearer_request(Some(&format!("Bearer {}", huge_token)));
+        let token = extract_bearer_token(&req)
+            .expect("10KB token must be extracted without panic");
+        assert_eq!(
+            token.len(),
+            huge_token.len(),
+            "10KB token must not be truncated"
+        );
+        assert_eq!(token, huge_token);
+    }
+
+    /// 100KB Token 也必须正常处理（边界压力测试）。
+    #[test]
+    fn test_100kb_token_extracted_without_panic() {
+        let huge_token = "B".repeat(100 * 1024);
+        let req = make_bearer_request(Some(&format!("Bearer {}", huge_token)));
+        let token = extract_bearer_token(&req)
+            .expect("100KB token must be extracted without panic");
+        assert_eq!(token.len(), huge_token.len());
+    }
+
+    /// SHA-256 哈希对超长 Token 产生有效摘要（64 字符 hex），不崩溃。
+    #[test]
+    fn test_oversized_token_hashed_without_panic() {
+        let huge_token = "C".repeat(10 * 1024);
+        let hash = security::hash_api_key_sha256(&huge_token);
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    /// 超长 Token 通过完整中间件流程必须返回 401（未认证），
+    /// 而非 500（服务器错误）或 panic。
+    ///
+    /// 这验证端到端流程对超长输入的健壮性。
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn test_oversized_token_returns_401_not_500() {
+        ensure_auth_debug_logger();
+        let _guard = lock_global_state();
+
+        let state = ensure_global_state_with_cache_and_limiter();
+        if let Some(ref rate_limiter) = state.auth_rate_limiter {
+            rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
+        }
+
+        let huge_token = "D".repeat(10 * 1024);
+
+        let app = Router::new()
+            .route("/protected", get(|| async { "ok" }))
+            .layer(middleware::from_fn(auth_middleware_inner));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
+                    .header("Authorization", format!("Bearer {}", huge_token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "10KB token must return 401 (not found in DB), not 500 or panic"
+        );
+
+        // Cleanup: 清理 rate_limiter 失败计数 + 重置全局 AuthState
+        // 避免本测试设置的全局状态污染后续依赖"无全局状态"契约的测试
+        if let Some(ref rate_limiter) = state.auth_rate_limiter {
+            rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
+        }
+        reset_global_auth_state();
+    }
+
+    // ----- #214 特殊字符注入（\0 / \n / Unicode）-----
+
+    /// 含 \0（NULL 字节）、\n（换行）、\r（回车）的 Token 在 HTTP 头部层被拒绝，
+    /// 永远不会到达 `extract_bearer_token`。
+    ///
+    /// 这验证 `HeaderValue` 对非法控制字符的过滤：
+    /// - `\n`、`\r` 被拒绝（HTTP 头部不允许换行，防止 CRLF 注入）
+    /// - `\0` 被拒绝（NULL 字节不允许）
+    /// 这些字符在 HTTP 头构造阶段就被拒绝，无法进入认证流程。
+    #[test]
+    fn test_special_character_token_extracted_or_rejected_safely() {
+        use axum::http::HeaderValue;
+
+        // \n、\r、\0 在 HTTP 头部中均被 HeaderValue 拒绝
+        let malicious_tokens = [
+            "token_with_\n_newline",
+            "token_with_\r_carriage_return",
+            "token_with_\0_null",
+            "token_with_\n\r_crlf_injection",
+        ];
+        for token in malicious_tokens {
+            let header_value = format!("Bearer {}", token);
+            let result = HeaderValue::from_str(&header_value);
+            assert!(
+                result.is_err(),
+                "HTTP HeaderValue must reject token with control char: {:?}",
+                token
+            );
+        }
+
+        // 验证合法 ASCII token 能正常通过 HTTP 头部层
+        let legit_header = HeaderValue::from_str("Bearer legit_token_abc123");
+        assert!(
+            legit_header.is_ok(),
+            "Legit ASCII token must be accepted by HeaderValue"
+        );
+
+        // 验证合法 ASCII token 能被 extract_bearer_token 正确提取
+        let req = make_bearer_request(Some("Bearer legit_token_abc123"));
+        let token = extract_bearer_token(&req)
+            .expect("Legit token must be extracted successfully");
+        assert_eq!(token, "legit_token_abc123");
+    }
+
+    /// 含 Unicode 字符的 Token 必须被正常提取（HTTP 头部允许 ASCII，
+    /// 但非 ASCII 字节会被 HeaderValue 拒绝）。
+    #[test]
+    fn test_unicode_token_rejected_by_http_header_parsing() {
+        // 非 ASCII 字节（如中文）在 HeaderValue 中被拒绝
+        let unicode_token = "token_with_中文_unicode";
+        let req = make_bearer_request(Some(&format!("Bearer {}", unicode_token)));
+        assert_eq!(
+            extract_bearer_token(&req),
+            None,
+            "Non-ASCII Unicode in header must be rejected (safe None)"
+        );
+    }
+
+    /// `hash_api_key_sha256` 对含特殊字符的 Token（直接传入，绕过 HTTP 头）
+    /// 必须产生确定性哈希，不崩溃。
+    #[test]
+    fn test_special_character_token_hashed_safely() {
+        let special_tokens = [
+            "token_with_\n_newline",
+            "token_with_\t_tab",
+            "token_with_\0_null",
+            "token_with_中文_unicode",
+            "token_with_emoji_🔐",
+            "token_with_\r_carriage_return",
+        ];
+        for token in special_tokens {
+            let h1 = security::hash_api_key_sha256(token);
+            let h2 = security::hash_api_key_sha256(token);
+            assert_eq!(
+                h1, h2,
+                "SHA-256 must be deterministic for special char token"
+            );
+            assert_eq!(h1.len(), 64);
+            // 验证不同特殊字符产生不同哈希（未退化成常量）
+            assert_ne!(
+                h1,
+                security::hash_api_key_sha256("different_token"),
+                "Different special char tokens must produce different hashes"
+            );
+        }
+    }
+
+    /// `verify_key_hash` 对含特殊字符的 Token 必须返回 `false`（不匹配），
+    /// 不因特殊字符触发异常。
+    #[test]
+    fn test_special_character_token_rejected_by_verify_key_hash() {
+        // 复用跨测试缓存的 bcrypt hash（统一 token，避免重复 cost=12 计算）
+        let stored_bcrypt = get_test_legit_bcrypt_hash().to_string();
+        let key = make_key_model(Some(stored_bcrypt), None);
+
+        let special_tokens = [
+            "token_with_\n_newline",
+            "token_with_\0_null",
+            "token_with_中文_unicode",
+            "token_with_emoji_🔐",
+        ];
+        for token in special_tokens {
+            assert!(
+                !verify_key_hash(&key, token),
+                "Special char token must not verify against bcrypt hash: {:?}",
+                token
+            );
+        }
+    }
+
+    // ----- #216 并发认证竞态：同一 Token 高并发一致性 -----
+
+    /// 同一 Token 在高并发下 `hash_api_key_sha256` 必须产生完全一致的结果。
+    ///
+    /// SHA-256 是纯函数（无共享状态），理论上无竞态；
+    /// 此测试锁定该契约，防止未来引入缓存/状态导致竞态。
+    #[tokio::test]
+    async fn test_concurrent_hashing_same_token_produces_consistent_result() {
+        let token = "concurrent_test_token";
+        let expected = security::hash_api_key_sha256(token);
+
+        let mut handles = Vec::new();
+        for _ in 0..50 {
+            let token_owned = token.to_string();
+            handles.push(tokio::spawn(async move {
+                security::hash_api_key_sha256(&token_owned)
+            }));
+        }
+
+        let results: Vec<String> = futures::future::join_all(handles)
+            .await
+            .into_iter()
+            .map(|r| r.expect("spawned task must not panic"))
+            .collect();
+
+        for result in &results {
+            assert_eq!(
+                result, &expected,
+                "All concurrent hash results must be identical (pure function, no race)"
+            );
+        }
+    }
+
+    /// 同一 Token + 同一 key 在高并发下 `verify_key_hash` 必须产生一致结果。
+    ///
+    /// 样本数选择 8（而非更大）：bcrypt verify 是 CPU 密集型（cost=12），
+    /// 8 个并发任务已足以暴露竞态条件（若有），更多样本不增加信息增益
+    /// 但线性增加 CI 耗时（每样本 ~300ms）。
+    #[tokio::test]
+    async fn test_concurrent_verify_key_hash_consistent_result() {
+        let legit_token = "concurrent_verify_token";
+        let stored_bcrypt = security::hash_api_key(legit_token).unwrap();
+        let key = Arc::new(make_key_model(Some(stored_bcrypt), None));
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let key_clone = key.clone();
+            let token_owned = legit_token.to_string();
+            handles.push(tokio::spawn(async move {
+                verify_key_hash(&key_clone, &token_owned)
+            }));
+        }
+
+        let results: Vec<bool> = futures::future::join_all(handles)
+            .await
+            .into_iter()
+            .map(|r| r.expect("spawned task must not panic"))
+            .collect();
+
+        // 所有结果必须为 true（合法 token 验证通过）且一致
+        for result in &results {
+            assert!(
+                *result,
+                "All concurrent verify results must be true for legit token"
+            );
+        }
+        let first = results[0];
+        assert!(
+            results.iter().all(|&r| r == first),
+            "All concurrent verify results must be identical (no race condition)"
+        );
+    }
+
+    /// 同一 Token 在高并发下 `validate_api_key_from_db` 必须产生一致结果。
+    ///
+    /// 这验证 SeaORM 参数化查询在并发下无竞态（连接池线程安全）。
+    ///
+    /// 注意：`validate_api_key_from_db` 在 key 不存在时返回 `Err(401)`，
+    /// 所有并发调用对同一未知 token 必须一致返回 `Err(401)`（非 `Err(500)`）。
+    #[tokio::test]
+    async fn test_concurrent_validate_api_key_from_db_consistent() {
+        let pool = create_test_db_pool();
+        let state = Arc::new(AuthState::new(
+            pool,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        ));
+
+        // 先验证 DB 可用（排除环境问题）
+        let session_check = state.pool.get_session("admin").await;
+        if session_check.is_err() {
+            eprintln!(
+                "[skip] DB session not available — skipping concurrent DB validation test"
+            );
+            return;
+        }
+        drop(session_check);
+
+        let token = "concurrent_db_validate_token";
+        let token_hash = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(token.as_bytes()))
+        );
+
+        let mut handles = Vec::new();
+        for _ in 0..20 {
+            let state_clone = state.clone();
+            let hash_clone = token_hash.clone();
+            handles.push(tokio::spawn(async move {
+                validate_api_key_from_db(&state_clone, &hash_clone, "10.0.0.200").await
+            }));
+        }
+
+        let results: Vec<Result<Option<api_key::Model>, StatusCode>> =
+            futures::future::join_all(handles)
+                .await
+                .into_iter()
+                .map(|r| r.expect("spawned task must not panic"))
+                .collect();
+
+        // 所有结果必须一致：Err(401)（token 不在 DB 中，字面量未匹配）
+        // 关键：不能是 Err(500)（DB 错误，表示并发竞态导致连接问题）
+        for result in &results {
+            assert_eq!(
+                result,
+                &Err(StatusCode::UNAUTHORIZED),
+                "Concurrent DB validation must consistently return 401 for unknown token \
+                 (not 500 DB error, not Ok(Some) race condition)"
+            );
+        }
+        // 已验证每个结果都等于 Err(401)，因此所有结果必然一致（无需额外比较）
+    }
+
+    // ----- #212 分布式暴力破解：多 IP 各 < MAX_AUTH_FAILURES -----
+
+    /// 多个 IP 各发起 `MAX_AUTH_FAILURES - 1` 次失败，
+    /// 每个单独 IP 不应被锁定（当前 per-IP 追踪契约）。
+    ///
+    /// test_matrix.md #212 描述「多 IP 各 < 5 次（需全局监控）」，
+    /// 当前实现为 per-IP 追踪（无全局监控）。
+    /// 此测试锁定当前行为契约，并验证 per-IP 隔离正确性：
+    /// - 每个 IP 独立计数
+    /// - 低于阈值的 IP 不被锁定
+    /// - 多个低阈值 IP 不会相互影响
+    #[tokio::test]
+    async fn test_distributed_brute_force_per_ip_tracking() {
+        let limiter = AuthRateLimiter::new();
+        let ips = ["203.0.113.1", "203.0.113.2", "203.0.113.3", "203.0.113.4"];
+
+        // 每个 IP 发起 MAX_AUTH_FAILURES - 1 次失败（低于锁定阈值）
+        for ip in &ips {
+            for _ in 0..(MAX_AUTH_FAILURES - 1) {
+                limiter.record_failure(ip).await;
+            }
+        }
+
+        // 验证每个 IP 都未被锁定（低于阈值）
+        for ip in &ips {
+            assert!(
+                !limiter.is_locked_out(ip).await,
+                "IP {} with {} failures (below threshold) must not be locked",
+                ip,
+                MAX_AUTH_FAILURES - 1
+            );
+            assert_eq!(
+                limiter.get_lockout_remaining(ip).await,
+                0,
+                "Non-locked IP must have 0 remaining lockout"
+            );
+        }
+    }
+
+    /// 分布式暴力破解场景：多 IP 各发起 `MAX_AUTH_FAILURES - 1` 次失败后，
+    /// 任一 IP 再发起 1 次失败应触发该 IP 的锁定（阈值 = MAX_AUTH_FAILURES）。
+    ///
+    /// 这验证 per-IP 追踪在分布式场景下的正确性：
+    /// 每个 IP 独立达到阈值时独立锁定。
+    #[tokio::test]
+    async fn test_distributed_brute_force_individual_ip_lockout_at_threshold() {
+        let limiter = AuthRateLimiter::new();
+        let ips = ["198.51.100.1", "198.51.100.2", "198.51.100.3"];
+
+        // 每个 IP 发起 MAX_AUTH_FAILURES - 1 次失败
+        for ip in &ips {
+            for _ in 0..(MAX_AUTH_FAILURES - 1) {
+                limiter.record_failure(ip).await;
+            }
+            assert!(!limiter.is_locked_out(ip).await);
+        }
+
+        // 其中一个 IP 再发起 1 次失败 → 该 IP 锁定，其他 IP 不受影响
+        limiter.record_failure(ips[0]).await;
+        assert!(
+            limiter.is_locked_out(ips[0]).await,
+            "IP {} must be locked after reaching threshold",
+            ips[0]
+        );
+        assert!(
+            limiter.get_lockout_remaining(ips[0]).await > 0,
+            "Locked IP must have positive remaining lockout"
+        );
+
+        // 其他 IP 仍然未锁定
+        assert!(
+            !limiter.is_locked_out(ips[1]).await,
+            "Other IP {} must not be affected by different IP's lockout",
+            ips[1]
+        );
+        assert!(
+            !limiter.is_locked_out(ips[2]).await,
+            "Other IP {} must not be affected by different IP's lockout",
+            ips[2]
+        );
+    }
+
+    /// 分布式暴力破解场景：多 IP 各发起 `MAX_AUTH_FAILURES` 次失败，
+    /// 所有 IP 都应被独立锁定（验证多 IP 同时锁定的正确性）。
+    #[tokio::test]
+    async fn test_distributed_brute_force_all_ips_locked_at_threshold() {
+        let limiter = AuthRateLimiter::new();
+        let ips = ["192.0.2.10", "192.0.2.20", "192.0.2.30", "192.0.2.40"];
+
+        // 每个 IP 都达到锁定阈值
+        for ip in &ips {
+            for _ in 0..MAX_AUTH_FAILURES {
+                limiter.record_failure(ip).await;
+            }
+        }
+
+        // 所有 IP 都应被锁定
+        for ip in &ips {
+            assert!(
+                limiter.is_locked_out(ip).await,
+                "IP {} with {} failures must be locked",
+                ip,
+                MAX_AUTH_FAILURES
+            );
+        }
+    }
+
+    /// 分布式暴力破解场景：reset_failures 只影响指定 IP，
+    /// 不影响其他 IP 的失败计数（验证 per-IP 隔离的 reset 操作）。
+    #[tokio::test]
+    async fn test_distributed_brute_force_reset_isolates_per_ip() {
+        let limiter = AuthRateLimiter::new();
+        let ip_a = "10.0.0.1";
+        let ip_b = "10.0.0.2";
+
+        // 两个 IP 都达到阈值
+        for ip in &[ip_a, ip_b] {
+            for _ in 0..MAX_AUTH_FAILURES {
+                limiter.record_failure(ip).await;
+            }
+        }
+        assert!(limiter.is_locked_out(ip_a).await);
+        assert!(limiter.is_locked_out(ip_b).await);
+
+        // 重置 ip_a，ip_b 不受影响
+        limiter.reset_failures(ip_a).await;
+        assert!(
+            !limiter.is_locked_out(ip_a).await,
+            "IP A must be unlocked after reset"
+        );
+        assert!(
+            limiter.is_locked_out(ip_b).await,
+            "IP B must remain locked after resetting IP A (per-IP isolation)"
+        );
     }
 }

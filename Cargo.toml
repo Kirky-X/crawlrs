@@ -7,7 +7,16 @@
 name = "crawlrs"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
+license = "Apache-2.0"
+description = "crawlrs - Enterprise-grade web scraping and crawling platform built with Rust"
+homepage = "https://github.com/Kirky-X/crawlrs"
+repository = "https://github.com/Kirky-X/crawlrs"
+documentation = "https://docs.rs/crawlrs"
+readme = "README.md"
+keywords = ["scraping", "crawling", "web-scraping", "data-extraction", "crawler"]
+categories = ["web-programming", "web-programming::http-client"]
 
 exclude = []
 

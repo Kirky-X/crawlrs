@@ -75,7 +75,7 @@ pub fn init_engines(
         engines.push(Arc::new(FlareSolverrEngine::with_tls_mode_and_url(
             http_client.clone(),
             &engine_config.fire_tls.url,
-            Some(proxy_url),
+            proxy_url,
         )));
     }
 
@@ -88,7 +88,7 @@ pub fn init_engines(
         engines.push(Arc::new(FlareSolverrEngine::with_cdp_mode_and_url(
             http_client.clone(),
             &engine_config.fire_cdp.url,
-            Some(proxy_url),
+            proxy_url,
         )));
     }
 
