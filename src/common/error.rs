@@ -454,7 +454,7 @@ impl From<crate::engines::engine_client::EngineError> for CrawlRsError {
 // 通用错误转换宏（从 utils/errors.rs 迁移）
 // =============================================================================
 
-/// 为错误类型生成标准 From 转换（From<String> / From<&str> / From<anyhow::Error>）
+/// 为错误类型生成标准 From 转换（`From<String>` / `From<&str>` / `From<anyhow::Error>`)
 ///
 /// 用法：`impl_basic_error_conversions!(MyError, TargetVariant);`
 #[macro_export]

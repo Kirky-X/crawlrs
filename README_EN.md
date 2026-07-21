@@ -6,7 +6,7 @@
 
 **High-Performance • Scalable • Type-Safe**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=build)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/releases) [![License](https://img.shields.io/github/license/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE) ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
+[![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=build)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/releases) [![License](https://img.shields.io/github/license/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE) ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange)
 
 **English** | **[中文](README.md)**
 
@@ -124,7 +124,7 @@ Compared to Node.js implementations:
 
 | Requirement | Minimum Version | Recommended |
 |-------------|------------------|---------------|
-| Rust | 1.70+ | Latest stable |
+| Rust | 1.95+ | Latest stable |
 | PostgreSQL | 14+ | Latest stable |
 | Docker | 20+ | Latest |
 

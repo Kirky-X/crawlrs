@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// * `api_key` - LLM API 密钥（敏感信息，仅 crate 可见）
 /// * `model` - 使用的模型名称，默认 "gpt-3.5-turbo"
-/// * `api_base_url` - LLM API 基础 URL，默认 "https://api.openai.com/v1"
+/// * `api_base_url` - LLM API 基础 URL，默认 <https://api.openai.com/v1>
 ///
 /// # 安全提示
 ///

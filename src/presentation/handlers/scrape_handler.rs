@@ -99,10 +99,7 @@ pub async fn create_scrape(
                     auth_state.api_key_id,
                     e
                 );
-                return errors::bad_request(format!(
-                    "SSRF protection: proxy URL rejected: {}",
-                    e
-                ));
+                return errors::bad_request(format!("SSRF protection: proxy URL rejected: {}", e));
             }
         }
     }

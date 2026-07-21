@@ -1243,7 +1243,9 @@ pub fn test_auth_state(db: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid) -> Auth
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::test_helpers::{create_test_db_pool, resolve_test_database_url, skip_if_no_test_db};
+    use crate::common::test_helpers::{
+        create_test_db_pool, resolve_test_database_url, skip_if_no_test_db,
+    };
     use crate::domain::repositories::auth_scope_repository::{
         AuthScopeRepository, RepositoryError,
     };
@@ -2613,12 +2615,7 @@ mod tests {
             .await
             .expect("Failed to acquire held session for #74 test");
 
-        let state = AuthState::new(
-            pool,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            ApiKeyScope::default(),
-        );
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
 
         // 此时 validate_api_key_from_db 内部 get_session 会超时 → map_err → 500
         let result = validate_api_key_from_db(&state, "some_hash", TEST_UNKNOWN_IP).await;
@@ -3597,10 +3594,7 @@ mod tests {
         ];
         for payload in sql_payloads {
             // 模拟真实流程：先 SHA-256 哈希 token，再用哈希查 DB
-            let token_hash = format!(
-                "sha256:{}",
-                hex::encode(Sha256::digest(payload.as_bytes()))
-            );
+            let token_hash = format!("sha256:{}", hex::encode(Sha256::digest(payload.as_bytes())));
             let result = validate_api_key_from_db(&state, &token_hash, "10.0.0.99").await;
             // 关键断言：必须返回 Err(401)（未找到），而非 Err(500)（DB 错误）或 Ok(Some)（命中）
             assert_eq!(
@@ -3658,8 +3652,7 @@ mod tests {
         // 10 KB Token（远超正常 API Key 长度）
         let huge_token = "A".repeat(10 * 1024);
         let req = make_bearer_request(Some(&format!("Bearer {}", huge_token)));
-        let token = extract_bearer_token(&req)
-            .expect("10KB token must be extracted without panic");
+        let token = extract_bearer_token(&req).expect("10KB token must be extracted without panic");
         assert_eq!(
             token.len(),
             huge_token.len(),
@@ -3673,8 +3666,8 @@ mod tests {
     fn test_100kb_token_extracted_without_panic() {
         let huge_token = "B".repeat(100 * 1024);
         let req = make_bearer_request(Some(&format!("Bearer {}", huge_token)));
-        let token = extract_bearer_token(&req)
-            .expect("100KB token must be extracted without panic");
+        let token =
+            extract_bearer_token(&req).expect("100KB token must be extracted without panic");
         assert_eq!(token.len(), huge_token.len());
     }
 
@@ -3741,6 +3734,7 @@ mod tests {
     /// 这验证 `HeaderValue` 对非法控制字符的过滤：
     /// - `\n`、`\r` 被拒绝（HTTP 头部不允许换行，防止 CRLF 注入）
     /// - `\0` 被拒绝（NULL 字节不允许）
+    ///
     /// 这些字符在 HTTP 头构造阶段就被拒绝，无法进入认证流程。
     #[test]
     fn test_special_character_token_extracted_or_rejected_safely() {
@@ -3772,8 +3766,7 @@ mod tests {
 
         // 验证合法 ASCII token 能被 extract_bearer_token 正确提取
         let req = make_bearer_request(Some("Bearer legit_token_abc123"));
-        let token = extract_bearer_token(&req)
-            .expect("Legit token must be extracted successfully");
+        let token = extract_bearer_token(&req).expect("Legit token must be extracted successfully");
         assert_eq!(token, "legit_token_abc123");
     }
 
@@ -3935,18 +3928,13 @@ mod tests {
         // 先验证 DB 可用（排除环境问题）
         let session_check = state.pool.get_session("admin").await;
         if session_check.is_err() {
-            eprintln!(
-                "[skip] DB session not available — skipping concurrent DB validation test"
-            );
+            eprintln!("[skip] DB session not available — skipping concurrent DB validation test");
             return;
         }
         drop(session_check);
 
         let token = "concurrent_db_validate_token";
-        let token_hash = format!(
-            "sha256:{}",
-            hex::encode(Sha256::digest(token.as_bytes()))
-        );
+        let token_hash = format!("sha256:{}", hex::encode(Sha256::digest(token.as_bytes())));
 
         let mut handles = Vec::new();
         for _ in 0..20 {

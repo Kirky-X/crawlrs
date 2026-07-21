@@ -38,7 +38,7 @@ pub use cache_service::OxcacheService;
 ///
 /// # Implementations
 ///
-/// - [`OxcacheService`](cache_service::OxcacheService) — wraps `oxcache::Cache<String, String>`
+/// - [`OxcacheService`] — wraps `oxcache::Cache<String, String>`
 ///
 /// # Usage
 ///

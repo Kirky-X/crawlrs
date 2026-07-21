@@ -6,7 +6,7 @@
 
 **高性能 • 可扩展 • 类型安全**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=build)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/releases) [![License](https://img.shields.io/github/license/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE) ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
+[![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=build)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/releases) [![License](https://img.shields.io/github/license/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE) ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange)
 
 **[English](README_EN.md)** | **中文**
 
@@ -124,7 +124,7 @@
 
 | 要求 | 最低版本 | 推荐版本 |
 |-------------|------------------|---------------|
-| Rust | 1.70+ | 最新稳定版 |
+| Rust | 1.95+ | 最新稳定版 |
 | PostgreSQL | 14+ | 最新稳定版 |
 | Docker | 20+ | 最新版 |
 

@@ -10,8 +10,8 @@
 //!
 //! # Module Structure
 //!
-//! - [`modules`](modules) — trait-kit module definitions (Settings, Database, Http, Cache, etc.)
-//! - [`axum_state`](axum_state::CrawlRsState) — Axum integration; `CrawlRsState::from_kit` is the
+//! - `modules` — trait-kit module definitions (Settings, Database, Http, Cache, etc.)
+//! - `axum_state` — Axum integration; `CrawlRsState::from_kit` is the
 //!   canonical entry point after building the `AsyncKit`
 
 // Core DI modules

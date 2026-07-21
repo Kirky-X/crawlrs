@@ -40,7 +40,7 @@ impl DatabasePool {
         &self.inner
     }
 
-    /// Clone the inner Arc<DbPool> for dependency injection
+    /// Clone the inner `Arc<DbPool>` for dependency injection
     ///
     /// # Performance
     ///

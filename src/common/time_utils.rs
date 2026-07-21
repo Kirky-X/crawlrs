@@ -20,7 +20,7 @@ pub const UTC_OFFSET: FixedOffset = {
     }
 };
 
-/// 将 DateTime<Utc> 转换为数据库存储格式
+/// 将 `DateTime<Utc>` 转换为数据库存储格式
 ///
 /// # Arguments
 /// * `dt` - UTC 时间
@@ -44,7 +44,7 @@ pub fn to_db_datetime_opt(dt: Option<DateTime<Utc>>) -> Option<DateTime<FixedOff
     dt.map(|d| d.with_timezone(&UTC_OFFSET))
 }
 
-/// 从数据库格式转换为 DateTime<Utc>
+/// 从数据库格式转换为 `DateTime<Utc>`
 ///
 /// # Arguments
 /// * `dt` - FixedOffset 时间格式

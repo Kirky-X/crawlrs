@@ -66,12 +66,10 @@ where
     // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证，
     // 与 scrape_handler / crawl_handler 保持一致，在入队前拦截恶意 URL。
     // 并行化避免 N 个 URL 串行 DNS 解析的 N 倍延迟。
-    let validation_results = futures::future::join_all(
-        payload.urls.iter().map(|url| validate_url(url)),
-    )
-    .await;
+    let validation_results =
+        futures::future::join_all(payload.urls.iter().map(|url| validate_url(url))).await;
 
-    for (url, result) in payload.urls.iter().zip(validation_results.into_iter()) {
+    for (url, result) in payload.urls.iter().zip(validation_results) {
         if let Err(e) = result {
             log::warn!(
                 "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",

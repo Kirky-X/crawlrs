@@ -7,7 +7,7 @@
 name = "crawlrs"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.95"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
 license = "Apache-2.0"
 description = "crawlrs - Enterprise-grade web scraping and crawling platform built with Rust"

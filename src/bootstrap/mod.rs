@@ -10,12 +10,12 @@
 //!
 //! # Module Structure
 //!
-//! - [`telemetry`](telemetry) - Telemetry and metrics initialization
-//! - [`config`](config) - Configuration loading and validation
-//! - [`infrastructure`](infrastructure) - Database, cache (oxcache), repositories
-//! - [`engines`](engines) - Scraper engines and router
-//! - [`services`](services) - Application services
-//! - [`routes`](routes) - Route configuration and application builder
+//! - `telemetry` - Telemetry and metrics initialization
+//! - `config` - Configuration loading and validation
+//! - `infrastructure` - Database, cache (oxcache), repositories
+//! - `engines` - Scraper engines and router
+//! - `services` - Application services
+//! - `routes` - Route configuration and application builder
 
 pub mod config;
 pub mod engines;

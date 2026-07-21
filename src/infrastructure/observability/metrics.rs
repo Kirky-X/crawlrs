@@ -582,12 +582,12 @@ mod tests {
         let cpu = component.cpu_usage();
         let mem = component.memory_usage();
         assert!(
-            cpu >= 0.0 && cpu <= 1.0,
+            (0.0..=1.0).contains(&cpu),
             "cpu usage should be in [0, 1], got {}",
             cpu
         );
         assert!(
-            mem >= 0.0 && mem <= 1.0,
+            (0.0..=1.0).contains(&mem),
             "memory usage should be in [0, 1], got {}",
             mem
         );
@@ -645,8 +645,8 @@ mod tests {
         let cpu1 = monitor.cpu_usage();
         let cpu2 = monitor.cpu_usage();
         // Both should be in valid range
-        assert!(cpu1 >= 0.0 && cpu1 <= 1.0);
-        assert!(cpu2 >= 0.0 && cpu2 <= 1.0);
+        assert!((0.0..=1.0).contains(&cpu1));
+        assert!((0.0..=1.0).contains(&cpu2));
     }
 
     // ========== check_alerts tests ==========
@@ -720,7 +720,7 @@ mod tests {
         let mut monitor = MutableSystemMonitor::new();
         monitor.refresh();
         let cpu = monitor.cpu_usage();
-        assert!(cpu >= 0.0 && cpu <= 1.0);
+        assert!((0.0..=1.0).contains(&cpu));
     }
 
     #[test]
@@ -728,7 +728,7 @@ mod tests {
         let mut monitor = MutableSystemMonitor::new();
         monitor.refresh();
         let mem = monitor.memory_usage();
-        assert!(mem >= 0.0 && mem <= 1.0);
+        assert!((0.0..=1.0).contains(&mem));
     }
 
     #[test]
@@ -738,8 +738,8 @@ mod tests {
             monitor.refresh();
             let cpu = monitor.cpu_usage();
             let mem = monitor.memory_usage();
-            assert!(cpu >= 0.0 && cpu <= 1.0);
-            assert!(mem >= 0.0 && mem <= 1.0);
+            assert!((0.0..=1.0).contains(&cpu));
+            assert!((0.0..=1.0).contains(&mem));
         }
     }
 
@@ -759,8 +759,8 @@ mod tests {
         // Verify monitor is still functional after update
         let cpu = monitor.cpu_usage();
         let mem = monitor.memory_usage();
-        assert!(cpu >= 0.0 && cpu <= 1.0);
-        assert!(mem >= 0.0 && mem <= 1.0);
+        assert!((0.0..=1.0).contains(&cpu));
+        assert!((0.0..=1.0).contains(&mem));
     }
 
     #[test]
@@ -772,8 +772,8 @@ mod tests {
         }
         let cpu = monitor.cpu_usage();
         let mem = monitor.memory_usage();
-        assert!(cpu >= 0.0 && cpu <= 1.0);
-        assert!(mem >= 0.0 && mem <= 1.0);
+        assert!((0.0..=1.0).contains(&cpu));
+        assert!((0.0..=1.0).contains(&mem));
     }
 
     // =========================================================================
