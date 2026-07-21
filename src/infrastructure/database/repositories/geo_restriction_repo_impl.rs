@@ -277,7 +277,7 @@ mod tests {
         repo.seed_test_data().await;
         let restrictions = repo.restrictions.read().await;
         // Both seeded teams should have geo restrictions enabled
-        for (_, team_geo) in restrictions.iter() {
+        for team_geo in restrictions.values() {
             assert!(
                 team_geo.enable_geo_restrictions,
                 "seeded team should have geo restrictions enabled"
