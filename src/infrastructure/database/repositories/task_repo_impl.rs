@@ -1017,6 +1017,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_expire_tasks_with_real_db_returns_zero_when_none_expired() {
+        // 序列化：防止 acquire_next 测试获取此测试创建的 queued task
+        let _guard = acquire_next_test_mutex().lock().await;
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         // Create a fresh queued task that is not stale (just created).
         let task = make_test_task_with_unique_url();
@@ -1031,6 +1033,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_expire_tasks_with_real_db_expires_past_expires_at() {
+        // 序列化：防止 acquire_next 测试获取此测试创建的 queued task（status→active），
+        // 导致 expire_tasks 不再匹配 status='queued' 条件
+        let _guard = acquire_next_test_mutex().lock().await;
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let mut task = make_test_task();
         // Set expires_at in the past so the task should be expired.
