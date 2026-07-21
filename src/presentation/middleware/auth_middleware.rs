@@ -1243,7 +1243,7 @@ pub fn test_auth_state(db: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid) -> Auth
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::test_helpers::create_test_db_pool;
+    use crate::common::test_helpers::{create_test_db_pool, resolve_test_database_url, skip_if_no_test_db};
     use crate::domain::repositories::auth_scope_repository::{
         AuthScopeRepository, RepositoryError,
     };
@@ -2559,6 +2559,75 @@ mod tests {
             result.unwrap_err(),
             StatusCode::UNAUTHORIZED,
             "non-existent token_hash must map to UNAUTHORIZED"
+        );
+    }
+
+    /// #74: 数据库连接获取失败时 `validate_api_key_from_db` 必须返回 500。
+    ///
+    /// 测试策略：创建 `max_connections=1, acquire_timeout=10ms` 的连接池，
+    /// 先占住唯一连接（不 drop），再调用 `validate_api_key_from_db`。
+    /// 此时 `get_session` → `acquire_connection` 因信号量超时返回
+    /// `ConnAcquireErr::Timeout`，经 `map_err` 转换为 500。
+    /// `acquire_timeout=10ms` 足够稳定：信号量等待是纯进程内操作（无网络往返），
+    /// 在任何 CI 环境 10ms 都有充分余量。
+    ///
+    /// **为何不用 `DbPool::try_from` + 无效 URL**：`permission` feature 被
+    /// 传递性启用后，`try_from` 同步构造直接返回 `Err`（需 async 初始化
+    /// 缓存），无法获得 `DbPool` 实例。`with_config` 则在构造时预连接，
+    /// 无效 URL 会让 `with_config` 本身失败。连接池耗尽是唯一能在持有
+    /// `DbPool` 实例的同时让 `get_session` 失败的方式。
+    ///
+    /// **覆盖的场景**：连接池无法提供可用连接（pool exhausted/timeout），
+    /// 这是"数据库连接失败"在生产环境中的典型表现（DB 宕机/网络分区导致
+    /// 连接全部失效后，新连接创建也会失败，最终同样触发此路径）。
+    #[tokio::test]
+    async fn test_validate_api_key_db_connection_failure_returns_500() {
+        use dbnexus::DbConfig;
+
+        if skip_if_no_test_db() {
+            return;
+        }
+
+        let url = resolve_test_database_url()
+            .expect("TEST_DATABASE_URL or DATABASE_URL required for #74 test");
+
+        // max_connections=1 + acquire_timeout=10ms：
+        // 先占住唯一连接，后续 get_session 在信号量上等待至超时（纯进程内，无网络）
+        let cfg = DbConfig {
+            url,
+            max_connections: 1,
+            min_connections: 0,
+            acquire_timeout: 10,
+            ..Default::default()
+        };
+
+        let pool = Arc::new(
+            DbPool::with_config(cfg)
+                .await
+                .expect("Failed to create DbPool for #74 test"),
+        );
+
+        // 先占住唯一连接（_held_session 不 drop，信号量保持 0 许可）
+        let _held_session = pool
+            .get_session("admin")
+            .await
+            .expect("Failed to acquire held session for #74 test");
+
+        let state = AuthState::new(
+            pool,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        );
+
+        // 此时 validate_api_key_from_db 内部 get_session 会超时 → map_err → 500
+        let result = validate_api_key_from_db(&state, "some_hash", TEST_UNKNOWN_IP).await;
+
+        assert_eq!(
+            result,
+            Err(StatusCode::INTERNAL_SERVER_ERROR),
+            "DB connection acquisition failure (pool exhausted/timeout) must return 500 \
+             (INTERNAL_SERVER_ERROR), not panic or return other status code"
         );
     }
 
