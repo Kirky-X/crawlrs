@@ -81,7 +81,7 @@ pub fn create_test_db_pool() -> Arc<DbPool> {
 /// 全局 mutex 用于序列化所有 `acquire_next` 相关测试。
 ///
 /// `acquire_next` 获取任何 `queued` task（不按 team_id 过滤），共享测试数据库
-/// + 并行测试会导致测试间相互干扰：一个测试创建的 task 可能被另一个测试的
+/// 以及并行测试会导致测试间相互干扰：一个测试创建的 task 可能被另一个测试的
 /// `acquire_next` 获取，导致返回 `None`（flaky test）。此 mutex 确保同一时间
 /// 只有一个 `acquire_next` 测试在运行，消除竞争条件。
 ///
