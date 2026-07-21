@@ -2,180 +2,172 @@
 
 ![Logo](docs/image/logo.png)
 
-### 🚀 Enterprise-grade Web Scraping Platform built with Rust
+### 🚀 使用 Rust 构建的企业级网页数据采集平台
 
-**High-Performance • Scalable • Type-Safe**
+**高性能 • 可扩展 • 类型安全**
 
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
-![License](https://img.shields.io/badge/license-Apache%202.0-green)
-![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
+![Build Status](https://img.shields.io/badge/build-passing-brightgreen) ![Version](https://img.shields.io/badge/version-0.1.0-blue) ![License](https://img.shields.io/badge/license-Apache%202.0-green) ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
 
 </div>
 
+## 📖 目录
 
-## 📖 Table of Contents
-
-- [Overview](#overview)
-- [Performance Benchmarks](#performance-benchmarks)
-- [Key Features](#key-features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [API Documentation](#api-documentation)
-- [Architecture](#architecture)
-- [Deployment](#deployment)
-- [Testing](#testing)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
-- [Support](#support)
+- [概述](#概述)
+- [性能基准](#性能基准)
+- [核心特性](#核心特性)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [配置](#配置)
+- [API 文档](#api-文档)
+- [架构](#架构)
+- [部署](#部署)
+- [测试](#测试)
+- [路线图](#路线图)
+- [贡献](#贡献)
+- [许可证](#许可证)
+- [支持](#支持)
 
 ---
 
-## 📝 Overview <span id="overview"></span>
+## 📝 概述 <span id="概述"></span>
 
-**crawlrs** is a high-performance, enterprise-level web data collection platform designed for developers. It provides comprehensive capabilities including:
+**crawlrs** 是一个面向开发者的高性能企业级网页数据采集平台，提供全面的数据采集能力：
 
-| Capability | Description |
+| 能力 | 描述 |
 |------------|-------------|
-| 🔍 **Search** | Unified search across Google, Bing, Baidu, and Sogou |
-| 🎯 **Scrape** | Extract data from single web pages |
-| 🕷️ **Crawl** | Automatically discover and scrape multiple pages |
-| 📊 **Extract** | Parse and structure data from HTML |
-| 🗺️ **Map** | Visualize and organize crawled data |
+| 🔍 **搜索** | 统一的 Google、Bing、百度和搜狗搜索 |
+| 🎯 **抓取** | 从单个网页提取数据 |
+| 🕷️ **爬取** | 自动发现并爬取多个页面 |
+| 📊 **提取** | 从 HTML 解析和结构化数据 |
+| 🗺️ **映射** | 可视化和组织爬取的数据 |
 
-Built with Rust, crawlrs delivers exceptional performance:
+采用 Rust 构建，crawlrs 提供卓越的性能：
 
-| Metric | Improvement |
+| 指标 | 提升幅度 |
 |--------|-------------|
-| **Throughput** | 3-5x higher than Node.js |
-| **P99 Latency** | 50% reduction |
-| **Memory Usage** | 75% lower consumption |
-| **CPU Usage** | 59% lower utilization |
+| **吞吐量** | 相比 Node.js 提升 3-5 倍 |
+| **P99 延迟** | 降低 50% |
+| **内存使用** | 降低 75% |
+| **CPU 使用** | 降低 59% |
 
 ---
 
-## 📊 Performance Benchmarks <span id="performance-benchmarks"></span>
+## 📊 性能基准 <span id="性能基准"></span>
 
-Compared to Node.js implementations:
+与 Node.js 实现相比：
 
-| Metric | Node.js | Rust (crawlrs) | Improvement |
-|--------|----------|----------------|-------------|
-| Throughput | 1,200 req/s | 4,500 req/s | **3.75x** |
-| P99 Latency | 450ms | 180ms | **60%** |
-| Memory Usage | 512 MB | 128 MB | **75%** |
-| CPU Usage | 85% | 35% | **59%** |
+| 指标 | Node.js 版本 | Rust 版本 (crawlrs) | 提升 |
+|--------|----------------|----------------------|------|
+| 吞吐量 | 1,200 请求/秒 | 4,500 请求/秒 | **3.75x** |
+| P99 延迟 | 450ms | 180ms | **60%** |
+| 内存使用 | 512 MB | 128 MB | **75%** |
+| CPU 使用 | 85% | 35% | **59%** |
 
 ---
 
-## ✨ Key Features <span id="key-features"></span>
+## ✨ 核心特性 <span id="核心特性"></span>
 
-### 🚀 High Performance
+### 🚀 高性能
 
-| Feature | Benefit |
+| 特性 | 优势 |
 |---------|---------|
-| 3-5x throughput improvement | Faster data collection |
-| 50% reduction in P99 latency | Real-time response times |
-| Zero-cost abstractions | Rust's safety guarantees without overhead |
-| Memory efficiency | 75% lower memory usage than Node.js |
+| 3-5 倍吞吐量提升 | 更快的数据采集 |
+| 50% 的 P99 延迟降低 | 实时响应时间 |
+| 零成本抽象 | Rust 的安全性保证无额外开销 |
+| 内存效率 | 相比 Node.js 降低 75% 的内存使用 |
 
-### 🔍 Multi-Engine Support
+### 🔍 多引擎支持
 
-| Engine | Use Case | Performance | Cost |
+| 引擎 | 用例 | 性能 | 成本 |
 |--------|----------|------------|-------|
-| **Reqwest** | Static HTML, API responses | ⚡ Fastest | 💰 Lowest |
-| **Playwright** | JavaScript-heavy SPAs, interactions | 🐢 Slower | 💳 Higher |
-| **FlareSolverr** | Anti-bot protected sites | 🚀 Variable | 💎 Variable |
+| **Reqwest** | 静态 HTML、API 响应 | ⚡ 最快 | 💰 最低 |
+| **Playwright** | JavaScript 密集的 SPA、交互 | 🐢 较慢 | 💳 较高 |
+| **FlareSolverr** | 反爬虫保护网站 | 🚀 可变 | 💎 可变 |
 
-### 🔎 Unified Search
+### 🔎 统一搜索
 
-| Capability | Description |
+| 能力 | 描述 |
 |------------|-------------|
-| Multi-engine support | Google, Bing, Baidu, Sogou |
-| A/B testing | Compare results across engines |
-| Auto deduplication | Remove duplicate results |
-| Result aggregation | Unified output format |
+| 多引擎支持 | Google、Bing、百度、搜狗 |
+| A/B 测试 | 跨引擎比较结果 |
+| 自动去重 | 删除重复结果 |
+| 结果聚合 | 统一的输出格式 |
 
-### 📊 Enterprise Features
+### 📊 企业级功能
 
-| Feature | Description |
+| 特性 | 描述 |
 |---------|-------------|
-| **Rate Limiting** | Per-team concurrency and RPM controls |
-| **Caching** | oxcache-based caching (moka memory backend) with TTL |
-| **Metrics & Monitoring** | Prometheus-compatible export |
-| **Webhooks** | Event-driven task notifications |
-| **API Key Authentication** | Scoped access and team isolation |
-| **Audit Logging** | Complete request tracking |
+| **速率限制** | 每团队并发和 RPM 控制 |
+| **缓存** | 基于 oxcache 的 TTL 缓存（moka 内存后端） |
+| **指标与监控** | Prometheus 兼容的导出 |
+| **Webhooks** | 事件驱动的任务完成通知 |
+| **API Key 认证** | 作用域访问控制和团队隔离 |
+| **审计日志** | 完整的请求跟踪 |
 
-### 🏗️ Architecture
+### 🏗️ 架构
 
-| Layer | Technology | Purpose |
+| 层次 | 技术 | 用途 |
 |--------|------------|---------|
-| Presentation | Axum | HTTP handlers, middleware |
-| Application | Use Cases | Business logic orchestration |
-| Domain | Traits | Core entities and services |
-| Infrastructure | Postgres | External integrations |
+| 表现层 | Axum | HTTP 处理器、中间件 |
+| 应用层 | Use Cases | 业务逻辑编排 |
+| 领域层 | Traits | 核心实体和服务 |
+| 基础设施层 | Postgres | 外部集成 |
 
 ---
 
-## 📦 Installation <span id="installation"></span>
+## 📦 安装 <span id="安装"></span>
 
-### Prerequisites
+### 前置要求
 
-| Requirement | Minimum Version | Recommended |
+| 要求 | 最低版本 | 推荐版本 |
 |-------------|------------------|---------------|
-| Rust | 1.70+ | Latest stable |
-| PostgreSQL | 14+ | Latest stable |
-| Docker | 20+ | Latest |
+| Rust | 1.70+ | 最新稳定版 |
+| PostgreSQL | 14+ | 最新稳定版 |
+| Docker | 20+ | 最新版 |
 
-### Build from Source
+### 从源码构建
 
 ```bash
-# Clone repository
+# 克隆仓库
 git clone https://github.com/your-org/crawlrs.git
 cd crawlrs
 
-# Install with the `standard` preset (core stack + Playwright + metrics)
+# 使用 standard 预设安装（核心栈 + Playwright + metrics）
 cargo build --release --features standard
 
-# Install with all features (standard + engine-flaresolverr)
+# 安装所有特性（standard + engine-flaresolverr）
 cargo build --release --features full
 
-# Install with custom features
+# 使用自定义特性安装
 cargo build --release --features "engine-playwright,metrics"
 ```
 
-### Feature Flags
+### 特性标志
 
-> **Note:** `default = []` — no features are enabled by default. Use a preset (`standard` / `full`) or list features explicitly.
+> **注意：** `default = []` — 默认不启用任何特性。使用预设（`standard` / `full`）或显式列出所需特性。
 
-> **Core stack is non-optional since v0.2.** Core dependencies (oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit + scraper / chardetng / encoding_rs / robotstxt) and the HTTP fetching stack are always compiled in; they are no longer exposed as features.
+> **核心栈自 v0.2 起为非可选。** 核心依赖（oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit + scraper / chardetng / encoding_rs / robotstxt）与 HTTP 抓取栈始终编译，不再以 feature 形式暴露。
 
-| Feature | Description | Default |
+| 特性 | 描述 | 默认 |
 |---------|-------------|----------|
-| `engine-playwright` | Browser automation with Chromium | ❌ No |
-| `engine-flaresolverr` | FlareSolverr anti-bot protection (covers Full/Cdp/Tls modes) | ❌ No |
-| `metrics` | Prometheus metrics export | ❌ No |
-| `genai-llm` | LLM extraction via genai | ❌ No |
-| `browser-download` | Auto-download browser for Playwright | ❌ No |
+| `engine-playwright` | 基于 Chromium 的浏览器自动化 | ❌ 否 |
+| `engine-flaresolverr` | FlareSolverr 反爬虫保护（涵盖 Full/Cdp/Tls 模式） | ❌ 否 |
+| `metrics` | Prometheus 指标导出 | ❌ 否 |
+| `genai-llm` | 基于 genai 的 LLM 抽取 | ❌ 否 |
+| `browser-download` | 自动下载 Playwright 浏览器 | ❌ 否 |
 
-> **Note:** `openapi` is not a Cargo feature — it is a cfg marker generated by `sdforge_macros`'s `#[forge]` macro for OpenAPI spec emission. Users do not need to enable it; it is automatically active when sdforge is compiled (which is always, since Task9).
+> **说明：** `openapi` 不是 Cargo feature——它是 `sdforge_macros` 的 `#[forge]` 宏生成的 cfg 标记，用于 OpenAPI 规范输出。用户无需显式启用；Task9 后 sdforge 总是编译，openapi 自动生效。
 
----
+### 预设与编译体积
 
-## 🔧 Compilation Features <span id="compilation-features"></span>
+本项目通过 Cargo 特性控制可选功能。自 v0.2 起，核心栈（oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。
 
-本项目支持通过 Cargo 特性灵活控制编译功能和二进制体积。自 v0.2 起，核心栈（oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。
-
-### 预设配置
-
-| 配置 | 特性组合 | 二进制大小 | 适用场景 |
+| 预设 | 特性组合 | 二进制大小 | 适用场景 |
 |-----|---------|-----------|---------|
 | standard | `engine-playwright, metrics` | ~35MB | 需要 JS 渲染（核心栈默认包含） |
 | full | `standard + engine-flaresolverr` | ~52MB | 所有功能 |
 
-> **Note:** `default = []` 不出现在预设表中，因为它不启用任何可选特性，仅编译核心栈（约 ~30MB）；用于按需显式启用场景。
+> **注意：** `default = []` 不出现在预设表中，因为它不启用任何可选特性，仅编译核心栈（约 ~30MB）；用于按需显式启用场景。
 
 ### 自定义组合
 
@@ -199,13 +191,13 @@ cargo build --release --no-default-features
 
 ---
 
-## 🚀 Quick Start <span id="quick-start"></span>
+## 🚀 快速开始 <span id="快速开始"></span>
 
-Get up and running in under 5 minutes!
+5 分钟内启动并运行！
 
-### 1️⃣ Configuration
+### 1️⃣ 配置
 
-Create a configuration file `config/default.toml`:
+创建配置文件 `config/default.toml`：
 
 ```toml
 # config/default.toml
@@ -235,123 +227,118 @@ baidu_enabled = true
 sogou_enabled = true
 ```
 
-### 2️⃣ Database Setup
+### 2️⃣ 数据库设置
 
 ```bash
-# Run migrations using built-in CLI
+# 使用内置 CLI 运行迁移
 cargo run --bin crawlrs -- migrate
 
-# Or with SQLx CLI
+# 或使用 SQLx CLI
 sqlx database create
 sqlx migrate run
 ```
 
-### 3️⃣ Run Server
+### 3️⃣ 运行服务器
 
 ```bash
-# Development mode with hot reloading
+# 开发模式（热重载）
 cargo run --bin crawlrs
 
-# Production mode
+# 生产模式
 ./target/release/crawlrs
 ```
 
-### 4️⃣ Verify Installation
+### 4️⃣ 验证安装
 
 ```bash
-# Health check
+# 健康检查
 curl http://localhost:8899/health
 
-# Expected response:
+# 预期响应：
 # {"status":"healthy"}
 ```
 
 ---
 
-## ⚙️ Configuration <span id="configuration"></span>
+## ⚙️ 配置 <span id="配置"></span>
 
-### Environment Variables
+### 环境变量
 
-| Variable | Description | Default | Required |
-|----------|-------------|----------|-----------|
-| `DATABASE_URL` | PostgreSQL connection string | - | Yes |
-| `SERVER_HOST` | Server bind address | 0.0.0.0 | No |
-| `SERVER_PORT` | Server port | 8899 | No |
-| `LOG_LEVEL` | Logging level | info | No |
+| 环境变量 | 描述 | 默认值 | 必需 |
+|-------------|----------|--------|------|
+| `DATABASE_URL` | PostgreSQL 连接字符串 | - | 是 |
+| `SERVER_HOST` | 服务器绑定地址 | 0.0.0.0 | 否 |
+| `SERVER_PORT` | 服务器端口 | 8899 | 否 |
+| `LOG_LEVEL` | 日志级别 | info | 否 |
 
 ---
 
-## 📚 API Documentation <span id="api-documentation"></span>
+## 📚 API 文档 <span id="api-文档"></span>
 
-> **Complete API Reference:** [API_REFERENCE.md](docs/API_REFERENCE.md) | **User Guide:** [USER_GUIDE.md](docs/USER_GUIDE.md)
+> **完整 API 参考:** [API_REFERENCE.md](docs/API_REFERENCE.md) | **用户指南:** [USER_GUIDE.md](docs/USER_GUIDE.md)
 
-### 🔑 Authentication
+### 🔑 认证
 
-All protected endpoints require an API key in `Authorization` header:
+所有受保护的端点都需要在 `Authorization` 头中提供 API 密钥：
 
 ```bash
-# Format
+# 格式
 Authorization: Bearer YOUR_API_KEY
 
-# Example curl
+# 示例 curl
 curl -H "Authorization: Bearer crawlrs_sk_abc123" \
   http://localhost:8899/v1/scrape
 ```
 
-> **⚠️ Security Tip:** Never commit API keys to version control. Use environment variables.
+> **⚠️ 安全提示:** 永远不要将 API 密钥提交到版本控制系统。使用环境变量。
 
-### 📡 Core Endpoints
+### 📡 核心端点
 
-| Endpoint | Method | Description |
+| 端点 | 方法 | 描述 |
 |----------|--------|-------------|
-| `/v1/scrape` | POST | Create a scrape task |
-| `/v1/scrape/{id}` | GET | Get task details |
-| `/v1/scrape/{id}/_cancel` | POST | Cancel scrape task |
-| `/v1/crawl` | POST | Create a crawl task |
-| `/v1/crawl/{id}` | GET | Get crawl status |
-| `/v1/crawl/{id}/_cancel` | POST | Cancel crawl task |
-| `/v1/crawl/{id}/results` | GET | Get crawl results |
-| `/v1/search` | POST | Search with specified engine |
-| `/v1/extract` | POST | Extract data from HTML |
-| `/v1/tasks/_query` | POST | Query tasks (complex query) |
-| `/v1/tasks/_cancel` | POST | Batch cancel tasks |
-| `/v1/webhooks` | POST | Create webhook |
-| `/v1/teams/geo-restrictions` | GET | Get team geo restrictions |
-| `/v1/teams/geo-restrictions` | PUT | Update team geo restrictions |
-| `/v1/audit/logs` | GET | Get audit logs |
-| `/v1/audit/denied` | GET | Get denied requests |
-| `/v1/metrics` | GET | Get system metrics |
+| `/v1/scrape` | POST | 创建抓取任务 |
+| `/v1/scrape/{id}` | GET | 获取任务详情 |
+| `/v1/scrape/{id}` | DELETE | 取消抓取任务 |
+| `/v1/crawl` | POST | 创建爬取任务 |
+| `/v1/crawl/{id}` | GET | 获取爬取状态 |
+| `/v1/crawl/{id}` | DELETE | 取消爬取任务 |
+| `/v1/crawl/{id}/results` | GET | 获取爬取结果 |
+| `/v1/search` | POST | 使用指定引擎搜索 |
+| `/v1/extract` | POST | 从 HTML 提取数据 |
+| `/v1/webhooks` | POST | 创建 webhook |
+| `/v1/teams/geo-restrictions` | GET | 获取团队地理限制 |
+| `/v1/teams/geo-restrictions` | PUT | 更新团队地理限制 |
+| `/v1/audit/logs` | GET | 获取审计日志 |
+| `/v1/audit/denied` | GET | 获取被拒绝的请求 |
+| `/v1/metrics` | GET | 获取系统指标 |
 
 ---
 
-## 🏗️ Architecture <span id="architecture"></span>
+## 🏗️ 架构 <span id="架构"></span>
 
-crawlrs follows Domain-Driven Design (DDD) principles with clean architecture layers:
-
-
-### Mermaid 版本
+crawlrs 遵循领域驱动设计（DDD）原则，采用清晰的分层架构：
 
 ```mermaid
-flowchart TD
-    subgraph Presentation [Presentation Layer - Axum]
-        A[HTTP Handlers]
-        B[Middleware]
-        C[Routes]
+flowchart TB
+    subgraph Presentation [表现层 - Axum]
+        A[HTTP 处理器]
+        B[中间件]
+        C[路由]
     end
 
-    subgraph Application [Application Layer]
+    subgraph Application [应用层]
         D[Use Cases]
         E[DTOs]
-        F[Request Validation]
+        F[请求验证]
     end
 
-    subgraph Domain [Domain Layer]
+    subgraph Domain [领域层]
         G[Models]
         H[Services]
-        I[Repository Interfaces]
+        I[Repository 接口]
     end
 
-    subgraph Infrastructure [Infrastructure Layer]
+    subgraph Infrastructure [基础设施层]
         J[Database]
         K[Cache]
         L[Storage]
@@ -361,132 +348,134 @@ flowchart TD
     Presentation --> Application --> Domain --> Infrastructure
 ```
 
-> **Detailed Architecture:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+> **详细架构:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-### Technology Stack
+> **详细架构:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-| Component | Technology | Version |
+### 技术栈
+
+| 组件 | 技术 | 版本 |
 |-----------|------------|---------|
-| Web Framework | Axum | 0.8 |
-| Async Runtime | Tokio | 1.48 |
-| Database ORM | Sea-ORM 2.0.0-rc (via dbnexus 0.4) | - |
-| Database | PostgreSQL | 14+ |
-| Cache | oxcache (moka memory backend) | 0.3 |
-| HTTP Client | Reqwest | 0.12 |
-| Browser Automation | Playwright | 0.40+ |
-| Structured Logging | inklog | 0.1 |
+| Web 框架 | Axum | 0.8 |
+| 异步运行时 | Tokio | 1.48 |
+| 数据库 ORM | Sea-ORM 2.0.0-rc（通过 dbnexus 0.4） | - |
+| 数据库 | PostgreSQL | 14+ |
+| 缓存 | oxcache (moka) | 0.3 |
+| HTTP 客户端 | Reqwest | 0.12 |
+| 浏览器自动化 | Playwright | 0.40+ |
+| 结构化日志 | inklog | 0.1 |
 | API SDK | sdforge | 0.4 |
-| Multi-backend Cache | oxcache | 0.3 |
-| Rate Limiting | limiteron | 0.2 |
-| Configuration | confers | 0.4 |
+| 多后端缓存 | oxcache | 0.3 |
+| 速率限制 | limiteron | 0.2 |
+| 配置管理 | confers | 0.4 |
 
 ---
 
-## 🚢 Deployment <span id="deployment"></span>
+## 🚢 部署 <span id="部署"></span>
 
-### Docker Deployment
+### Docker 部署
 
 ```bash
-# Build Docker image
+# 构建 Docker 镜像
 docker build -t crawlrs:latest .
 
-# Run with Docker
+# 使用 Docker 运行
 docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgresql://user:pass@db:5432/crawlrs" \
   crawlrs:latest
 
-# Run with Docker Compose
+# 使用 Docker Compose 运行
 docker-compose up -d
 ```
 
-### Production Checklist
+### 生产环境检查清单
 
-- [ ] Set strong API keys and secrets
-- [ ] Configure proper database connection pooling
-- [ ] Configure oxcache for production caching
-- [ ] Set up rate limiting appropriate for your capacity
-- [ ] Configure metrics export to Prometheus
-- [ ] Enable distributed tracing (inklog HTTP sink)
-- [ ] Set up log aggregation (ELK, CloudWatch, etc.)
-- [ ] Configure webhook endpoints for task notifications
-- [ ] Review and tune concurrency settings
-- [ ] Enable SSL/TLS termination
-- [ ] Configure health check endpoints
-- [ ] Set up backup and disaster recovery
+- [ ] 设置强密码 API 密钥和密钥
+- [ ] 配置适当的数据库连接池
+- [ ] 为生产环境配置 oxcache 缓存
+- [ ] 根据容量设置适当的速率限制
+- [ ] 配置指标导出到 Prometheus
+- [ ] 启用分布式追踪（inklog HTTP sink）
+- [ ] 设置日志聚合（ELK、CloudWatch 等）
+- [ ] 配置任务通知的 Webhook 端点
+- [ ] 审查和调整并发设置
+- [ ] 启用 SSL/TLS 终止
+- [ ] 配置健康检查端点
+- [ ] 设置备份和灾难恢复
 
 ---
 
-## 🧪 Testing <span id="testing"></span>
+## 🧪 测试 <span id="测试"></span>
 
 ```bash
-# Run unit tests
+# 运行单元测试
 cargo test
 
-# Run integration tests
+# 运行集成测试
 cargo test --test integration_tests --features full
 
-# Run with coverage
+# 运行覆盖率测试
 cargo tarpaulin --out Html
 
-# Run benchmarks
+# 运行基准测试
 cargo bench
 
-# Run clippy (linter)
+# 运行 clippy（linter）
 cargo clippy -- -D warnings
 
-# Format code
+# 格式化代码
 cargo fmt
 ```
 
 ---
 
-## 🗺️ Roadmap <span id="roadmap"></span>
+## 🗺️ 路线图 <span id="路线图"></span>
 
-### v0.2.0 (Planned)
+### v0.2.0 (计划中)
 
-| Feature | Status |
+| 特性 | 状态 |
 |---------|--------|
-| FlareSolverr engine (Full/Cdp/Tls modes via `FlareSolverrMode`) | ✅ Implemented |
-| WebSocket real-time subscriptions | 📅 Planned |
-| Advanced proxy rotation | 📅 Planned |
-| Machine learning-based proxy selection | 📅 Planned |
+| FlareSolverr 引擎（通过 `FlareSolverrMode` 区分 Full/Cdp/Tls 模式） | ✅ 已实现 |
+| WebSocket 实时订阅 | 📅 已计划 |
+| 高级代理轮换 | 📅 已计划 |
+| 基于机器学习的代理选择 | 📅 已计划 |
 
-### v0.3.0 (Planned)
+### v0.3.0 (计划中)
 
-| Feature | Status |
+| 特性 | 状态 |
 |---------|--------|
-| Multi-language SDKs (Python, JavaScript, Go) | 📅 Planned |
-| UI dashboard | 📅 Planned |
-| Advanced scheduling and cron jobs | 📅 Planned |
-| Data pipeline integrations | 📅 Planned |
+| 多语言 SDK（Python、JavaScript、Go） | 📅 已计划 |
+| UI 仪表板 | 📅 已计划 |
+| 高级调度和定时任务 | 📅 已计划 |
+| 数据管道集成 | 📅 已计划 |
 
 ---
 
-## 🤝 Contributing <span id="contributing"></span>
+## 🤝 贡献 <span id="贡献"></span>
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+欢迎贡献！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解指南。
 
-### Development Workflow
+### 开发工作流程
 
-1. Fork repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. Fork 仓库
+2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
+3. 提交更改 (`git commit -m '添加惊人的功能'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 开启 Pull Request
 
-### Code Style
+### 代码风格
 
-- Follow Rust naming conventions
-- Add doc comments to public APIs
-- Write tests for new features
-- Keep functions focused and small
+- 遵循 Rust 命名约定
+- 为公共 API 添加文档注释
+- 为新功能编写测试
+- 保持函数聚焦且简短
 
 ---
 
-## 📄 License <span id="license"></span>
+## 📄 许可证 <span id="许可证"></span>
 
-This project is licensed under Apache License 2.0 - see [LICENSE](LICENSE) file for details.
+本项目在 Apache License 2.0 下获得许可 - 详见 [LICENSE](LICENSE) 文件。
 
 ```
 Copyright 2025 Kirky.X
@@ -506,33 +495,33 @@ limitations under the License.
 
 ---
 
-## 💬 Support <span id="support"></span>
+## 💬 支持 <span id="支持"></span>
 
-| Resource | Link |
+| 资源 | 链接 |
 |----------|------|
-| 📖 Documentation | [docs/](docs/) |
-| 📚 API Reference | [API_REFERENCE.md](docs/API_REFERENCE.md) |
-| 👤 User Guide | [USER_GUIDE.md](docs/USER_GUIDE.md) |
-| 🏗️ Architecture | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| 🐛 Issue Tracker | [GitHub Issues](https://github.com/your-org/crawlrs/issues) |
-| 💬 Discord Community | [Join Discord](https://discord.gg/your-server) |
-| 📧 Email | [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com) |
+| 📖 文档 | [docs/](docs/) |
+| 📚 API 参考 | [API_REFERENCE.md](docs/API_REFERENCE.md) |
+| 👤 用户指南 | [USER_GUIDE.md](docs/USER_GUIDE.md) |
+| 🏗️ 架构 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| 🐛 问题追踪 | [GitHub Issues](https://github.com/your-org/crawlrs/issues) |
+| 💬 Discord 社区 | [加入 Discord](https://discord.gg/your-server) |
+| 📧 邮箱 | [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com) |
 
 ---
 
-## 🙏 Acknowledgments
+## 🙏 致谢
 
-- Built with [Rust](https://www.rust-lang.org/)
-- Web framework powered by [Axum](https://github.com/tokio-rs/axum)
-- Database ORM by [Sea-ORM](https://www.sea-ql.org/)
-- Inspired by the need for high-performance web scraping solutions
+- 使用 [Rust](https://www.rust-lang.org/) 构建
+- Web 框架由 [Axum](https://github.com/tokio-rs/axum) 驱动
+- 数据库 ORM 来自 [Sea-ORM](https://www.sea-ql.org/)
+- 灵感来源于对高性能网页爬取解决方案的需求
 
 ---
 
 <div align="center">
 
-**Built with ❤️ in Rust**
+**使用 ❤️ 在 Rust 中构建**
 
-[⬆ Back to Top](#overview)
+[⬆ 返回顶部](#概述)
 
 </div>
