@@ -1553,6 +1553,7 @@ dependencies = [
  "serde_urlencoded",
  "sha2 0.11.0",
  "strsim",
+ "subtle",
  "sysinfo",
  "tempfile",
  "testcontainers",

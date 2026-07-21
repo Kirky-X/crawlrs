@@ -17,28 +17,48 @@ use axum::{
 };
 use log::error;
 use serde_json::json;
+use std::fmt::Display;
 
 /// Check rate limit for an API key and endpoint.
 ///
 /// This helper consolidates the rate limit check logic that was repeated
 /// across multiple handlers (crawl, scrape, search, webhook).
 ///
+/// 性能 LOW-3（注释修正）：`api_key` 参数接受 `impl Display`，handler 可直接传 `Uuid`。
+/// **注意**：这并未消除 `String` 分配 — `helper` 内部仍调用 `api_key.to_string()`。
+/// 真正的变化是把分配从 handler 挪到 helper，handler 调用点更简洁（删除中间变量）。
+/// 若要真正消除分配，需要 `RateLimitingService::check_rate_limit` 接受 `&dyn Display`
+/// 或泛型 `K: Display`，但这会污染 trait 接口。当前实现是可读性与性能的折中。
+///
+/// 安全 LOW-3（fail-open 监控建议）：当 `service.check_rate_limit` 返回 `Err(e)` 时，
+/// 本 helper 采用 **fail-open** 策略 — 返回 `Ok(())` 让请求通过。
+/// 这是可用性优先于安全的折中（限流服务故障不应阻断正常业务流量），
+/// 但要求生产环境必须监控 `Rate limiting service error` 日志（error! 级别），
+/// 并设置告警阈值（如 1 分钟内 >= 5 次即告警），避免 fail-open 被长期利用绕过限流。
+/// 进阶建议：将 fail-open 计数暴露到 metrics（如 Prometheus `rate_limit_fail_open_total`），
+/// 配合 SLO 告警（如 fail-open 比例 > 1% 即触发）。
+///
 /// # Arguments
 ///
 /// * `service` - The rate limiting service (implements RateLimitingService trait)
-/// * `api_key` - The API key to check
+/// * `api_key` - The API key to check (any `Display` type, e.g. `Uuid` or `&str`)
 /// * `endpoint` - The endpoint path being accessed
 ///
 /// # Returns
 ///
 /// * `Ok(())` - Rate limit check passed
 /// * `Err(Response)` - Rate limit exceeded, with appropriate error response
-pub async fn check_rate_limit<T: RateLimitingService + ?Sized>(
+pub async fn check_rate_limit<T, K>(
     service: &T,
-    api_key: &str,
+    api_key: K,
     endpoint: &str,
-) -> Result<(), Response> {
-    match service.check_rate_limit(api_key, endpoint).await {
+) -> Result<(), Response>
+where
+    T: RateLimitingService + ?Sized,
+    K: Display,
+{
+    let api_key_str = api_key.to_string();
+    match service.check_rate_limit(&api_key_str, endpoint).await {
         Ok(RateLimitResult::Denied { reason }) => Err((
             StatusCode::TOO_MANY_REQUESTS,
             Json(json!({
@@ -70,22 +90,30 @@ pub async fn check_rate_limit<T: RateLimitingService + ?Sized>(
 ///
 /// This variant is for handlers that return `Result<T, CrawlRsError>`.
 ///
+/// 性能 LOW-3（注释修正）：同 `check_rate_limit`，`impl Display` 未消除分配，
+/// 仅把分配从 handler 挪到 helper。详见 `check_rate_limit` 文档。
+///
 /// # Arguments
 ///
 /// * `service` - The rate limiting service (implements RateLimitingService trait)
-/// * `api_key` - The API key to check
+/// * `api_key` - The API key to check (any `Display` type, e.g. `Uuid` or `&str`)
 /// * `endpoint` - The endpoint path being accessed
 ///
 /// # Returns
 ///
 /// * `Ok(())` - Rate limit check passed
 /// * `Err(CrawlRsError::RateLimit)` - Rate limit exceeded
-pub async fn check_rate_limit_as_app_error<T: RateLimitingService + ?Sized>(
+pub async fn check_rate_limit_as_app_error<T, K>(
     service: &T,
-    api_key: &str,
+    api_key: K,
     endpoint: &str,
-) -> Result<(), CrawlRsError> {
-    match service.check_rate_limit(api_key, endpoint).await {
+) -> Result<(), CrawlRsError>
+where
+    T: RateLimitingService + ?Sized,
+    K: Display,
+{
+    let api_key_str = api_key.to_string();
+    match service.check_rate_limit(&api_key_str, endpoint).await {
         Ok(RateLimitResult::Denied { reason }) => Err(CrawlRsError::RateLimit(format!(
             "Rate limit exceeded: {}",
             reason

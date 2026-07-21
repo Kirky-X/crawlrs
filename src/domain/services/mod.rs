@@ -17,12 +17,9 @@
 //! - LLM服务（llm_service）：集成大语言模型进行智能处理
 //! - 重试处理器（retry_handler）：处理任务失败的重试逻辑
 //! - 搜索服务（search_service）：处理内容搜索和索引逻辑
-//! - 团队服务（team_service）：处理团队管理和地理限制验证逻辑
+//! - 团队服务（team_service）：处理团队地理限制验证逻辑
 //! - 限流服务（rate_limiting_service）：处理请求限流逻辑
 //! - Webhook服务（webhook_service）：处理 Webhook 通知逻辑
-//!
-//! 并发控制统一由 `crate::infrastructure::concurrency` 提供（基于 limiteron 组件），
-//! 不再在本模块重复定义。
 //!
 //! 领域服务与应用程序服务的区别在于：领域服务包含纯粹的业务逻辑，
 //! 而应用程序服务负责协调和编排，可能包含技术实现细节。

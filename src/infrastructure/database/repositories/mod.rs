@@ -12,7 +12,6 @@ pub mod auth_scope_repo_impl;
 pub mod crawl_repo_impl;
 pub mod credits_repo_impl;
 pub mod database_geo_restriction_repo;
-pub mod feature_flag_repo_impl;
 pub mod geo_restriction_repo_impl;
 pub mod macros;
 pub mod scrape_result_repo_impl;

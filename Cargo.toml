@@ -93,6 +93,9 @@ figment = { version = "0.10", default-features = false, features = ["toml", "jso
 thiserror = "2.0"
 anyhow = "1.0"
 
+# Security — constant-time comparison for HMAC signature verification
+subtle = "2.6"
+
 # HTTP client and networking
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs", "cookies", "http2", "charset", "system-proxy", "gzip", "brotli"] }
 url = "2.5"
@@ -256,6 +259,16 @@ trait-kit = { version = "0.3", features = ["async", "confers"] }
 name = "integration_tests"
 path = "tests/integration/mod.rs"
 required-features = ["full"]
+
+# main 测试入口（包含 tests/unit/ + tests/integration/ 集成测试 crate）
+# 安全 MEDIUM-1：tests/unit/ 下的 auth_middleware_test.rs 调用
+# `reset_global_auth_state`，该函数用 `#[cfg(any(test, feature = "test-mocks"))]` 门控。
+# 集成测试是独立 crate，看不到 `cfg(test)`，必须通过 `--features test-mocks` 启用。
+# 运行方式：`cargo test --features standard,test-mocks --test main`
+[[test]]
+name = "main"
+path = "tests/main.rs"
+required-features = ["test-mocks"]
 
 # sdk_api_test 引用 `crawlrs::presentation::sdk::mocks::*`，需要 test-mocks feature
 # 启用 mocks 模块编译。运行方式：`cargo test --features test-mocks --test sdk_api_test`

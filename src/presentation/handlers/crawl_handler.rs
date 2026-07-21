@@ -36,7 +36,6 @@ pub async fn create_crawl(
     Json(payload): Json<CrawlRequestDto>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
-    let api_key = auth_state.api_key_id.to_string();
     let sync_wait_ms = payload.sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
 
     // 验证 config 字段
@@ -44,7 +43,16 @@ pub async fn create_crawl(
         return errors::unprocessable_entity("max_depth must be between 0 and 5");
     }
 
-    // SSRF 验证 - 使用完整的异步 DNS 验证
+    // 1. 检查限流（架构 MEDIUM-1：限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
+    // 性能 LOW-1：直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 消除 handler 中的中间变量分配。
+    if let Err(response) =
+        check_rate_limit(state.rate_limiting_service.as_ref(), auth_state.api_key_id, "/v1/crawl").await
+    {
+        return response;
+    }
+
+    // 2. SSRF 验证 - 使用完整的异步 DNS 验证
     match validate_url(&payload.url).await {
         Ok(validated) => {
             log::debug!(
@@ -66,14 +74,7 @@ pub async fn create_crawl(
         }
     }
 
-    // 1. 检查限流
-    if let Err(response) =
-        check_rate_limit(state.rate_limiting_service.as_ref(), &api_key, "/v1/crawl").await
-    {
-        return response;
-    }
-
-    // 2. 检查配额
+    // 3. 检查配额
     if let Err(e) = state
         .rate_limiting_service
         .check_and_deduct_quota(

@@ -102,7 +102,10 @@ jobs:
       - name: Run tests (standard features)
         # 跑全部测试（lib + integration tests），不再只跑 --lib
         # integration tests 需要数据库，已在 services.postgres 中配置
-        run: cargo test --features standard --verbose
+        # 安全 MEDIUM-1：启用 test-mocks feature 让集成测试 (tests/unit/...) 能调用
+        # `reset_global_auth_state`（用 #[cfg(any(test, feature = "test-mocks"))] 门控）。
+        # test-mocks 不影响 production binary（仅编译测试专用 mock 模块和 reset 函数）。
+        run: cargo test --features standard,test-mocks --verbose
 
   build:
     name: Build

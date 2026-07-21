@@ -289,10 +289,12 @@ async fn test_add_credits_returns_ok() {
 
     match result {
         Ok(returned) => {
-            // add_credits 返回 Ok(0) 是当前实现的占位返回值
+            // add_credits 返回存储过程 add_credits_safe 产生的新余额
+            // （初始 100 + 增加 200 = 300），而非旧的 Ok(0) 占位符。
             assert_eq!(
-                returned, 0,
-                "add_credits currently returns Ok(0) as placeholder"
+                returned, 300,
+                "add_credits should return new balance (100 + 200 = 300), got: {}",
+                returned
             );
         }
         Err(e) => {

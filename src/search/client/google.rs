@@ -14,14 +14,53 @@ use crate::search::{
 use async_trait::async_trait;
 use chrono::Utc;
 use log::{info, warn};
+use once_cell::sync::Lazy;
 use rand::Rng;
 use scraper::Html;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
 use super::shared_utils::{build_query_string, escape_html_text, safe_parse_selector};
+
+/// Google CONSENT cookie 值（绕过 EU 同意重定向）
+///
+/// 参考: temp/searxng/searx/engines/google.py line 274
+/// （架构 MEDIUM-4：提取为常量，避免硬编码在请求构造中）
+const GOOGLE_CONSENT_COOKIE: &str = "CONSENT=YES+";
+
+/// Google 搜索请求的静态 HTTP 头
+///
+/// 这些头在所有请求中都是相同的，使用 `Lazy` 只构造一次 HashMap 结构（capacity + buckets）。
+///
+/// 性能 LOW-1（注释修正）：`headers()` 方法接受 `HashMap` 所有权，每次调用必须 clone。
+/// `HashMap::clone` 会克隆所有 entries，3 个 (String, String) 对等于 6 个 String 分配，
+/// 与每次新构造 `HashMap::with_capacity(3)` + 3 次 insert 等价。
+/// 之前的注释声称 "避免每次构造 6 个 String" 是错误的 — clone 不省分配，只省 capacity 计算。
+/// 真正的优化需要修改 `ScrapeOptions::headers` 接口为 `&HashMap` 或共享 `Arc<HashMap>`。
+static GOOGLE_STATIC_HEADERS: Lazy<HashMap<String, String>> = Lazy::new(|| {
+    let mut map = HashMap::with_capacity(3);
+    map.insert("Accept".to_string(), "*/*".to_string());
+    map.insert("Accept-Language".to_string(), "en-US,en;q=0.9".to_string());
+    map.insert("Cookie".to_string(), GOOGLE_CONSENT_COOKIE.to_string());
+    map
+});
+
+/// Google bot-protection 检测的 OR 模式
+///
+/// 任一模式命中即判定为 CAPTCHA/sorry 页面，返回 RateLimited。
+/// 与下方 NOSCRIPT_AND_PATTERNS 分离是因为 AND/OR 语义不同：
+/// - 这里是 OR（任一匹配即 RateLimited）
+/// - noscript 是 AND（两个都存在才判定）
+///
+/// 性能 LOW-2（注释修正 + 回退）：之前用 AhoCorasick 一次扫描替代 2 次 contains，
+/// 但 AhoCorasick 对 2 个短模式有状态机常数开销，无 benchmark 证据证明更优。
+/// 架构 LOW-3（注释修正）：删除"通常更快"的无证据断言 — `str::contains` 在 memchr
+/// SIMD 优化下对小模式快速，但本仓库未做 benchmark，不能断言哪种更快。
+/// 2 次 `str::contains` 代码更直观，且无证据表明 AhoCorasick 对 2 个短模式更优。
+/// 已删除 aho-corasick 直接依赖（regex 仍间接引入）。
+const GOOGLE_BOT_PROTECTION_OR_PATTERNS: [&str; 2] = ["/sorry/", "sorry.google.com"];
 
 /// Google Search Engine implementation
 struct ArcIdCache {
@@ -59,10 +98,27 @@ impl GoogleSearchEngine {
     }
 
     /// Get ARC_ID (auto-refreshes every hour)
+    ///
+    /// 性能 MEDIUM-2：使用读锁优先 + 双重检查模式，避免每次请求都获取写锁。
+    /// 快速路径（缓存未过期）：仅获取读锁 → 无竞争 → 直接返回。
+    /// 慢速路径（缓存过期）：先释放读锁，再获取写锁，双重检查防止重复刷新。
     pub async fn get_arc_id(&self, start_offset: usize) -> String {
+        // 快速路径：尝试读锁（缓存未过期时直接返回，无写锁竞争）
+        {
+            let cache = self.arc_id_cache.read().await;
+            let now = Utc::now().timestamp();
+            if now - cache.generated_at <= 3600 {
+                return format!(
+                    "arc_id:srp_{}_1{:02},use_ac:true,_fmt:prog",
+                    cache.arc_id, start_offset
+                );
+            }
+        }
+
+        // 慢速路径：缓存已过期，获取写锁刷新
         let mut cache = self.arc_id_cache.write().await;
         let now = Utc::now().timestamp();
-
+        // 双重检查：在等待写锁期间，其他线程可能已刷新缓存
         if now - cache.generated_at > 3600 {
             cache.arc_id = Self::generate_random_id();
             cache.generated_at = now;
@@ -275,30 +331,30 @@ impl SearchEngine for GoogleSearchEngine {
         // Use EngineClient to scrape the search result page.
         //
         // Google's search results page can be scraped via plain HTTP without JS
-        // rendering — the result HTML is server-side rendered. SearXNG (the
+        // rendering when the request comes from a residential IP. SearXNG (the
         // reference implementation in temp/searxng) uses the same approach:
         // HTTP request + lxml/CSS selector parsing, no browser engine.
+        //
+        // In datacenter environments, Google may return a noscript/captcha page
+        // requiring JS rendering. In that case, deploy FlareSolverr
+        // (http://localhost:8191) and set needs_js=true below to route the
+        // request through FlareSolverrGoogleEngine.
         //
         // Setting needs_js=false ensures ReqwestEngine (support_score=100) is
         // selected by the router instead of being filtered out by feature_filter
         // (which excludes engines with support_score < 50 for needs_js=true).
+        //
+        // CONSENT cookie: SearXNG sets CONSENT=YES+ to bypass Google's EU
+        // consent redirect (see temp/searxng/searx/engines/google.py line 274).
         let engine_request = EngineScrapeRequest::new(&google_url)
             .with_options(
                 crate::engines::engine_client::ScrapeOptions::builder()
                     .needs_js(false)
                     .timeout(Duration::from_secs(60))
-                    .headers(
-                        vec![
-                            (
-                                "Accept".to_string(),
-                                "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-                                    .to_string(),
-                            ),
-                            ("Accept-Language".to_string(), "en-US,en;q=0.9".to_string()),
-                        ]
-                        .into_iter()
-                        .collect(),
-                    )
+                    // 复用静态 headers（Lazy<HashMap>）— 见 GOOGLE_STATIC_HEADERS 注释
+                    // 性能 LOW-1：clone 仍分配 6 个 String，与每次新构造等价；
+                    // 真正优化需要 ScrapeOptions::headers 接口改造（暂未做）。
+                    .headers(GOOGLE_STATIC_HEADERS.clone())
                     .build(),
             );
 
@@ -321,13 +377,32 @@ impl SearchEngine for GoogleSearchEngine {
             // We might still try to parse if content is present, but usually error page
         }
 
-        let results = self.parse_results(&scrape_response.content)?;
+        // Detect Google's bot-protection responses (CAPTCHA / sorry / noscript pages)
+        // See temp/searxng/searx/engines/google.py detect_google_sorry()
+        let content = &scrape_response.content;
+        // 性能 LOW-2：2 次 contains 替代 AhoCorasick（2 个短模式，状态机常数开销不划算）
+        if GOOGLE_BOT_PROTECTION_OR_PATTERNS.iter().any(|p| content.contains(p)) {
+            warn!("Google returned CAPTCHA/sorry page — IP likely flagged as bot");
+            return Err(SearchError::RateLimited("Google".to_string()));
+        }
+        // noscript 检测保持 2 次 contains（AND 逻辑：两个子串都存在才判定）
+        if content.contains("Please click") && content.contains("enablejs") {
+            warn!(
+                "Google returned noscript page — JS rendering required (deploy FlareSolverr at localhost:8191)"
+            );
+            return Err(SearchError::EngineClient(
+                "Google".to_string(),
+                "noscript page returned — JS rendering required (FlareSolverr not available)".to_string(),
+            ));
+        }
+
+        let results = self.parse_results(content)?;
 
         // If no results and status was OK, it might be a different layout or captcha
         if results.is_empty() {
             warn!(
                 "No results found on Google page. Content length: {}",
-                scrape_response.content.len()
+                content.len()
             );
         }
 

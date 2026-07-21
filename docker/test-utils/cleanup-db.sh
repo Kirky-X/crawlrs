@@ -44,8 +44,8 @@ fi
 [ -n "$CRAWLRS__DATABASE__PORT" ] && DB_PORT="$CRAWLRS__DATABASE__PORT"
 
 # 所有需要清理的表（按依赖顺序）
+# 架构 MEDIUM-3：feature_flags 与 feature_flag_overrides 已删除（dead schema）
 TABLES=(
-    "auth_feature_flag_overrides"
     "auth_audit_log"
     "webhook_event"
     "webhook"
@@ -57,7 +57,6 @@ TABLES=(
     "credits_transactions"
     "credits"
     "auth_scopes"
-    "auth_feature_flags"
     "api_keys"
     "team"
 )

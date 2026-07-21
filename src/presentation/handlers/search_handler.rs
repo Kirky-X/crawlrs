@@ -35,11 +35,12 @@ pub async fn search(
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     let api_key_id = auth_state.api_key_id;
-    let api_key = api_key_id.to_string();
 
     // 1. 检查限流
+    // 性能 LOW-1：直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 消除 handler 中的中间变量分配。
     if let Err(response) =
-        check_rate_limit(rate_limiting_service.as_ref(), &api_key, "/v1/search").await
+        check_rate_limit(rate_limiting_service.as_ref(), api_key_id, "/v1/search").await
     {
         return response;
     }

@@ -48,10 +48,9 @@ roles:
         operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
       audit_logs:
         operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
-      feature_flags:
-        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
-      feature_flag_overrides:
-        operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      # 架构 MEDIUM-3：feature_flags 与 feature_flag_overrides 已通过
+      # migrations/004_drop_feature_flags.sql 删除（dead schema），
+      # 权限配置同步清理。
       scopes:
         operations: ["SELECT", "INSERT", "UPDATE", "DELETE"]
 
@@ -106,8 +105,7 @@ roles:
         operations: ["SELECT"]
       audit_logs:
         operations: ["SELECT"]
-      feature_flags:
-        operations: ["SELECT"]
+      # 架构 MEDIUM-3：feature_flags 权限已清理（表已删除）
       scopes:
         operations: ["SELECT"]
 

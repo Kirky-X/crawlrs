@@ -42,7 +42,6 @@ pub async fn create_scrape(
     Json(payload): Json<ScrapeRequestDto>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
-    let api_key = auth_state.api_key_id.to_string();
 
     // 验证 sync_wait_ms 范围
     if let Some(ms) = payload.sync_wait_ms {
@@ -54,7 +53,16 @@ pub async fn create_scrape(
         }
     }
 
-    // SSRF 验证 - 使用完整的异步 DNS 验证
+    // 1. 检查限流（架构 MEDIUM-1：限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
+    // 性能 LOW-1：直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 消除 handler 中的中间变量分配。
+    if let Err(response) =
+        check_rate_limit(rate_limiting_service.as_ref(), auth_state.api_key_id, "/v1/scrape").await
+    {
+        return response;
+    }
+
+    // 2. SSRF 验证 - 使用完整的异步 DNS 验证
     match validate_url(&payload.url).await {
         Ok(validated) => {
             log::debug!(
@@ -76,14 +84,7 @@ pub async fn create_scrape(
         }
     }
 
-    // 1. 检查限流
-    if let Err(response) =
-        check_rate_limit(rate_limiting_service.as_ref(), &api_key, "/v1/scrape").await
-    {
-        return response;
-    }
-
-    // 2. 检查配额
+    // 3. 检查配额
     if let Err(e) = rate_limiting_service
         .check_and_deduct_quota(
             team_id,

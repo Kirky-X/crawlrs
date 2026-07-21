@@ -6,7 +6,7 @@
 //! Auth middleware tests
 //!
 //! Tests for the unified authentication middleware, covering AuthState construction,
-//! scope_middleware behavior, check_feature_flag, and auth_middleware integration.
+//! scope_middleware behavior, and auth_middleware integration.
 //!
 //! Note: Code paths requiring a real PostgreSQL connection (validate_api_key_from_db,
 //! create_and_cache_auth_state, load_scope_from_db) are not covered here — they need
@@ -34,9 +34,9 @@ use crawlrs::domain::auth::{ApiKeyScope, AuditLogEntry, ScopePermission};
 use crawlrs::domain::services::audit_service::{AuditServiceError, AuditServiceTrait};
 use crawlrs::infrastructure::security;
 use crawlrs::presentation::middleware::auth_middleware::{
-    self, check_feature_flag, get_cache_stats, get_global_auth_cache, get_global_auth_state,
-    invalidate_all_cache, set_global_auth_cache, set_global_auth_state, ApiKeyCache, AuthError,
-    AuthRateLimiter, AuthState, CacheStats,
+    self, get_cache_stats, get_global_auth_cache, get_global_auth_state,
+    invalidate_all_cache, reset_global_auth_state, set_global_auth_cache, set_global_auth_state,
+    ApiKeyCache, AuthError, AuthRateLimiter, AuthState, CacheStats,
 };
 
 use crate::common::helpers::db_pool::create_test_pool_or_panic;
@@ -128,12 +128,14 @@ fn make_auth_state(scope: ApiKeyScope) -> AuthState {
     AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), scope)
 }
 
-/// Serialize tests that touch GLOBAL_AUTH_STATE (OnceLock — set once, never reset).
+/// Serialize tests that touch GLOBAL_AUTH_STATE (Mutex<Option<...>> — resettable per test).
 static GLOBAL_STATE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Ensure global auth state is initialized with cache, rate limiter, and trusted proxies.
 ///
-/// Uses OnceLock internally — only the first caller actually sets the state.
+/// 架构 MEDIUM-1：GLOBAL_AUTH_STATE 现在是 Mutex<Option<...>>（可重置）。
+/// 默认复用已设置的 state（避免重建）；需要带 rate_limiter 的 state 时，
+/// 调用方应先 `reset_global_auth_state()` 再调用本函数。
 /// All callers must hold GLOBAL_STATE_LOCK to avoid races.
 fn ensure_global_auth_state() -> Arc<AuthState> {
     if let Some(state) = get_global_auth_state() {
@@ -656,32 +658,6 @@ async fn test_scope_middleware_no_audit_service_still_works() {
 }
 
 // ============================================================================
-// check_feature_flag Tests
-// ============================================================================
-
-#[tokio::test]
-async fn test_check_feature_flag_returns_true() {
-    let state = make_auth_state(ApiKeyScope::default());
-    let result = check_feature_flag("any_feature", &state).await;
-    assert!(result.is_ok());
-    assert!(
-        result.unwrap(),
-        "check_feature_flag should return Ok(true) by default"
-    );
-}
-
-#[tokio::test]
-async fn test_check_feature_flag_different_names() {
-    let state = make_auth_state(ApiKeyScope::default());
-    // Multiple feature names should all return Ok(true)
-    for name in &["search", "scrape", "billing", "admin_panel"] {
-        let result = check_feature_flag(name, &state).await;
-        assert!(result.is_ok(), "feature {} should be Ok", name);
-        assert!(result.unwrap(), "feature {} should be enabled", name);
-    }
-}
-
-// ============================================================================
 // Auth Middleware Integration Tests (serialized via GLOBAL_STATE_LOCK)
 // ============================================================================
 
@@ -812,9 +788,10 @@ async fn test_auth_middleware_empty_bearer_token_returns_401() {
 }
 
 #[tokio::test]
-#[ignore = "预先存在的 bug：src/presentation/middleware/auth_middleware.rs 中的 cfg(test) 测试可能先设置 GLOBAL_AUTH_STATE（不带 rate_limiter），OnceLock 不能重置，导致 ensure_global_auth_state() 返回的 state 没有 rate_limiter。修复需重构 AuthState 支持更新或独立测试上下文。"]
 async fn test_auth_middleware_rate_limit_lockout_returns_429() {
     let _guard = GLOBAL_STATE_LOCK.lock().await;
+    // 架构 MEDIUM-1：reset 后重新 ensure，保证 state 带 rate_limiter
+    reset_global_auth_state();
     let state = ensure_global_auth_state();
     let rate_limiter = state
         .auth_rate_limiter
@@ -859,9 +836,10 @@ async fn test_auth_middleware_rate_limit_lockout_returns_429() {
 }
 
 #[tokio::test]
-#[ignore = "预先存在的 bug：src/presentation/middleware/auth_middleware.rs 中的 cfg(test) 测试可能先设置 GLOBAL_AUTH_STATE（不带 rate_limiter），OnceLock 不能重置，导致 ensure_global_auth_state() 返回的 state 没有 rate_limiter。修复需重构 AuthState 支持更新或独立测试上下文。"]
 async fn test_auth_middleware_different_ip_not_locked_out() {
     let _guard = GLOBAL_STATE_LOCK.lock().await;
+    // 架构 MEDIUM-1：reset 后重新 ensure，保证 state 带 rate_limiter
+    reset_global_auth_state();
     let state = ensure_global_auth_state();
     let rate_limiter = state
         .auth_rate_limiter

@@ -6,35 +6,111 @@
 use crate::application::dto::webhook_request::{
     CreateWebhookRequest, WebhookListResponse, WebhookResponse,
 };
+use crate::config::settings::Settings;
 use crate::domain::models::Webhook;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
+// 架构 MEDIUM-2：domain 层提供 `verify_webhook_signature_from_parts`（timestamp 解析 +
+// HMAC 验证 + 时间戳窗口检查），presentation 层仅负责 HTTP header → &str 提取。
+// 之前的 `verify_webhook_signature_from_headers` 跨层混合 HTTP 解析 + 域逻辑，违反 SRP。
+use crate::domain::services::webhook_service::{
+    verify_webhook_signature_from_parts, WEBHOOK_AUTH_FAILED,
+};
 use crate::domain::use_cases::create_webhook::CreateWebhookUseCase;
-use crate::engines::validators::validate_url;
+// 架构 MEDIUM-2：与 crawl/scrape handler 统一使用 `presentation::helpers::ssrf::validate_url`。
+// `engines::validators::validate_url` 仅是 re-export（见 engines/validators.rs line 39-42），
+// 直接使用源模块避免读者跳两次 import 才找到实现。
+use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::errors::CrawlRsError;
 use crate::presentation::handlers::response_builder::ApiResponse;
 use crate::presentation::helpers::rate_limit_helper::check_rate_limit_as_app_error;
 use crate::presentation::middleware::auth_middleware::AuthState;
-use axum::{http::StatusCode, Extension, Json};
+use axum::body::Bytes;
+use axum::http::{HeaderMap, StatusCode};
+use axum::{Extension, Json};
 use std::sync::Arc;
+
+/// Webhook 签名验证相关的 HTTP 头名称（HTTP 协议层常量）
+const SIGNATURE_HEADER: &str = "X-Crawlrs-Signature";
+const TIMESTAMP_HEADER: &str = "X-Crawlrs-Timestamp";
+
+/// 构造统一的 webhook 认证失败错误
+///
+/// 架构 MEDIUM-2：错误消息常量 `WEBHOOK_AUTH_FAILED` 已迁移至
+/// `domain::services::webhook_service`，本 helper 仅负责将 `&'static str`
+/// 映射为 `CrawlRsError::Authentication`（presentation 层错误类型）。
+fn auth_error() -> CrawlRsError {
+    CrawlRsError::Authentication(WEBHOOK_AUTH_FAILED.to_string())
+}
+
+/// 从请求头中提取 signature + timestamp 字符串并委托给 domain 层验证
+///
+/// 架构 MEDIUM-2：本函数仅承担 **HTTP 协议层**职责（HeaderMap → &str 提取），
+/// 不再混合 timestamp 解析 + HMAC 验证等域逻辑。
+/// 失败时返回统一的 `WEBHOOK_AUTH_FAILED` 错误消息（来自 domain 层），避免泄露具体失败阶段。
+fn verify_webhook_signature_from_headers(
+    headers: &HeaderMap,
+    secret: &str,
+    body: &[u8],
+) -> Result<(), CrawlRsError> {
+    let signature = headers
+        .get(SIGNATURE_HEADER)
+        .and_then(|h| h.to_str().ok())
+        .ok_or_else(auth_error)?;
+
+    let timestamp_str = headers
+        .get(TIMESTAMP_HEADER)
+        .and_then(|h| h.to_str().ok())
+        .ok_or_else(auth_error)?;
+
+    // 委托给 domain 层：timestamp 解析 + HMAC 验证 + 时间戳窗口检查
+    verify_webhook_signature_from_parts(secret, signature, timestamp_str, body)
+        .map_err(|_| auth_error())
+}
 
 pub async fn create_webhook<R: WebhookRepository>(
     Extension(repo): Extension<Arc<R>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
-    Json(payload): Json<CreateWebhookRequest>,
+    Extension(settings): Extension<Arc<Settings>>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<(StatusCode, Json<Webhook>), CrawlRsError> {
-    let team_id = auth_state.team_id;
-    let api_key = auth_state.api_key_id.to_string();
+    // 架构 MEDIUM-3：限流检查必须在最早阶段执行（与 search/scrape/crawl handler 一致），
+    // 防止攻击者通过大量无效签名请求耗服（每个请求都做 HMAC 计算会消耗 CPU）。
+    // 限流命中时直接返回 429，避免不必要的 HMAC + JSON 解析 + SSRF 验证。
+    // 性能 LOW-1：直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 消除 handler 中的中间变量分配。
+    check_rate_limit_as_app_error(rate_limiting_service.as_ref(), auth_state.api_key_id, "/v1/webhooks").await?;
 
-    // Validate webhook URL for SSRF protection
+    // 1. 验证 webhook 签名 (HMAC-SHA256 + 时间戳窗口，防止重放攻击)
+    verify_webhook_signature_from_headers(&headers, settings.webhook.secret(), &body).map_err(
+        |e| {
+            log::warn!(
+                "Webhook signature verification failed team_id={} api_key_id={}",
+                auth_state.team_id,
+                auth_state.api_key_id
+            );
+            e
+        },
+    )?;
+
+    // 2. 解析 JSON payload (签名验证通过后再解析)
+    let payload: CreateWebhookRequest =
+        serde_json::from_slice(&body).map_err(|e| {
+            CrawlRsError::Validation(format!("invalid JSON payload: {}", e))
+        })?;
+
+    let team_id = auth_state.team_id;
+
+    // 3. Validate webhook URL for SSRF protection
     match validate_url(&payload.url).await {
-        Ok(validated) => {
+        Ok(_) => {
+            // 不记录 resolved_ips 到日志，避免泄露内部网络拓扑
             log::debug!(
-                "Webhook URL passed SSRF validation url={} team_id={} resolved_ips={:?}",
+                "Webhook URL passed SSRF validation url={} team_id={}",
                 payload.url,
-                team_id,
-                validated.resolved_ips
+                team_id
             );
         }
         Err(e) => {
@@ -45,15 +121,14 @@ pub async fn create_webhook<R: WebhookRepository>(
         }
     }
 
-    // 1. 检查限流
-    check_rate_limit_as_app_error(rate_limiting_service.as_ref(), &api_key, "/v1/webhooks").await?;
-
     let use_case = CreateWebhookUseCase::new(repo);
     let webhook = use_case.execute(team_id, payload.url).await?;
     Ok((StatusCode::CREATED, Json(webhook)))
 }
 
 /// 列出团队的 Webhooks
+///
+/// 只读 GET 操作，已通过 auth_middleware 验证身份，无需 HMAC 签名验证。
 pub async fn list_webhooks<R: WebhookRepository>(
     Extension(repo): Extension<Arc<R>>,
     Extension(auth_state): Extension<AuthState>,
@@ -90,8 +165,56 @@ mod tests {
     use async_trait::async_trait;
     use chrono::Utc;
     use dbnexus::DbPool;
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::Sha256;
     use std::sync::Mutex;
     use uuid::Uuid;
+
+    type HmacSha256 = Hmac<Sha256>;
+
+    /// 测试用 webhook 签名密钥
+    ///
+    /// 安全 MEDIUM-1：测试 secret 通过 `validate_security` 验证，确保满足生产安全要求
+    /// （长度 >= 32，不在弱密钥列表中）。值明显标记为测试专用，避免与生产 secret 混淆。
+    const TEST_WEBHOOK_SECRET: &str = "test-webhook-secret-key-32-chars-long!!";
+
+    /// 构造带已知 webhook secret 的 Settings（其他字段使用默认值）
+    ///
+    /// 安全 MEDIUM-1：调用 `validate_security` 验证 secret 满足生产安全要求，
+    /// 防止测试中使用弱密钥导致安全验证逻辑被绕过。
+    fn make_test_settings_with_secret(secret: &str) -> Arc<Settings> {
+        let mut settings = Settings::default();
+        settings.webhook.secret = secret.to_string();
+        // 验证 secret 满足生产安全要求（非空、非弱密钥、长度 >= 32）
+        crate::config::settings::validate_security(&settings)
+            .expect("test webhook secret must satisfy validate_security requirements");
+        Arc::new(settings)
+    }
+
+    /// 使用与生产相同的算法生成测试签名：HMAC-SHA256("{timestamp}.{payload}")
+    fn make_test_signature(secret: &str, payload: &str, timestamp: i64) -> String {
+        let message = format!("{}.{}", timestamp, payload);
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC key error");
+        mac.update(message.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    /// 构造包含有效签名 + 时间戳的 HeaderMap
+    fn make_signed_headers(secret: &str, payload: &str) -> HeaderMap {
+        let timestamp = Utc::now().timestamp();
+        let signature = make_test_signature(secret, payload, timestamp);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            SIGNATURE_HEADER,
+            axum::http::HeaderValue::from_str(&signature).expect("signature is valid header"),
+        );
+        headers.insert(
+            TIMESTAMP_HEADER,
+            axum::http::HeaderValue::from_str(&timestamp.to_string())
+                .expect("timestamp is valid header"),
+        );
+        headers
+    }
 
     // ========== CreateWebhookRequest tests ==========
 
@@ -507,12 +630,17 @@ mod tests {
         let payload = CreateWebhookRequest {
             url: "https://example.com/webhook".to_string(),
         };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
 
         let result = create_webhook(
             Extension(repo),
             Extension(rate_limit as Arc<dyn RateLimitingService>),
             Extension(auth),
-            Json(payload),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
         )
         .await;
 
@@ -531,12 +659,17 @@ mod tests {
         let payload = CreateWebhookRequest {
             url: "http://127.0.0.1:8080".to_string(),
         };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
 
         let result = create_webhook(
             Extension(repo),
             Extension(rate_limit as Arc<dyn RateLimitingService>),
             Extension(auth),
-            Json(payload),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
         )
         .await;
 
@@ -561,12 +694,17 @@ mod tests {
         let payload = CreateWebhookRequest {
             url: "https://example.com/webhook".to_string(),
         };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
 
         let result = create_webhook(
             Extension(repo),
             Extension(rate_limit as Arc<dyn RateLimitingService>),
             Extension(auth),
-            Json(payload),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
         )
         .await;
 
@@ -593,12 +731,17 @@ mod tests {
         let payload = CreateWebhookRequest {
             url: "https://example.com/webhook".to_string(),
         };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
 
         let result = create_webhook(
             Extension(repo),
             Extension(rate_limit as Arc<dyn RateLimitingService>),
             Extension(auth),
-            Json(payload),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
         )
         .await;
 
@@ -730,12 +873,17 @@ mod tests {
         let payload = CreateWebhookRequest {
             url: "https://example.com/webhook".to_string(),
         };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
 
         let result = create_webhook(
             Extension(repo),
             Extension(rate_limit as Arc<dyn RateLimitingService>),
             Extension(auth),
-            Json(payload),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
         )
         .await;
 
@@ -743,5 +891,318 @@ mod tests {
         let (status, webhook) = result.unwrap();
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(webhook.url, "https://example.com/webhook");
+    }
+
+    // ========== webhook signature verification failure tests ==========
+
+    /// 辅助：构造带自定义签名的 HeaderMap
+    fn make_headers_with_signature_and_timestamp(
+        signature: &str,
+        timestamp: i64,
+    ) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            SIGNATURE_HEADER,
+            axum::http::HeaderValue::from_str(signature).expect("signature is valid header"),
+        );
+        headers.insert(
+            TIMESTAMP_HEADER,
+            axum::http::HeaderValue::from_str(&timestamp.to_string())
+                .expect("timestamp is valid header"),
+        );
+        headers
+    }
+
+    /// 缺少签名头 → 401 Authentication
+    #[tokio::test]
+    async fn test_create_webhook_missing_signature_header_returns_401() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+
+        // 仅包含 timestamp，缺少 signature
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            TIMESTAMP_HEADER,
+            axum::http::HeaderValue::from_str(&Utc::now().timestamp().to_string())
+                .expect("timestamp is valid header"),
+        );
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
+        )
+        .await;
+
+        assert!(result.is_err(), "missing signature header should fail");
+        match result.unwrap_err() {
+            CrawlRsError::Authentication(msg) => {
+                assert!(
+                    msg.contains(WEBHOOK_AUTH_FAILED),
+                    "expected unified auth failure message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected CrawlRsError::Authentication, got {:?}", other),
+        }
+    }
+
+    /// 缺少时间戳头 → 401 Authentication
+    #[tokio::test]
+    async fn test_create_webhook_missing_timestamp_header_returns_401() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+
+        // 仅包含 signature，缺少 timestamp
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            SIGNATURE_HEADER,
+            axum::http::HeaderValue::from_static("deadbeef"),
+        );
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
+        )
+        .await;
+
+        assert!(result.is_err(), "missing timestamp header should fail");
+        match result.unwrap_err() {
+            CrawlRsError::Authentication(msg) => {
+                assert!(
+                    msg.contains(WEBHOOK_AUTH_FAILED),
+                    "expected unified auth failure message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected CrawlRsError::Authentication, got {:?}", other),
+        }
+    }
+
+    /// 时间戳格式无效 → 401 Authentication
+    #[tokio::test]
+    async fn test_create_webhook_invalid_timestamp_format_returns_401() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            SIGNATURE_HEADER,
+            axum::http::HeaderValue::from_static("deadbeef"),
+        );
+        headers.insert(
+            TIMESTAMP_HEADER,
+            axum::http::HeaderValue::from_static("not-a-number"),
+        );
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
+        )
+        .await;
+
+        assert!(result.is_err(), "invalid timestamp format should fail");
+        match result.unwrap_err() {
+            CrawlRsError::Authentication(msg) => {
+                assert!(
+                    msg.contains(WEBHOOK_AUTH_FAILED),
+                    "expected unified auth failure message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected CrawlRsError::Authentication, got {:?}", other),
+        }
+    }
+
+    /// 签名错误 → 401 Authentication
+    #[tokio::test]
+    async fn test_create_webhook_wrong_signature_returns_401() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+
+        // 使用错误的签名（不是基于真实 secret 计算的）
+        let headers = make_headers_with_signature_and_timestamp(
+            "deadbeefcafebabe",
+            Utc::now().timestamp(),
+        );
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
+        )
+        .await;
+
+        assert!(result.is_err(), "wrong signature should fail");
+        match result.unwrap_err() {
+            CrawlRsError::Authentication(msg) => {
+                assert!(
+                    msg.contains(WEBHOOK_AUTH_FAILED),
+                    "expected unified auth failure message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected CrawlRsError::Authentication, got {:?}", other),
+        }
+    }
+
+    /// 时间戳过期（超出 5 分钟窗口）→ 401 Authentication
+    #[tokio::test]
+    async fn test_create_webhook_expired_timestamp_returns_401() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+
+        // 时间戳为 10 分钟前（超出 MAX_TIMESTAMP_AGE = 300 秒窗口）
+        let expired_timestamp = Utc::now().timestamp() - 600;
+        let payload_str = std::str::from_utf8(&payload_bytes).expect("utf8");
+        let signature = make_test_signature(TEST_WEBHOOK_SECRET, payload_str, expired_timestamp);
+        let headers = make_headers_with_signature_and_timestamp(&signature, expired_timestamp);
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
+        )
+        .await;
+
+        assert!(result.is_err(), "expired timestamp should fail");
+        match result.unwrap_err() {
+            CrawlRsError::Authentication(msg) => {
+                assert!(
+                    msg.contains(WEBHOOK_AUTH_FAILED),
+                    "expected unified auth failure message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected CrawlRsError::Authentication, got {:?}", other),
+        }
+    }
+
+    /// 使用不同 secret 计算的签名 → 401 Authentication
+    #[tokio::test]
+    async fn test_create_webhook_wrong_secret_returns_401() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let payload = CreateWebhookRequest {
+            url: "https://example.com/webhook".to_string(),
+        };
+        let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
+
+        // 服务器使用一个 secret，客户端用另一个 secret 签名
+        let server_secret = "server-side-secret-32-chars-long-xxxx";
+        let client_secret = "client-side-secret-32-chars-long-xxxx";
+        let settings = make_test_settings_with_secret(server_secret);
+        let payload_str = std::str::from_utf8(&payload_bytes).expect("utf8");
+        let timestamp = Utc::now().timestamp();
+        let signature = make_test_signature(client_secret, payload_str, timestamp);
+        let headers = make_headers_with_signature_and_timestamp(&signature, timestamp);
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Extension(settings),
+            headers,
+            Bytes::from(payload_bytes),
+        )
+        .await;
+
+        assert!(result.is_err(), "wrong secret signature should fail");
+        match result.unwrap_err() {
+            CrawlRsError::Authentication(msg) => {
+                assert!(
+                    msg.contains(WEBHOOK_AUTH_FAILED),
+                    "expected unified auth failure message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected CrawlRsError::Authentication, got {:?}", other),
+        }
+    }
+
+    /// Body 不是有效 UTF-8 → 401 Authentication
+    #[tokio::test]
+    async fn test_create_webhook_invalid_utf8_body_returns_401() {
+        let repo = Arc::new(MockWebhookRepository::new());
+        let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
+        let auth = make_test_auth_state();
+        let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
+
+        // 包含无效 UTF-8 字节的 body
+        let invalid_utf8_bytes: Vec<u8> = vec![0xff, 0xfe, 0xfd, 0x00];
+        let headers = make_signed_headers(
+            TEST_WEBHOOK_SECRET,
+            std::str::from_utf8(&invalid_utf8_bytes).unwrap_or(""),
+        );
+
+        let result = create_webhook(
+            Extension(repo),
+            Extension(rate_limit as Arc<dyn RateLimitingService>),
+            Extension(auth),
+            Extension(settings),
+            headers,
+            Bytes::from(invalid_utf8_bytes),
+        )
+        .await;
+
+        assert!(result.is_err(), "invalid UTF-8 body should fail");
+        match result.unwrap_err() {
+            CrawlRsError::Authentication(msg) => {
+                assert!(
+                    msg.contains(WEBHOOK_AUTH_FAILED),
+                    "expected unified auth failure message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected CrawlRsError::Authentication, got {:?}", other),
+        }
     }
 }

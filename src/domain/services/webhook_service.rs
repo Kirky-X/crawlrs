@@ -14,6 +14,13 @@ use crate::domain::models::{WebhookEvent, WebhookEventType};
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::webhook_sender::WebhookSender;
+// 架构 MEDIUM-1（审查 M1 折中说明）：本 import 引入 domain → infrastructure 的依赖箭头。
+// `constant_time_eq_str` 是无状态纯函数（无 I/O、无 DB、无全局状态），位于
+// `infrastructure::security::constant_time_compare` 是历史组织结果（与 auth_middleware 共用）。
+// 严格 DDD 下应将此 helper 迁移到 `domain::shared` 或 `crate::common` 等中性位置，
+// 但当前选择 **DRY 优先于分层纯净** — 复用公共 helper（含完整文档 + 7 个单元测试）
+// 优于在 domain 层复制一份。此为已知折中，未来可在 `domain::shared` 重构时统一迁移。
+use crate::infrastructure::security::constant_time_eq_str;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -405,6 +412,15 @@ impl WebhookManagementService for WebhookManagementServiceImpl {
     }
 }
 
+/// 统一的 webhook 认证失败错误消息
+///
+/// 架构 MEDIUM-2：此常量从 `presentation::handlers::webhook_handler` 迁移至 domain 层。
+/// 不区分具体失败阶段（缺失 header / 格式错误 / 签名不匹配 / 时间戳过期），
+/// 避免向攻击者泄露验证步骤信息。所有失败路径均返回此消息。
+///
+/// 接收方 webhook handler 应将本常量映射到 HTTP 401 响应体或 `CrawlRsError::Authentication`。
+pub const WEBHOOK_AUTH_FAILED: &str = "webhook authentication failed";
+
 /// 最大允许的时间戳偏差（秒）
 /// 用于防止重放攻击
 /// 接收方 webhook handler 应使用此常量验证时间戳
@@ -420,8 +436,17 @@ fn validate_timestamp(timestamp: i64) -> bool {
 }
 
 /// 为负载生成签名（包含时间戳以防止重放攻击）
-fn generate_signature(secret: &str, payload: &str, timestamp: i64) -> String {
-    let message = format!("{}.{}", timestamp, payload);
+///
+/// 接受 `impl AsRef<[u8]>` payload 以同时支持 `&str` 和 `&[u8]`，
+/// 避免不必要的 UTF-8 验证（HMAC 可直接对原始字节计算）。
+///
+/// # 性能审查 M1 折中说明（timestamp.to_string() 分配）
+///
+/// `timestamp.to_string()` 分配一个 ~20 字节的 `String`（i64 最大位数）。
+/// 相比之前的 `format!("{}.{}", timestamp, payload)`，本实现已减少 `payload_len` 字节的分配
+/// （对大 payload 是显著优化）。完全消除该分配需使用 `itoa` crate 或栈上 `[u8; 20]` buffer，
+/// 但 webhook 签名生成不是热路径，~20 字节的堆分配对性能无实际影响，不值得引入额外依赖。
+fn generate_signature(secret: &str, payload: impl AsRef<[u8]>, timestamp: i64) -> String {
     let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
         Ok(mac) => mac,
         Err(e) => {
@@ -429,16 +454,44 @@ fn generate_signature(secret: &str, payload: &str, timestamp: i64) -> String {
             return String::new();
         }
     };
-    mac.update(message.as_bytes());
+    // 先更新时间戳，再更新 payload，避免 format! 分配
+    mac.update(timestamp.to_string().as_bytes());
+    mac.update(b".");
+    mac.update(payload.as_ref());
     let result = mac.finalize();
     hex::encode(result.into_bytes())
 }
 
-/// 验证 webhook 签名
-/// 供接收方使用以验证 webhook  authenticity 和 freshness
+/// 验证 webhook 签名（接受 `&str` payload，兼容旧调用方）
+///
+/// 供接收方使用以验证 webhook authenticity 和 freshness。
 pub fn verify_webhook_signature(
     secret: &str,
     payload: &str,
+    timestamp: i64,
+    signature: &str,
+) -> bool {
+    verify_webhook_signature_bytes(secret, payload.as_bytes(), timestamp, signature)
+}
+
+/// 验证 webhook 签名（接受 `&[u8]` payload，避免不必要的 UTF-8 验证）
+///
+/// 这是性能优化的主入口，HMAC 可直接对原始字节计算。
+///
+/// # 安全审查 M1 折中说明（非端到端常量时间）
+///
+/// 本函数 **不是端到端常量时间**：时间戳无效时直接返回 `false`（跳过 HMAC 计算），
+/// 时间戳有效时执行 HMAC 计算 + 常量时间比较。两者耗时差异显著（HMAC-SHA256 开销）。
+/// 这是有意为之的性能优化，**不泄露秘密信息**，因为：
+/// - 时间戳由客户端提供，不是秘密（攻击者已知其值）
+/// - 时间戳窗口（`MAX_TIMESTAMP_AGE` = 300 秒）是公开参数
+/// - 时序差异仅泄露"时间戳是否在窗口内"，这是公开信息
+///
+/// 真正需要常量时间保护的是 **签名比较** 部分（`constant_time_eq_str`），
+/// 已使用 `subtle::ConstantTimeEq` 实现。
+pub fn verify_webhook_signature_bytes(
+    secret: &str,
+    payload: &[u8],
     timestamp: i64,
     signature: &str,
 ) -> bool {
@@ -449,16 +502,49 @@ pub fn verify_webhook_signature(
     }
 
     // 重新计算签名并比较
+    // 架构 MEDIUM-1：复用公共 `constant_time_eq_str` helper，
+    // 消除本文件之前私有的 `constant_time_eq` 重复实现。
     let expected_signature = generate_signature(secret, payload, timestamp);
-    constant_time_eq(signature, &expected_signature)
+    constant_time_eq_str(signature, &expected_signature)
 }
 
-/// 常数时间字符串比较以防止时序攻击
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
+/// 从字符串形式的 signature + timestamp 验证 webhook 签名
+///
+/// 架构 MEDIUM-2：本函数承担 **domain 层**的 webhook 认证逻辑，
+/// 包括 timestamp 字符串解析 + 签名验证。
+/// 之前的 `verify_webhook_signature_from_headers`（HTTP header 提取 + 域逻辑）
+/// 跨越了 presentation / domain 两层，违反 SRP。
+/// 现拆分为：
+/// - presentation 层：仅做 HTTP header → `&str` 提取（HeaderMap 解析）
+/// - domain 层（本函数）：timestamp 字符串解析 + HMAC 验证 + 时间戳窗口检查
+///
+/// # 参数
+///
+/// * `secret` - webhook 共享密钥
+/// * `signature` - 来自请求头的签名 hex 字符串
+/// * `timestamp_str` - 来自请求头的时间戳字符串（Unix 秒）
+/// * `body` - 请求 body 原始字节
+///
+/// # 返回值
+///
+/// * `Ok(())` - 签名验证通过
+/// * `Err(WEBHOOK_AUTH_FAILED)` - 时间戳格式错误或签名不匹配
+///
+/// # 安全说明
+///
+/// 失败原因统一为 [`WEBHOOK_AUTH_FAILED`]，不区分缺失/格式错误/签名不匹配/时间戳过期，
+/// 避免向攻击者泄露验证步骤信息。
+pub fn verify_webhook_signature_from_parts(
+    secret: &str,
+    signature: &str,
+    timestamp_str: &str,
+    body: &[u8],
+) -> Result<(), &'static str> {
+    let timestamp: i64 = timestamp_str.parse().map_err(|_| WEBHOOK_AUTH_FAILED)?;
+    if !verify_webhook_signature_bytes(secret, body, timestamp, signature) {
+        return Err(WEBHOOK_AUTH_FAILED);
     }
-    a.bytes().zip(b.bytes()).all(|(x, y)| x == y)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1331,32 +1417,97 @@ mod tests {
         ));
     }
 
-    // ---- constant_time_eq ----
+    // ---- verify_webhook_signature_from_parts（架构 MEDIUM-2） ----
 
+    /// 合法签名 + 合法时间戳字符串 → Ok
     #[test]
-    fn test_constant_time_eq_same_strings() {
-        assert!(constant_time_eq("hello", "hello"));
-        assert!(constant_time_eq("", ""));
-        assert!(constant_time_eq("a", "a"));
+    fn test_verify_webhook_signature_from_parts_valid() {
+        let secret = "mysecret";
+        let payload = br#"{"task_id":"abc"}"#;
+        let timestamp = Utc::now().timestamp();
+        let signature = generate_signature(secret, payload, timestamp);
+        let result = verify_webhook_signature_from_parts(
+            secret,
+            &signature,
+            &timestamp.to_string(),
+            payload,
+        );
+        assert!(result.is_ok(), "valid signature should return Ok");
     }
 
+    /// 时间戳字符串非数字 → Err(WEBHOOK_AUTH_FAILED)
     #[test]
-    fn test_constant_time_eq_different_strings() {
-        assert!(!constant_time_eq("hello", "world"));
-        assert!(!constant_time_eq("abc", "abd"));
+    fn test_verify_webhook_signature_from_parts_invalid_timestamp_format() {
+        let secret = "mysecret";
+        let payload = br#"{"task_id":"abc"}"#;
+        // timestamp_str 不是有效 i64
+        let result = verify_webhook_signature_from_parts(
+            secret,
+            "deadbeef",
+            "not-a-number",
+            payload,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), WEBHOOK_AUTH_FAILED);
     }
 
+    /// 签名不匹配 → Err(WEBHOOK_AUTH_FAILED)
     #[test]
-    fn test_constant_time_eq_different_lengths() {
-        assert!(!constant_time_eq("a", "ab"));
-        assert!(!constant_time_eq("abc", "abcd"));
-        assert!(!constant_time_eq("", "a"));
+    fn test_verify_webhook_signature_from_parts_wrong_signature() {
+        let secret = "mysecret";
+        let payload = br#"{"task_id":"abc"}"#;
+        let timestamp = Utc::now().timestamp();
+        // 用错误的 secret 生成签名
+        let wrong_signature = generate_signature("wrong-secret", payload, timestamp);
+        let result = verify_webhook_signature_from_parts(
+            secret,
+            &wrong_signature,
+            &timestamp.to_string(),
+            payload,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), WEBHOOK_AUTH_FAILED);
     }
 
+    /// 时间戳超出窗口 → Err(WEBHOOK_AUTH_FAILED)
     #[test]
-    fn test_constant_time_eq_case_sensitive() {
-        assert!(!constant_time_eq("Hello", "hello"));
+    fn test_verify_webhook_signature_from_parts_timestamp_outside_window() {
+        let secret = "mysecret";
+        let payload = br#"{"task_id":"abc"}"#;
+        // 1 天前，超出 5 分钟窗口
+        let timestamp = Utc::now().timestamp() - 86_400;
+        let signature = generate_signature(secret, payload, timestamp);
+        let result = verify_webhook_signature_from_parts(
+            secret,
+            &signature,
+            &timestamp.to_string(),
+            payload,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), WEBHOOK_AUTH_FAILED);
     }
+
+    /// payload 不匹配 → Err(WEBHOOK_AUTH_FAILED)
+    #[test]
+    fn test_verify_webhook_signature_from_parts_wrong_payload() {
+        let secret = "mysecret";
+        let signed_payload = br#"{"a":1}"#;
+        let actual_payload = br#"{"a":2}"#;
+        let timestamp = Utc::now().timestamp();
+        let signature = generate_signature(secret, signed_payload, timestamp);
+        let result = verify_webhook_signature_from_parts(
+            secret,
+            &signature,
+            &timestamp.to_string(),
+            actual_payload,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), WEBHOOK_AUTH_FAILED);
+    }
+
+    // 架构 MEDIUM-1：constant_time_eq 单元测试已迁移至
+    // infrastructure::security::constant_time_compare::tests（7 个测试覆盖更全面）。
+    // 此处不再重复测试公共 helper，避免测试代码冗余。
 
     #[tokio::test]
     async fn test_mock_webhook_event_repo_remaining_methods_return_defaults() {

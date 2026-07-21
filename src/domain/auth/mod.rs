@@ -3,12 +3,11 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Authentication domain models for API Key scopes and feature flags
+//! Authentication domain models for API Key scopes
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub mod feature_flag;
 pub mod scope;
 
 /// API Key scope permissions
@@ -43,28 +42,6 @@ pub enum ScopePermission {
     Write,
     /// Admin access
     Admin,
-}
-
-/// Feature flag for runtime feature control
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FeatureFlag {
-    pub id: Uuid,
-    pub name: String,
-    pub description: Option<String>,
-    pub enabled: bool,
-    pub rollout_percentage: u8,
-    pub metadata: serde_json::Value,
-    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub stopped_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-/// Per-API-Key feature flag override
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FeatureFlagOverride {
-    pub id: Uuid,
-    pub feature_flag_id: Uuid,
-    pub api_key_id: Uuid,
-    pub enabled: bool,
 }
 
 /// Audit log entry for authentication and authorization decisions
@@ -157,7 +134,6 @@ impl std::fmt::Display for AuditDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
     #[test]
     fn test_api_key_scope_default() {
@@ -235,61 +211,6 @@ mod tests {
     }
 
     #[test]
-    fn test_feature_flag_is_active() {
-        let flag = FeatureFlag {
-            id: Uuid::new_v4(),
-            name: "test".to_string(),
-            description: None,
-            enabled: true,
-            rollout_percentage: 100,
-            metadata: serde_json::json!({}),
-            started_at: None,
-            stopped_at: None,
-        };
-        assert!(flag.is_active());
-
-        let flag = FeatureFlag {
-            id: Uuid::new_v4(),
-            name: "test".to_string(),
-            description: None,
-            enabled: false,
-            rollout_percentage: 100,
-            metadata: serde_json::json!({}),
-            started_at: None,
-            stopped_at: None,
-        };
-        assert!(!flag.is_active());
-    }
-
-    #[test]
-    fn test_feature_flag_should_enable_for_key() {
-        let flag = FeatureFlag {
-            id: Uuid::new_v4(),
-            name: "test".to_string(),
-            description: None,
-            enabled: true,
-            rollout_percentage: 100,
-            metadata: serde_json::json!({}),
-            started_at: None,
-            stopped_at: None,
-        };
-        let api_key_id = Uuid::new_v4();
-        assert!(flag.should_enable_for_key(api_key_id));
-
-        let flag = FeatureFlag {
-            id: Uuid::new_v4(),
-            name: "test".to_string(),
-            description: None,
-            enabled: true,
-            rollout_percentage: 0,
-            metadata: serde_json::json!({}),
-            started_at: None,
-            stopped_at: None,
-        };
-        assert!(!flag.should_enable_for_key(api_key_id));
-    }
-
-    #[test]
     fn test_audit_decision_display() {
         assert_eq!(AuditDecision::Allow.to_string(), "ALLOW");
         assert_eq!(AuditDecision::Deny.to_string(), "DENY");
@@ -341,36 +262,4 @@ mod tests {
         assert_eq!(scope.scrape_limit, 50);
     }
 
-    #[test]
-    fn test_feature_flag_should_enable_for_key_partial_rollout_is_deterministic() {
-        // rollout_percentage between 0 and 100 exercises the hash-bucket branch
-        let api_key_id = Uuid::new_v4();
-        let flag = FeatureFlag {
-            id: Uuid::new_v4(),
-            name: "partial".to_string(),
-            description: None,
-            enabled: true,
-            rollout_percentage: 50,
-            metadata: serde_json::json!({}),
-            started_at: None,
-            stopped_at: None,
-        };
-        // Same key must always yield the same decision (deterministic hash)
-        let first = flag.should_enable_for_key(api_key_id);
-        let second = flag.should_enable_for_key(api_key_id);
-        assert_eq!(first, second);
-
-        // At 50% rollout, sweeping many keys must produce both outcomes
-        let mut enabled = 0;
-        let mut disabled = 0;
-        for _ in 0..200 {
-            if flag.should_enable_for_key(Uuid::new_v4()) {
-                enabled += 1;
-            } else {
-                disabled += 1;
-            }
-        }
-        assert!(enabled > 0, "some keys should be enabled at 50% rollout");
-        assert!(disabled > 0, "some keys should be disabled at 50% rollout");
-    }
 }

@@ -10,12 +10,3 @@
 pub mod config_service;
 pub mod limiteron_service;
 pub mod webhook_sender_impl;
-
-/// Webhook 服务公共接口
-/// 导出验证函数供接收方使用
-pub mod webhook_service {
-    pub use crate::domain::services::webhook_service::WebhookServiceImpl;
-
-    /// 验证 webhook 签名
-    pub use crate::domain::services::webhook_service::verify_webhook_signature;
-}

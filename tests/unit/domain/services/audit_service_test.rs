@@ -244,7 +244,7 @@ async fn test_audit_service_log_deny_with_all_fields() {
 }
 
 #[tokio::test]
-async fn test_audit_service_log_deny_with_none_fields_uses_defaults() {
+async fn test_audit_service_log_deny_with_none_fields_preserves_none() {
     let (service, repo) = make_service();
 
     service
@@ -252,12 +252,15 @@ async fn test_audit_service_log_deny_with_none_fields_uses_defaults() {
         .await
         .expect("log_deny should succeed");
 
+    // `log_deny` 传入 None 时保留 None 语义（写入 NULL 而非 nil UUID），
+    // 避免 find_by_api_key_id(nil_uuid) 误匹配。与 AuditLogBuilder::maybe_with_*
+    // 的 M-2 regression guard 行为一致。
     let entries = repo.created_entries();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].decision, AuditDecision::Deny);
-    assert_eq!(entries[0].api_key_id, Some(Uuid::nil()));
-    assert_eq!(entries[0].team_id, Some(Uuid::nil()));
-    assert_eq!(entries[0].scope_used, Some(ApiKeyScope::default()));
+    assert_eq!(entries[0].api_key_id, None);
+    assert_eq!(entries[0].team_id, None);
+    assert_eq!(entries[0].scope_used, None);
     assert_eq!(entries[0].denial_reason.as_deref(), Some("auth required"));
 }
 

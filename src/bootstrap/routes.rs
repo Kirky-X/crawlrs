@@ -6,7 +6,6 @@
 //! Route configuration and application builder.
 
 use crate::config::settings::Settings;
-use crate::di::infrastructure_module::GeoRestrictionRepositoryComponent;
 use crate::di::{CrawlRsState, CrawlRsStateExt};
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
@@ -112,22 +111,19 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
     let crawl_repo = state.crawl_repo.clone();
     let webhook_repo = state.webhook_repo.clone();
-    let tasks_backlog_repo = state.webhook_event_repo(); // Use webhook_event_repo for now
+    let webhook_event_repo = state.webhook_event_repo();
     let search_engine_service = state.search_client();
     let team_service = state.team_service.clone();
     let geo_location_service = state.geo_location_service();
     let credits_repo = state.credits_repo();
 
-    // Create geo restriction repository for extension (使用 DI 组件)
-    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = Arc::new(
-        GeoRestrictionRepositoryComponent::new(state.db_pool.clone()),
-    );
-
-    // Create concrete DatabaseGeoRestrictionRepository for handlers that need the concrete type
+    // 构造一次具体实现，同时用于 trait object Extension 和泛型 handler Extension
+    // （架构 HIGH-2：消除重复构造——之前 trait object 和 concrete 各 new 一次）
     let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
         Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
+    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = geo_restriction_repo_impl.clone();
 
-    // Create concrete WebhookRepoImpl for handlers that need the concrete type
+    // WebhookRepoImpl 同理：构造一次，复用给 Extension layer
     let webhook_repo_impl: Arc<WebhookRepoImpl> =
         Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
 
@@ -194,7 +190,7 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .layer(Extension(rate_limiting_service))
         .layer(Extension(crawl_repo))
         .layer(Extension(webhook_repo))
-        .layer(Extension(tasks_backlog_repo))
+        .layer(Extension(webhook_event_repo))
         .layer(Extension(search_engine_service))
         .layer(Extension(state.search_service.clone()))
         .layer(Extension(team_service))
@@ -222,8 +218,9 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
 
     // Use new_for_middleware to ensure global cache is initialized
     let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone(), None));
-    // Set global auth state for middleware (will be overwritten but that's ok)
-    crate::presentation::middleware::auth_middleware::set_global_auth_state(auth_state);
+    // 架构 MEDIUM-1：仅在未设置时设置（避免覆盖 protected routes 已设置的完整 state）
+    // protected routes 带 auth_scope_service，v2 routes 不带——不能覆盖。
+    crate::presentation::middleware::auth_middleware::ensure_global_auth_state_set(auth_state);
 
     task_routes()
         .layer(Extension(task_repo.clone()))
@@ -258,11 +255,9 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     let rate_limiting_service = state.rate_limiting_service.clone();
     let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
     let search_engine_service = state.search_client();
-    let tasks_backlog_repo = state.webhook_event_repo();
     let queue = state.task_queue.clone();
-    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = Arc::new(
-        GeoRestrictionRepositoryComponent::new(state.db_pool.clone()),
-    );
+    // 使用 DI 容器中已构造的 geo_restriction_repo，避免重复 new（架构 HIGH-2）
+    let geo_restriction_repo = state.geo_restriction_repo();
     let credits_repo = state.credits_repo();
     let crawl_repo = state.crawl_repo.clone();
     let webhook_event_repo = state.webhook_event_repo();
@@ -295,6 +290,10 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
             crate::presentation::middleware::security_headers_middleware::security_headers_middleware,
         ))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
+        // 架构 HIGH-3：以下 Extension layers 供 SDK 路由使用（SDK router 仅 layer 了
+        // search_service / task_queue / crawl_repo 三个）。protected/v2 路由已在各自
+        // 子函数中 layer 过，此处重复 layer 对它们无功能影响（Axum 外层 Extension 覆盖
+        // 内层），但为 SDK 路由提供必要的依赖注入。
         .layer(Extension(state.team_semaphore.clone()))
         .layer(Extension(queue))
         .layer(Extension(state.task_repo.clone()))
@@ -303,12 +302,10 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
         .layer(Extension(webhook_event_repo))
         .layer(Extension(webhook_repo.clone()))
         .layer(Extension(rate_limit_middleware))
-        .layer(Extension(state.crawl_repo.clone()))
         .layer(Extension(credits_repo))
         .layer(Extension(geo_restriction_repo))
         .layer(Extension(settings))
         .layer(Extension(search_engine_service))
-        .layer(Extension(tasks_backlog_repo.clone()))
         .layer(Extension(rate_limiting_service.clone()))
         .layer(Extension(state.audit_service()))
 }

@@ -14,8 +14,6 @@
         { "name": "credits_transactions", "operations": ["select", "insert", "update", "delete"] },
         { "name": "geo_restriction_logs", "operations": ["select", "insert", "update", "delete"] },
         { "name": "audit_logs", "operations": ["select", "insert", "update", "delete"] },
-        { "name": "feature_flags", "operations": ["select", "insert", "update", "delete"] },
-        { "name": "feature_flag_overrides", "operations": ["select", "insert", "update", "delete"] },
         { "name": "scopes", "operations": ["select", "insert", "update", "delete"] }
       ]
     },
@@ -46,7 +44,6 @@
         { "name": "teams", "operations": ["select"] },
         { "name": "api_keys", "operations": ["select"] },
         { "name": "audit_logs", "operations": ["select"] },
-        { "name": "feature_flags", "operations": ["select"] },
         { "name": "scopes", "operations": ["select"] }
       ]
     },

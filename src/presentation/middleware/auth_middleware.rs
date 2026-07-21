@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Unified authentication middleware with scope and feature flag support
+//! Unified authentication middleware with scope support
 //!
 //! Provides API key authentication with rate limiting for brute-force protection.
 
@@ -13,7 +13,7 @@ use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::auth_scope_service::{AuthScopeService, AuthScopeServiceTrait};
 use crate::infrastructure::database::entities::api_key;
-use crate::infrastructure::security;
+use crate::infrastructure::security::{self, constant_time_eq_str};
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 use axum::{
     body::Body,
@@ -24,10 +24,11 @@ use axum::{
 use dbnexus::DbPool;
 use log::{debug, info, warn};
 use lru::LruCache;
+use parking_lot::RwLock as ParkRwLock;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use sha2::{Digest, Sha256};
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -44,36 +45,123 @@ const DEFAULT_CACHE_TTL_SECS: u64 = 120;
 const DEFAULT_CACHE_MAX_SIZE: usize = 10000;
 
 /// Global auth cache instance for cache invalidation across the application
-/// 使用 Mutex<Option<Arc<...>>> 而非 OnceLock，以支持测试中重置全局状态
-static GLOBAL_AUTH_CACHE: Mutex<Option<Arc<RwLock<ApiKeyCache>>>> = Mutex::new(None);
+///
+/// 架构 MEDIUM-1 + 性能 MEDIUM-1：从 `std::sync::Mutex<Option<Arc<...>>>` 改为
+/// `parking_lot::RwLock<Option<Arc<...>>>`，与 `GLOBAL_AUTH_STATE` 模式一致。
+/// - `get_global_auth_cache()` 在每请求热路径上调用（`try_get_cached_auth`、
+///   `invalidate_cache_by_*` 等多个函数），读多写少（启动时 set 一次）。
+/// - RwLock 读锁无竞争（多核并行），比 Mutex 的串行化更优。
+/// - parking_lot::RwLock 是同步锁（不需要 await），不会跨 await 持有，避免死锁风险。
+/// - 不 poison（panic 后 lock 仍可用），优于 std::sync::Mutex。
+///
+/// 注意：内部 `Arc<RwLock<ApiKeyCache>>` 的 `RwLock` 仍是 `tokio::sync::RwLock`，
+/// 因为 ApiKeyCache 操作可能跨 `.await`（如 `cache.write().await`）。外部 ParkRwLock
+/// 仅保护 Option 赋值，不涉及 await。
+static GLOBAL_AUTH_CACHE: ParkRwLock<Option<Arc<RwLock<ApiKeyCache>>>> = ParkRwLock::new(None);
 
 /// Global auth state for middleware
-static GLOBAL_AUTH_STATE: OnceLock<Arc<AuthState>> = OnceLock::new();
+///
+/// 架构 MEDIUM-1：从 OnceLock 改为 Mutex<Option<...>>，与 GLOBAL_AUTH_CACHE 模式一致。
+/// OnceLock 设置后不可重置，导致测试间状态污染（2 个 #[ignore] 测试）。
+/// Mutex<Option<...>> 支持覆盖式 set + test-only reset，消除状态污染。
+///
+/// 性能 MEDIUM-1：从 std::sync::Mutex 改为 parking_lot::RwLock。
+/// `get_global_auth_state()` 在每请求热路径上调用，读多写少（启动时 set 一次）。
+/// RwLock 读锁无竞争（多核并行），比 Mutex 的串行化更优。
+/// parking_lot::RwLock 是同步锁（不需要 await），不会跨 await 持有，避免死锁风险。
+static GLOBAL_AUTH_STATE: ParkRwLock<Option<Arc<AuthState>>> = ParkRwLock::new(None);
 
 /// Get the global auth cache instance
+///
+/// 性能 MEDIUM-1：使用 parking_lot::RwLock 的 read() 锁，多读并发无竞争。
 pub fn get_global_auth_cache() -> Option<Arc<RwLock<ApiKeyCache>>> {
-    GLOBAL_AUTH_CACHE.lock().unwrap().clone()
+    GLOBAL_AUTH_CACHE.read().clone()
 }
 
 /// Set the global auth cache instance (called during application startup)
 pub fn set_global_auth_cache(cache: Arc<RwLock<ApiKeyCache>>) {
-    *GLOBAL_AUTH_CACHE.lock().unwrap() = Some(cache);
+    *GLOBAL_AUTH_CACHE.write() = Some(cache);
 }
 
 /// Reset the global auth cache (test-only, for avoiding cross-test OnceLock pollution)
+///
+/// 架构 LOW-2：仅用 `#[cfg(test)]` 门控（对比 `reset_global_auth_state` 用
+/// `#[cfg(any(test, feature = "test-mocks"))]`）。原因：此函数只在 lib 内部
+/// 单元测试中调用，`cfg(test)` 对 lib 内部测试可见，足够隔离生产 binary。
+/// `reset_global_auth_state` 还被 `tests/unit/auth_middleware_test.rs` 集成测试调用，
+/// 集成测试看不到 `cfg(test)`，必须通过 `--features test-mocks` 启用。
 #[cfg(test)]
 fn reset_global_auth_cache() {
-    *GLOBAL_AUTH_CACHE.lock().unwrap() = None;
+    *GLOBAL_AUTH_CACHE.write() = None;
 }
 
 /// Get the global auth state for middleware
+///
+/// 性能 MEDIUM-1：使用 parking_lot::RwLock 的 read() 锁，多读并发无竞争。
+/// 原 std::sync::Mutex 在每请求热路径上串行化所有读，是性能瓶颈。
 pub fn get_global_auth_state() -> Option<Arc<AuthState>> {
-    GLOBAL_AUTH_STATE.get().cloned()
+    GLOBAL_AUTH_STATE.read().clone()
 }
 
 /// Set the global auth state (called during application startup)
+///
+/// 覆盖式设置：每次调用都会替换之前的 state。
+/// 生产环境中 `create_protected_routes_with_state` 设置完整 state（带 auth_scope_service），
+/// `create_v2_routes_with_state` 通过 `ensure_global_auth_state_set` 仅在未设置时设置（避免覆盖）。
 pub fn set_global_auth_state(state: Arc<AuthState>) {
-    let _ = GLOBAL_AUTH_STATE.set(state);
+    *GLOBAL_AUTH_STATE.write() = Some(state);
+}
+
+/// Set the global auth state only if it has not been set yet.
+///
+/// Used by route builders that may run after the primary state has been set
+/// (e.g., v2 routes running after protected routes). Prevents overwriting a
+/// more complete state (with auth_scope_service) with a less complete one.
+pub fn ensure_global_auth_state_set(state: Arc<AuthState>) {
+    let mut guard = GLOBAL_AUTH_STATE.write();
+    if guard.is_none() {
+        *guard = Some(state);
+    }
+}
+
+/// Reset the global auth state (test-only, for avoiding cross-test state pollution)
+///
+/// 安全 MEDIUM-1 / 架构 MEDIUM-2：用 `#[cfg(any(test, feature = "test-mocks"))]` 门控。
+/// - `cfg(test)`：lib 内部单元测试可见
+/// - `feature = "test-mocks"`：`tests/unit/` 下的集成测试（独立 crate）通过
+///   `cargo test --features test-mocks` 启用
+///
+/// 生产 binary (`cargo build --features standard`) 不会编译此函数，
+/// 防止恶意依赖通过调用 `crawlrs::presentation::middleware::auth_middleware::reset_global_auth_state()`
+/// 触发 DoS（清空全局 auth state 导致所有请求 401）。
+///
+/// # 已知限制：Cargo feature 统一效应
+///
+/// 安全 MEDIUM（续）：Cargo feature 是 **统一效应（unified feature）** — 这是 Rust 生态的
+/// 已知限制（参考 [Cargo #8799](https://github.com/rust-lang/cargo/issues/8799)）。
+/// 同一 workspace 内只要任何一个 crate 启用了 `test-mocks` feature，整个 workspace 都会
+/// 以 `test-mocks` 启用编译，包括生产 binary。这意味着：
+///
+/// - 恶意依赖在 `Cargo.toml` 中声明 `crawlrs = { version = "...", features = ["test-mocks"] }`
+///   会强制启用本 crate 的 `test-mocks`，从而把 `reset_global_auth_state` 编译进生产 binary。
+/// - 防御措施仅靠 `#[cfg(any(test, feature = "test-mocks"))]` 不足以完全阻断此攻击面。
+///
+/// **当前缓解**：本 crate 是 application crate（非 library crate），不被外部依赖，
+/// 攻击面仅限 workspace 内恶意 transitive dep。`Cargo.lock` 应定期审计
+/// （`cargo audit` + `cargo tree -f "{p}" | sort -u`）。
+///
+/// **后续 hardening 建议**：将 `test-mocks` 相关代码（包括此函数）拆到独立
+/// `crawlrs-test-support` crate，仅以 `[dev-dependencies]` 引入，彻底隔离生产 binary。
+/// 当前未拆分是因为成本高于收益（application crate 不发布到 crates.io，
+/// 攻击者无法通过外部声明 features 触发）。
+///
+/// 调用此函数的集成测试必须以 `--features test-mocks` 运行：
+/// ```sh
+/// cargo test --features test-mocks --test main
+/// ```
+#[cfg(any(test, feature = "test-mocks"))]
+pub fn reset_global_auth_state() {
+    *GLOBAL_AUTH_STATE.write() = None;
 }
 
 /// LRU Cache for authenticated API keys to reduce database queries
@@ -893,6 +981,10 @@ async fn validate_api_key_from_db(
 }
 
 /// Verify key hash against provided token
+///
+/// 安全 LOW-1：`sha256:` 前缀和纯 hex 路径使用 `constant_time_eq_str`（来自
+/// `infrastructure::security` 模块）做常量时间比较，避免时序侧信道泄露 hash 内容。
+/// 详见 `infrastructure::security::constant_time_compare` 模块文档。
 fn verify_key_hash(key: &api_key::Model, token_str: &str) -> bool {
     if let Some(ref stored_hash) = key.key_hash {
         // Check if it's a new format bcrypt hash
@@ -902,11 +994,13 @@ fn verify_key_hash(key: &api_key::Model, token_str: &str) -> bool {
             // SHA256 hash format (for testing)
             let stored_sha256 = stored_hash.trim_start_matches("sha256:");
             let input_sha256 = hex::encode(Sha256::digest(token_str.as_bytes()));
-            stored_sha256 == input_sha256
+            // 安全 LOW-1：常量时间比较，避免时序侧信道泄露 hash 内容
+            constant_time_eq_str(stored_sha256, &input_sha256)
         } else if stored_hash.len() == 64 && stored_hash.chars().all(|c| c.is_ascii_hexdigit()) {
             // Pure SHA-256 hash (64 character hex)
             let input_sha256 = hex::encode(Sha256::digest(token_str.as_bytes()));
-            *stored_hash == input_sha256
+            // 安全 LOW-1：常量时间比较，避免时序侧信道泄露 hash 内容
+            constant_time_eq_str(stored_hash, &input_sha256)
         } else {
             // Other formats, try bcrypt verification
             security::verify_api_key(token_str, stored_hash)
@@ -1140,18 +1234,6 @@ fn determine_required_scope(path: &str, method: &str) -> Option<ScopePermission>
     None
 }
 
-/// Feature flag check extension
-///
-/// Use this in handlers to check if a feature is enabled for the current API key
-pub async fn check_feature_flag(
-    _feature_name: &str,
-    _state: &AuthState,
-) -> Result<bool, AuthError> {
-    // This would integrate with the FeatureFlagService
-    // For now, return true (feature enabled by default)
-    Ok(true)
-}
-
 /// Create an auth state for testing purposes
 #[cfg(test)]
 pub fn test_auth_state(db: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid) -> AuthState {
@@ -1172,7 +1254,7 @@ mod tests {
     /// Serializes tests that touch the global auth cache to prevent race conditions.
     static GLOBAL_CACHE_LOCK: StdMutex<()> = StdMutex::new(());
 
-    /// Serializes tests that touch GLOBAL_AUTH_STATE (OnceLock — set once, never reset).
+    /// Serializes tests that touch GLOBAL_AUTH_STATE (Mutex<Option<...>> — resettable per test).
     static GLOBAL_STATE_LOCK: StdMutex<()> = StdMutex::new(());
 
     /// Acquire the global cache lock, recovering from a poisoned mutex.
@@ -2587,19 +2669,6 @@ mod tests {
         assert!(state.api_key_cache.is_none());
     }
 
-    // ===== check_feature_flag (inline coverage) =====
-
-    #[tokio::test]
-    async fn test_check_feature_flag_inline_returns_true() {
-        let pool = create_test_db_pool();
-        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
-
-        let result = check_feature_flag("any_feature", &state).await;
-
-        assert!(result.is_ok());
-        assert!(result.unwrap(), "feature flag should default to true");
-    }
-
     // ===== AuthState with global cache (inline) =====
 
     #[tokio::test]
@@ -2661,16 +2730,17 @@ mod tests {
 
         set_global_auth_state(state.clone());
 
-        // get should return Some (either our state or a previously-set one — OnceLock semantics)
+        // 架构 MEDIUM-1：覆盖式 set，get 应返回我们刚设置的 state（ptr_eq 成立）
         let retrieved = get_global_auth_state();
         assert!(
             retrieved.is_some(),
             "get_global_auth_state should return Some after set"
         );
-        // If we were the first to set, ptr_eq should hold. If not, the earlier state wins.
         if let Some(retrieved_state) = retrieved {
-            // Either our set won (ptr_eq), or an earlier set won (different ptr, still Some)
-            let _ = retrieved_state; // confirm Some
+            assert!(
+                Arc::ptr_eq(&retrieved_state, &state),
+                "get_global_auth_state should return the state we just set (覆盖式语义)"
+            );
         }
     }
 
@@ -3037,7 +3107,8 @@ mod tests {
 
     /// Ensure the global auth state is set with cache + rate limiter.
     /// If already set (by another test), returns the existing state.
-    /// This is necessary because GLOBAL_AUTH_STATE is a OnceLock (set once, never reset).
+    /// 架构 MEDIUM-1：GLOBAL_AUTH_STATE 现在是 Mutex<Option<...>>（可重置），
+    /// 但为避免每个测试都重置+重建，仍复用已设置的 state。
     ///
     /// Panics when `TEST_DATABASE_URL` is not set — callers MUST mark their
     /// tests with `#[ignore = "requires TEST_DATABASE_URL"]` so CI without a

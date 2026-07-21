@@ -7,7 +7,6 @@ mod audit_log_repo_test;
 mod auth_scope_repo_test;
 mod crawl_repo_test;
 mod credits_repo_test;
-mod feature_flag_repo_test;
 mod geo_restriction_repo_test;
 mod scrape_result_repo_test;
 mod task_repository_query_test;
