@@ -223,7 +223,7 @@ impl UserAgentManager {
 
     /// Get random user agent
     pub fn get_random(&self) -> &str {
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         let index = rng.random_range(0..self.user_agents.len());
         &self.user_agents[index]

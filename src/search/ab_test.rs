@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use log::info;
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Arc;
 
 use crate::search::engine_trait::{SearchEngine, SearchRequest};

@@ -34,7 +34,7 @@ regex = "1.12"
 base64 = "0.22"
 uuid = { version = "1.23", features = ["v4"] }
 chrono = { version = "0.4", features = ["std"] }
-rand = "0.9"
+rand = "0.10"
 
 # 数据库示例依赖（与主项目保持版本一致）
 dbnexus = { version = "0.4", default-features = false, features = [

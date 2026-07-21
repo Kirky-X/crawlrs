@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use log::{info, warn};
 use once_cell::sync::Lazy;
-use rand::Rng;
+use rand::RngExt;
 use scraper::Html;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

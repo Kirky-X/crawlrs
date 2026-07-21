@@ -81,7 +81,7 @@ fn make_server_success() -> TestServer {
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
         .layer(Extension(auth_state));
-    TestServer::new(app).expect("failed to build TestServer")
+    TestServer::new(app)
 }
 
 /// 构造 TestServer，注入搜索服务失败版 mock（其他服务用成功版）。
@@ -96,7 +96,7 @@ fn make_server_search_error() -> TestServer {
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
         .layer(Extension(auth_state));
-    TestServer::new(app).expect("failed to build TestServer")
+    TestServer::new(app)
 }
 
 /// 构造 TestServer，注入任务队列失败版 mock（其他服务用成功版）。
@@ -111,7 +111,7 @@ fn make_server_queue_error() -> TestServer {
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
         .layer(Extension(auth_state));
-    TestServer::new(app).expect("failed to build TestServer")
+    TestServer::new(app)
 }
 
 /// 构造 TestServer，注入 crawl 仓库失败版 mock（其他服务用成功版）。
@@ -126,7 +126,7 @@ fn make_server_crawl_repo_error() -> TestServer {
             Arc::new(MockCrawlRepositoryError) as Arc<dyn CrawlRepository>
         ))
         .layer(Extension(auth_state));
-    TestServer::new(app).expect("failed to build TestServer")
+    TestServer::new(app)
 }
 
 // ============ sdk_search tests ============

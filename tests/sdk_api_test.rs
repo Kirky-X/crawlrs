@@ -51,7 +51,7 @@ fn make_server() -> TestServer {
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
         .layer(Extension(auth_state));
-    TestServer::new(app).expect("failed to build TestServer")
+    TestServer::new(app)
 }
 
 const TEAM_ID: &str = "00000000-0000-0000-0000-000000000001";

@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use chrono::{DateTime, Utc};
+use rand::RngExt;
 use std::time::Duration;
 
 /// 重试策略配置
@@ -87,7 +88,7 @@ impl RetryPolicy {
         // 添加抖动
         let final_backoff = if self.enable_jitter {
             let jitter_range = capped_backoff * self.jitter_factor;
-            let jitter = rand::random_range(-jitter_range..jitter_range);
+            let jitter = rand::rng().random_range(-jitter_range..jitter_range);
             (capped_backoff + jitter).max(0.0)
         } else {
             capped_backoff
