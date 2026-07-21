@@ -108,7 +108,7 @@ chrono = { version = "0.4", features = ["serde"] }
 rand = "0.9"
 validator = { version = "0.20", features = ["derive"] }
 sysinfo = { version = "0.39", optional = true }
-dirs = "5.0"
+dirs = "6.0"
 
 # Logging and observability
 log = "0.4"
