@@ -100,6 +100,23 @@ jobs:
       fail-fast: false
       matrix:
         rust: [1.95, stable]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crawlrs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -111,6 +128,11 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: ci-test-deps-${{ matrix.rust }}
+      - name: Run database migrations
+        run: |
+          for f in migrations/*.sql; do
+            PGPASSWORD=postgres psql -h localhost -U postgres -d crawlrs_test -f "$f"
+          done
       - name: Test (standard, lib)
         run: cargo test --features "standard" --lib
       - name: Test (full, lib)
@@ -145,6 +167,23 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crawlrs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -153,6 +192,11 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: ci-full-deps
+      - name: Run database migrations
+        run: |
+          for f in migrations/*.sql; do
+            PGPASSWORD=postgres psql -h localhost -U postgres -d crawlrs_test -f "$f"
+          done
       - name: Integration tests (full + test-mocks)
         run: cargo test --features "full,test-mocks" --tests --no-fail-fast
 
@@ -160,6 +204,23 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crawlrs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -170,6 +231,11 @@ jobs:
           shared-key: ci-full-deps
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@ea361d59ff285fa3ab7cc40dcba421e91017d586 # cargo-llvm-cov
+      - name: Run database migrations
+        run: |
+          for f in migrations/*.sql; do
+            PGPASSWORD=postgres psql -h localhost -U postgres -d crawlrs_test -f "$f"
+          done
       - name: Run coverage (fail under 80% lines)
         run: cargo llvm-cov --features "full" --fail-under-lines 80 --lcov --output-path lcov.info
       - name: Upload coverage

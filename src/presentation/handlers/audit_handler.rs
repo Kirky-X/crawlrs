@@ -83,7 +83,6 @@ pub async fn get_audit_logs(
     match query {
         AuditLogsQuery {
             api_key_id: Some(api_key_id),
-            team_id: _,
             ..
         } => {
             match audit_service
@@ -99,7 +98,6 @@ pub async fn get_audit_logs(
         }
         AuditLogsQuery {
             team_id: Some(team_id),
-            api_key_id: _,
             ..
         } => {
             match audit_service

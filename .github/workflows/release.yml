@@ -50,6 +50,23 @@ jobs:
     name: Test Check (lib + integration)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crawlrs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -60,6 +77,11 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: release-full-deps
+      - name: Run database migrations
+        run: |
+          for f in migrations/*.sql; do
+            PGPASSWORD=postgres psql -h localhost -U postgres -d crawlrs_test -f "$f"
+          done
       - name: Lib tests
         run: cargo test --features full --lib
       - name: Integration tests
