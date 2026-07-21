@@ -1268,10 +1268,7 @@ async fn test_find_existing_urls_performance() {
 async fn test_acquire_next_set_clause_mirrors_domain_methods() {
     let app = create_test_app_no_worker().await;
     let lock_duration = chrono::Duration::seconds(30);
-    let repo = Arc::new(TaskRepositoryImpl::new(
-        app.db_pool.clone(),
-        lock_duration,
-    ));
+    let repo = Arc::new(TaskRepositoryImpl::new(app.db_pool.clone(), lock_duration));
     let team_id = app.team_id;
     let worker_id = Uuid::new_v4();
 
@@ -1434,8 +1431,7 @@ async fn test_acquire_next_prefers_queued_over_active_expired() {
     // Only assert priority semantics when it picks one of our two tasks.
     if acquired.id == stale_task_id || acquired.id == queued_task_id {
         assert_eq!(
-            acquired.id,
-            queued_task_id,
+            acquired.id, queued_task_id,
             "Should prefer queued task over active-expired task (no starvation)"
         );
     }
@@ -1492,8 +1488,7 @@ async fn test_acquire_next_skips_active_unexpired() {
             .expect("acquire_next failed")
         {
             assert_ne!(
-                acquired.id,
-                active_unexpired_id,
+                acquired.id, active_unexpired_id,
                 "Should not acquire active task with unexpired lock"
             );
         }
@@ -1573,8 +1568,7 @@ async fn test_acquire_next_skips_active_with_null_lock_expires_at() {
             .expect("acquire_next failed")
         {
             assert_ne!(
-                acquired.id,
-                active_null_id,
+                acquired.id, active_null_id,
                 "Should not acquire active task with NULL lock_expires_at"
             );
         }

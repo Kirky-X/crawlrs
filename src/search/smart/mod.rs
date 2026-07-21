@@ -106,10 +106,15 @@ impl GoogleParseContext {
             .iter()
             .filter_map(|s| Selector::parse(s).ok())
             .collect(),
-            title_selectors: ["h3", "div[data-attrid='title']", "span.dvSrP", "div.v7W49e h3"]
-                .iter()
-                .filter_map(|s| Selector::parse(s).ok())
-                .collect(),
+            title_selectors: [
+                "h3",
+                "div[data-attrid='title']",
+                "span.dvSrP",
+                "div.v7W49e h3",
+            ]
+            .iter()
+            .filter_map(|s| Selector::parse(s).ok())
+            .collect(),
             snippet_selectors: [
                 "span[ae30]",
                 "div[itemprop='description']",
@@ -711,9 +716,11 @@ impl SmartSearchEngine {
         if !title.is_empty() && !url.is_empty() {
             let engine_name = self.get_engine_name();
             let mut result = SearchResult::new(title, url, Some(description), engine_name);
-            result.score = ctx
-                .scorer
-                .calculate_score(&result.title, result.description.as_deref(), &result.url);
+            result.score = ctx.scorer.calculate_score(
+                &result.title,
+                result.description.as_deref(),
+                &result.url,
+            );
             Some(result)
         } else {
             None
@@ -1025,7 +1032,9 @@ impl SearchEngine for SmartSearchEngine {
                         self.handle_retry().await;
                         continue;
                     }
-                    break Err(SearchError::SmartRoutingTimeout(self.config.timeout_seconds));
+                    break Err(SearchError::SmartRoutingTimeout(
+                        self.config.timeout_seconds,
+                    ));
                 }
             }
         }?;
@@ -3110,7 +3119,9 @@ mod tests_ext {
         let result = engine.search(&request).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchError::InsufficientContent(_, msg) => assert!(msg.contains("insufficient content")),
+            SearchError::InsufficientContent(_, msg) => {
+                assert!(msg.contains("insufficient content"))
+            }
             _ => panic!("Expected SearchError::InsufficientContent"),
         }
     }

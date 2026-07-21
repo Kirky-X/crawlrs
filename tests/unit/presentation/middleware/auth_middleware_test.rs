@@ -34,9 +34,9 @@ use crawlrs::domain::auth::{ApiKeyScope, AuditLogEntry, ScopePermission};
 use crawlrs::domain::services::audit_service::{AuditServiceError, AuditServiceTrait};
 use crawlrs::infrastructure::security;
 use crawlrs::presentation::middleware::auth_middleware::{
-    self, get_cache_stats, get_global_auth_cache, get_global_auth_state,
-    invalidate_all_cache, reset_global_auth_state, set_global_auth_cache, set_global_auth_state,
-    ApiKeyCache, AuthError, AuthRateLimiter, AuthState, CacheStats,
+    self, get_cache_stats, get_global_auth_cache, get_global_auth_state, invalidate_all_cache,
+    reset_global_auth_state, set_global_auth_cache, set_global_auth_state, ApiKeyCache, AuthError,
+    AuthRateLimiter, AuthState, CacheStats,
 };
 
 use crate::common::helpers::db_pool::create_test_pool_or_panic;

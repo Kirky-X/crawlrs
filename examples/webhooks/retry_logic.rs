@@ -130,8 +130,8 @@ impl WebhookDelivery {
     }
 
     fn simulate_send(&self) -> DeliveryResult {
-        let mut rng = rand::thread_rng();
-        let roll: f32 = rng.gen();
+        let mut rng = rand::rng();
+        let roll: f32 = rng.random();
 
         match roll {
             r if r < 0.7 => DeliveryResult::Success,

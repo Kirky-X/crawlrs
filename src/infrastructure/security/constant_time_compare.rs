@@ -81,18 +81,12 @@ mod tests {
 
     #[test]
     fn test_equal_strings_return_true() {
-        assert!(constant_time_eq_str(
-            "abc123def456",
-            "abc123def456"
-        ));
+        assert!(constant_time_eq_str("abc123def456", "abc123def456"));
     }
 
     #[test]
     fn test_different_strings_return_false() {
-        assert!(!constant_time_eq_str(
-            "abc123def456",
-            "abc123def457"
-        ));
+        assert!(!constant_time_eq_str("abc123def456", "abc123def457"));
     }
 
     #[test]

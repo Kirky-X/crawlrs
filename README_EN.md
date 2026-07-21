@@ -10,7 +10,6 @@
 
 </div>
 
-
 ## 📖 Table of Contents
 
 - [Overview](#overview)
@@ -23,7 +22,6 @@
 - [Architecture](#architecture)
 - [Deployment](#deployment)
 - [Testing](#testing)
-- [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 - [Support](#support)
@@ -32,13 +30,13 @@
 
 ## 📝 Overview <span id="overview"></span>
 
-**crawlrs** is a high-performance, enterprise-level web data collection platform designed for developers. It provides comprehensive capabilities including:
+**crawlrs** is a high-performance, enterprise-grade web data collection platform for developers:
 
 | Capability | Description |
 |------------|-------------|
-| 🔍 **Search** | Unified search across Google, Bing, Baidu, and Sogou |
+| 🔍 **Search** | Unified Google, Bing, Baidu, and Sogou search |
 | 🎯 **Scrape** | Extract data from single web pages |
-| 🕷️ **Crawl** | Automatically discover and scrape multiple pages |
+| 🕷️ **Crawl** | Automatically discover and crawl multiple pages |
 | 📊 **Extract** | Parse and structure data from HTML |
 | 🗺️ **Map** | Visualize and organize crawled data |
 
@@ -82,8 +80,8 @@ Compared to Node.js implementations:
 | Engine | Use Case | Performance | Cost |
 |--------|----------|------------|-------|
 | **Reqwest** | Static HTML, API responses | ⚡ Fastest | 💰 Lowest |
-| **Playwright** | JavaScript-heavy SPAs, interactions | 🐢 Slower | 💳 Higher |
-| **FlareSolverr** | Anti-bot protected sites | 🚀 Variable | 💎 Variable |
+| **chromiumoxide** | JavaScript-heavy SPAs, interactions | 🐢 Slower | 💳 Higher |
+| **FlareSolverr** | Anti-bot protected sites (Full/Cdp/Tls modes) | 🚀 Variable | 💎 Variable |
 
 ### 🔎 Unified Search
 
@@ -98,12 +96,14 @@ Compared to Node.js implementations:
 
 | Feature | Description |
 |---------|-------------|
-| **Rate Limiting** | Per-team concurrency and RPM controls |
-| **Caching** | oxcache-based caching (moka memory backend) with TTL |
+| **Rate Limiting** | Per-team concurrency and RPM controls (limiteron-based, distributed rate limiting with circuit breaker) |
+| **Caching** | oxcache multi-layer caching (L1 moka memory backend) with per-type TTL (search/dns/regex) |
 | **Metrics & Monitoring** | Prometheus-compatible export |
-| **Webhooks** | Event-driven task notifications |
-| **API Key Authentication** | Scoped access and team isolation |
+| **Webhooks** | Event-driven task completion notifications |
+| **API Key Authentication** | Scoped access control and team isolation |
 | **Audit Logging** | Complete request tracking |
+| **Proxy Support** | Unified outbound proxy configuration |
+| **LLM Extraction** | genai-based LLM content extraction |
 
 ### 🏗️ Architecture
 
@@ -130,10 +130,10 @@ Compared to Node.js implementations:
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/crawlrs.git
+git clone https://github.com/YOUR_ORG/crawlrs.git
 cd crawlrs
 
-# Install with the `standard` preset (core stack + Playwright + metrics)
+# Install with the `standard` preset (core stack + engine-playwright + metrics)
 cargo build --release --features standard
 
 # Install with all features (standard + engine-flaresolverr)
@@ -147,52 +147,52 @@ cargo build --release --features "engine-playwright,metrics"
 
 > **Note:** `default = []` — no features are enabled by default. Use a preset (`standard` / `full`) or list features explicitly.
 
-> **Core stack is non-optional since v0.2.** Core dependencies (oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit + scraper / chardetng / encoding_rs / robotstxt) and the HTTP fetching stack are always compiled in; they are no longer exposed as features.
+> **Core stack is non-optional.** Core dependencies (oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit 0.3 + scraper / chardetng / encoding_rs / robotstxt) and the HTTP fetching stack are always compiled; they are no longer exposed as features.
 
 | Feature | Description | Default |
 |---------|-------------|----------|
-| `engine-playwright` | Browser automation with Chromium | ❌ No |
-| `engine-flaresolverr` | FlareSolverr anti-bot protection (covers Full/Cdp/Tls modes) | ❌ No |
+| `engine-playwright` | chromiumoxide-based browser automation | ❌ No |
+| `engine-flaresolverr` | FlareSolverr anti-bot protection (FlareSolverrMode enum distinguishes Full/Cdp/Tls modes) | ❌ No |
 | `metrics` | Prometheus metrics export | ❌ No |
-| `genai-llm` | LLM extraction via genai | ❌ No |
-| `browser-download` | Auto-download browser for Playwright | ❌ No |
+| `genai-llm` | genai-based LLM extraction | ❌ No |
+| `browser-download` | Auto-download Playwright browser | ❌ No |
+| `test-mocks` | Test-only mock modules (requires explicit enable for integration tests) | ❌ No |
+| `admin-tools` | Ops CLI tools (e.g. add_credits) | ❌ No |
 
-> **Note:** `openapi` is not a Cargo feature — it is a cfg marker generated by `sdforge_macros`'s `#[forge]` macro for OpenAPI spec emission. Users do not need to enable it; it is automatically active when sdforge is compiled (which is always, since Task9).
+> **Note:** `openapi` is not a Cargo feature — it is a cfg marker generated by `sdforge_macros`'s `#[forge]` macro for OpenAPI spec emission. Users do not need to enable it; sdforge always compiles and openapi auto-activates.
 
----
+### Presets & Binary Size
 
-## 🔧 Compilation Features <span id="compilation-features"></span>
+The core stack (oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP fetching stack) is always compiled and no longer exposed as features.
 
-本项目支持通过 Cargo 特性灵活控制编译功能和二进制体积。自 v0.2 起，核心栈（oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。
-
-### 预设配置
-
-| 配置 | 特性组合 | 二进制大小 | 适用场景 |
+| Preset | Feature Set | Binary Size | Use Case |
 |-----|---------|-----------|---------|
-| standard | `engine-playwright, metrics` | ~35MB | 需要 JS 渲染（核心栈默认包含） |
-| full | `standard + engine-flaresolverr` | ~52MB | 所有功能 |
+| standard | `engine-playwright, metrics` | ~35MB | JS rendering needed (core stack included by default) |
+| full | `standard + engine-flaresolverr` | ~52MB | All features |
 
-> **Note:** `default = []` 不出现在预设表中，因为它不启用任何可选特性，仅编译核心栈（约 ~30MB）；用于按需显式启用场景。
+> **Note:** `default = []` is not listed in the preset table because it enables no optional features, compiling only the core stack (~30MB); intended for explicit opt-in scenarios.
 
-### 自定义组合
+### Custom Combinations
 
 ```bash
-# 自定义组合：核心栈始终编译，仅需指定可选特性
+# Custom combination: core stack always compiled, only specify optional features
 cargo build --release --features "engine-playwright,metrics,genai-llm"
 
-# 仅核心栈（无任何可选特性）
+# Core stack only (no optional features)
 cargo build --release --no-default-features
 ```
 
-### 特性参考
+### Feature Reference
 
-| 特性 | 描述 | 影响 |
+| Feature | Description | Impact |
 |------|------|------|
-| `engine-playwright` | Playwright JS 渲染引擎 | +8MB |
-| `engine-flaresolverr` | FlareSolverr 引擎（合并原 fire-cdp / fire-tls / flaresolverr 三引擎，通过 `FlareSolverrMode` 枚举区分 Full/Cdp/Tls 模式） | - |
-| `metrics` | 指标监控 | - |
-| `genai-llm` | genai LLM 抽取 | - |
-| `browser-download` | 自动下载 Playwright 浏览器 | - |
+| `engine-playwright` | chromiumoxide JS rendering engine | +8MB |
+| `engine-flaresolverr` | FlareSolverr engine (FlareSolverrMode enum for Full/Cdp/Tls modes) | - |
+| `metrics` | Metrics monitoring | - |
+| `genai-llm` | genai LLM extraction | - |
+| `browser-download` | Auto-download Playwright browser | - |
+| `test-mocks` | Test mock modules (`#[cfg(any(test, feature = "test-mocks"))]`) | - |
+| `admin-tools` | Ops CLI tools (`cargo run --bin add_credits --features admin-tools`) | - |
 
 ---
 
@@ -214,14 +214,33 @@ max_connections = 20
 host = "0.0.0.0"
 port = 8899
 
+[cors]
+allowed_origins = "*"
+
 [rate_limiting]
 enabled = true
 default_rpm = 60
-default_concurrent = 10
+default_limit = 60
+burst_size = 20
 
 [cache]
 enabled = true
-default_ttl = 300
+
+[cache.memory]
+capacity = 10000
+ttl_seconds = 300
+
+[cache.types.search]
+ttl_seconds = 300
+max_size = 10000
+
+[cache.types.dns]
+ttl_seconds = 3600
+max_size = 1000
+
+[cache.types.regex]
+ttl_seconds = 86400
+max_size = 5000
 
 [search]
 default_engine = "baidu"
@@ -246,7 +265,7 @@ sqlx migrate run
 ### 3️⃣ Run Server
 
 ```bash
-# Development mode with hot reloading
+# Development mode
 cargo run --bin crawlrs
 
 # Production mode
@@ -260,21 +279,51 @@ cargo run --bin crawlrs
 curl http://localhost:8899/health
 
 # Expected response:
-# {"status":"healthy"}
+# {"status":"healthy","version":"0.1.0"}
 ```
 
 ---
 
 ## ⚙️ Configuration <span id="configuration"></span>
 
+crawlrs uses confers for configuration management, supporting TOML files and `CRAWLRS__`-prefixed environment variables (`__` for nesting). Default config file: `config/default.toml`.
+
 ### Environment Variables
 
 | Variable | Description | Default | Required |
-|----------|-------------|----------|-----------|
-| `DATABASE_URL` | PostgreSQL connection string | - | Yes |
-| `SERVER_HOST` | Server bind address | 0.0.0.0 | No |
-| `SERVER_PORT` | Server port | 8899 | No |
-| `LOG_LEVEL` | Logging level | info | No |
+|-------------|----------|--------|------|
+| `CRAWLRS__DATABASE__URL` | PostgreSQL connection string | - | Yes |
+| `CRAWLRS__SERVER__HOST` | Server bind address | 0.0.0.0 | No |
+| `CRAWLRS__SERVER__PORT` | Server port | 8899 | No |
+| `CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT` | Default per-team concurrency limit | 10 | No |
+| `CRAWLRS__CACHE__MEMORY__CAPACITY` | Memory cache capacity | 10000 | No |
+| `CRAWLRS__CACHE__MEMORY__TTL_SECONDS` | Memory cache TTL | 300 | No |
+| `CRAWLRS__WEBHOOK__TIMEOUT_SECONDS` | Webhook call timeout | 10 | No |
+| `CRAWLRS__WORKERS__COUNT` | Worker count ("auto" or number) | auto | No |
+| `CRAWLRS__PROXY__URL` | Outbound proxy URL | - | No |
+| `CRAWLRS__LLM__API_KEY` | LLM service API key | - | No |
+| `CRAWLRS__ENGINES__FLARESOLVERR__URL` | FlareSolverr service URL | http://localhost:8191/v1 | No |
+| `CRAWLRS__LOG_LEVEL` | Log level | info | No |
+| `CRAWLRS__DATABASE__PASSWORD` | Database password (Docker mode) | - | No |
+
+### Configuration Reference
+
+| Section | Description | Key Fields |
+|--------|------|---------|
+| `[server]` | Server bind | `host`, `port`, `enable_port_detection` |
+| `[cors]` | CORS cross-origin | `allowed_origins` (comma-separated, `*` wildcard) |
+| `[database]` | Database connection | `url`, `max_connections`, `min_connections`, `connect_timeout` |
+| `[rate_limiting]` | Rate limiting | `enabled`, `default_rpm`, `default_limit`, `burst_size` |
+| `[cache]` | Cache control | `enabled`, `[cache.memory]` (capacity/ttl), `[cache.types.*]` (search/dns/regex) |
+| `[concurrency]` | Concurrency control | `default_team_limit`, `task_lock_duration_seconds` |
+| `[search]` | Search config | `default_engine`, `ab_test_enabled`, `timeout_seconds` |
+| `[webhook]` | Webhook | `timeout_seconds`, `max_retries`, `secret`, `batch_size` |
+| `[proxy]` | Outbound proxy | `url`, `enabled` |
+| `[llm]` | LLM extraction | `api_key`, `model`, `api_base_url` |
+| `[workers]` | Worker pool | `count` (`"auto"` or number) |
+| `[engines.flaresolverr]` | FlareSolverr | `enabled`, `url`, `timeout_seconds` |
+| `[logging]` | Log output | `[logging.console]`, `[logging.file]` (path/max_file_size/file_count) |
+| `[trusted_proxies]` | Trusted proxies | `enabled`, `proxies` (CIDR list) |
 
 ---
 
@@ -284,7 +333,7 @@ curl http://localhost:8899/health
 
 ### 🔑 Authentication
 
-All protected endpoints require an API key in `Authorization` header:
+All protected endpoints require an API key in the `Authorization` header:
 
 ```bash
 # Format
@@ -297,7 +346,15 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 
 > **⚠️ Security Tip:** Never commit API keys to version control. Use environment variables.
 
-### 📡 Core Endpoints
+### 📡 Public Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check (liveness probe) |
+| `/metrics` | GET | Prometheus metrics |
+| `/v1/version` | GET | Version number |
+
+### 📡 Core Protected Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -306,30 +363,39 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 | `/v1/scrape/{id}/_cancel` | POST | Cancel scrape task |
 | `/v1/crawl` | POST | Create a crawl task |
 | `/v1/crawl/{id}` | GET | Get crawl status |
+| `/v1/crawl/{id}` | DELETE | Cancel crawl task |
 | `/v1/crawl/{id}/_cancel` | POST | Cancel crawl task |
 | `/v1/crawl/{id}/results` | GET | Get crawl results |
 | `/v1/search` | POST | Search with specified engine |
 | `/v1/extract` | POST | Extract data from HTML |
-| `/v1/tasks/_query` | POST | Query tasks (complex query) |
-| `/v1/tasks/_cancel` | POST | Batch cancel tasks |
 | `/v1/webhooks` | POST | Create webhook |
+| `/v1/webhooks` | GET | List webhooks |
+| `/v1/teams/me` | GET | Get current team info |
+| `/v1/teams/me/usage` | GET | Get team usage |
 | `/v1/teams/geo-restrictions` | GET | Get team geo restrictions |
 | `/v1/teams/geo-restrictions` | PUT | Update team geo restrictions |
+| `/v1/tasks/_query` | POST | Complex query tasks |
+| `/v1/tasks/_cancel` | POST | Batch cancel tasks |
 | `/v1/audit/logs` | GET | Get audit logs |
 | `/v1/audit/denied` | GET | Get denied requests |
-| `/v1/metrics` | GET | Get system metrics |
+
+### 📡 SDK Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/sdk/search` | POST | SDK search |
+| `/api/v1/sdk/tasks` | POST | SDK create task |
+| `/api/v1/sdk/scrape` | POST | SDK create scrape |
+| `/api/v1/sdk/crawl` | POST | SDK create crawl |
 
 ---
 
 ## 🏗️ Architecture <span id="architecture"></span>
 
-crawlrs follows Domain-Driven Design (DDD) principles with clean architecture layers:
-
-
-### Mermaid 版本
+crawlrs follows Domain-Driven Design (DDD) principles with a clean four-layer architecture:
 
 ```mermaid
-flowchart TD
+flowchart TB
     subgraph Presentation [Presentation Layer - Axum]
         A[HTTP Handlers]
         B[Middleware]
@@ -360,22 +426,30 @@ flowchart TD
 
 > **Detailed Architecture:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
+### Engine Architecture
+
+- **EngineClient**: The only public entry point, wrapping all scrape operations in a unified API
+- **EngineRouter**: Engine dispatch core, using `Vec<Arc<dyn ScraperEngine>>` to store engine instances, selecting the best engine via configurable strategy
+- **Routing Strategies**: Default `SmartHybrid` (intelligent hybrid), optional `RaceMode` (concurrent racing) / `SequentialFallback` (sequential fallback)
+
 ### Technology Stack
 
 | Component | Technology | Version |
 |-----------|------------|---------|
 | Web Framework | Axum | 0.8 |
-| Async Runtime | Tokio | 1.48 |
-| Database ORM | Sea-ORM 2.0.0-rc (via dbnexus 0.4) | - |
+| Async Runtime | Tokio | 1.52 |
+| Database ORM | Sea-ORM 2.0.0-rc.43 (via dbnexus 0.4) | - |
 | Database | PostgreSQL | 14+ |
-| Cache | oxcache (moka memory backend) | 0.3 |
-| HTTP Client | Reqwest | 0.12 |
-| Browser Automation | Playwright | 0.40+ |
+| Cache | oxcache (moka) | 0.3 |
+| HTTP Client | Reqwest | 0.13 |
+| Browser Automation | chromiumoxide | 0.9 |
 | Structured Logging | inklog | 0.1 |
 | API SDK | sdforge | 0.4 |
 | Multi-backend Cache | oxcache | 0.3 |
 | Rate Limiting | limiteron | 0.2 |
 | Configuration | confers | 0.4 |
+| DI Framework | trait-kit | 0.3 |
+| HTML Parser | scraper | 0.27 |
 
 ---
 
@@ -389,8 +463,8 @@ docker build -t crawlrs:latest .
 
 # Run with Docker
 docker run -d \
-  -p 8080:8080 \
-  -e DATABASE_URL="postgresql://user:pass@db:5432/crawlrs" \
+  -p 8899:8899 \
+  -e CRAWLRS__DATABASE__URL="postgresql://user:pass@db:5432/crawlrs" \
   crawlrs:latest
 
 # Run with Docker Compose
@@ -401,13 +475,15 @@ docker-compose up -d
 
 - [ ] Set strong API keys and secrets
 - [ ] Configure proper database connection pooling
-- [ ] Configure oxcache for production caching
-- [ ] Set up rate limiting appropriate for your capacity
+- [ ] Configure oxcache caching for production (per-type TTL for search/dns/regex)
+- [ ] Set appropriate rate limits (`default_limit` / `burst_size`)
+- [ ] Configure CORS to specific origins (not `*` wildcard)
 - [ ] Configure metrics export to Prometheus
 - [ ] Enable distributed tracing (inklog HTTP sink)
 - [ ] Set up log aggregation (ELK, CloudWatch, etc.)
 - [ ] Configure webhook endpoints for task notifications
-- [ ] Review and tune concurrency settings
+- [ ] Review and tune concurrency settings (`concurrency.default_team_limit`)
+- [ ] Configure trusted proxies (`trusted_proxies`) to prevent IP spoofing
 - [ ] Enable SSL/TLS termination
 - [ ] Configure health check endpoints
 - [ ] Set up backup and disaster recovery
@@ -418,45 +494,38 @@ docker-compose up -d
 
 ```bash
 # Run unit tests
-cargo test
+cargo test --features default --lib --verbose
 
-# Run integration tests
+# Run integration tests (requires Docker: PostgreSQL + Redis via testcontainers)
 cargo test --test integration_tests --features full
 
-# Run with coverage
+# Run SDK API tests
+cargo test --features test-mocks --test sdk_api_test
+
+# Run full main test entry
+cargo test --features standard,test-mocks --test main
+
+# Run coverage tests
 cargo tarpaulin --out Html
 
 # Run benchmarks
 cargo bench
 
 # Run clippy (linter)
-cargo clippy -- -D warnings
+cargo clippy --features default -- -D warnings
+
+# Full clippy check (all features)
+cargo clippy --features full -- -D warnings
 
 # Format code
-cargo fmt
+cargo fmt --all -- --check
+
+# Dependency security check
+cargo deny check
+
+# Pre-commit full check
+scripts/pre-commit-check.sh all
 ```
-
----
-
-## 🗺️ Roadmap <span id="roadmap"></span>
-
-### v0.2.0 (Planned)
-
-| Feature | Status |
-|---------|--------|
-| FlareSolverr engine (Full/Cdp/Tls modes via `FlareSolverrMode`) | ✅ Implemented |
-| WebSocket real-time subscriptions | 📅 Planned |
-| Advanced proxy rotation | 📅 Planned |
-| Machine learning-based proxy selection | 📅 Planned |
-
-### v0.3.0 (Planned)
-
-| Feature | Status |
-|---------|--------|
-| Multi-language SDKs (Python, JavaScript, Go) | 📅 Planned |
-| UI dashboard | 📅 Planned |
-| Advanced scheduling and cron jobs | 📅 Planned |
-| Data pipeline integrations | 📅 Planned |
 
 ---
 
@@ -468,7 +537,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 1. Fork repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
 4. Push to branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
@@ -511,8 +580,7 @@ limitations under the License.
 | 📚 API Reference | [API_REFERENCE.md](docs/API_REFERENCE.md) |
 | 👤 User Guide | [USER_GUIDE.md](docs/USER_GUIDE.md) |
 | 🏗️ Architecture | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| 🐛 Issue Tracker | [GitHub Issues](https://github.com/your-org/crawlrs/issues) |
-| 💬 Discord Community | [Join Discord](https://discord.gg/your-server) |
+| 🐛 Issue Tracker | [GitHub Issues](https://github.com/YOUR_ORG/crawlrs/issues) |
 | 📧 Email | [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com) |
 
 ---

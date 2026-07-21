@@ -1,13 +1,11 @@
-
-
 # 👤 Comprehensive User Documentation
 <div align="center">
 
 ![Guide](https://img.shields.io/badge/type-user%20guide-blue)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 
-**Version:** 0.1.0 | **Last Updated:** 2025-01-15
+**Version:** 1.0.0 | **Last Updated:** 2025-07-21
 
 </div>
 
@@ -23,6 +21,8 @@
 - [Searching](#searching)
 - [Data Extraction](#data-extraction)
 - [Webhooks](#webhooks)
+- [Tasks](#tasks)
+- [Teams & Usage](#teams--usage)
 - [Error Handling](#error-handling)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -32,7 +32,7 @@
 
 ## Introduction
 
-Welcome to crawlrs, the high-performance web scraping platform built with Rust. This guide will help you get started and make the most of our API.
+Welcome to **crawlrs**, a high-performance self-hosted web scraping platform built with Rust. This guide covers all available API endpoints and features.
 
 ### What You Can Do
 
@@ -46,51 +46,57 @@ Welcome to crawlrs, the high-performance web scraping platform built with Rust. 
 | Concept | Description |
 |---------|-------------|
 | **Task** | A unit of work (scrape, crawl, extract) |
-| **API Key** | Your authentication credential with specific permissions |
-| **Team** | A logical group of API keys with shared limits |
-| **Credits** | Resource consumption unit for tracking usage |
-| **Webhook** - HTTP callback for task completion notifications |
+| **API Key** | Your authentication credential scoped to a team |
+| **Team** | A logical group of API keys with shared usage tracking |
+| **Webhook** | HTTP callback for task completion notifications |
+
+### Available Engines
+
+| Engine | Description | Best For |
+|--------|-------------|----------|
+| **Reqwest** | Pure Rust HTTP client | Static HTML, fast scraping |
+| **Playwright** | Full browser automation | JavaScript-heavy SPAs |
+| **Playwright (Firefox)** | Firefox-based rendering | Anti-bot bypass |
+| **FlareSolverr** | Cloudflare challenge solver | Sites behind Cloudflare |
+
+**FlareSolverr modes:**
+
+| Mode | Description |
+|------|-------------|
+| `Full` | Full browser automation with session reuse, slow but reliable |
+| `Cdp` | Chrome DevTools Protocol mode, moderate performance |
+| `Tls` | TLS fingerprint spoofing, fastest but limited bypass capability |
 
 ---
 
 ## Getting Started
 
-### 1. Sign Up
+### 1. Installation
 
-1. Visit the crawlrs registration page
-2. Create your account
-3. Generate your first API key
+crawlrs is a single Rust binary. Build and run:
 
-### 2. Install a Client
-
-Choose a client library for your preferred language:
-
-**JavaScript/Node.js:**
 ```bash
-npm install axios
+git clone https://github.com/your-org/crawlrs.git
+cd crawlrs
+cargo build --release
+
+# Start the API server (default)
+./target/release/crawlrs
+
+# Or run in worker mode (requires API running)
+./target/release/crawlrs worker
 ```
 
-**Python:**
-```bash
-pip install requests
-```
+The server starts on `http://localhost:8899` by default. Configure via `config/default.toml` or environment variables (prefix `CRAWLRS__`).
 
-**Go:**
-```bash
-go get github.com/your-org/crawlrs-go-sdk
-```
+### 2. Configure Authentication
 
-**Rust:**
-```bash
-cargo add crawlrs-client
-```
+Set your API key in the server config. See [Authentication](#authentication) for details.
 
 ### 3. Your First Request
 
-Here's how to scrape your first page:
-
 ```bash
-curl -X POST https://api.crawlrs.com/v1/scrape \
+curl -X POST http://localhost:8899/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -103,8 +109,7 @@ curl -X POST https://api.crawlrs.com/v1/scrape \
 {
   "success": true,
   "id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "https://example.com",
-  "credits_used": 10
+  "url": "https://example.com"
 }
 ```
 
@@ -112,74 +117,71 @@ curl -X POST https://api.crawlrs.com/v1/scrape \
 
 ## Authentication
 
-### API Key Management
+### API Key Configuration
 
-**Generate API Key:**
-1. Log in to your dashboard
-2. Navigate to "API Keys"
-3. Click "Create New Key"
-4. Choose scopes and team
-5. Save the key (you won't see it again)
+API keys are configured on the server side. There is no cloud dashboard — keys are set via environment variables, config files, or the database.
 
-**API Key Format:**
-```
-crawlrs_sk_abc123def456...
+**Environment variable:**
+```bash
+export CRAWLRS__AUTH__KEYS="sk-your-key-here"
 ```
 
-**Security Best Practices:**
+**Config file (`config/default.toml`):**
+```toml
+[auth]
+keys = ["sk-your-key-here"]
+```
+
+Keys are passed as a Bearer token in the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer sk-your-key-here" http://localhost:8899/v1/scrape
+```
+
+### Scopes
+
+API keys are scoped to restrict access:
+
+| Scope | Description |
+|--------|-------------|
+| `scrape` | Single page scraping |
+| `crawl` | Multi-page crawling |
+| `search` | Search engine queries |
+| `extract` | Data extraction |
+| `admin` | Full administrative access |
+
+### Security Best Practices
+
 - Never commit API keys to version control
 - Use environment variables for API keys
 - Rotate keys regularly
 - Revoke unused keys
 - Limit scopes to minimum required
+- Restrict network access to the server port
 
-### Scopes
+### Rate Limiting
 
-When creating an API key, choose which features it can access:
+Rate limits are configured server-side. Default configuration:
 
-| Scope | Description | Example Use Case |
-|--------|-------------|------------------|
-| `scrape` | Single page scraping | E-commerce product pages |
-| `crawl` | Multi-page crawling | Blog post discovery |
-| `search` | Search engine queries | Market research |
-| `extract` | Data extraction | Email parsing from HTML |
-| `admin` | Full administrative access | Automated backups |
-
-**Example:**
-```bash
-# Create key with only scrape scope
-curl -X POST https://api.crawlrs.com/v1/keys \
-  -H "Authorization: Bearer ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Production Scrape Key",
-    "scopes": ["scrape"],
-    "team_id": "your-team-id"
-  }'
+```toml
+[rate_limit]
+requests_per_minute = 60
+concurrent = 10
 ```
 
-### Rate Limits
+Every API response includes your current rate limit status:
 
-Your API key has rate limits based on your plan:
-
-| Plan | Requests/Minute | Concurrent |
-|-------|----------------|-------------|
-| Free | 30 | 3 |
-| Pro | 100 | 10 |
-| Enterprise | Unlimited | 100 |
-
-**Checking Your Limits:**
-```bash
-curl -X GET https://api.crawlrs.com/v1/keys/YOUR_KEY/limits \
-  -H "Authorization: Bearer YOUR_KEY"
 ```
-
-**Rate Limit Headers:**
-Every API response includes your current usage:
-```
-X-RateLimit-Limit: 100
+X-RateLimit-Limit: 60
 X-RateLimit-Remaining: 45
 X-RateLimit-Reset: 1705315200
+```
+
+Check your current limits:
+
+```bash
+curl -X GET http://localhost:8899/v1/teams/me/usage \
+  -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
 ---
@@ -188,63 +190,61 @@ X-RateLimit-Reset: 1705315200
 
 ### Basic Scraping
 
-Scrape a single page and get the HTML:
+Scrape a single page:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
-    url: 'https://example.com/article/123'
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/article/123"
+  }'
+```
 
-console.log(response.data);
-// {
-//   "success": true,
-//   "id": "550e8400-e29b-41d4-a716-446655440000",
-//   "url": "https://example.com/article/123",
-//   "credits_used": 10
-// }
+**Response:**
+```json
+{
+  "success": true,
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://example.com/article/123"
+}
 ```
 
 ### Get Scrape Results
 
-After creating a scrape task, retrieve the results:
+```bash
+curl http://localhost:8899/v1/scrape/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
 
-```javascript
-const response = await axios.get('https://api.crawlrs.com/v1/scrape/${taskId}', {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
+**Response:**
+```json
+{
+  "success": true,
+  "task": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "completed",
+    "result": {
+      "html": "<html>...</html>",
+      "markdown": "# Article Title\n\nContent...",
+      "text": "Article Title\n\nContent..."
     }
   }
-);
-
-console.log(response.data.task.result);
-// {
-//   "html": "<html>...</html>",
-//   "markdown": "# Article Title\n\nContent...",
-//   "text": "Article Title\n\nContent..."
-// }
+}
 ```
 
 ### Output Formats
 
 Request data in multiple formats:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
-    url: 'https://example.com/article',
-    formats: ['html', 'markdown', 'text']
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/article",
+    "formats": ["html", "markdown", "text"]
+  }'
 ```
 
 **Available Formats:**
@@ -256,56 +256,50 @@ const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
 
 Include or exclude specific HTML tags:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
-    url: 'https://example.com/blog',
-    include_tags: ['h1', 'h2', 'p', 'article'],
-    exclude_tags: ['script', 'style', 'nav', 'footer']
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/blog",
+    "include_tags": ["h1", "h2", "p", "article"],
+    "exclude_tags": ["script", "style", "nav", "footer"]
+  }'
 ```
 
 ### Extraction Rules
 
 Extract specific data using CSS selectors:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
-    url: 'https://example.com/product',
-    extraction_rules: {
-      title: {
-        selector: 'h1',
-        attribute: 'text'
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/product",
+    "extraction_rules": {
+      "title": {
+        "selector": "h1",
+        "attribute": "text"
       },
-      price: {
-        selector: '.price',
-        attribute: 'text'
+      "price": {
+        "selector": ".price",
+        "attribute": "text"
       },
-      description: {
-        selector: '.description',
-        attribute: 'text'
+      "description": {
+        "selector": ".description",
+        "attribute": "text"
       },
-      imageUrl: {
-        selector: '.product-image img',
-        attribute: 'src'
+      "imageUrl": {
+        "selector": ".product-image img",
+        "attribute": "src"
       },
-      inStock: {
-        selector: '#stock-status',
-        attribute: 'data-stock'
+      "inStock": {
+        "selector": "#stock-status",
+        "attribute": "data-stock"
       }
     }
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+  }'
 ```
 
 **Result:**
@@ -324,91 +318,84 @@ const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
 
 ### Custom Options
 
-Configure how the scraper should fetch the page:
+Configure how the scraper fetches the page:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
-    url: 'https://example.com/page',
-    options: {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; MyBot/1.0)',
-        'Accept-Language': 'en-US,en;q=0.9'
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/page",
+    "options": {
+      "headers": {
+        "User-Agent": "Mozilla/5.0 (compatible; MyBot/1.0)",
+        "Accept-Language": "en-US,en;q=0.9"
       },
-      wait_for: 2000,           // Wait 2 seconds for page load
-      timeout: 30,                // 30 second timeout
-      js_rendering: false,       // Don't use JavaScript rendering
-      screenshot: true,            // Take a screenshot
-      screenshot_options: {
-        full_page: true,
-        quality: 90,
-        format: 'png'
+      "wait_for": 2000,
+      "timeout": 30,
+      "js_rendering": false,
+      "screenshot": true,
+      "screenshot_options": {
+        "full_page": true,
+        "quality": 90,
+        "format": "png"
       },
-      mobile: false,               // Don't simulate mobile
-      proxy: 'http://proxy.example.com:8080',
-      skip_tls_verification: false,
-      needs_tls_fingerprint: false
+      "mobile": false,
+      "proxy": "http://proxy.example.com:8080",
+      "skip_tls_verification": false
     }
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+  }'
 ```
 
 ### Page Actions
 
 Perform actions on the page before scraping:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
-    url: 'https://example.com/lazy-load-page',
-    options: {
-      js_rendering: true  // Required for actions
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/lazy-load-page",
+    "options": {
+      "js_rendering": true
     },
-    actions: [
+    "actions": [
       {
-        type: 'wait',
-        milliseconds: 1000
+        "type": "wait",
+        "milliseconds": 1000
       },
       {
-        type: 'scroll',
-        direction: 'down'
+        "type": "scroll",
+        "direction": "down"
       },
       {
-        type: 'wait',
-        milliseconds: 2000
+        "type": "wait",
+        "milliseconds": 2000
       },
       {
-        type: 'click',
-        selector: '.load-more-button'
+        "type": "click",
+        "selector": ".load-more-button"
       },
       {
-        type: 'wait',
-        milliseconds: 3000
+        "type": "wait",
+        "milliseconds": 3000
       },
       {
-        type: 'scroll',
-        direction: 'down'
+        "type": "scroll",
+        "direction": "down"
       },
       {
-        type: 'input',
-        selector: '#search-input',
-        text: 'search query'
+        "type": "input",
+        "selector": "#search-input",
+        "text": "search query"
       },
       {
-        type: 'screenshot',
-        full_page: true
+        "type": "screenshot",
+        "full_page": true
       }
     ]
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+  }'
 ```
 
 **Action Types:**
@@ -425,20 +412,14 @@ const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
 
 Wait for the scrape to complete and get results immediately:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
-    url: 'https://example.com/article',
-    sync_wait_ms: 10000  // Wait up to 10 seconds
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
-
-console.log(response.data.task.result);
-// Results available immediately
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/article",
+    "sync_wait_ms": 10000
+  }'
 ```
 
 **Best Practices:**
@@ -446,6 +427,15 @@ console.log(response.data.task.result);
 - Recommended max: 5000ms for most cases
 - Maximum: 30000ms
 - For long-running tasks, use webhooks instead
+
+### Cancel a Scrape
+
+Stop a running scrape task:
+
+```bash
+curl -X POST http://localhost:8899/v1/scrape/550e8400-e29b-41d4-a716-446655440000/_cancel \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
 
 ---
 
@@ -455,26 +445,24 @@ console.log(response.data.task.result);
 
 Crawl a website starting from a URL:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
-    url: 'https://example.com/blog',
-    max_depth: 2,
-    max_pages: 100
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+```bash
+curl -X POST http://localhost:8899/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/blog",
+    "max_depth": 2,
+    "max_pages": 100
+  }'
+```
 
-console.log(response.data);
-// {
-//   "success": true,
-//   "id": "550e8400-e29b-41d4-a716-446655440000",
-//   "url": "https://example.com/blog",
-//   "credits_used": 50
-// }
+**Response:**
+```json
+{
+  "success": true,
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://example.com/blog"
+}
 ```
 
 ### Crawl Depth
@@ -489,37 +477,32 @@ Control how deep the crawler goes:
 | 3+ | Deep crawling | Full site discovery |
 
 **Example:**
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
-    url: 'https://example.com',
-    max_depth: 3,  // Crawl 3 levels deep
-    max_pages: 500  // Stop after 500 pages
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+
+```bash
+curl -X POST http://localhost:8899/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com",
+    "max_depth": 3,
+    "max_pages": 500
+  }'
 ```
 
 ### URL Patterns
 
 Control which URLs to crawl:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
-    url: 'https://example.com',
-    follow_links: true,
-    include_patterns: ['/blog/.*', '/articles/.*'],
-    exclude_patterns: ['/admin/.*', '/login/.*', '/api/.*']
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+```bash
+curl -X POST http://localhost:8899/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com",
+    "follow_links": true,
+    "include_patterns": ["/blog/.*", "/articles/.*"],
+    "exclude_patterns": ["/admin/.*", "/login/.*", "/api/.*"]
+  }'
 ```
 
 **Pattern Examples:**
@@ -533,80 +516,70 @@ const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
 
 Track crawl progress:
 
-```javascript
-let crawlId = '550e8400-e29b-41d4-a716-446655440000';
+```bash
+# Poll for status
+curl http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
 
-// Poll for status
-setInterval(async () => {
-  const response = await axios.get(`https://api.crawlrs.com/v1/crawl/${crawlId}`, {
-      headers: {
-        'Authorization': 'Bearer YOUR_API_KEY'
-      }
+**Response:**
+
+```json
+{
+  "success": true,
+  "task": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "running",
+    "progress": {
+      "pages_processed": 45,
+      "total_pages": 100
     }
-  );
-
-  const status = response.data.task.status;
-  const progress = response.data.task.progress;
-
-  console.log(`Status: ${status}`);
-  console.log(`Pages: ${progress.pages_processed}/${progress.total_pages}`);
-
-  if (status === 'completed' || status === 'failed') {
-    clearInterval(interval);
-    // Get results
-    await getResults(crawlId);
   }
-}, 2000);  // Check every 2 seconds
+}
 ```
 
 ### Get Crawl Results
 
 Retrieve all pages crawled:
 
-```javascript
-const getResults = async (crawlId) => {
-  const response = await axios.get(`https://api.crawlrs.com/v1/crawl/${crawlId}/results`, {
-      headers: {
-        'Authorization': 'Bearer YOUR_API_KEY'
-      },
-      params: {
-        page: 1,
-        limit: 20
-      }
+```bash
+curl "http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000/results?page=1&limit=20" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "results": [
+    {
+      "url": "https://example.com/blog/post-1",
+      "markdown": "# Post Title\n\nContent..."
     }
-  );
-
-  response.data.results.forEach(result => {
-    console.log(`URL: ${result.url}`);
-    console.log(`Markdown: ${result.markdown.substring(0, 100)}...`);
-  });
-
-  return response.data.pagination;
-};
-
-// Pagination
-const pagination = await getResults(crawlId);
-console.log(`Total: ${pagination.total}`);
-console.log(`Pages: ${Math.ceil(pagination.total / pagination.limit)}`);
+  ],
+  "pagination": {
+    "total": 150,
+    "page": 1,
+    "limit": 20
+  }
+}
 ```
 
 ### Cancel a Crawl
 
-Stop a running crawl:
+Stop a running crawl via cancel endpoint:
 
-```javascript
-const response = await axios.delete(`https://api.crawlrs.com/v1/crawl/${crawlId}`, {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+```bash
+curl -X POST http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000/_cancel \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
 
-console.log(response.data);
-// {
-//   "success": true,
-//   "message": "Crawl task cancelled"
-// }
+Or delete the crawl task:
+
+```bash
+curl -X DELETE http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
 ---
@@ -617,26 +590,25 @@ console.log(response.data);
 
 Search using Google:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/search', {
-    engine: 'google',
-    query: 'Rust web scraping tutorial'
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+```bash
+curl -X POST http://localhost:8899/v1/search \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "engine": "google",
+    "query": "Rust web scraping tutorial"
+  }'
+```
 
-console.log(response.data);
-// {
-//   "success": true,
-//   "id": "550e8400-e29b-41d4-a716-446655440000",
-//   "engine": "google",
-//   "query": "Rust web scraping tutorial",
-//   "credits_used": 5
-// }
+**Response:**
+
+```json
+{
+  "success": true,
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "engine": "google",
+  "query": "Rust web scraping tutorial"
+}
 ```
 
 ### Search Engines
@@ -650,48 +622,23 @@ Available search engines:
 | Baidu | `baidu` | Chinese content |
 | Sogou | `sogou` | Chinese content |
 
-**Example:**
-```javascript
-const engines = ['google', 'bing', 'baidu', 'sogou'];
-
-for (const engine of engines) {
-  const response = await axios.post(
-    'https://api.crawlrs.com/v1/search',
-    {
-      engine: engine,
-      query: 'your search query'
-    },
-    {
-      headers: {
-        'Authorization': 'Bearer YOUR_API_KEY'
-      }
-    }
-  );
-
-  console.log(`${engine} results:`, response.data.results);
-}
-```
-
 ### Search Options
 
 Customize your search:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/search', {
-    engine: 'google',
-    query: 'Rust programming',
-    num_results: 20,        // Number of results (max 100)
-    language: 'en',           // Language
-    region: 'us',             // Region
-    safe_search: false,        // Safe search
-    sync_wait_ms: 5000        // Wait for completion
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+```bash
+curl -X POST http://localhost:8899/v1/search \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "engine": "google",
+    "query": "Rust programming",
+    "num_results": 20,
+    "language": "en",
+    "region": "us",
+    "safe_search": false,
+    "sync_wait_ms": 5000
+  }'
 ```
 
 **Available Languages:**
@@ -713,50 +660,32 @@ const response = await axios.post('https://api.crawlrs.com/v1/search', {
 
 ### Get Search Results
 
-Retrieve search results:
+```bash
+# Synchronous (wait for completion)
+curl -X POST http://localhost:8899/v1/search \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "engine": "google",
+    "query": "Rust tutorial",
+    "sync_wait_ms": 5000
+  }'
+```
 
-```javascript
-const searchId = '550e8400-e29b-41d4-a716-446655440000';
+**Response:**
 
-// Option 1: Synchronous (wait for completion)
-const response = await axios.post('https://api.crawlrs.com/v1/search', {
-    engine: 'google',
-    query: 'Rust tutorial',
-    sync_wait_ms: 5000
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
+```json
+{
+  "success": true,
+  "results": [
+    {
+      "title": "Rust Programming Tutorial",
+      "url": "https://example.com/rust-tutorial",
+      "snippet": "Learn Rust programming...",
+      "engine": "google"
     }
-  }
-);
-
-console.log(response.data.results);
-// [
-//   {
-//     "title": "Rust Programming Tutorial",
-//     "url": "https://example.com/rust-tutorial",
-//     "snippet": "Learn Rust programming...",
-//     "engine": "google"
-//   },
-//   ...
-// ]
-
-// Option 2: Asynchronous (use webhook)
-const response = await axios.post('https://api.crawlrs.com/v1/search', {
-    engine: 'google',
-    query: 'Rust tutorial',
-    webhook: 'https://your-server.com/callback'
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
-
-console.log(response.data.id);
-// Results will be sent to your webhook
+  ]
+}
 ```
 
 ---
@@ -767,172 +696,110 @@ console.log(response.data.id);
 
 Parse structured data from HTML:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/extract', {
-    html: '<html><body><h1>Title</h1><p>Content</p></body></html>',
-    extraction_rules: {
-      title: {
-        selector: 'h1',
-        attribute: 'text'
+```bash
+curl -X POST http://localhost:8899/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "html": "<html><body><h1>Title</h1><p>Content</p></body></html>",
+    "extraction_rules": {
+      "title": {
+        "selector": "h1",
+        "attribute": "text"
       },
-      content: {
-        selector: 'p',
-        attribute: 'text'
+      "content": {
+        "selector": "p",
+        "attribute": "text"
       }
     }
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+  }'
+```
 
-console.log(response.data);
-// {
-//   "success": true,
-//   "data": {
-//     "title": "Title",
-//     "content": "Content"
-//   }
-// }
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "title": "Title",
+    "content": "Content"
+  }
+}
 ```
 
 ### Advanced Extraction
 
 Extract multiple elements:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/extract', {
-    html: htmlContent,
-    extraction_rules: {
-      headings: {
-        selector: 'h1, h2, h3',
-        attribute: 'text',
-        multiple: true
+```bash
+curl -X POST http://localhost:8899/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "html": "<html>...</html>",
+    "extraction_rules": {
+      "headings": {
+        "selector": "h1, h2, h3",
+        "attribute": "text",
+        "multiple": true
       },
-      links: {
-        selector: 'a',
-        attribute: 'href',
-        multiple: true
+      "links": {
+        "selector": "a",
+        "attribute": "href",
+        "multiple": true
       },
-      images: {
-        selector: 'img',
-        attribute: 'src',
-        multiple: true
+      "images": {
+        "selector": "img",
+        "attribute": "src",
+        "multiple": true
       },
-      meta_description: {
-        selector: 'meta[name="description"]',
-        attribute: 'content'
-      },
-      meta_keywords: {
-        selector: 'meta[name="keywords"]',
-        attribute: 'content'
+      "meta_description": {
+        "selector": "meta[name=\"description\"]",
+        "attribute": "content"
       }
     }
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
-
-console.log(response.data);
-// {
-//   "success": true,
-//   "data": {
-//     "headings": ["Main Title", "Section 1", "Section 2"],
-//     "links": ["/page1", "/page2", "/page3"],
-//     "images": ["/img1.jpg", "/img2.jpg"],
-//     "meta_description": "Page description...",
-//     "meta_keywords": "keyword1, keyword2, keyword3"
-//   }
-// }
-```
-
-### Nested Extraction
-
-Extract data from structured HTML:
-
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/extract', {
-    html: `
-      <div class="product">
-        <h1 class="name">Product Name</h1>
-        <div class="price">$99.99</div>
-        <ul class="features">
-          <li>Feature 1</li>
-          <li>Feature 2</li>
-        </ul>
-      </div>
-    `,
-    extraction_rules: {
-      productName: {
-        selector: '.name',
-        attribute: 'text'
-      },
-      productPrice: {
-        selector: '.price',
-        attribute: 'text'
-      },
-      features: {
-        selector: '.features li',
-        attribute: 'text',
-        multiple: true
-      }
-    }
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
-
-console.log(response.data);
-// {
-//   "success": true,
-//   "data": {
-//     "productName": "Product Name",
-//     "productPrice": "$99.99",
-//     "features": ["Feature 1", "Feature 2"]
-//   }
-// }
+  }'
 ```
 
 ---
 
 ## Webhooks
 
-### Setup Webhooks
+### Create Webhook
 
 Receive notifications when tasks complete:
 
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/webhooks', {
-    url: 'https://your-server.com/webhook',
-    events: ['task.completed', 'task.failed'],
-    secret: 'your-webhook-secret',
-    active: true
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
+```bash
+curl -X POST http://localhost:8899/v1/webhooks \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-server.com/webhook",
+    "events": ["task.completed", "task.failed"],
+    "secret": "your-webhook-secret",
+    "active": true
+  }'
+```
 
-console.log(response.data);
-// {
-//   "success": true,
-//   "webhook": {
-//     "id": "550e8400-e29b-41d4-a716-446655440000",
-//     "url": "https://your-server.com/webhook",
-//     "events": ["task.completed", "task.failed"],
-//     "active": true
-//   }
-// }
+**Response:**
+
+```json
+{
+  "success": true,
+  "webhook": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "url": "https://your-server.com/webhook",
+    "events": ["task.completed", "task.failed"],
+    "active": true
+  }
+}
+```
+
+### List Webhooks
+
+```bash
+curl http://localhost:8899/v1/webhooks \
+  -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
 ### Webhook Events
@@ -946,20 +813,6 @@ Subscribe to specific events:
 | `task.completed` | Task succeeded | Result processing |
 | `task.failed` | Task failed | Error handling |
 | `task.cancelled` | Task cancelled | Cleanup |
-
-**Example:**
-```javascript
-const response = await axios.post('https://api.crawlrs.com/v1/webhooks', {
-    url: 'https://your-server.com/webhook',
-    events: ['task.created', 'task.started', 'task.completed', 'task.failed']
-  },
-  {
-    headers: {
-      'Authorization': 'Bearer YOUR_API_KEY'
-    }
-  }
-);
-```
 
 ### Handle Webhook
 
@@ -975,7 +828,6 @@ app.post('/webhook', express.raw({type: 'application/json'}), (req, res) => {
   const signature = req.headers['x-webhook-signature'];
   const payload = req.body;
 
-  // Verify signature
   const expectedSignature = crypto
     .createHmac('sha256', 'your-webhook-secret')
     .update(payload)
@@ -986,14 +838,11 @@ app.post('/webhook', express.raw({type: 'application/json'}), (req, res) => {
   }
 
   const webhook = JSON.parse(payload);
-
   console.log('Event:', webhook.event);
   console.log('Task:', webhook.task);
 
-  // Process task result
   if (webhook.event === 'task.completed') {
     const result = webhook.result;
-    // Process result...
   }
 
   res.status(200).send('OK');
@@ -1005,6 +854,7 @@ app.listen(3000, () => {
 ```
 
 **Webhook Payload:**
+
 ```json
 {
   "event": "task.completed",
@@ -1025,8 +875,6 @@ app.listen(3000, () => {
 
 ### Webhook Retry Policy
 
-If your webhook endpoint returns an error:
-
 | Status Code | Retry Policy |
 |-----------|--------------|
 | 200-299 | Success, no retry |
@@ -1041,6 +889,85 @@ If your webhook endpoint returns an error:
 - 4th retry: 15 minutes
 - 5th retry: 1 hour
 - After 5 failed attempts: Mark webhook as failed
+
+---
+
+## Tasks
+
+### Query Tasks
+
+Search and filter tasks across all types:
+
+```bash
+curl -X POST http://localhost:8899/v1/tasks/_query \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "running",
+    "type": "scrape",
+    "limit": 20,
+    "offset": 0
+  }'
+```
+
+### Cancel Task
+
+Cancel any running task by its ID:
+
+```bash
+curl -X POST http://localhost:8899/v1/tasks/_cancel \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "550e8400-e29b-41d4-a716-446655440000"
+  }'
+```
+
+---
+
+## Teams & Usage
+
+### Get Team Info
+
+```bash
+curl http://localhost:8899/v1/teams/me \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "team": {
+    "id": "team-id-123",
+    "name": "My Team"
+  }
+}
+```
+
+### Get Usage Stats
+
+```bash
+curl http://localhost:8899/v1/teams/me/usage \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "usage": {
+    "requests_today": 150,
+    "rate_limit_info": {
+      "limit": 60,
+      "remaining": 45,
+      "reset": 1705315200
+    }
+  }
+}
+```
 
 ---
 
@@ -1066,9 +993,6 @@ try {
 } catch (error) {
   if (error.response?.status === 429) {
     const retryAfter = error.response.headers['retry-after'];
-    console.log(`Rate limited. Retry after ${retryAfter} seconds`);
-
-    // Wait and retry
     await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
     return makeRequest(url, data);
   }
@@ -1096,7 +1020,6 @@ function isValidUrl(url) {
   }
 }
 
-// Validate before making request
 if (!isValidUrl(userUrl)) {
   throw new Error('Invalid URL format');
 }
@@ -1112,118 +1035,90 @@ if (!isValidUrl(userUrl)) {
 ```
 
 **Solution:**
-- Never request internal URLs
+- Never request internal URLs (localhost, 127.0.0.1, private IPs)
 - Always validate URLs before sending
-- Use the whitelist approach
 
-**4. Insufficient Credits**
+**4. Authentication Failed**
 
 ```json
 {
   "success": false,
-  "error": "Insufficient credits for this operation"
+  "error": "Invalid or missing API key"
 }
 ```
 
 **Solution:**
-```javascript
-// Check credits before making request
-const response = await axios.get('https://api.crawlrs.com/v1/credits', {
-    headers: {
-      'Authorization': `Bearer ${API_KEY}`
-    }
-  }
-);
-if (response.data.credits < requiredCredits) {
-
-if (creditsResponse.data.credits < requiredCredits) {
-  console.error('Insufficient credits');
-  // Prompt user to upgrade or wait for renewal
-  return;
-}
-```
+- Verify the `Authorization` header is set correctly
+- Check the API key is configured on the server
 
 ### Error Handling Best Practices
 
 1. **Always Check `success` Field**
-   ```javascript
-   const response = await makeRequest();
-   if (!response.data.success) {
-     console.error('API error:', response.data.error);
-     // Handle error
-   }
-   ```
+
+```javascript
+const response = await makeRequest();
+if (!response.data.success) {
+  console.error('API error:', response.data.error);
+}
+```
 
 2. **Use Exponential Backoff for Retries**
-   ```javascript
-   async function retryWithBackoff(fn, maxRetries = 3) {
-     for (let i = 0; i < maxRetries; i++) {
-       try {
-         return await fn();
-       } catch (error) {
-         if (i === maxRetries - 1) throw error;
-         const delay = Math.pow(2, i) * 1000;  // 1s, 2s, 4s
-         await new Promise(resolve => setTimeout(resolve, delay));
-       }
-     }
-   }
-   }
-   ```
 
-3. **Log Errors with Context**
-   ```javascript
-   try {
-     const response = await axios.post(url, data);
-   } catch (error) {
-     console.error({
-       timestamp: new Date().toISOString(),
-       endpoint: url,
-       error: error.message,
-       status: error.response?.status,
-       data: error.response?.data
-     });
-   }
-   ```
+```javascript
+async function retryWithBackoff(fn, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === maxRetries - 1) throw error;
+      const delay = Math.pow(2, i) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+```
 
-4. **Implement Circuit Breaker**
-   ```javascript
-   class CircuitBreaker {
-     constructor(threshold = 5) {
-       this.failureCount = 0;
-       this.threshold = threshold;
-       this.state = 'closed';
-       this.nextAttempt = Date.now();
-     }
+3. **Implement Circuit Breaker**
 
-     async execute(fn) {
-       if (this.state === 'open' && Date.now() < this.nextAttempt) {
-         throw new Error('Circuit breaker is open');
-       }
+```javascript
+class CircuitBreaker {
+  constructor(threshold = 5, resetTimeout = 60000) {
+    this.failureCount = 0;
+    this.threshold = threshold;
+    this.state = 'closed';
+    this.nextAttempt = Date.now();
+    this.resetTimeout = resetTimeout;
+  }
 
-       try {
-         const result = await fn();
-         this.onSuccess();
-         return result;
-       } catch (error) {
-         this.onFailure();
-         throw error;
-       }
-     }
+  async execute(fn) {
+    if (this.state === 'open' && Date.now() < this.nextAttempt) {
+      throw new Error('Circuit breaker is open');
+    }
 
-     onSuccess() {
-       this.failureCount = 0;
-       this.state = 'closed';
-     }
+    try {
+      const result = await fn();
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
 
-     onFailure() {
-       this.failureCount++;
-       if (this.failureCount >= this.threshold) {
-         this.state = 'open';
-         this.nextAttempt = Date.now() + 60000;  // Retry after 1 minute
-       }
-     }
-   }
-   ```
+  onSuccess() {
+    this.failureCount = 0;
+    this.state = 'closed';
+  }
+
+  onFailure() {
+    this.failureCount++;
+    if (this.failureCount >= this.threshold) {
+      this.state = 'open';
+      this.nextAttempt = Date.now() + this.resetTimeout;
+    }
+  }
+}
+```
 
 ---
 
@@ -1232,23 +1127,21 @@ if (creditsResponse.data.credits < requiredCredits) {
 ### 1. Use Async Mode for Long-Running Tasks
 
 **Don't:**
-```javascript
-// Bad: Long wait times
-const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
-  url: 'https://example.com',
-  sync_wait_ms: 30000  // Wait 30 seconds
-});
+
+```bash
+curl -X POST http://localhost:8899/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "sync_wait_ms": 30000}'
 ```
 
 **Do:**
-```javascript
-// Good: Use webhook for async processing
-const response = await axios.post('https://api.crawlrs.com/v1/crawl', {
-  url: 'https://example.com',
-  webhook: 'https://your-server.com/callback'
-});
 
-// Process results when webhook is called
+```bash
+curl -X POST http://localhost:8899/v1/crawl \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "webhook": "https://your-server.com/callback"}'
 ```
 
 ### 2. Implement Proper Retry Logic
@@ -1263,16 +1156,12 @@ async function makeRequestWithRetry(url, data, retries = 3) {
       });
       return response.data;
     } catch (error) {
-      // Don't retry on 4xx errors (except 429)
       if (error.response?.status >= 400 && error.response?.status < 500 && error.response?.status !== 429) {
         throw error;
       }
 
-      // Backoff before retry
       const delay = Math.pow(2, i) * 1000;
       await new Promise(resolve => setTimeout(resolve, delay));
-
-      console.log(`Retry ${i + 1}/${retries} after ${delay}ms`);
     }
   }
 }
@@ -1286,21 +1175,17 @@ const cache = new Map();
 async function scrapeWithCache(url) {
   const cacheKey = `scrape:${url}`;
 
-  // Check cache
   if (cache.has(cacheKey)) {
-    console.log('Cache hit');
     return cache.get(cacheKey);
   }
 
-  // Make request
-  const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
+  const response = await axios.post('http://localhost:8899/v1/scrape', {
     url: url,
     formats: ['markdown']
   }, {
     headers: { 'Authorization': `Bearer ${API_KEY}` }
   });
 
-  // Cache result
   cache.set(cacheKey, response.data);
   return response.data;
 }
@@ -1309,46 +1194,29 @@ async function scrapeWithCache(url) {
 ### 4. Use Specific Output Formats
 
 **Don't:**
-```javascript
-// Bad: Request all formats when not needed
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
-  url: 'https://example.com',
-  formats: ['html', 'markdown', 'text', 'json']  // All formats
-});
+
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "formats": ["html", "markdown", "text"]}'
 ```
 
 **Do:**
-```javascript
-// Good: Request only what you need
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', {
-  url: 'https://example.com',
-  formats: ['markdown']  // Only markdown
-});
+
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "formats": ["markdown"]}'
 ```
 
-### 5. Monitor Your Usage
+### 5. Monitor Server Usage
 
-```javascript
-// Check usage regularly
-async function monitorUsage() {
-  const response = await axios.get('https://api.crawlrs.com/v1/usage', {
-    headers: { 'Authorization': `Bearer ${API_KEY}` }
-  });
-
-  const { credits_used, credits_remaining, requests_today, rate_limit_info } = response.data;
-
-  console.log(`Credits used: ${credits_used}/${credits_used + credits_remaining}`);
-  console.log(`Requests today: ${requests_today}`);
-  console.log(`Rate limit: ${rate_limit_info.remaining}/${rate_limit_info.limit}`);
-
-  // Alert if running low
-  if (credits_remaining < 100) {
-    console.warn('Low credits remaining!');
-  }
-}
-
-// Run every hour
-setInterval(monitorUsage, 3600000);
+```bash
+# Check usage regularly
+curl http://localhost:8899/v1/teams/me/usage \
+  -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
 ### 6. Validate Inputs Before Sending
@@ -1375,40 +1243,31 @@ function validateScrapeRequest(request) {
 
   return true;
 }
-
-// Use before making request
-try {
-  validateScrapeRequest(scrapeRequest);
-  await axios.post('/v1/scrape', scrapeRequest);
-} catch (error) {
-  console.error('Validation failed:', error.message);
-}
 ```
 
 ### 7. Use Environment Variables for Secrets
 
-**Never commit API keys:**
-
 ```bash
 # .env file
-CRAWLRS_API_KEY=crawlrs_sk_abc123def456...
+CRAWLRS_API_KEY=sk-your-key-here
 CRAWLRS_WEBHOOK_SECRET=my-secret-key
+CRAWLRS__SERVER__PORT=8899
+CRAWLRS__DATABASE__URL=postgres://user:pass@localhost/crawlrs
 ```
 
 ```javascript
-// Load environment variables
 require('dotenv').config();
 
 const API_KEY = process.env.CRAWLRS_API_KEY;
 const WEBHOOK_SECRET = process.env.CRAWLRS_WEBHOOK_SECRET;
 
-// Use in requests
-const response = await axios.post('https://api.crawlrs.com/v1/scrape', data, {
+const response = await axios.post('http://localhost:8899/v1/scrape', data, {
   headers: { 'Authorization': `Bearer ${API_KEY}` }
 });
 ```
 
 **.gitignore:**
+
 ```
 .env
 .env.local
@@ -1417,13 +1276,12 @@ const response = await axios.post('https://api.crawlrs.com/v1/scrape', data, {
 
 ### 8. Use Appropriate Engines
 
-**Choose the right engine for your needs:**
-
 | Scenario | Recommended Engine | Reason |
 |----------|-------------------|---------|
-| Static HTML pages | Reqwest | Fastest, lowest cost |
+| Static HTML pages | Reqwest | Fastest, lowest overhead |
 | JavaScript-heavy SPAs | Playwright | Renders JS |
-| Anti-bot protection | Playwright/Fire | Bypasses detection |
+| Anti-bot protection | Playwright (Firefox) | Bypasses detection |
+| Cloudflare-protected sites | FlareSolverr | Solves challenge |
 | Simple data extraction | Reqwest | Fast, efficient |
 | Screenshots needed | Playwright | Full page rendering |
 | High-volume scraping | Reqwest | Best performance |
@@ -1441,7 +1299,7 @@ const response = await axios.post('https://api.crawlrs.com/v1/scrape', data, {
 **Solutions:**
 - Check if multiple clients are using the same API key
 - Implement proper rate limiting in your application
-- Consider upgrading your plan for higher limits
+- Increase `requests_per_minute` in your server config
 - Use async mode (webhooks) instead of sync waiting
 
 **2. "SSRF protection: Internal URLs are not allowed"**
@@ -1460,25 +1318,25 @@ const response = await axios.post('https://api.crawlrs.com/v1/scrape', data, {
 **Solutions:**
 - Check if the target URL is accessible
 - Verify the URL isn't blocking bots
-- Try with a different engine (Playwright vs Reqwest)
+- Try with a different engine (Playwright vs Reqwest vs FlareSolverr)
 - Check your webhook endpoint is responding
-- Contact support if issue persists
+- Check worker logs if running in worker mode
 
 **4. Webhook not being called**
 
 **Problem:** Tasks complete but webhook not triggered
 
 **Solutions:**
-- Verify webhook URL is publicly accessible
+- Verify webhook URL is accessible from the crawlrs server
 - Check your server logs for incoming requests
 - Verify webhook signature is being sent correctly
 - Test webhook endpoint manually:
+
   ```bash
   curl -X POST https://your-server.com/webhook \
     -H 'Content-Type: application/json' \
     -d '{"event":"test"}'
   ```
-- Check webhook status in dashboard
 
 **5. Slow response times**
 
@@ -1488,18 +1346,18 @@ const response = await axios.post('https://api.crawlrs.com/v1/scrape', data, {
 - Use synchronous mode only when necessary
 - Reduce payload size (fewer formats, smaller sync_wait_ms)
 - Use caching for repeated requests
-- Check your network latency
-- Consider geographic distribution
+- Check your network latency to the crawlrs server
+- Ensure the server has sufficient resources (CPU, memory)
 
-**6. "Insufficient credits"**
+**6. Engine not available**
 
-**Problem:** Cannot create new tasks
+**Problem:** Requested engine returns an error
 
 **Solutions:**
-- Check your current credit usage in dashboard
-- Upgrade your plan for more credits
-- Wait for monthly credit renewal
-- Optimize your requests to use fewer credits
+- Verify FlareSolverr is running and accessible if using that engine
+- Check Playwright browsers are installed (`npx playwright install`)
+- Ensure Reqwest engine is compiled in (default)
+- Check server logs for engine-specific errors
 
 ---
 
@@ -1511,16 +1369,13 @@ const response = await axios.post('https://api.crawlrs.com/v1/scrape', data, {
 
 A: **Scrape** extracts content from a single page. **Crawl** automatically discovers and scrapes multiple linked pages starting from a URL.
 
-**Q: How much does it cost?**
+**Q: How do I install and run crawlrs?**
 
-A: Usage is measured in credits. Each operation consumes credits:
-- Scrape: 5-20 credits (based on options)
-- Crawl: 10-50 credits per page
-- Search: 2-5 credits per query
+A: crawlrs is a single Rust binary. Clone the repo, run `cargo build --release`, then execute `./target/release/crawlrs`. See the [Getting Started](#getting-started) section for details. The server starts on `http://localhost:8899` by default.
 
 **Q: Can I scrape any website?**
 
-A: Most websites, but we respect robots.txt and may block sites that explicitly prohibit scraping. Always check a website's Terms of Service.
+A: Most websites, but the server respects `robots.txt` and may block sites that explicitly prohibit scraping. Always check a website's Terms of Service.
 
 **Q: What happens if a task fails?**
 
@@ -1531,10 +1386,24 @@ A: Failed tasks are logged and you receive a webhook notification (if configured
 **Q: How do I handle JavaScript-rendered content?**
 
 A: Use Playwright engine by setting `js_rendering: true` in options:
-```javascript
+
+```json
 {
-  options: {
-    js_rendering: true
+  "options": {
+    "js_rendering": true
+  }
+}
+```
+
+**Q: How do I bypass Cloudflare protection?**
+
+A: Use the FlareSolverr engine. Choose the appropriate mode (`Full`, `Cdp`, or `Tls`) based on your needs:
+
+```json
+{
+  "options": {
+    "engine": "flaresolverr",
+    "flaresolverr_mode": "Full"
   }
 }
 ```
@@ -1542,10 +1411,11 @@ A: Use Playwright engine by setting `js_rendering: true` in options:
 **Q: Can I use a proxy?**
 
 A: Yes, specify a proxy in options:
-```javascript
+
+```json
 {
-  options: {
-    proxy: 'http://user:pass@proxy.example.com:8080'
+  "options": {
+    "proxy": "http://user:pass@proxy.example.com:8080"
   }
 }
 ```
@@ -1553,13 +1423,14 @@ A: Yes, specify a proxy in options:
 **Q: How do I extract data from multiple elements?**
 
 A: Use `multiple: true` in extraction rules:
-```javascript
+
+```json
 {
-  extraction_rules: {
-    links: {
-      selector: 'a',
-      attribute: 'href',
-      multiple: true
+  "extraction_rules": {
+    "links": {
+      "selector": "a",
+      "attribute": "href",
+      "multiple": true
     }
   }
 }
@@ -1569,19 +1440,15 @@ A: Use `multiple: true` in extraction rules:
 
 A: Maximum is 30,000 milliseconds (30 seconds). For longer tasks, use webhooks for async processing.
 
-### Billing Questions
+**Q: How do I configure rate limits?**
 
-**Q: How are credits calculated?**
+A: Rate limits are set in the server config file (`config/default.toml`):
 
-A: Credits are deducted when tasks complete. If a task fails, credits are refunded.
-
-**Q: Do unused credits roll over?**
-
-A: Yes, unused credits from your billing period roll over to the next period.
-
-**Q: Can I set a credit usage limit?**
-
-A: Yes, you can set a monthly cap in your dashboard to prevent overages.
+```toml
+[rate_limit]
+requests_per_minute = 60
+concurrent = 10
+```
 
 ---
 
@@ -1590,10 +1457,9 @@ A: Yes, you can set a monthly cap in your dashboard to prevent overages.
 ### Getting Help
 
 - 📖 [Documentation](/)
-- 📚 [API Reference](docs/API_REFERENCE.md)
-- 🏗️ [Architecture](docs/ARCHITECTURE.md)
+- 📚 [API Reference](API_REFERENCE.md)
+- 🏗️ [Architecture](ARCHITECTURE.md)
 - 🐛 [Issue Tracker](https://github.com/your-org/crawlrs/issues)
-- 💬 [Discord Community](https://discord.gg/your-server)
 - 📧 Email: Kirky-X@outlook.com
 
 ### Reporting Bugs
@@ -1603,14 +1469,14 @@ When reporting bugs, include:
 2. Request parameters (sanitized)
 3. Expected vs actual behavior
 4. Error messages
-5. Reproduction steps
+5. Server logs if available
+6. Reproduction steps
 
 ### Feature Requests
 
-We love feature requests! Submit them via:
+Submit feature requests via:
 - GitHub Issues (with "enhancement" label)
-- Discord Community channel
-- Email to support
+- Email to maintainer
 
 ---
 

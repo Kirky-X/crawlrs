@@ -261,5 +261,4 @@ mod tests {
         assert_eq!(scope.search_limit, 100);
         assert_eq!(scope.scrape_limit, 50);
     }
-
 }

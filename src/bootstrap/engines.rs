@@ -56,13 +56,12 @@ pub fn init_engines(
     // None → 空字符串（ReqwestEngine 内部会将空字符串视为未配置代理）
     let proxy_url_str = proxy_url.unwrap_or("");
     #[allow(unused_mut)]
-    let mut engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(
-        ReqwestEngine::with_proxy_and_timeout(
+    let mut engines: Vec<Arc<dyn ScraperEngine>> =
+        vec![Arc::new(ReqwestEngine::with_proxy_and_timeout(
             http_client.clone(),
             proxy_url_str.to_string(),
             timeout_seconds,
-        ),
-    )];
+        ))];
 
     #[cfg(feature = "engine-playwright")]
     engines.push(Arc::new(PlaywrightEngine::new()));
@@ -161,7 +160,12 @@ mod tests {
     fn test_init_engines_returns_non_empty_vec() {
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let engines = init_engines(http_client, Some("http://localhost:10808"), &engine_config, 30);
+        let engines = init_engines(
+            http_client,
+            Some("http://localhost:10808"),
+            &engine_config,
+            30,
+        );
         assert!(
             !engines.is_empty(),
             "init_engines should return at least one engine"
@@ -172,7 +176,12 @@ mod tests {
     fn test_init_engines_default_contains_reqwest_engine() {
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let engines = init_engines(http_client, Some("http://localhost:10808"), &engine_config, 30);
+        let engines = init_engines(
+            http_client,
+            Some("http://localhost:10808"),
+            &engine_config,
+            30,
+        );
         let engine_names: Vec<&str> = engines.iter().map(|e| e.name()).collect();
         assert!(
             engine_names.contains(&"reqwest"),
@@ -188,7 +197,12 @@ mod tests {
         // flaresolverr 引擎通过 FlareSolverrMode 枚举区分 Full / Cdp / Tls 三种模式。
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let engines = init_engines(http_client, Some("http://localhost:10808"), &engine_config, 30);
+        let engines = init_engines(
+            http_client,
+            Some("http://localhost:10808"),
+            &engine_config,
+            30,
+        );
         assert!(
             !engines.is_empty(),
             "Should have at least 1 engine with default features"

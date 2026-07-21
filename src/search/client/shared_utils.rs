@@ -297,7 +297,10 @@ mod tests {
 
     #[test]
     fn test_escape_html_text_plain_text_unchanged() {
-        assert_eq!(escape_html_text("Rust Programming Language"), "Rust Programming Language");
+        assert_eq!(
+            escape_html_text("Rust Programming Language"),
+            "Rust Programming Language"
+        );
     }
 
     #[test]

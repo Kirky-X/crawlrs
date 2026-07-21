@@ -293,8 +293,8 @@ mod tests {
     #[test]
     fn test_maybe_with_api_key_id_some_sets_value() {
         let id = Uuid::new_v4();
-        let builder =
-            AuditLogBuilder::new("authed.deny", AuditDecision::Deny).maybe_with_api_key_id(Some(id));
+        let builder = AuditLogBuilder::new("authed.deny", AuditDecision::Deny)
+            .maybe_with_api_key_id(Some(id));
         assert_eq!(builder.api_key_id, Some(id));
     }
 
@@ -322,8 +322,8 @@ mod tests {
     #[test]
     fn test_maybe_with_scope_some_sets_value() {
         let scope = ApiKeyScope::full_access();
-        let builder =
-            AuditLogBuilder::new("authed.deny", AuditDecision::Deny).maybe_with_scope(Some(scope.clone()));
+        let builder = AuditLogBuilder::new("authed.deny", AuditDecision::Deny)
+            .maybe_with_scope(Some(scope.clone()));
         assert_eq!(builder.scope_used, Some(scope));
     }
 

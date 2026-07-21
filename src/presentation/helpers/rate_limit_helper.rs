@@ -48,11 +48,7 @@ use std::fmt::Display;
 ///
 /// * `Ok(())` - Rate limit check passed
 /// * `Err(Response)` - Rate limit exceeded, with appropriate error response
-pub async fn check_rate_limit<T, K>(
-    service: &T,
-    api_key: K,
-    endpoint: &str,
-) -> Result<(), Response>
+pub async fn check_rate_limit<T, K>(service: &T, api_key: K, endpoint: &str) -> Result<(), Response>
 where
     T: RateLimitingService + ?Sized,
     K: Display,

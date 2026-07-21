@@ -26,8 +26,6 @@ pub mod env_var_security;
 pub mod secure_ip;
 
 // 重新导出常用类型与函数（保持现有调用路径 `security::hash_api_key` 等不变）
-pub use api_key_hash::{
-    hash_api_key, hash_api_key_sha256, is_legacy_sha256_hash, verify_api_key,
-};
+pub use api_key_hash::{hash_api_key, hash_api_key_sha256, is_legacy_sha256_hash, verify_api_key};
 pub use constant_time_compare::constant_time_eq_str;
 pub use secure_ip::{get_secure_client_ip, SecureIpExtractor, TrustedProxyConfig};

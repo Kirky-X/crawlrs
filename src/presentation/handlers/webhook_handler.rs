@@ -20,10 +20,10 @@ use crate::domain::use_cases::create_webhook::CreateWebhookUseCase;
 // 架构 MEDIUM-2：与 crawl/scrape handler 统一使用 `presentation::helpers::ssrf::validate_url`。
 // `engines::validators::validate_url` 仅是 re-export（见 engines/validators.rs line 39-42），
 // 直接使用源模块避免读者跳两次 import 才找到实现。
-use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::errors::CrawlRsError;
 use crate::presentation::handlers::response_builder::ApiResponse;
 use crate::presentation::helpers::rate_limit_helper::check_rate_limit_as_app_error;
+use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::body::Bytes;
 use axum::http::{HeaderMap, StatusCode};
@@ -81,25 +81,27 @@ pub async fn create_webhook<R: WebhookRepository>(
     // 限流命中时直接返回 429，避免不必要的 HMAC + JSON 解析 + SSRF 验证。
     // 性能 LOW-1：直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
     // 消除 handler 中的中间变量分配。
-    check_rate_limit_as_app_error(rate_limiting_service.as_ref(), auth_state.api_key_id, "/v1/webhooks").await?;
+    check_rate_limit_as_app_error(
+        rate_limiting_service.as_ref(),
+        auth_state.api_key_id,
+        "/v1/webhooks",
+    )
+    .await?;
 
     // 1. 验证 webhook 签名 (HMAC-SHA256 + 时间戳窗口，防止重放攻击)
-    verify_webhook_signature_from_headers(&headers, settings.webhook.secret(), &body).map_err(
-        |e| {
+    verify_webhook_signature_from_headers(&headers, settings.webhook.secret(), &body).inspect_err(
+        |_| {
             log::warn!(
                 "Webhook signature verification failed team_id={} api_key_id={}",
                 auth_state.team_id,
                 auth_state.api_key_id
             );
-            e
         },
     )?;
 
     // 2. 解析 JSON payload (签名验证通过后再解析)
-    let payload: CreateWebhookRequest =
-        serde_json::from_slice(&body).map_err(|e| {
-            CrawlRsError::Validation(format!("invalid JSON payload: {}", e))
-        })?;
+    let payload: CreateWebhookRequest = serde_json::from_slice(&body)
+        .map_err(|e| CrawlRsError::Validation(format!("invalid JSON payload: {}", e)))?;
 
     let team_id = auth_state.team_id;
 
@@ -632,7 +634,10 @@ mod tests {
         };
         let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
         let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
-        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
+        let headers = make_signed_headers(
+            TEST_WEBHOOK_SECRET,
+            std::str::from_utf8(&payload_bytes).expect("utf8"),
+        );
 
         let result = create_webhook(
             Extension(repo),
@@ -661,7 +666,10 @@ mod tests {
         };
         let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
         let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
-        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
+        let headers = make_signed_headers(
+            TEST_WEBHOOK_SECRET,
+            std::str::from_utf8(&payload_bytes).expect("utf8"),
+        );
 
         let result = create_webhook(
             Extension(repo),
@@ -696,7 +704,10 @@ mod tests {
         };
         let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
         let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
-        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
+        let headers = make_signed_headers(
+            TEST_WEBHOOK_SECRET,
+            std::str::from_utf8(&payload_bytes).expect("utf8"),
+        );
 
         let result = create_webhook(
             Extension(repo),
@@ -733,7 +744,10 @@ mod tests {
         };
         let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
         let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
-        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
+        let headers = make_signed_headers(
+            TEST_WEBHOOK_SECRET,
+            std::str::from_utf8(&payload_bytes).expect("utf8"),
+        );
 
         let result = create_webhook(
             Extension(repo),
@@ -875,7 +889,10 @@ mod tests {
         };
         let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
         let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
-        let headers = make_signed_headers(TEST_WEBHOOK_SECRET, std::str::from_utf8(&payload_bytes).expect("utf8"));
+        let headers = make_signed_headers(
+            TEST_WEBHOOK_SECRET,
+            std::str::from_utf8(&payload_bytes).expect("utf8"),
+        );
 
         let result = create_webhook(
             Extension(repo),
@@ -896,10 +913,7 @@ mod tests {
     // ========== webhook signature verification failure tests ==========
 
     /// 辅助：构造带自定义签名的 HeaderMap
-    fn make_headers_with_signature_and_timestamp(
-        signature: &str,
-        timestamp: i64,
-    ) -> HeaderMap {
+    fn make_headers_with_signature_and_timestamp(signature: &str, timestamp: i64) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(
             SIGNATURE_HEADER,
@@ -1056,10 +1070,8 @@ mod tests {
         let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
 
         // 使用错误的签名（不是基于真实 secret 计算的）
-        let headers = make_headers_with_signature_and_timestamp(
-            "deadbeefcafebabe",
-            Utc::now().timestamp(),
-        );
+        let headers =
+            make_headers_with_signature_and_timestamp("deadbeefcafebabe", Utc::now().timestamp());
 
         let result = create_webhook(
             Extension(repo),

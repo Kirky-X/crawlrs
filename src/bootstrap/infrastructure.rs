@@ -120,11 +120,7 @@ pub fn init_http_client(
             Err(e) => {
                 // 安全：日志中脱敏 proxy URL（剥离 userinfo 部分），防止凭据泄露到日志
                 let safe_url = sanitize_proxy_url(proxy_url);
-                log::warn!(
-                    "Invalid proxy URL '{}', disabling proxy: {}",
-                    safe_url,
-                    e
-                );
+                log::warn!("Invalid proxy URL '{}', disabling proxy: {}", safe_url, e);
             }
         }
     }
@@ -328,10 +324,7 @@ async fn init_dns_cache_service(settings: &Settings) -> Option<Arc<DnsCacheServi
             )))
         }
         Err(e) => {
-            log::warn!(
-                "Failed to create DNS cache: {}. Using system DNS.",
-                e
-            );
+            log::warn!("Failed to create DNS cache: {}. Using system DNS.", e);
             None
         }
     }

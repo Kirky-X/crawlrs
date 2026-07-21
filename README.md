@@ -22,7 +22,6 @@
 - [架构](#架构)
 - [部署](#部署)
 - [测试](#测试)
-- [路线图](#路线图)
 - [贡献](#贡献)
 - [许可证](#许可证)
 - [支持](#支持)
@@ -81,8 +80,8 @@
 | 引擎 | 用例 | 性能 | 成本 |
 |--------|----------|------------|-------|
 | **Reqwest** | 静态 HTML、API 响应 | ⚡ 最快 | 💰 最低 |
-| **Playwright** | JavaScript 密集的 SPA、交互 | 🐢 较慢 | 💳 较高 |
-| **FlareSolverr** | 反爬虫保护网站 | 🚀 可变 | 💎 可变 |
+| **chromiumoxide** | JavaScript 密集的 SPA、交互 | 🐢 较慢 | 💳 较高 |
+| **FlareSolverr** | 反爬虫保护网站（Full/Cdp/Tls 三种模式） | 🚀 可变 | 💎 可变 |
 
 ### 🔎 统一搜索
 
@@ -97,12 +96,14 @@
 
 | 特性 | 描述 |
 |---------|-------------|
-| **速率限制** | 每团队并发和 RPM 控制 |
-| **缓存** | 基于 oxcache 的 TTL 缓存（moka 内存后端） |
+| **速率限制** | 每团队并发和 RPM 控制（基于 limiteron，支持分布式限流与熔断） |
+| **缓存** | 基于 oxcache 的多层缓存（L1 内存 moka 后端），支持 search/dns/regex 分类型 TTL |
 | **指标与监控** | Prometheus 兼容的导出 |
 | **Webhooks** | 事件驱动的任务完成通知 |
 | **API Key 认证** | 作用域访问控制和团队隔离 |
 | **审计日志** | 完整的请求跟踪 |
+| **代理支持** | 统一出站代理配置 |
+| **LLM 抽取** | 基于 genai 的 LLM 内容抽取 |
 
 ### 🏗️ 架构
 
@@ -129,10 +130,10 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-org/crawlrs.git
+git clone https://github.com/YOUR_ORG/crawlrs.git
 cd crawlrs
 
-# 使用 standard 预设安装（核心栈 + Playwright + metrics）
+# 使用 standard 预设安装（核心栈 + engine-playwright + metrics）
 cargo build --release --features standard
 
 # 安装所有特性（standard + engine-flaresolverr）
@@ -146,21 +147,23 @@ cargo build --release --features "engine-playwright,metrics"
 
 > **注意：** `default = []` — 默认不启用任何特性。使用预设（`standard` / `full`）或显式列出所需特性。
 
-> **核心栈自 v0.2 起为非可选。** 核心依赖（oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit + scraper / chardetng / encoding_rs / robotstxt）与 HTTP 抓取栈始终编译，不再以 feature 形式暴露。
+> **核心栈为非可选。** 核心依赖（oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit 0.3 + scraper / chardetng / encoding_rs / robotstxt）与 HTTP 抓取栈始终编译，不再以 feature 形式暴露。
 
 | 特性 | 描述 | 默认 |
 |---------|-------------|----------|
-| `engine-playwright` | 基于 Chromium 的浏览器自动化 | ❌ 否 |
-| `engine-flaresolverr` | FlareSolverr 反爬虫保护（涵盖 Full/Cdp/Tls 模式） | ❌ 否 |
+| `engine-playwright` | 基于 chromiumoxide 的浏览器自动化 | ❌ 否 |
+| `engine-flaresolverr` | FlareSolverr 反爬虫保护（FlareSolverrMode 枚举区分 Full/Cdp/Tls 三模式） | ❌ 否 |
 | `metrics` | Prometheus 指标导出 | ❌ 否 |
 | `genai-llm` | 基于 genai 的 LLM 抽取 | ❌ 否 |
 | `browser-download` | 自动下载 Playwright 浏览器 | ❌ 否 |
+| `test-mocks` | 测试专用 mock 模块（integration test 需显式启用） | ❌ 否 |
+| `admin-tools` | 运维 CLI 工具（如 add_credits） | ❌ 否 |
 
-> **说明：** `openapi` 不是 Cargo feature——它是 `sdforge_macros` 的 `#[forge]` 宏生成的 cfg 标记，用于 OpenAPI 规范输出。用户无需显式启用；Task9 后 sdforge 总是编译，openapi 自动生效。
+> **说明：** `openapi` 不是 Cargo feature——它是 `sdforge_macros` 的 `#[forge]` 宏生成的 cfg 标记，用于 OpenAPI 规范输出。用户无需显式启用；sdforge 总是编译，openapi 自动生效。
 
 ### 预设与编译体积
 
-本项目通过 Cargo 特性控制可选功能。自 v0.2 起，核心栈（oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。
+本项目通过 Cargo 特性控制可选功能。核心栈（oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。
 
 | 预设 | 特性组合 | 二进制大小 | 适用场景 |
 |-----|---------|-----------|---------|
@@ -183,11 +186,13 @@ cargo build --release --no-default-features
 
 | 特性 | 描述 | 影响 |
 |------|------|------|
-| `engine-playwright` | Playwright JS 渲染引擎 | +8MB |
-| `engine-flaresolverr` | FlareSolverr 引擎（合并原 fire-cdp / fire-tls / flaresolverr 三引擎，通过 `FlareSolverrMode` 枚举区分 Full/Cdp/Tls 模式） | - |
+| `engine-playwright` | chromiumoxide JS 渲染引擎 | +8MB |
+| `engine-flaresolverr` | FlareSolverr 引擎（通过 FlareSolverrMode 枚举区分 Full/Cdp/Tls 三种模式） | - |
 | `metrics` | 指标监控 | - |
 | `genai-llm` | genai LLM 抽取 | - |
 | `browser-download` | 自动下载 Playwright 浏览器 | - |
+| `test-mocks` | 测试 mock 模块（`#[cfg(any(test, feature = "test-mocks"))]`） | - |
+| `admin-tools` | 运维 CLI 工具（`cargo run --bin add_credits --features admin-tools`） | - |
 
 ---
 
@@ -209,14 +214,33 @@ max_connections = 20
 host = "0.0.0.0"
 port = 8899
 
+[cors]
+allowed_origins = "*"
+
 [rate_limiting]
 enabled = true
 default_rpm = 60
-default_concurrent = 10
+default_limit = 60
+burst_size = 20
 
 [cache]
 enabled = true
-default_ttl = 300
+
+[cache.memory]
+capacity = 10000
+ttl_seconds = 300
+
+[cache.types.search]
+ttl_seconds = 300
+max_size = 10000
+
+[cache.types.dns]
+ttl_seconds = 3600
+max_size = 1000
+
+[cache.types.regex]
+ttl_seconds = 86400
+max_size = 5000
 
 [search]
 default_engine = "baidu"
@@ -241,7 +265,7 @@ sqlx migrate run
 ### 3️⃣ 运行服务器
 
 ```bash
-# 开发模式（热重载）
+# 开发模式
 cargo run --bin crawlrs
 
 # 生产模式
@@ -255,21 +279,51 @@ cargo run --bin crawlrs
 curl http://localhost:8899/health
 
 # 预期响应：
-# {"status":"healthy"}
+# {"status":"healthy","version":"0.1.0"}
 ```
 
 ---
 
 ## ⚙️ 配置 <span id="配置"></span>
 
+crawlrs 使用 confers 管理配置，支持 TOML 文件和 `CRAWLRS__` 前缀的环境变量（`__` 用于嵌套层级）。默认配置文件：`config/default.toml`。
+
 ### 环境变量
 
 | 环境变量 | 描述 | 默认值 | 必需 |
 |-------------|----------|--------|------|
-| `DATABASE_URL` | PostgreSQL 连接字符串 | - | 是 |
-| `SERVER_HOST` | 服务器绑定地址 | 0.0.0.0 | 否 |
-| `SERVER_PORT` | 服务器端口 | 8899 | 否 |
-| `LOG_LEVEL` | 日志级别 | info | 否 |
+| `CRAWLRS__DATABASE__URL` | PostgreSQL 连接字符串 | - | 是 |
+| `CRAWLRS__SERVER__HOST` | 服务器绑定地址 | 0.0.0.0 | 否 |
+| `CRAWLRS__SERVER__PORT` | 服务器端口 | 8899 | 否 |
+| `CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT` | 每团队默认并发限制 | 10 | 否 |
+| `CRAWLRS__CACHE__MEMORY__CAPACITY` | 内存缓存容量 | 10000 | 否 |
+| `CRAWLRS__CACHE__MEMORY__TTL_SECONDS` | 内存缓存 TTL | 300 | 否 |
+| `CRAWLRS__WEBHOOK__TIMEOUT_SECONDS` | Webhook 调用超时 | 10 | 否 |
+| `CRAWLRS__WORKERS__COUNT` | Worker 数量（"auto" 或数字） | auto | 否 |
+| `CRAWLRS__PROXY__URL` | 出站代理 URL | - | 否 |
+| `CRAWLRS__LLM__API_KEY` | LLM 服务 API 密钥 | - | 否 |
+| `CRAWLRS__ENGINES__FLARESOLVERR__URL` | FlareSolverr 服务 URL | http://localhost:8191/v1 | 否 |
+| `CRAWLRS__LOG_LEVEL` | 日志级别 | info | 否 |
+| `CRAWLRS__DATABASE__PASSWORD` | 数据库密码（Docker 模式） | - | 否 |
+
+### 配置参考
+
+| 配置段 | 描述 | 关键字段 |
+|--------|------|---------|
+| `[server]` | 服务器绑定 | `host`, `port`, `enable_port_detection` |
+| `[cors]` | CORS 跨域 | `allowed_origins`（逗号分隔，`*` 通配） |
+| `[database]` | 数据库连接 | `url`, `max_connections`, `min_connections`, `connect_timeout` |
+| `[rate_limiting]` | 速率限制 | `enabled`, `default_rpm`, `default_limit`, `burst_size` |
+| `[cache]` | 缓存控制 | `enabled`, `[cache.memory]` (capacity/ttl), `[cache.types.*]` (search/dns/regex) |
+| `[concurrency]` | 并发控制 | `default_team_limit`, `task_lock_duration_seconds` |
+| `[search]` | 搜索配置 | `default_engine`, `ab_test_enabled`, `timeout_seconds` |
+| `[webhook]` | Webhook | `timeout_seconds`, `max_retries`, `secret`, `batch_size` |
+| `[proxy]` | 出站代理 | `url`, `enabled` |
+| `[llm]` | LLM 抽取 | `api_key`, `model`, `api_base_url` |
+| `[workers]` | Worker 池 | `count`（`"auto"` 或数字） |
+| `[engines.flaresolverr]` | FlareSolverr | `enabled`, `url`, `timeout_seconds` |
+| `[logging]` | 日志输出 | `[logging.console]`, `[logging.file]` (path/max_file_size/file_count) |
+| `[trusted_proxies]` | 可信代理 | `enabled`, `proxies`（CIDR 列表） |
 
 ---
 
@@ -292,31 +346,53 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 
 > **⚠️ 安全提示:** 永远不要将 API 密钥提交到版本控制系统。使用环境变量。
 
-### 📡 核心端点
+### 📡 公开端点
+
+| 端点 | 方法 | 描述 |
+|----------|--------|-------------|
+| `/health` | GET | 健康检查（liveness probe） |
+| `/metrics` | GET | Prometheus 指标 |
+| `/v1/version` | GET | 版本号 |
+
+### 📡 核心受保护端点
 
 | 端点 | 方法 | 描述 |
 |----------|--------|-------------|
 | `/v1/scrape` | POST | 创建抓取任务 |
 | `/v1/scrape/{id}` | GET | 获取任务详情 |
-| `/v1/scrape/{id}` | DELETE | 取消抓取任务 |
+| `/v1/scrape/{id}/_cancel` | POST | 取消抓取任务 |
 | `/v1/crawl` | POST | 创建爬取任务 |
 | `/v1/crawl/{id}` | GET | 获取爬取状态 |
 | `/v1/crawl/{id}` | DELETE | 取消爬取任务 |
+| `/v1/crawl/{id}/_cancel` | POST | 取消爬取任务 |
 | `/v1/crawl/{id}/results` | GET | 获取爬取结果 |
 | `/v1/search` | POST | 使用指定引擎搜索 |
 | `/v1/extract` | POST | 从 HTML 提取数据 |
 | `/v1/webhooks` | POST | 创建 webhook |
+| `/v1/webhooks` | GET | 列出 webhook |
+| `/v1/teams/me` | GET | 获取当前团队信息 |
+| `/v1/teams/me/usage` | GET | 获取团队使用量 |
 | `/v1/teams/geo-restrictions` | GET | 获取团队地理限制 |
 | `/v1/teams/geo-restrictions` | PUT | 更新团队地理限制 |
+| `/v1/tasks/_query` | POST | 复杂查询任务 |
+| `/v1/tasks/_cancel` | POST | 批量取消任务 |
 | `/v1/audit/logs` | GET | 获取审计日志 |
 | `/v1/audit/denied` | GET | 获取被拒绝的请求 |
-| `/v1/metrics` | GET | 获取系统指标 |
+
+### 📡 SDK 端点
+
+| 端点 | 方法 | 描述 |
+|----------|--------|-------------|
+| `/api/v1/sdk/search` | POST | SDK 搜索 |
+| `/api/v1/sdk/tasks` | POST | SDK 创建任务 |
+| `/api/v1/sdk/scrape` | POST | SDK 创建抓取 |
+| `/api/v1/sdk/crawl` | POST | SDK 创建爬取 |
 
 ---
 
 ## 🏗️ 架构 <span id="架构"></span>
 
-crawlrs 遵循领域驱动设计（DDD）原则，采用清晰的分层架构：
+crawlrs 遵循领域驱动设计（DDD）原则，采用清晰的四层架构：
 
 ```mermaid
 flowchart TB
@@ -350,24 +426,30 @@ flowchart TB
 
 > **详细架构:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-> **详细架构:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+### 引擎架构
+
+- **EngineClient**: 唯一的公开入口点，封装所有抓取操作的统一 API
+- **EngineRouter**: 引擎调度核心，使用 `Vec<Arc<dyn ScraperEngine>>` 存储引擎实例，通过配置策略选择最佳引擎
+- **路由策略**: 默认使用 `SmartHybrid` 策略（智能混合），可选 `RaceMode`（并发竞速）/ `SequentialFallback`（顺序降级）
 
 ### 技术栈
 
 | 组件 | 技术 | 版本 |
 |-----------|------------|---------|
 | Web 框架 | Axum | 0.8 |
-| 异步运行时 | Tokio | 1.48 |
-| 数据库 ORM | Sea-ORM 2.0.0-rc（通过 dbnexus 0.4） | - |
+| 异步运行时 | Tokio | 1.52 |
+| 数据库 ORM | Sea-ORM 2.0.0-rc.43（通过 dbnexus 0.4） | - |
 | 数据库 | PostgreSQL | 14+ |
 | 缓存 | oxcache (moka) | 0.3 |
-| HTTP 客户端 | Reqwest | 0.12 |
-| 浏览器自动化 | Playwright | 0.40+ |
+| HTTP 客户端 | Reqwest | 0.13 |
+| 浏览器自动化 | chromiumoxide | 0.9 |
 | 结构化日志 | inklog | 0.1 |
 | API SDK | sdforge | 0.4 |
 | 多后端缓存 | oxcache | 0.3 |
 | 速率限制 | limiteron | 0.2 |
 | 配置管理 | confers | 0.4 |
+| DI 框架 | trait-kit | 0.3 |
+| HTML 解析 | scraper | 0.27 |
 
 ---
 
@@ -381,8 +463,8 @@ docker build -t crawlrs:latest .
 
 # 使用 Docker 运行
 docker run -d \
-  -p 8080:8080 \
-  -e DATABASE_URL="postgresql://user:pass@db:5432/crawlrs" \
+  -p 8899:8899 \
+  -e CRAWLRS__DATABASE__URL="postgresql://user:pass@db:5432/crawlrs" \
   crawlrs:latest
 
 # 使用 Docker Compose 运行
@@ -393,13 +475,15 @@ docker-compose up -d
 
 - [ ] 设置强密码 API 密钥和密钥
 - [ ] 配置适当的数据库连接池
-- [ ] 为生产环境配置 oxcache 缓存
-- [ ] 根据容量设置适当的速率限制
+- [ ] 为生产环境配置 oxcache 缓存（search/dns/regex 分类型 TTL）
+- [ ] 根据容量设置适当的速率限制（`default_limit` / `burst_size`）
+- [ ] 配置 CORS 为具体来源（非 `*` 通配符）
 - [ ] 配置指标导出到 Prometheus
 - [ ] 启用分布式追踪（inklog HTTP sink）
 - [ ] 设置日志聚合（ELK、CloudWatch 等）
 - [ ] 配置任务通知的 Webhook 端点
-- [ ] 审查和调整并发设置
+- [ ] 审查和调整并发设置（`concurrency.default_team_limit`）
+- [ ] 配置可信代理（`trusted_proxies`）防止 IP 伪造
 - [ ] 启用 SSL/TLS 终止
 - [ ] 配置健康检查端点
 - [ ] 设置备份和灾难恢复
@@ -410,10 +494,16 @@ docker-compose up -d
 
 ```bash
 # 运行单元测试
-cargo test
+cargo test --features default --lib --verbose
 
-# 运行集成测试
+# 运行集成测试（需要 Docker：PostgreSQL + Redis via testcontainers）
 cargo test --test integration_tests --features full
+
+# 运行 SDK API 测试
+cargo test --features test-mocks --test sdk_api_test
+
+# 运行完整主测试入口
+cargo test --features standard,test-mocks --test main
 
 # 运行覆盖率测试
 cargo tarpaulin --out Html
@@ -422,33 +512,20 @@ cargo tarpaulin --out Html
 cargo bench
 
 # 运行 clippy（linter）
-cargo clippy -- -D warnings
+cargo clippy --features default -- -D warnings
+
+# 完整 clippy 检查（全部特性）
+cargo clippy --features full -- -D warnings
 
 # 格式化代码
-cargo fmt
+cargo fmt --all -- --check
+
+# 依赖安全检查
+cargo deny check
+
+# Pre-commit 完整检查
+scripts/pre-commit-check.sh all
 ```
-
----
-
-## 🗺️ 路线图 <span id="路线图"></span>
-
-### v0.2.0 (计划中)
-
-| 特性 | 状态 |
-|---------|--------|
-| FlareSolverr 引擎（通过 `FlareSolverrMode` 区分 Full/Cdp/Tls 模式） | ✅ 已实现 |
-| WebSocket 实时订阅 | 📅 已计划 |
-| 高级代理轮换 | 📅 已计划 |
-| 基于机器学习的代理选择 | 📅 已计划 |
-
-### v0.3.0 (计划中)
-
-| 特性 | 状态 |
-|---------|--------|
-| 多语言 SDK（Python、JavaScript、Go） | 📅 已计划 |
-| UI 仪表板 | 📅 已计划 |
-| 高级调度和定时任务 | 📅 已计划 |
-| 数据管道集成 | 📅 已计划 |
 
 ---
 
@@ -460,7 +537,7 @@ cargo fmt
 
 1. Fork 仓库
 2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m '添加惊人的功能'`)
+3. 提交更改 (`git commit -m 'feat: 添加惊人功能'`)
 4. 推送到分支 (`git push origin feature/amazing-feature`)
 5. 开启 Pull Request
 
@@ -503,8 +580,7 @@ limitations under the License.
 | 📚 API 参考 | [API_REFERENCE.md](docs/API_REFERENCE.md) |
 | 👤 用户指南 | [USER_GUIDE.md](docs/USER_GUIDE.md) |
 | 🏗️ 架构 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| 🐛 问题追踪 | [GitHub Issues](https://github.com/your-org/crawlrs/issues) |
-| 💬 Discord 社区 | [加入 Discord](https://discord.gg/your-server) |
+| 🐛 问题追踪 | [GitHub Issues](https://github.com/YOUR_ORG/crawlrs/issues) |
 | 📧 邮箱 | [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com) |
 
 ---

@@ -1441,12 +1441,8 @@ mod tests {
         let secret = "mysecret";
         let payload = br#"{"task_id":"abc"}"#;
         // timestamp_str 不是有效 i64
-        let result = verify_webhook_signature_from_parts(
-            secret,
-            "deadbeef",
-            "not-a-number",
-            payload,
-        );
+        let result =
+            verify_webhook_signature_from_parts(secret, "deadbeef", "not-a-number", payload);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), WEBHOOK_AUTH_FAILED);
     }

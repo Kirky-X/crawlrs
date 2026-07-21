@@ -3,11 +3,11 @@
 
 <div align="center">
 
-![API Version](https://img.shields.io/badge/api-0.1.0-blue)
+![API Version](https://img.shields.io/badge/api-0.2.0-blue)
 ![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green)
 ![License](https://img.shields.io/badge/license-Apache%202.0-orange)
 
-**Version:** 0.1.0 | **Base URL:** `http://localhost:8899` | **Updated:** 2025-01-15
+**Version:** 0.2.0 | **Base URL:** `http://localhost:8899` | **Updated:** 2025-07-21
 
 </div>
 
@@ -28,34 +28,16 @@
   - [Search API](#search-api)
   - [Extract API](#extract-api)
   - [Task API](#task-api)
-  - [Task API v1](#task-api-v1)
   - [Team API](#team-api)
   - [Webhook API](#webhook-api)
   - [Audit API](#audit-api)
 - [Rate Limiting](#rate-limiting)
 - [Webhooks](#webhooks)
+- [SDK API](#sdk-api)
 - [SDK Examples](#sdk-examples)
 - [Best Practices](#best-practices)
 - [Changelog](#changelog)
 - [Support](#support)
-
----
-
-## Table of Contents
-
-- [Authentication](#authentication)
-- [Common Response Format](#common-response-format)
-- [Errors](#errors)
-- [Public Endpoints](#public-endpoints)
-- [Protected Endpoints](#protected-endpoints)
-  - [Scrape API](#scrape-api)
-  - [Crawl API](#crawl-api)
-  - [Search API](#search-api)
-  - [Extract API](#extract-api)
-  - [Task API](#task-api)
-  - [Team API](#team-api)
-  - [Webhook API](#webhook-api)
-  - [Audit API](#audit-api)
 
 ---
 
@@ -173,20 +155,7 @@ All API responses follow this unified structure:
 | 422 | Unprocessable Entity - Validation error |
 | 500 | Internal Server Error |
 
-### Error Response Format
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Detailed error message"
-  },
-  "timestamp": "2025-01-15T12:00:00+00:00"
-}
-```
-
-### Common Error Codes
+### Error Codes
 
 | Error Code | HTTP Status | Description |
 |------------|-------------|-------------|
@@ -232,7 +201,7 @@ Get the current API version.
 
 **Response:**
 ```text
-0.1.0
+0.2.0
 ```
 
 ### Get Metrics
@@ -391,55 +360,6 @@ Scrape a single web page.
 }
 ```
 
-#### Cancel Crawl
-
-**Endpoint:** `POST /v1/crawl/{id}/_cancel`
-
-**Parameters:**
-- `id` (path) - Task UUID
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "message": "Crawl task cancelled"
-  }
-}
-```
-
-#### Get Crawl Results
-
-**Endpoint:** `GET /v1/crawl/{id}/results`
-
-**Parameters:**
-- `id` (path) - Task UUID
-
-**Query Parameters:**
-- `page` - Page number (default: 1)
-- `limit` - Results per page (default: 20, max: 100)
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "results": [
-      {
-        "url": "https://example.com/page1",
-        "html": "...",
-        "markdown": "..."
-      }
-    ],
-    "pagination": {
-      "page": 1,
-      "limit": 20,
-      "total": 100
-    }
-  }
-}
-```
-
 ---
 
 ### Crawl API
@@ -555,6 +475,10 @@ Crawl multiple pages from a starting URL.
 ```
 
 #### Cancel Crawl
+
+Cancel a crawl task. Supports both POST and DELETE methods.
+
+**Endpoint:** `POST /v1/crawl/{id}/_cancel`
 
 **Endpoint:** `DELETE /v1/crawl/{id}`
 
@@ -685,6 +609,8 @@ Extract structured data from HTML.
 
 ### Task API
 
+Query and manage tasks. Task API follows RESTful conventions with action suffixes (`_query` for queries, `_cancel` for cancellations).
+
 #### Query Tasks
 
 **Endpoint:** `POST /v1/tasks/_query`
@@ -694,7 +620,7 @@ Extract structured data from HTML.
 {
   "filters": {
     "status": ["completed", "running"],
-    "type": ["scrape", "crawl"],
+    "type": ["scrape", "crawl", "extract"],
     "created_after": "2025-01-01T00:00:00Z",
     "created_before": "2025-01-15T00:00:00Z"
   },
@@ -708,6 +634,15 @@ Extract structured data from HTML.
   }
 }
 ```
+
+**Filter Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `status` | array | Filter by status: `pending`, `running`, `completed`, `failed`, `cancelled` |
+| `type` | array | Filter by type: `scrape`, `crawl`, `extract` |
+| `created_after` | string | Filter by creation date (RFC3339) |
+| `created_before` | string | Filter by creation date (RFC3339) |
 
 **Response (Success):**
 ```json
@@ -751,6 +686,39 @@ Extract structured data from HTML.
 ---
 
 ### Team API
+
+#### Get Current Team
+
+**Endpoint:** `GET /v1/teams/me`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "770e8400-e29b-41d4-a716-446655440000",
+    "name": "My Team",
+    "created_at": "2025-01-01T00:00:00Z"
+  }
+}
+```
+
+#### Get Team Usage
+
+**Endpoint:** `GET /v1/teams/me/usage`
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "credits_used": 1234,
+    "credits_limit": 10000,
+    "requests_today": 42,
+    "requests_limit": 1000
+  }
+}
+```
 
 #### Get Team Geo Restrictions
 
@@ -797,6 +765,37 @@ Extract structured data from HTML.
 
 ### Webhook API
 
+#### List Webhooks
+
+**Endpoint:** `GET /v1/webhooks`
+
+**Query Parameters:**
+- `page` - Page number (default: 1)
+- `limit` - Results per page (default: 20, max: 100)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "webhooks": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "url": "https://your-webhook.com/callback",
+        "events": ["task.completed", "task.failed"],
+        "active": true,
+        "created_at": "2025-01-15T00:00:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 5
+    }
+  }
+}
+```
+
 #### Create Webhook
 
 **Endpoint:** `POST /v1/webhooks`
@@ -838,77 +837,6 @@ Extract structured data from HTML.
       "events": ["task.completed", "task.failed"],
       "active": true
     }
-  }
-}
-```
-
----
-
-### Task API v1
-
-> **Note:** Task API 已从 v2 迁移到 v1，并遵循 RESTful 规范：
-> - 查询操作使用 `POST /v1/tasks/_query`（复杂查询使用 `_query` 后缀）
-> - 取消操作使用 `POST /v1/tasks/_cancel`（动作操作使用 `_cancel` 后缀）
-
-#### Query Tasks
-
-**Endpoint:** `POST /v1/tasks/_query`
-
-**Request Body:**
-```json
-{
-  "filters": {
-    "status": ["completed", "running"],
-    "type": ["scrape", "crawl", "extract"],
-    "created_after": "2025-01-01T00:00:00Z",
-    "created_before": "2025-01-15T00:00:00Z"
-  },
-  "pagination": {
-    "page": 1,
-    "limit": 20
-  },
-  "sort": {
-    "field": "created_at",
-    "order": "desc"
-  }
-}
-```
-
-**Response (Success):**
-```json
-{
-  "success": true,
-  "data": {
-    "tasks": [...],
-    "pagination": {
-      "page": 1,
-      "limit": 20,
-      "total": 150
-    }
-  }
-}
-```
-
-#### Cancel Tasks
-
-**Endpoint:** `POST /v1/tasks/_cancel`
-
-**Request Body:**
-```json
-{
-  "task_ids": [
-    "550e8400-e29b-41d4-a716-446655440000",
-    "660e8400-e29b-41d4-a716-446655440001"
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "cancelled_count": 2
   }
 }
 ```
@@ -1045,6 +973,121 @@ Verify the signature by computing HMAC SHA256 of the payload using your secret.
 
 ---
 
+## SDK API
+
+SDK endpoints provide simplified interfaces for common operations, wrapping the underlying REST API.
+
+### SDK Search
+
+**Endpoint:** `POST /api/v1/sdk/search`
+
+**Request Body:**
+```json
+{
+  "query": "Rust web scraping",
+  "engine": "google",
+  "num_results": 10
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "results": [...],
+    "credits_used": 5
+  }
+}
+```
+
+### SDK Tasks
+
+**Endpoint:** `POST /api/v1/sdk/tasks`
+
+**Request Body:**
+```json
+{
+  "filters": {
+    "status": ["completed"],
+    "type": ["scrape", "crawl"]
+  },
+  "pagination": {
+    "page": 1,
+    "limit": 20
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "tasks": [...],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 150
+    }
+  }
+}
+```
+
+### SDK Scrape
+
+**Endpoint:** `POST /api/v1/sdk/scrape`
+
+**Request Body:**
+```json
+{
+  "url": "https://example.com",
+  "formats": ["markdown"],
+  "sync_wait_ms": 5000
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "completed",
+    "result": {
+      "markdown": "..."
+    }
+  }
+}
+```
+
+### SDK Crawl
+
+**Endpoint:** `POST /api/v1/sdk/crawl`
+
+**Request Body:**
+```json
+{
+  "url": "https://example.com",
+  "max_pages": 50,
+  "max_depth": 2,
+  "formats": ["markdown"]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "running"
+  }
+}
+```
+
+---
+
 ## SDK Examples
 
 ### JavaScript/Node.js
@@ -1135,6 +1178,15 @@ func Scrape(url string) error {
 ---
 
 ## Changelog
+
+### v0.2.0 (2025-07-21)
+- Added `GET /v1/webhooks` to list webhooks
+- Added `GET /v1/teams/me` and `GET /v1/teams/me/usage` team endpoints
+- Added SDK API section (`/api/v1/sdk/*` endpoints)
+- Added `POST /v1/crawl/{id}/_cancel` cancel endpoint (alongside existing `DELETE /v1/crawl/{id}`)
+- Merged Task API sections into single unified section
+- Removed duplicate table of contents
+- Updated base URL to localhost:8899
 
 ### v0.1.0 (2025-01-15)
 - Initial release

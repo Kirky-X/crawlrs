@@ -417,7 +417,10 @@ mod tests {
         </div>
         "#;
         let results = engine.parse_search_results(html).unwrap();
-        assert!(results.is_empty(), "result without data-url should be skipped");
+        assert!(
+            results.is_empty(),
+            "result without data-url should be skipped"
+        );
     }
 
     #[test]

@@ -81,12 +81,8 @@ impl ReqwestEngine {
         let (proxy_url, proxy_client) = if url.trim().is_empty() {
             (None, None)
         } else {
-            let client = Self::build_custom_client(
-                Some(&url),
-                false,
-                &http_client,
-                timeout_seconds,
-            );
+            let client =
+                Self::build_custom_client(Some(&url), false, &http_client, timeout_seconds);
             (Some(url), Some(client))
         };
         Self {
@@ -104,7 +100,7 @@ impl ReqwestEngine {
     /// - `skip_tls`: true 时启用 `danger_accept_invalid_certs(true)`（仅开发环境，生产环境由
     ///   `ScrapeOptions::builder().skip_tls_verification(true)` 在 APP_ENVIRONMENT=production 时拒绝）
     /// - `timeout_seconds`: 请求超时（秒），从 Settings 注入避免硬编码
-    /// 创建失败时 fallback 到注入的 http_client。
+    ///   创建失败时 fallback 到注入的 http_client。
     fn build_custom_client(
         proxy_url: Option<&str>,
         skip_tls: bool,
@@ -138,10 +134,7 @@ impl ReqwestEngine {
                         client
                     }
                     Err(e) => {
-                        log::warn!(
-                            "Failed to build proxy client: {}, using fallback client",
-                            e
-                        );
+                        log::warn!("Failed to build proxy client: {}, using fallback client", e);
                         (**fallback).clone()
                     }
                 },
@@ -164,10 +157,7 @@ impl ReqwestEngine {
                     client
                 }
                 Err(e) => {
-                    log::warn!(
-                        "Failed to build client: {}, using fallback client",
-                        e
-                    );
+                    log::warn!("Failed to build client: {}, using fallback client", e);
                     (**fallback).clone()
                 }
             },
@@ -199,10 +189,7 @@ impl ReqwestEngine {
         }
 
         // 请求级代理优先
-        let request_proxy = proxy
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty());
+        let request_proxy = proxy.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
 
         if let Some(url) = request_proxy {
             // 请求级代理与引擎级代理相同，复用缓存的 proxy_client
@@ -926,11 +913,8 @@ mod tests {
     #[test]
     fn test_with_proxy_and_timeout_sets_timeout_seconds() {
         let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy_and_timeout(
-            client,
-            "http://proxy.example.com:8080",
-            45,
-        );
+        let engine =
+            ReqwestEngine::with_proxy_and_timeout(client, "http://proxy.example.com:8080", 45);
         // 引擎级代理路径下，timeout_seconds 应为注入值 45
         assert_eq!(engine.timeout_seconds, 45);
         // 验证 proxy_client 也使用注入的 timeout 构建（不 panic）

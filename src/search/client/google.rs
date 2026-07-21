@@ -346,17 +346,16 @@ impl SearchEngine for GoogleSearchEngine {
         //
         // CONSENT cookie: SearXNG sets CONSENT=YES+ to bypass Google's EU
         // consent redirect (see temp/searxng/searx/engines/google.py line 274).
-        let engine_request = EngineScrapeRequest::new(&google_url)
-            .with_options(
-                crate::engines::engine_client::ScrapeOptions::builder()
-                    .needs_js(false)
-                    .timeout(Duration::from_secs(60))
-                    // 复用静态 headers（Lazy<HashMap>）— 见 GOOGLE_STATIC_HEADERS 注释
-                    // 性能 LOW-1：clone 仍分配 6 个 String，与每次新构造等价；
-                    // 真正优化需要 ScrapeOptions::headers 接口改造（暂未做）。
-                    .headers(GOOGLE_STATIC_HEADERS.clone())
-                    .build(),
-            );
+        let engine_request = EngineScrapeRequest::new(&google_url).with_options(
+            crate::engines::engine_client::ScrapeOptions::builder()
+                .needs_js(false)
+                .timeout(Duration::from_secs(60))
+                // 复用静态 headers（Lazy<HashMap>）— 见 GOOGLE_STATIC_HEADERS 注释
+                // 性能 LOW-1：clone 仍分配 6 个 String，与每次新构造等价；
+                // 真正优化需要 ScrapeOptions::headers 接口改造（暂未做）。
+                .headers(GOOGLE_STATIC_HEADERS.clone())
+                .build(),
+        );
 
         let scrape_response = self
             .engine_client
@@ -381,7 +380,10 @@ impl SearchEngine for GoogleSearchEngine {
         // See temp/searxng/searx/engines/google.py detect_google_sorry()
         let content = &scrape_response.content;
         // 性能 LOW-2：2 次 contains 替代 AhoCorasick（2 个短模式，状态机常数开销不划算）
-        if GOOGLE_BOT_PROTECTION_OR_PATTERNS.iter().any(|p| content.contains(p)) {
+        if GOOGLE_BOT_PROTECTION_OR_PATTERNS
+            .iter()
+            .any(|p| content.contains(p))
+        {
             warn!("Google returned CAPTCHA/sorry page — IP likely flagged as bot");
             return Err(SearchError::RateLimited("Google".to_string()));
         }
@@ -392,7 +394,8 @@ impl SearchEngine for GoogleSearchEngine {
             );
             return Err(SearchError::EngineClient(
                 "Google".to_string(),
-                "noscript page returned — JS rendering required (FlareSolverr not available)".to_string(),
+                "noscript page returned — JS rendering required (FlareSolverr not available)"
+                    .to_string(),
             ));
         }
 

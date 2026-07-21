@@ -46,8 +46,12 @@ pub async fn create_crawl(
     // 1. 检查限流（架构 MEDIUM-1：限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
     // 性能 LOW-1：直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
     // 消除 handler 中的中间变量分配。
-    if let Err(response) =
-        check_rate_limit(state.rate_limiting_service.as_ref(), auth_state.api_key_id, "/v1/crawl").await
+    if let Err(response) = check_rate_limit(
+        state.rate_limiting_service.as_ref(),
+        auth_state.api_key_id,
+        "/v1/crawl",
+    )
+    .await
     {
         return response;
     }
