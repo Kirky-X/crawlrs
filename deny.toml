@@ -3,6 +3,7 @@
 
 [advisories]
 db-urls = ["https://github.com/RustSec/advisory-db"]
+vulnerability = "deny"
 yanked = "deny"
 
 [licenses]

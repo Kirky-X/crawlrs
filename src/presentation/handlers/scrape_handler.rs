@@ -88,6 +88,25 @@ pub async fn create_scrape(
         }
     }
 
+    // 2.5 SSRF 防护 (CWE-918)：验证 options.proxy 不指向内部网络
+    if let Some(ref options) = payload.options {
+        if let Some(ref proxy_url) = options.proxy {
+            if let Err(e) = validate_url(proxy_url).await {
+                log::warn!(
+                    "SSRF via proxy blocked proxy={} team_id={} api_key_id={} error={}",
+                    proxy_url,
+                    team_id,
+                    auth_state.api_key_id,
+                    e
+                );
+                return errors::bad_request(format!(
+                    "SSRF protection: proxy URL rejected: {}",
+                    e
+                ));
+            }
+        }
+    }
+
     // 3. 检查配额
     if let Err(e) = rate_limiting_service
         .check_and_deduct_quota(

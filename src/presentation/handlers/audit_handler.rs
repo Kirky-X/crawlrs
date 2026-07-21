@@ -26,6 +26,15 @@ pub struct AuditLogsQuery {
     pub team_id: Option<Uuid>,
 }
 
+/// 拒绝请求查询参数（仅支持 limit，不支持 api_key_id/team_id 过滤）
+///
+/// get_denied_requests 始终使用 auth_state.api_key_id 查询，
+/// 不允许通过查询参数指定其他 key（避免 IDOR 风险和 API 契约误导）。
+#[derive(Deserialize)]
+pub struct DeniedRequestsQuery {
+    pub limit: Option<u64>,
+}
+
 /// 审计日志响应数据传输对象
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AuditLogsResponseDto<T> {
@@ -122,7 +131,7 @@ pub async fn get_audit_logs(
 pub async fn get_denied_requests(
     Extension(audit_service): Extension<Arc<dyn AuditServiceTrait>>,
     Extension(auth_state): Extension<AuthState>,
-    Query(query): Query<AuditLogsQuery>,
+    Query(query): Query<DeniedRequestsQuery>,
 ) -> impl IntoResponse {
     let limit = query
         .limit
@@ -806,6 +815,27 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
+    #[tokio::test]
+    async fn test_get_audit_logs_idor_combo_own_key_other_team() {
+        let logs = vec![sample_entry("search", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        // 非 Admin 用户：自有 api_key_id + 他人 team_id → 403（team_id 检查拦截）
+        let api_key_id = Uuid::new_v4();
+        let auth_state = make_auth_state_with_key(api_key_id);
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: Some(api_key_id),
+            team_id: Some(Uuid::new_v4()),
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
     // ========== get_denied_requests handler tests ==========
 
     #[tokio::test]
@@ -816,12 +846,7 @@ mod tests {
         ];
         let mock = Arc::new(MockAuditService::new(denied));
         let auth_state = make_auth_state();
-        let query = AuditLogsQuery {
-            limit: Some(10),
-            offset: None,
-            api_key_id: None,
-            team_id: None,
-        };
+        let query = DeniedRequestsQuery { limit: Some(10) };
 
         let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
             .await
@@ -834,12 +859,7 @@ mod tests {
     async fn test_get_denied_requests_error_returns_internal_server_error() {
         let mock = Arc::new(MockAuditService::failing());
         let auth_state = make_auth_state();
-        let query = AuditLogsQuery {
-            limit: Some(10),
-            offset: None,
-            api_key_id: None,
-            team_id: None,
-        };
+        let query = DeniedRequestsQuery { limit: Some(10) };
 
         let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
             .await
@@ -852,12 +872,7 @@ mod tests {
     async fn test_get_denied_requests_empty() {
         let mock = Arc::new(MockAuditService::new(vec![]));
         let auth_state = make_auth_state();
-        let query = AuditLogsQuery {
-            limit: Some(10),
-            offset: None,
-            api_key_id: None,
-            team_id: None,
-        };
+        let query = DeniedRequestsQuery { limit: Some(10) };
 
         let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
             .await
@@ -871,12 +886,7 @@ mod tests {
         let denied = vec![sample_entry("search", AuditDecision::Deny)];
         let mock = Arc::new(MockAuditService::new(denied));
         let auth_state = make_auth_state();
-        let query = AuditLogsQuery {
-            limit: Some(99999),
-            offset: None,
-            api_key_id: None,
-            team_id: None,
-        };
+        let query = DeniedRequestsQuery { limit: Some(99999) };
 
         let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
             .await
@@ -891,12 +901,7 @@ mod tests {
         let denied = vec![sample_entry("search", AuditDecision::Deny)];
         let mock = Arc::new(MockAuditService::new(denied));
         let auth_state = make_auth_state_with_key(api_key_id);
-        let query = AuditLogsQuery {
-            limit: Some(10),
-            offset: None,
-            api_key_id: Some(Uuid::new_v4()),
-            team_id: None,
-        };
+        let query = DeniedRequestsQuery { limit: Some(10) };
 
         let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
             .await
@@ -914,12 +919,7 @@ mod tests {
         ];
         let mock = Arc::new(MockAuditService::new(entries));
         let auth_state = make_auth_state();
-        let query = AuditLogsQuery {
-            limit: Some(10),
-            offset: None,
-            api_key_id: None,
-            team_id: None,
-        };
+        let query = DeniedRequestsQuery { limit: Some(10) };
 
         let response = get_denied_requests(Extension(mock), Extension(auth_state), Query(query))
             .await

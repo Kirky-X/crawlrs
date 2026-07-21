@@ -186,6 +186,9 @@ jobs:
     name: GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # 串行依赖 publish-crates-io（非并行）：确保 crates.io 发布成功后才创建 GitHub Release，
+    # 避免 crates.io 失败时 GitHub Release 已存在的半发布不一致状态。
+    # 1-2min 的时间节省不值得牺牲发布完整性。
     needs: [version-consistency, publish-crates-io]
     permissions:
       contents: write

@@ -39,7 +39,7 @@ use crate::engines::engine_client::{
     EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
     ScreenshotConfig, ScrollDirection,
 };
-use crate::presentation::helpers::ssrf::validate_url;
+use crate::presentation::helpers::ssrf::is_internal_url;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
@@ -229,6 +229,20 @@ impl ScrapeWorker {
             ))
         });
 
+        // SSRF 防护 (CWE-918)：静态校验 options.proxy 不指向内部网络（防御纵深）。
+        // handler 层已通过 validate_url 完成完整 DNS 解析校验，
+        // 此处仅用静态检查拦截直接入队的恶意任务（如 private IP / localhost），不依赖网络。
+        if let Some(ref proxy_url) = scrape_request.options.proxy {
+            if is_internal_url(proxy_url) {
+                warn!(
+                    "SSRF via proxy blocked in worker proxy={} task_id={} team_id={}",
+                    proxy_url, task.id, task.team_id
+                );
+                self.repository.mark_failed(task.id).await?;
+                return Ok(());
+            }
+        }
+
         let response = self.engine_client.scrape(&scrape_request).await;
 
         match response {
@@ -364,16 +378,14 @@ impl ScrapeWorker {
             return Ok(());
         }
 
-        // 2.5 SSRF 防护 (CWE-918)：验证 crawl_config.proxy 不指向内部网络（防御纵深）。
-        // handler 层已在入队前验证，此处作为第二层防御拦截直接入队的恶意任务。
+        // 2.5 SSRF 防护 (CWE-918)：静态校验 crawl_config.proxy 不指向内部网络（防御纵深）。
+        // handler 层已通过 validate_url 完成完整 DNS 解析校验，
+        // 此处仅用静态检查拦截直接入队的恶意任务（如 private IP / localhost），不依赖网络。
         if let Some(ref proxy_url) = config.proxy {
-            if let Err(e) = validate_url(proxy_url).await {
+            if is_internal_url(proxy_url) {
                 warn!(
-                    "SSRF via proxy blocked in worker proxy={} task_id={} team_id={} error={}",
-                    proxy_url,
-                    task.id,
-                    task.team_id,
-                    e
+                    "SSRF via proxy blocked in worker proxy={} task_id={} team_id={}",
+                    proxy_url, task.id, task.team_id
                 );
                 self.repository.mark_failed(task.id).await?;
                 return Ok(());
