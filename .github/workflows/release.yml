@@ -171,8 +171,8 @@ jobs:
         env:
           VERSION: ${{ steps.extract-version.outputs.version }}
         run: |
-          BODY=$(awk -v ver="## \[${VERSION}\]" '
-            $0 ~ "^" ver " " {flag=1; next}
+          BODY=$(awk -v ver="## [${VERSION}] " '
+            index($0, ver) == 1 {flag=1; next}
             /^## \[/ {if (flag) exit}
             flag {print}
           ' CHANGELOG.md)
