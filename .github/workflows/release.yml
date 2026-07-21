@@ -1,0 +1,280 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.1.0, without v prefix)"
+        required: false
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  lint-check:
+    name: Lint Check (fmt + clippy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+        with:
+          components: rustfmt, clippy
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          shared-key: release-full-deps
+      - name: Rustfmt check
+        run: cargo fmt --all -- --check
+      - name: Clippy (full features)
+        run: cargo clippy --features full --lib --tests -- -D warnings
+
+  test-check:
+    name: Test Check (lib + integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+        with:
+          components: rustfmt, clippy
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          shared-key: release-full-deps
+      - name: Lib tests
+        run: cargo test --features full --lib
+      - name: Integration tests
+        run: cargo test --features full,test-mocks --tests --no-fail-fast
+
+  security-check:
+    name: Security Check (cargo-deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cargo deny check
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          arguments: --all-features
+
+  doc-check:
+    name: Doc Check (zero warnings)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          shared-key: release-full-deps
+      - name: Build docs (zero warnings)
+        run: cargo doc --features full --no-deps
+
+  version-consistency:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [lint-check, test-check, security-check, doc-check]
+    outputs:
+      version: ${{ steps.extract-version.outputs.version }}
+      body: ${{ steps.changelog-body.outputs.body }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: extract-version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Invalid version format: $VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Check Cargo.toml version
+        env:
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          CARGO_VERSION=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
+          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) != release version ($VERSION)"
+            exit 1
+          fi
+          echo "Cargo.toml version: $CARGO_VERSION OK"
+
+      - name: Check CHANGELOG.md
+        env:
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          if ! grep -qE "^## \[${VERSION}\] " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md missing ## [${VERSION}] section"
+            exit 1
+          fi
+          echo "CHANGELOG.md contains ## [${VERSION}] OK"
+
+      - name: Extract CHANGELOG body
+        id: changelog-body
+        env:
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          BODY=$(awk -v ver="## \[${VERSION}\]" '
+            $0 ~ "^" ver " " {flag=1; next}
+            /^## \[/ {if (flag) exit}
+            flag {print}
+          ' CHANGELOG.md)
+          if [[ -z "$BODY" ]]; then
+            echo "::error::No content found for ## [${VERSION}] in CHANGELOG.md"
+            exit 1
+          fi
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  publish-crates-io:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: version-consistency
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          shared-key: release-full-deps
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [version-consistency, publish-crates-io]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          shared-key: release-full-deps
+
+      - name: Build source package (.crate)
+        run: |
+          cargo package --no-verify
+          CRATE_FILE=$(find target/package -name "*.crate" -type f | head -1)
+          if [[ -z "$CRATE_FILE" ]]; then
+            echo "::error::No .crate file found"
+            exit 1
+          fi
+          echo "CRATE_FILE=$CRATE_FILE" >> $GITHUB_ENV
+          echo "Built: $CRATE_FILE"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
+        with:
+          tag_name: v${{ needs.version-consistency.outputs.version }}
+          name: Release v${{ needs.version-consistency.outputs.version }}
+          body: ${{ needs.version-consistency.outputs.body }}
+          draft: false
+          prerelease: ${{ contains(needs.version-consistency.outputs.version, '-rc') || contains(needs.version-consistency.outputs.version, '-beta') || contains(needs.version-consistency.outputs.version, '-alpha') }}
+          files: |
+            ${{ env.CRATE_FILE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  verify-release:
+    name: Verify Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [github-release, publish-crates-io]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Extract version from Cargo.toml
+        id: extract-version
+        run: |
+          VERSION=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Invalid version format: $VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Verify GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          for i in 1 2 3; do
+            if gh release view "v${VERSION}" >/dev/null 2>&1; then
+              echo "GitHub Release v${VERSION} verified OK"
+              break
+            fi
+            echo "Waiting for GitHub Release propagation (attempt $i/3)..."
+            sleep 5
+            if [[ $i -eq 3 ]]; then
+              echo "::error::GitHub Release v${VERSION} verification failed"
+              exit 1
+            fi
+          done
+
+      - name: Verify crates.io publish
+        env:
+          VERSION: ${{ steps.extract-version.outputs.version }}
+        run: |
+          PUBLISHED=""
+          for i in 1 2 3 4 5 6; do
+            PUBLISHED=$(curl -sS "https://crates.io/api/v1/crates/crawlrs" | grep -o "\"newest_version\":\"[^\"]*\"" | head -1)
+            if echo "$PUBLISHED" | grep -q "\"$VERSION\""; then
+              echo "crates.io published v${VERSION} OK"
+              exit 0
+            fi
+            echo "Waiting for crates.io index propagation (attempt $i/6)..."
+            sleep 10
+          done
+          echo "::error::crates.io did not find v${VERSION} (last result: $PUBLISHED)"
+          exit 1

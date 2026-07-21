@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::common::constants::server_config;
+use crate::domain::auth::ScopePermission;
 use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
 use crate::presentation::middleware::auth_middleware::AuthState;
@@ -49,6 +50,26 @@ pub async fn get_audit_logs(
         .unwrap_or(server_config::DEFAULT_PAGE_LIMIT as u64)
         .min(server_config::MAX_PAGE_LIMIT as u64);
     let offset = query.offset.unwrap_or(0);
+
+    // IDOR 防护 (CWE-862)：跨 key/team 查询需要 Admin 权限。
+    // 非 Admin 用户只能查看自身 api_key_id 或所属 team_id 的审计日志。
+    let is_admin = auth_state.scope.has_permission(ScopePermission::Admin);
+    if let Some(req_key_id) = query.api_key_id {
+        if req_key_id != auth_state.api_key_id && !is_admin {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "Insufficient permissions to query other API keys' audit logs",
+            );
+        }
+    }
+    if let Some(req_team_id) = query.team_id {
+        if req_team_id != auth_state.team_id && !is_admin {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "Insufficient permissions to query other teams' audit logs",
+            );
+        }
+    }
 
     match query {
         AuditLogsQuery {
@@ -298,6 +319,21 @@ mod tests {
         AuthState::new(pool, Uuid::new_v4(), api_key_id, ApiKeyScope::default())
     }
 
+    fn make_auth_state_with_team(team_id: Uuid) -> AuthState {
+        let pool = create_test_db_pool();
+        AuthState::new(pool, team_id, Uuid::new_v4(), ApiKeyScope::default())
+    }
+
+    fn make_admin_auth_state() -> AuthState {
+        let pool = create_test_db_pool();
+        AuthState::new(
+            pool,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::full_access(),
+        )
+    }
+
     fn sample_entry(action: &str, decision: AuditDecision) -> AuditLogEntry {
         AuditLogBuilder::new(action, decision)
             .with_api_key_id(Uuid::new_v4())
@@ -478,11 +514,12 @@ mod tests {
             sample_entry("scrape", AuditDecision::Allow),
         ];
         let mock = Arc::new(MockAuditService::new(logs));
-        let auth_state = make_auth_state();
+        let api_key_id = Uuid::new_v4();
+        let auth_state = make_auth_state_with_key(api_key_id);
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
-            api_key_id: Some(Uuid::new_v4()),
+            api_key_id: Some(api_key_id),
             team_id: None,
         };
 
@@ -497,12 +534,13 @@ mod tests {
     async fn test_get_audit_logs_by_team_id() {
         let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
-        let auth_state = make_auth_state();
+        let team_id = Uuid::new_v4();
+        let auth_state = make_auth_state_with_team(team_id);
         let query = AuditLogsQuery {
             limit: Some(50),
             offset: None,
             api_key_id: None,
-            team_id: Some(Uuid::new_v4()),
+            team_id: Some(team_id),
         };
 
         let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
@@ -535,7 +573,7 @@ mod tests {
     async fn test_get_audit_logs_api_key_takes_priority_over_team_id() {
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
-        let auth_state = make_auth_state();
+        let auth_state = make_admin_auth_state();
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
@@ -553,7 +591,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_audit_logs_error_returns_internal_server_error() {
         let mock = Arc::new(MockAuditService::failing());
-        let auth_state = make_auth_state();
+        let auth_state = make_admin_auth_state();
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
@@ -571,7 +609,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_audit_logs_error_on_team_branch() {
         let mock = Arc::new(MockAuditService::failing());
-        let auth_state = make_auth_state();
+        let auth_state = make_admin_auth_state();
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
@@ -607,7 +645,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_audit_logs_empty_logs() {
         let mock = Arc::new(MockAuditService::new(vec![]));
-        let auth_state = make_auth_state();
+        let auth_state = make_admin_auth_state();
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
@@ -626,12 +664,139 @@ mod tests {
     async fn test_get_audit_logs_limit_clamped_to_max() {
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
-        let auth_state = make_auth_state();
+        let auth_state = make_admin_auth_state();
         let query = AuditLogsQuery {
             limit: Some(50000),
             offset: Some(0),
             api_key_id: Some(Uuid::new_v4()),
             team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ========== IDOR 防护测试 (CWE-862) ==========
+    //
+    // 非 Admin 用户只能查询自身 api_key_id 或所属 team_id 的审计日志。
+    // 跨 key/team 查询需要 Admin 权限，否则返回 403 FORBIDDEN。
+
+    #[tokio::test]
+    async fn test_get_audit_logs_idor_blocks_other_api_key_id() {
+        let logs = vec![sample_entry("search", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        // 非 Admin 用户，查询其他 api_key_id → 403
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_idor_blocks_other_team_id() {
+        let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        // 非 Admin 用户，查询其他 team_id → 403
+        let auth_state = make_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: None,
+            team_id: Some(Uuid::new_v4()),
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_non_admin_can_query_own_api_key_id() {
+        let logs = vec![sample_entry("search", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        // 非 Admin 用户查询自身 api_key_id → 200（自有数据路径）
+        let api_key_id = Uuid::new_v4();
+        let auth_state = make_auth_state_with_key(api_key_id);
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: Some(api_key_id),
+            team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_non_admin_can_query_own_team_id() {
+        let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        // 非 Admin 用户查询自身 team_id → 200（自有数据路径）
+        let team_id = Uuid::new_v4();
+        let auth_state = make_auth_state_with_team(team_id);
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: None,
+            team_id: Some(team_id),
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_admin_can_query_other_api_key_id() {
+        let logs = vec![sample_entry("search", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        // Admin 用户查询其他 api_key_id → 200（管理员特权）
+        let auth_state = make_admin_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: Some(Uuid::new_v4()),
+            team_id: None,
+        };
+
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_audit_logs_admin_can_query_other_team_id() {
+        let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
+        let mock = Arc::new(MockAuditService::new(logs));
+        // Admin 用户查询其他 team_id → 200（管理员特权）
+        let auth_state = make_admin_auth_state();
+        let query = AuditLogsQuery {
+            limit: Some(10),
+            offset: Some(0),
+            api_key_id: None,
+            team_id: Some(Uuid::new_v4()),
         };
 
         let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))

@@ -39,6 +39,7 @@ use crate::engines::engine_client::{
     EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
     ScreenshotConfig, ScrollDirection,
 };
+use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
@@ -361,6 +362,22 @@ impl ScrapeWorker {
         if !self.check_robots_txt(&task).await {
             self.repository.mark_failed(task.id).await?;
             return Ok(());
+        }
+
+        // 2.5 SSRF 防护 (CWE-918)：验证 crawl_config.proxy 不指向内部网络（防御纵深）。
+        // handler 层已在入队前验证，此处作为第二层防御拦截直接入队的恶意任务。
+        if let Some(ref proxy_url) = config.proxy {
+            if let Err(e) = validate_url(proxy_url).await {
+                warn!(
+                    "SSRF via proxy blocked in worker proxy={} task_id={} team_id={} error={}",
+                    proxy_url,
+                    task.id,
+                    task.team_id,
+                    e
+                );
+                self.repository.mark_failed(task.id).await?;
+                return Ok(());
+            }
         }
 
         // 3. 构建并执行抓取请求

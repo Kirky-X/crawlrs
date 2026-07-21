@@ -21,6 +21,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::team_service::TeamService;
 use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
+use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 use std::sync::Arc;
@@ -60,6 +61,21 @@ where
             StatusCode::BAD_REQUEST,
             "Either prompt, schema, or rules is required",
         );
+    }
+
+    // SSRF 防护 (CWE-918)：对每个 URL 执行完整的异步 DNS 验证，
+    // 与 scrape_handler / crawl_handler 保持一致，在入队前拦截恶意 URL。
+    for url in &payload.urls {
+        if let Err(e) = validate_url(url).await {
+            log::warn!(
+                "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
+                url,
+                team_id,
+                auth_state.api_key_id,
+                e
+            );
+            return error_response(StatusCode::BAD_REQUEST, format!("SSRF protection: {}", e));
+        }
     }
 
     // 检查地理限制

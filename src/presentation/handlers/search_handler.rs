@@ -22,6 +22,7 @@ use crate::{
     presentation::handlers::response_builder::{error_response, success_response},
     presentation::handlers::task_handler::wait_for_tasks_completion,
     presentation::helpers::rate_limit_helper::check_rate_limit,
+    presentation::helpers::ssrf::validate_url,
     presentation::middleware::auth_middleware::AuthState,
 };
 
@@ -74,6 +75,27 @@ pub async fn search(
             }
         }),
     };
+
+    // SSRF 防护 (CWE-918)：验证 crawl_config.proxy 不指向内部网络。
+    // 攻击者可通过 proxy=http://169.254.169.254:8080 绕过目标 URL 的 SSRF 防护，
+    // 通过内部代理隧道访问云元数据服务等内部资源。
+    if let Some(ref config) = search_query.crawl_config {
+        if let Some(ref proxy_url) = config.proxy {
+            if let Err(e) = validate_url(proxy_url).await {
+                log::warn!(
+                    "SSRF via proxy blocked proxy={} team_id={} api_key_id={} error={}",
+                    proxy_url,
+                    team_id,
+                    api_key_id,
+                    e
+                );
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    format!("SSRF protection: proxy URL rejected: {}", e),
+                );
+            }
+        }
+    }
 
     // 使用注入的SearchService
     match search_service
