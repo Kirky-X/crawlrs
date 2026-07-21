@@ -231,6 +231,8 @@ jobs:
           shared-key: ci-full-deps
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # cargo-llvm-cov
+        with:
+          tool: cargo-llvm-cov
       - name: Run database migrations
         run: |
           for f in migrations/*.sql; do
