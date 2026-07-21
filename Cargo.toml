@@ -162,7 +162,7 @@ regex = "1.12"
 
 bytes = "1.12"
 genai = { version = "0.6", optional = true }
-toml = "0.9"
+toml = "1.1"
 
 # Dependency Injection
 trait-kit = { version = "0.3", features = ["async", "confers"] }
