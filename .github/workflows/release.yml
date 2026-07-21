@@ -291,7 +291,7 @@ jobs:
         run: |
           PUBLISHED=""
           for i in 1 2 3 4 5 6; do
-            PUBLISHED=$(curl -sS "https://crates.io/api/v1/crates/crawlrs" | grep -o "\"newest_version\":\"[^\"]*\"" | head -1)
+            PUBLISHED=$(curl -sS -H "User-Agent: crawlrs-release-verify" "https://crates.io/api/v1/crates/crawlrs" | grep -o "\"newest_version\":\"[^\"]*\"" | head -1)
             if echo "$PUBLISHED" | grep -q "\"$VERSION\""; then
               echo "crates.io published v${VERSION} OK"
               exit 0
