@@ -1,6 +1,6 @@
 <div align="center">
 
-![Logo](docs/image/logo.png)
+<img src="docs/image/logo.png" alt="Logo" width="200">
 
 ### 🚀 使用 Rust 构建的企业级网页数据采集平台
 
