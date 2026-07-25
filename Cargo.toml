@@ -47,7 +47,8 @@ metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
 teams = ["auth"]
 # `auth` 关闭时走 default_identity_middleware 注入固定 AuthState
 # （DEFAULT_TEAM_ID/DEFAULT_API_KEY_ID 见 src/common/constants.rs::default_identity）
-auth = []
+# garrison-auth-migration：auth-on 改由 garrison 提供认证引擎，故 `auth` 隐含 `dep:garrison`
+auth = ["dep:garrison"]
 # `rate-limit` 门控 limiteron 依赖；关闭时注入 NoopRateLimitingService
 rate-limit = ["dep:limiteron"]
 # `webhook` 关闭时注入 NoopWebhookService 并移除 /v1/webhooks 路由
@@ -167,6 +168,27 @@ limiteron = { version = "0.2", default-features = false, optional = true, featur
     "circuit-breaker",
     "monitoring",
     "parallel-checker",
+] }
+
+# Authentication & authorization framework — gated by `auth` feature
+# garrison-auth-migration (R-auth-engine-001)：auth-on 改由 garrison 提供认证引擎
+# 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐（共享 rc.43 链）
+garrison = { version = "0.8", default-features = false, optional = true, features = [
+    "backend-embedded",
+    "web-axum",
+    "db-postgres",
+    "cache-memory",
+    "protocol-apikey",
+    "protocol-jwt",
+    "permission-registry",
+    "authorize-api",
+    "listener",
+    "audit-log",
+    "audit-inklog",
+    "firewall",
+    "firewall-bruteforce",
+    "tenant-isolation",
+    "tracing-log",
 ] }
 
 # Concurrency and synchronization
