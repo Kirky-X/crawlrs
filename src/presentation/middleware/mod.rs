@@ -8,7 +8,19 @@
 /// 提供HTTP请求处理的中间件功能
 /// 包括认证、限流、信号量控制等功能
 pub mod auth_middleware;
+/// 分布式限流中间件（limiteron 后端）
+///
+/// R-rl-001 / T017：rate-limit feature 关闭时不编译此模块。
+/// rate-limit-off 模式下，限流逻辑由 `RateLimitingService` trait 经
+/// `NoopRateLimitingService` 放行，不需要分布式限流中间件。
+#[cfg(feature = "rate-limit")]
 pub mod distributed_rate_limit_middleware;
+/// limiteron 限流中间件
+///
+/// R-rl-001 / T017：rate-limit feature 关闭时不编译此模块。
+/// rate-limit-off 模式下，handler 内 `check_rate_limit` 调用经 trait
+/// 走 `NoopRateLimitingService` 放行，不需要 limiteron 中间件。
+#[cfg(feature = "rate-limit")]
 pub mod limiteron_rate_limit_middleware;
 pub mod rate_limit_middleware;
 pub mod security_headers_middleware;

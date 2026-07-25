@@ -19,8 +19,11 @@ use crate::domain::services::extraction_service::{ExtractionService, ExtractionS
 #[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
+use crate::domain::services::rate_limiting_service::RateLimitingService;
+// R-rl-003 / T020：rate-limit feature 关闭时不导入 LimiteronService 相关配置类型
+#[cfg(feature = "rate-limit")]
 use crate::domain::services::rate_limiting_service::{
-    ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy, RateLimitingService,
+    ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy,
 };
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
 #[cfg(feature = "teams")]
@@ -32,7 +35,12 @@ use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLog
 use crate::infrastructure::database::repositories::auth_scope_repo_impl::AuthScopeRepositoryImpl;
 #[cfg(feature = "teams")]
 use crate::infrastructure::geolocation::GeoLocationServiceImpl;
+// R-rl-003 / T020：rate-limit feature 关闭时不导入 LimiteronService
+#[cfg(feature = "rate-limit")]
 use crate::infrastructure::services::limiteron_service::{LimiteronService, RateLimitingConfig};
+// R-rl-003 / T020：rate-limit feature 关闭时导入 NoopRateLimitingService
+#[cfg(not(feature = "rate-limit"))]
+use crate::infrastructure::services::noop_rate_limiting_service::NoopRateLimitingService;
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::presentation::middleware::auth_middleware::AuthRateLimiter;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
@@ -127,7 +135,11 @@ pub fn init_team_semaphore(default_team_limit: u64) -> Arc<TeamSemaphore> {
     Arc::new(TeamSemaphore::new(default_team_limit as usize))
 }
 
-/// Initialize rate limiting service using LimiteronService (in-memory storage, no Redis).
+/// Initialize rate limiting service.
+///
+/// R-rl-003 / T020：根据 `rate-limit` feature 选择装配：
+/// - `rate-limit` on：使用 `LimiteronService`（内存存储）
+/// - `rate-limit` off：使用 `NoopRateLimitingService`（放行所有请求）
 ///
 /// # Arguments
 ///
@@ -136,55 +148,70 @@ pub fn init_team_semaphore(default_team_limit: u64) -> Arc<TeamSemaphore> {
 ///
 /// # Returns
 ///
-/// Returns an initialized rate limiting service.
+/// Returns an initialized rate limiting service as `Arc<dyn RateLimitingService>`.
 pub async fn init_rate_limiting_service(
     repositories: &Repositories,
     settings: &Settings,
 ) -> Arc<dyn RateLimitingService> {
-    let rate_limit_config = RateLimitConfig {
-        strategy: RateLimitStrategy::TokenBucket,
-        requests_per_second: settings.rate_limiting.default_rpm / 60,
-        requests_per_minute: settings.rate_limiting.default_rpm,
-        requests_per_hour: settings.rate_limiting.default_rpm * 60,
-        bucket_capacity: Some(settings.rate_limiting.default_rpm),
-        enabled: settings.rate_limiting.enabled,
-    };
+    #[cfg(feature = "rate-limit")]
+    {
+        let rate_limit_config = RateLimitConfig {
+            strategy: RateLimitStrategy::TokenBucket,
+            requests_per_second: settings.rate_limiting.default_rpm / 60,
+            requests_per_minute: settings.rate_limiting.default_rpm,
+            requests_per_hour: settings.rate_limiting.default_rpm * 60,
+            bucket_capacity: Some(settings.rate_limiting.default_rpm),
+            enabled: settings.rate_limiting.enabled,
+        };
 
-    // Validate rate limit config
-    if let Err(e) = rate_limit_config.validate() {
-        log::error!("Rate limit configuration error: {}", e);
+        // Validate rate limit config
+        if let Err(e) = rate_limit_config.validate() {
+            log::error!("Rate limit configuration error: {}", e);
+        }
+
+        let concurrency_config = ConcurrencyConfig {
+            strategy: ConcurrencyStrategy::DistributedSemaphore,
+            max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
+            max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
+            lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds as u64,
+            enabled: true,
+        };
+
+        // Validate concurrency config
+        if let Err(e) = concurrency_config.validate() {
+            log::error!("Concurrency configuration error: {}", e);
+        }
+
+        let rate_limiting_config = RateLimitingConfig {
+            rate_limit: rate_limit_config,
+            concurrency: concurrency_config,
+            backlog_process_interval_seconds: 30,
+            rate_limit_ttl_seconds: 3600,
+        };
+
+        let service = LimiteronService::new(
+            repositories.task_repo.clone(),
+            repositories.tasks_backlog_repo.clone(),
+            repositories.credits_repo.clone(),
+            rate_limiting_config,
+        )
+        .await
+        .expect("Failed to create LimiteronService");
+
+        Arc::new(service)
     }
-
-    let concurrency_config = ConcurrencyConfig {
-        strategy: ConcurrencyStrategy::DistributedSemaphore,
-        max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
-        max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
-        lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds as u64,
-        enabled: true,
-    };
-
-    // Validate concurrency config
-    if let Err(e) = concurrency_config.validate() {
-        log::error!("Concurrency configuration error: {}", e);
+    // R-rl-003 / T020：rate-limit-off 时装配 NoopRateLimitingService
+    #[cfg(not(feature = "rate-limit"))]
+    {
+        // 避免 unused 参数 warning
+        let _ = repositories;
+        let _ = settings;
+        log::warn!(
+            "rate-limit feature disabled, using NoopRateLimitingService — \
+             all requests are allowed without rate limiting"
+        );
+        Arc::new(NoopRateLimitingService::new())
     }
-
-    let rate_limiting_config = RateLimitingConfig {
-        rate_limit: rate_limit_config,
-        concurrency: concurrency_config,
-        backlog_process_interval_seconds: 30,
-        rate_limit_ttl_seconds: 3600,
-    };
-
-    let service = LimiteronService::new(
-        repositories.task_repo.clone(),
-        repositories.tasks_backlog_repo.clone(),
-        repositories.credits_repo.clone(),
-        rate_limiting_config,
-    )
-    .await
-    .expect("Failed to create LimiteronService");
-
-    Arc::new(service)
 }
 
 /// Initialize search engine service.
