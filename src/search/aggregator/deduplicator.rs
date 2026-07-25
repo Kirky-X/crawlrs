@@ -805,4 +805,91 @@ mod tests {
             "UrlAndTitle should NOT use hamming distance (only exact URL/title match)"
         );
     }
+
+    // ========== HTTP vs HTTPS and www normalization tests ==========
+
+    #[test]
+    fn test_normalize_url_strips_trailing_slash() {
+        let dedup = ResultDeduplicator::with_default_config();
+        assert_eq!(
+            dedup.normalize_url("https://example.com/path/"),
+            "https://example.com/path"
+        );
+    }
+
+    #[test]
+    fn test_deduplicate_same_url_different_schemes_kept_separate() {
+        // URL normalization does NOT strip scheme (http vs https are different)
+        // This is intentional — http and https may serve different content
+        let mut dedup = ResultDeduplicator::with_default_config();
+        dedup.config.strategy = DeduplicationStrategy::UrlOnly;
+
+        let results = vec![
+            create_test_result("http://example.com/page", "Title HTTP", None),
+            create_test_result("https://example.com/page", "Title HTTPS", None),
+        ];
+
+        let deduplicated = dedup.deduplicate(results);
+        // Both are kept because scheme is part of the normalized URL
+        assert_eq!(deduplicated.len(), 2);
+    }
+
+    #[test]
+    fn test_deduplicate_www_vs_non_www_kept_separate() {
+        // www and non-www are treated as different hosts by normalization
+        let mut dedup = ResultDeduplicator::with_default_config();
+        dedup.config.strategy = DeduplicationStrategy::UrlOnly;
+
+        let results = vec![
+            create_test_result("https://www.example.com/page", "Title WWW", None),
+            create_test_result("https://example.com/page", "Title No WWW", None),
+        ];
+
+        let deduplicated = dedup.deduplicate(results);
+        assert_eq!(deduplicated.len(), 2);
+    }
+
+    #[test]
+    fn test_deduplicate_tracking_params_removed() {
+        // Query params are removed by default normalization
+        let mut dedup = ResultDeduplicator::with_default_config();
+        dedup.config.strategy = DeduplicationStrategy::UrlOnly;
+
+        let results = vec![
+            create_test_result("https://example.com/page?utm_source=google", "Title 1", None),
+            create_test_result("https://example.com/page?utm_source=bing", "Title 2", None),
+        ];
+
+        let deduplicated = dedup.deduplicate(results);
+        // Both normalize to "https://example.com/page" → deduped to 1
+        assert_eq!(deduplicated.len(), 1);
+    }
+
+    #[test]
+    fn test_deduplicate_fragment_differences_removed() {
+        let mut dedup = ResultDeduplicator::with_default_config();
+        dedup.config.strategy = DeduplicationStrategy::UrlOnly;
+
+        let results = vec![
+            create_test_result("https://example.com/page#section1", "Title 1", None),
+            create_test_result("https://example.com/page#section2", "Title 2", None),
+        ];
+
+        let deduplicated = dedup.deduplicate(results);
+        assert_eq!(deduplicated.len(), 1);
+    }
+
+    #[test]
+    fn test_deduplicate_case_insensitive_url() {
+        let mut dedup = ResultDeduplicator::with_default_config();
+        dedup.config.strategy = DeduplicationStrategy::UrlOnly;
+
+        let results = vec![
+            create_test_result("https://EXAMPLE.com/Page", "Title Upper", None),
+            create_test_result("https://example.com/page", "Title Lower", None),
+        ];
+
+        let deduplicated = dedup.deduplicate(results);
+        assert_eq!(deduplicated.len(), 1, "URLs should match case-insensitively");
+    }
 }

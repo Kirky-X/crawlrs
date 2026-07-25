@@ -56,6 +56,25 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
                 || (segs[0] & 0xff00) == 0xff00 // ff00::/8 multicast
                 || segs == [0, 0, 0, 0, 0, 0, 0, 0] // ::/128 unspecified
                 || (segs[0] == 0x2001 && segs[1] == 0x0db8) // 2001:db8::/32 documentation
+                // IPv4-mapped IPv6 (::ffff:x.x.x.x) - use std lib (Rust 1.65+)
+                || ipv6
+                    .to_ipv4_mapped()
+                    .map(|v4| is_private_ip(IpAddr::V4(v4)))
+                    .unwrap_or(false)
+                // IPv4-compatible IPv6 (::x.x.x.x, RFC 4291 deprecated) - bypass risk
+                // to_ipv4_mapped() does NOT cover this form; must check explicitly.
+                // Exclude ::/128 (unspecified) and ::1 (loopback) - already handled above.
+                || (segs[0..6] == [0, 0, 0, 0, 0, 0]
+                    && (segs[6] != 0 || segs[7] != 0)
+                    && {
+                        let ipv4 = std::net::Ipv4Addr::new(
+                            (segs[6] >> 8) as u8,
+                            (segs[6] & 0xff) as u8,
+                            (segs[7] >> 8) as u8,
+                            (segs[7] & 0xff) as u8,
+                        );
+                        is_private_ip(IpAddr::V4(ipv4))
+                    })
         }
     }
 }
@@ -99,8 +118,15 @@ pub fn is_blocked_hostname(host: &str) -> bool {
         return true;
     }
 
-    // 检查是否为纯 IP 地址形式的字符串
-    if let Ok(ip) = host_lower.parse::<std::net::IpAddr>() {
+    // IPv6 host from url::Url::host_str() comes wrapped in brackets (e.g. "[::1]").
+    // Strip brackets before parsing to IpAddr, otherwise parse fails and IPv6
+    // IP checks are silently skipped (SSRF bypass vector).
+    let host_for_parse = host_lower
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(&host_lower);
+
+    if let Ok(ip) = host_for_parse.parse::<std::net::IpAddr>() {
         return is_private_ip(ip);
     }
 
@@ -167,6 +193,20 @@ mod tests {
         // Documentation
         assert!(is_private_ip("2001:db8::1".parse().unwrap()));
 
+        // IPv4-mapped IPv6 (::ffff:x.x.x.x) - must check embedded IPv4
+        assert!(is_private_ip("::ffff:10.0.0.1".parse().unwrap()));
+        assert!(is_private_ip("::ffff:127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip("::ffff:169.254.169.254".parse().unwrap()));
+        assert!(is_private_ip("::ffff:192.168.1.1".parse().unwrap()));
+        assert!(!is_private_ip("::ffff:8.8.8.8".parse().unwrap()));
+
+        // IPv4-compatible IPv6 (::x.x.x.x, RFC 4291 deprecated) - bypass risk
+        assert!(is_private_ip("::127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip("::169.254.169.254".parse().unwrap()));
+        assert!(is_private_ip("::10.0.0.1".parse().unwrap()));
+        assert!(is_private_ip("::192.168.1.1".parse().unwrap()));
+        assert!(!is_private_ip("::8.8.8.8".parse().unwrap()));
+
         // Public IPv6 should not be private
         assert!(!is_private_ip("2001:4860:4860::8888".parse().unwrap())); // Google DNS
     }
@@ -185,9 +225,16 @@ mod tests {
         assert!(is_blocked_hostname("LOCALHOST"));
         assert!(is_blocked_hostname("LocalHost"));
 
+        // IPv6 hosts from url::Url::host_str() come bracketed; must still be detected
+        assert!(is_blocked_hostname("[::1]"));
+        assert!(is_blocked_hostname("[::ffff:127.0.0.1]"));
+        assert!(is_blocked_hostname("[::127.0.0.1]"));
+        assert!(is_blocked_hostname("[fe80::1]"));
+
         // Not blocked
         assert!(!is_blocked_hostname("google.com"));
         assert!(!is_blocked_hostname("example.com"));
         assert!(!is_blocked_hostname("8.8.8.8"));
+        assert!(!is_blocked_hostname("[2001:4860:4860::8888]"));
     }
 }

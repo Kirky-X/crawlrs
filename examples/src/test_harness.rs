@@ -9,11 +9,17 @@
 //!
 //! # 使用示例
 //!
-//! ```rust
+//! ```no_run
 //! use crawlrs_examples::test_harness::SearchTestHarness;
+//! use crawlrs::search::client::GoogleSearchEngine;
+//! use crawlrs::engines::engine_client::EngineClient;
+//! use std::sync::Arc;
 //!
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
 //! let harness = SearchTestHarness::new("Google", 60, 10);
-//! let result = harness.run_test("test query").await;
+//! let engine = GoogleSearchEngine::new(Arc::new(EngineClient::new()));
+//! let result = harness.run_engine_test_with_timeout(engine).await;
+//! # });
 //! ```
 
 use anyhow::Result;

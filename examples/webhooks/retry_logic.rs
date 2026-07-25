@@ -20,7 +20,7 @@
 //! - 重试条件判断
 
 use log::{info, warn};
-use rand::Rng;
+use rand::RngExt;
 use std::time::Duration;
 
 // 重试策略配置

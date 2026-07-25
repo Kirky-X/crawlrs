@@ -124,29 +124,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_private_ip() {
-        // IPv4 private
-        assert!(is_private_ip("10.0.0.1".parse().unwrap()));
-        assert!(is_private_ip("172.16.0.1".parse().unwrap()));
-        assert!(is_private_ip("192.168.1.1".parse().unwrap()));
-
-        // IPv4 loopback
-        assert!(is_private_ip("127.0.0.1".parse().unwrap()));
-
-        // IPv4 link-local
-        assert!(is_private_ip("169.254.0.1".parse().unwrap()));
-
-        // IPv6
-        assert!(is_private_ip("::1".parse().unwrap()));
-        assert!(is_private_ip("fe80::1".parse().unwrap()));
-        assert!(is_private_ip("fc00::1".parse().unwrap()));
-
-        // Public IPs
-        assert!(!is_private_ip("8.8.8.8".parse().unwrap()));
-        assert!(!is_private_ip("1.1.1.1".parse().unwrap()));
-    }
-
-    #[test]
     fn test_is_blocked_hostname() {
         assert!(is_blocked_hostname("localhost"));
         assert!(is_blocked_hostname("127.0.0.1"));
@@ -161,5 +138,64 @@ mod tests {
         assert!(!is_blocked_hostname("google.com"));
         assert!(!is_blocked_hostname("example.com"));
         assert!(!is_blocked_hostname("8.8.8.8"));
+    }
+
+    // ========== SSRF edge cases ==========
+
+    #[tokio::test]
+    async fn test_validate_url_ssrf_double_encoded_blocked() {
+        // Double-encoded localhost: %2531%2532%2537%252e%2530%252e%2530%252e%2531
+        // These should be caught by scheme/host validation even if decoded
+        assert!(validate_url("http://%31%32%37%2e%30%2e%30%2e%31").await.is_err());
+        assert!(validate_url("http://0x7f000001").await.is_err()); // hex IP for 127.0.0.1
+        assert!(validate_url("http://2130706433").await.is_err()); // decimal IP for 127.0.0.1
+    }
+
+    #[tokio::test]
+    async fn test_validate_url_ssrf_url_with_credentials_blocked() {
+        // URLs with embedded credentials should be blocked (potential bypass)
+        assert!(validate_url("http://user:pass@127.0.0.1/path").await.is_err());
+        assert!(validate_url("http://admin@localhost/admin").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_url_ssrf_ipv6_shorthand_blocked() {
+        // Various IPv6 loopback representations
+        assert!(validate_url("http://[::1]").await.is_err());
+        assert!(validate_url("http://[0:0:0:0:0:0:0:1]").await.is_err());
+        assert!(validate_url("http://[::ffff:127.0.0.1]").await.is_err());
+        // IPv4-compatible IPv6 (::x.x.x.x, RFC 4291 deprecated) - bypass vector
+        assert!(validate_url("http://[::127.0.0.1]").await.is_err());
+        assert!(validate_url("http://[::169.254.169.254]").await.is_err());
+        assert!(validate_url("http://[::10.0.0.1]").await.is_err());
+        assert!(validate_url("http://[::192.168.1.1]").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_url_ssrf_cloud_metadata_variants() {
+        // AWS metadata
+        assert!(validate_url("http://169.254.169.254/latest/meta-data/").await.is_err());
+        // GCP metadata
+        assert!(validate_url("http://metadata.google.internal/computeMetadata/v1/").await.is_err());
+        // Azure metadata
+        assert!(validate_url("http://169.254.169.254/metadata/instance").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_url_empty_and_invalid() {
+        assert!(validate_url("").await.is_err());
+        assert!(validate_url("not-a-url").await.is_err());
+        assert!(validate_url("javascript:alert(1)").await.is_err());
+        assert!(validate_url("data:text/html,<h1>hi</h1>").await.is_err());
+    }
+
+    #[test]
+    fn test_is_internal_url_edge_cases() {
+        // 0.0.0.0 is internal
+        assert!(is_internal_url("http://0.0.0.0"));
+        // Mapped IPv4 in IPv6
+        assert!(is_internal_url("http://[::ffff:10.0.0.1]"));
+        // Empty host should not panic
+        assert!(!is_internal_url("http://"));
     }
 }

@@ -7020,4 +7020,131 @@ mod tests {
             "handle_failure should return Ok(()) when task exceeds max_retries"
         );
     }
+
+    // ========== should_crawl tests ==========
+
+    /// Build a worker pre-configured for should_crawl unit tests.
+    /// should_crawl only reads `self.regex_cache`, so all other deps use
+    /// default in-memory mocks.
+    async fn build_should_crawl_worker() -> ScrapeWorker {
+        build_configurable_worker(
+            Arc::new(ConfigurableTaskRepo::new()),
+            Arc::new(ConfigurableCrawlRepo::new()),
+            Arc::new(MockRobotsChecker),
+            Arc::new(EngineClient::new()),
+        )
+        .await
+    }
+
+    /// Build a CrawlConfigDto with only the given include/exclude patterns set;
+    /// all other fields default to None, max_depth defaults to 3.
+    fn build_crawl_config(
+        include_patterns: Option<Vec<String>>,
+        exclude_patterns: Option<Vec<String>>,
+    ) -> CrawlConfigDto {
+        CrawlConfigDto {
+            max_depth: 3,
+            include_patterns,
+            exclude_patterns,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: None,
+            extraction_rules: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_should_crawl_no_patterns_allows_all() {
+        let worker = build_should_crawl_worker().await;
+        let config = build_crawl_config(None, None);
+
+        assert!(worker.should_crawl("https://any-url.com/page", &config));
+        assert!(worker.should_crawl("https://another.org/deep/path", &config));
+    }
+
+    #[tokio::test]
+    async fn test_should_crawl_include_regex_matches() {
+        let worker = build_should_crawl_worker().await;
+        let config = build_crawl_config(Some(vec![r".*/blog/.*".to_string()]), None);
+
+        assert!(worker.should_crawl("https://example.com/blog/post-1", &config));
+        assert!(!worker.should_crawl("https://example.com/about", &config));
+    }
+
+    #[tokio::test]
+    async fn test_should_crawl_include_regex_no_match_returns_false() {
+        let worker = build_should_crawl_worker().await;
+        let config = build_crawl_config(Some(vec![r"^https://specific\.com/.*".to_string()]), None);
+
+        assert!(!worker.should_crawl("https://other.com/page", &config));
+    }
+
+    #[tokio::test]
+    async fn test_should_crawl_exclude_regex_blocks() {
+        let worker = build_should_crawl_worker().await;
+        let config = build_crawl_config(None, Some(vec![r".*/admin/.*".to_string()]));
+
+        assert!(!worker.should_crawl("https://example.com/admin/settings", &config));
+        assert!(worker.should_crawl("https://example.com/public/page", &config));
+    }
+
+    #[tokio::test]
+    async fn test_should_crawl_invalid_regex_falls_back_to_contains() {
+        let worker = build_should_crawl_worker().await;
+        // Invalid regex pattern (unclosed bracket) falls back to string contains
+        let config = build_crawl_config(Some(vec!["[unclosed".to_string()]), None);
+
+        // String contains "[unclosed"
+        assert!(worker.should_crawl("https://example.com/[unclosed/page", &config));
+        // Does not contain "[unclosed"
+        assert!(!worker.should_crawl("https://example.com/other", &config));
+    }
+
+    #[tokio::test]
+    async fn test_should_crawl_include_and_exclude_overlap_exclude_wins() {
+        let worker = build_should_crawl_worker().await;
+        let config = build_crawl_config(
+            Some(vec![r".*/blog/.*".to_string()]),
+            Some(vec![r".*/blog/private/.*".to_string()]),
+        );
+
+        // Matches include but also matches exclude → blocked
+        assert!(!worker.should_crawl("https://example.com/blog/private/draft", &config));
+        // Matches include, does not match exclude → allowed
+        assert!(worker.should_crawl("https://example.com/blog/public-post", &config));
+    }
+
+    #[tokio::test]
+    async fn test_should_crawl_multiple_include_patterns_any_match() {
+        let worker = build_should_crawl_worker().await;
+        let config = build_crawl_config(
+            Some(vec![
+                r".*/docs/.*".to_string(),
+                r".*/api/.*".to_string(),
+            ]),
+            None,
+        );
+
+        assert!(worker.should_crawl("https://example.com/docs/intro", &config));
+        assert!(worker.should_crawl("https://example.com/api/v1/users", &config));
+        assert!(!worker.should_crawl("https://example.com/home", &config));
+    }
+
+    #[tokio::test]
+    async fn test_should_crawl_multiple_exclude_patterns_any_blocks() {
+        let worker = build_should_crawl_worker().await;
+        let config = build_crawl_config(
+            None,
+            Some(vec![
+                r".*/admin/.*".to_string(),
+                r".*/internal/.*".to_string(),
+            ]),
+        );
+
+        assert!(!worker.should_crawl("https://example.com/admin/users", &config));
+        assert!(!worker.should_crawl("https://example.com/internal/debug", &config));
+        assert!(worker.should_crawl("https://example.com/public/page", &config));
+    }
 }
