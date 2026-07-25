@@ -130,7 +130,9 @@ impl GarrisonInterface for CrawlrsGarrisonInterface {
         // 预估容量避免扩容 rehash（P-MEDIUM-003 修复）。
         let mut permission_ids: HashSet<String> = HashSet::with_capacity(user_roles.len());
         for ur in &user_roles {
-            let role_perms = role_perm_repo.find_by_role_id(tenant_id, &ur.role_id).await?;
+            let role_perms = role_perm_repo
+                .find_by_role_id(tenant_id, &ur.role_id)
+                .await?;
             for rp in role_perms {
                 permission_ids.insert(rp.permission_id);
             }
@@ -297,10 +299,8 @@ mod tests {
         let interface = CrawlrsGarrisonInterface::new((*pool).clone());
 
         // 使用 with_default_tenant 提供 tenant_id=0 上下文
-        let result = with_default_tenant(async {
-            interface.get_permission_list("test-admin").await
-        })
-        .await;
+        let result =
+            with_default_tenant(async { interface.get_permission_list("test-admin").await }).await;
 
         match result {
             Ok(perms) => {

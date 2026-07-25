@@ -110,8 +110,17 @@ pub fn database_settings(url: &str) -> crate::config::DatabaseSettings {
 ///
 /// Loads the default configuration file, then overrides the database URL
 /// to point at the testcontainers PostgreSQL instance.
+///
+/// R-auth-engine-002 / T011：auth feature 启用时，注入测试用强密钥（≥32 字节 HS256），
+/// 避免 `init_services` → `init_garrison_auth` 的 fail-fast panic 触发。
+/// 测试场景下不验证密钥强度，仅满足签名要求。
 pub fn settings_with_urls(db_url: &str) -> anyhow::Result<crate::config::Settings> {
     let mut settings = crate::bootstrap::config::load_settings()?;
     settings.database = database_settings(db_url);
+    // R-auth-engine-002 / T011：auth-on 时注入测试用强密钥，避免 fail-fast panic
+    #[cfg(feature = "auth")]
+    {
+        settings.auth.jwt_secret = "test-jwt-secret-32-bytes-or-more!!".to_string();
+    }
     Ok(settings)
 }

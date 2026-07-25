@@ -235,3 +235,23 @@ enabled = true
 # 生产环境请根据实际部署架构配置，例如：
 # proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1", "::1"]
 proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1", "::1"]
+
+# =============================================================================
+# 认证配置（R-auth-engine-002 / T011：garrison JWT 密钥等）
+# =============================================================================
+#
+# `auth` feature 启用时（`--features default` 或 `--features auth`）：
+# - `jwt_secret` 为空或 <32 字节 → 启动 panic（fail-fast，CWE-326 弱密钥防护）
+# - 必须通过环境变量 `CRAWLRS__AUTH__JWT_SECRET` 或此处显式提供强密钥（≥32 字节）
+#
+# `auth` feature 关闭时（`--no-default-features`）：
+# - 本段仍需存在（confers 反序列化 Settings 结构需要）
+# - `jwt_secret` 字段值被忽略（garrison 不编译，不读取）
+#
+# 开发环境推荐：通过环境变量注入测试密钥，避免提交真实密钥到版本控制
+# 生产环境推荐：通过运维密钥管理系统注入，禁止硬编码在配置文件
+[auth]
+# JWT 签名密钥（HS256）。默认空字符串——auth-on 时 fail-fast 触发 panic。
+# 开发环境可通过环境变量注入：export CRAWLRS__AUTH__JWT_SECRET="test-jwt-secret-32-bytes-or-more!!"
+jwt_secret = ""
+

@@ -90,6 +90,9 @@ pub struct Settings {
 
     /// 可信代理配置
     pub trusted_proxies: TrustedProxySettings,
+
+    /// 认证配置（R-auth-engine-002 / T011：garrison JWT 密钥等）
+    pub auth: AuthSettings,
 }
 
 // =============================================================================
@@ -148,6 +151,59 @@ impl WebhookSettings {
     /// 不要记录到日志或暴露给用户。
     pub fn secret(&self) -> &str {
         &self.secret
+    }
+}
+
+// =============================================================================
+// 认证配置（R-auth-engine-002 / T011）
+// =============================================================================
+
+/// 认证配置设置。
+///
+/// 配置 garrison 认证鉴权框架的 JWT 密钥等参数。
+///
+/// # 字段说明
+///
+/// * `jwt_secret` - JWT 签名密钥（HS256），敏感信息，仅 crate 可见
+///
+/// # 安全提示
+///
+/// `jwt_secret` 字段包含 JWT 签名密钥，泄露可能导致 token 伪造。
+/// 该字段仅对 crate 可见，外部模块应使用 `jwt_secret()` 方法访问。
+/// 密钥长度须 ≥32 字节（HS256 最小要求），弱密钥会在 `build_garrison_config` 中被拒绝。
+///
+/// # Debug 脱敏
+///
+/// 手动实现 `Debug`（不派生 `#[derive(Debug)]`），对 `jwt_secret` 字段输出 `"***REDACTED***"`，
+/// 防止日志打印 Settings 时泄露密钥（CWE-532 防护）。对齐 [`ProxySettings`] 的 redaction 模式。
+#[derive(Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__AUTH__")]
+pub struct AuthSettings {
+    /// JWT 签名密钥（HS256，敏感信息）。
+    ///
+    /// 默认空字符串——`auth` feature 启用时，`build_garrison_config("")` 会返回 `Err(EmptySecret)`，
+    /// 导致启动 panic（fail-fast），强制运维通过环境变量或配置文件提供强密钥。
+    #[config(default = "".to_string())]
+    pub(crate) jwt_secret: String,
+}
+
+impl std::fmt::Debug for AuthSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthSettings")
+            .field("jwt_secret", &"***REDACTED***")
+            .finish()
+    }
+}
+
+impl AuthSettings {
+    /// 获取 JWT 签名密钥。
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回 JWT 签名密钥，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn jwt_secret(&self) -> &str {
+        &self.jwt_secret
     }
 }
 
@@ -567,11 +623,32 @@ mod tests {
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
+            auth: AuthSettings::default(),
         };
 
         assert_eq!(settings.server.port, 8899);
         assert!(settings.rate_limiting.enabled);
         assert!(settings.trusted_proxies.enabled);
+    }
+
+    /// R-auth-engine-002：AuthSettings Debug 输出对 jwt_secret 脱敏（CWE-532 防护）。
+    ///
+    /// 验证 `format!("{:?}", auth_settings)` 不含密钥明文，仅含 `"***REDACTED***"`。
+    /// 防止日志打印 Settings 时泄露 JWT 签名密钥。
+    #[test]
+    fn test_auth_settings_debug_redacts_jwt_secret() {
+        let mut auth = AuthSettings::default();
+        auth.jwt_secret = "super-secret-jwt-key-32-bytes-or-more!!".to_string();
+
+        let debug_output = format!("{:?}", auth);
+        assert!(
+            !debug_output.contains("super-secret-jwt-key-32-bytes-or-more!!"),
+            "Debug output must not contain plaintext jwt_secret, got: {debug_output}"
+        );
+        assert!(
+            debug_output.contains("***REDACTED***"),
+            "Debug output should contain '***REDACTED***' placeholder, got: {debug_output}"
+        );
     }
 
     #[test]
@@ -972,6 +1049,7 @@ mod tests {
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
+            auth: AuthSettings::default(),
         }
     }
 

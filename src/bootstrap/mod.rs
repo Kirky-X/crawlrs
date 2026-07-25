@@ -10,6 +10,7 @@
 //!
 //! # Module Structure
 //!
+//! - `error` - Bootstrap 阶段错误类型（`BootstrapError`）
 //! - `telemetry` - Telemetry and metrics initialization
 //! - `config` - Configuration loading and validation
 //! - `infrastructure` - Database, cache (oxcache), repositories
@@ -19,6 +20,7 @@
 
 pub mod config;
 pub mod engines;
+pub mod error;
 pub mod infrastructure;
 pub mod routes;
 pub mod services;

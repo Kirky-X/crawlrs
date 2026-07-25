@@ -68,9 +68,7 @@ pub enum GarrisonConfigError {
 /// # Spec
 ///
 /// - R-session-jwt-001
-pub fn build_garrison_config(
-    jwt_secret: &str,
-) -> Result<GarrisonConfig, GarrisonConfigError> {
+pub fn build_garrison_config(jwt_secret: &str) -> Result<GarrisonConfig, GarrisonConfigError> {
     if jwt_secret.is_empty() {
         return Err(GarrisonConfigError::EmptySecret);
     }
@@ -140,7 +138,10 @@ mod tests {
     fn test_build_garrison_config_boundary_32_bytes_accepted() {
         let boundary = "0123456789abcdef0123456789abcdef"; // 32 字节
         let result = build_garrison_config(boundary);
-        assert!(result.is_ok(), "32-byte jwt_secret (boundary) must be accepted");
+        assert!(
+            result.is_ok(),
+            "32-byte jwt_secret (boundary) must be accepted"
+        );
     }
 
     /// R-session-jwt-001：业务字段覆盖正确（is_read_cookie=false / frontend_separation=true）
@@ -160,9 +161,6 @@ mod tests {
             config.frontend_separation,
             "frontend_separation must be true"
         );
-        assert_eq!(
-            config.jwt_algorithm, "HS256",
-            "jwt_algorithm must be HS256"
-        );
+        assert_eq!(config.jwt_algorithm, "HS256", "jwt_algorithm must be HS256");
     }
 }
