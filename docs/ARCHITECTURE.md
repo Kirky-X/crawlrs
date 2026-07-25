@@ -19,6 +19,7 @@
 - [System Architecture](#system-architecture)
 - [Layer Architecture](#layer-architecture)
 - [Core Components](#core-components)
+  - [Feature Gate Architecture](#feature-gate-architecture)
 - [Data Flow](#data-flow)
 - [Crawling Engines](#crawling-engines)
 - [Queue System](#queue-system)
@@ -603,7 +604,7 @@ DI uses **trait-kit 0.3** with async module builders. Three top-level modules ar
 - `EngineModule` - ReqwestEngine, PlaywrightEngine, FlareSolverrEngine, EngineRouter, EngineClient
 - `ServiceModule` - Rate limiting, search, webhook, team services, workers
 
-**CrawlRsState** is the runtime state extracted from the built DI container:
+**CrawlRsState** is the runtime state extracted from the built DI container. Since v0.2.0 (`feature-gate-optional-modules` change), 7 fields are gated by `#[cfg(feature = "...")]` and only compiled when the corresponding business-capability feature is enabled:
 
 ```rust
 #[derive(Clone)]
@@ -613,12 +614,16 @@ pub struct CrawlRsState {
     pub credits_repo: Arc<dyn CreditsRepository>,
     pub crawl_repo: Arc<dyn CrawlRepository>,
     pub result_repo: Arc<dyn ScrapeResultRepository>,
+    #[cfg(feature = "webhook")]
     pub webhook_repo: Arc<dyn WebhookRepository>,
+    #[cfg(feature = "webhook")]
     pub webhook_event_repo: Arc<dyn WebhookEventRepository>,
     pub tasks_backlog_repo: Arc<dyn TasksBacklogRepository>,
     pub task_queue: Arc<dyn TaskQueue>,
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
+    #[cfg(feature = "teams")]
     pub team_service: Arc<TeamService>,
+    // webhook_service 始终编译（trait），webhook-off 时装配 NoopWebhookService
     pub webhook_service: Arc<dyn WebhookService>,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     pub team_semaphore: Arc<TeamSemaphore>,
@@ -632,13 +637,25 @@ pub struct CrawlRsState {
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
     pub regex_cache: Arc<RegexCache>,
     pub audit_service: Arc<dyn AuditServiceTrait>,
+    #[cfg(feature = "webhook")]
     pub webhook_worker: Arc<WebhookWorker>,
     pub backlog_worker: Arc<BacklogWorker>,
     pub expiration_worker: Arc<ExpirationWorker>,
+    #[cfg(feature = "teams")]
     pub geo_location_service: Arc<dyn GeoLocationService>,
+    #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 ```
+
+| Field | Gated By | Off-mode Behavior |
+|-------|----------|-------------------|
+| `webhook_repo` / `webhook_event_repo` / `webhook_worker` | `webhook` | Field not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn block skipped |
+| `team_service` / `geo_location_service` / `geo_restriction_repo` | `teams` | Field not compiled; `/v1/teams/*` routes not registered; `extract_handler` signature loses GR generic |
+| `webhook_service` | (none, always compiled) | webhook-off: assembled with `NoopWebhookService` (no-op trait impl) |
+| `rate_limiting_service` | (none, always compiled) | rate-limit-off: assembled with `NoopRateLimitingService` (always-allow trait impl) |
+
+See [Feature Gate Architecture](#feature-gate-architecture) for the full gating matrix.
 
 State is injected into Axum handlers via `Extension<CrawlRsState>`.
 
@@ -653,6 +670,100 @@ SettingsModule (config: Arc<Settings>)
          └── EngineModule → EngineComponents (depends: HttpModule, SettingsModule)
                 └── ServiceModule → ServicesComponents (depends: all above)
 ```
+
+### Feature Gate Architecture
+
+Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 business-capability features** that allow operators to build stripped-down binaries for single-tenant / no-auth / no-webhook / no-rate-limit deployments. The gating strategy follows two complementary patterns:
+
+1. **Field/module gating** (`#[cfg(feature = "...")]` on `pub mod`/struct field/fn) — gated symbols are **not compiled** when the feature is off, eliminating dead code and reducing binary size.
+2. **Noop trait injection** — for traits that business logic calls unconditionally (`WebhookService`, `RateLimitingService`), the trait is always compiled but the DI container assembles a no-op implementation when the feature is off, preserving call-site compatibility.
+
+### Feature Matrix
+
+| Feature | Default | Depends On | Off-mode Behavior |
+|---------|---------|------------|-------------------|
+| `teams` | on | `auth` | `/v1/teams/*` routes not registered; `extract_handler` loses GR generic + geo-restriction block; `CrawlRsState.{team_service, geo_location_service, geo_restriction_repo}` not compiled; `team_id` falls back to `DEFAULT_TEAM_ID` |
+| `auth` | on | — | `auth_middleware()` replaced by `default_identity_middleware` injecting fixed `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`; no DB lookup, no brute-force protection |
+| `rate-limit` | on | `dep:limiteron` | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `limiteron_service`/`distributed_rate_limit_middleware`/`limiteron_rate_limit_middleware` modules not compiled |
+| `webhook` | on | — | `WebhookServiceImpl`/`WebhookManagementServiceImpl`/`webhook_sender`/`webhook_handler`/`webhook_worker` modules not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn blocks skipped; `WebhookService` trait preserved and assembled with `NoopWebhookService` (all ops return `Ok(())`) |
+
+### Default feature set
+
+```toml
+[features]
+default = ["teams", "auth", "rate-limit", "webhook"]
+teams   = ["auth"]
+auth    = []
+rate-limit = ["dep:limiteron"]
+webhook = []
+```
+
+### Gating pattern examples
+
+**Field gating** (`src/di/axum_state.rs`):
+
+```rust
+#[cfg(feature = "webhook")]
+pub webhook_repo: Arc<dyn WebhookRepository>,
+```
+
+**Noop injection** (`src/bootstrap/services.rs::init_rate_limiting_service`):
+
+```rust
+#[cfg(feature = "rate-limit")]
+{ /* assemble LimiteronService */ }
+#[cfg(not(feature = "rate-limit"))]
+{
+    log::warn!("rate-limit feature disabled, using NoopRateLimitingService");
+    Arc::new(NoopRateLimitingService::new())
+}
+```
+
+**Route gating with shadowing** (`src/bootstrap/routes.rs`):
+
+```rust
+#[cfg(feature = "webhook")]
+let app = app.route("/v1/webhooks", post(webhook_handler::create_webhook::<WebhookRepoImpl>));
+// webhook-off: route not registered, returns 404
+```
+
+**Middleware layer gating** (`src/bootstrap/routes.rs`):
+
+```rust
+#[cfg(feature = "auth")]
+let app = app.layer(axum::middleware::from_fn(auth_middleware::auth_middleware()));
+#[cfg(not(feature = "auth"))]
+let app = {
+    let template = build_default_identity_template(state);
+    app.layer(axum::middleware::from_fn_with_state(
+        template,
+        auth_middleware::default_identity_middleware,
+    ))
+};
+```
+
+### CI verification
+
+The `feature-matrix` job in `.github/workflows/ci.yml` runs `cargo check` against 7 feature combinations to ensure no broken cfg paths slip in:
+
+| Combination | Flags |
+|-------------|-------|
+| no-default | `--no-default-features` |
+| teams-only | `--no-default-features --features teams` |
+| auth-only | `--no-default-features --features auth` |
+| rate-limit-only | `--no-default-features --features rate-limit` |
+| webhook-only | `--no-default-features --features webhook` |
+| default | `--features default` |
+| full | `--features full` |
+
+### Migration notes
+
+When a feature is off, the corresponding endpoints return **404** (not 401/403) because routes are not registered at startup. Operators switching from full to stripped-down builds should:
+
+- For `auth`-off: pre-provision credits for `DEFAULT_TEAM_ID` via `add_credits` CLI (see `docs/USER_GUIDE.md` → Single-Tenant / No-Auth Deployment)
+- For `rate-limit`-off: ensure upstream gateways enforce their own rate limiting
+- For `webhook`-off: notify clients that completion callbacks will not be delivered
+- For `teams`-off: only `DEFAULT_TEAM_ID` exists; multi-tenant data isolation is enforced at the application layer (all rows owned by `DEFAULT_TEAM_ID`)
 
 ---
 
