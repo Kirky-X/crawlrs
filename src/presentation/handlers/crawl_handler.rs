@@ -1042,6 +1042,7 @@ mod tests {
     use crate::domain::services::team_service::{TeamGeoRestrictions, TeamService};
     use async_trait::async_trait;
     use std::collections::HashSet;
+    #[cfg(feature = "teams")]
     use std::net::IpAddr;
     use std::sync::Mutex;
 

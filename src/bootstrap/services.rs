@@ -21,7 +21,6 @@ use crate::infrastructure::auth::{
 };
 // garrison prelude 提供 GarrisonDao / GarrisonInterface / GarrisonManager trait 与类型。
 use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
-use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::extraction_service::{ExtractionService, ExtractionServiceTrait};
 #[cfg(feature = "auth")]
 use dbnexus::DbPool;
@@ -51,7 +50,6 @@ use crate::domain::services::noop_webhook_service::NoopWebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
-use crate::infrastructure::database::repositories::auth_scope_repo_impl::AuthScopeRepositoryImpl;
 #[cfg(feature = "teams")]
 use crate::infrastructure::geolocation::GeoLocationServiceImpl;
 // R-rl-003 / T020：rate-limit feature 关闭时不导入 LimiteronService
@@ -64,7 +62,6 @@ use crate::infrastructure::services::noop_rate_limiting_service::NoopRateLimitin
 // （webhook_sender_impl 模块本身也被 cfg 门控，见 infrastructure::services::mod）
 #[cfg(feature = "webhook")]
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
-use crate::presentation::middleware::auth_middleware::AuthRateLimiter;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
@@ -85,8 +82,6 @@ pub struct ServicesComponents {
     pub team_semaphore: Arc<TeamSemaphore>,
     /// Rate limiting service for distributed rate limiting.
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
-    /// Rate limiter (in-memory via limiteron)
-    pub rate_limiter: Option<Arc<AuthRateLimiter>>,
     /// Create scrape use case.
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     /// Webhook service.
@@ -111,8 +106,6 @@ pub struct ServicesComponents {
     pub search_engine_service: Arc<dyn SearchEngine>,
     /// Search service.
     pub search_service: Arc<dyn SearchServiceTrait>,
-    /// Auth scope service for API key permission management.
-    pub auth_scope_service: Option<Arc<AuthScopeService>>,
     /// Task queue.
     pub queue: Arc<dyn TaskQueue>,
     /// Audit service.
@@ -312,23 +305,6 @@ pub fn init_search_service(
     Arc::new(service)
 }
 
-/// Initialize auth scope service.
-///
-/// This function creates the AuthScopeService for authentication scope operations,
-/// following dependency injection principles.
-///
-/// # Arguments
-///
-/// * `pool` - Database pool
-///
-/// # Returns
-///
-/// Returns an initialized auth scope service wrapped in Arc.
-pub fn init_auth_scope_service(pool: Arc<dbnexus::DbPool>) -> Arc<AuthScopeService> {
-    let repo = Arc::new(AuthScopeRepositoryImpl::new(pool));
-    Arc::new(AuthScopeService::new(repo))
-}
-
 /// 初始化 garrison 认证鉴权服务（R-auth-engine-002 / T011）。
 ///
 /// 装配流程：
@@ -337,7 +313,10 @@ pub fn init_auth_scope_service(pool: Arc<dbnexus::DbPool>) -> Arc<AuthScopeServi
 /// 3. 构造 [`CrawlrsGarrisonInterface`] 并装为 `Arc<dyn GarrisonInterface>`
 ///    （注入 crawlrs 的 `DbPool` 用于查询 garrison RBAC 表）
 /// 4. 调用 [`GarrisonManager::init`] 写入 `GARRISON_MANAGER` 全局单例
-/// 5. 错误（DAO 失败 / 弱密钥 / manager init 失败）映射为 [`BootstrapError::Auth`]
+/// 5. 错误按故障层级映射为类型化变体（Stage 3 重构）：
+///    - 弱密钥 / 空密钥 → [`BootstrapError::GarrisonConfig`]（`#[from]` 自动转换）
+///    - DAO oxcache 初始化失败 → [`BootstrapError::GarrisonDao`]
+///    - `GarrisonManager::init` 失败 → [`BootstrapError::GarrisonManager`]
 ///
 /// # Fail-Fast 语义
 ///
@@ -353,19 +332,21 @@ pub fn init_auth_scope_service(pool: Arc<dbnexus::DbPool>) -> Arc<AuthScopeServi
 ///
 /// * `settings` - 应用配置（含 `auth.jwt_secret`）
 /// * `pool` - crawlrs 数据库连接池 `Arc<DbPool>`（注入到 `CrawlrsGarrisonInterface`
-///   查询 RBAC 表；传 Arc 而非 DbPool 匹配现有 `init_auth_scope_service` 调用模式）
+///   查询 RBAC 表；传 Arc 而非 DbPool）
 ///
 /// # Returns
 ///
 /// - `Ok(())` - garrison 初始化成功（`GARRISON_MANAGER` 单例已就绪，后续中间件通过
 ///   `GarrisonUtil` 访问）
-/// - `Err(BootstrapError::Auth)` - DAO 初始化失败 / 弱密钥 / `GarrisonManager::init` 失败
+/// - `Err(BootstrapError::GarrisonConfig)` - 弱密钥 / 空密钥 / 格式非法
+/// - `Err(BootstrapError::GarrisonDao)` - DAO oxcache 初始化失败
+/// - `Err(BootstrapError::GarrisonManager)` - `GarrisonManager::init` 失败
 ///
 /// # Spec
 ///
 /// - R-auth-engine-002：构造 `CrawlrsGarrisonDao`/`build_garrison_config`/
-///   `CrawlrsGarrisonInterface` 并调 `GarrisonManager::init`，失败 map 为
-///   `BootstrapError::Auth`
+///   `CrawlrsGarrisonInterface` 并调 `GarrisonManager::init`，失败按层级 map 为
+///   `BootstrapError::GarrisonConfig` / `GarrisonDao` / `GarrisonManager`（Stage 3）
 #[cfg(feature = "auth")]
 pub async fn init_garrison_auth(
     settings: &Settings,
@@ -375,14 +356,15 @@ pub async fn init_garrison_auth(
     //
     // 顺序选择：先做便宜的同步 config 校验，再做异步 DAO 初始化——
     // 弱密钥场景下避免无谓的 oxcache 实例创建（规则5 简洁优先的执行层面体现）。
-    let config = build_garrison_config(settings.auth.jwt_secret())
-        .map_err(|e| BootstrapError::Auth(format!("garrison config error: {e}")))?;
+    // Stage 3 重构：使用类型化 `BootstrapError::GarrisonConfig`（#[from] 自动转换）。
+    let config = build_garrison_config(settings.auth.jwt_secret())?;
     let config = Arc::new(config);
 
     // 2. 初始化 DAO（garrison 内建 oxcache，自管理实例）
+    // Stage 3 重构：使用类型化 `BootstrapError::GarrisonDao`。
     let dao: Arc<dyn GarrisonDao> = init_garrison_dao()
         .await
-        .map_err(|e| BootstrapError::Auth(format!("garrison dao init failed: {e}")))?;
+        .map_err(|e| BootstrapError::GarrisonDao(format!("{e}")))?;
 
     // 3. 构造业务 Interface（注入 crawlrs DbPool 查询 RBAC 表）
     //
@@ -393,10 +375,31 @@ pub async fn init_garrison_auth(
         Arc::new(CrawlrsGarrisonInterface::new((*pool).clone()));
 
     // 4. 写入 garrison 全局单例（同步函数，覆盖式更新允许重复 init）
+    // Stage 3 重构：使用类型化 `BootstrapError::GarrisonManager`。
     GarrisonManager::init(dao, config, interface)
-        .map_err(|e| BootstrapError::Auth(format!("garrison manager init failed: {e}")))?;
+        .map_err(|e| BootstrapError::GarrisonManager(format!("{e}")))?;
 
-    info!("Garrison authentication manager initialized (token_style=jwt, HS256)");
+    // 5. 决策 2：断言 garrison firewall 已启用（仅依赖 garrison 做 CWE-307 IP 限速）
+    //
+    // crawlrs 已删除本地 `AuthRateLimiter`，暴力破解防护完全依赖 garrison 的
+    // `firewall` + `firewall-bruteforce` features。若 features 未启用，garrison
+    // 不会执行 IP 级限速，导致 CWE-307 防护缺失。
+    //
+    // 此处通过引用 `BruteForceStrategy` 类型做编译期断言——若 garrison 未启用
+    // `firewall-bruteforce` feature，该类型不存在，编译失败（fail-fast）。
+    // 运行时无需额外检查（garrison 在 `check_api_key` 内部自动调用 firewall）。
+    //
+    // 注：Cargo feature 是统一效应，此处断言仅防止"误关闭 features"配置错误，
+    // 不防恶意依赖（见 auth_middleware.rs `reset_global_auth_state` 注释）。
+    #[cfg(feature = "auth")]
+    {
+        // garrison 顶层 re-export（lib.rs:621，gated on `firewall-bruteforce` feature）
+        use garrison::BruteForceStrategy as _FwAssert;
+        // 引用类型做编译期检查（无运行时开销）
+        let _ = std::marker::PhantomData::<_FwAssert>;
+    }
+
+    info!("Garrison authentication manager initialized (token_style=jwt, HS256, firewall=enabled)");
     Ok(())
 }
 
@@ -460,9 +463,6 @@ pub async fn init_services(
     settings: &Settings,
 ) -> ServicesComponents {
     let repositories = &infrastructure.repositories;
-
-    // Initialize rate limiter (for auth rate limiting)
-    let rate_limiter = Some(Arc::new(AuthRateLimiter::new()));
 
     // Initialize team semaphore
     let team_semaphore = init_team_semaphore(settings.concurrency.default_team_limit as u64);
@@ -533,9 +533,6 @@ pub async fn init_services(
     // Initialize search service
     let search_service = init_search_service(repositories, settings, search_client.clone());
 
-    // Initialize auth scope service
-    let auth_scope_service = Some(init_auth_scope_service(infrastructure.db.inner().clone()));
-
     // R-auth-engine-002 / T011：初始化 garrison 认证鉴权（auth-on 时 fail-fast）
     //
     // - 弱密钥 / 空密钥 → panic（强制运维提供强密钥，CWE-326）
@@ -545,13 +542,12 @@ pub async fn init_services(
     // 此调用无返回值——garrison 通过 GARRISON_MANAGER 全局单例暴露能力，
     // 后续中间件（Stage 3 / T017 重写 auth_middleware_inner）通过 GarrisonUtil 访问。
     //
-    // pool 传 Arc<DbPool> 的 clone（Arc::clone 廉价 <10ns），匹配
-    // init_auth_scope_service(infrastructure.db.inner().clone()) 既有模式。
+    // pool 传 Arc<DbPool> 的 clone（Arc::clone 廉价 <10ns）。
     #[cfg(feature = "auth")]
     init_garrison_auth(settings, infrastructure.db.inner().clone())
         .await
         .expect(
-            "garrison auth initialization failed (BootstrapError::Auth) — \
+            "garrison auth initialization failed (BootstrapError::GarrisonConfig/GarrisonDao/GarrisonManager) — \
                  check CRAWLRS__AUTH__JWT_SECRET env var (HS256 requires >=32 bytes)",
         );
 
@@ -600,7 +596,6 @@ pub async fn init_services(
 
     ServicesComponents {
         rate_limit_middleware,
-        rate_limiter,
         team_semaphore,
         rate_limiting_service,
         create_scrape_use_case,
@@ -612,7 +607,6 @@ pub async fn init_services(
         robots_checker,
         search_engine_service,
         search_service,
-        auth_scope_service,
         queue,
         audit_service,
         http_client,
@@ -630,7 +624,6 @@ pub async fn init_services(
 // real external services that are only available in Docker-based integration tests:
 //   - init_rate_limiting_service: needs Repositories (DB pool) — LimiteronService uses in-memory storage
 //   - init_search_service: needs Repositories (DB pool for crawl/task/credits repos)
-//   - init_auth_scope_service: needs dbnexus::DbPool (PostgreSQL connection)
 //   - init_services: needs InfrastructureComponents (full DB + HTTP stack)
 // These are covered by integration tests in tests/integration/ with Docker-provided
 // PostgreSQL.
@@ -640,8 +633,8 @@ mod tests {
     use super::*;
     use crate::domain::models::CreditsTransactionType;
     use crate::domain::services::rate_limiting_service::{
-        BacklogService, ConcurrencyControlService, ConcurrencyResult, QuotaService,
-        RateLimitResult, RateLimitService, RateLimitingError,
+        BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
+        QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
     };
 
     fn make_http_client() -> Arc<reqwest::Client> {
@@ -920,33 +913,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tc_init_auth_scope_service_with_db() {
-        if !require_docker().await {
-            eprintln!("[skip] Docker unavailable — tc_init_auth_scope_service_with_db");
-            return;
-        }
-        let pg = match tcf::PgHandle::start().await {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("[skip] failed to start postgres container: {e}");
-                return;
-            }
-        };
-        let settings = tcf::settings_with_urls(&pg.url).unwrap();
-        // 高并行度下（如 tarpaulin）连接池创建可能因资源耗尽而失败，此时跳过而非 panic
-        let db = match init_database(&settings).await {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("[skip] failed to init database pool: {e}");
-                return;
-            }
-        };
-
-        let service = init_auth_scope_service(db.inner().clone());
-        assert!(Arc::strong_count(&service) >= 1);
-    }
-
-    #[tokio::test]
     async fn tc_init_search_service_with_repos() {
         if !require_docker().await {
             eprintln!("[skip] Docker unavailable — tc_init_search_service_with_repos");
@@ -992,13 +958,11 @@ mod tests {
                 return;
             }
         };
-        let mut settings = tcf::settings_with_urls(&handle.pg.url).unwrap();
+        let settings = tcf::settings_with_urls(&handle.pg.url).unwrap();
         // R-auth-engine-002 / T011：auth feature on 时 init_services 会调 init_garrison_auth，
-        // 弱密钥 / 空密钥会触发 fail-fast panic。此处注入测试用强密钥（>=32 字节 HS256）。
-        #[cfg(feature = "auth")]
-        {
-            settings.auth.jwt_secret = "test-jwt-secret-32-bytes-or-more!!".to_string();
-        }
+        // 弱密钥 / 空密钥会触发 fail-fast panic。
+        // `tcf::settings_with_urls` 已从 `CRAWLRS_TEST_JWT_SECRET` 环境变量读取强密钥
+        // （tiangang LOW-2），此处无需再次注入。
         // 高并行度下基础设施初始化可能因资源耗尽而失败，此时跳过而非 panic
         let infra = match init_infrastructure(&settings).await {
             Ok(i) => i,
@@ -1043,7 +1007,6 @@ mod tests {
         assert!(Arc::strong_count(&services.robots_checker) >= 1);
         assert!(Arc::strong_count(&services.search_engine_service) >= 1);
         assert!(Arc::strong_count(&services.search_service) >= 1);
-        assert!(services.auth_scope_service.is_some());
         assert!(Arc::strong_count(&services.queue) >= 1);
         assert!(Arc::strong_count(&services.audit_service) >= 1);
         assert!(Arc::strong_count(&services.llm_service) >= 1);
@@ -1061,7 +1024,7 @@ mod tests {
     // ========== init_garrison_auth tests (R-auth-engine-002 / T011) ==========
     //
     // 测试覆盖三类场景：
-    // 1. 弱密钥 / 空密钥 → Err(BootstrapError::Auth)（fail-fast）
+    // 1. 弱密钥 / 空密钥 → Err(BootstrapError::GarrisonConfig)（fail-fast，Stage 3 类型化）
     // 2. 强密钥 + 真实 DbPool → Ok(())（标记 #[ignore] 由 Stage 7 集成测试覆盖）
     //
     // 注意：DbPool 在 dbnexus 0.4.0 无 Default 实现（需真实连接池），故弱密钥测试也
@@ -1081,8 +1044,8 @@ mod tests {
             settings
         }
 
-        /// R-auth-engine-002：空 jwt_secret 返回 `Err(BootstrapError::Auth)`，
-        /// 错误消息含 "config error" 与 EmptySecret Display（"must not be empty or missing"）。
+        /// R-auth-engine-002：空 jwt_secret 返回 `Err(BootstrapError::GarrisonConfig)`，
+        /// 错误消息含 "garrison config error" 与 EmptySecret Display（"must not be empty or missing"）。
         ///
         /// 验证规则12（失败必须显性化）——空密钥不藏默认值背后，而是返回类型化错误。
         #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -1096,12 +1059,16 @@ mod tests {
             let result = init_garrison_auth(&settings, pool).await;
             assert!(
                 result.is_err(),
-                "empty jwt_secret must be rejected with Err(BootstrapError::Auth)"
+                "empty jwt_secret must be rejected with Err(BootstrapError::GarrisonConfig)"
             );
             let err = result.unwrap_err();
             assert!(
-                matches!(err, BootstrapError::Auth(ref msg) if msg.contains("config error")),
-                "error message should contain 'config error' prefix, got: {err}"
+                matches!(err, BootstrapError::GarrisonConfig(_)),
+                "error should be BootstrapError::GarrisonConfig variant, got: {err}"
+            );
+            assert!(
+                format!("{err}").contains("garrison config error"),
+                "error Display should contain 'garrison config error' prefix, got: {err}"
             );
             assert!(
                 format!("{err}").contains("must not be empty or missing"),
@@ -1109,7 +1076,7 @@ mod tests {
             );
         }
 
-        /// R-auth-engine-002：弱密钥（<32 字节）返回 `Err(BootstrapError::Auth)`，
+        /// R-auth-engine-002：弱密钥（<32 字节）返回 `Err(BootstrapError::GarrisonConfig)`，
         /// 错误消息含 WeakSecret Display（"weak jwt_secret: length N < 32 bytes"）。
         #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
         async fn test_init_garrison_auth_rejects_weak_secret() {
@@ -1122,12 +1089,12 @@ mod tests {
             let result = init_garrison_auth(&settings, pool).await;
             assert!(
                 result.is_err(),
-                "weak jwt_secret (<32 bytes) must be rejected with Err(BootstrapError::Auth)"
+                "weak jwt_secret (<32 bytes) must be rejected with Err(BootstrapError::GarrisonConfig)"
             );
             let err = result.unwrap_err();
             assert!(
-                matches!(err, BootstrapError::Auth(ref msg) if msg.contains("config error")),
-                "error message should contain 'config error' prefix, got: {err}"
+                matches!(err, BootstrapError::GarrisonConfig(_)),
+                "error should be BootstrapError::GarrisonConfig variant, got: {err}"
             );
             // 验证错误消息含长度信息（验证类型化错误传递 len/min 字段到 Display）
             let display = format!("{err}");

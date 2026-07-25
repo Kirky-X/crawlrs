@@ -402,7 +402,6 @@ domain/
 │   ├── webhook_sender.rs
 │   ├── audit_service.rs
 │   ├── audit_log_builder.rs
-│   ├── auth_scope_service.rs
 │   ├── geo_location.rs
 │   ├── llm_service.rs
 │   ├── relevance_scorer.rs
@@ -632,7 +631,6 @@ pub struct CrawlRsState {
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     pub search_client: Arc<SearchClient>,
     pub search_service: Arc<dyn SearchServiceTrait>,
-    pub auth_scope_service: Option<Arc<AuthScopeService>>,
     pub llm_service: Arc<dyn LLMServiceTrait>,
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
     pub regex_cache: Arc<RegexCache>,

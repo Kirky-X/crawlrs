@@ -25,7 +25,7 @@
 //! - R-auth-engine-003：`bridge_to_auth_state` 实现分解参数到 AuthState 的桥接
 
 use crate::domain::auth::ApiKeyScope;
-use crate::presentation::middleware::auth_middleware::{AuthError, AuthState};
+use crate::presentation::middleware::auth_types::{AuthError, AuthState};
 use axum::body::Body;
 use axum::http::{header, Request};
 use dbnexus::DbPool;
@@ -46,6 +46,12 @@ const DEFAULT_SCRAPE_LIMIT: u32 = 50;
 
 /// `Authorization: Bearer <token>` scheme 前缀（RFC 7235，大小写敏感）。
 const BEARER_PREFIX: &str = "Bearer ";
+
+/// Bearer token 最大长度（CWE-208 防护：超长 token 拒绝，避免资源耗尽攻击）。
+///
+/// 真实 JWT（HS256）典型长度 200-800 字节；API Key 通常 32-128 字节。
+/// 1024 字节上限覆盖所有合法场景，同时拒绝明显异常的超长输入（DoS 防护）。
+const MAX_BEARER_TOKEN_LEN: usize = 1024;
 
 /// 将 garrison 权限串列表映射为 crawlrs `ApiKeyScope`（R-authz-rbac-002 / T012-T013）。
 ///
@@ -124,6 +130,7 @@ pub fn map_perms_to_scope(perms: &[String]) -> ApiKeyScope {
 /// 2. header 值非可见 ASCII → `AuthError::InvalidKey`
 /// 3. 不以 `Bearer ` 前缀开头 → `AuthError::InvalidKey`（RFC 7235：scheme 大小写敏感）
 /// 4. 截取前缀后的 token；空 token → `AuthError::InvalidKey`
+/// 5. token 长度 > [`MAX_BEARER_TOKEN_LEN`] → `AuthError::InvalidKey`（CWE-208 超长输入拒绝）
 ///
 /// ## 安全
 ///
@@ -131,6 +138,7 @@ pub fn map_perms_to_scope(perms: &[String]) -> ApiKeyScope {
 ///   crawlrs 旧实现也是大小写敏感的（`auth_middleware.rs::extract_bearer_token`），
 ///   本桥接保持一致性（规则8 惯例优先于新颖）。
 /// - 不记录 token 内容到日志（避免 CWE-532 凭据泄露）。
+/// - 超长 token 拒绝（CWE-208 / DoS 防护）：避免下游 garrison 校验消耗资源在明显异常输入上。
 ///
 /// ## 参数
 ///
@@ -139,7 +147,7 @@ pub fn map_perms_to_scope(perms: &[String]) -> ApiKeyScope {
 /// ## 返回
 ///
 /// - `Ok(token)`：提取的 Bearer token 字符串（owned）
-/// - `Err(AuthError::InvalidKey)`：header 缺失 / 非 Bearer scheme / 空 token
+/// - `Err(AuthError::InvalidKey)`：header 缺失 / 非 Bearer scheme / 空 token / 超长 token
 ///
 /// ## 示例
 ///
@@ -154,20 +162,40 @@ pub fn map_perms_to_scope(perms: &[String]) -> ApiKeyScope {
 /// assert_eq!(token, "ak_test_123");
 /// ```
 pub fn extract_bearer(req: &Request<Body>) -> Result<String, AuthError> {
-    let auth_header = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .ok_or(AuthError::InvalidKey)?;
+    let auth_header = req.headers().get(header::AUTHORIZATION).ok_or_else(|| {
+        // LOW-2 修复：拒绝原因显式记录，便于调试。
+        log::debug!("Bearer token rejected: Authorization header missing");
+        AuthError::InvalidKey
+    })?;
 
-    let value = auth_header.to_str().map_err(|_| AuthError::InvalidKey)?;
+    let value = auth_header.to_str().map_err(|_| {
+        log::debug!("Bearer token rejected: header value not visible ASCII");
+        AuthError::InvalidKey
+    })?;
 
-    // 检查 `Bearer ` 前缀（大小写敏感，RFC 7235）
+    // 检查 `Bearer ` 前缀。
+    // 注：RFC 7235 §2.1 实际规定 auth-scheme 是 case-insensitive，
+    // 但 crawlrs 旧实现是大小写敏感的（规则8 惯例优先于新颖），此处保持一致。
     if !value.starts_with(BEARER_PREFIX) {
+        log::debug!(
+            "Bearer token rejected: scheme not 'Bearer ' (case-sensitive, RFC 7235 legacy)"
+        );
         return Err(AuthError::InvalidKey);
     }
 
     let token = &value[BEARER_PREFIX.len()..];
     if token.is_empty() {
+        log::debug!("Bearer token rejected: token empty after 'Bearer ' prefix");
+        return Err(AuthError::InvalidKey);
+    }
+
+    // CWE-208 / DoS 防护：超长 token 拒绝（合法 JWT/API Key 不会超过 1024 字节）
+    if token.len() > MAX_BEARER_TOKEN_LEN {
+        log::warn!(
+            "Bearer token rejected: length {} exceeds max {} (CWE-208)",
+            token.len(),
+            MAX_BEARER_TOKEN_LEN
+        );
         return Err(AuthError::InvalidKey);
     }
 
@@ -178,60 +206,34 @@ pub fn extract_bearer(req: &Request<Body>) -> Result<String, AuthError> {
 ///
 /// ## 桥接逻辑
 ///
-/// 1. `login_id` → `api_key_id` (Uuid)：design.md §5 约定签发 API Key 时
-///    `login_id = api_key_id` 的 Uuid 字符串形式；解析失败 → `AuthError::InvalidLoginId`
-/// 2. `perms` → `scope`：调用 [`map_perms_to_scope`] 映射为 `ApiKeyScope`
-/// 3. 构造 `AuthState::new(pool, team_id, api_key_id, scope)`——不携带 cache/rate_limiter/
-///    trusted_proxies（这些字段将在 Stage 4 T019/T021 删除，DTO 化后 `AuthState`
-///    仅有 `pool/team_id/api_key_id/scope` 四字段）
+/// 1. `perms` → `scope`：调用 [`map_perms_to_scope`] 映射为 `ApiKeyScope`
+/// 2. 构造 `AuthState::new(pool, team_id, api_key_id, scope)`（DTO 化后仅 4 字段）
 ///
 /// ## 参数
 ///
 /// * `pool` - crawlrs 数据库连接池（`Arc<DbPool>`，`DbPool` 内部 `Arc`，clone 廉价）
-/// * `login_id` - garrison `GarrisonUtil::get_login_id` 返回的 login_id 字符串
-/// * `perms` - garrison `GarrisonUtil::get_permission_list` 返回的权限串列表
+/// * `api_key_id` - 已从 garrison `login_id` 解析的 API Key Uuid（调用方负责解析）
+/// * `perms` - garrison `GarrisonUtil::get_permission_list` 返回的权限串切片（借用）
 /// * `team_id` - 由中间件反查 crawlrs `api_keys` 表获取的 team_id（design.md §3 步骤 4）
 ///
 /// ## 返回
 ///
 /// - `Ok(AuthState)`：成功构造的 AuthState，可注入到请求 extensions
-/// - `Err(AuthError::InvalidLoginId)`：`login_id` 无法解析为 Uuid
 ///
-/// ## 失败显性化（规则12）
+/// ## 设计说明
 ///
-/// `login_id` 解析失败时返回 `AuthError::InvalidLoginId`，不静默回退到 `Uuid::nil()`
-/// （避免安全敏感场景下生成"匿名" AuthState，导致越权风险）。
-///
-/// ## 示例
-///
-/// ```ignore
-/// use crawlrs::presentation::middleware::auth_bridge::bridge_to_auth_state;
-/// use std::sync::Arc;
-/// use dbnexus::DbPool;
-/// use uuid::Uuid;
-///
-/// # async fn demo(pool: Arc<DbPool>) {
-/// let login_id = Uuid::new_v4().to_string();
-/// let perms = vec!["crawlrs:admin".to_string()];
-/// let team_id = Uuid::new_v4();
-/// let auth_state = bridge_to_auth_state(pool, login_id, perms, team_id).await.unwrap();
-/// assert_eq!(auth_state.team_id, team_id);
-/// # }
-/// ```
+/// MEDIUM-2/MEDIUM-3 修复：签名改为接收 `api_key_id: Uuid` 而非 `login_id: String`，
+/// 消除调用方与函数内部的重复 Uuid 解析；`perms` 改为 `&[String]` 借用而非 owned。
 pub async fn bridge_to_auth_state(
     pool: Arc<DbPool>,
-    login_id: String,
-    perms: Vec<String>,
+    api_key_id: Uuid,
+    perms: &[String],
     team_id: Uuid,
 ) -> Result<AuthState, AuthError> {
-    // 1. 解析 login_id → api_key_id (Uuid)
-    let api_key_id =
-        Uuid::parse_str(&login_id).map_err(|_| AuthError::InvalidLoginId(login_id.clone()))?;
+    // 权限映射（确定性查找表，规则3）
+    let scope = map_perms_to_scope(perms);
 
-    // 2. 权限映射（确定性查找表，规则3）
-    let scope = map_perms_to_scope(&perms);
-
-    // 3. 构造 AuthState（DTO 化后仅 4 字段，cache/rate_limiter/trusted_proxies 由 Stage 4 删除）
+    // 构造 AuthState（DTO 化后仅 4 字段）
     Ok(AuthState::new(pool, team_id, api_key_id, scope))
 }
 
@@ -473,7 +475,7 @@ mod tests {
         Some(crate::common::test_helpers::create_test_db_pool())
     }
 
-    /// R-auth-engine-003：合法 Uuid login_id + admin perms → 全 true scope + 正确字段
+    /// R-auth-engine-003：合法 api_key_id + admin perms → 全 true scope + 正确字段
     #[tokio::test]
     async fn test_bridge_to_auth_state_admin_perms() {
         let pool = match make_test_pool().await {
@@ -486,11 +488,10 @@ mod tests {
             }
         };
         let api_key_id = Uuid::new_v4();
-        let login_id = api_key_id.to_string();
         let perms = vec!["crawlrs:admin".to_string()];
         let team_id = Uuid::new_v4();
 
-        let auth_state = bridge_to_auth_state(pool, login_id, perms, team_id)
+        let auth_state = bridge_to_auth_state(pool, api_key_id, &perms, team_id)
             .await
             .expect("admin bridge should succeed");
 
@@ -502,7 +503,7 @@ mod tests {
         assert!(auth_state.scope.has_permission(ScopePermission::Admin));
     }
 
-    /// R-auth-engine-003：合法 Uuid login_id + read perms → 仅 read scope
+    /// R-auth-engine-003：合法 api_key_id + read perms → 仅 read scope
     #[tokio::test]
     async fn test_bridge_to_auth_state_read_perms() {
         let pool = match make_test_pool().await {
@@ -515,11 +516,10 @@ mod tests {
             }
         };
         let api_key_id = Uuid::new_v4();
-        let login_id = api_key_id.to_string();
         let perms = vec!["crawlrs:read".to_string()];
         let team_id = Uuid::new_v4();
 
-        let auth_state = bridge_to_auth_state(pool, login_id, perms, team_id)
+        let auth_state = bridge_to_auth_state(pool, api_key_id, &perms, team_id)
             .await
             .expect("read bridge should succeed");
 
@@ -528,36 +528,6 @@ mod tests {
         assert!(auth_state.scope.read);
         assert!(!auth_state.scope.write);
         assert!(!auth_state.scope.admin);
-    }
-
-    /// R-auth-engine-003：非 Uuid login_id → `AuthError::InvalidLoginId`（规则12 失败显性化）
-    #[tokio::test]
-    async fn test_bridge_to_auth_state_invalid_login_id() {
-        let pool = match make_test_pool().await {
-            Some(p) => p,
-            None => {
-                eprintln!(
-                    "[skip] TEST_DATABASE_URL not set — test requires real DbPool for AuthState::new"
-                );
-                return;
-            }
-        };
-        let login_id = "not-a-uuid".to_string();
-        let perms = vec!["crawlrs:admin".to_string()];
-        let team_id = Uuid::new_v4();
-
-        let result = bridge_to_auth_state(pool, login_id.clone(), perms, team_id).await;
-
-        assert!(result.is_err(), "invalid login_id should be Err");
-        match result.unwrap_err() {
-            AuthError::InvalidLoginId(returned_id) => {
-                assert_eq!(
-                    returned_id, login_id,
-                    "returned login_id should match input"
-                );
-            }
-            other => panic!("expected InvalidLoginId, got {:?}", other),
-        }
     }
 
     /// R-auth-engine-003：空 perms → denied scope（全 false），但 AuthState 构造成功
@@ -573,11 +543,10 @@ mod tests {
             }
         };
         let api_key_id = Uuid::new_v4();
-        let login_id = api_key_id.to_string();
         let perms: Vec<String> = vec![];
         let team_id = Uuid::new_v4();
 
-        let auth_state = bridge_to_auth_state(pool, login_id, perms, team_id)
+        let auth_state = bridge_to_auth_state(pool, api_key_id, &perms, team_id)
             .await
             .expect("empty perms should still bridge successfully");
 
@@ -602,42 +571,16 @@ mod tests {
             }
         };
         let api_key_id = Uuid::new_v4();
-        let login_id = api_key_id.to_string();
         let perms = vec!["otherapp:admin".to_string(), "foo:read".to_string()];
         let team_id = Uuid::new_v4();
 
-        let auth_state = bridge_to_auth_state(pool, login_id, perms, team_id)
+        let auth_state = bridge_to_auth_state(pool, api_key_id, &perms, team_id)
             .await
             .expect("unknown perms should still bridge successfully");
 
         assert!(!auth_state.scope.read);
         assert!(!auth_state.scope.write);
         assert!(!auth_state.scope.admin);
-    }
-
-    /// R-auth-engine-003：Uuid 大小写（`ABCD...` vs `abcd...`）均能解析（Uuid 不区分大小写）
-    #[tokio::test]
-    async fn test_bridge_to_auth_state_uppercase_uuid_login_id() {
-        let pool = match make_test_pool().await {
-            Some(p) => p,
-            None => {
-                eprintln!(
-                    "[skip] TEST_DATABASE_URL not set — test requires real DbPool for AuthState::new"
-                );
-                return;
-            }
-        };
-        let api_key_id = Uuid::new_v4();
-        // Uuid::to_string 输出小写，但 Uuid::parse_str 接受大写
-        let login_id = api_key_id.to_string().to_uppercase();
-        let perms = vec!["crawlrs:read".to_string()];
-        let team_id = Uuid::new_v4();
-
-        let auth_state = bridge_to_auth_state(pool, login_id, perms, team_id)
-            .await
-            .expect("uppercase Uuid login_id should bridge successfully");
-
-        assert_eq!(auth_state.api_key_id, api_key_id);
     }
 
     // ========== AuthError::from_garrison 测试（R-auth-engine-003 / T016）==========

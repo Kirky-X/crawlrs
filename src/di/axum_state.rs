@@ -33,7 +33,6 @@ use crate::domain::repositories::webhook_event_repository::WebhookEventRepositor
 #[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
-use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 #[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
@@ -115,8 +114,6 @@ pub struct CrawlRsState {
     pub search_client: Arc<SearchClient>,
     /// Search service (trait object for DI)
     pub search_service: Arc<dyn SearchServiceTrait>,
-    /// Auth scope service for API key permission management
-    pub auth_scope_service: Option<Arc<AuthScopeService>>,
     /// LLM service for LLM operations
     pub llm_service: Arc<dyn LLMServiceTrait>,
     /// Extraction service for data extraction
@@ -191,7 +188,6 @@ impl CrawlRsState {
             create_scrape_use_case: services.create_scrape_use_case.clone(),
             search_client,
             search_service: services.search_service.clone(),
-            auth_scope_service: services.auth_scope_service.clone(),
             llm_service: services.llm_service.clone(),
             extraction_service: services.extraction_service.clone(),
             regex_cache: services.regex_cache.clone(),
@@ -250,8 +246,6 @@ pub trait CrawlRsStateExt {
     fn search_client(&self) -> Arc<SearchClient>;
     /// Get search service
     fn search_service(&self) -> Arc<dyn SearchServiceTrait>;
-    /// Get auth scope service
-    fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>>;
     /// Get LLM service
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait>;
     /// Get regex cache
@@ -349,10 +343,6 @@ impl CrawlRsStateExt for CrawlRsState {
 
     fn search_service(&self) -> Arc<dyn SearchServiceTrait> {
         self.search_service.clone()
-    }
-
-    fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>> {
-        self.auth_scope_service.clone()
     }
 
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {
@@ -473,10 +463,6 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
 
     fn search_service(&self) -> Arc<dyn SearchServiceTrait> {
         self.as_ref().search_service()
-    }
-
-    fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>> {
-        self.as_ref().auth_scope_service()
     }
 
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {
@@ -654,9 +640,6 @@ mod tests {
 
         let search_service: Arc<dyn SearchServiceTrait> = state.search_service();
         assert!(Arc::strong_count(&search_service) >= 2);
-
-        let auth_scope: Option<Arc<AuthScopeService>> = state.auth_scope_service();
-        assert!(auth_scope.is_some());
 
         let llm_service: Arc<dyn LLMServiceTrait> = state.llm_service();
         assert!(Arc::strong_count(&llm_service) >= 2);
@@ -881,11 +864,6 @@ mod tests {
         let search_service = state_arc.search_service();
         assert!(Arc::strong_count(&search_service) >= 2);
 
-        // auth_scope_service returns Option<Arc<...>> — verify Some when
-        // the underlying state has it configured.
-        let auth_scope = state_arc.auth_scope_service();
-        assert!(auth_scope.is_some());
-
         let llm_service = state_arc.llm_service();
         assert!(Arc::strong_count(&llm_service) >= 2);
 
@@ -965,11 +943,5 @@ mod tests {
         let db_b = cloned_arc.db_pool();
         assert!(Arc::strong_count(&db_a) >= 2);
         assert!(Arc::strong_count(&db_b) >= 2);
-
-        // auth_scope_service should return Some on both clones.
-        let auth_a = state_arc.auth_scope_service();
-        let auth_b = cloned_arc.auth_scope_service();
-        assert!(auth_a.is_some());
-        assert!(auth_b.is_some());
     }
 }

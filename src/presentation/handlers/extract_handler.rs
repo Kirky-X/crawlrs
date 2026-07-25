@@ -386,7 +386,7 @@ pub async fn extract(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "teams"))]
 mod tests {
     use super::*;
     use uuid::Uuid;

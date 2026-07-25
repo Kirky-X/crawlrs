@@ -579,7 +579,7 @@ pub fn verify_webhook_signature_from_parts(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "webhook"))]
 mod tests {
     use super::*;
     use crate::domain::repositories::task_repository::RepositoryError;

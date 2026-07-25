@@ -15,6 +15,11 @@ pub mod auth_bridge;
 /// 提供HTTP请求处理的中间件功能
 /// 包括认证、限流、信号量控制等功能
 pub mod auth_middleware;
+/// 认证共享类型（Stage 3 重构 / 决策 3）
+///
+/// 抽出 `AuthError` 与 `AuthState` 解决 `auth_bridge` ↔ `auth_middleware` 之间的循环依赖。
+/// 两个模块都从此处导入共享类型，避免互相 `use` 形成循环。
+pub mod auth_types;
 /// 分布式限流中间件（limiteron 后端）
 ///
 /// R-rl-001 / T017：rate-limit feature 关闭时不编译此模块。

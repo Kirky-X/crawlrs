@@ -566,6 +566,22 @@ pub fn validate_security(settings: &Settings) -> Result<(), validator::Validatio
         }
     }
 
+    // JWT secret 校验（auth-on 时强制，MEDIUM-3 修复：早期失败反馈）
+    //
+    // 仅在 `auth` feature 启用时检查——auth-off 走 default_identity_middleware，
+    // 不读取 jwt_secret。空 / 弱密钥（< 32 字节）会被 `build_garrison_config` 二次拒绝，
+    // 此处提前检查让运维在启动时即收到反馈而非等到 garrison 初始化。
+    #[cfg(feature = "auth")]
+    {
+        let jwt_secret = settings.auth.jwt_secret();
+        if jwt_secret.is_empty() {
+            return Err(validator::ValidationError::new("auth_jwt_secret_empty"));
+        }
+        if jwt_secret.len() < 32 {
+            return Err(validator::ValidationError::new("auth_jwt_secret_weak"));
+        }
+    }
+
     Ok(())
 }
 
@@ -637,8 +653,9 @@ mod tests {
     /// 防止日志打印 Settings 时泄露 JWT 签名密钥。
     #[test]
     fn test_auth_settings_debug_redacts_jwt_secret() {
-        let mut auth = AuthSettings::default();
-        auth.jwt_secret = "super-secret-jwt-key-32-bytes-or-more!!".to_string();
+        let auth = AuthSettings {
+            jwt_secret: "super-secret-jwt-key-32-bytes-or-more!!".to_string(),
+        };
 
         let debug_output = format!("{:?}", auth);
         assert!(
@@ -1049,7 +1066,11 @@ mod tests {
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
-            auth: AuthSettings::default(),
+            // MEDIUM-3 修复后 validate_security 在 auth-on 时校验 jwt_secret，
+            // 测试用强密钥（32+ 字节）确保 validate_security 通过
+            auth: AuthSettings {
+                jwt_secret: "a-very-strong-and-secure-jwt-secret-key-32+chars".to_string(),
+            },
         }
     }
 

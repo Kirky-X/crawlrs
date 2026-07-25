@@ -25,7 +25,8 @@ use crate::presentation::handlers::webhook_handler;
 // R-teams-002 / T012：teams-off 时 team_handler 模块不编译
 #[cfg(feature = "teams")]
 use crate::presentation::handlers::team_handler;
-use crate::presentation::middleware::auth_middleware::AuthState;
+#[cfg(not(feature = "auth"))]
+use crate::presentation::middleware::auth_types::AuthState;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crate::presentation::routes;
@@ -40,7 +41,6 @@ use axum::{
 use axum::routing::put;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-
 // 导入常量
 use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
 
@@ -124,9 +124,8 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
 /// - `api_key_id`: `DEFAULT_API_KEY_ID`（固定值，与 team_id 区分）
 /// - `scope`: `ApiKeyScope::full_access()`（read/write/admin=true、limit=u32::MAX）
 ///
-/// 其余字段（`auth_scope_service` / `api_key_cache` / `auth_rate_limiter` / `trusted_proxies`）
-/// 均为 `None`：单租户降级模式下不查 DB 加载 scope、不做缓存、不做暴力破解防护、
-/// 不解析 trusted proxies。
+/// 其余字段（`api_key_cache` / `auth_rate_limiter` / `trusted_proxies`）已在 Stage 3 DTO 化中删除，
+/// 单租户降级模式下不查 DB 加载 scope、不做缓存、不做暴力破解防护、不解析 trusted proxies。
 ///
 /// 此函数仅在三处路由装配点（`create_protected_routes_with_state` /
 /// `create_v2_routes_with_state` / `build_api_app_with_state` 的 SDK 路由）
@@ -210,20 +209,11 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
 
     // Auth state for middleware
     //
-    // auth-on：通过 `GLOBAL_AUTH_STATE` 全局共享，`auth_middleware()` 从中读取
-    //   （含真实 `auth_scope_service` 用于按 API Key 加载 scope）。
+    // auth-on：通过 `from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool，
+    //   `auth_middleware_inner` 在每请求中通过 garrison RBAC + `bridge_to_auth_state` 动态填充 AuthState。
     // auth-off：通过 `from_fn_with_state(template, default_identity_middleware)` 直接注入模板，
     //   `default_identity_middleware` 通过 `State<AuthState>` 提取器读取；
     //   模板在下方 `.layer()` 调用处构造（携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope）。
-    #[cfg(feature = "auth")]
-    {
-        // R-auth-engine-003 / T015：AuthState DTO 化后不再传 auth_scope_service——
-        // scope 改由 Stage 3 的 `bridge_principal_to_auth_state`（garrison RBAC +
-        // `map_perms_to_scope`）填充。`auth_scope_service` 仍在 CrawlRsState
-        // 中保留（由 Stage 4 的 T022 删除 `auth_scope_service.rs` 时一并清理）。
-        let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone()));
-        crate::presentation::middleware::auth_middleware::set_global_auth_state(auth_state);
-    }
 
     let app: Router = Router::new()
         .route("/v1/scrape", post(scrape_handler::create_scrape))
@@ -294,18 +284,20 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
 
     // 认证中间件层（条件编译，T009）
     //
-    // auth-on：`auth_middleware()` 从 `GLOBAL_AUTH_STATE` 读取真实 AuthState
-    //   （含 auth_scope_service / api_key_cache / auth_rate_limiter / trusted_proxies）。
+    // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 通过 State<Arc<DbPool>> 提取器
+    //   注入 DbPool，中间件在每请求中调用 garrison RBAC + `bridge_to_auth_state` 动态填充
+    //   AuthState（Stage 3 DTO 化后仅含 pool/team_id/api_key_id/scope 四字段）。
     // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
     //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool，
     //   `default_identity_middleware` 克隆模板并注入 extensions（不查 DB、不校验 token）。
     //
-    // 注意：两分支返回的 `FromFnLayer` 类型参数不同（`S=()` vs `S=AuthState`），
+    // 注意：两分支返回的 `FromFnLayer` 类型参数不同（`S=Arc<DbPool>` vs `S=AuthState`），
     // 无法用 `let layer = if ... { from_fn(...) } else { from_fn_with_state(...) }` 统一类型，
     // 必须用 shadowing + cfg 分别调用 `.layer()`。
     #[cfg(feature = "auth")]
-    let app = app.layer(axum::middleware::from_fn(
-        crate::presentation::middleware::auth_middleware::auth_middleware(),
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        state.db_pool.clone(),
+        crate::presentation::middleware::auth_middleware::auth_middleware_inner,
     ));
     #[cfg(not(feature = "auth"))]
     let app = {
@@ -371,15 +363,8 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
 
     // Auth state for middleware
     //
-    // auth-on：`ensure_global_auth_state_set` 仅在未设置时填充（避免覆盖 protected routes
-    //   已设置的完整 state——protected routes 带 auth_scope_service，v2 routes 不带）。
+    // auth-on：通过 `from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool（与 protected_routes 一致）。
     // auth-off：不调用全局状态，模板通过下方 `from_fn_with_state` 直接注入。
-    #[cfg(feature = "auth")]
-    {
-        // R-auth-engine-003 / T015：AuthState DTO 化后不再传 auth_scope_service
-        let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone()));
-        crate::presentation::middleware::auth_middleware::ensure_global_auth_state_set(auth_state);
-    }
 
     let app = task_routes()
         .layer(Extension(task_repo.clone()))
@@ -387,12 +372,13 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
 
     // 认证中间件层（条件编译，T009）
     //
-    // auth-on：`auth_middleware()` 从 `GLOBAL_AUTH_STATE` 读取真实 AuthState。
+    // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool。
     // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
     //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
     #[cfg(feature = "auth")]
-    let app = app.layer(axum::middleware::from_fn(
-        crate::presentation::middleware::auth_middleware::auth_middleware(),
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        state.db_pool.clone(),
+        crate::presentation::middleware::auth_middleware::auth_middleware_inner,
     ));
     #[cfg(not(feature = "auth"))]
     let app = {
@@ -460,13 +446,15 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     // CRITICAL: auth middleware is mandatory — SDK handlers extract team_id/api_key_id
     // from AuthState set by the middleware, never from the request body.
     //
-    // auth-on：`auth_middleware()` 从 `GLOBAL_AUTH_STATE` 读取真实 AuthState。
+    // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool。
     // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
     //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
     #[cfg(feature = "auth")]
-    let sdk_router = crate::presentation::sdk::build_sdk_router().layer(axum::middleware::from_fn(
-        crate::presentation::middleware::auth_middleware::auth_middleware(),
-    ));
+    let sdk_router =
+        crate::presentation::sdk::build_sdk_router().layer(axum::middleware::from_fn_with_state(
+            state.db_pool.clone(),
+            crate::presentation::middleware::auth_middleware::auth_middleware_inner,
+        ));
     #[cfg(not(feature = "auth"))]
     let sdk_router = {
         let template = build_default_identity_template(state);

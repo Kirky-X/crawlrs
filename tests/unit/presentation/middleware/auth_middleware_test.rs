@@ -8,12 +8,18 @@
 //! Tests for the unified authentication middleware, covering AuthState construction,
 //! scope_middleware behavior, and auth_middleware integration.
 //!
-//! Note: Code paths requiring a real PostgreSQL connection (validate_api_key_from_db,
-//! create_and_cache_auth_state, load_scope_from_db) are not covered here — they need
-//! Docker/testcontainers. The cache-hit path is also skipped because ApiKeyCache::insert
-//! and CachedAuthResult fields are module-private and cannot be exercised from external tests.
+//! ## Stage 3 重构（R-auth-engine-003）
+//!
+//! 已删除对 `ApiKeyCache` / `AuthRateLimiter` / `CacheStats` / `with_cache` /
+//! `with_trusted_proxies` / `new_for_middleware` 等已删除 API 的测试。
+//! 限速测试已移除——crawlrs 侧不再做暴力破解防护，完全依赖 garrison firewall
+//! （决策 2）。缓存测试已移除——`ApiKeyCache` 已删除，改为 `TEAM_ID_CACHE`
+//! （决策 4，内部 LRU，不暴露公共 API）。
+//!
+//! Note: Code paths requiring garrison RBAC (auth_middleware_inner 的 garrison 路径)
+//! 不在此处覆盖——需要 garrison 单例 + 真实 API Key，由 Stage 7 集成测试覆盖。
 
-#![cfg(test)]
+#![cfg(all(test, feature = "auth"))]
 
 use std::sync::Arc;
 
@@ -26,17 +32,15 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 use crawlrs::domain::auth::{ApiKeyScope, AuditLogEntry, ScopePermission};
 use crawlrs::domain::services::audit_service::{AuditServiceError, AuditServiceTrait};
-use crawlrs::infrastructure::security;
 use crawlrs::presentation::middleware::auth_middleware::{
-    self, get_cache_stats, get_global_auth_cache, get_global_auth_state, invalidate_all_cache,
-    reset_global_auth_state, set_global_auth_cache, set_global_auth_state, ApiKeyCache, AuthError,
-    AuthRateLimiter, AuthState, CacheStats,
+    self, get_global_auth_state, reset_global_auth_state, set_global_auth_state, AuthError,
+    AuthState,
 };
 
 use crate::common::helpers::db_pool::create_test_pool_or_panic;
@@ -131,35 +135,26 @@ fn make_auth_state(scope: ApiKeyScope) -> AuthState {
 /// Serialize tests that touch GLOBAL_AUTH_STATE (Mutex<Option<...>> — resettable per test).
 static GLOBAL_STATE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
-/// Ensure global auth state is initialized with cache, rate limiter, and trusted proxies.
+/// Ensure global auth state is initialized (Stage 3 DTO 化后仅含 4 字段).
 ///
-/// 架构 MEDIUM-1：GLOBAL_AUTH_STATE 现在是 Mutex<Option<...>>（可重置）。
-/// 默认复用已设置的 state（避免重建）；需要带 rate_limiter 的 state 时，
-/// 调用方应先 `reset_global_auth_state()` 再调用本函数。
+/// 架构 MEDIUM-1：GLOBAL_AUTH_STATE 是 `ParkRwLock<Option<Arc<AuthState>>>`（可重置）。
+/// 默认复用已设置的 state（避免重建）；调用方需要 fresh state 时，
+/// 应先 `reset_global_auth_state()` 再调用本函数。
 /// All callers must hold GLOBAL_STATE_LOCK to avoid races.
+///
+/// ## Stage 3 重构
+///
+/// AuthState DTO 化后仅含 `pool`/`team_id`/`api_key_id`/`scope` 四字段。
+/// `ApiKeyCache` / `AuthRateLimiter` / `trusted_proxies` 已删除：
+/// - 限速由 garrison firewall 负责（决策 2）
+/// - team_id 缓存由 `TEAM_ID_CACHE` 内部 LRU 负责（决策 4）
+/// - IP 解析由 garrison 在 `check_api_key` 内部处理
 fn ensure_global_auth_state() -> Arc<AuthState> {
     if let Some(state) = get_global_auth_state() {
         return state;
     }
-    if get_global_auth_cache().is_none() {
-        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
-        set_global_auth_cache(cache);
-    }
     let pool = create_test_pool_or_panic();
-    let cache = get_global_auth_cache().unwrap();
-    let rate_limiter = Arc::new(AuthRateLimiter::new());
-    // disabled=false means X-Forwarded-For is trusted directly — allows IP control in tests
-    let trusted_proxies = security::TrustedProxyConfig::from_settings(false, vec![]);
-    let state = AuthState::with_trusted_proxies(
-        pool,
-        None,
-        Uuid::nil(),
-        Uuid::nil(),
-        ApiKeyScope::default(),
-        Some(cache),
-        Some(rate_limiter),
-        trusted_proxies,
-    );
+    let state = AuthState::new(pool, Uuid::nil(), Uuid::nil(), ApiKeyScope::default());
     let state = Arc::new(state);
     set_global_auth_state(state.clone());
     get_global_auth_state().unwrap_or(state)
@@ -222,114 +217,6 @@ fn test_auth_state_new_sets_required_fields() {
     assert_eq!(state.team_id, team_id);
     assert_eq!(state.api_key_id, api_key_id);
     assert_eq!(state.scope, scope);
-    assert!(state.auth_scope_service.is_none());
-    assert!(state.api_key_cache.is_none());
-    assert!(state.auth_rate_limiter.is_none());
-    assert!(state.trusted_proxies.is_none());
-}
-
-#[test]
-fn test_auth_state_with_cache_sets_cache() {
-    let pool = create_test_pool_or_panic();
-    let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
-    let state = AuthState::with_cache(
-        pool,
-        None,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        ApiKeyScope::default(),
-        cache,
-    );
-
-    assert!(state.api_key_cache.is_some());
-    assert!(state.auth_rate_limiter.is_none());
-    assert!(state.trusted_proxies.is_none());
-    assert!(state.auth_scope_service.is_none());
-}
-
-#[test]
-fn test_auth_state_with_trusted_proxies_sets_all_fields() {
-    let pool = create_test_pool_or_panic();
-    let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
-    let rate_limiter = Arc::new(AuthRateLimiter::new());
-    let trusted_proxies = security::TrustedProxyConfig::from_settings(false, vec![]);
-
-    let state = AuthState::with_trusted_proxies(
-        pool,
-        None,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        ApiKeyScope::read_only(),
-        Some(cache),
-        Some(rate_limiter),
-        trusted_proxies,
-    );
-
-    assert!(state.api_key_cache.is_some());
-    assert!(state.auth_rate_limiter.is_some());
-    assert!(state.trusted_proxies.is_some());
-    assert_eq!(state.scope, ApiKeyScope::read_only());
-}
-
-#[tokio::test]
-async fn test_auth_state_with_global_cache_uses_global() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    // Reset global cache to a known state
-    let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
-    set_global_auth_cache(cache);
-
-    let pool = create_test_pool_or_panic();
-    let state = AuthState::with_global_cache(
-        pool,
-        None,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        ApiKeyScope::default(),
-        None,
-        None,
-    );
-
-    assert!(
-        state.api_key_cache.is_some(),
-        "with_global_cache should set cache from global"
-    );
-    // The cache should be the same Arc as the global cache
-    let global_cache = get_global_auth_cache().unwrap();
-    let state_cache = state.api_key_cache.unwrap();
-    assert!(
-        Arc::ptr_eq(&global_cache, &state_cache),
-        "with_global_cache should use the global cache instance"
-    );
-}
-
-#[tokio::test]
-async fn test_auth_state_new_for_middleware_initializes_global_cache() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    // Ensure global cache is reset so new_for_middleware creates a fresh one
-    let fresh_cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
-    set_global_auth_cache(fresh_cache);
-
-    let pool = create_test_pool_or_panic();
-    let state = AuthState::new_for_middleware(pool, None);
-
-    assert!(
-        state.api_key_cache.is_some(),
-        "new_for_middleware should initialize cache"
-    );
-    assert_eq!(state.team_id, Uuid::nil());
-    assert_eq!(state.api_key_id, Uuid::nil());
-    assert_eq!(state.scope, ApiKeyScope::default());
-    assert!(state.auth_scope_service.is_none());
-    assert!(state.auth_rate_limiter.is_none());
-    assert!(state.trusted_proxies.is_none());
-
-    // Verify the cache is the global one
-    let global = get_global_auth_cache();
-    assert!(global.is_some());
-    assert!(Arc::ptr_eq(
-        &global.unwrap(),
-        state.api_key_cache.as_ref().unwrap()
-    ));
 }
 
 #[test]
@@ -341,8 +228,6 @@ fn test_auth_state_debug_format() {
     assert!(debug_str.contains("team_id"));
     assert!(debug_str.contains("api_key_id"));
     assert!(debug_str.contains("scope"));
-    assert!(debug_str.contains("auth_scope_service"));
-    assert!(debug_str.contains("false")); // auth_scope_service is None → false
 }
 
 #[test]
@@ -789,100 +674,22 @@ async fn test_auth_middleware_empty_bearer_token_returns_401() {
 
 #[tokio::test]
 async fn test_auth_middleware_rate_limit_lockout_returns_429() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    // 架构 MEDIUM-1：reset 后重新 ensure，保证 state 带 rate_limiter
-    reset_global_auth_state();
-    let state = ensure_global_auth_state();
-    let rate_limiter = state
-        .auth_rate_limiter
-        .as_ref()
-        .expect("global state should have rate limiter")
-        .clone();
-
-    let test_ip = "10.1.2.3";
-    // Record failures until the IP is locked out
-    for _ in 0..20 {
-        rate_limiter.record_failure(test_ip).await;
-        if rate_limiter.is_locked_out(test_ip).await {
-            break;
-        }
-    }
-    assert!(
-        rate_limiter.is_locked_out(test_ip).await,
-        "IP should be locked out after recording failures"
-    );
-
-    let app = build_auth_test_app();
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/protected")
-                .header("x-forwarded-for", test_ip)
-                .header(header::AUTHORIZATION, "Bearer some_token")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(
-        response.status(),
-        StatusCode::TOO_MANY_REQUESTS,
-        "Locked-out IP should return 429"
-    );
-
-    // Cleanup: reset failures so other tests are not affected
-    rate_limiter.reset_failures(test_ip).await;
+    // Stage 3 重构（决策 2）：本测试已删除。
+    // crawlrs 侧已删除 `AuthRateLimiter`，暴力破解防护完全依赖 garrison firewall。
+    // 429 响应由 garrison 在 `check_api_key` 内部触发，crawlrs 中间件仅透传
+    // `AuthError::RateLimited` → 429。此路径需 garrison 单例 + 真实 IP 上下文，
+    // 由 Stage 7 集成测试 `tests/integration/auth_garrison_test.rs` 覆盖。
 }
 
 #[tokio::test]
 async fn test_auth_middleware_different_ip_not_locked_out() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    // 架构 MEDIUM-1：reset 后重新 ensure，保证 state 带 rate_limiter
-    reset_global_auth_state();
-    let state = ensure_global_auth_state();
-    let rate_limiter = state
-        .auth_rate_limiter
-        .as_ref()
-        .expect("global state should have rate limiter")
-        .clone();
-
-    // Lock out one IP
-    let locked_ip = "10.9.9.9";
-    for _ in 0..20 {
-        rate_limiter.record_failure(locked_ip).await;
-        if rate_limiter.is_locked_out(locked_ip).await {
-            break;
-        }
-    }
-
-    // A different IP should NOT be locked out
-    let app = build_auth_test_app();
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/protected")
-                .header("x-forwarded-for", "10.8.8.8")
-                .header(header::AUTHORIZATION, "Bearer some_token")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    // Should be 401 or 500 (DB error), NOT 429
-    assert_ne!(
-        response.status(),
-        StatusCode::TOO_MANY_REQUESTS,
-        "Different IP should not be locked out"
-    );
-
-    // Cleanup
-    rate_limiter.reset_failures(locked_ip).await;
+    // Stage 3 重构（决策 2）：本测试已删除。
+    // 同 `test_auth_middleware_rate_limit_lockout_returns_429`——IP 级限速由
+    // garrison firewall 负责，crawlrs 不再持有 `AuthRateLimiter`。
 }
 
 // ============================================================================
-// Global State and Cache Function Tests
+// Global State Function Tests
 // ============================================================================
 
 #[tokio::test]
@@ -901,38 +708,6 @@ async fn test_global_auth_state_set_and_get() {
     assert!(
         Arc::ptr_eq(&state, &retrieved.unwrap()),
         "get_global_auth_state should return the same Arc"
-    );
-}
-
-#[tokio::test]
-async fn test_global_cache_stats_when_initialized() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    ensure_global_auth_state();
-
-    let stats = get_cache_stats().await;
-    assert!(
-        stats.is_some(),
-        "get_cache_stats should return Some when global cache is initialized"
-    );
-    let stats = stats.unwrap();
-    assert!(stats.capacity > 0, "Cache capacity should be positive");
-}
-
-#[tokio::test]
-async fn test_global_cache_invalidate_all_returns_count() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    ensure_global_auth_state();
-
-    // Cache should be empty (or have some entries from other tests)
-    let removed = invalidate_all_cache().await;
-    // Just verify it doesn't panic and returns a number
-    let _ = removed;
-
-    // After invalidation, cache should be empty
-    let stats = get_cache_stats().await.unwrap();
-    assert_eq!(
-        stats.size, 0,
-        "Cache should be empty after invalidate_all_cache"
     );
 }
 
@@ -958,25 +733,4 @@ fn test_auth_error_database_error_display() {
 
     let err = AuthError::ExpiredKey;
     assert_eq!(err.to_string(), "API key has expired");
-}
-
-// ============================================================================
-// CacheStats Debug Test
-// ============================================================================
-
-#[test]
-fn test_cache_stats_fields() {
-    let stats = CacheStats {
-        size: 42,
-        capacity: 1000,
-        ttl_seconds: 300,
-    };
-    assert_eq!(stats.size, 42);
-    assert_eq!(stats.capacity, 1000);
-    assert_eq!(stats.ttl_seconds, 300);
-
-    let debug = format!("{:?}", stats);
-    assert!(debug.contains("42"));
-    assert!(debug.contains("1000"));
-    assert!(debug.contains("300"));
 }

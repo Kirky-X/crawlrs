@@ -187,6 +187,14 @@ mod tests {
     fn make_test_settings_with_secret(secret: &str) -> Arc<Settings> {
         let mut settings = Settings::default();
         settings.webhook.secret = secret.to_string();
+        // MEDIUM-3 修复后 validate_security 在 auth-on 时校验 jwt_secret，
+        // 测试中注入强 jwt_secret（32+ 字节）以满足校验。
+        #[cfg(feature = "auth")]
+        {
+            settings.auth = crate::config::settings::AuthSettings {
+                jwt_secret: "a-very-strong-and-secure-jwt-secret-key-32+chars".to_string(),
+            };
+        }
         // 验证 secret 满足生产安全要求（非空、非弱密钥、长度 >= 32）
         crate::config::settings::validate_security(&settings)
             .expect("test webhook secret must satisfy validate_security requirements");
