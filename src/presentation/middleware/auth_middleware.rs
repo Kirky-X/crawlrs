@@ -13,9 +13,9 @@
 use crate::common::constants::default_identity::DEFAULT_IDENTITY_TOKEN_HASH;
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use crate::domain::services::audit_service::AuditServiceTrait;
-use crate::domain::services::auth_scope_service::{AuthScopeService, AuthScopeServiceTrait};
 use crate::infrastructure::database::entities::api_key;
 use crate::infrastructure::security::{self, constant_time_eq_str};
+#[cfg(feature = "auth")]
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 #[cfg(not(feature = "auth"))]
 use axum::extract::State;
@@ -567,12 +567,14 @@ impl Default for AuthRateLimiter {
 
 /// This state is injected into requests after successful authentication and contains
 /// all necessary information for authorization checks.
+///
+/// R-auth-engine-003 / T015：DTO 化——移除 `auth_scope_service` 字段。
+/// scope 改由 Stage 3 的 `bridge_principal_to_auth_state`（garrison RBAC +
+/// `map_perms_to_scope`）填充，不再需要 AuthScopeService 从 crawlrs DB 加载。
 #[derive(Clone)]
 pub struct AuthState {
     /// Database pool for additional queries
     pub pool: Arc<DbPool>,
-    /// AuthScopeService for loading permissions from database
-    pub auth_scope_service: Option<AuthScopeService>,
     /// Team ID associated with the API key
     pub team_id: Uuid,
     /// API Key ID for audit logging and feature flags
@@ -596,7 +598,6 @@ impl std::fmt::Debug for AuthState {
             .field("team_id", &self.team_id)
             .field("api_key_id", &self.api_key_id)
             .field("scope", &self.scope)
-            .field("auth_scope_service", &self.auth_scope_service.is_some())
             .field("api_key_cache", &self.api_key_cache.is_some())
             .field("auth_rate_limiter", &self.auth_rate_limiter.is_some())
             .field("trusted_proxies", &self.trusted_proxies)
@@ -618,7 +619,6 @@ impl AuthState {
     pub fn new(pool: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid, scope: ApiKeyScope) -> Self {
         Self {
             pool,
-            auth_scope_service: None,
             team_id,
             api_key_id,
             scope,
@@ -628,30 +628,13 @@ impl AuthState {
         }
     }
 
-    /// Create AuthState with AuthScopeService for permission loading
-    pub fn with_scope_service(
-        pool: Arc<DbPool>,
-        auth_scope_service: AuthScopeService,
-        team_id: Uuid,
-        api_key_id: Uuid,
-        default_scope: ApiKeyScope,
-    ) -> Self {
-        Self {
-            pool,
-            auth_scope_service: Some(auth_scope_service),
-            team_id,
-            api_key_id,
-            scope: default_scope,
-            api_key_cache: None,
-            auth_rate_limiter: None,
-            trusted_proxies: None,
-        }
-    }
-
     /// Create AuthState with cache support
+    ///
+    /// R-auth-engine-003 / T015：移除 `auth_scope_service` 参数（DTO 化）。
+    /// scope 改由 Stage 3 `bridge_principal_to_auth_state` 通过
+    /// `map_perms_to_scope` 填充，调用方传入即可。
     pub fn with_cache(
         pool: Arc<DbPool>,
-        auth_scope_service: Option<AuthScopeService>,
         team_id: Uuid,
         api_key_id: Uuid,
         scope: ApiKeyScope,
@@ -659,7 +642,6 @@ impl AuthState {
     ) -> Self {
         Self {
             pool,
-            auth_scope_service,
             team_id,
             api_key_id,
             scope,
@@ -673,7 +655,6 @@ impl AuthState {
     #[allow(clippy::too_many_arguments)]
     pub fn with_trusted_proxies(
         pool: Arc<DbPool>,
-        auth_scope_service: Option<AuthScopeService>,
         team_id: Uuid,
         api_key_id: Uuid,
         scope: ApiKeyScope,
@@ -683,7 +664,6 @@ impl AuthState {
     ) -> Self {
         Self {
             pool,
-            auth_scope_service,
             team_id,
             api_key_id,
             scope,
@@ -704,7 +684,6 @@ impl AuthState {
     /// API keys are revoked, permissions are changed, or teams are suspended.
     pub fn with_global_cache(
         pool: Arc<DbPool>,
-        auth_scope_service: Option<AuthScopeService>,
         team_id: Uuid,
         api_key_id: Uuid,
         scope: ApiKeyScope,
@@ -713,7 +692,6 @@ impl AuthState {
     ) -> Self {
         Self {
             pool,
-            auth_scope_service,
             team_id,
             api_key_id,
             scope,
@@ -727,10 +705,9 @@ impl AuthState {
     ///
     /// This is used during application startup to create the initial AuthState
     /// that will be passed to the middleware.
-    pub fn new_for_middleware(
-        pool: Arc<DbPool>,
-        auth_scope_service: Option<AuthScopeService>,
-    ) -> Self {
+    ///
+    /// R-auth-engine-003 / T015：移除 `auth_scope_service` 参数（DTO 化）。
+    pub fn new_for_middleware(pool: Arc<DbPool>) -> Self {
         // Initialize global cache if not already done
         let cache = get_global_auth_cache().unwrap_or_else(|| {
             let new_cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
@@ -740,7 +717,6 @@ impl AuthState {
 
         Self {
             pool,
-            auth_scope_service,
             team_id: Uuid::nil(),
             api_key_id: Uuid::nil(),
             scope: ApiKeyScope::default(),
@@ -749,28 +725,26 @@ impl AuthState {
             trusted_proxies: None,
         }
     }
-
-    /// Load actual scope from database if service is available
-    pub async fn load_scope_from_db(&mut self) {
-        if let Some(ref service) = self.auth_scope_service {
-            match service.get_scope_for_key(self.api_key_id, None).await {
-                Ok(scope) => {
-                    self.scope = scope;
-                    debug!(
-                        "Loaded scope from database for API Key: {}",
-                        self.api_key_id
-                    );
-                }
-                Err(e) => {
-                    log::warn!("Failed to load scope from database: {:?}, using default", e);
-                    // Keep using default scope
-                }
-            }
-        }
-    }
 }
 
 /// Error types for authentication
+///
+/// # garrison 错误映射（R-auth-engine-003 / T016）
+///
+/// `auth` feature 启用时，`AuthError::from_garrison(GarrisonError)` 复用
+/// `GarrisonError::response_parts()` 获取 `(status, error_code, message)`，
+/// 按 HTTP 状态码映射到对应变体：
+///
+/// | garrison 状态码 | error_code 示例 | AuthError 变体 |
+/// |----------------|-----------------|----------------|
+/// | 401 | NOT_LOGIN / INVALID_TOKEN / TOKEN_REVOKED / EXPIRED_TOKEN | `InvalidKey` |
+/// | 403 NOT_PERMISSION / NOT_ROLE / FIREWALL_BLOCKED / SMS_CHANNEL_RECYCLED | `Forbidden` |
+/// | 403 DISABLE_SERVICE | `InactiveKey` |
+/// | 429 SMS_RATE_LIMIT_EXCEEDED | `RateLimited` |
+/// | 500 DAO_ERROR / CONFIG_ERROR / INTERNAL_ERROR / SESSION_ERROR / ... | `InternalError` |
+/// | 502 NETWORK_ERROR | `NetworkError` |
+/// | 501 NOT_IMPLEMENTED | `NotImplemented` |
+/// | 400 INVALID_PARAM / NOT_SAFE / SMS_VERIFY_MAX_ATTEMPTS / SMS_CODE_NOT_FOUND | `InvalidParam` |
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
     #[error("Invalid or missing API key")]
@@ -785,16 +759,144 @@ pub enum AuthError {
     NilTeamId,
     #[error("API key has expired")]
     ExpiredKey,
+    /// garrison 返回的 `login_id` 无法解析为 `Uuid`（design.md §5 约定 login_id = api_key_id 的 Uuid 字符串）。
+    #[error("Invalid login_id from garrison: {0}")]
+    InvalidLoginId(String),
+    /// `api_key_id` 反查 crawlrs `api_keys` 表未命中（key 已被 garrison 吊销但 crawlrs 仍保留映射）。
+    #[error("API key not found in crawlrs mapping: {0}")]
+    KeyNotFound(Uuid),
+    /// garrison 触发限速（429，对应 `SmsRateLimitExceeded`）。
+    #[error("Rate limited by garrison")]
+    RateLimited,
+    /// garrison 拒绝授权（403，对应 `NotPermission` / `NotRole` / `FirewallBlocked` / `SmsChannelRecycled`）。
+    #[error("Forbidden by garrison: {0}")]
+    Forbidden(String),
+    /// garrison 网络错误（502，对应 `Network`）。
+    #[error("Garrison network error: {0}")]
+    NetworkError(String),
+    /// garrison 内部错误（500，对应 `Dao` / `Config` / `Internal` / `Session` / `Annotation` / `Context` / `OAuth2` / `InvalidStateTransition`）。
+    #[error("Garrison internal error: {0}")]
+    InternalError(String),
+    /// garrison 未实现（501，对应 `NotImplemented`）。
+    #[error("Garrison not implemented: {0}")]
+    NotImplemented(String),
+    /// garrison 参数无效（400，对应 `InvalidParam` / `NotSafe` / `SmsVerifyMaxAttempts` / `SmsCodeNotFound`）。
+    #[error("Invalid param to garrison: {0}")]
+    InvalidParam(String),
 }
 
-/// Unified authentication middleware
+#[cfg(feature = "auth")]
+impl AuthError {
+    /// garrison 错误 → crawlrs `AuthError` 转换（R-auth-engine-003 / T016 方案 A）。
+    ///
+    /// 复用 `GarrisonError::response_parts()` 获取 `(status, error_code, message)`，
+    /// 按 HTTP 状态码映射到对应 `AuthError` 变体。`message` 字段保留 garrison
+    /// 通用错误消息（不泄露内部细节），通过 `log::error!` 记录完整错误。
+    ///
+    /// # 映射规则
+    ///
+    /// | status | error_code | AuthError 变体 |
+    /// |--------|------------|---------------|
+    /// | 401 | NOT_LOGIN / INVALID_TOKEN / TOKEN_REVOKED / EXPIRED_TOKEN / Exception(code=-1) | `InvalidKey` |
+    /// | 403 | NOT_PERMISSION / NOT_ROLE / FIREWALL_BLOCKED / SMS_CHANNEL_RECYCLED / Exception(code=-2) | `Forbidden` |
+    /// | 403 | DISABLE_SERVICE | `InactiveKey` |
+    /// | 429 | SMS_RATE_LIMIT_EXCEEDED | `RateLimited` |
+    /// | 500 | DAO_ERROR / CONFIG_ERROR / INTERNAL_ERROR / SESSION_ERROR / ANNOTATION_ERROR / CONTEXT_ERROR / OAUTH2_ERROR / INVALID_STATE_TRANSITION / Exception(其他) | `InternalError` |
+    /// | 502 | NETWORK_ERROR | `NetworkError` |
+    /// | 501 | NOT_IMPLEMENTED | `NotImplemented` |
+    /// | 400 | INVALID_PARAM / NOT_SAFE / SMS_VERIFY_MAX_ATTEMPTS / SMS_CODE_NOT_FOUND | `InvalidParam` |
+    /// | 其他 | — | `InternalError`（fail-safe，归为内部错误） |
+    pub fn from_garrison(err: garrison::error::GarrisonError) -> Self {
+        let (status, error_code, message, _ex_code) = err.response_parts();
+        log::error!(
+            "garrison authentication error: status={}, error_code={}, message={}",
+            status,
+            error_code,
+            message
+        );
+        match status {
+            401 => AuthError::InvalidKey,
+            403 => match error_code {
+                "DISABLE_SERVICE" => AuthError::InactiveKey,
+                _ => AuthError::Forbidden(error_code.to_string()),
+            },
+            429 => AuthError::RateLimited,
+            502 => AuthError::NetworkError(error_code.to_string()),
+            501 => AuthError::NotImplemented(error_code.to_string()),
+            400 => AuthError::InvalidParam(error_code.to_string()),
+            _ => AuthError::InternalError(error_code.to_string()),
+        }
+    }
+}
+
+impl IntoResponse for AuthError {
+    /// 将 `AuthError` 转换为 HTTP 响应（R-auth-engine-003 / T016）。
+    ///
+    /// # 状态码映射
+    ///
+    /// | AuthError 变体 | HTTP 状态码 |
+    ///|---------------|-------------|
+    /// | `InvalidKey` / `ExpiredKey` / `NilTeamId` | 401 Unauthorized |
+    /// | `InactiveKey` / `MissingScope` / `Forbidden` | 403 Forbidden |
+    /// | `RateLimited` | 429 Too Many Requests |
+    /// | `InvalidLoginId` / `KeyNotFound` / `InvalidParam` | 400 Bad Request |
+    /// | `DatabaseError` / `InternalError` / `NetworkError` / `NotImplemented` | 500 Internal Server Error |
+    fn into_response(self) -> Response {
+        let status = match &self {
+            AuthError::InvalidKey | AuthError::ExpiredKey | AuthError::NilTeamId => {
+                StatusCode::UNAUTHORIZED
+            }
+            AuthError::InactiveKey | AuthError::MissingScope(_) | AuthError::Forbidden(_) => {
+                StatusCode::FORBIDDEN
+            }
+            AuthError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            AuthError::InvalidLoginId(_)
+            | AuthError::KeyNotFound(_)
+            | AuthError::InvalidParam(_) => StatusCode::BAD_REQUEST,
+            AuthError::DatabaseError(_)
+            | AuthError::InternalError(_)
+            | AuthError::NetworkError(_)
+            | AuthError::NotImplemented(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (status, self.to_string()).into_response()
+    }
+}
+
+/// Unified authentication middleware (garrison RBAC path, R-auth-engine-003 / T017).
 ///
-/// This middleware validates API keys and loads associated scope for authorization.
-/// It combines the functionality of the original basic and enhanced auth middlewares.
+/// ## 职责
 ///
-/// This version uses global state for middleware initialization.
-async fn auth_middleware_inner(req: axum::http::Request<Body>, next: Next) -> Response {
-    // Get auth state from global storage
+/// 1. 提取 Bearer token（`extract_bearer`，来自 `auth_bridge`）
+/// 2. 在 `with_current_token` 作用域内调用 garrison `GarrisonUtil::check_api_key` 校验
+///    API Key（含 CWE-916 哈希、CWE-307 IP 限速），并提取 `login_id` / `perms`
+/// 3. 解析 `login_id` → `api_key_id` (Uuid)（design.md §5 约定）
+/// 4. 反查 crawlrs `api_keys` 表获取 `team_id`（garrison 不持有此映射）
+/// 5. 桥接为 `AuthState`（`bridge_to_auth_state`，来自 `auth_bridge`）
+/// 6. 复用 `inject_auth_state` 注入 extensions
+///
+/// ## 失败映射（规则12 显性化）
+///
+/// | 失败点 | 映射 | HTTP 状态码 |
+/// |--------|------|-------------|
+/// | 全局态未初始化 | `StatusCode::INTERNAL_SERVER_ERROR` | 500 |
+/// | 公开端点 | `next.run(req)`（跳过） | 200 |
+/// | `extract_bearer` 失败 | `AuthError::InvalidKey` | 401 |
+/// | garrison 校验失败 | `AuthError::from_garrison(...)` | 401/403/429/500 |
+/// | `login_id` 非 Uuid | `AuthError::InvalidLoginId` | 400 |
+/// | `api_key_id` 反查未命中 | `AuthError::KeyNotFound` | 400 |
+/// | DB 查询失败 | `AuthError::DatabaseError` | 500 |
+/// | 桥接失败 | 透传 `AuthError` | 400 |
+///
+/// ## Security
+///
+/// - garrison `check_api_key` 负责 CWE-916 哈希校验和 CWE-307 IP 限速
+/// - token 不记录到日志（CWE-532）
+/// - `login_id` 解析失败不静默回退 `Uuid::nil()`（避免越权）
+#[cfg(feature = "auth")]
+async fn auth_middleware_inner(mut req: axum::http::Request<Body>, next: Next) -> Response {
+    use crate::presentation::middleware::auth_bridge::{bridge_to_auth_state, extract_bearer};
+
+    // 1. 获取全局 AuthState（仅用 pool 字段，T019 删除 GLOBAL_AUTH_STATE 后改由 State 提取器注入）
     let state = match get_global_auth_state() {
         Some(s) => s,
         None => {
@@ -804,82 +906,72 @@ async fn auth_middleware_inner(req: axum::http::Request<Body>, next: Next) -> Re
     };
 
     let path = req.uri().path();
-    debug!("AuthMiddleware processing path: {}", path);
+    debug!("AuthMiddleware (garrison) processing path: {}", path);
 
-    // Allow public endpoints without authentication
+    // 2. 公开端点跳过认证
     if PUBLIC_ENDPOINTS.contains(&path) {
         debug!("Public endpoint {}, skipping auth", path);
         return next.run(req).await;
     }
 
-    // Create a mutable request for processing
-    let mut req = req;
-
-    // Get client IP for rate limiting using secure IP extraction
-    let client_ip = get_client_ip(&req, state.trusted_proxies.as_ref());
-
-    // Check auth rate limit lockout
-    if let Err(status) = check_rate_limit_lockout(&state, &client_ip).await {
-        return status.into_response();
-    }
-
-    // Extract and validate Bearer token
-    let token_str = match extract_bearer_token(&req) {
-        Some(token) => token,
-        None => {
-            record_auth_failure(&state, &client_ip).await;
-            return StatusCode::UNAUTHORIZED.into_response();
-        }
+    // 3. 提取 Bearer token
+    let raw = match extract_bearer(&req) {
+        Ok(t) => t,
+        Err(e) => return e.into_response(),
     };
 
-    // Hash the token for lookup using SHA-256
-    // 注意：sha2 0.10 的 Sha256::digest 返回 Array<u8, U32>，新版 Array 不实现 LowerHex。
-    // 使用 hex::encode 替代 format!("{:x}")。
-    let token_hash = format!(
-        "sha256:{}",
-        hex::encode(Sha256::digest(token_str.as_bytes()))
-    );
-
-    // Check cache first before database query
-    if let Some(auth_state) = try_get_cached_auth(&state, &token_hash).await {
-        inject_auth_state(&mut req, auth_state.clone(), &token_hash);
-        return next.run(req).await;
-    }
-
-    // Validate API key from database
-    let key = match validate_api_key_from_db(&state, &token_hash, &client_ip).await {
-        Ok(Some(key)) => key,
-        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
-        Err(status) => return status.into_response(),
+    // 4. garrison 校验 + 提取 login_id / perms（在 with_current_token 作用域内）
+    //
+    //    `check_api_key` 返回 `GarrisonResult<()>`（不返回 Principal），
+    //    login_id / perms 由 GarrisonUtil 静态方法在作用域内读取。
+    let (login_id, perms) = match garrison::stp::with_current_token(raw.clone(), async {
+        garrison::stp::GarrisonUtil::check_api_key("crawlrs").await?;
+        let login_id = garrison::stp::GarrisonUtil::get_login_id()
+            .await?
+            .ok_or_else(|| {
+                garrison::error::GarrisonError::NotLogin("login_id missing".to_string())
+            })?;
+        let perms = garrison::stp::GarrisonUtil::get_permission_list().await?;
+        Ok::<_, garrison::error::GarrisonError>((login_id, perms))
+    })
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => return AuthError::from_garrison(e).into_response(),
     };
 
-    // Verify key hash
-    if !verify_key_hash(&key, &token_str) {
-        warn!("API Key verification failed for key_id={}", key.id);
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-
-    // Check key expiration
-    if let Err(status) = check_key_expiration(&key) {
-        return status.into_response();
-    }
-
-    // Create and inject auth state
-    let auth_state = match create_and_cache_auth_state(&state, &key, &token_hash).await {
-        Ok(state) => state,
-        Err(status) => return status.into_response(),
+    // 5. 解析 login_id → api_key_id (Uuid)
+    let api_key_id = match Uuid::parse_str(&login_id) {
+        Ok(u) => u,
+        Err(_) => return AuthError::InvalidLoginId(login_id).into_response(),
     };
-    inject_auth_state(&mut req, auth_state, &token_hash);
 
-    // Reset auth failures on successful authentication
-    reset_auth_failures(&state, &client_ip).await;
+    // 6. 反查 crawlrs DB 获取 team_id
+    let team_id = match fetch_team_id_by_api_key_id(&state.pool, api_key_id).await {
+        Ok(Some(tid)) => tid,
+        Ok(None) => return AuthError::KeyNotFound(api_key_id).into_response(),
+        Err(e) => return e.into_response(),
+    };
 
-    debug!("API Key authentication successful");
+    // 7. 桥接为 AuthState
+    let auth_state = match bridge_to_auth_state(state.pool.clone(), login_id, perms, team_id).await
+    {
+        Ok(s) => s,
+        Err(e) => return e.into_response(),
+    };
+
+    // 8. 注入 extensions（复用 inject_auth_state，token_hash 用 raw token）
+    inject_auth_state(&mut req, auth_state, &raw);
+
+    debug!("API Key authentication successful (garrison path)");
 
     next.run(req).await
 }
 
-/// Wrapper function for middleware registration
+/// Wrapper function for middleware registration (R-auth-engine-003 / T017).
+///
+/// 仅在 `auth` feature 启用时编译——auth-off 走 `default_identity_middleware`。
+#[cfg(feature = "auth")]
 pub fn auth_middleware() -> impl Fn(
     axum::http::Request<Body>,
     Next,
@@ -983,7 +1075,6 @@ async fn try_get_cached_auth(state: &AuthState, token_hash: &str) -> Option<Auth
             debug!("API Key authentication cache hit for key hash");
             return Some(AuthState::with_cache(
                 state.pool.clone(),
-                state.auth_scope_service.clone(),
                 cached_result.team_id,
                 cached_result.api_key_id,
                 cached_result.scope.clone(),
@@ -992,6 +1083,46 @@ async fn try_get_cached_auth(state: &AuthState, token_hash: &str) -> Option<Auth
         }
     }
     None
+}
+
+/// 按 `api_key_id` 反查 crawlrs `api_keys` 表获取 `team_id`（R-auth-engine-003 / T017）。
+///
+/// ## 设计
+///
+/// garrison 管理 API Key 的校验/吊销/哈希存储，但不持有 `api_key_id → team_id` 映射。
+/// crawlrs 保留 `api_keys` 表的 `id`/`team_id` 列供反查（`key_hash` 列由 T018 弃用）。
+///
+/// ## 参数
+///
+/// * `pool` - crawlrs 数据库连接池
+/// * `api_key_id` - 从 garrison `login_id` 解析得到的 API Key Uuid
+///
+/// ## 返回
+///
+/// - `Ok(Some(team_id))`：找到映射
+/// - `Ok(None)`：`api_key_id` 不在 `api_keys` 表中（key 已被 garrison 吊销但 crawlrs 仍保留映射，或从未签发）
+/// - `Err(AuthError::InternalError)`：dbnexus `DbError`（连接池/会话获取失败）
+/// - `Err(AuthError::DatabaseError)`：sea-orm 查询失败（`DbErr`）
+///
+/// ## 失败显性化（规则12）
+///
+/// dbnexus `DbError`（连接池层）与 sea-orm `DbErr`（查询层）是不同类型，
+/// 分别映射到 `InternalError` / `DatabaseError` 以区分故障层级。
+async fn fetch_team_id_by_api_key_id(
+    pool: &Arc<DbPool>,
+    api_key_id: Uuid,
+) -> Result<Option<Uuid>, AuthError> {
+    // dbnexus 连接池层错误 → InternalError（基础设施故障）
+    let session = pool
+        .get_session("admin")
+        .await
+        .map_err(|e| AuthError::InternalError(format!("db session: {}", e)))?;
+    let conn = session
+        .connection()
+        .map_err(|e| AuthError::InternalError(format!("db conn: {}", e)))?;
+    // sea-orm 查询层错误 → DatabaseError（业务查询失败，#[from] sea_orm::DbErr 自动转换）
+    let result = api_key::Entity::find_by_id(api_key_id).one(conn).await?;
+    Ok(result.map(|m| m.team_id))
 }
 
 /// Validate API key from database
@@ -1124,44 +1255,42 @@ fn check_key_expiration(key: &api_key::Model) -> Result<(), StatusCode> {
 ///   或绑定到 nil team_id——`validate_api_key_from_db` 在 teams-off 时跳过 nil 检查，见 T011）
 ///
 /// 注入的 `team_id` 同时用于：
-/// 1. `AuthState::with_scope_service` 构造的 `auth_state.team_id`（注入到请求 extensions）
+/// 1. `AuthState::with_cache` 构造的 `auth_state.team_id`（注入到请求 extensions）
 /// 2. `CachedAuthResult.team_id`（缓存，供后续 `try_get_cached_auth` 命中时复用）
+///
+/// R-auth-engine-003 / T015：DTO 化后 `auth_scope_service` 字段已移除——
+/// 此函数不再调用 `load_scope_from_db`，scope 使用 `ApiKeyScope::default()`。
+/// Stage 3 的 T017 将重写 `auth_middleware_inner` 走 garrison RBAC，
+/// 不再调用本函数（Stage 4 的 T019 删除 ApiKeyCache 后会一并清理）。
 async fn create_and_cache_auth_state(
     state: &AuthState,
     key: &api_key::Model,
     token_hash: &str,
 ) -> Result<AuthState, StatusCode> {
-    // Get AuthScopeService from CrawlRsState
-    let auth_scope_service = match state.auth_scope_service.clone() {
-        Some(service) => service,
-        None => {
-            log::error!(
-                "FATAL: AuthScopeService not initialized in CrawlRsState. \
-                This indicates a startup configuration error."
-            );
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
-
     // R-teams-001 / T010：teams-on 使用 key.team_id（多租户场景，key 绑定 team）；
     // teams-off 使用 DEFAULT_TEAM_ID（单租户降级，key 可能无 team_id 绑定或绑定到 nil）。
-    // 注意：两分支类型均为 `Uuid`，下游 `AuthState::with_scope_service` / `CachedAuthResult`
+    // 注意：两分支类型均为 `Uuid`，下游 `AuthState::with_cache` / `CachedAuthResult`
     // 使用统一类型签名，无需 cfg 分裂函数签名。
     #[cfg(feature = "teams")]
     let team_id = key.team_id;
     #[cfg(not(feature = "teams"))]
     let team_id = crate::common::constants::default_identity::DEFAULT_TEAM_ID;
 
-    let mut auth_state = AuthState::with_scope_service(
-        state.pool.clone(),
-        auth_scope_service,
-        team_id,
-        key.id,
-        ApiKeyScope::default(),
-    );
+    // R-auth-engine-003 / T015：DTO 化后无 auth_scope_service，
+    // scope 暂用 default（T017 重写 auth_middleware_inner 后此函数不再被调用）。
+    let scope = ApiKeyScope::default();
 
-    // Load actual scope from database
-    auth_state.load_scope_from_db().await;
+    let auth_state = if let Some(ref cache) = state.api_key_cache {
+        AuthState::with_cache(
+            state.pool.clone(),
+            team_id,
+            key.id,
+            scope.clone(),
+            cache.clone(),
+        )
+    } else {
+        AuthState::new(state.pool.clone(), team_id, key.id, scope.clone())
+    };
 
     // Cache the successful authentication result
     if let Some(ref cache) = state.api_key_cache {
@@ -1331,9 +1460,6 @@ mod tests {
     use crate::common::test_helpers::{
         create_test_db_pool, resolve_test_database_url, skip_if_no_test_db,
     };
-    use crate::domain::repositories::auth_scope_repository::{
-        AuthScopeRepository, RepositoryError,
-    };
     use async_trait::async_trait;
     use std::sync::Mutex as StdMutex;
     use std::time::Instant;
@@ -1379,71 +1505,6 @@ mod tests {
         TEST_LEGIT_BCRYPT_HASH.get_or_init(|| {
             crate::infrastructure::security::hash_api_key("legit_token_abc123").unwrap()
         })
-    }
-
-    /// Mock AuthScopeRepository that returns a configurable scope or an error.
-    ///
-    /// Avoids storing `Result<.., RepositoryError>` because RepositoryError does
-    /// not implement Clone — instead we store the scope and a should_error flag.
-    struct MockAuthScopeRepo {
-        scope: Option<ApiKeyScope>,
-        should_error: bool,
-    }
-
-    #[async_trait]
-    impl AuthScopeRepository for MockAuthScopeRepo {
-        async fn find_by_api_key_id(
-            &self,
-            _api_key_id: Uuid,
-        ) -> Result<Option<ApiKeyScope>, RepositoryError> {
-            if self.should_error {
-                return Err(RepositoryError::NotFound("mock error".to_string()));
-            }
-            Ok(self.scope.clone())
-        }
-        async fn find_by_api_key(
-            &self,
-            _key: &str,
-        ) -> Result<Option<ApiKeyScope>, RepositoryError> {
-            if self.should_error {
-                return Err(RepositoryError::NotFound("mock error".to_string()));
-            }
-            Ok(self.scope.clone())
-        }
-        async fn upsert(
-            &self,
-            _api_key_id: Uuid,
-            scope: ApiKeyScope,
-        ) -> Result<ApiKeyScope, RepositoryError> {
-            if self.should_error {
-                return Err(RepositoryError::NotFound("mock error".to_string()));
-            }
-            Ok(scope)
-        }
-        async fn delete_by_api_key_id(&self, _api_key_id: Uuid) -> Result<bool, RepositoryError> {
-            if self.should_error {
-                return Err(RepositoryError::NotFound("mock error".to_string()));
-            }
-            Ok(true)
-        }
-    }
-
-    /// Build an AuthScopeService backed by a mock repo that returns the given scope.
-    fn make_auth_scope_service(scope: Option<ApiKeyScope>) -> AuthScopeService {
-        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepo {
-            scope,
-            should_error: false,
-        });
-        AuthScopeService::new(repo)
-    }
-
-    /// Build an AuthScopeService backed by a mock repo that always errors.
-    fn make_auth_scope_service_error() -> AuthScopeService {
-        let repo: Arc<dyn AuthScopeRepository> = Arc::new(MockAuthScopeRepo {
-            scope: None,
-            should_error: true,
-        });
-        AuthScopeService::new(repo)
     }
 
     #[tokio::test]
@@ -1828,6 +1889,116 @@ mod tests {
             "API key associated with nil team_id"
         );
         assert_eq!(AuthError::ExpiredKey.to_string(), "API key has expired");
+    }
+
+    #[test]
+    fn test_auth_error_display_garrison_variants() {
+        // R-auth-engine-003 / T016：新增变体 Display 一致性
+        assert_eq!(
+            AuthError::InvalidLoginId("not-a-uuid".to_string()).to_string(),
+            "Invalid login_id from garrison: not-a-uuid"
+        );
+        let key_id = Uuid::new_v4();
+        assert_eq!(
+            AuthError::KeyNotFound(key_id).to_string(),
+            format!("API key not found in crawlrs mapping: {}", key_id)
+        );
+        assert_eq!(
+            AuthError::RateLimited.to_string(),
+            "Rate limited by garrison"
+        );
+        assert_eq!(
+            AuthError::Forbidden("NOT_PERMISSION".to_string()).to_string(),
+            "Forbidden by garrison: NOT_PERMISSION"
+        );
+        assert_eq!(
+            AuthError::NetworkError("NETWORK_ERROR".to_string()).to_string(),
+            "Garrison network error: NETWORK_ERROR"
+        );
+        assert_eq!(
+            AuthError::InternalError("DAO_ERROR".to_string()).to_string(),
+            "Garrison internal error: DAO_ERROR"
+        );
+        assert_eq!(
+            AuthError::NotImplemented("NOT_IMPLEMENTED".to_string()).to_string(),
+            "Garrison not implemented: NOT_IMPLEMENTED"
+        );
+        assert_eq!(
+            AuthError::InvalidParam("INVALID_PARAM".to_string()).to_string(),
+            "Invalid param to garrison: INVALID_PARAM"
+        );
+    }
+
+    #[test]
+    fn test_auth_error_into_response_status_codes() {
+        // R-auth-engine-003 / T016：IntoResponse 状态码映射
+        assert_eq!(
+            AuthError::InvalidKey.into_response().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            AuthError::ExpiredKey.into_response().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            AuthError::NilTeamId.into_response().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            AuthError::InactiveKey.into_response().status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            AuthError::MissingScope(ScopePermission::Read)
+                .into_response()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            AuthError::Forbidden("NOT_PERMISSION".to_string())
+                .into_response()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            AuthError::RateLimited.into_response().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            AuthError::InvalidLoginId("xxx".to_string())
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        let key_id = Uuid::new_v4();
+        assert_eq!(
+            AuthError::KeyNotFound(key_id).into_response().status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            AuthError::InvalidParam("INVALID_PARAM".to_string())
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            AuthError::InternalError("DAO_ERROR".to_string())
+                .into_response()
+                .status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            AuthError::NetworkError("NETWORK_ERROR".to_string())
+                .into_response()
+                .status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            AuthError::NotImplemented("NOT_IMPLEMENTED".to_string())
+                .into_response()
+                .status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     // ===== verify_key_hash tests =====
@@ -2429,95 +2600,6 @@ mod tests {
         assert_eq!(stats.capacity, DEFAULT_CACHE_MAX_SIZE);
     }
 
-    // ===== AuthState construction (with_scope_service) =====
-
-    #[test]
-    fn test_auth_state_with_scope_service_sets_service() {
-        let pool = create_test_db_pool();
-        let service = make_auth_scope_service(Some(ApiKeyScope::full_access()));
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
-        let default_scope = ApiKeyScope::read_only();
-
-        let state = AuthState::with_scope_service(
-            pool,
-            service,
-            team_id,
-            api_key_id,
-            default_scope.clone(),
-        );
-
-        assert!(state.auth_scope_service.is_some());
-        assert_eq!(state.team_id, team_id);
-        assert_eq!(state.api_key_id, api_key_id);
-        assert_eq!(state.scope, default_scope);
-        assert!(state.api_key_cache.is_none());
-        assert!(state.auth_rate_limiter.is_none());
-        assert!(state.trusted_proxies.is_none());
-    }
-
-    // ===== load_scope_from_db =====
-
-    #[tokio::test]
-    async fn test_load_scope_from_db_with_service_loads_scope() {
-        let pool = create_test_db_pool();
-        let custom_scope = ApiKeyScope {
-            read: true,
-            write: true,
-            admin: false,
-            search_limit: 500,
-            scrape_limit: 250,
-        };
-        let service = make_auth_scope_service(Some(custom_scope.clone()));
-        let mut state = AuthState::with_scope_service(
-            pool,
-            service,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            ApiKeyScope::default(),
-        );
-
-        // Before load: default scope
-        assert_eq!(state.scope, ApiKeyScope::default());
-
-        state.load_scope_from_db().await;
-
-        // After load: scope from mock repo
-        assert_eq!(state.scope, custom_scope);
-    }
-
-    #[tokio::test]
-    async fn test_load_scope_from_db_service_error_keeps_default() {
-        let pool = create_test_db_pool();
-        let service = make_auth_scope_service_error();
-        let original_scope = ApiKeyScope::read_only();
-        let mut state = AuthState::with_scope_service(
-            pool,
-            service,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            original_scope.clone(),
-        );
-
-        state.load_scope_from_db().await;
-
-        // On error, scope should remain unchanged
-        assert_eq!(state.scope, original_scope);
-    }
-
-    #[tokio::test]
-    async fn test_load_scope_from_db_no_service_is_no_op() {
-        let pool = create_test_db_pool();
-        let original_scope = ApiKeyScope::full_access();
-        let mut state =
-            AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), original_scope.clone());
-
-        state.load_scope_from_db().await;
-
-        // No service → no-op, scope unchanged
-        assert_eq!(state.scope, original_scope);
-    }
-
     // ===== try_get_cached_auth =====
 
     #[tokio::test]
@@ -2535,7 +2617,6 @@ mod tests {
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
         let state = AuthState::with_cache(
             pool,
-            None,
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -2571,7 +2652,6 @@ mod tests {
 
         let state = AuthState::with_cache(
             pool,
-            None,
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -2805,31 +2885,11 @@ mod tests {
     // ===== create_and_cache_auth_state =====
 
     #[tokio::test]
-    async fn test_create_and_cache_auth_state_no_service_returns_500() {
-        let pool = create_test_db_pool();
-        // No auth_scope_service, no cache
-        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
-
-        let key = make_key_model(Some("sha256:somehash".to_string()), Some(0));
-
-        let result = create_and_cache_auth_state(&state, &key, "sha256:any").await;
-
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Missing AuthScopeService should return 500"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_create_and_cache_auth_state_with_service_succeeds_and_caches() {
+    async fn test_create_and_cache_auth_state_with_cache_succeeds_and_caches() {
         let pool = create_test_db_pool();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
-        let service = make_auth_scope_service(Some(ApiKeyScope::full_access()));
         let state = AuthState::with_cache(
             pool,
-            Some(service),
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -2841,11 +2901,11 @@ mod tests {
 
         let result = create_and_cache_auth_state(&state, &key, &token_hash).await;
 
-        assert!(result.is_ok(), "Should succeed with service present");
+        assert!(result.is_ok(), "Should succeed with cache present");
         let auth_state = result.unwrap();
         assert_eq!(auth_state.team_id, key.team_id);
         assert_eq!(auth_state.api_key_id, key.id);
-        assert_eq!(auth_state.scope, ApiKeyScope::full_access());
+        assert_eq!(auth_state.scope, ApiKeyScope::default());
 
         // Verify the cache was populated (get requires &mut self → write lock)
         let mut cache_guard = cache.write().await;
@@ -2854,21 +2914,13 @@ mod tests {
         let cached = cached.unwrap();
         assert_eq!(cached.team_id, key.team_id);
         assert_eq!(cached.api_key_id, key.id);
-        assert_eq!(cached.scope, ApiKeyScope::full_access());
+        assert_eq!(cached.scope, ApiKeyScope::default());
     }
 
     #[tokio::test]
     async fn test_create_and_cache_auth_state_without_cache_still_returns_state() {
         let pool = create_test_db_pool();
-        let service = make_auth_scope_service(None);
-        // No cache — uses with_scope_service (api_key_cache is None)
-        let state = AuthState::with_scope_service(
-            pool,
-            service,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            ApiKeyScope::default(),
-        );
+        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
 
         let key = make_key_model(Some("sha256:somehash".to_string()), Some(0));
 
@@ -2885,7 +2937,7 @@ mod tests {
     ///
     /// 此测试仅在 `--no-default-features --features auth`（teams-off + auth-on）下编译运行。
     /// 在 `--features default`（teams-on）下被 cfg 排除，由上方
-    /// `test_create_and_cache_auth_state_with_service_succeeds_and_caches` 覆盖 teams-on 契约。
+    /// `test_create_and_cache_auth_state_with_cache_succeeds_and_caches` 覆盖 teams-on 契约。
     #[cfg(not(feature = "teams"))]
     #[tokio::test]
     async fn test_create_and_cache_auth_state_uses_default_team_id_when_teams_off() {
@@ -2893,10 +2945,8 @@ mod tests {
 
         let pool = create_test_db_pool();
         let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
-        let service = make_auth_scope_service(Some(ApiKeyScope::full_access()));
         let state = AuthState::with_cache(
             pool,
-            Some(service),
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -2910,7 +2960,7 @@ mod tests {
 
         let result = create_and_cache_auth_state(&state, &key, &token_hash).await;
 
-        assert!(result.is_ok(), "Should succeed with service present");
+        assert!(result.is_ok(), "Should succeed with cache present");
         let auth_state = result.unwrap();
 
         // 核心正向断言：team_id 必须是 DEFAULT_TEAM_ID
@@ -2957,7 +3007,6 @@ mod tests {
         let rate_limiter = Arc::new(AuthRateLimiter::new());
         let state = AuthState::with_trusted_proxies(
             pool,
-            None,
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -2981,7 +3030,6 @@ mod tests {
         }
         let state = AuthState::with_trusted_proxies(
             pool,
-            None,
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -3018,7 +3066,6 @@ mod tests {
         let test_ip = "10.0.0.5";
         let state = AuthState::with_trusted_proxies(
             pool,
-            None,
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -3067,7 +3114,6 @@ mod tests {
 
         let state = AuthState::with_trusted_proxies(
             pool,
-            None,
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -3108,7 +3154,6 @@ mod tests {
         assert_eq!(state.team_id, team_id);
         assert_eq!(state.api_key_id, api_key_id);
         assert_eq!(state.scope, ApiKeyScope::default());
-        assert!(state.auth_scope_service.is_none());
         assert!(state.api_key_cache.is_none());
     }
 
@@ -3124,7 +3169,6 @@ mod tests {
         let pool = create_test_db_pool();
         let state = AuthState::with_global_cache(
             pool,
-            None,
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -3148,7 +3192,7 @@ mod tests {
         assert!(get_global_auth_cache().is_none());
 
         let pool = create_test_db_pool();
-        let _state = AuthState::new_for_middleware(pool, None);
+        let _state = AuthState::new_for_middleware(pool);
 
         // new_for_middleware should have created and set the global cache
         let global = get_global_auth_cache();
@@ -3270,18 +3314,32 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // ===== auth_middleware_inner integration tests =====
-    // Exercise auth_middleware_inner through a real axum Router to cover the
-    // main middleware branches: public bypass, missing token, DB failure.
+    // ===== auth_middleware_inner (garrison path) integration tests =====
+    //
+    // R-auth-engine-003 / T017：新版 `auth_middleware_inner` 走 garrison RBAC 路径，
+    // 完整 mock 测试（garrison 校验成功/失败、bridge 成功/失败）由 T031 在 Stage 7 补全。
+    // 此处保留两条不依赖 garrison 单例状态的稳定路径覆盖（公共端点 + 缺失 Bearer），
+    // 避免 T017 到 T031 之间的测试空窗。
+    //
+    // 已删除的旧测试（DB 路径契约，由 T031 替换）：
+    //   - test_auth_middleware_inner_public_endpoint_bypasses（已替换为新版）
+    //   - test_auth_middleware_inner_missing_bearer_returns_401（已替换为新版）
+    //   - test_auth_middleware_inner_unknown_bearer_returns_unauthorized
+    //   - test_auth_middleware_inner_no_global_state_returns_500
+    //   - test_auth_middleware_inner_rate_limit_lockout_returns_429
+    //   - test_auth_middleware_inner_cache_hit_returns_200
 
-    // GLOBAL_STATE_LOCK must be held across .await because the middleware
-    // reads GLOBAL_AUTH_STATE during request handling; releasing the guard
-    // would let other tests race-modify the global state.
-    // Single-threaded tokio runtime => no deadlock risk.
-    #[allow(clippy::await_holding_lock)]
+    /// 公开端点（`PUBLIC_ENDPOINTS`）跳过认证，直接返回 200。
+    ///
+    /// 此路径不调用 garrison，不依赖 garrison 单例状态，是稳定的最小覆盖。
+    #[cfg(feature = "auth")]
+    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access
     #[tokio::test]
     async fn test_auth_middleware_inner_public_endpoint_bypasses() {
         let _guard = lock_global_state();
+        ensure_auth_debug_logger();
+
+        // 确保全局 AuthState 已设置（避免 "global auth state not initialized" 500 干扰）
         if get_global_auth_state().is_none() {
             let pool = create_test_db_pool();
             let state = Arc::new(AuthState::new(
@@ -3310,10 +3368,17 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
+    /// 缺失 `Authorization` header → `extract_bearer` 返回 `AuthError::InvalidKey` → 401。
+    ///
+    /// 此路径在调用 garrison 之前失败，不依赖 garrison 单例状态。
+    #[cfg(feature = "auth")]
+    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access
     #[tokio::test]
     async fn test_auth_middleware_inner_missing_bearer_returns_401() {
         let _guard = lock_global_state();
+        ensure_auth_debug_logger();
+
+        // 确保全局 AuthState 已设置（避免 "global auth state not initialized" 500 干扰）
         if get_global_auth_state().is_none() {
             let pool = create_test_db_pool();
             let state = Arc::new(AuthState::new(
@@ -3339,42 +3404,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
-    #[tokio::test]
-    async fn test_auth_middleware_inner_unknown_bearer_returns_unauthorized() {
-        let _guard = lock_global_state();
-        if get_global_auth_state().is_none() {
-            let pool = create_test_db_pool();
-            let state = Arc::new(AuthState::new(
-                pool,
-                Uuid::new_v4(),
-                Uuid::new_v4(),
-                ApiKeyScope::default(),
-            ));
-            set_global_auth_state(state);
-        }
-
-        let app = Router::new()
-            .route("/protected", get(|| async { "ok" }))
-            .layer(middleware::from_fn(auth_middleware_inner));
-
-        // Bearer token present, but the token hash is not present in the
-        // api_keys table → validate_api_key_from_db returns Ok(None),
-        // which the middleware maps to UNAUTHORIZED (401).
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/protected")
-                    .header("Authorization", "Bearer test_token_unknown_to_db")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
+        // extract_bearer 失败 → AuthError::InvalidKey → 401
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -3496,7 +3526,6 @@ mod tests {
         assert!(debug_str.contains(&team_id.to_string()));
         assert!(debug_str.contains(&api_key_id.to_string()));
         // Optional fields should show as false when None
-        assert!(debug_str.contains("auth_scope_service"));
         assert!(debug_str.contains("api_key_cache"));
         assert!(debug_str.contains("auth_rate_limiter"));
         assert!(debug_str.contains("trusted_proxies"));
@@ -3517,7 +3546,6 @@ mod tests {
         let debug_str = format!("{:?}", state);
         assert!(debug_str.contains("AuthState"));
         // With optional fields set, the debug should still contain field names
-        assert!(debug_str.contains("auth_scope_service"));
         assert!(debug_str.contains("api_key_cache"));
         assert!(debug_str.contains("auth_rate_limiter"));
         assert!(debug_str.contains("trusted_proxies"));
@@ -3567,7 +3595,6 @@ mod tests {
         let rate_limiter = Arc::new(AuthRateLimiter::new());
         let state = AuthState::with_trusted_proxies(
             pool,
-            None,
             Uuid::new_v4(),
             Uuid::new_v4(),
             ApiKeyScope::default(),
@@ -3577,150 +3604,6 @@ mod tests {
         );
         set_global_auth_state(Arc::new(state));
         get_global_auth_state().expect("global auth state should be set")
-    }
-
-    // ===== auth_middleware_inner: no global state (lines 709-710) =====
-    // Only covers when this test runs before any test that sets GLOBAL_AUTH_STATE.
-
-    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
-    #[tokio::test]
-    async fn test_auth_middleware_inner_no_global_state_returns_500() {
-        ensure_auth_debug_logger();
-        let _guard = lock_global_state();
-
-        // Only test the None path if no other test has set the state yet
-        if get_global_auth_state().is_some() {
-            return;
-        }
-
-        let app = Router::new()
-            .route("/protected", get(|| async { "ok" }))
-            .layer(middleware::from_fn(auth_middleware_inner));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/protected")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    // ===== auth_middleware_inner: rate limit lockout (line 731) =====
-
-    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
-    #[tokio::test]
-    async fn test_auth_middleware_inner_rate_limit_lockout_returns_429() {
-        ensure_auth_debug_logger();
-        let _guard = lock_global_state();
-
-        let state = ensure_global_state_with_cache_and_limiter();
-
-        // Need a rate limiter to test the lockout path
-        let rate_limiter = match state.auth_rate_limiter.clone() {
-            Some(rl) => rl,
-            None => return, // State was set by another test without a rate limiter
-        };
-
-        // Reset any prior failures for "unknown" IP (test requests appear as "unknown")
-        rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
-
-        // Lock out "unknown" IP by recording MAX_AUTH_FAILURES failures
-        for _ in 0..MAX_AUTH_FAILURES {
-            rate_limiter.record_failure(TEST_UNKNOWN_IP).await;
-        }
-
-        let app = Router::new()
-            .route("/protected", get(|| async { "ok" }))
-            .layer(middleware::from_fn(auth_middleware_inner));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/protected")
-                    .header("Authorization", "Bearer some_token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-
-        // Cleanup: reset failures to avoid affecting other tests
-        rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
-    }
-
-    // ===== auth_middleware_inner: cache hit path (lines 748-749, 782) =====
-
-    #[allow(clippy::await_holding_lock)] // GLOBAL_STATE_LOCK serializes global state access; see above
-    #[tokio::test]
-    async fn test_auth_middleware_inner_cache_hit_returns_200() {
-        ensure_auth_debug_logger();
-        let _guard = lock_global_state();
-
-        let state = ensure_global_state_with_cache_and_limiter();
-
-        // Reset rate limiter for "unknown" IP to avoid interference from lockout test
-        if let Some(ref rate_limiter) = state.auth_rate_limiter {
-            rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
-        }
-
-        // Need a cache to test the cache hit path
-        let cache = match state.api_key_cache.clone() {
-            Some(c) => c,
-            None => return, // State was set by another test without a cache
-        };
-
-        let token_str = "test_token_cache_hit_path";
-        let token_hash = format!(
-            "sha256:{}",
-            hex::encode(Sha256::digest(token_str.as_bytes()))
-        );
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
-        let cached_scope = ApiKeyScope::full_access();
-
-        // Pre-populate the cache with a token hash entry
-        {
-            let mut g = cache.write().await;
-            g.insert(
-                token_hash.clone(),
-                CachedAuthResult {
-                    team_id,
-                    api_key_id,
-                    scope: cached_scope,
-                    cached_at: Instant::now(),
-                },
-            );
-        }
-
-        let app = Router::new()
-            .route("/protected", get(|| async { "ok" }))
-            .layer(middleware::from_fn(auth_middleware_inner));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/protected")
-                    .header("Authorization", format!("Bearer {}", token_str))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        // Cleanup: remove the cache entry to avoid affecting other tests
-        {
-            let mut g = cache.write().await;
-            g.invalidate(&token_hash);
-        }
     }
 
     // =========================================================================
@@ -3914,51 +3797,16 @@ mod tests {
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
-    /// 超长 Token 通过完整中间件流程必须返回 401（未认证），
-    /// 而非 500（服务器错误）或 panic。
+    /// 超长 Token 通过完整中间件流程的端到端测试已迁移至 T031（Stage 7）。
     ///
-    /// 这验证端到端流程对超长输入的健壮性。
-    #[allow(clippy::await_holding_lock)]
-    #[tokio::test]
-    async fn test_oversized_token_returns_401_not_500() {
-        ensure_auth_debug_logger();
-        let _guard = lock_global_state();
-
-        let state = ensure_global_state_with_cache_and_limiter();
-        if let Some(ref rate_limiter) = state.auth_rate_limiter {
-            rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
-        }
-
-        let huge_token = "D".repeat(10 * 1024);
-
-        let app = Router::new()
-            .route("/protected", get(|| async { "ok" }))
-            .layer(middleware::from_fn(auth_middleware_inner));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/protected")
-                    .header("Authorization", format!("Bearer {}", huge_token))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(
-            response.status(),
-            StatusCode::UNAUTHORIZED,
-            "10KB token must return 401 (not found in DB), not 500 or panic"
-        );
-
-        // Cleanup: 清理 rate_limiter 失败计数 + 重置全局 AuthState
-        // 避免本测试设置的全局状态污染后续依赖"无全局状态"契约的测试
-        if let Some(ref rate_limiter) = state.auth_rate_limiter {
-            rate_limiter.reset_failures(TEST_UNKNOWN_IP).await;
-        }
-        reset_global_auth_state();
-    }
+    /// 旧版 `test_oversized_token_returns_401_not_500` 测试 DB 路径契约
+    /// （超长 token 不在 `api_keys` 表 → 401），新版 `auth_middleware_inner`
+    /// 走 garrison RBAC 路径，超长 token 传给 `GarrisonUtil::check_api_key`，
+    /// garrison 未初始化时返回 `Session` 错误 → `InternalError` → 500，
+    /// 不再适用旧 401 契约。T031 会用 garrison mock 测试覆盖超长 token 路径。
+    ///
+    /// 保留的 `test_oversized_token_hashed_without_panic`（SHA-256 层）仍覆盖
+    /// 超长输入的哈希健壮性，不依赖中间件路径。
 
     // ----- #214 特殊字符注入（\0 / \n / Unicode）-----
 

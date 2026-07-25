@@ -217,11 +217,11 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     //   模板在下方 `.layer()` 调用处构造（携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope）。
     #[cfg(feature = "auth")]
     {
-        let auth_scope_service = state.auth_scope_service.as_ref().map(|arc| (**arc).clone());
-        let auth_state = Arc::new(AuthState::new_for_middleware(
-            state.db_pool.clone(),
-            auth_scope_service,
-        ));
+        // R-auth-engine-003 / T015：AuthState DTO 化后不再传 auth_scope_service——
+        // scope 改由 Stage 3 的 `bridge_principal_to_auth_state`（garrison RBAC +
+        // `map_perms_to_scope`）填充。`auth_scope_service` 仍在 CrawlRsState
+        // 中保留（由 Stage 4 的 T022 删除 `auth_scope_service.rs` 时一并清理）。
+        let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone()));
         crate::presentation::middleware::auth_middleware::set_global_auth_state(auth_state);
     }
 
@@ -376,8 +376,8 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
     // auth-off：不调用全局状态，模板通过下方 `from_fn_with_state` 直接注入。
     #[cfg(feature = "auth")]
     {
-        // Use new_for_middleware to ensure global cache is initialized
-        let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone(), None));
+        // R-auth-engine-003 / T015：AuthState DTO 化后不再传 auth_scope_service
+        let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone()));
         crate::presentation::middleware::auth_middleware::ensure_global_auth_state_set(auth_state);
     }
 

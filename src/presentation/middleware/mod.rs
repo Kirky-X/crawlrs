@@ -3,6 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+/// Garrison Principal ↔ crawlrs AuthState 桥接（Stage 3 / T012-T017）
+///
+/// R-auth-engine-003 / R-authz-rbac-002：auth feature 启用时编译，
+/// 提供 `map_perms_to_scope`、`bridge_principal_to_auth_state`、`extract_bearer` 等。
+/// auth-off 时 garrison 不编译，走 feature-gate 的 `default_identity_middleware` 路径。
+#[cfg(feature = "auth")]
+pub mod auth_bridge;
 /// 中间件模块
 ///
 /// 提供HTTP请求处理的中间件功能
