@@ -15,6 +15,9 @@ pub mod response_builder;
 pub mod scrape_handler;
 pub mod search_handler;
 pub mod task_handler;
+// R-teams-002 / T012：teams feature 关闭时不编译 team_handler 模块
+// （/v1/teams/* 路由也不会注册，见 bootstrap::routes）
+#[cfg(feature = "teams")]
 pub mod team_handler;
 pub mod webhook_handler;
 

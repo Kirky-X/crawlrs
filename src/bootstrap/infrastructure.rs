@@ -11,11 +11,13 @@ use crate::infrastructure::dns::DnsCacheService;
 use crate::infrastructure::oxcache::{create_cache, CacheService, OxcacheService, SearchCache};
 use crate::infrastructure::repositories::{
     crawl_repo_impl::CrawlRepositoryImpl, credits_repo_impl::CreditsRepositoryImpl,
-    database_geo_restriction_repo::DatabaseGeoRestrictionRepository,
     scrape_result_repo_impl::ScrapeResultRepositoryImpl, task_repo_impl::TaskRepositoryImpl,
     tasks_backlog_repo_impl::TasksBacklogRepositoryImpl,
     webhook_event_repo_impl::WebhookEventRepoImpl, webhook_repo_impl::WebhookRepoImpl,
 };
+// R-teams-004 / T015：teams-off 时不导入 DatabaseGeoRestrictionRepository
+#[cfg(feature = "teams")]
+use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use anyhow::Result;
 use log::info;
 use std::net::Ipv4Addr;
@@ -38,6 +40,9 @@ pub struct Repositories {
     /// Credits repository for credit management.
     pub credits_repo: Arc<CreditsRepositoryImpl>,
     /// Geo restriction repository.
+    ///
+    /// R-teams-004 / T015：teams feature 关闭时不编译此字段。
+    #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<DatabaseGeoRestrictionRepository>,
     /// Tasks backlog repository for backlog processing.
     pub tasks_backlog_repo: Arc<TasksBacklogRepositoryImpl>,
@@ -173,6 +178,8 @@ pub fn init_repositories(db: Arc<DatabasePool>, settings: &Settings) -> Reposito
     let webhook_event_repo = Arc::new(WebhookEventRepoImpl::new(db.inner().clone()));
     let webhook_repo = Arc::new(WebhookRepoImpl::new(db.inner().clone()));
     let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.inner().clone()));
+    // R-teams-004 / T015：teams-off 时不构造 geo_restriction_repo
+    #[cfg(feature = "teams")]
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.inner().clone()));
     let tasks_backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db.inner().clone()));
 
@@ -183,6 +190,7 @@ pub fn init_repositories(db: Arc<DatabasePool>, settings: &Settings) -> Reposito
         webhook_event_repo,
         webhook_repo,
         credits_repo,
+        #[cfg(feature = "teams")]
         geo_restriction_repo,
         tasks_backlog_repo,
     }
@@ -529,6 +537,8 @@ mod tests {
         assert!(Arc::strong_count(&repos.webhook_event_repo.clone()) >= 1);
         assert!(Arc::strong_count(&repos.webhook_repo.clone()) >= 1);
         assert!(Arc::strong_count(&repos.credits_repo.clone()) >= 1);
+        // R-teams-004 / T015：teams feature 关闭时字段不编译
+        #[cfg(feature = "teams")]
         assert!(Arc::strong_count(&repos.geo_restriction_repo.clone()) >= 1);
         assert!(Arc::strong_count(&repos.tasks_backlog_repo.clone()) >= 1);
     }

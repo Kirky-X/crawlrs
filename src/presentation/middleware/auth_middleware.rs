@@ -21,6 +21,10 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+#[cfg(not(feature = "auth"))]
+use axum::extract::State;
+#[cfg(not(feature = "auth"))]
+use crate::common::constants::default_identity::DEFAULT_IDENTITY_TOKEN_HASH;
 use dbnexus::DbPool;
 use log::{debug, info, warn};
 use lru::LruCache;
@@ -887,6 +891,60 @@ pub fn auth_middleware() -> impl Fn(
     |req, next| Box::pin(auth_middleware_inner(req, next))
 }
 
+/// 单租户降级模式下的默认身份中间件（`auth` feature 关闭时启用）。
+///
+/// 当 `auth` feature 关闭时，此中间件替代真实 `auth_middleware`：
+/// 不校验 API Key、不查 DB、不做暴力破解防护，而是直接将预构建的
+/// `AuthState` 模板（携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope）
+/// 克隆并注入到请求 extensions，使下游 handler 能像认证通过一样工作。
+///
+/// # 单租户降级语义
+///
+/// - 不读 `Authorization` header（即使存在也忽略）
+/// - 不查 DB（不调用 `validate_api_key_from_db`）
+/// - 不做 rate limit lockout 检查（暴力破解防护在单租户模式下无意义）
+/// - 直接注入 template 的克隆 + 裸 `Uuid` extensions + `token_hash` 占位字符串
+///
+/// # Security
+///
+/// 此中间件仅适用于受信任的内部部署（单租户、无外部用户）。
+/// 在多租户或公开 API 场景下必须启用 `auth` feature。
+///
+/// # 与 `inject_auth_state` 的一致性
+///
+/// 注入的 extensions 与 `inject_auth_state` 完全一致：
+/// - `AuthState`（自身）
+/// - `Uuid`（team_id）
+/// - `Uuid`（api_key_id）
+/// - `String`（token_hash，固定为 [`DEFAULT_IDENTITY_TOKEN_HASH`]）
+///
+/// 这保证了 teams-on/off 下游 handler 的 `Extension<AuthState>`/`Extension<Uuid>`
+/// 提取器都能工作，且 `limiteron_rate_limit_middleware` 的 `Extension<String>`
+/// 提取器在 `rate-limit` 启用、`auth` 关闭的组合下也能获取非空字符串。
+///
+/// # 模板构造
+///
+/// `template` 由 `bootstrap::routes::create_protected_routes_with_state` /
+/// `create_v2_routes_with_state` 在应用启动时通过 `from_fn_with_state(template, ...)`
+/// 注入（见 T009）。模板携带 `pool`，避免在中间件内重建 `DbPool`。
+///
+/// # Performance
+///
+/// `template` 由 axum `FromFnLayer` 在每请求 `Service::call` 内 `clone()` 一次后传入，
+/// 因此这里拿到的是 owned `AuthState`，可直接 `move` 进 `inject_auth_state`，
+/// 无需再次 clone（见 diting 性能审查 MEDIUM-1）。
+#[cfg(not(feature = "auth"))]
+pub(crate) async fn default_identity_middleware(
+    State(template): State<AuthState>,
+    mut req: Request<Body>,
+    next: Next,
+) -> Response {
+    // template 由 FromFnLayer 每请求 clone 注入（owned），可直接 move 进 extensions。
+    // inject_auth_state 只 move 不修改 auth_state，无需 clone。
+    inject_auth_state(&mut req, template, DEFAULT_IDENTITY_TOKEN_HASH);
+    next.run(req).await
+}
+
 /// Check rate limit lockout for client IP
 async fn check_rate_limit_lockout(state: &AuthState, client_ip: &str) -> Result<(), StatusCode> {
     if let Some(ref rate_limiter) = state.auth_rate_limiter {
@@ -958,13 +1016,21 @@ async fn validate_api_key_from_db(
         .await
     {
         Ok(Some(key)) => {
-            // Security check: reject nil UUID
-            if key.team_id == Uuid::nil() {
-                warn!(
-                    "SECURITY: API key with nil team_id detected, key_id={}",
-                    key.id
-                );
-                return Err(StatusCode::UNAUTHORIZED);
+            // Security check: reject nil team_id
+            //
+            // R-teams-001 / T011：teams-on 时强制校验 key.team_id 非 nil（多租户安全要求，
+            //   nil team_id 意味着数据损坏或越权尝试）；teams-off 时跳过此检查，因为
+            //   单租户降级模式下 key 可能无 team_id 绑定或绑定到 nil，team_id 的替换
+            //   由 `create_and_cache_auth_state` 在 T010 中处理（统一替换为 DEFAULT_TEAM_ID）。
+            #[cfg(feature = "teams")]
+            {
+                if key.team_id == Uuid::nil() {
+                    warn!(
+                        "SECURITY: API key with nil team_id detected, key_id={}",
+                        key.id
+                    );
+                    return Err(StatusCode::UNAUTHORIZED);
+                }
             }
             Ok(Some(key))
         }
@@ -1050,6 +1116,16 @@ fn check_key_expiration(key: &api_key::Model) -> Result<(), StatusCode> {
 }
 
 /// Create auth state and cache it
+///
+/// # team_id 决策（R-teams-001 / T010）
+///
+/// - `teams` feature 启用（多租户）：使用 `key.team_id`（key 与 team 绑定）
+/// - `teams` feature 关闭（单租户降级）：使用 [`DEFAULT_TEAM_ID`]（key 可能无 team_id 绑定，
+///   或绑定到 nil team_id——`validate_api_key_from_db` 在 teams-off 时跳过 nil 检查，见 T011）
+///
+/// 注入的 `team_id` 同时用于：
+/// 1. `AuthState::with_scope_service` 构造的 `auth_state.team_id`（注入到请求 extensions）
+/// 2. `CachedAuthResult.team_id`（缓存，供后续 `try_get_cached_auth` 命中时复用）
 async fn create_and_cache_auth_state(
     state: &AuthState,
     key: &api_key::Model,
@@ -1067,10 +1143,19 @@ async fn create_and_cache_auth_state(
         }
     };
 
+    // R-teams-001 / T010：teams-on 使用 key.team_id（多租户场景，key 绑定 team）；
+    // teams-off 使用 DEFAULT_TEAM_ID（单租户降级，key 可能无 team_id 绑定或绑定到 nil）。
+    // 注意：两分支类型均为 `Uuid`，下游 `AuthState::with_scope_service` / `CachedAuthResult`
+    // 使用统一类型签名，无需 cfg 分裂函数签名。
+    #[cfg(feature = "teams")]
+    let team_id = key.team_id;
+    #[cfg(not(feature = "teams"))]
+    let team_id = crate::common::constants::default_identity::DEFAULT_TEAM_ID;
+
     let mut auth_state = AuthState::with_scope_service(
         state.pool.clone(),
         auth_scope_service,
-        key.team_id,
+        team_id,
         key.id,
         ApiKeyScope::default(),
     );
@@ -1084,7 +1169,7 @@ async fn create_and_cache_auth_state(
         cache_guard.insert(
             token_hash.to_string(),
             CachedAuthResult {
-                team_id: key.team_id,
+                team_id,
                 api_key_id: key.id,
                 scope: auth_state.scope.clone(),
                 cached_at: Instant::now(),
@@ -2564,6 +2649,96 @@ mod tests {
         );
     }
 
+    /// R-teams-001 / T011：teams-on 时 `validate_api_key_from_db` 必须拒绝
+    /// `team_id = Uuid::nil()` 的 API Key（返回 `UNAUTHORIZED`）。
+    ///
+    /// 此测试仅在 `--features default`（teams-on）下编译运行。
+    /// teams-off 时 nil 检查被 `#[cfg(not(feature = "teams"))]` 跳过，由
+    /// `test_create_and_cache_auth_state_uses_default_team_id_when_teams_off`
+    /// 覆盖 teams-off 契约（T010：nil/任意 team_id 被替换为 DEFAULT_TEAM_ID）。
+    ///
+    /// # 测试策略
+    ///
+    /// 1. 用原生 SQL 在 `api_keys` 表插入一行 `team_id = '00000000-...-000000000000'` 的 key
+    ///    （`api_keys.team_id` 是 `UUID NOT NULL`，但无外键约束到 `teams` 表，
+    ///     所以可以直接插 nil UUID 而不触发外键违规）
+    /// 2. 调用 `validate_api_key_from_db` 用该 key 的 `token_hash`
+    /// 3. 断言返回 `Err(UNAUTHORIZED)`
+    /// 4. 清理：`DELETE FROM api_keys WHERE id = $nil_team_key_id`
+    ///
+    /// # 安全语义
+    ///
+    /// nil team_id 意味着数据损坏或越权尝试（攻击者绕过 teams 表插入孤立 key）。
+    /// 在多租户场景下，拒绝 nil team_id 是安全基线（防止孤立 key 被用于
+    /// 访问其他租户的数据）。
+    #[cfg(feature = "teams")]
+    #[tokio::test]
+    async fn test_validate_api_key_from_db_rejects_nil_team_id_when_teams_on() {
+        use sea_orm::ConnectionTrait;
+
+        let pool = create_test_db_pool();
+        let state = AuthState::new(
+            pool.clone(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+        );
+
+        let nil_team_key_id = Uuid::new_v4();
+        let nil_team_token_hash = format!("sha256:nil_team_t011_{}", nil_team_key_id);
+
+        // 插入 team_id=nil 的 key（api_keys 表 team_id NOT NULL 但无外键约束）
+        {
+            let session = pool
+                .get_session("admin")
+                .await
+                .expect("Failed to get session for insert");
+            let conn = session
+                .connection()
+                .expect("Failed to get connection for insert");
+            conn.execute_unprepared(&format!(
+                "INSERT INTO api_keys (id, key, key_hash, team_id) VALUES \
+                 ('{}', 'nil-team-key-{}', '{}', '00000000-0000-0000-0000-000000000000') \
+                 ON CONFLICT (id) DO NOTHING",
+                nil_team_key_id, nil_team_key_id, nil_team_token_hash
+            ))
+            .await
+            .expect("Failed to insert nil-team_id key for test");
+        }
+
+        // 调用 validate_api_key_from_db
+        let result =
+            validate_api_key_from_db(&state, &nil_team_token_hash, "10.0.0.1").await;
+
+        // teams-on: 必须返回 Err(UNAUTHORIZED)
+        assert!(
+            result.is_err(),
+            "teams-on: nil team_id must be rejected (UNAUTHORIZED)"
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            StatusCode::UNAUTHORIZED,
+            "teams-on: nil team_id must map to UNAUTHORIZED"
+        );
+
+        // 清理：删除测试插入的 key（避免污染数据库）
+        {
+            let session = pool
+                .get_session("admin")
+                .await
+                .expect("Failed to get session for cleanup");
+            let conn = session
+                .connection()
+                .expect("Failed to get connection for cleanup");
+            let _ = conn
+                .execute_unprepared(&format!(
+                    "DELETE FROM api_keys WHERE id = '{}'",
+                    nil_team_key_id
+                ))
+                .await;
+        }
+    }
+
     /// #74: 数据库连接获取失败时 `validate_api_key_from_db` 必须返回 500。
     ///
     /// 测试策略：创建 `max_connections=1, acquire_timeout=10ms` 的连接池，
@@ -2703,6 +2878,66 @@ mod tests {
         // Should still succeed (cache insert is guarded by if-let-Some)
         assert!(result.is_ok());
         assert_eq!(result.unwrap().api_key_id, key.id);
+    }
+
+    /// R-teams-001 / T010：teams feature 关闭时，`create_and_cache_auth_state` 必须注入
+    /// `DEFAULT_TEAM_ID` 而非 `key.team_id`（单租户降级模式下 key 可能无 team_id 绑定，
+    /// 或绑定到 nil team_id——由 T011 在 `validate_api_key_from_db` 跳过 nil 检查保证）。
+    ///
+    /// 此测试仅在 `--no-default-features --features auth`（teams-off + auth-on）下编译运行。
+    /// 在 `--features default`（teams-on）下被 cfg 排除，由上方
+    /// `test_create_and_cache_auth_state_with_service_succeeds_and_caches` 覆盖 teams-on 契约。
+    #[cfg(not(feature = "teams"))]
+    #[tokio::test]
+    async fn test_create_and_cache_auth_state_uses_default_team_id_when_teams_off() {
+        use crate::common::constants::default_identity::DEFAULT_TEAM_ID;
+
+        let pool = create_test_db_pool();
+        let cache = Arc::new(RwLock::new(ApiKeyCache::new_default()));
+        let service = make_auth_scope_service(Some(ApiKeyScope::full_access()));
+        let state = AuthState::with_cache(
+            pool,
+            Some(service),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::default(),
+            cache.clone(),
+        );
+
+        // key.team_id 是随机 Uuid（非 DEFAULT_TEAM_ID），但 teams-off 时应被完全忽略
+        let key = make_key_model(Some("sha256:somehash".to_string()), Some(0));
+        let key_team_id = key.team_id; // 保存原值用于反向断言
+        let token_hash = "sha256:teams_off_t010".to_string();
+
+        let result = create_and_cache_auth_state(&state, &key, &token_hash).await;
+
+        assert!(result.is_ok(), "Should succeed with service present");
+        let auth_state = result.unwrap();
+
+        // 核心正向断言：team_id 必须是 DEFAULT_TEAM_ID
+        assert_eq!(
+            auth_state.team_id, DEFAULT_TEAM_ID,
+            "teams-off: auth_state.team_id must be DEFAULT_TEAM_ID, not key.team_id"
+        );
+        // 核心反向断言：team_id 必须不等于 key.team_id（除非 key.team_id 恰好等于 DEFAULT_TEAM_ID，
+        // 概率 = 1/2^128，可忽略）
+        assert_ne!(
+            auth_state.team_id, key_team_id,
+            "teams-off: auth_state.team_id must NOT equal key.team_id"
+        );
+        // api_key_id 仍来自 key（单租户降级不放弃 API Key 级别身份）
+        assert_eq!(auth_state.api_key_id, key.id);
+
+        // 验证缓存条目也使用 DEFAULT_TEAM_ID（保证 try_get_cached_auth 命中时一致）
+        let mut cache_guard = cache.write().await;
+        let cached = cache_guard
+            .get(&token_hash)
+            .expect("Cache should be populated after create");
+        assert_eq!(
+            cached.team_id, DEFAULT_TEAM_ID,
+            "teams-off: cached.team_id must be DEFAULT_TEAM_ID"
+        );
+        assert_eq!(cached.api_key_id, key.id);
     }
 
     // ===== check_rate_limit_lockout =====
@@ -4099,5 +4334,184 @@ mod tests {
             limiter.is_locked_out(ip_b).await,
             "IP B must remain locked after resetting IP A (per-IP isolation)"
         );
+    }
+
+    // ===== default_identity_middleware tests (feature-gate: `auth` off) =====
+    //
+    // 这些测试仅在 `--no-default-features`（关闭 `auth` feature）下编译运行，
+    // 验证 `default_identity_middleware` 的契约（R-auth-002）：
+    //   1. 注入 `AuthState` 模板（含 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope）
+    //   2. 同时注入裸 `Uuid` team_id/api_key_id extensions（与 `inject_auth_state` 行为一致，
+    //      确保 teams-on/off 下游 handler 的 Extension<Uuid> 提取器都能工作）
+    //   3. 不读 `Authorization` header，不查 DB，直接放行（单租户降级语义）
+    //
+    // TDD 状态：
+    //   - Stage 1 / T007 (Red)：测试引用 `default_identity_middleware`，该函数在 T008 实现；
+    //     当前 `cargo test --no-default-features` 会因找不到函数符号而编译失败（Red）。
+    //   - Stage 1 / T008 (Green)：实现 `default_identity_middleware` 后编译通过。
+    //   - Stage 5 统一验证 `cargo test --no-default-features`（Stage 2-4 cfg 门控就位后整个 crate 才能在 --no-default-features 下编译）。
+    //
+    // 注意：测试用 `#[cfg(not(feature = "auth"))]` 门控，与被测函数门控一致；
+    // 在 `--features default`（auth 启用）下不编译，因此不影响 `cargo test --features default`。
+    #[cfg(not(feature = "auth"))]
+    mod default_identity_tests {
+        use super::*;
+        use crate::common::constants::default_identity::{
+            DEFAULT_API_KEY_ID, DEFAULT_TEAM_ID,
+        };
+        use crate::common::test_helpers::create_test_db_pool;
+        use axum::{middleware::from_fn_with_state, routing::get, Extension, Router};
+        use tower::ServiceExt;
+
+        /// 构造测试 handler：从请求 extensions 提取 `AuthState` 与裸 `Uuid` team_id/api_key_id，
+        /// 返回包含所有字段的字符串 body 以供测试断言。
+        ///
+        /// 这模拟了真实业务 handler（如 `extract_handler`、`task_handler`）的 Extension 提取模式：
+        /// 它们既依赖 `Extension<AuthState>`，也依赖 `Extension<Uuid>`（team_id/api_key_id）。
+        async fn reflect_extensions(
+            Extension(auth_state): Extension<AuthState>,
+            Extension(team_id_ext): Extension<Uuid>,
+            Extension(api_key_id_ext): Extension<Uuid>,
+        ) -> impl IntoResponse {
+            (
+                StatusCode::OK,
+                format!(
+                    "auth_team={}\nauth_key={}\nread={}\nwrite={}\nadmin={}\nteam_ext={}\nkey_ext={}",
+                    auth_state.team_id,
+                    auth_state.api_key_id,
+                    auth_state.scope.read,
+                    auth_state.scope.write,
+                    auth_state.scope.admin,
+                    team_id_ext,
+                    api_key_id_ext,
+                ),
+            )
+        }
+
+        /// 用 `from_fn_with_state(template, default_identity_middleware)` 装配 router：
+        /// template 携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope，
+        /// 中间件应克隆 template 并注入 extensions，然后调用下游 handler。
+        fn make_default_identity_router(template: AuthState) -> Router {
+            Router::new()
+                .route("/v1/echo", get(reflect_extensions))
+                .layer(from_fn_with_state(template, default_identity_middleware))
+        }
+
+        /// 主契约测试：验证 default_identity_middleware 注入的 AuthState 与裸 Uuid extensions
+        /// 均等于默认身份常量，且 scope 为 full_access。
+        #[tokio::test]
+        async fn default_identity_middleware_injects_default_api_key_id_and_full_access_scope() {
+            let pool = create_test_db_pool();
+            let template = AuthState::new(
+                pool,
+                DEFAULT_TEAM_ID,
+                DEFAULT_API_KEY_ID,
+                ApiKeyScope::full_access(),
+            );
+
+            let response = make_default_identity_router(template)
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/echo")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = String::from_utf8(
+                axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            // AuthState 中的 team_id/api_key_id 必须等于默认身份常量
+            assert!(
+                body.contains(&format!("auth_team={}", DEFAULT_TEAM_ID)),
+                "AuthState.team_id must be DEFAULT_TEAM_ID, got: {body}"
+            );
+            assert!(
+                body.contains(&format!("auth_key={}", DEFAULT_API_KEY_ID)),
+                "AuthState.api_key_id must be DEFAULT_API_KEY_ID, got: {body}"
+            );
+            // scope 必须是 full_access (read/write/admin=true)
+            assert!(body.contains("read=true"), "scope.read must be true");
+            assert!(body.contains("write=true"), "scope.write must be true");
+            assert!(body.contains("admin=true"), "scope.admin must be true");
+            // 同时注入的裸 Uuid extensions 必须等于默认身份常量
+            assert!(
+                body.contains(&format!("team_ext={}", DEFAULT_TEAM_ID)),
+                "Extension<Uuid> team_id must be DEFAULT_TEAM_ID, got: {body}"
+            );
+            assert!(
+                body.contains(&format!("key_ext={}", DEFAULT_API_KEY_ID)),
+                "Extension<Uuid> api_key_id must be DEFAULT_API_KEY_ID, got: {body}"
+            );
+        }
+
+        /// 验证 default_identity_middleware 不要求 Authorization header：
+        /// 单租户降级模式下无鉴权，即使无 Authorization 头也应放行（与真实 auth_middleware 不同）。
+        #[tokio::test]
+        async fn default_identity_middleware_passes_without_authorization_header() {
+            let pool = create_test_db_pool();
+            let template = AuthState::new(
+                pool,
+                DEFAULT_TEAM_ID,
+                DEFAULT_API_KEY_ID,
+                ApiKeyScope::full_access(),
+            );
+
+            let response = make_default_identity_router(template)
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/echo")
+                        // 不带 Authorization 头
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            // 必须放行（200 OK），不返回 401
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "default_identity_middleware must pass through without Authorization header"
+            );
+        }
+
+        /// 验证 default_identity_middleware 即使带 Authorization 头也忽略它：
+        /// 不解析、不校验 token，直接注入默认身份并放行。
+        /// 这防止了"误把单租户降级当成弱鉴权"的实现错误。
+        #[tokio::test]
+        async fn default_identity_middleware_ignores_invalid_authorization_header() {
+            let pool = create_test_db_pool();
+            let template = AuthState::new(
+                pool,
+                DEFAULT_TEAM_ID,
+                DEFAULT_API_KEY_ID,
+                ApiKeyScope::full_access(),
+            );
+
+            let response = make_default_identity_router(template)
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/echo")
+                        .header("Authorization", "Bearer fake_token_should_be_ignored")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            // 必须放行（200 OK），即使 Authorization 头无效
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "default_identity_middleware must ignore Authorization header when present"
+            );
+        }
     }
 }

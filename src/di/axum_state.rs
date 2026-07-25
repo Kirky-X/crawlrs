@@ -20,6 +20,8 @@ use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::di::modules::{EngineModule, InfrastructureModule, ModuleBuildError, ServiceModule};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
+// R-teams-004 / T014：teams-off 时不导入 teams 相关类型
+#[cfg(feature = "teams")]
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -29,10 +31,12 @@ use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
+#[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm_service::LLMServiceTrait;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::search_service::SearchServiceTrait;
+#[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
@@ -72,6 +76,12 @@ pub struct CrawlRsState {
     /// Rate limiting service
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
     /// Team service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，handler 不再需要 `TeamService`（无地理限制、无团队管理）。
+    /// 引用此字段的代码（routes.rs 的 `Extension(team_service)` 装配、handler 签名）
+    /// 必须通过 `#[cfg(feature = "teams")]` 门控。
+    #[cfg(feature = "teams")]
     pub team_service: Arc<TeamService>,
     /// Webhook service
     pub webhook_service: Arc<dyn WebhookService>,
@@ -106,8 +116,16 @@ pub struct CrawlRsState {
     /// Expiration worker
     pub expiration_worker: Arc<crate::workers::expiration_worker::ExpirationWorker>,
     /// Geo location service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，无地理限制相关业务，不需要 `GeoLocationService`。
+    #[cfg(feature = "teams")]
     pub geo_location_service: Arc<dyn GeoLocationService>,
     /// Geo restriction repository
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，无地理限制数据访问，不需要 `GeoRestrictionRepository`。
+    #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 
@@ -141,6 +159,7 @@ impl CrawlRsState {
             tasks_backlog_repo: infra.repositories.tasks_backlog_repo.clone(),
             task_queue: services.queue.clone(),
             rate_limiting_service: services.rate_limiting_service.clone(),
+            #[cfg(feature = "teams")]
             team_service: services.team_service.clone(),
             webhook_service: services.webhook_service.clone(),
             robots_checker: services.robots_checker.clone(),
@@ -158,7 +177,9 @@ impl CrawlRsState {
             webhook_worker: services.webhook_worker.clone(),
             backlog_worker: services.backlog_worker.clone(),
             expiration_worker: services.expiration_worker.clone(),
+            #[cfg(feature = "teams")]
             geo_location_service: services.geo_location_service.clone(),
+            #[cfg(feature = "teams")]
             geo_restriction_repo: infra.repositories.geo_restriction_repo.clone(),
         })
     }
@@ -184,6 +205,9 @@ pub trait CrawlRsStateExt {
     /// Get rate limiting service
     fn rate_limiting_service(&self) -> Arc<dyn RateLimitingService>;
     /// Get team service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService>;
     /// Get webhook service
     fn webhook_service(&self) -> Arc<dyn WebhookService>;
@@ -224,8 +248,14 @@ pub trait CrawlRsStateExt {
     /// Get expiration worker
     fn expiration_worker(&self) -> Arc<crate::workers::expiration_worker::ExpirationWorker>;
     /// Get geo location service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    #[cfg(feature = "teams")]
     fn geo_location_service(&self) -> Arc<dyn GeoLocationService>;
     /// Get geo restriction repository
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
 }
 
@@ -258,6 +288,7 @@ impl CrawlRsStateExt for CrawlRsState {
         self.rate_limiting_service.clone()
     }
 
+    #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService> {
         self.team_service.clone()
     }
@@ -338,10 +369,12 @@ impl CrawlRsStateExt for CrawlRsState {
         self.expiration_worker.clone()
     }
 
+    #[cfg(feature = "teams")]
     fn geo_location_service(&self) -> Arc<dyn GeoLocationService> {
         self.geo_location_service.clone()
     }
 
+    #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
         self.geo_restriction_repo.clone()
     }
@@ -376,6 +409,7 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().rate_limiting_service()
     }
 
+    #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService> {
         self.as_ref().team_service()
     }
@@ -456,10 +490,12 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().expiration_worker()
     }
 
+    #[cfg(feature = "teams")]
     fn geo_location_service(&self) -> Arc<dyn GeoLocationService> {
         self.as_ref().geo_location_service()
     }
 
+    #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
         self.as_ref().geo_restriction_repo()
     }
@@ -552,8 +588,12 @@ mod tests {
         let rate_limiting: Arc<dyn RateLimitingService> = state.rate_limiting_service();
         assert!(Arc::strong_count(&rate_limiting) >= 2);
 
-        let team_service: Arc<TeamService> = state.team_service();
-        assert!(Arc::strong_count(&team_service) >= 2);
+        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        #[cfg(feature = "teams")]
+        {
+            let team_service: Arc<TeamService> = state.team_service();
+            assert!(Arc::strong_count(&team_service) >= 2);
+        }
 
         let webhook_service: Arc<dyn WebhookService> = state.webhook_service();
         assert!(Arc::strong_count(&webhook_service) >= 2);
@@ -612,11 +652,15 @@ mod tests {
         let expiration_worker = state.expiration_worker();
         assert!(Arc::strong_count(&expiration_worker) >= 2);
 
-        let geo_location: Arc<dyn GeoLocationService> = state.geo_location_service();
-        assert!(Arc::strong_count(&geo_location) >= 2);
+        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        #[cfg(feature = "teams")]
+        {
+            let geo_location: Arc<dyn GeoLocationService> = state.geo_location_service();
+            assert!(Arc::strong_count(&geo_location) >= 2);
 
-        let geo_restriction: Arc<dyn GeoRestrictionRepository> = state.geo_restriction_repo();
-        assert!(Arc::strong_count(&geo_restriction) >= 2);
+            let geo_restriction: Arc<dyn GeoRestrictionRepository> = state.geo_restriction_repo();
+            assert!(Arc::strong_count(&geo_restriction) >= 2);
+        }
     }
 
     #[tokio::test]
@@ -762,8 +806,12 @@ mod tests {
         let rate_limiting_service = state_arc.rate_limiting_service();
         assert!(Arc::strong_count(&rate_limiting_service) >= 2);
 
-        let team_service = state_arc.team_service();
-        assert!(Arc::strong_count(&team_service) >= 2);
+        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        #[cfg(feature = "teams")]
+        {
+            let team_service = state_arc.team_service();
+            assert!(Arc::strong_count(&team_service) >= 2);
+        }
 
         let webhook_service = state_arc.webhook_service();
         assert!(Arc::strong_count(&webhook_service) >= 2);
@@ -824,11 +872,15 @@ mod tests {
         let expiration_worker = state_arc.expiration_worker();
         assert!(Arc::strong_count(&expiration_worker) >= 2);
 
-        let geo_location = state_arc.geo_location_service();
-        assert!(Arc::strong_count(&geo_location) >= 2);
+        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        #[cfg(feature = "teams")]
+        {
+            let geo_location = state_arc.geo_location_service();
+            assert!(Arc::strong_count(&geo_location) >= 2);
 
-        let geo_restriction = state_arc.geo_restriction_repo();
-        assert!(Arc::strong_count(&geo_restriction) >= 2);
+            let geo_restriction = state_arc.geo_restriction_repo();
+            assert!(Arc::strong_count(&geo_restriction) >= 2);
+        }
     }
 
     /// Verify that cloning `Arc<CrawlRsState>` does not corrupt accessor

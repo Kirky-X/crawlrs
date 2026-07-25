@@ -15,18 +15,22 @@ use crate::config::settings::Settings;
 use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
 use crate::domain::services::auth_scope_service::AuthScopeService;
 use crate::domain::services::extraction_service::{ExtractionService, ExtractionServiceTrait};
+// R-teams-004 / T015：teams-off 时不导入 teams 相关类型
+#[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy, RateLimitingService,
 };
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
+#[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::{WebhookService, WebhookServiceImpl};
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
 use crate::infrastructure::database::repositories::auth_scope_repo_impl::AuthScopeRepositoryImpl;
+#[cfg(feature = "teams")]
 use crate::infrastructure::geolocation::GeoLocationServiceImpl;
 use crate::infrastructure::services::limiteron_service::{LimiteronService, RateLimitingConfig};
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
@@ -58,8 +62,14 @@ pub struct ServicesComponents {
     /// Webhook service.
     pub webhook_service: Arc<dyn WebhookService>,
     /// Team service.
+    ///
+    /// R-teams-004 / T015：teams feature 关闭时不编译此字段。
+    #[cfg(feature = "teams")]
     pub team_service: Arc<TeamService>,
     /// Geo Location Service
+    ///
+    /// R-teams-004 / T015：teams feature 关闭时不编译此字段。
+    #[cfg(feature = "teams")]
     pub geo_location_service: Arc<dyn GeoLocationService>,
     /// Robots.txt checker.
     pub robots_checker: Arc<RobotsChecker>,
@@ -350,10 +360,10 @@ pub async fn init_services(
         repositories.webhook_event_repo.clone(),
     ));
 
-    // Initialize GeoLocationService
+    // R-teams-004 / T015：teams 相关服务在 teams-off 时不初始化
+    #[cfg(feature = "teams")]
     let geo_location_service = Arc::new(GeoLocationServiceImpl::new(http_client.clone()));
-
-    // Initialize team service
+    #[cfg(feature = "teams")]
     let team_service = Arc::new(TeamService::new(
         geo_location_service.clone(),
         repositories.geo_restriction_repo.clone(),
@@ -432,7 +442,9 @@ pub async fn init_services(
         rate_limiting_service,
         create_scrape_use_case,
         webhook_service,
+        #[cfg(feature = "teams")]
         team_service,
+        #[cfg(feature = "teams")]
         geo_location_service,
         robots_checker,
         search_engine_service,
@@ -852,8 +864,12 @@ mod tests {
         assert!(Arc::strong_count(&services.team_semaphore) >= 1);
         assert!(Arc::strong_count(&services.create_scrape_use_case) >= 1);
         assert!(Arc::strong_count(&services.webhook_service) >= 1);
-        assert!(Arc::strong_count(&services.team_service) >= 1);
-        assert!(Arc::strong_count(&services.geo_location_service) >= 1);
+        // R-teams-004 / T015：teams feature 关闭时这两个字段不编译
+        #[cfg(feature = "teams")]
+        {
+            assert!(Arc::strong_count(&services.team_service) >= 1);
+            assert!(Arc::strong_count(&services.geo_location_service) >= 1);
+        }
         assert!(Arc::strong_count(&services.robots_checker) >= 1);
         assert!(Arc::strong_count(&services.search_engine_service) >= 1);
         assert!(Arc::strong_count(&services.search_service) >= 1);

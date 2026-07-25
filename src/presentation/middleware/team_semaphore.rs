@@ -239,4 +239,83 @@ mod tests {
         assert!(cloned.semaphores.contains_key(&team_id));
         assert!(Arc::ptr_eq(&sem.semaphores, &cloned.semaphores));
     }
+
+    // R-teams-005 / T016：单租户退化模式下的全局并发上限测试
+    //
+    // teams feature 关闭时，所有请求都使用 DEFAULT_TEAM_ID（来自
+    // `crate::common::constants::default_identity::DEFAULT_TEAM_ID`），
+    // TeamSemaphore 不门控，仍按 team_id 维度管理信号量。
+    // 单租户模式下，所有请求共享同一个信号量，退化为全局并发上限：
+    //   - acquire 达到 default_permits 后，try_acquire 返回 None
+    //   - 释放一个 permit 后，try_acquire 立即可用
+    //
+    // 此测试不门控 cfg(feature = "teams")，因为 TeamSemaphore 本身不门控（见 tasks.md T016）。
+
+    #[tokio::test]
+    async fn test_single_tenant_degraded_global_concurrency_limit() {
+        use crate::common::constants::default_identity::DEFAULT_TEAM_ID;
+
+        // 构造 default_permits=3 的 TeamSemaphore
+        let sem = TeamSemaphore::new(3);
+
+        // 连续 acquire 3 次（达到 default_permits 上限）
+        let p1 = sem
+            .acquire(DEFAULT_TEAM_ID)
+            .await
+            .expect("first acquire should succeed");
+        let p2 = sem
+            .acquire(DEFAULT_TEAM_ID)
+            .await
+            .expect("second acquire should succeed");
+        let p3 = sem
+            .acquire(DEFAULT_TEAM_ID)
+            .await
+            .expect("third acquire should succeed");
+
+        // 此时信号量已耗尽，try_acquire 应返回 None
+        let result_exhausted = sem.try_acquire(DEFAULT_TEAM_ID);
+        assert!(
+            result_exhausted.is_none(),
+            "try_acquire should return None when single-tenant permits are exhausted"
+        );
+
+        // 释放一个 permit（p3 drop），try_acquire 应立即可用
+        drop(p3);
+        let result_after_release = sem.try_acquire(DEFAULT_TEAM_ID);
+        assert!(
+            result_after_release.is_some(),
+            "try_acquire should return Some after a permit is dropped"
+        );
+
+        // 清理剩余 permits，避免影响其他测试
+        drop(p1);
+        drop(p2);
+        // result_after_release 的 permit 在结束时自动 drop
+    }
+
+    /// R-teams-005 / T016：单租户模式下信号量仅有一个 team_id 条目
+    ///
+    /// teams-off 模式下所有请求都用 DEFAULT_TEAM_ID，
+    /// TeamSemaphore 的 semaphores DashMap 应只包含一个条目（DEFAULT_TEAM_ID）。
+    #[tokio::test]
+    async fn test_single_tenant_degraded_uses_only_default_team_id_entry() {
+        use crate::common::constants::default_identity::DEFAULT_TEAM_ID;
+
+        let sem = TeamSemaphore::new(2);
+
+        // 多次 acquire 同一个 DEFAULT_TEAM_ID
+        let _p1 = sem.acquire(DEFAULT_TEAM_ID).await.expect("first acquire");
+        let _p2 = sem.acquire(DEFAULT_TEAM_ID).await.expect("second acquire");
+
+        // 验证 semaphores map 只有一个条目（DEFAULT_TEAM_ID）
+        assert_eq!(
+            sem.semaphores.len(),
+            1,
+            "single-tenant mode should have exactly one semaphore entry"
+        );
+        assert!(
+            sem.semaphores.contains_key(&DEFAULT_TEAM_ID),
+            "semaphore entry must be keyed by DEFAULT_TEAM_ID"
+        );
+    }
 }

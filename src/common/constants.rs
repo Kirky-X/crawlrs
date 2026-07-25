@@ -79,6 +79,19 @@ pub mod default_identity {
 
     /// 单租户模式下的默认 API Key ID（非 nil，固定值 2，与 DEFAULT_TEAM_ID 区分）
     pub const DEFAULT_API_KEY_ID: Uuid = Uuid::from_u128(2);
+
+    /// 单租户降级模式下注入的 `token_hash` 占位字符串。
+    ///
+    /// 真实 `auth_middleware` 注入 `"sha256:<hex>"` 格式的 `token_hash`；
+    /// 单租户模式下没有 token，使用固定字符串 `"default_identity"` 作为占位。
+    ///
+    /// 这保证了下游中间件（如 `limiteron_rate_limit_middleware`）的
+    /// `Extension<String>` 提取器在单租户模式下也能获取到非空字符串。
+    ///
+    /// 注意：此字符串格式与真实 `token_hash` 不一致（无 `sha256:` 前缀），
+    /// 当前下游消费者仅用作 rate-limit bucket key，不解析格式；若未来下游
+    /// 新增格式解析逻辑，需同步调整此占位或统一格式（见 diting 架构审查 LOW-3）。
+    pub const DEFAULT_IDENTITY_TOKEN_HASH: &str = "default_identity";
 }
 
 /// 数据库连接池常量 - 避免settings.rs中的魔法数字

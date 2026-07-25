@@ -7,13 +7,19 @@
 
 use crate::config::settings::Settings;
 use crate::di::{CrawlRsState, CrawlRsStateExt};
+// R-teams-004 / T014：teams-off 时不导入 teams 相关类型
+#[cfg(feature = "teams")]
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
+#[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
     audit_handler, crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
-    team_handler, webhook_handler,
+    webhook_handler,
 };
+// R-teams-002 / T012：teams-off 时 team_handler 模块不编译
+#[cfg(feature = "teams")]
+use crate::presentation::handlers::team_handler;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
@@ -21,14 +27,23 @@ use crate::presentation::routes;
 use crate::presentation::routes::task::task_routes;
 use crate::presentation::state::CrawlHandlerState;
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
     Extension, Router,
 };
+// R-teams-002 / T012：put 仅在 teams-on 时被使用（/v1/teams/geo-restrictions PUT）
+#[cfg(feature = "teams")]
+use axum::routing::put;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
 // 导入常量
 use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
+
+// auth feature 关闭时需要的默认身份常量与 scope 构造器（T009）
+#[cfg(not(feature = "auth"))]
+use crate::common::constants::default_identity::{DEFAULT_API_KEY_ID, DEFAULT_TEAM_ID};
+#[cfg(not(feature = "auth"))]
+use crate::domain::auth::ApiKeyScope;
 
 /// 创建 CORS 中间件层
 ///
@@ -96,6 +111,48 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
         .with_state(Arc::new(state.clone()))
 }
 
+/// 构造单租户降级模式下的默认身份 `AuthState` 模板（`auth` feature 关闭时使用）。
+///
+/// 模板携带：
+/// - `pool`: 共享 `CrawlRsState` 的 `DbPool`，供下游业务 handler 使用
+/// - `team_id`: `DEFAULT_TEAM_ID`（固定值，单租户标识）
+/// - `api_key_id`: `DEFAULT_API_KEY_ID`（固定值，与 team_id 区分）
+/// - `scope`: `ApiKeyScope::full_access()`（read/write/admin=true、limit=u32::MAX）
+///
+/// 其余字段（`auth_scope_service` / `api_key_cache` / `auth_rate_limiter` / `trusted_proxies`）
+/// 均为 `None`：单租户降级模式下不查 DB 加载 scope、不做缓存、不做暴力破解防护、
+/// 不解析 trusted proxies。
+///
+/// 此函数仅在三处路由装配点（`create_protected_routes_with_state` /
+/// `create_v2_routes_with_state` / `build_api_app_with_state` 的 SDK 路由）
+/// 调用，构造的模板通过 `from_fn_with_state(template, default_identity_middleware)`
+/// 注入到 `FromFnLayer`，由 layer 在每请求 `Service::call` 内 `clone()` 一次传给
+/// `default_identity_middleware`（见 diting 架构审查 MEDIUM-1 / 性能审查 LOW-2）。
+///
+/// # Security
+///
+/// 首次调用时通过 `OnceLock` 保证只打印一次 WARNING 日志，告知运维本实例运行在
+/// 无鉴权模式（见 tiangang 安全审查 MEDIUM-2）。三处路由装配点都会调用此函数，
+/// 但日志只在第一次调用时输出，避免启动日志噪声。
+#[cfg(not(feature = "auth"))]
+fn build_default_identity_template(state: &CrawlRsState) -> AuthState {
+    static WARN_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    WARN_ONCE.get_or_init(|| {
+        log::warn!(
+            "auth feature disabled — running in single-tenant degraded mode; \
+             NO authentication, NO brute-force protection. \
+             DO NOT expose to public networks."
+        );
+    });
+
+    AuthState::new(
+        state.db_pool.clone(),
+        DEFAULT_TEAM_ID,
+        DEFAULT_API_KEY_ID,
+        ApiKeyScope::full_access(),
+    )
+}
+
 /// Create the protected API routes using CrawlRsState.
 ///
 /// # Arguments
@@ -113,15 +170,24 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let webhook_repo = state.webhook_repo.clone();
     let webhook_event_repo = state.webhook_event_repo();
     let search_engine_service = state.search_client();
+    // R-teams-004 / T014：teams 相关字段在 teams-off 时不编译
+    #[cfg(feature = "teams")]
     let team_service = state.team_service.clone();
+    #[cfg(feature = "teams")]
     let geo_location_service = state.geo_location_service();
     let credits_repo = state.credits_repo();
 
     // 构造一次具体实现，同时用于 trait object Extension 和泛型 handler Extension
     // （架构 HIGH-2：消除重复构造——之前 trait object 和 concrete 各 new 一次）
+    //
+    // R-teams-004 / T014：teams-off 时不构造 geo_restriction_repo_impl / geo_restriction_repo
+    //   （DatabaseGeoRestrictionRepository 仅供 teams-on 的 extract_handler 使用）
+    #[cfg(feature = "teams")]
     let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
         Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
-    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = geo_restriction_repo_impl.clone();
+    #[cfg(feature = "teams")]
+    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
+        geo_restriction_repo_impl.clone();
 
     // WebhookRepoImpl 同理：构造一次，复用给 Extension layer
     let webhook_repo_impl: Arc<WebhookRepoImpl> =
@@ -132,22 +198,26 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let app_state_arc = Arc::new(state.clone());
     let crawl_handler_state = Arc::new(CrawlHandlerState::from_app_state(&app_state_arc));
 
-    // Auth state for middleware - wrap in Arc and set global state
-    let auth_scope_service = state.auth_scope_service.as_ref().map(|arc| (**arc).clone());
-    let auth_state = Arc::new(AuthState::new_for_middleware(
-        state.db_pool.clone(),
-        auth_scope_service,
-    ));
-    // Set global auth state for middleware
-    crate::presentation::middleware::auth_middleware::set_global_auth_state(auth_state.clone());
+    // Auth state for middleware
+    //
+    // auth-on：通过 `GLOBAL_AUTH_STATE` 全局共享，`auth_middleware()` 从中读取
+    //   （含真实 `auth_scope_service` 用于按 API Key 加载 scope）。
+    // auth-off：通过 `from_fn_with_state(template, default_identity_middleware)` 直接注入模板，
+    //   `default_identity_middleware` 通过 `State<AuthState>` 提取器读取；
+    //   模板在下方 `.layer()` 调用处构造（携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope）。
+    #[cfg(feature = "auth")]
+    {
+        let auth_scope_service = state.auth_scope_service.as_ref().map(|arc| (**arc).clone());
+        let auth_state = Arc::new(AuthState::new_for_middleware(
+            state.db_pool.clone(),
+            auth_scope_service,
+        ));
+        crate::presentation::middleware::auth_middleware::set_global_auth_state(auth_state);
+    }
 
     let app: Router = Router::new()
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
-        .route(
-            "/v1/extract",
-            post(extract_handler::extract::<DatabaseGeoRestrictionRepository>),
-        )
         .route(
             "/v1/webhooks",
             post(webhook_handler::create_webhook::<WebhookRepoImpl>),
@@ -163,7 +233,30 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
             get(crawl_handler::get_crawl_results),
         )
         .route("/v1/crawl/{id}", delete(crawl_handler::cancel_crawl))
-        .route("/v1/search", post(search_handler::search))
+        .route("/v1/search", post(search_handler::search));
+
+    // R-teams-003 / T013：extract 路由按 teams feature 分裂
+    //
+    // teams-on：保留 GR 泛型（`extract::<DatabaseGeoRestrictionRepository>`），
+    //   handler 需要 `Extension<Arc<GR>>` 与 `Extension<Arc<TeamService>>` 参数
+    // teams-off：移除 GR 泛型，handler 不接收 GR/TeamService 参数
+    #[cfg(feature = "teams")]
+    let app = app.route(
+        "/v1/extract",
+        post(extract_handler::extract::<DatabaseGeoRestrictionRepository>),
+    );
+    #[cfg(not(feature = "teams"))]
+    let app = app.route("/v1/extract", post(extract_handler::extract));
+
+    // R-teams-002 / T012：teams 路由组单独 cfg 门控
+    //
+    // teams-on：注册 /v1/teams/me、/v1/teams/me/usage、/v1/teams/geo-restrictions (GET/PUT) 4 条路由
+    // teams-off：跳过注册（端点不存在，返回 404 而非编译失败）
+    //
+    // 注意：teams-off 时 team_handler 模块本身不编译（见 handlers/mod.rs 的 cfg 门控），
+    // 所以这里引用 team_handler::* 必须 cfg 门控避免 unresolved import。
+    #[cfg(feature = "teams")]
+    let app = app
         .route("/v1/teams/me", get(team_handler::get_team_info))
         .route("/v1/teams/me/usage", get(team_handler::get_team_usage))
         .route(
@@ -173,18 +266,53 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .route(
             "/v1/teams/geo-restrictions",
             put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
-        )
+        );
+
+    let app = app
         .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
-        .route("/v1/audit/denied", get(audit_handler::get_denied_requests))
-        .layer(axum::middleware::from_fn(
-            crate::presentation::middleware::auth_middleware::auth_middleware(),
+        .route("/v1/audit/denied", get(audit_handler::get_denied_requests));
+
+    // 认证中间件层（条件编译，T009）
+    //
+    // auth-on：`auth_middleware()` 从 `GLOBAL_AUTH_STATE` 读取真实 AuthState
+    //   （含 auth_scope_service / api_key_cache / auth_rate_limiter / trusted_proxies）。
+    // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
+    //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool，
+    //   `default_identity_middleware` 克隆模板并注入 extensions（不查 DB、不校验 token）。
+    //
+    // 注意：两分支返回的 `FromFnLayer` 类型参数不同（`S=()` vs `S=AuthState`），
+    // 无法用 `let layer = if ... { from_fn(...) } else { from_fn_with_state(...) }` 统一类型，
+    // 必须用 shadowing + cfg 分别调用 `.layer()`。
+    #[cfg(feature = "auth")]
+    let app = app.layer(axum::middleware::from_fn(
+        crate::presentation::middleware::auth_middleware::auth_middleware(),
+    ));
+    #[cfg(not(feature = "auth"))]
+    let app = {
+        let template = build_default_identity_template(state);
+        app.layer(axum::middleware::from_fn_with_state(
+            template,
+            crate::presentation::middleware::auth_middleware::default_identity_middleware,
         ))
+    };
+
+    // R-teams-004 / T014：teams 相关 Extension 层在 teams-off 时不装配
+    //
+    // teams-on：附加 geo_restriction_repo / team_service / geo_location_service / geo_restriction_repo_impl
+    //   四个 Extension 层（供 teams-on 版本的 extract_handler / team_handler / crawl_handler 等使用）
+    // teams-off：跳过这四个 Extension 层（对应 handler 不接收这些参数，trait object 缺失不会触发 panic）
+    #[cfg(feature = "teams")]
+    let app = app
         .layer(Extension(geo_restriction_repo))
+        .layer(Extension(geo_location_service.clone()))
+        .layer(Extension(team_service))
+        .layer(Extension(geo_restriction_repo_impl));
+
+    app
         .layer(Extension(team_semaphore))
         .layer(Extension(queue))
         .layer(Extension(task_repo))
         .layer(Extension(result_repo))
-        .layer(Extension(geo_location_service.clone()))
         .layer(Extension(rate_limit_middleware))
         .layer(Extension(settings))
         .layer(Extension(rate_limiting_service))
@@ -193,14 +321,9 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .layer(Extension(webhook_event_repo))
         .layer(Extension(search_engine_service))
         .layer(Extension(state.search_service.clone()))
-        .layer(Extension(team_service))
-        .layer(Extension(geo_location_service))
         .layer(Extension(crawl_handler_state)) // CrawlHandlerState for crawl handlers
         .layer(Extension(credits_repo))
         .layer(Extension(webhook_repo_impl))
-        .layer(Extension(geo_restriction_repo_impl));
-
-    app
 }
 
 /// Create v2 task routes using CrawlRsState.
@@ -216,19 +339,41 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
     let webhook_event_repo = state.webhook_event_repo();
     let team_semaphore = state.team_semaphore.clone();
 
-    // Use new_for_middleware to ensure global cache is initialized
-    let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone(), None));
-    // 架构 MEDIUM-1：仅在未设置时设置（避免覆盖 protected routes 已设置的完整 state）
-    // protected routes 带 auth_scope_service，v2 routes 不带——不能覆盖。
-    crate::presentation::middleware::auth_middleware::ensure_global_auth_state_set(auth_state);
+    // Auth state for middleware
+    //
+    // auth-on：`ensure_global_auth_state_set` 仅在未设置时填充（避免覆盖 protected routes
+    //   已设置的完整 state——protected routes 带 auth_scope_service，v2 routes 不带）。
+    // auth-off：不调用全局状态，模板通过下方 `from_fn_with_state` 直接注入。
+    #[cfg(feature = "auth")]
+    {
+        // Use new_for_middleware to ensure global cache is initialized
+        let auth_state = Arc::new(AuthState::new_for_middleware(state.db_pool.clone(), None));
+        crate::presentation::middleware::auth_middleware::ensure_global_auth_state_set(auth_state);
+    }
 
-    task_routes()
+    let app = task_routes()
         .layer(Extension(task_repo.clone()))
-        .layer(Extension(result_repo.clone()))
-        .layer(axum::middleware::from_fn(
-            crate::presentation::middleware::auth_middleware::auth_middleware(),
+        .layer(Extension(result_repo.clone()));
+
+    // 认证中间件层（条件编译，T009）
+    //
+    // auth-on：`auth_middleware()` 从 `GLOBAL_AUTH_STATE` 读取真实 AuthState。
+    // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
+    //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
+    #[cfg(feature = "auth")]
+    let app = app.layer(axum::middleware::from_fn(
+        crate::presentation::middleware::auth_middleware::auth_middleware(),
+    ));
+    #[cfg(not(feature = "auth"))]
+    let app = {
+        let template = build_default_identity_template(state);
+        app.layer(axum::middleware::from_fn_with_state(
+            template,
+            crate::presentation::middleware::auth_middleware::default_identity_middleware,
         ))
-        .layer(axum::middleware::from_fn(team_semaphore_middleware))
+    };
+
+    app.layer(axum::middleware::from_fn(team_semaphore_middleware))
         .layer(Extension(team_semaphore))
         .layer(Extension(task_repo.clone()))
         .layer(Extension(result_repo.clone()))
@@ -256,7 +401,9 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
     let search_engine_service = state.search_client();
     let queue = state.task_queue.clone();
-    // 使用 DI 容器中已构造的 geo_restriction_repo，避免重复 new（架构 HIGH-2）
+    // R-teams-004 / T014：teams-off 时不构造 geo_restriction_repo
+    //   （DatabaseGeoRestrictionRepository 仅供 teams-on SDK 路由使用）
+    #[cfg(feature = "teams")]
     let geo_restriction_repo = state.geo_restriction_repo();
     let credits_repo = state.credits_repo();
     let crawl_repo = state.crawl_repo.clone();
@@ -272,19 +419,32 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
         .merge(v2_routes);
 
     // SDK routes (always enabled; sdforge is non-optional since Task9)
-    // CRITICAL: auth_middleware is mandatory — SDK handlers extract team_id/api_key_id
+    // CRITICAL: auth middleware is mandatory — SDK handlers extract team_id/api_key_id
     // from AuthState set by the middleware, never from the request body.
-    let app = app.merge(
-        crate::presentation::sdk::build_sdk_router()
-            .layer(axum::middleware::from_fn(
-                crate::presentation::middleware::auth_middleware::auth_middleware(),
-            ))
-            .layer(Extension(state.search_service.clone()))
-            .layer(Extension(state.task_queue.clone()))
-            .layer(Extension(state.crawl_repo.clone())),
+    //
+    // auth-on：`auth_middleware()` 从 `GLOBAL_AUTH_STATE` 读取真实 AuthState。
+    // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
+    //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
+    #[cfg(feature = "auth")]
+    let sdk_router = crate::presentation::sdk::build_sdk_router().layer(
+        axum::middleware::from_fn(crate::presentation::middleware::auth_middleware::auth_middleware()),
     );
+    #[cfg(not(feature = "auth"))]
+    let sdk_router = {
+        let template = build_default_identity_template(state);
+        crate::presentation::sdk::build_sdk_router().layer(axum::middleware::from_fn_with_state(
+            template,
+            crate::presentation::middleware::auth_middleware::default_identity_middleware,
+        ))
+    };
 
-    app.layer(cors_layer)
+    let app = app
+        .merge(sdk_router)
+        .layer(Extension(state.search_service.clone()))
+        .layer(Extension(state.task_queue.clone()))
+        .layer(Extension(state.crawl_repo.clone()));
+
+    let app = app.layer(cors_layer)
         // Security headers middleware - should be applied early in the middleware chain
         .layer(axum::middleware::from_fn(
             crate::presentation::middleware::security_headers_middleware::security_headers_middleware,
@@ -303,11 +463,18 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
         .layer(Extension(webhook_repo.clone()))
         .layer(Extension(rate_limit_middleware))
         .layer(Extension(credits_repo))
-        .layer(Extension(geo_restriction_repo))
         .layer(Extension(settings))
         .layer(Extension(search_engine_service))
         .layer(Extension(rate_limiting_service.clone()))
-        .layer(Extension(state.audit_service()))
+        .layer(Extension(state.audit_service()));
+
+    // R-teams-004 / T014：teams-on 时附加 geo_restriction_repo Extension
+    //   （供 SDK 路由中的 teams 相关 handler 使用）
+    // teams-off：跳过，geo_restriction_repo 变量未声明
+    #[cfg(feature = "teams")]
+    let app = app.layer(Extension(geo_restriction_repo));
+
+    app
 }
 
 // Note: create_public_routes, create_protected_routes_with_state,
