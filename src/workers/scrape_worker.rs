@@ -7120,10 +7120,7 @@ mod tests {
     async fn test_should_crawl_multiple_include_patterns_any_match() {
         let worker = build_should_crawl_worker().await;
         let config = build_crawl_config(
-            Some(vec![
-                r".*/docs/.*".to_string(),
-                r".*/api/.*".to_string(),
-            ]),
+            Some(vec![r".*/docs/.*".to_string(), r".*/api/.*".to_string()]),
             None,
         );
 

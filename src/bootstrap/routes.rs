@@ -12,11 +12,16 @@ use crate::di::{CrawlRsState, CrawlRsStateExt};
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 #[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
+// R-wh-001 / T028：webhook feature 关闭时不导入 WebhookRepoImpl
+// （/v1/webhooks 路由不注册，webhook_handler 模块也不编译）
+#[cfg(feature = "webhook")]
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
     audit_handler, crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
-    webhook_handler,
 };
+// R-wh-001 / T028：webhook-off 时 webhook_handler 模块不编译
+#[cfg(feature = "webhook")]
+use crate::presentation::handlers::webhook_handler;
 // R-teams-002 / T012：teams-off 时 team_handler 模块不编译
 #[cfg(feature = "teams")]
 use crate::presentation::handlers::team_handler;
@@ -167,7 +172,10 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let rate_limiting_service = state.rate_limiting_service.clone();
     let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
     let crawl_repo = state.crawl_repo.clone();
+    // R-wh-001 / T028：webhook 相关字段在 webhook-off 时不编译
+    #[cfg(feature = "webhook")]
     let webhook_repo = state.webhook_repo.clone();
+    #[cfg(feature = "webhook")]
     let webhook_event_repo = state.webhook_event_repo();
     let search_engine_service = state.search_client();
     // R-teams-004 / T014：teams 相关字段在 teams-off 时不编译
@@ -186,10 +194,12 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
         Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
     #[cfg(feature = "teams")]
-    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
-        geo_restriction_repo_impl.clone();
+    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = geo_restriction_repo_impl.clone();
 
     // WebhookRepoImpl 同理：构造一次，复用给 Extension layer
+    // R-wh-001 / T028：webhook-off 时不构造 WebhookRepoImpl
+    //   （WebhookRepoImpl 仅供 webhook-on 的 webhook_handler 使用）
+    #[cfg(feature = "webhook")]
     let webhook_repo_impl: Arc<WebhookRepoImpl> =
         Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
 
@@ -218,14 +228,6 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let app: Router = Router::new()
         .route("/v1/scrape", post(scrape_handler::create_scrape))
         .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
-        .route(
-            "/v1/webhooks",
-            post(webhook_handler::create_webhook::<WebhookRepoImpl>),
-        )
-        .route(
-            "/v1/webhooks",
-            get(webhook_handler::list_webhooks::<WebhookRepoImpl>),
-        )
         .route("/v1/crawl", post(crawl_handler::create_crawl))
         .route("/v1/crawl/{id}", get(crawl_handler::get_crawl))
         .route(
@@ -234,6 +236,24 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         )
         .route("/v1/crawl/{id}", delete(crawl_handler::cancel_crawl))
         .route("/v1/search", post(search_handler::search));
+
+    // R-wh-001 / T028：/v1/webhooks (POST/GET) 路由按 webhook feature 分裂
+    //
+    // webhook-on：注册 create_webhook / list_webhooks 两条路由（使用泛型 WebhookRepoImpl）
+    // webhook-off：跳过注册（端点不存在，返回 404 而非编译失败）
+    //
+    // 注意：webhook-off 时 webhook_handler 模块本身不编译（见 handlers/mod.rs 的 cfg 门控），
+    // 所以这里引用 webhook_handler::* 必须 cfg 门控避免 unresolved import。
+    #[cfg(feature = "webhook")]
+    let app = app
+        .route(
+            "/v1/webhooks",
+            post(webhook_handler::create_webhook::<WebhookRepoImpl>),
+        )
+        .route(
+            "/v1/webhooks",
+            get(webhook_handler::list_webhooks::<WebhookRepoImpl>),
+        );
 
     // R-teams-003 / T013：extract 路由按 teams feature 分裂
     //
@@ -308,8 +328,18 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .layer(Extension(team_service))
         .layer(Extension(geo_restriction_repo_impl));
 
-    app
-        .layer(Extension(team_semaphore))
+    // R-wh-001 / T028：webhook 相关 Extension 层在 webhook-off 时不装配
+    //
+    // webhook-on：附加 webhook_repo / webhook_event_repo / webhook_repo_impl
+    //   三个 Extension 层（供 webhook_handler 使用）
+    // webhook-off：跳过这三个 Extension 层（对应 handler 不存在，trait object 缺失不会触发 panic）
+    #[cfg(feature = "webhook")]
+    let app = app
+        .layer(Extension(webhook_repo))
+        .layer(Extension(webhook_event_repo))
+        .layer(Extension(webhook_repo_impl));
+
+    app.layer(Extension(team_semaphore))
         .layer(Extension(queue))
         .layer(Extension(task_repo))
         .layer(Extension(result_repo))
@@ -317,13 +347,10 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .layer(Extension(settings))
         .layer(Extension(rate_limiting_service))
         .layer(Extension(crawl_repo))
-        .layer(Extension(webhook_repo))
-        .layer(Extension(webhook_event_repo))
         .layer(Extension(search_engine_service))
         .layer(Extension(state.search_service.clone()))
         .layer(Extension(crawl_handler_state)) // CrawlHandlerState for crawl handlers
         .layer(Extension(credits_repo))
-        .layer(Extension(webhook_repo_impl))
 }
 
 /// Create v2 task routes using CrawlRsState.
@@ -335,7 +362,10 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
     let task_repo = state.task_repo.clone();
     let result_repo = state.result_repo.clone();
     let crawl_repo = state.crawl_repo.clone();
+    // R-wh-001 / T028：webhook 相关字段在 webhook-off 时不编译
+    #[cfg(feature = "webhook")]
     let webhook_repo = state.webhook_repo.clone();
+    #[cfg(feature = "webhook")]
     let webhook_event_repo = state.webhook_event_repo();
     let team_semaphore = state.team_semaphore.clone();
 
@@ -373,13 +403,18 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
         ))
     };
 
-    app.layer(axum::middleware::from_fn(team_semaphore_middleware))
+    let app = app
+        .layer(axum::middleware::from_fn(team_semaphore_middleware))
         .layer(Extension(team_semaphore))
         .layer(Extension(task_repo.clone()))
         .layer(Extension(result_repo.clone()))
-        .layer(Extension(crawl_repo.clone()))
+        .layer(Extension(crawl_repo.clone()));
+    // R-wh-001 / T028：webhook Extension 层在 webhook-off 时不装配
+    #[cfg(feature = "webhook")]
+    let app = app
         .layer(Extension(webhook_repo.clone()))
-        .layer(Extension(webhook_event_repo.clone()))
+        .layer(Extension(webhook_event_repo.clone()));
+    app
 }
 
 /// Build the complete API application router using CrawlRsState.
@@ -407,7 +442,10 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     let geo_restriction_repo = state.geo_restriction_repo();
     let credits_repo = state.credits_repo();
     let crawl_repo = state.crawl_repo.clone();
+    // R-wh-001 / T028：webhook 相关字段在 webhook-off 时不编译
+    #[cfg(feature = "webhook")]
     let webhook_event_repo = state.webhook_event_repo();
+    #[cfg(feature = "webhook")]
     let webhook_repo = state.webhook_repo();
 
     // 创建 CORS 层
@@ -426,9 +464,9 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
     //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
     #[cfg(feature = "auth")]
-    let sdk_router = crate::presentation::sdk::build_sdk_router().layer(
-        axum::middleware::from_fn(crate::presentation::middleware::auth_middleware::auth_middleware()),
-    );
+    let sdk_router = crate::presentation::sdk::build_sdk_router().layer(axum::middleware::from_fn(
+        crate::presentation::middleware::auth_middleware::auth_middleware(),
+    ));
     #[cfg(not(feature = "auth"))]
     let sdk_router = {
         let template = build_default_identity_template(state);
@@ -459,14 +497,18 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
         .layer(Extension(state.task_repo.clone()))
         .layer(Extension(state.result_repo.clone()))
         .layer(Extension(crawl_repo))
-        .layer(Extension(webhook_event_repo))
-        .layer(Extension(webhook_repo.clone()))
         .layer(Extension(rate_limit_middleware))
         .layer(Extension(credits_repo))
         .layer(Extension(settings))
         .layer(Extension(search_engine_service))
         .layer(Extension(rate_limiting_service.clone()))
         .layer(Extension(state.audit_service()));
+
+    // R-wh-001 / T028：webhook Extension 层在 webhook-off 时不装配
+    #[cfg(feature = "webhook")]
+    let app = app
+        .layer(Extension(webhook_event_repo))
+        .layer(Extension(webhook_repo.clone()));
 
     // R-teams-004 / T014：teams-on 时附加 geo_restriction_repo Extension
     //   （供 SDK 路由中的 teams 相关 handler 使用）

@@ -9,15 +9,24 @@ use crate::{
         models::{scrape_result::ScrapeResult, Crawl, CrawlStatus, Task, TaskStatus, TaskType},
         repositories::{
             crawl_repository::CrawlRepository,
-            geo_restriction_repository::GeoRestrictionRepository,
             scrape_result_repository::ScrapeResultRepository,
             task_repository::{RepositoryError, TaskRepository},
-            webhook_repository::WebhookRepository,
         },
-        services::team_service::TeamService,
     },
 };
+// R-teams-004 / T014：teams feature 关闭时不导入 teams 相关类型
+// （CrawlUseCase.geo_restriction_repo 字段、create_crawl 地理限制块均门控）
+#[cfg(feature = "teams")]
+use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
+#[cfg(feature = "teams")]
+use crate::domain::services::team_service::TeamService;
+// R-wh-003 / T027：webhook feature 关闭时不导入 WebhookRepository
+// （CrawlUseCase.webhook_repo 字段门控）
+#[cfg(feature = "webhook")]
+use crate::domain::repositories::webhook_repository::WebhookRepository;
 use chrono::Utc;
+// R-teams-004 / T014: error! 仅在 teams-on 地理限制块中使用，teams-off 时不导入
+#[cfg(feature = "teams")]
 use log::error;
 use serde_json::json;
 use std::sync::Arc;
@@ -56,12 +65,24 @@ pub struct CrawlUseCase {
     /// 任务仓库
     task_repo: Arc<dyn TaskRepository>,
     /// Webhook 仓库
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook-off 模式下，CrawlUseCase 不持有 WebhookRepository。
+    #[cfg(feature = "webhook")]
     webhook_repo: Arc<dyn WebhookRepository>,
     /// 抓取结果仓库
     scrape_result_repo: Arc<dyn ScrapeResultRepository>,
     /// 地理限制仓库
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，CrawlUseCase 不执行地理限制检查。
+    #[cfg(feature = "teams")]
     geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     /// 团队服务
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，CrawlUseCase 不调用 TeamService.validate_geographic_restriction。
+    #[cfg(feature = "teams")]
     team_service: Arc<TeamService>,
 }
 
@@ -72,10 +93,10 @@ impl CrawlUseCase {
     ///
     /// * `crawl_repo` - 爬取任务仓库
     /// * `task_repo` - 任务仓库
-    /// * `webhook_repo` - Webhook 仓库
+    /// * `webhook_repo` - Webhook 仓库（仅 webhook-on 时传入）
     /// * `scrape_result_repo` - 抓取结果仓库
-    /// * `geo_restriction_repo` - 地理限制仓库
-    /// * `team_service` - 团队服务
+    /// * `geo_restriction_repo` - 地理限制仓库（仅 teams-on 时传入）
+    /// * `team_service` - 团队服务（仅 teams-on 时传入）
     ///
     /// # 返回值
     ///
@@ -83,17 +104,20 @@ impl CrawlUseCase {
     pub fn new(
         crawl_repo: Arc<dyn CrawlRepository>,
         task_repo: Arc<dyn TaskRepository>,
-        webhook_repo: Arc<dyn WebhookRepository>,
         scrape_result_repo: Arc<dyn ScrapeResultRepository>,
-        geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
-        team_service: Arc<TeamService>,
+        #[cfg(feature = "webhook")] webhook_repo: Arc<dyn WebhookRepository>,
+        #[cfg(feature = "teams")] geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
+        #[cfg(feature = "teams")] team_service: Arc<TeamService>,
     ) -> Self {
         Self {
             crawl_repo,
             task_repo,
-            webhook_repo,
             scrape_result_repo,
+            #[cfg(feature = "webhook")]
+            webhook_repo,
+            #[cfg(feature = "teams")]
             geo_restriction_repo,
+            #[cfg(feature = "teams")]
             team_service,
         }
     }
@@ -192,57 +216,79 @@ impl CrawlUseCase {
         }
 
         // 2. 检查地理限制
-        let restrictions = self
-            .geo_restriction_repo
-            .get_team_restrictions(team_id)
-            .await
-            .map_err(|e| {
-                CrawlUseCaseError::Anyhow(anyhow::anyhow!("Failed to get team restrictions: {}", e))
-            })?;
+        //
+        // R-teams-004 / T014：teams feature 关闭时跳过整个地理限制块。
+        // teams-off 模式下，CrawlUseCase 不持有 geo_restriction_repo / team_service，
+        // 单租户降级，无地理限制概念，直接进入任务创建流程。
+        //
+        // teams-on：执行地理限制检查（获取限制→validate→log），失败则返回 ValidationError。
+        // teams-off：restrictions 变量使用 TeamGeoRestrictions::default() 占位，
+        //   以保证下游 payload 中的 `restrictions.domain_blacklist` 字段类型一致。
+        #[cfg(feature = "teams")]
+        let restrictions = {
+            let r = self
+                .geo_restriction_repo
+                .get_team_restrictions(team_id)
+                .await
+                .map_err(|e| {
+                    CrawlUseCaseError::Anyhow(anyhow::anyhow!(
+                        "Failed to get team restrictions: {}",
+                        e
+                    ))
+                })?;
 
-        match self
-            .team_service
-            .validate_geographic_restriction(team_id, client_ip, &restrictions)
-            .await
-        {
-            Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
-                // 记录允许的访问日志
-                if let Err(e) = self
-                    .geo_restriction_repo
-                    .log_geo_restriction_action(
-                        team_id,
-                        client_ip,
-                        "",
-                        "ALLOWED",
-                        "Geographic restriction check passed",
-                    )
-                    .await
-                {
-                    error!("Failed to log geographic restriction action: {}", e);
+            match self
+                .team_service
+                .validate_geographic_restriction(team_id, client_ip, &r)
+                .await
+            {
+                Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
+                    // 记录允许的访问日志
+                    if let Err(e) = self
+                        .geo_restriction_repo
+                        .log_geo_restriction_action(
+                            team_id,
+                            client_ip,
+                            "",
+                            "ALLOWED",
+                            "Geographic restriction check passed",
+                        )
+                        .await
+                    {
+                        error!("Failed to log geographic restriction action: {}", e);
+                    }
+                }
+                Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
+                    // 记录拒绝的访问日志
+                    if let Err(e) = self
+                        .geo_restriction_repo
+                        .log_geo_restriction_action(team_id, client_ip, "", "DENIED", &reason)
+                        .await
+                    {
+                        error!("Failed to log geographic restriction action: {}", e);
+                    }
+                    return Err(CrawlUseCaseError::ValidationError(format!(
+                        "Geographic restriction check failed: {}",
+                        reason
+                    )));
+                }
+                Err(e) => {
+                    error!("Geographic restriction validation error: {}", e);
+                    return Err(CrawlUseCaseError::Anyhow(anyhow::anyhow!(
+                        "Geographic restriction validation failed: {}",
+                        e
+                    )));
                 }
             }
-            Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
-                // 记录拒绝的访问日志
-                if let Err(e) = self
-                    .geo_restriction_repo
-                    .log_geo_restriction_action(team_id, client_ip, "", "DENIED", &reason)
-                    .await
-                {
-                    error!("Failed to log geographic restriction action: {}", e);
-                }
-                return Err(CrawlUseCaseError::ValidationError(format!(
-                    "Geographic restriction check failed: {}",
-                    reason
-                )));
-            }
-            Err(e) => {
-                error!("Geographic restriction validation error: {}", e);
-                return Err(CrawlUseCaseError::Anyhow(anyhow::anyhow!(
-                    "Geographic restriction validation failed: {}",
-                    e
-                )));
-            }
-        }
+            r
+        };
+        // R-teams-004 / T014：teams-off 时 restrictions 用默认值占位
+        // （payload.domain_blacklist 字段类型保持一致，避免 cfg 分裂 payload 构造）
+        #[cfg(not(feature = "teams"))]
+        let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
+        // 避免 unused variable warning（client_ip 在 teams-off 时不被使用）
+        #[cfg(not(feature = "teams"))]
+        let _ = client_ip;
 
         // 3. 生成新的爬取任务 ID
         let crawl_id = Uuid::new_v4();
@@ -395,10 +441,19 @@ impl CrawlUseCase {
 mod tests {
     use super::*;
     use crate::domain::models::scrape_result::ScrapeResult;
+    // R-teams-004 / T014：teams feature 关闭时不导入 teams 相关类型
+    // （teams-only 测试已门控，mock 类型也门控）
+    #[cfg(feature = "teams")]
     use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError;
+    #[cfg(feature = "teams")]
     use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
+    #[cfg(feature = "teams")]
     use crate::domain::services::team_service::TeamGeoRestrictions;
+    // R-wh-003 / T027：webhook feature 关闭时不导入 WebhookRepository
+    #[cfg(feature = "webhook")]
+    use crate::domain::repositories::webhook_repository::WebhookRepository;
     use async_trait::async_trait;
+    #[cfg(feature = "teams")]
     use std::net::IpAddr;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
@@ -691,9 +746,14 @@ mod tests {
     }
 
     // ============ MockWebhookRepository ============
+    //
+    // R-wh-003 / T027：webhook feature 关闭时不编译此 mock
+    // （WebhookRepository trait 已门控，mock 也同步门控）
 
+    #[cfg(feature = "webhook")]
     struct MockWebhookRepository;
 
+    #[cfg(feature = "webhook")]
     #[async_trait]
     impl WebhookRepository for MockWebhookRepository {
         async fn create(
@@ -771,7 +831,11 @@ mod tests {
     }
 
     // ============ MockGeoRestrictionRepository ============
+    //
+    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
+    // （GeoRestrictionRepository trait 已门控，mock 也同步门控）
 
+    #[cfg(feature = "teams")]
     struct MockGeoRestrictionRepository {
         restrictions: Mutex<TeamGeoRestrictions>,
         get_should_fail: bool,
@@ -779,6 +843,7 @@ mod tests {
         log_count: AtomicU32,
     }
 
+    #[cfg(feature = "teams")]
     impl MockGeoRestrictionRepository {
         fn with_restrictions(restrictions: TeamGeoRestrictions) -> Self {
             Self {
@@ -808,6 +873,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "teams")]
     #[async_trait]
     impl GeoRestrictionRepository for MockGeoRestrictionRepository {
         async fn get_team_restrictions(
@@ -849,11 +915,16 @@ mod tests {
     }
 
     // ============ MockGeoLocationService ============
+    //
+    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
+    // （GeoLocationService trait 仅 teams-on 时使用）
 
+    #[cfg(feature = "teams")]
     struct MockGeoLocationService {
         should_fail: bool,
     }
 
+    #[cfg(feature = "teams")]
     impl MockGeoLocationService {
         fn succeeding() -> Self {
             Self { should_fail: false }
@@ -864,6 +935,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "teams")]
     #[async_trait]
     impl GeoLocationService for MockGeoLocationService {
         async fn get_location(&self, _ip: &IpAddr) -> anyhow::Result<GeoLocation> {
@@ -935,13 +1007,18 @@ mod tests {
     }
 
     /// Build a CrawlUseCase with configurable mocks.
+    ///
+    /// R-teams-004 / T014：teams-off 时不接收 geo_repo / geo_loc_service 参数。
+    /// R-wh-003 / T027：webhook-off 时不构造 MockWebhookRepository。
     fn build_use_case(
         crawl_repo: Arc<MockCrawlRepository>,
         task_repo: Arc<MockTaskRepository>,
         scrape_result_repo: Arc<MockScrapeResultRepository>,
-        geo_repo: Arc<MockGeoRestrictionRepository>,
-        geo_loc_service: Arc<MockGeoLocationService>,
+        #[cfg(feature = "teams")] geo_repo: Arc<MockGeoRestrictionRepository>,
+        #[cfg(feature = "teams")] geo_loc_service: Arc<MockGeoLocationService>,
     ) -> CrawlUseCase {
+        // R-teams-004 / T014：teams-on 时构造 team_service 并传入 CrawlUseCase
+        #[cfg(feature = "teams")]
         let team_service = Arc::new(TeamService::new(
             geo_loc_service,
             Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -951,9 +1028,12 @@ mod tests {
         CrawlUseCase::new(
             crawl_repo,
             task_repo,
-            Arc::new(MockWebhookRepository),
             scrape_result_repo,
+            #[cfg(feature = "webhook")]
+            Arc::new(MockWebhookRepository),
+            #[cfg(feature = "teams")]
             geo_repo,
+            #[cfg(feature = "teams")]
             team_service,
         )
     }
@@ -968,9 +1048,11 @@ mod tests {
             crawl_repo,
             task_repo,
             scrape_result_repo,
+            #[cfg(feature = "teams")]
             Arc::new(MockGeoRestrictionRepository::with_restrictions(
                 TeamGeoRestrictions::default(),
             )),
+            #[cfg(feature = "teams")]
             Arc::new(MockGeoLocationService::succeeding()),
         )
     }
@@ -1261,6 +1343,7 @@ mod tests {
         assert!(result.is_ok(), "max_concurrency=100 should be allowed");
     }
 
+    #[cfg(feature = "teams")]
     #[tokio::test]
     async fn test_create_crawl_geo_denied_invalid_ip() {
         // enable_geo_restrictions=true + invalid IP → Denied without calling geolocation
@@ -1298,6 +1381,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "teams")]
     #[tokio::test]
     async fn test_create_crawl_geo_validation_error() {
         // enable_geo_restrictions=true + valid IP + geolocation fails → Err
@@ -1330,6 +1414,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "teams")]
     #[tokio::test]
     async fn test_create_crawl_geo_repo_get_error() {
         let use_case = build_use_case(
@@ -1354,6 +1439,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "teams")]
     #[tokio::test]
     async fn test_create_crawl_log_failure_does_not_block_allowed() {
         // Geo is allowed, but log_geo_restriction_action fails — flow should still succeed
@@ -1665,6 +1751,7 @@ mod tests {
         assert!(err.to_string().contains("cancel tasks down"));
     }
 
+    #[cfg(feature = "teams")]
     #[tokio::test]
     async fn test_create_crawl_geo_denied_with_failing_log_still_returns_validation_error() {
         // Geo denied + log failure → error is logged but ValidationError is still returned
@@ -1778,6 +1865,7 @@ mod tests {
         assert!(failed.is_empty());
     }
 
+    #[cfg(feature = "webhook")]
     #[tokio::test]
     async fn test_mock_webhook_repo_remaining_methods_return_defaults() {
         let repo = MockWebhookRepository;
@@ -1803,6 +1891,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "teams")]
     #[tokio::test]
     async fn test_mock_geo_restriction_repo_update_team_restrictions_succeeds() {
         let repo = MockGeoRestrictionRepository::with_restrictions(TeamGeoRestrictions::default());

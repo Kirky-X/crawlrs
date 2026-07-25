@@ -147,12 +147,16 @@ cargo build --release --features "engine-playwright,metrics"
 
 ### 特性标志
 
-> **注意：** `default = []` — 默认不启用任何特性。使用预设（`standard` / `full`）或显式列出所需特性。
+> **注意：** `default = ["teams", "auth", "rate-limit", "webhook"]` — 默认启用全部业务能力特性（多租户 + 认证 + 限流 + Webhook），保持现有全功能行为。使用预设（`standard` / `full`）或显式列出所需特性可叠加引擎与基础设施特性。
 
-> **核心栈为非可选。** 核心依赖（oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit 0.3 + scraper / chardetng / encoding_rs / robotstxt）与 HTTP 抓取栈始终编译，不再以 feature 形式暴露。
+> **核心栈为非可选。** 核心依赖（oxcache 0.3 / dbnexus 0.4 / confers 0.4 / sdforge 0.4 / inklog 0.1 / trait-kit 0.3 + scraper / chardetng / encoding_rs / robotstxt）与 HTTP 抓取栈始终编译，不再以 feature 形式暴露。
 
 | 特性 | 描述 | 默认 |
 |---------|-------------|----------|
+| `teams` | 多租户隔离（团队、地理限制、配额隔离）；隐含 `auth` | ✅ 是 |
+| `auth` | API Key 认证中间件；关闭时走 `default_identity_middleware` 注入固定身份 | ✅ 是 |
+| `rate-limit` | 基于 limiteron 的速率限制与熔断；关闭时注入 `NoopRateLimitingService` 放行 | ✅ 是 |
+| `webhook` | Webhook 投递与管理；关闭时注入 `NoopWebhookService` 并移除 `/v1/webhooks` 路由 | ✅ 是 |
 | `engine-playwright` | 基于 chromiumoxide 的浏览器自动化 | ❌ 否 |
 | `engine-flaresolverr` | FlareSolverr 反爬虫保护（FlareSolverrMode 枚举区分 Full/Cdp/Tls 三模式） | ❌ 否 |
 | `metrics` | Prometheus 指标导出 | ❌ 否 |
@@ -165,14 +169,16 @@ cargo build --release --features "engine-playwright,metrics"
 
 ### 预设与编译体积
 
-本项目通过 Cargo 特性控制可选功能。核心栈（oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。
+本项目通过 Cargo 特性控制可选功能。核心栈（oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。业务能力特性（`teams` / `auth` / `rate-limit` / `webhook`）默认启用，可通过 `--no-default-features` 关闭以构建单租户/无认证部署。
 
 | 预设 | 特性组合 | 二进制大小 | 适用场景 |
 |-----|---------|-----------|---------|
-| standard | `engine-playwright, metrics` | ~35MB | 需要 JS 渲染（核心栈默认包含） |
+| default | `teams, auth, rate-limit, webhook` | ~30MB | 单租户/多租户全功能（业务能力默认开） |
+| standard | `default + engine-playwright, metrics` | ~35MB | 需要 JS 渲染（核心栈默认包含） |
 | full | `standard + engine-flaresolverr` | ~52MB | 所有功能 |
+| no-default | `--no-default-features` | ~22MB | 单租户/无认证部署（业务能力全关，Noop 实现） |
 
-> **注意：** `default = []` 不出现在预设表中，因为它不启用任何可选特性，仅编译核心栈（约 ~30MB）；用于按需显式启用场景。
+> **注意：** `default` 包含业务能力特性，因此预设表已包含业务能力。如需关闭业务能力，使用 `--no-default-features` 显式列出所需特性（如 `--no-default-features --features rate-limit`）。
 
 ### 自定义组合
 
@@ -180,14 +186,24 @@ cargo build --release --features "engine-playwright,metrics"
 # 自定义组合：核心栈始终编译，仅需指定可选特性
 cargo build --release --features "engine-playwright,metrics,genai-llm"
 
-# 仅核心栈（无任何可选特性）
+# 仅核心栈（关闭所有业务能力 + 引擎，单租户/无认证部署）
 cargo build --release --no-default-features
+
+# 单租户 + 限流（关闭认证与 Webhook）
+cargo build --release --no-default-features --features rate-limit
+
+# 多租户 + 认证（关闭限流与 Webhook）
+cargo build --release --no-default-features --features teams
 ```
 
 ### 特性参考
 
 | 特性 | 描述 | 影响 |
 |------|------|------|
+| `teams` | 多租户隔离（团队、地理限制、配额隔离） | 隐含 `auth`；关闭时降级为单租户，使用 `DEFAULT_TEAM_ID` |
+| `auth` | API Key 认证中间件 | 关闭时走 `default_identity_middleware` 注入固定 `AuthState` |
+| `rate-limit` | 基于 limiteron 的速率限制与熔断 | 引入 `limiteron` 依赖；关闭时注入 `NoopRateLimitingService` 全放行 |
+| `webhook` | Webhook 投递与管理 | 关闭时注入 `NoopWebhookService` 并移除 `/v1/webhooks` 路由 |
 | `engine-playwright` | chromiumoxide JS 渲染引擎 | +8MB |
 | `engine-flaresolverr` | FlareSolverr 引擎（通过 FlareSolverrMode 枚举区分 Full/Cdp/Tls 三种模式） | - |
 | `metrics` | 指标监控 | - |
@@ -195,6 +211,41 @@ cargo build --release --no-default-features
 | `browser-download` | 自动下载 Playwright 浏览器 | - |
 | `test-mocks` | 测试 mock 模块（`#[cfg(any(test, feature = "test-mocks"))]`） | - |
 | `admin-tools` | 运维 CLI 工具（`cargo run --bin add_credits --features admin-tools`） | - |
+
+### Feature 矩阵（业务能力）
+
+> **R-flags-005：** 业务能力特性（`teams` / `auth` / `rate-limit` / `webhook`）默认启用，可通过 `--no-default-features` 关闭以构建单租户/无认证/无限流/无 Webhook 的轻量部署。每个特性关闭时都有对应的 Noop 实现注入，保证业务逻辑无感知。
+
+#### 业务能力特性矩阵
+
+| 特性 | 默认 | 依赖关系 | 关闭时行为 | 关联常量/Noop 实现 |
+|------|------|----------|------------|---------------------|
+| `teams` | ✅ 启用 | 隐含 `auth` | 降级为单租户，所有请求归属 `DEFAULT_TEAM_ID`（`Uuid::from_u128(1)`） | `DEFAULT_TEAM_ID` |
+| `auth` | ✅ 启用 | 无 | 走 `default_identity_middleware`，注入固定 `AuthState`（`DEFAULT_API_KEY_ID` + `full_access` scope） | `DEFAULT_API_KEY_ID`（`Uuid::from_u128(2)`）、`default_identity_middleware` |
+| `rate-limit` | ✅ 启用 | `dep:limiteron` | 注入 `NoopRateLimitingService`，`check_rate_limit` 返回 `Allowed`、`check_and_deduct_quota` 返回 `Ok(())`、`get_quota_balance` 返回 `Ok(i64::MAX)` | `NoopRateLimitingService` |
+| `webhook` | ✅ 启用 | 无 | 注入 `NoopWebhookService`，`trigger_completion` / `trigger_failure` 返回 `Ok(())`；移除 `/v1/webhooks` 路由与 `webhook_worker` | `NoopWebhookService` |
+
+#### 条件端点
+
+| 端点 | 启用条件 | 关闭时行为 |
+|------|----------|------------|
+| `/v1/teams/me`、`/v1/teams/me/usage`、`/v1/teams/geo-restrictions`（GET/PUT） | `teams` | 路由不注册（404） |
+| `/v1/extract`（带地理限制泛型） | `teams` | 降级为无地理限制的 `extract` 签名 |
+| `/v1/webhooks`（POST/GET） | `webhook` | 路由不注册（404） |
+
+#### Feature 组合验证矩阵（CI 覆盖）
+
+CI 的 `feature-matrix` job 覆盖以下 7 种组合，确保门控完整、无未门控引用：
+
+| 组合 | 命令 | 验证目标 |
+|------|------|----------|
+| no-default | `cargo check --no-default-features --lib` | 全部门控就位，无业务能力 + 无引擎 |
+| teams-only | `cargo check --no-default-features --features teams --lib` | 多租户（隐含 `auth`）单独编译 |
+| auth-only | `cargo check --no-default-features --features auth --lib` | 仅认证（单租户 + 认证） |
+| rate-limit-only | `cargo check --no-default-features --features rate-limit --lib` | 仅限流（单租户 + 限流） |
+| webhook-only | `cargo check --no-default-features --features webhook --lib` | 仅 Webhook（单租户 + Webhook） |
+| default | `cargo check --features default --lib` | 全业务能力默认组合 |
+| full | `cargo check --features full --lib` | 全功能（业务能力 + 引擎 + 指标） |
 
 ---
 

@@ -243,11 +243,7 @@ mod tests {
 
         for i in 0..3 {
             let result = svc.process_backlog_tasks(team_id).await;
-            assert!(
-                result.is_ok(),
-                "call {} should succeed",
-                i
-            );
+            assert!(result.is_ok(), "call {} should succeed", i);
             assert_eq!(
                 result.unwrap(),
                 0,

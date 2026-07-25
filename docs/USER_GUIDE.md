@@ -16,6 +16,7 @@
 - [Introduction](#introduction)
 - [Getting Started](#getting-started)
 - [Authentication](#authentication)
+- [Single-Tenant / No-Auth Deployment](#single-tenant--no-auth-deployment)
 - [Scraping](#scraping)
 - [Crawling](#crawling)
 - [Searching](#searching)
@@ -183,6 +184,133 @@ Check your current limits:
 curl -X GET http://localhost:8899/v1/teams/me/usage \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
+
+---
+
+## Single-Tenant / No-Auth Deployment
+
+> **R-flags-005:** crawlrs supports a lightweight deployment mode with business capability features disabled. This is ideal for single-tenant self-hosted scenarios that do not require multi-tenant isolation, API Key authentication, rate limiting, or Webhook notifications.
+
+### Overview
+
+By default, crawlrs builds with all business capability features enabled (`default = ["teams", "auth", "rate-limit", "webhook"]`). For simpler deployments (e.g., internal tools, single-user scraping services), you can disable these features to:
+
+- Reduce binary size (~22MB vs ~30MB)
+- Eliminate database tables for teams/api_keys/webhooks
+- Skip API Key verification (requests pass through with a fixed identity)
+- Disable rate limiting (all requests allowed)
+- Disable Webhook delivery (no `/v1/webhooks` routes, no `webhook_worker`)
+
+### Building with No Default Features
+
+```bash
+# Single-tenant, no auth, no rate limiting, no Webhook
+cargo build --release --no-default-features
+
+# Single-tenant + rate limiting only (no auth, no Webhook)
+cargo build --release --no-default-features --features rate-limit
+
+# Multi-tenant + auth (no rate limiting, no Webhook)
+cargo build --release --no-default-features --features teams
+```
+
+### Default Identity Constants
+
+When `auth` is disabled, the `default_identity_middleware` injects a fixed `AuthState` into all requests, using these constants defined in `src/common/constants.rs`:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `DEFAULT_TEAM_ID` | `Uuid::from_u128(1)` | All requests are attributed to this team |
+| `DEFAULT_API_KEY_ID` | `Uuid::from_u128(2)` | Fixed API Key ID for audit logs |
+| `DEFAULT_IDENTITY_TOKEN_HASH` | `"default_identity"` | Placeholder token hash for downstream extractors |
+
+The injected `AuthState` has `ApiKeyScope::full_access()` (read/write/admin all `true`, search/scrape limits `u32::MAX`), so all endpoints are accessible without authentication.
+
+### Noop Service Implementations
+
+When business capability features are disabled, corresponding Noop implementations are injected via DI:
+
+| Disabled Feature | Noop Implementation | Behavior |
+|------------------|---------------------|----------|
+| `rate-limit` | `NoopRateLimitingService` | `check_rate_limit` → `Allowed`; `check_and_deduct_quota` → `Ok(())`; `get_quota_balance` → `Ok(i64::MAX)` |
+| `webhook` | `NoopWebhookService` | `trigger_completion` / `trigger_failure` → `Ok(())` (no-op) |
+
+### Conditional Endpoints
+
+When features are disabled, the corresponding routes are not registered (return 404):
+
+| Endpoint | Required Feature | Disabled Behavior |
+|----------|------------------|-------------------|
+| `/v1/teams/me`, `/v1/teams/me/usage`, `/v1/teams/geo-restrictions` (GET/PUT) | `teams` | 404 Not Found |
+| `/v1/extract` (with geo-restriction generic) | `teams` | Degrades to `extract` signature without geo-restrictions |
+| `/v1/webhooks` (POST/GET) | `webhook` | 404 Not Found |
+
+### Pre-provisioning Credits for Default Tenant
+
+> **Important:** When `rate-limit` is enabled but `teams` is disabled, quota deductions still occur against `DEFAULT_TEAM_ID`. You must pre-provision credits for the default tenant before making requests, otherwise `check_and_deduct_quota` will return `PaymentRequired` (402).
+
+Use the `add_credits` CLI tool to provision the default tenant:
+
+```bash
+# Build with admin-tools feature
+cargo build --release --no-default-features --features rate-limit,admin-tools
+
+# Add 10000 credits to DEFAULT_TEAM_ID (Uuid::from_u128(1))
+./target/release/add_credits --team-id 00000000-0000-0000-0000-000000000001 --amount 10000
+```
+
+### Configuration Example
+
+`config/default.toml` for single-tenant + rate-limit deployment:
+
+```toml
+[database]
+url = "postgresql://user:password@localhost/crawlrs"
+max_connections = 20
+
+[server]
+host = "0.0.0.0"
+port = 8899
+
+[rate_limiting]
+enabled = true
+default_rpm = 60
+default_limit = 60
+burst_size = 20
+
+# No [auth] section needed — auth feature disabled
+# No [webhook] section needed — webhook feature disabled
+```
+
+### Verification
+
+After building with `--no-default-features`, verify the deployment:
+
+```bash
+# Health check (always available)
+curl http://localhost:8899/health
+
+# Scrape without Authorization header (auth disabled)
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
+
+# Verify /v1/webhooks returns 404 (webhook disabled)
+curl -X POST http://localhost:8899/v1/webhooks -d '{}'
+
+# Verify /v1/teams/me returns 404 (teams disabled)
+curl http://localhost:8899/v1/teams/me
+```
+
+### Migration from Multi-Tenant to Single-Tenant
+
+If you are migrating from a multi-tenant deployment:
+
+1. **Export your data** from the multi-tenant database (scrape results, crawl configurations)
+2. **Re-import** into the single-tenant database, mapping all `team_id` values to `DEFAULT_TEAM_ID` (`00000000-0000-0000-0000-000000000001`)
+3. **Rebuild** with `--no-default-features` (or with only the features you need)
+4. **Pre-provision credits** for `DEFAULT_TEAM_ID` if `rate-limit` is enabled
+5. **Verify** all endpoints behave as expected
 
 ---
 

@@ -26,7 +26,11 @@ use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepos
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
+// R-wh-003 / T027：webhook feature 关闭时不导入 webhook 相关 repository 类型
+// （字段不编译，accessor 也不编译）
+#[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+#[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::auth_scope_service::AuthScopeService;
@@ -66,8 +70,16 @@ pub struct CrawlRsState {
     /// Scrape result repository
     pub result_repo: Arc<dyn ScrapeResultRepository>,
     /// Webhook repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook-off 模式下，无 webhook 管理功能，不需要 `WebhookRepository`。
+    #[cfg(feature = "webhook")]
     pub webhook_repo: Arc<dyn WebhookRepository>,
     /// Webhook event repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook-off 模式下，无 webhook 事件持久化，不需要 `WebhookEventRepository`。
+    #[cfg(feature = "webhook")]
     pub webhook_event_repo: Arc<dyn WebhookEventRepository>,
     /// Tasks backlog repository
     pub tasks_backlog_repo: Arc<dyn TasksBacklogRepository>,
@@ -84,6 +96,10 @@ pub struct CrawlRsState {
     #[cfg(feature = "teams")]
     pub team_service: Arc<TeamService>,
     /// Webhook service
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时此字段保留，但装配 `NoopWebhookService`。
+    /// `WebhookService` trait 需始终编译（业务逻辑通过 trait 调用 trigger_completion / trigger_failure），
+    /// 故此字段不门控；`ServicesComponents` 与 `init_services` 中的装配按 cfg 选择具体实现。
     pub webhook_service: Arc<dyn WebhookService>,
     /// Robots checker
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
@@ -110,6 +126,10 @@ pub struct CrawlRsState {
     /// Audit service
     pub audit_service: Arc<dyn AuditServiceTrait>,
     /// Webhook worker
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook-off 模式下，不启动 webhook_worker，不需要此字段。
+    #[cfg(feature = "webhook")]
     pub webhook_worker: Arc<crate::workers::webhook_worker::WebhookWorker>,
     /// Backlog worker
     pub backlog_worker: Arc<crate::workers::backlog_worker::BacklogWorker>,
@@ -154,7 +174,9 @@ impl CrawlRsState {
             credits_repo: infra.repositories.credits_repo.clone(),
             crawl_repo: infra.repositories.crawl_repo.clone(),
             result_repo: infra.repositories.result_repo.clone(),
+            #[cfg(feature = "webhook")]
             webhook_repo: infra.repositories.webhook_repo.clone(),
+            #[cfg(feature = "webhook")]
             webhook_event_repo: infra.repositories.webhook_event_repo.clone(),
             tasks_backlog_repo: infra.repositories.tasks_backlog_repo.clone(),
             task_queue: services.queue.clone(),
@@ -174,6 +196,7 @@ impl CrawlRsState {
             extraction_service: services.extraction_service.clone(),
             regex_cache: services.regex_cache.clone(),
             audit_service: services.audit_service.clone(),
+            #[cfg(feature = "webhook")]
             webhook_worker: services.webhook_worker.clone(),
             backlog_worker: services.backlog_worker.clone(),
             expiration_worker: services.expiration_worker.clone(),
@@ -199,8 +222,14 @@ pub trait CrawlRsStateExt {
     /// Get result repository
     fn result_repo(&self) -> Arc<dyn ScrapeResultRepository>;
     /// Get webhook repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository>;
     /// Get webhook event repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    #[cfg(feature = "webhook")]
     fn webhook_event_repo(&self) -> Arc<dyn WebhookEventRepository>;
     /// Get rate limiting service
     fn rate_limiting_service(&self) -> Arc<dyn RateLimitingService>;
@@ -242,6 +271,9 @@ pub trait CrawlRsStateExt {
     /// Get extraction service
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait>;
     /// Get webhook worker
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    #[cfg(feature = "webhook")]
     fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker>;
     /// Get backlog worker
     fn backlog_worker(&self) -> Arc<crate::workers::backlog_worker::BacklogWorker>;
@@ -276,10 +308,12 @@ impl CrawlRsStateExt for CrawlRsState {
         self.result_repo.clone()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
         self.webhook_repo.clone()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_event_repo(&self) -> Arc<dyn WebhookEventRepository> {
         self.webhook_event_repo.clone()
     }
@@ -357,6 +391,7 @@ impl CrawlRsStateExt for CrawlRsState {
         self.extraction_service.clone()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker> {
         self.webhook_worker.clone()
     }
@@ -397,10 +432,12 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().result_repo()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
         self.as_ref().webhook_repo()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_event_repo(&self) -> Arc<dyn WebhookEventRepository> {
         self.as_ref().webhook_event_repo()
     }
@@ -478,6 +515,7 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().extraction_service()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker> {
         self.as_ref().webhook_worker()
     }
@@ -579,12 +617,6 @@ mod tests {
         let result_repo: Arc<dyn ScrapeResultRepository> = state.result_repo();
         assert!(Arc::strong_count(&result_repo) >= 2);
 
-        let webhook_repo: Arc<dyn WebhookRepository> = state.webhook_repo();
-        assert!(Arc::strong_count(&webhook_repo) >= 2);
-
-        let webhook_event_repo: Arc<dyn WebhookEventRepository> = state.webhook_event_repo();
-        assert!(Arc::strong_count(&webhook_event_repo) >= 2);
-
         let rate_limiting: Arc<dyn RateLimitingService> = state.rate_limiting_service();
         assert!(Arc::strong_count(&rate_limiting) >= 2);
 
@@ -593,6 +625,16 @@ mod tests {
         {
             let team_service: Arc<TeamService> = state.team_service();
             assert!(Arc::strong_count(&team_service) >= 2);
+        }
+
+        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_repo: Arc<dyn WebhookRepository> = state.webhook_repo();
+            assert!(Arc::strong_count(&webhook_repo) >= 2);
+
+            let webhook_event_repo: Arc<dyn WebhookEventRepository> = state.webhook_event_repo();
+            assert!(Arc::strong_count(&webhook_event_repo) >= 2);
         }
 
         let webhook_service: Arc<dyn WebhookService> = state.webhook_service();
@@ -643,8 +685,12 @@ mod tests {
         let extraction_service: Arc<dyn ExtractionServiceTrait> = state.extraction_service();
         assert!(Arc::strong_count(&extraction_service) >= 2);
 
-        let webhook_worker = state.webhook_worker();
-        assert!(Arc::strong_count(&webhook_worker) >= 2);
+        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_worker = state.webhook_worker();
+            assert!(Arc::strong_count(&webhook_worker) >= 2);
+        }
 
         let backlog_worker = state.backlog_worker();
         assert!(Arc::strong_count(&backlog_worker) >= 2);
@@ -797,12 +843,6 @@ mod tests {
         let result_repo = state_arc.result_repo();
         assert!(Arc::strong_count(&result_repo) >= 2);
 
-        let webhook_repo = state_arc.webhook_repo();
-        assert!(Arc::strong_count(&webhook_repo) >= 2);
-
-        let webhook_event_repo = state_arc.webhook_event_repo();
-        assert!(Arc::strong_count(&webhook_event_repo) >= 2);
-
         let rate_limiting_service = state_arc.rate_limiting_service();
         assert!(Arc::strong_count(&rate_limiting_service) >= 2);
 
@@ -811,6 +851,16 @@ mod tests {
         {
             let team_service = state_arc.team_service();
             assert!(Arc::strong_count(&team_service) >= 2);
+        }
+
+        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_repo = state_arc.webhook_repo();
+            assert!(Arc::strong_count(&webhook_repo) >= 2);
+
+            let webhook_event_repo = state_arc.webhook_event_repo();
+            assert!(Arc::strong_count(&webhook_event_repo) >= 2);
         }
 
         let webhook_service = state_arc.webhook_service();
@@ -863,8 +913,12 @@ mod tests {
         let extraction_service = state_arc.extraction_service();
         assert!(Arc::strong_count(&extraction_service) >= 2);
 
-        let webhook_worker = state_arc.webhook_worker();
-        assert!(Arc::strong_count(&webhook_worker) >= 2);
+        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_worker = state_arc.webhook_worker();
+            assert!(Arc::strong_count(&webhook_worker) >= 2);
+        }
 
         let backlog_worker = state_arc.backlog_worker();
         assert!(Arc::strong_count(&backlog_worker) >= 2);

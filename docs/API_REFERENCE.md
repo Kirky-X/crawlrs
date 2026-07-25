@@ -61,6 +61,28 @@ API keys can have different scopes that control access to specific features:
 | `extract` | Access to extract endpoints |
 | `admin` | Full administrative access |
 
+### Auth Disabled Behavior (R-flags-005)
+
+> **Conditional:** When the `auth` feature is disabled (via `--no-default-features` or explicit feature selection), API Key authentication is bypassed. The `default_identity_middleware` injects a fixed `AuthState` into all requests.
+
+| Behavior | When `auth` Enabled (default) | When `auth` Disabled |
+|----------|------------------------------|---------------------|
+| `Authorization` header | Required (401 if missing/invalid) | Ignored — requests pass through |
+| `AuthState.team_id` | Resolved from API Key's `team_id` | Fixed to `DEFAULT_TEAM_ID` (`Uuid::from_u128(1)`) |
+| `AuthState.api_key_id` | Resolved from API Key | Fixed to `DEFAULT_API_KEY_ID` (`Uuid::from_u128(2)`) |
+| `AuthState.scope` | Loaded from DB (or default `scrape`/`crawl`/etc.) | `ApiKeyScope::full_access()` (all permissions `true`, limits `u32::MAX`) |
+| Token cache | Populated on first request per API Key | N/A — fixed identity, no caching |
+| Rate limit lockout | Tracked per API Key | Not tracked (but `rate-limit` feature may still apply per-IP limits) |
+
+**Build commands:**
+```bash
+# Auth disabled (single-tenant, no auth)
+cargo build --release --no-default-features
+
+# Auth enabled (default)
+cargo build --release --features default
+```
+
 ---
 
 ## Common Response Format
@@ -556,6 +578,10 @@ Search using various search engines.
 
 ### Extract API
 
+> **Conditional Endpoint (R-teams-003):** This endpoint's signature depends on the `teams` feature:
+> - **`teams` enabled (default):** `POST /v1/extract` accepts `Extension<Arc<TeamService>>` and `Extension<Arc<GR>>` (geo-restriction repository) parameters, enforcing team-scoped geo-restrictions before task creation.
+> - **`teams` disabled:** `POST /v1/extract` degrades to a simpler signature without geo-restriction parameters; tasks are created directly against `DEFAULT_TEAM_ID` without geo checks.
+
 Extract structured data from HTML.
 
 #### Extract Data
@@ -687,6 +713,8 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 
 ### Team API
 
+> **Conditional Endpoints (R-teams-002):** All `/v1/teams/*` endpoints are only available when the `teams` feature is enabled (default). When `teams` is disabled, these routes are not registered and return 404 Not Found. In single-tenant mode (`teams` disabled), all requests are attributed to `DEFAULT_TEAM_ID` (`Uuid::from_u128(1)`), making team management endpoints unnecessary.
+
 #### Get Current Team
 
 **Endpoint:** `GET /v1/teams/me`
@@ -764,6 +792,8 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 ---
 
 ### Webhook API
+
+> **Conditional Endpoints (R-wh-001):** All `/v1/webhooks/*` endpoints are only available when the `webhook` feature is enabled (default). When `webhook` is disabled, these routes are not registered and return 404 Not Found. Additionally, the `webhook_worker` is not spawned, and `NoopWebhookService` is injected (task completion/failure notifications become no-ops).
 
 #### List Webhooks
 
@@ -919,6 +949,8 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 ---
 
 ## Rate Limiting
+
+> **Conditional Behavior (R-rl-003):** Rate limiting is only active when the `rate-limit` feature is enabled (default). When disabled, `NoopRateLimitingService` is injected: `check_rate_limit` returns `Allowed`, `check_and_deduct_quota` returns `Ok(())`, `get_quota_balance` returns `Ok(i64::MAX)`. All requests are allowed without limit, and quota deductions are no-ops. The `X-RateLimit-*` headers are not populated.
 
 The API implements rate limiting at multiple levels:
 

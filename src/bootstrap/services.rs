@@ -28,7 +28,14 @@ use crate::domain::services::rate_limiting_service::{
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
-use crate::domain::services::webhook_service::{WebhookService, WebhookServiceImpl};
+// R-wh-003 / T027：webhook feature 关闭时不导入 WebhookServiceImpl
+// （NoopWebhookService 在 webhook-off 时替代，trait 始终导入）
+use crate::domain::services::webhook_service::WebhookService;
+#[cfg(feature = "webhook")]
+use crate::domain::services::webhook_service::WebhookServiceImpl;
+// R-wh-003 / T027：webhook feature 关闭时导入 NoopWebhookService
+#[cfg(not(feature = "webhook"))]
+use crate::domain::services::noop_webhook_service::NoopWebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
 use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
@@ -41,6 +48,9 @@ use crate::infrastructure::services::limiteron_service::{LimiteronService, RateL
 // R-rl-003 / T020：rate-limit feature 关闭时导入 NoopRateLimitingService
 #[cfg(not(feature = "rate-limit"))]
 use crate::infrastructure::services::noop_rate_limiting_service::NoopRateLimitingService;
+// R-wh-003 / T027：webhook feature 关闭时不导入 WebhookSenderImpl
+// （webhook_sender_impl 模块本身也被 cfg 门控，见 infrastructure::services::mod）
+#[cfg(feature = "webhook")]
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::presentation::middleware::auth_middleware::AuthRateLimiter;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
@@ -68,6 +78,10 @@ pub struct ServicesComponents {
     /// Create scrape use case.
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     /// Webhook service.
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时此字段保留，但装配 `NoopWebhookService`。
+    /// `WebhookService` trait 需始终编译（业务逻辑通过 trait 调用 trigger_completion / trigger_failure），
+    /// 故此字段不门控；`init_services` 中的装配按 cfg 选择具体实现。
     pub webhook_service: Arc<dyn WebhookService>,
     /// Team service.
     ///
@@ -100,6 +114,10 @@ pub struct ServicesComponents {
     /// Regex cache for performance optimization.
     pub regex_cache: Arc<RegexCache>,
     /// Webhook worker
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook-off 模式下，不启动 webhook_worker，不需要此字段。
+    #[cfg(feature = "webhook")]
     pub webhook_worker: Arc<crate::workers::webhook_worker::WebhookWorker>,
     /// Backlog worker
     pub backlog_worker: Arc<crate::workers::backlog_worker::BacklogWorker>,
@@ -376,16 +394,30 @@ pub async fn init_services(
     let create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait> =
         Arc::new(CreateScrapeUseCase::new(engine_client.clone()));
 
-    // Initialize webhook service (使用 WebhookSenderImpl)
+    // R-wh-003 / T027：webhook 相关服务在 webhook-off 时不初始化
+    // webhook-on：装配 WebhookServiceImpl（含 WebhookSenderImpl + 签名密钥 + 事件仓库）
+    // webhook-off：装配 NoopWebhookService（所有方法返回 Ok(())，业务逻辑放行）
+    #[cfg(feature = "webhook")]
     let webhook_sender: Arc<WebhookSenderImpl> = Arc::new(WebhookSenderImpl::new(
         http_client.clone(),
         std::time::Duration::from_secs(10),
     ));
+    #[cfg(feature = "webhook")]
     let webhook_service: Arc<WebhookServiceImpl> = Arc::new(WebhookServiceImpl::new(
         webhook_sender.clone(),
         settings.webhook.secret().to_string(),
         repositories.webhook_event_repo.clone(),
     ));
+    #[cfg(not(feature = "webhook"))]
+    let webhook_service: Arc<NoopWebhookService> = {
+        // tiangang 安全审查 LOW-1：webhook-off 时输出 info 日志，告知运维 webhook 投递已禁用。
+        // 严重程度低于 auth/rate-limit 警告（webhook 关闭不直接引入安全风险，仅影响通知能力）。
+        log::info!(
+            "webhook feature disabled, using NoopWebhookService — \
+             trigger_completion/trigger_failure are no-ops"
+        );
+        Arc::new(NoopWebhookService::new())
+    };
 
     // R-teams-004 / T015：teams 相关服务在 teams-off 时不初始化
     #[cfg(feature = "teams")]
@@ -440,7 +472,9 @@ pub async fn init_services(
     // Initialize regex cache
     let regex_cache = init_regex_cache();
 
-    // Initialize WebhookWorker
+    // R-wh-003 / T027：Initialize WebhookWorker（仅 webhook-on 时构造）
+    // webhook-off：不构造 WebhookWorker，ServicesComponents.webhook_worker 字段不编译
+    #[cfg(feature = "webhook")]
     let webhook_worker = Arc::new(crate::workers::webhook_worker::WebhookWorker::new(
         repositories.webhook_event_repo.clone(),
         webhook_service.clone(),
@@ -483,6 +517,7 @@ pub async fn init_services(
         llm_service,
         extraction_service,
         regex_cache,
+        #[cfg(feature = "webhook")]
         webhook_worker,
         backlog_worker,
         expiration_worker,
@@ -906,7 +941,11 @@ mod tests {
         assert!(Arc::strong_count(&services.llm_service) >= 1);
         assert!(Arc::strong_count(&services.extraction_service) >= 1);
         assert!(Arc::strong_count(&services.regex_cache) >= 1);
-        assert!(Arc::strong_count(&services.webhook_worker) >= 1);
+        // R-wh-003 / T027：webhook feature 关闭时 webhook_worker 字段不编译
+        #[cfg(feature = "webhook")]
+        {
+            assert!(Arc::strong_count(&services.webhook_worker) >= 1);
+        }
         assert!(Arc::strong_count(&services.backlog_worker) >= 1);
         assert!(Arc::strong_count(&services.expiration_worker) >= 1);
     }

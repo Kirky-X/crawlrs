@@ -147,12 +147,16 @@ cargo build --release --features "engine-playwright,metrics"
 
 ### Feature Flags
 
-> **Note:** `default = []` — no features are enabled by default. Use a preset (`standard` / `full`) or list features explicitly.
+> **Note:** `default = ["teams", "auth", "rate-limit", "webhook"]` — all business capability features are enabled by default (multi-tenant + auth + rate limiting + Webhook), preserving existing full-feature behavior. Use presets (`standard` / `full`) or list features explicitly to add engine and infrastructure features.
 
-> **Core stack is non-optional.** Core dependencies (oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit 0.3 + scraper / chardetng / encoding_rs / robotstxt) and the HTTP fetching stack are always compiled; they are no longer exposed as features.
+> **Core stack is non-optional.** Core dependencies (oxcache 0.3 / dbnexus 0.4 / confers 0.4 / sdforge 0.4 / inklog 0.1 / trait-kit 0.3 + scraper / chardetng / encoding_rs / robotstxt) and the HTTP fetching stack are always compiled; they are no longer exposed as features.
 
 | Feature | Description | Default |
 |---------|-------------|----------|
+| `teams` | Multi-tenant isolation (teams, geo-restrictions, quota isolation); implies `auth` | ✅ Yes |
+| `auth` | API Key auth middleware; when disabled, `default_identity_middleware` injects a fixed identity | ✅ Yes |
+| `rate-limit` | limiteron-based rate limiting and circuit breaking; when disabled, `NoopRateLimitingService` allows all | ✅ Yes |
+| `webhook` | Webhook delivery and management; when disabled, `NoopWebhookService` is injected and `/v1/webhooks` route removed | ✅ Yes |
 | `engine-playwright` | chromiumoxide-based browser automation | ❌ No |
 | `engine-flaresolverr` | FlareSolverr anti-bot protection (FlareSolverrMode enum distinguishes Full/Cdp/Tls modes) | ❌ No |
 | `metrics` | Prometheus metrics export | ❌ No |
@@ -165,14 +169,16 @@ cargo build --release --features "engine-playwright,metrics"
 
 ### Presets & Binary Size
 
-The core stack (oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP fetching stack) is always compiled and no longer exposed as features.
+The core stack (oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP fetching stack) is always compiled and no longer exposed as features. Business capability features (`teams` / `auth` / `rate-limit` / `webhook`) are enabled by default; use `--no-default-features` to build single-tenant/no-auth deployments.
 
 | Preset | Feature Set | Binary Size | Use Case |
 |-----|---------|-----------|---------|
-| standard | `engine-playwright, metrics` | ~35MB | JS rendering needed (core stack included by default) |
+| default | `teams, auth, rate-limit, webhook` | ~30MB | Single/multi-tenant full features (business capabilities on by default) |
+| standard | `default + engine-playwright, metrics` | ~35MB | JS rendering needed (core stack included by default) |
 | full | `standard + engine-flaresolverr` | ~52MB | All features |
+| no-default | `--no-default-features` | ~22MB | Single-tenant/no-auth deployment (all business capabilities off, Noop implementations) |
 
-> **Note:** `default = []` is not listed in the preset table because it enables no optional features, compiling only the core stack (~30MB); intended for explicit opt-in scenarios.
+> **Note:** `default` includes business capability features, so the preset table already includes them. To disable business capabilities, use `--no-default-features` and list required features explicitly (e.g. `--no-default-features --features rate-limit`).
 
 ### Custom Combinations
 
@@ -180,14 +186,24 @@ The core stack (oxcache / dbnexus / confers / limiteron / sdforge / inklog / tra
 # Custom combination: core stack always compiled, only specify optional features
 cargo build --release --features "engine-playwright,metrics,genai-llm"
 
-# Core stack only (no optional features)
+# Core stack only (disable all business capabilities + engines, single-tenant/no-auth deployment)
 cargo build --release --no-default-features
+
+# Single-tenant + rate limiting (disable auth and Webhook)
+cargo build --release --no-default-features --features rate-limit
+
+# Multi-tenant + auth (disable rate limiting and Webhook)
+cargo build --release --no-default-features --features teams
 ```
 
 ### Feature Reference
 
 | Feature | Description | Impact |
 |------|------|------|
+| `teams` | Multi-tenant isolation (teams, geo-restrictions, quota isolation) | Implies `auth`; when disabled, degrades to single-tenant using `DEFAULT_TEAM_ID` |
+| `auth` | API Key auth middleware | When disabled, uses `default_identity_middleware` to inject fixed `AuthState` |
+| `rate-limit` | limiteron-based rate limiting and circuit breaking | Pulls in `limiteron` dependency; when disabled, injects `NoopRateLimitingService` allowing all |
+| `webhook` | Webhook delivery and management | When disabled, injects `NoopWebhookService` and removes `/v1/webhooks` route |
 | `engine-playwright` | chromiumoxide JS rendering engine | +8MB |
 | `engine-flaresolverr` | FlareSolverr engine (FlareSolverrMode enum for Full/Cdp/Tls modes) | - |
 | `metrics` | Metrics monitoring | - |
@@ -195,6 +211,41 @@ cargo build --release --no-default-features
 | `browser-download` | Auto-download Playwright browser | - |
 | `test-mocks` | Test mock modules (`#[cfg(any(test, feature = "test-mocks"))]`) | - |
 | `admin-tools` | Ops CLI tools (`cargo run --bin add_credits --features admin-tools`) | - |
+
+### Feature Matrix (Business Capabilities)
+
+> **R-flags-005:** Business capability features (`teams` / `auth` / `rate-limit` / `webhook`) are enabled by default. Use `--no-default-features` to disable them for lightweight single-tenant/no-auth/no-rate-limit/no-Webhook deployments. Each feature has a corresponding Noop implementation injected when disabled, ensuring business logic is unaware of the change.
+
+#### Business Capability Feature Matrix
+
+| Feature | Default | Dependencies | Behavior when disabled | Related Constants/Noop Implementations |
+|------|------|----------|------------|---------------------|
+| `teams` | ✅ Enabled | Implies `auth` | Degrades to single-tenant; all requests attributed to `DEFAULT_TEAM_ID` (`Uuid::from_u128(1)`) | `DEFAULT_TEAM_ID` |
+| `auth` | ✅ Enabled | None | Uses `default_identity_middleware`, injects fixed `AuthState` (`DEFAULT_API_KEY_ID` + `full_access` scope) | `DEFAULT_API_KEY_ID` (`Uuid::from_u128(2)`), `default_identity_middleware` |
+| `rate-limit` | ✅ Enabled | `dep:limiteron` | Injects `NoopRateLimitingService`: `check_rate_limit` returns `Allowed`, `check_and_deduct_quota` returns `Ok(())`, `get_quota_balance` returns `Ok(i64::MAX)` | `NoopRateLimitingService` |
+| `webhook` | ✅ Enabled | None | Injects `NoopWebhookService`: `trigger_completion` / `trigger_failure` return `Ok(())`; removes `/v1/webhooks` route and `webhook_worker` | `NoopWebhookService` |
+
+#### Conditional Endpoints
+
+| Endpoint | Required Feature | Behavior when disabled |
+|------|----------|------------|
+| `/v1/teams/me`, `/v1/teams/me/usage`, `/v1/teams/geo-restrictions` (GET/PUT) | `teams` | Route not registered (404) |
+| `/v1/extract` (with geo-restriction generic) | `teams` | Degrades to `extract` signature without geo-restrictions |
+| `/v1/webhooks` (POST/GET) | `webhook` | Route not registered (404) |
+
+#### Feature Combination Verification Matrix (CI Coverage)
+
+The CI `feature-matrix` job covers the following 7 combinations, ensuring complete gating and no ungated references:
+
+| Combination | Command | Verification Target |
+|------|------|----------|
+| no-default | `cargo check --no-default-features --lib` | All gating in place; no business capabilities + no engines |
+| teams-only | `cargo check --no-default-features --features teams --lib` | Multi-tenant (implies `auth`) compiles standalone |
+| auth-only | `cargo check --no-default-features --features auth --lib` | Auth only (single-tenant + auth) |
+| rate-limit-only | `cargo check --no-default-features --features rate-limit --lib` | Rate limiting only (single-tenant + rate limiting) |
+| webhook-only | `cargo check --no-default-features --features webhook --lib` | Webhook only (single-tenant + Webhook) |
+| default | `cargo check --features default --lib` | Full business capability default combination |
+| full | `cargo check --features full --lib` | Full features (business capabilities + engines + metrics) |
 
 ---
 

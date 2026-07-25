@@ -19,6 +19,9 @@ pub mod task_handler;
 // （/v1/teams/* 路由也不会注册，见 bootstrap::routes）
 #[cfg(feature = "teams")]
 pub mod team_handler;
+/// R-wh-001 / T026：webhook feature 关闭时不编译此模块
+/// （/v1/webhooks/* 路由也不会注册，见 bootstrap::routes）
+#[cfg(feature = "webhook")]
 pub mod webhook_handler;
 
 use crate::domain::models::Task;

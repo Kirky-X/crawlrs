@@ -22,4 +22,10 @@ pub mod limiteron_service;
 /// 所有方法返回放行/成功。
 #[cfg(not(feature = "rate-limit"))]
 pub mod noop_rate_limiting_service;
+/// webhook 发送器实现
+///
+/// R-wh-001 / T026：webhook feature 关闭时不编译此模块。
+/// webhook-off 模式下，`init_services` 装配 `NoopWebhookService`（不发送 webhook），
+/// 不需要 `WebhookSenderImpl`。
+#[cfg(feature = "webhook")]
 pub mod webhook_sender_impl;

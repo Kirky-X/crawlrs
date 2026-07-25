@@ -856,7 +856,11 @@ mod tests {
         dedup.config.strategy = DeduplicationStrategy::UrlOnly;
 
         let results = vec![
-            create_test_result("https://example.com/page?utm_source=google", "Title 1", None),
+            create_test_result(
+                "https://example.com/page?utm_source=google",
+                "Title 1",
+                None,
+            ),
             create_test_result("https://example.com/page?utm_source=bing", "Title 2", None),
         ];
 
@@ -890,6 +894,10 @@ mod tests {
         ];
 
         let deduplicated = dedup.deduplicate(results);
-        assert_eq!(deduplicated.len(), 1, "URLs should match case-insensitively");
+        assert_eq!(
+            deduplicated.len(),
+            1,
+            "URLs should match case-insensitively"
+        );
     }
 }

@@ -66,14 +66,18 @@ mod app {
     ) -> anyhow::Result<()> {
         log::info!("Starting API service...");
 
-        // Start webhook worker
-        let webhook_worker = AbstractWorker::new(
-            app_state.webhook_worker(),
-            std::time::Duration::from_secs(5),
-        );
-        tokio::spawn(async move {
-            webhook_worker.run().await;
-        });
+        // R-wh-003 / T029：webhook worker 仅在 webhook feature 启用时启动
+        // webhook-off：webhook_worker accessor 不编译，跳过 spawn
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_worker = AbstractWorker::new(
+                app_state.webhook_worker(),
+                std::time::Duration::from_secs(5),
+            );
+            tokio::spawn(async move {
+                webhook_worker.run().await;
+            });
+        }
 
         // Start backlog worker
         let backlog_worker = AbstractWorker::new(
@@ -118,14 +122,18 @@ mod app {
     ) -> anyhow::Result<()> {
         log::info!("Starting Worker service...");
 
-        // Start webhook worker
-        let webhook_worker = AbstractWorker::new(
-            app_state.webhook_worker(),
-            std::time::Duration::from_secs(5),
-        );
-        tokio::spawn(async move {
-            webhook_worker.run().await;
-        });
+        // R-wh-003 / T029：webhook worker 仅在 webhook feature 启用时启动
+        // webhook-off：webhook_worker accessor 不编译，跳过 spawn
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_worker = AbstractWorker::new(
+                app_state.webhook_worker(),
+                std::time::Duration::from_secs(5),
+            );
+            tokio::spawn(async move {
+                webhook_worker.run().await;
+            });
+        }
 
         // Create worker manager with dependencies (使用 DI 注入的服务)
         let deps = crawlrs::workers::manager::WorkerManagerDeps {

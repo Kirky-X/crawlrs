@@ -13,6 +13,9 @@ pub mod expiration_worker;
 pub mod manager;
 pub mod scrape_worker;
 pub mod task_state_machine;
+/// R-wh-001 / T026：webhook feature 关闭时不编译此模块
+/// （webhook_worker spawn 也会门控，见 main.rs）
+#[cfg(feature = "webhook")]
 pub mod webhook_worker;
 pub mod worker;
 

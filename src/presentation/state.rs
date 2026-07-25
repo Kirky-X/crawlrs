@@ -34,12 +34,18 @@ use std::sync::Arc;
 use crate::application::use_cases::crawl_use_case::CrawlUseCase;
 use crate::di::{CrawlRsState, CrawlRsStateExt};
 use crate::domain::repositories::{
-    crawl_repository::CrawlRepository, geo_restriction_repository::GeoRestrictionRepository,
-    scrape_result_repository::ScrapeResultRepository, task_repository::TaskRepository,
-    webhook_repository::WebhookRepository,
+    crawl_repository::CrawlRepository, scrape_result_repository::ScrapeResultRepository,
+    task_repository::TaskRepository,
 };
-use crate::domain::services::rate_limiting_service::RateLimitingService;
+// R-teams-004 / T014：teams feature 关闭时不导入 teams 相关类型
+#[cfg(feature = "teams")]
+use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
+#[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
+// R-wh-003 / T027：webhook feature 关闭时不导入 WebhookRepository
+#[cfg(feature = "webhook")]
+use crate::domain::repositories::webhook_repository::WebhookRepository;
+use crate::domain::services::rate_limiting_service::RateLimitingService;
 
 /// Trait for handler state access.
 ///
@@ -62,12 +68,21 @@ pub trait HandlerState: Clone + Send + Sync + 'static {
     fn result_repo(&self) -> Arc<dyn ScrapeResultRepository>;
 
     /// Get webhook repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository>;
 
     /// Get geo restriction repository
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
 
     /// Get team service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService>;
 
     /// Get rate limiting service
@@ -87,14 +102,20 @@ impl HandlerState for Arc<CrawlRsState> {
         CrawlRsStateExt::result_repo(self)
     }
 
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor 实现。
+    #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
         CrawlRsStateExt::webhook_repo(self)
     }
 
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor 实现。
+    #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
         CrawlRsStateExt::geo_restriction_repo(self)
     }
 
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor 实现。
+    #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService> {
         CrawlRsStateExt::team_service(self)
     }
@@ -129,12 +150,24 @@ pub struct CrawlHandlerState {
     /// Task repository
     pub task_repo: Arc<dyn TaskRepository>,
     /// Webhook repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook-off 模式下，CrawlHandlerState 不持有 WebhookRepository。
+    #[cfg(feature = "webhook")]
     pub webhook_repo: Arc<dyn WebhookRepository>,
     /// Scrape result repository
     pub scrape_result_repo: Arc<dyn ScrapeResultRepository>,
     /// Geo restriction repository
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，CrawlHandlerState 不持有 GeoRestrictionRepository。
+    #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     /// Team service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，CrawlHandlerState 不持有 TeamService。
+    #[cfg(feature = "teams")]
     pub team_service: Arc<TeamService>,
     /// Rate limiting service
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
@@ -142,24 +175,33 @@ pub struct CrawlHandlerState {
 
 impl CrawlHandlerState {
     /// Create a new CrawlHandlerState from individual dependencies.
+    ///
+    /// # Parameters
+    ///
+    /// * `webhook_repo` - Webhook repository（仅 webhook-on 时传入）
+    /// * `geo_restriction_repo` - Geo restriction repository（仅 teams-on 时传入）
+    /// * `team_service` - Team service（仅 teams-on 时传入）
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         crawl_repo: Arc<dyn CrawlRepository>,
         task_repo: Arc<dyn TaskRepository>,
-        webhook_repo: Arc<dyn WebhookRepository>,
         scrape_result_repo: Arc<dyn ScrapeResultRepository>,
-        geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
-        team_service: Arc<TeamService>,
         rate_limiting_service: Arc<dyn RateLimitingService>,
+        #[cfg(feature = "webhook")] webhook_repo: Arc<dyn WebhookRepository>,
+        #[cfg(feature = "teams")] geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
+        #[cfg(feature = "teams")] team_service: Arc<TeamService>,
     ) -> Self {
         Self {
             crawl_repo,
             task_repo,
-            webhook_repo,
             scrape_result_repo,
-            geo_restriction_repo,
-            team_service,
             rate_limiting_service,
+            #[cfg(feature = "webhook")]
+            webhook_repo,
+            #[cfg(feature = "teams")]
+            geo_restriction_repo,
+            #[cfg(feature = "teams")]
+            team_service,
         }
     }
 
@@ -171,11 +213,16 @@ impl CrawlHandlerState {
         Self {
             crawl_repo: app_state.crawl_repo.clone(),
             task_repo: app_state.task_repo.clone(),
-            webhook_repo: app_state.webhook_repo.clone(),
             scrape_result_repo: app_state.result_repo.clone(),
-            geo_restriction_repo: app_state.geo_restriction_repo.clone(),
-            team_service: app_state.team_service.clone(),
             rate_limiting_service: app_state.rate_limiting_service.clone(),
+            // R-wh-003 / T027：webhook-on 时从 app_state 取 webhook_repo
+            #[cfg(feature = "webhook")]
+            webhook_repo: app_state.webhook_repo.clone(),
+            // R-teams-004 / T014：teams-on 时从 app_state 取 geo_restriction_repo / team_service
+            #[cfg(feature = "teams")]
+            geo_restriction_repo: app_state.geo_restriction_repo.clone(),
+            #[cfg(feature = "teams")]
+            team_service: app_state.team_service.clone(),
         }
     }
 
@@ -183,13 +230,18 @@ impl CrawlHandlerState {
     ///
     /// This factory method creates a new use case with all required
     /// dependencies injected from this state.
+    ///
+    /// R-teams-004 / R-wh-003：feature-off 时跳过对应字段（CrawlUseCase::new 已门控参数）
     pub fn create_use_case(&self) -> CrawlUseCase {
         CrawlUseCase::new(
             self.crawl_repo.clone(),
             self.task_repo.clone(),
-            self.webhook_repo.clone(),
             self.scrape_result_repo.clone(),
+            #[cfg(feature = "webhook")]
+            self.webhook_repo.clone(),
+            #[cfg(feature = "teams")]
             self.geo_restriction_repo.clone(),
+            #[cfg(feature = "teams")]
             self.team_service.clone(),
         )
     }
@@ -208,14 +260,20 @@ impl HandlerState for CrawlHandlerState {
         self.scrape_result_repo.clone()
     }
 
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor 实现。
+    #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
         self.webhook_repo.clone()
     }
 
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor 实现。
+    #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
         self.geo_restriction_repo.clone()
     }
 
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor 实现。
+    #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService> {
         self.team_service.clone()
     }
@@ -230,16 +288,25 @@ mod tests {
     use super::*;
     use crate::domain::models::credits_model::CreditsTransactionType;
     use crate::domain::models::scrape_result::ScrapeResult;
-    use crate::domain::models::{Crawl, Task, Webhook};
+    use crate::domain::models::{Crawl, Task};
+    // R-wh-003 / T027：webhook feature 关闭时不导入 Webhook 模型
+    #[cfg(feature = "webhook")]
+    use crate::domain::models::Webhook;
     use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
+    // R-teams-004 / T014：teams feature 关闭时不导入 geo_location 相关类型
+    #[cfg(feature = "teams")]
     use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
     use crate::domain::services::rate_limiting_service::{
         BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
         QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
     };
+    // R-teams-004 / T014：teams feature 关闭时不导入 team_service 相关类型
+    #[cfg(feature = "teams")]
     use crate::domain::services::team_service::TeamGeoRestrictions;
     use async_trait::async_trait;
     use std::collections::HashSet;
+    // R-teams-004 / T014：teams-off 时 IpAddr 未使用
+    #[cfg(feature = "teams")]
     use std::net::IpAddr;
     use uuid::Uuid;
 
@@ -353,7 +420,10 @@ mod tests {
         }
     }
 
+    // R-wh-003 / T027：webhook feature 关闭时不编译此 mock
+    #[cfg(feature = "webhook")]
     struct MockWebhookRepository;
+    #[cfg(feature = "webhook")]
     #[async_trait]
     impl WebhookRepository for MockWebhookRepository {
         async fn create(&self, webhook: &Webhook) -> Result<Webhook, RepositoryError> {
@@ -384,7 +454,10 @@ mod tests {
         }
     }
 
+    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
+    #[cfg(feature = "teams")]
     struct MockGeoRestrictionRepository;
+    #[cfg(feature = "teams")]
     #[async_trait]
     impl GeoRestrictionRepository for MockGeoRestrictionRepository {
         async fn get_team_restrictions(
@@ -421,7 +494,10 @@ mod tests {
         }
     }
 
+    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
+    #[cfg(feature = "teams")]
     struct MockGeoLocationService;
+    #[cfg(feature = "teams")]
     #[async_trait]
     impl GeoLocationService for MockGeoLocationService {
         async fn get_location(&self, _ip: &IpAddr) -> anyhow::Result<GeoLocation> {
@@ -517,27 +593,40 @@ mod tests {
     impl RateLimitingService for MockRateLimitingService {}
 
     /// Build a CrawlHandlerState with no-op mocks for wiring/clone tests.
+    ///
+    /// R-teams-004 / R-wh-003：feature-off 时跳过对应依赖构造。
     fn build_test_state() -> CrawlHandlerState {
         let crawl_repo: Arc<dyn CrawlRepository> = Arc::new(MockCrawlRepository);
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
-        let webhook_repo: Arc<dyn WebhookRepository> = Arc::new(MockWebhookRepository);
         let scrape_result_repo: Arc<dyn ScrapeResultRepository> =
             Arc::new(MockScrapeResultRepository);
+        let rate_limiting_service: Arc<dyn RateLimitingService> = Arc::new(MockRateLimitingService);
+
+        // R-teams-004 / T014：teams-on 时构造 geo_restriction_repo / team_service
+        #[cfg(feature = "teams")]
         let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository);
+        #[cfg(feature = "teams")]
         let team_service = Arc::new(TeamService::new(
             Arc::new(MockGeoLocationService),
             geo_restriction_repo.clone(),
         ));
-        let rate_limiting_service: Arc<dyn RateLimitingService> = Arc::new(MockRateLimitingService);
+
+        // R-wh-003 / T027：webhook-on 时构造 webhook_repo
+        #[cfg(feature = "webhook")]
+        let webhook_repo: Arc<dyn WebhookRepository> = Arc::new(MockWebhookRepository);
+
         CrawlHandlerState::new(
             crawl_repo,
             task_repo,
-            webhook_repo,
             scrape_result_repo,
-            geo_restriction_repo,
-            team_service,
             rate_limiting_service,
+            #[cfg(feature = "webhook")]
+            webhook_repo,
+            #[cfg(feature = "teams")]
+            geo_restriction_repo,
+            #[cfg(feature = "teams")]
+            team_service,
         )
     }
 
@@ -549,9 +638,17 @@ mod tests {
         let _ = state.crawl_repo();
         let _ = state.task_repo();
         let _ = state.result_repo();
-        let _ = state.webhook_repo();
-        let _ = state.geo_restriction_repo();
-        let _ = state.team_service();
+        // R-wh-003 / T027：webhook-on 时验证 webhook_repo accessor
+        #[cfg(feature = "webhook")]
+        {
+            let _ = state.webhook_repo();
+        }
+        // R-teams-004 / T014：teams-on 时验证 geo_restriction_repo / team_service accessor
+        #[cfg(feature = "teams")]
+        {
+            let _ = state.geo_restriction_repo();
+            let _ = state.team_service();
+        }
         let _ = state.rate_limiting_service();
     }
 
@@ -562,18 +659,30 @@ mod tests {
         // objects that were injected via new(), verifying correct wiring.
         assert!(Arc::ptr_eq(&state.crawl_repo, &state.crawl_repo(),));
         assert!(Arc::ptr_eq(&state.task_repo, &state.task_repo(),));
-        assert!(Arc::ptr_eq(&state.webhook_repo, &state.webhook_repo(),));
+        // R-wh-003 / T027：webhook-on 时验证 webhook_repo 注入一致性
+        #[cfg(feature = "webhook")]
+        {
+            assert!(Arc::ptr_eq(&state.webhook_repo, &state.webhook_repo(),));
+        }
         assert!(Arc::ptr_eq(&state.scrape_result_repo, &state.result_repo(),));
-        assert!(Arc::ptr_eq(
-            &state.geo_restriction_repo,
-            &state.geo_restriction_repo(),
-        ));
+        // R-teams-004 / T014：teams-on 时验证 geo_restriction_repo 注入一致性
+        #[cfg(feature = "teams")]
+        {
+            assert!(Arc::ptr_eq(
+                &state.geo_restriction_repo,
+                &state.geo_restriction_repo(),
+            ));
+        }
     }
 
     #[test]
     fn test_handler_state_trait_returns_injected_services() {
         let state = build_test_state();
-        assert!(Arc::ptr_eq(&state.team_service, &state.team_service(),));
+        // R-teams-004 / T014：teams-on 时验证 team_service 注入一致性
+        #[cfg(feature = "teams")]
+        {
+            assert!(Arc::ptr_eq(&state.team_service, &state.team_service(),));
+        }
         assert!(Arc::ptr_eq(
             &state.rate_limiting_service,
             &state.rate_limiting_service(),
@@ -594,16 +703,24 @@ mod tests {
         // Clone must share the same underlying Arcs (not deep copies)
         assert!(Arc::ptr_eq(&state.crawl_repo, &cloned.crawl_repo));
         assert!(Arc::ptr_eq(&state.task_repo, &cloned.task_repo));
-        assert!(Arc::ptr_eq(&state.webhook_repo, &cloned.webhook_repo));
+        // R-wh-003 / T027：webhook-on 时验证 webhook_repo clone 一致性
+        #[cfg(feature = "webhook")]
+        {
+            assert!(Arc::ptr_eq(&state.webhook_repo, &cloned.webhook_repo));
+        }
         assert!(Arc::ptr_eq(
             &state.scrape_result_repo,
             &cloned.scrape_result_repo
         ));
-        assert!(Arc::ptr_eq(
-            &state.geo_restriction_repo,
-            &cloned.geo_restriction_repo
-        ));
-        assert!(Arc::ptr_eq(&state.team_service, &cloned.team_service));
+        // R-teams-004 / T014：teams-on 时验证 geo_restriction_repo / team_service clone 一致性
+        #[cfg(feature = "teams")]
+        {
+            assert!(Arc::ptr_eq(
+                &state.geo_restriction_repo,
+                &cloned.geo_restriction_repo
+            ));
+            assert!(Arc::ptr_eq(&state.team_service, &cloned.team_service));
+        }
         assert!(Arc::ptr_eq(
             &state.rate_limiting_service,
             &cloned.rate_limiting_service

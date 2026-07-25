@@ -31,10 +31,20 @@ pub mod extraction_service;
 pub mod extraction_utils;
 pub mod geo_location;
 pub mod llm_service;
+/// Noop Webhook 服务实现（webhook feature 关闭时使用）
+///
+/// R-wh-002 / T025：webhook feature 关闭时编译此模块，
+/// 提供 `NoopWebhookService` 替代 `WebhookServiceImpl`，
+/// 所有方法返回 `Ok(())`。
+#[cfg(not(feature = "webhook"))]
+pub mod noop_webhook_service;
 pub mod rate_limiting_service;
 pub mod relevance_scorer;
 pub mod retry_handler;
 pub mod search_service;
 pub mod team_service;
+/// R-wh-001 / T026：webhook feature 关闭时不编译此模块
+/// （`WebhookSender` trait 只在 `WebhookServiceImpl` 中使用，后者已被门控）
+#[cfg(feature = "webhook")]
 pub mod webhook_sender;
 pub mod webhook_service;

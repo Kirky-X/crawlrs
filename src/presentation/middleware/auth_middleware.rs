@@ -9,22 +9,22 @@
 
 #![allow(dead_code)]
 
+#[cfg(not(feature = "auth"))]
+use crate::common::constants::default_identity::DEFAULT_IDENTITY_TOKEN_HASH;
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::auth_scope_service::{AuthScopeService, AuthScopeServiceTrait};
 use crate::infrastructure::database::entities::api_key;
 use crate::infrastructure::security::{self, constant_time_eq_str};
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
+#[cfg(not(feature = "auth"))]
+use axum::extract::State;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
-#[cfg(not(feature = "auth"))]
-use axum::extract::State;
-#[cfg(not(feature = "auth"))]
-use crate::common::constants::default_identity::DEFAULT_IDENTITY_TOKEN_HASH;
 use dbnexus::DbPool;
 use log::{debug, info, warn};
 use lru::LruCache;
@@ -2707,8 +2707,7 @@ mod tests {
         }
 
         // 调用 validate_api_key_from_db
-        let result =
-            validate_api_key_from_db(&state, &nil_team_token_hash, "10.0.0.1").await;
+        let result = validate_api_key_from_db(&state, &nil_team_token_hash, "10.0.0.1").await;
 
         // teams-on: 必须返回 Err(UNAUTHORIZED)
         assert!(
@@ -4356,9 +4355,7 @@ mod tests {
     #[cfg(not(feature = "auth"))]
     mod default_identity_tests {
         use super::*;
-        use crate::common::constants::default_identity::{
-            DEFAULT_API_KEY_ID, DEFAULT_TEAM_ID,
-        };
+        use crate::common::constants::default_identity::{DEFAULT_API_KEY_ID, DEFAULT_TEAM_ID};
         use crate::common::test_helpers::create_test_db_pool;
         use axum::{middleware::from_fn_with_state, routing::get, Extension, Router};
         use tower::ServiceExt;
