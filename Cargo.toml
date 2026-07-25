@@ -189,6 +189,11 @@ garrison = { version = "0.8", default-features = false, optional = true, feature
     "firewall-bruteforce",
     "tenant-isolation",
     "tracing-log",
+    # three-tier-cache：启用 garrison 内置 L1(oxcache 30s)+L2(DAO 300s)+L3(interface 回调) 三层缓存，
+    # 避免 get_permission_list/get_role_list 每次认证都触发 N+1+M 数据库查询（P-CRITICAL-001 修复）。
+    "three-tier-cache",
+    # protocol-zeroize：JWT secret 使用 Zeroizing<String> 包装，Drop 时清零内存（CWE-316 防护）。
+    "protocol-zeroize",
 ] }
 
 # Concurrency and synchronization
