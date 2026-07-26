@@ -61,13 +61,15 @@ Authorization: Bearer YOUR_API_KEY
 3. `auth_bridge::bridge_to_auth_state` 将 garrison permissions 通过 `map_perms_to_scope` 映射为 `ApiKeyScope`，注入 `AuthState`
 4. 401（无效 key）/ 429（暴力破解锁定）由 garrison `firewall-bruteforce` 触发（默认 5 次失败/60 秒窗口/300 秒锁定）
 
-**RBAC 权限映射（`tenant_id=0`，所有 team 共享）：**
+**RBAC 权限映射（`tenant_id=0`，所有 team 共享，admin 蕴含 read+write）：**
 
 | garrison 权限 | 映射到 `ApiKeyScope` |
 |---------------|----------------------|
-| `crawlrs:admin` | `ApiKeyScope::full_access()` |
-| `crawlrs:write` | `scrape` + `crawl` + `search` + `extract` |
-| `crawlrs:read` | 只读子集 |
+| `crawlrs:admin` | `read=true, write=true, admin=true` |
+| `crawlrs:write` | `write=true` |
+| `crawlrs:read` | `read=true` |
+
+全部通过 `ApiKeyScope::with_custom_limits` 构造（`DEFAULT_SEARCH_LIMIT=100`, `DEFAULT_SCRAPE_LIMIT=50`），不调用 `full_access()`——避免无限制 `u32::MAX` 与项目配额语义冲突。
 
 **JWT 配置：**
 
@@ -250,7 +252,7 @@ All API responses follow this unified structure:
 | `EXTERNAL_SERVICE_ERROR` | 502 | External service error |
 | `TIMEOUT` | 504 | Request timeout |
 | `QUOTA_EXCEEDED` | 402 | Quota exceeded |
-| `FEATURE_DISABLED` | 403 | Feature not enabled |
+| `FEATURE_DISABLED` | 404 | Feature not enabled (route not registered) |
 
 ---
 
@@ -1075,7 +1077,7 @@ Expires: 0
 | `UNAUTHORIZED` | 401 | 调用方未认证或 garrison key 无效 |
 | `FORBIDDEN` | 403 | 调用方缺少 `crawlrs:admin` 权限 |
 | `VALIDATION_ERROR` | 400 | 请求体格式错误（如 `team_id` 非 UUID、`scopes` 含未知权限） |
-| `FEATURE_DISABLED` | 403 | `auth` feature 未启用，路由未注册（实际返回 404） |
+| `FEATURE_DISABLED` | 404 | `auth` feature 未启用，路由未注册 |
 | `INTERNAL_ERROR` | 500 | garrison `ApiKeyHandler::generate_with_namespace` 内部错误 |
 
 ---

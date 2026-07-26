@@ -1187,10 +1187,10 @@ Configured with rules for:
 
 ```rust
 pub struct AuthState {
+    pub pool: Arc<DbPool>,
     pub team_id: Uuid,
     pub api_key_id: Uuid,
-    pub scopes: Vec<String>,
-    pub is_active: bool,
+    pub scope: ApiKeyScope,
 }
 ```
 
@@ -1220,24 +1220,26 @@ garrison v0.8.1 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖�
 | `crawlrs:write` | ✅ | ✅ | ❌ |
 | `crawlrs:read` | ✅ | ✅ | ✅ |
 
-`auth_bridge::map_perms_to_scope` 将上述权限映射回 `ApiKeyScope`：
-- `crawlrs:admin` → `ApiKeyScope::full_access()`
-- `crawlrs:write` → `scrape` + `crawl` + `search` + `extract`
-- `crawlrs:read` → 仅只读子集
+`auth_bridge::map_perms_to_scope` 将上述权限映射回 `ApiKeyScope`（确定性查找表，admin 蕴含 read+write）：
+- `crawlrs:admin` → `read=true, write=true, admin=true`
+- `crawlrs:write` → `write=true`
+- `crawlrs:read` → `read=true`
+
+全部通过 `ApiKeyScope::with_custom_limits` 构造（`DEFAULT_SEARCH_LIMIT=100`, `DEFAULT_SCRAPE_LIMIT=50`），不调用 `full_access()`——避免无限制 `u32::MAX` 与项目配额语义冲突。
 
 ### Authorization
 
 **Scope-based Access Control:**
 
 ```rust
-pub struct ScopeValidator {
-    required_scopes: HashMap<String, HashSet<String>>,
-}
+pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response, StatusCode>
 ```
+
+`scope_middleware`（`auth_middleware.rs:335`）从 `AuthState.scope` 读取 `ApiKeyScope`，调用 `determine_required_scope(path, method)` 推导所需 `ScopePermission`，再用 `ApiKeyScope::has_permission` 校验。`ScopePermission` 枚举：`Read` / `Write` / `Admin`（`domain/auth/mod.rs:38`）。
 
 Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
 
-> **0.2.0 起**：`ScopeValidator` 接收的 `scopes` 由 `auth_bridge::map_perms_to_scope` 从 garrison permissions 桥接而来，下游业务层无感知。
+> **0.2.0 起**：`AuthState.scope` 由 `auth_bridge::map_perms_to_scope` 从 garrison permissions 桥接而来，下游 `scope_middleware` 无感知。
 
 ### 迁移指南（0.2.0 garrison-auth-migration）
 

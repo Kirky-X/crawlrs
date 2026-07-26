@@ -129,13 +129,15 @@ curl -X POST http://localhost:8899/v1/scrape \
 | **firewall-bruteforce** | 5 次失败/60 秒窗口/300 秒锁定；401/429 由 garrison 直接触发 |
 | **audit-log** | 认证事件落库到 crawlrs `audit_logs` + garrison 自管 schema |
 
-**权限映射：** garrison permissions 经 `auth_bridge::map_perms_to_scope` 桥接为 `ApiKeyScope`，下游业务层无感知。
+**权限映射（admin 蕴含 read+write）：** garrison permissions 经 `auth_bridge::map_perms_to_scope` 桥接为 `ApiKeyScope`，下游业务层无感知。
 
-| garrison 权限 | 映射到 scope |
-|---------------|--------------|
-| `crawlrs:admin` | `admin`（full_access） |
-| `crawlrs:write` | `scrape` + `crawl` + `search` + `extract` |
-| `crawlrs:read` | 只读子集 |
+| garrison 权限 | 映射到 `ApiKeyScope` |
+|---------------|----------------------|
+| `crawlrs:admin` | `read=true, write=true, admin=true` |
+| `crawlrs:write` | `write=true` |
+| `crawlrs:read` | `read=true` |
+
+全部通过 `ApiKeyScope::with_custom_limits` 构造（`DEFAULT_SEARCH_LIMIT=100`, `DEFAULT_SCRAPE_LIMIT=50`），不调用 `full_access()`——避免无限制 `u32::MAX` 与项目配额语义冲突。
 
 ### API Key Configuration
 
