@@ -951,8 +951,8 @@ All three modes share the same FlareSolverr API client implementation, differing
 | Mode | `name()` | `supports_tls_fingerprint()` | Screenshots |
 |------|----------|------------------------------|-------------|
 | Full | `flaresolverr` | No | Yes |
-| Cdp | `fire_engine_cdp` | Yes | Yes |
-| Tls | `fire_engine_tls` | Yes | Rejected |
+| Cdp | `flaresolverr_cdp` | Yes | Yes |
+| Tls | `flaresolverr_tls` | Yes | Rejected |
 
 **Use Cases:**
 - Cloudflare-protected sites
