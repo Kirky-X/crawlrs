@@ -17,7 +17,7 @@ use crate::config::settings::Settings;
 use crate::bootstrap::error::BootstrapError;
 #[cfg(feature = "auth")]
 use crate::infrastructure::auth::{
-    build_garrison_config, init_garrison_dao, CrawlrsGarrisonInterface,
+    build_garrison_config, init_garrison_dao, set_audit_service, CrawlrsGarrisonInterface,
 };
 // garrison prelude 提供 GarrisonDao / GarrisonInterface / GarrisonManager trait 与类型。
 use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
@@ -560,6 +560,33 @@ pub async fn init_services(
         infrastructure.db.inner().clone(),
     ));
     let audit_service = Arc::new(AuditService::new(audit_repo));
+
+    // R-audit-firewall-001 / T024：将 audit_service 注入 garrison listener 全局态。
+    //
+    // `set_audit_service` 通过 `parking_lot::RwLock<Option<Arc<…>>>` 暴露给
+    // `CrawlrsAuditListener::on_event`，使 garrison 事件广播能桥接到 crawlrs
+    // `audit_logs` 表。`RwLock`（而非 `OnceLock`）的理由：测试可通过
+    // `reset_audit_service_for_test` 重置全局态，避免测试间污染。
+    //
+    // 时序：garrison init（在上方）通过 `inventory::submit!` 已注册 listener factory，
+    // listener 实例在 `GarrisonManager::init` 时创建（无状态），但实际 `on_event`
+    // 调用发生在第一个 HTTP 请求认证时（远晚于 bootstrap 完成），故此处注入时序安全。
+    //
+    // `set` 失败（已有实例）返回 Err，此处 panic——
+    // 正常 bootstrap 路径只调用一次，二次调用表明初始化逻辑错误（如热重载未清理）。
+    // `Arc<dyn AuditServiceTrait>` 未实现 Debug，故用 `is_err()` 而非 `expect` 处理。
+    //
+    // 注意（架构审查 MEDIUM-5）：`init_services` 签名返回 `ServicesComponents` 而非
+    // `Result<ServicesComponents, BootstrapError>`，故失败只能 panic。这是既有设计问题
+    // （与上方 `init_garrison_auth().expect(...)` 一致），外科手术式修改不在此处重构，
+    // Stage 6/7 可考虑统一为 Result 返回类型。
+    #[cfg(feature = "auth")]
+    if set_audit_service(Arc::clone(&audit_service) as Arc<dyn AuditServiceTrait>).is_err() {
+        panic!(
+            "set_audit_service failed: audit_service already injected \
+             (check for duplicate init_services calls)"
+        );
+    }
 
     // Initialize LLM service (使用依赖注入的 http_client)
     let llm_service = init_llm_service(settings, http_client.clone());

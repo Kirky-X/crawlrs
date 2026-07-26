@@ -13,6 +13,7 @@
 //! - [`garrison_config`] — `GarrisonConfig` 构造器（从 confers 读 jwt_secret/超时等，弱密钥拒绝）
 //! - [`garrison_dao`] — DAO 工厂（复用 garrison 内建 [`GarrisonDaoOxcache`]，无需自实现）
 //! - [`garrison_interface`] — RBAC 接口（实现 garrison `GarrisonInterface`，从 RBAC 表读权限/角色）
+//! - [`garrison_listener`] — 审计监听器（实现 [`GarrisonListener`]，桥接 [`GarrisonEvent`] → [`AuditServiceTrait`]）
 //!
 //! ## 设计决策（R-auth-engine-002）
 //!
@@ -30,8 +31,10 @@
 pub mod garrison_config;
 pub mod garrison_dao;
 pub mod garrison_interface;
+pub mod garrison_listener;
 
 // Re-export 业务层常用类型，避免业务代码直接 use garrison::prelude
 pub use garrison_config::{build_garrison_config, GarrisonConfigError};
 pub use garrison_dao::init_garrison_dao;
 pub use garrison_interface::CrawlrsGarrisonInterface;
+pub use garrison_listener::{set_audit_service, wait_audit_tasks, CrawlrsAuditListener};

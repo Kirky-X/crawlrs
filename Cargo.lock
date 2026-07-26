@@ -1550,6 +1550,7 @@ dependencies = [
  "hmac 0.13.0",
  "html-escape",
  "inklog",
+ "inventory",
  "ipnetwork",
  "limiteron",
  "log",
