@@ -1,3 +1,8 @@
+# 安全说明（R-sec-002）：
+# CRAWLRS_DISABLE_SSRF_PROTECTION 环境变量仅限开发/测试环境使用，
+# 生产环境设置此变量将导致 SSRF 防护失效（内网探测风险）。
+# 启动时若在非 test/development 环境检测到该变量，会输出显著 warn 告警。
+
 # Database Configuration
 [database]
 # URL is loaded from CRAWLRS__DATABASE__URL env var in production
@@ -136,18 +141,18 @@ api_base_url = "http://localhost:11434/v1"
 # Scores are used by engine router to select the best engine for a request
 # Range: 0-100 (higher = more preferred)
 [engine_scores]
-# Fire CDP engine scores
-fire_cdp_with_tls_screenshot = 100  # TLS fingerprint + screenshot needed
-fire_cdp_with_tls = 100             # TLS fingerprint needed (no screenshot)
-fire_cdp_screenshot = 80            # Screenshot only
-fire_cdp_js = 90                    # JavaScript rendering needed
-fire_cdp_actions = 90               # Page interactions needed
-fire_cdp_default = 40               # Default score for basic requests
+# FlareSolverr CDP engine scores
+flaresolverr_cdp_with_tls_screenshot = 100  # TLS fingerprint + screenshot needed
+flaresolverr_cdp_with_tls = 100             # TLS fingerprint needed (no screenshot)
+flaresolverr_cdp_screenshot = 80            # Screenshot only
+flaresolverr_cdp_js = 90                    # JavaScript rendering needed
+flaresolverr_cdp_actions = 90               # Page interactions needed
+flaresolverr_cdp_default = 40               # Default score for basic requests
 
-# Fire TLS engine scores
-fire_tls_with_tls = 100             # TLS fingerprint needed
-fire_tls_unsupported = 0            # JS, screenshot, or actions not supported
-fire_tls_default = 40               # Default score for basic requests
+# FlareSolverr TLS engine scores
+flaresolverr_tls_with_tls = 100             # TLS fingerprint needed
+flaresolverr_tls_unsupported = 0            # JS, screenshot, or actions not supported
+flaresolverr_tls_default = 40               # Default score for basic requests
 
 # HTTP Proxy Configuration
 # Configure proxy for all scraping engines
@@ -156,18 +161,18 @@ url = "http://localhost:10808"
 enabled = false
 
 # Engine Configuration
-# Configure scraping engines (FlareSolverr, Fire Engine, etc.)
+# Configure scraping engines (FlareSolverr variants)
 [engines.flaresolverr]
 enabled = true
 url = "http://localhost:8191/v1"
 timeout_seconds = 30
 max_retries = 3
 
-[engines.fire_cdp]
+[engines.flaresolverr_cdp]
 enabled = false
 url = "http://localhost:8191/v1"
 
-[engines.fire_tls]
+[engines.flaresolverr_tls]
 enabled = false
 url = "http://localhost:8191/v1"
 

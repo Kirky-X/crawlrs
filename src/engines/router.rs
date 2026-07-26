@@ -256,8 +256,8 @@ pub struct EngineRouter {
     engines: Vec<Arc<dyn ScraperEngine>>,
     /// 熔断器
     circuit_breaker: Arc<CircuitBreaker>,
-    /// 引擎性能统计
-    engine_stats: Arc<parking_lot::RwLock<std::collections::HashMap<String, EngineStats>>>,
+    /// 引擎性能统计（DashMap 优化并发读写，避免 RwLock 借用）
+    engine_stats: Arc<DashMap<String, EngineStats>>,
     /// 当前轮询索引
     round_robin_index: Arc<parking_lot::Mutex<usize>>,
     /// 负载均衡策略
@@ -287,7 +287,7 @@ impl EngineRouter {
     ///
     /// 返回新的引擎路由器实例
     pub fn new(engines: Vec<Arc<dyn ScraperEngine>>) -> Self {
-        let mut engine_stats = std::collections::HashMap::with_capacity(8);
+        let engine_stats = DashMap::with_capacity(8);
         for engine in &engines {
             engine_stats.insert(engine.name().to_string(), EngineStats::default());
         }
@@ -295,7 +295,7 @@ impl EngineRouter {
         Self {
             engines,
             circuit_breaker: Arc::new(CircuitBreaker::new()),
-            engine_stats: Arc::new(parking_lot::RwLock::new(engine_stats)),
+            engine_stats: Arc::new(engine_stats),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy: LoadBalancingStrategy::SmartHybrid,
             metrics: Arc::new(RouterMetrics::new()),
@@ -323,7 +323,7 @@ impl EngineRouter {
         circuit_breaker: Arc<CircuitBreaker>,
         strategy: LoadBalancingStrategy,
     ) -> Self {
-        let mut engine_stats = std::collections::HashMap::with_capacity(8);
+        let engine_stats = DashMap::with_capacity(8);
         for engine in &engines {
             engine_stats.insert(engine.name().to_string(), EngineStats::default());
         }
@@ -331,7 +331,7 @@ impl EngineRouter {
         Self {
             engines,
             circuit_breaker,
-            engine_stats: Arc::new(parking_lot::RwLock::new(engine_stats)),
+            engine_stats: Arc::new(engine_stats),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy,
             metrics: Arc::new(RouterMetrics::new()),
@@ -424,25 +424,31 @@ impl EngineRouter {
             candidates.push((support_score, engine_name.to_string(), Arc::clone(engine)));
         }
 
-        // Second pass: calculate scores with stats (short lock hold)
-        let stats = self.engine_stats.read();
+        // PERF-04/MEDIUM-2：一次性收集 DashMap 为 HashMap，避免循环内多次 Ref 借用，
+        // 同时供 Second pass（calculate_engine_score）和 sort_candidates_by_strategy 复用，
+        // DashMap 全局只遍历一次。
+        let stats: std::collections::HashMap<String, EngineStats> = self
+            .engine_stats
+            .iter()
+            .map(|r| (r.key().clone(), r.value().clone()))
+            .collect();
+
+        // Second pass: calculate scores（从 HashMap 取 EngineStats，无 DashMap 借用开销）
         let mut scored_candidates = Vec::new();
 
         for (support_score, engine_name, engine) in candidates {
-            // Get engine stats
-            let default_stats = EngineStats::default();
-            let engine_stat = stats.get(&engine_name).unwrap_or(&default_stats);
+            let engine_stat = stats.get(&engine_name).cloned().unwrap_or_default();
 
             // Apply dynamic threshold factor
             let adjusted_score = support_score * self.dynamic_threshold_factor;
 
             // Calculate final score
-            let final_score = self.calculate_engine_score(adjusted_score, engine_stat);
+            let final_score = self.calculate_engine_score(adjusted_score, &engine_stat);
 
             scored_candidates.push((final_score, engine));
         }
 
-        // Sort by strategy
+        // Sort by strategy（复用上方已收集的 stats，无需再次遍历 DashMap）
         self.sort_candidates_by_strategy(&mut scored_candidates, &stats);
 
         scored_candidates
@@ -572,8 +578,8 @@ impl EngineRouter {
 
     /// 更新引擎统计信息
     fn update_engine_stats(&self, engine_name: &str, success: bool, response_time: Duration) {
-        let mut stats = self.engine_stats.write();
-        if let Some(stat) = stats.get_mut(engine_name) {
+        // DashMap::get_mut 返回 RefMut guard，作用域结束自动释放
+        if let Some(mut stat) = self.engine_stats.get_mut(engine_name) {
             // 更新成功率
             let alpha = 0.1; // 平滑因子
             let current_success = if success { 1.0 } else { 0.0 };
@@ -968,13 +974,17 @@ impl EngineRouter {
 
     /// 获取引擎统计信息
     pub fn _get_engine_stats_impl(&self) -> std::collections::HashMap<String, EngineStats> {
-        self.engine_stats.read().clone()
+        // DashMap → HashMap 一次性收集（trait 契约要求返回 HashMap）
+        self.engine_stats
+            .iter()
+            .map(|r| (r.key().clone(), r.value().clone()))
+            .collect()
     }
 
     /// 重置引擎统计信息
     pub fn _reset_engine_stats_impl(&self, engine_name: &str) {
-        let mut stats = self.engine_stats.write();
-        if let Some(stat) = stats.get_mut(engine_name) {
+        // DashMap::get_mut 返回 RefMut guard，作用域结束自动释放
+        if let Some(mut stat) = self.engine_stats.get_mut(engine_name) {
             *stat = EngineStats::default();
         }
     }
@@ -983,9 +993,8 @@ impl EngineRouter {
     pub fn register_engine(&mut self, engine: Arc<dyn ScraperEngine>) {
         let name = engine.name().to_string();
         self.engines.push(engine);
-        self.engine_stats
-            .write()
-            .insert(name.clone(), EngineStats::default());
+        // DashMap::insert 直接替换/插入，无需获取写锁
+        self.engine_stats.insert(name.clone(), EngineStats::default());
         info!("引擎已注册: {}", name);
     }
 

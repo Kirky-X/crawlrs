@@ -60,8 +60,8 @@ impl FlareSolverrMode {
     pub fn engine_name(&self) -> &'static str {
         match self {
             Self::Full => "flaresolverr",
-            Self::Cdp => "fire_engine_cdp",
-            Self::Tls => "fire_engine_tls",
+            Self::Cdp => "flaresolverr_cdp",
+            Self::Tls => "flaresolverr_tls",
         }
     }
 

@@ -16,7 +16,9 @@ use validator::Validate;
 
 // 重新导出子模块中的类型
 pub use super::app::{ConcurrencySettings, DatabaseSettings, RateLimitingSettings, ServerSettings};
-pub use super::engines::{EngineSettings, FireCdpSettings, FireTlsSettings, FlareSolverrSettings};
+pub use super::engines::{
+    EngineSettings, FlareSolverrCdpSettings, FlareSolverrSettings, FlareSolverrTlsSettings,
+};
 pub use super::llm::LLMSettings;
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 pub use super::search::{BingSearchSettings, SearchSettings};

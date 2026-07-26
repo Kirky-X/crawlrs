@@ -21,7 +21,9 @@ pub use app::DatabaseSettings;
 pub use app::RateLimitingSettings;
 pub use app::ServerSettings;
 
-pub use engines::{EngineSettings, FireCdpSettings, FireTlsSettings, FlareSolverrSettings};
+pub use engines::{
+    EngineSettings, FlareSolverrCdpSettings, FlareSolverrSettings, FlareSolverrTlsSettings,
+};
 
 pub use logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 

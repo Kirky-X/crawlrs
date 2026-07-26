@@ -67,27 +67,27 @@ pub fn init_engines(
     engines.push(Arc::new(PlaywrightEngine::new()));
 
     #[cfg(feature = "engine-flaresolverr")]
-    if engine_config.fire_tls.enabled {
+    if engine_config.flaresolverr_tls.enabled {
         log::info!(
-            "Fire Engine TLS enabled with URL: {}",
-            engine_config.fire_tls.url
+            "FlareSolverr TLS enabled with URL: {}",
+            engine_config.flaresolverr_tls.url
         );
         engines.push(Arc::new(FlareSolverrEngine::with_tls_mode_and_url(
             http_client.clone(),
-            &engine_config.fire_tls.url,
+            &engine_config.flaresolverr_tls.url,
             proxy_url,
         )));
     }
 
     #[cfg(feature = "engine-flaresolverr")]
-    if engine_config.fire_cdp.enabled {
+    if engine_config.flaresolverr_cdp.enabled {
         log::info!(
-            "Fire Engine CDP enabled with URL: {}",
-            engine_config.fire_cdp.url
+            "FlareSolverr CDP enabled with URL: {}",
+            engine_config.flaresolverr_cdp.url
         );
         engines.push(Arc::new(FlareSolverrEngine::with_cdp_mode_and_url(
             http_client.clone(),
-            &engine_config.fire_cdp.url,
+            &engine_config.flaresolverr_cdp.url,
             proxy_url,
         )));
     }

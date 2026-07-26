@@ -14,12 +14,12 @@ pub mod playwright;
 #[cfg(feature = "engine-playwright")]
 pub mod playwright_pool;
 
-/// FlareSolverr 引擎模块（合并了原 fire_cdp / fire_tls / flaresolverr 三引擎）
+/// FlareSolverr 引擎模块（统一 Full / CDP / TLS 三模式）
 ///
 /// 通过 `FlareSolverrMode` 枚举区分 Full / Cdp / Tls 三种工作模式：
-/// - `Full`：完整 FlareSolverr 客户端（原 flaresolverr）
-/// - `Cdp`：CDP 模式（原 fire_cdp）
-/// - `Tls`：TLS 指纹模式（原 fire_tls）
+/// - `Full`：完整 FlareSolverr 客户端
+/// - `Cdp`：CDP 模式
+/// - `Tls`：TLS 指纹模式
 #[cfg(feature = "engine-flaresolverr")]
 pub mod flare_solverr;
 

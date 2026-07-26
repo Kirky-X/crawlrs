@@ -5,7 +5,7 @@
 
 //! 引擎配置
 //!
-//! 包含 FlareSolverr、Fire Engine 等抓取引擎的配置设置
+//! 包含 FlareSolverr 各模式（Full/CDP/TLS）抓取引擎的配置设置
 
 use serde::{Deserialize, Serialize};
 
@@ -39,42 +39,42 @@ pub struct FlareSolverrSettings {
     pub max_retries: u32,
 }
 
-/// Fire Engine CDP 配置设置
+/// FlareSolverr CDP 配置设置
 ///
-/// 配置 Fire Engine CDP（Chrome DevTools Protocol）的参数
+/// 配置 FlareSolverr CDP（Chrome DevTools Protocol）模式的参数
 ///
 /// # 字段说明
 ///
-/// * `enabled` - 是否启用 Fire Engine CDP
-/// * `url` - Fire Engine CDP 服务器 URL
+/// * `enabled` - 是否启用 FlareSolverr CDP 模式
+/// * `url` - FlareSolverr CDP 服务器 URL
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
-#[config(env_prefix = "CRAWLRS__ENGINES__FIRE_CDP__")]
-pub struct FireCdpSettings {
-    /// 是否启用 Fire Engine CDP
+#[config(env_prefix = "CRAWLRS__ENGINES__FLARESOLVERR_CDP__")]
+pub struct FlareSolverrCdpSettings {
+    /// 是否启用 FlareSolverr CDP 模式
     #[config(default = false)]
     pub enabled: bool,
 
-    /// Fire Engine CDP 服务器 URL
+    /// FlareSolverr CDP 服务器 URL
     #[config(default = "http://localhost:8191/v1".to_string())]
     pub url: String,
 }
 
-/// Fire Engine TLS 配置设置
+/// FlareSolverr TLS 配置设置
 ///
-/// 配置 Fire Engine TLS 的参数，专注于 TLS 指纹对抗
+/// 配置 FlareSolverr TLS 模式的参数，专注于 TLS 指纹对抗
 ///
 /// # 字段说明
 ///
-/// * `enabled` - 是否启用 Fire Engine TLS
-/// * `url` - Fire Engine TLS 服务器 URL
+/// * `enabled` - 是否启用 FlareSolverr TLS 模式
+/// * `url` - FlareSolverr TLS 服务器 URL
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
-#[config(env_prefix = "CRAWLRS__ENGINES__FIRE_TLS__")]
-pub struct FireTlsSettings {
-    /// 是否启用 Fire Engine TLS
+#[config(env_prefix = "CRAWLRS__ENGINES__FLARESOLVERR_TLS__")]
+pub struct FlareSolverrTlsSettings {
+    /// 是否启用 FlareSolverr TLS 模式
     #[config(default = false)]
     pub enabled: bool,
 
-    /// Fire Engine TLS 服务器 URL
+    /// FlareSolverr TLS 服务器 URL
     #[config(default = "http://localhost:8191/v1".to_string())]
     pub url: String,
 }
@@ -88,9 +88,9 @@ pub struct EngineSettings {
     /// FlareSolverr 引擎配置
     pub flaresolverr: FlareSolverrSettings,
 
-    /// Fire Engine CDP 配置
-    pub fire_cdp: FireCdpSettings,
+    /// FlareSolverr CDP 模式配置
+    pub flaresolverr_cdp: FlareSolverrCdpSettings,
 
-    /// Fire Engine TLS 配置
-    pub fire_tls: FireTlsSettings,
+    /// FlareSolverr TLS 模式配置
+    pub flaresolverr_tls: FlareSolverrTlsSettings,
 }
