@@ -9,6 +9,7 @@ use crate::config::settings::Settings;
 use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::{EngineClient, HttpMethod, ScrapeOptions, ScrapeRequest};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
+use super::llm_provider_strategy::{OllamaStrategy, ProviderStrategy};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 #[cfg(feature = "genai-llm")]
@@ -174,7 +175,7 @@ impl LLMService {
     ) -> Self {
         let templates = template_loader.load_templates().unwrap_or_default();
         let engine_client = Self::create_engine_client(http_client);
-        let mut provider = settings
+        let fallback_provider = settings
             .llm
             .provider
             .clone()
@@ -188,12 +189,10 @@ impl LLMService {
         let api_key = settings.llm.api_key.clone();
 
         // 核心研究成果应用：如果检测到是本地 Ollama 地址，我们"假装"它是 OpenAI
-        // 这样可以避开 genai 内置适配器对 localhost 的强行转换
-        if let Some(url) = &api_base_url {
-            if url.contains("172.24.160.1") || url.contains(":11434") {
-                provider = "openai".to_string();
-            }
-        }
+        // 这样可以避开 genai 内置适配器对 localhost 的强行转换。
+        // 通过 ProviderStrategy 封装 URL 模式匹配逻辑（R-sec-006 / T006）
+        let provider =
+            OllamaStrategy::new(fallback_provider).resolve_provider(api_base_url.as_deref());
 
         Self {
             engine_client,

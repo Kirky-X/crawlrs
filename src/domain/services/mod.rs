@@ -34,6 +34,7 @@ pub mod audit_service;
 pub mod extraction_service;
 pub mod extraction_utils;
 pub mod geo_location;
+pub mod llm_provider_strategy;
 pub mod llm_service;
 /// Noop Webhook 服务实现（webhook feature 关闭时使用）
 ///
