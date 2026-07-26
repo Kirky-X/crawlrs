@@ -404,6 +404,7 @@ domain/
 │   ├── audit_log_builder.rs
 │   ├── geo_location.rs
 │   ├── llm_service.rs
+│   ├── llm_provider_strategy.rs  # T006/R-sec-006: ProviderStrategy 策略模式（OllamaStrategy/OpenAiStrategy）
 │   ├── relevance_scorer.rs
 │   └── retry_handler.rs
 ├── auth/                   # Authentication models
@@ -855,7 +856,8 @@ pub enum LoadBalancingStrategy {
 pub struct EngineRouter {
     engines: Vec<Arc<dyn ScraperEngine>>,
     circuit_breaker: Arc<CircuitBreaker>,
-    engine_stats: Arc<parking_lot::RwLock<HashMap<String, EngineStats>>>,
+    // T003/R-sec-003: 使用 DashMap 替代 RwLock<HashMap>，避免读写锁借用开销
+    engine_stats: Arc<DashMap<String, EngineStats>>,
     round_robin_index: Arc<parking_lot::Mutex<usize>>,
     strategy: LoadBalancingStrategy,
     metrics: Arc<RouterMetrics>,
@@ -964,6 +966,24 @@ All three modes share the same FlareSolverr API client implementation, differing
 - Full: JS rendering, session management, CAPTCHA detection
 - Cdp: TLS fingerprinting, browser automation, CDP protocol
 - Tls: TLS fingerprint adversarial, fast execution, no screenshot
+
+---
+
+### Search Subsystem (T007/R-sec-007 委托架构)
+
+**Location:** `src/search/`
+
+**职责分层：**
+
+- **smart 层** (`src/search/smart/mod.rs`)：URL 构建、速率限制、超时/重试控制、scoring、验证码前置检查、测试数据加载
+- **client 层** (`src/search/client/{google,bing,baidu,sogou}.rs`)：HTML 解析、URL 提取、XSS 防护、CSS 选择器管理
+
+**委托关系**：smart 端 `parse_google/bing/baidu/sogou_results` 委托 client 端 `parse_results`/`parse_search_results` 实现，消除 Stage 0 前的平行解析实现。smart 端补 score 由 `apply_scoring` 统一处理（PERF-03/MEDIUM-1）。
+
+**性能优化**：
+- PERF-02：smart 端用 `OnceCell` 缓存 4 个 client 引擎实例，避免每次解析都 `new` 一个 client 引擎
+- PERF-05：client 端 `HtmlParser` 改为 `once_cell::sync::Lazy` 全局单例，`baidu.rs`/`bing.rs` 不再持有 `parser` 字段
+- PERF-01：`google.rs` 的 `GoogleParseContext` 改为 `Lazy` 全局单例，避免重复编译 15 个 CSS 选择器
 
 ---
 
