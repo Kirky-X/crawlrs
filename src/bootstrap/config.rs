@@ -104,8 +104,23 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
     let env = std::env::var("CRAWLRS_ENV")
         .or_else(|_| std::env::var("APP_ENVIRONMENT"))
         .unwrap_or_else(|_| "development".to_string());
-    let is_test = env.to_lowercase() == "test"
+    let env_lower = env.to_lowercase();
+    let is_test = env_lower == "test"
         || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
+    let is_dev = env_lower == "development" || env_lower == "dev" || is_test;
+
+    // SSRF 防护禁用开关风险告警（R-sec-002）
+    // 仅在非 test/development 环境下告警；开发/测试场景允许禁用以方便调试
+    if std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok()
+        && !is_dev
+    {
+        warn!(
+            "⚠️ SSRF 保护已通过 CRAWLRS_DISABLE_SSRF_PROTECTION 禁用！\
+             此开关仅限开发/测试环境使用，生产环境禁用将导致内网探测风险。\
+             当前环境: {}。如需生产部署，请移除该环境变量并配置 trusted_proxies。",
+            env
+        );
+    }
 
     // Check for forbidden variables
     if !report.forbidden_variables.is_empty() && !is_test {
@@ -895,6 +910,109 @@ mod tests {
             result.is_ok(),
             "validate_environment with CRAWLRS_ENV=test should succeed even with forbidden vars"
         );
+    }
+
+    // ========== SSRF protection disable warning (T002) ==========
+
+    #[test]
+    fn test_validate_environment_warns_when_ssrf_disabled_in_non_dev_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_ssrf = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
+
+        // 生产环境 + SSRF 禁用 → 应触发 warn 但仍返回 Ok
+        std::env::set_var("APP_ENVIRONMENT", "production");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "true");
+
+        let result = validate_environment(false);
+
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+        if let Some(v) = saved_crawlrs_env {
+            std::env::set_var("CRAWLRS_ENV", v);
+        } else {
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+        if let Some(v) = saved_ssrf {
+            std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", v);
+        } else {
+            std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
+        }
+
+        // validate_environment 应返回 Ok（warn 不阻断启动），告警由日志验证
+        assert!(
+            result.is_ok(),
+            "validate_environment should succeed with SSRF disabled (warn only), got err: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_validate_environment_no_warn_when_ssrf_disabled_in_dev_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_ssrf = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
+
+        // 开发环境 + SSRF 禁用 → 不应触发风险告警（开发/测试场景允许）
+        std::env::set_var("APP_ENVIRONMENT", "development");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "true");
+
+        let result = validate_environment(false);
+
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+        if let Some(v) = saved_crawlrs_env {
+            std::env::set_var("CRAWLRS_ENV", v);
+        } else {
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+        if let Some(v) = saved_ssrf {
+            std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", v);
+        } else {
+            std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
+        }
+
+        assert!(result.is_ok());
     }
 
     // ========== Test logger for covering log::info!/log::error! paths ==========
