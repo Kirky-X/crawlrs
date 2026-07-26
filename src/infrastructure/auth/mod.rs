@@ -35,6 +35,6 @@ pub mod garrison_listener;
 
 // Re-export 业务层常用类型，避免业务代码直接 use garrison::prelude
 pub use garrison_config::{build_garrison_config, GarrisonConfigError};
-pub use garrison_dao::init_garrison_dao;
+pub use garrison_dao::{get_garrison_dao, init_garrison_dao, set_garrison_dao};
 pub use garrison_interface::CrawlrsGarrisonInterface;
 pub use garrison_listener::{set_audit_service, wait_audit_tasks, CrawlrsAuditListener};

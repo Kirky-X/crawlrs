@@ -8,6 +8,10 @@
 /// 包含各个API端点的具体处理逻辑
 /// 每个处理器负责处理特定类型的HTTP请求并返回响应
 pub mod audit_handler;
+/// R-auth-engine-002 / T027-3：API Key 签发 handler（garrison ApiKeyHandler 桥接）。
+/// 仅在 `auth` feature 启用时编译——`api_key_handler` 依赖 garrison 全局 DAO。
+#[cfg(feature = "auth")]
+pub mod api_key_handler;
 pub mod crawl_handler;
 pub mod extract_handler;
 pub mod metrics_handler;

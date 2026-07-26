@@ -17,7 +17,8 @@ use crate::config::settings::Settings;
 use crate::bootstrap::error::BootstrapError;
 #[cfg(feature = "auth")]
 use crate::infrastructure::auth::{
-    build_garrison_config, init_garrison_dao, set_audit_service, CrawlrsGarrisonInterface,
+    build_garrison_config, init_garrison_dao, set_audit_service, set_garrison_dao,
+    CrawlrsGarrisonInterface,
 };
 // garrison prelude 提供 GarrisonDao / GarrisonInterface / GarrisonManager trait 与类型。
 use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
@@ -365,6 +366,23 @@ pub async fn init_garrison_auth(
     let dao: Arc<dyn GarrisonDao> = init_garrison_dao()
         .await
         .map_err(|e| BootstrapError::GarrisonDao(format!("{e}")))?;
+
+    // T027-2：注入 DAO 到全局态，供业务 handler（`api_key_handler`）通过
+    // [`crate::infrastructure::auth::get_garrison_dao`] 读取。
+    //
+    // 时序：在 `GarrisonManager::init` 之前注入——`GarrisonManager::init` 接收 dao 的
+    // 所有权（move），故此处先 `Arc::clone` 再传入 manager，全局态保留另一份 Arc 引用。
+    //
+    // 失败契约（规则12 显性化）：`set_garrison_dao` 返回 `Err(dao)` 表示已有实例被注入
+    // （正常 bootstrap 路径只调用一次，二次调用表明初始化逻辑错误如热重载未清理），
+    // 此处 panic 与 `set_audit_service` 一致——避免静默覆盖导致 dao 来源不确定。
+    set_garrison_dao(Arc::clone(&dao)).map_err(|_| {
+        BootstrapError::GarrisonDao(
+            "set_garrison_dao failed: global DAO already injected \
+             (check for duplicate init_garrison_auth calls)"
+                .to_string(),
+        )
+    })?;
 
     // 3. 构造业务 Interface（注入 crawlrs DbPool 查询 RBAC 表）
     //

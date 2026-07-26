@@ -25,6 +25,10 @@ use crate::presentation::handlers::webhook_handler;
 // R-teams-002 / T012：teams-off 时 team_handler 模块不编译
 #[cfg(feature = "teams")]
 use crate::presentation::handlers::team_handler;
+// R-key-lifecycle-001 / T027-4：api_key_handler 仅在 auth-on 时编译
+// （依赖 garrison 全局 DAO，auth-off 时 handler 模块不编译，路由不注册）
+#[cfg(feature = "auth")]
+use crate::presentation::handlers::api_key_handler;
 #[cfg(not(feature = "auth"))]
 use crate::presentation::middleware::auth_types::AuthState;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
@@ -281,6 +285,23 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let app = app
         .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
         .route("/v1/audit/denied", get(audit_handler::get_denied_requests));
+
+    // R-key-lifecycle-001 / T027-4：注册 POST /v1/admin/api-keys 路由
+    //
+    // auth-on：注册 `api_key_handler::create_api_key`（调用 garrison `ApiKeyHandler` 签发）
+    // auth-off：路由不注册（返回 404），`api_key_handler` 模块不编译
+    //
+    // 鉴权防御说明（安全审查 [MEDIUM] 修复）：
+    //
+    // 全局 `auth_middleware_inner` layer 仅校验 API Key 有效性（garrison `check_api_key`），
+    // **不强制 admin scope**——`scope_middleware` 虽存在但仅在测试 Router 中注册，
+    // 未挂载到生产路由。故 handler 内 `has_permission(Admin)` 是 admin 权限校验的
+    // **唯一防御点**（CWE-862 IDOR 防护，详见 `api_key_handler.rs` 文档）。
+    //
+    // 后续若需引入纵深防御，应在 `determine_required_scope` 中覆盖 `/v1/admin/api-keys`
+    // 路径并注册 `scope_middleware` 到本路由层（属独立变更，不在本次范围）。
+    #[cfg(feature = "auth")]
+    let app = app.route("/v1/admin/api-keys", post(api_key_handler::create_api_key));
 
     // 认证中间件层（条件编译，T009）
     //
@@ -1481,6 +1502,98 @@ mod tests {
                 .get("access-control-allow-origin")
                 .is_some(),
             "merged app router should apply CORS layer"
+        );
+    }
+
+    /// T027-4：验证 `POST /v1/admin/api-keys` 路由按 auth feature 门控注册。
+    ///
+    /// # auth-on
+    ///
+    /// 路由被注册，未经认证的请求被 `auth_middleware_inner` 拦截返回 4xx
+    /// （401 缺 Bearer / 403 权限不足），**而非 404**——证明路由可达。
+    /// handler 内再做 `has_permission(Admin)` 二次校验（CWE-862 纵深防御）。
+    ///
+    /// # auth-off
+    ///
+    /// `api_key_handler` 模块不编译，路由不注册，请求返回 404。
+    ///
+    /// # Spec
+    ///
+    /// - R-key-lifecycle-001
+    #[cfg(feature = "auth")]
+    #[tokio::test]
+    async fn test_admin_api_keys_endpoint_registered_when_auth_on() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let state = match build_test_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
+                return;
+            }
+        };
+        let settings = Arc::new(load_test_settings());
+        let router = create_protected_routes_with_state(&state, settings);
+
+        // 发送未认证 POST 请求（无 Authorization header）
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/admin/api-keys")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        // 路由存在则被 auth 中间件拦截（4xx），不存在则 404
+        assert_ne!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "POST /v1/admin/api-keys must be registered when auth feature is on (got {})",
+            response.status()
+        );
+    }
+
+    /// T027-4（auth-off 分支）：验证 `POST /v1/admin/api-keys` 路由在 auth-off 时不注册。
+    ///
+    /// `api_key_handler` 模块被 `#[cfg(feature = "auth")]` 门控，auth-off 时不编译，
+    /// 路由也不注册——请求返回 404。
+    #[cfg(not(feature = "auth"))]
+    #[tokio::test]
+    async fn test_admin_api_keys_endpoint_not_registered_when_auth_off() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let state = match build_test_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
+                return;
+            }
+        };
+        let settings = Arc::new(load_test_settings());
+        let router = create_protected_routes_with_state(&state, settings);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/admin/api-keys")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "POST /v1/admin/api-keys must NOT be registered when auth feature is off"
         );
     }
 }

@@ -274,6 +274,14 @@ name = "add_credits"
 path = "tools/add_credits.rs"
 required-features = ["admin-tools"]
 
+# R-key-lifecycle-002 / T029：一次性运维脚本，读旧 api_keys 表枚举需重签 team 清单，
+# 并在 garrison RBAC 表中预置标准角色/权限（tenant_id=0，所有 crawlrs team 共享）。
+# 依赖 garrison repository trait，故需 auth feature（auth-on 才编译 garrison）。
+[[bin]]
+name = "reissue_api_keys"
+path = "tools/reissue_api_keys.rs"
+required-features = ["admin-tools", "auth"]
+
 # =============================================================================
 # Build Optimization Profiles
 # =============================================================================
