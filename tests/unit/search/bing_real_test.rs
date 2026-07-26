@@ -13,8 +13,8 @@ fn create_test_engine() -> BingSearchEngine {
 }
 
 /// Test BingSearchEngine with real HTML parsing - using sample data
-#[tokio::test]
-async fn test_bing_search_engine_real_parsing() {
+#[test]
+fn test_bing_search_engine_real_parsing() {
     let engine = create_test_engine();
 
     // Test with real-world HTML structure that Bing actually returns
@@ -57,7 +57,7 @@ async fn test_bing_search_engine_real_parsing() {
     </html>
     "#;
 
-    let result = engine.parse_search_results(real_bing_html).await;
+    let result = engine.parse_search_results(real_bing_html);
 
     assert!(result.is_ok());
     let results = result.expect("Failed to get bing search results");
@@ -78,8 +78,8 @@ async fn test_bing_search_engine_real_parsing() {
 }
 
 /// Test BingSearchEngine with real HTML that has malformed elements
-#[tokio::test]
-async fn test_bing_search_engine_real_malformed_html() {
+#[test]
+fn test_bing_search_engine_real_malformed_html() {
     let engine = create_test_engine();
 
     // Test with real HTML that has missing or malformed elements
@@ -125,7 +125,7 @@ async fn test_bing_search_engine_real_malformed_html() {
     </html>
     "#;
 
-    let result = engine.parse_search_results(malformed_html).await;
+    let result = engine.parse_search_results(malformed_html);
 
     assert!(result.is_ok());
     let results = result.expect("Failed to get bing search results");
@@ -137,8 +137,8 @@ async fn test_bing_search_engine_real_malformed_html() {
 }
 
 /// Test BingSearchEngine with real HTML containing dates and metadata
-#[tokio::test]
-async fn test_bing_search_engine_real_html_with_dates() {
+#[test]
+fn test_bing_search_engine_real_html_with_dates() {
     let engine = create_test_engine();
 
     // Test with real HTML that contains publication dates
@@ -181,7 +181,7 @@ async fn test_bing_search_engine_real_html_with_dates() {
     </html>
     "#;
 
-    let result = engine.parse_search_results(html_with_dates).await;
+    let result = engine.parse_search_results(html_with_dates);
 
     assert!(result.is_ok());
     let results = result.expect("Failed to get bing search results");
@@ -204,8 +204,8 @@ async fn test_bing_search_engine_real_html_with_dates() {
 }
 
 /// Test BingSearchEngine with empty real HTML
-#[tokio::test]
-async fn test_bing_search_engine_real_empty_html() {
+#[test]
+fn test_bing_search_engine_real_empty_html() {
     let engine = create_test_engine();
 
     // Test with real empty HTML
@@ -223,7 +223,7 @@ async fn test_bing_search_engine_real_empty_html() {
     </html>
     "#;
 
-    let result = engine.parse_search_results(empty_html).await;
+    let result = engine.parse_search_results(empty_html);
 
     // Should return empty results, not an error
     assert!(result.is_ok());
@@ -232,8 +232,8 @@ async fn test_bing_search_engine_real_empty_html() {
 }
 
 /// Test BingSearchEngine cookie and URL building with real parameters
-#[tokio::test]
-async fn test_bing_search_engine_real_cookie_construction() {
+#[test]
+fn test_bing_search_engine_real_cookie_construction() {
     let engine = create_test_engine();
 
     // Test real cookie construction for different locales
@@ -261,8 +261,8 @@ async fn test_bing_search_engine_real_cookie_construction() {
 }
 
 /// Test BingSearchEngine URL building with real pagination
-#[tokio::test]
-async fn test_bing_search_engine_real_url_construction() {
+#[test]
+fn test_bing_search_engine_real_url_construction() {
     let engine = create_test_engine();
 
     let query = "rust programming tutorial";

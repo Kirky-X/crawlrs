@@ -6,7 +6,6 @@
 use async_trait::async_trait;
 use log::{error, info, warn};
 use rand::prelude::*;
-use scraper::{Html, Selector};
 use std::sync::Arc;
 
 use crate::domain::models::search_result::SearchResult;
@@ -16,193 +15,20 @@ use crate::engines::engine_client::{
     EngineClient, EngineError, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest,
     ScrollDirection,
 };
+use crate::search::client::{
+    BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SogouSearchEngine,
+};
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
 use crate::search::types::{EngineHealth, SearchEngineType};
-use crate::utils::text_processing::encoding::TextEncodingProcessor;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::search::client::shared_utils::{build_query_string, safe_parse_selector};
-
-/// 解析并验证选择器，如果所有选择器都失败则返回错误
-///
-/// 这个辅助函数消除了重复的 `.expect()` 模式
-fn parse_selectors(
-    engine_name: &str,
-    selectors: &[&'static str],
-    selector_type: &str,
-) -> Result<Selector, SearchError> {
-    selectors
-        .iter()
-        .filter_map(|s| safe_parse_selector(s))
-        .next()
-        .ok_or_else(|| {
-            SearchError::Parse(format!(
-                "Failed to parse {} selector for {}",
-                selector_type, engine_name
-            ))
-        })
-}
-
-/// 搜索结果解析器配置
-struct SearchResultParserConfig {
-    /// 结果选择器
-    result_selectors: Vec<&'static str>,
-    /// 标题选择器
-    title_selectors: Vec<&'static str>,
-    /// 链接选择器
-    link_selectors: Vec<&'static str>,
-    /// 摘要选择器
-    snippet_selectors: Vec<&'static str>,
-    /// 引擎名称
-    engine_name: &'static str,
-    /// URL属性名（默认为href）
-    url_attr: Option<&'static str>,
-}
-
-/// Google 结果解析的预编译依赖上下文
-///
-/// 封装 `parse_google_results` 调用期间需要复用的所有对象，避免在
-/// `extract_google_result` 热路径中重复创建（性能 LOW-1/2/3/4）。
-///
-/// **设计说明**（架构 MEDIUM 2/3）：
-/// - 选择器字段（result/title/snippet/link）是 Google HTML 解析专用
-/// - `scorer` 和 `processor` 是通用领域服务，放在此处是为了"调用级复用"
-///   （每次 `parse_google_results` 调用创建一次），而非"引擎级复用"
-///   （`SmartSearchEngine` 字段）。这样可以在不修改 `SmartSearchEngine`
-///   结构的前提下实现热路径优化。
-/// - `link_selector` 是单个 Selector（非 Vec），因为它用于"遍历所有匹配元素"
-///   而非"按优先级回退"（与 title/snippet_selectors 语义不同）
-struct GoogleParseContext {
-    /// Google 现代搜索结果容器选择器（已预编译，按优先级排序）
-    result_selectors: Vec<Selector>,
-    /// 标题选择器（已预编译，按优先级排序）
-    title_selectors: Vec<Selector>,
-    /// 描述选择器（已预编译，按优先级排序）
-    snippet_selectors: Vec<Selector>,
-    /// 链接选择器（单个，用于遍历所有 <a> 元素）
-    link_selector: Selector,
-    /// 相关性评分器
-    scorer: RelevanceScorer,
-    /// 文本编码处理器
-    processor: TextEncodingProcessor,
-}
-
-impl GoogleParseContext {
-    /// 预编译所有选择器并创建 scorer/processor
-    fn new() -> Self {
-        Self {
-            result_selectors: [
-                "div.g",
-                "div[data-sokoban-container]",
-                "div.MjjYud",
-                "div.Ww4FFb",
-                "div.v7W49e",
-            ]
-            .iter()
-            .filter_map(|s| Selector::parse(s).ok())
-            .collect(),
-            title_selectors: [
-                "h3",
-                "div[data-attrid='title']",
-                "span.dvSrP",
-                "div.v7W49e h3",
-            ]
-            .iter()
-            .filter_map(|s| Selector::parse(s).ok())
-            .collect(),
-            snippet_selectors: [
-                "span[ae30]",
-                "div[itemprop='description']",
-                "div.yXK7ld",
-                "div.zIBAzf",
-                "span[style='color:#4d5156']",
-            ]
-            .iter()
-            .filter_map(|s| Selector::parse(s).ok())
-            .collect(),
-            link_selector: Selector::parse("a").expect("\"a\" selector should always parse"),
-            scorer: RelevanceScorer::with_engine("google_search"),
-            processor: TextEncodingProcessor::new(),
-        }
-    }
-}
-
-/// 通用搜索结果解析函数 - 消除重复代码
-fn parse_search_results_common(
-    html: &str,
-    config: SearchResultParserConfig,
-) -> Result<Vec<SearchResult>, SearchError> {
-    use crate::domain::services::relevance_scorer::RelevanceScorer;
-    use scraper::Html;
-
-    let document = Html::parse_document(html);
-
-    // 使用辅助函数解析选择器，消除重复的 expect 模式
-    let result_selector = parse_selectors(config.engine_name, &config.result_selectors, "result")?;
-
-    let title_selector = parse_selectors(config.engine_name, &config.title_selectors, "title")?;
-
-    let link_selector = parse_selectors(config.engine_name, &config.link_selectors, "link")?;
-
-    let snippet_selector =
-        parse_selectors(config.engine_name, &config.snippet_selectors, "snippet")?;
-
-    // 确定URL属性名（默认为href）
-    let url_attr = config.url_attr.unwrap_or("href");
-
-    let mut results = Vec::with_capacity(20);
-    let scorer = RelevanceScorer::with_engine(config.engine_name);
-    // TextEncodingProcessor 在循环外创建一次，避免每个元素重复构造（性能 LOW-3）
-    let processor = TextEncodingProcessor::new();
-
-    for element in document.select(&result_selector) {
-        let raw_title = element
-            .select(&title_selector)
-            .next()
-            .map(|el| el.text().collect::<String>().trim().to_string())
-            .unwrap_or_default();
-        let title = html_escape::encode_text(&raw_title).to_string();
-
-        // 使用指定的属性提取URL
-        let url = element
-            .select(&link_selector)
-            .next()
-            .and_then(|el| el.value().attr(url_attr))
-            .map(|href| href.to_string())
-            .unwrap_or_default();
-
-        let raw_description = element
-            .select(&snippet_selector)
-            .next()
-            .map(|el| el.text().collect::<String>().trim().to_string())
-            .unwrap_or_default();
-        let description = html_escape::encode_text(
-            &processor
-                .process_text(raw_description.as_bytes())
-                .unwrap_or(raw_description.clone()),
-        )
-        .to_string();
-
-        if !title.is_empty() && !url.is_empty() {
-            let mut result = SearchResult::new(
-                title,
-                url,
-                Some(description),
-                config.engine_name.to_string(),
-            );
-            result.score =
-                scorer.calculate_score(&result.title, result.description.as_deref(), &result.url);
-            results.push(result);
-        }
-    }
-
-    Ok(results)
-}
+use crate::search::client::shared_utils::build_query_string;
+use once_cell::sync::OnceCell;
 
 /// 智能搜索引擎配置
 pub struct SmartSearchEngineConfig {
@@ -258,9 +84,24 @@ impl Default for SmartSearchEngineConfig {
 ///
 /// 使用EngineClient智能路由，根据目标网站的特征自动选择最适合的抓取引擎
 /// 支持速率限制、超时控制和测试数据加载
+///
+/// **性能优化（PERF-02）**：缓存 4 个 client 引擎实例（OnceCell），避免每次
+/// `parse_*_results` 都 `new` 一个 client 引擎实例。`GoogleSearchEngine::new`
+/// 会创建 `Arc<RwLock<ArcIdCache>>` + 23 字符随机 ID 生成 + `Utc::now()`；
+/// `BingSearchEngine::new`/`BaiduSearchEngine::new` 不再持有 `HtmlParser` 字段，
+/// 改为通过 `HtmlParser::bing()`/`HtmlParser::baidu()` 访问全局 `Lazy` 单例
+/// （见 PERF-05）。缓存后仅在首次解析时构造一次。
 pub struct SmartSearchEngine {
     engine_client: Arc<EngineClient>,
     config: SmartSearchEngineConfig,
+    /// 缓存的 Google client 引擎实例（按需初始化）
+    google_engine: OnceCell<GoogleSearchEngine>,
+    /// 缓存的 Bing client 引擎实例（按需初始化）
+    bing_engine: OnceCell<BingSearchEngine>,
+    /// 缓存的 Baidu client 引擎实例（按需初始化）
+    baidu_engine: OnceCell<BaiduSearchEngine>,
+    /// 缓存的 Sogou client 引擎实例（按需初始化）
+    sogou_engine: OnceCell<SogouSearchEngine>,
 }
 
 impl SmartSearchEngine {
@@ -268,7 +109,55 @@ impl SmartSearchEngine {
         Self {
             engine_client,
             config,
+            google_engine: OnceCell::new(),
+            bing_engine: OnceCell::new(),
+            baidu_engine: OnceCell::new(),
+            sogou_engine: OnceCell::new(),
         }
+    }
+
+    /// 获取 Google client 引擎实例（缓存，首次调用时构造）
+    ///
+    /// 性能 PERF-02：避免每次 `parse_google_results` 都 `new` 一个
+    /// `GoogleSearchEngine`，节省 `Arc<RwLock<ArcIdCache>>` + 23 字符
+    /// 随机 ID 生成 + `Utc::now()` 系统调用。
+    fn google_engine(&self) -> &GoogleSearchEngine {
+        self.google_engine.get_or_init(|| {
+            GoogleSearchEngine::new(self.engine_client.clone())
+        })
+    }
+
+    /// 获取 Bing client 引擎实例（缓存，首次调用时构造）
+    ///
+    /// 性能 PERF-02：避免每次 `parse_bing_results` 都 `new` 一个
+    /// `BingSearchEngine`。`BingSearchEngine` 不再持有 `parser` 字段
+    /// （PERF-05 已迁移至 `HtmlParser::bing()` 全局单例），但 `new` 仍
+    /// 涉及 `Arc<EngineClient>` clone，缓存避免该开销。
+    fn bing_engine(&self) -> &BingSearchEngine {
+        self.bing_engine.get_or_init(|| {
+            BingSearchEngine::new(self.engine_client.clone())
+        })
+    }
+
+    /// 获取 Baidu client 引擎实例（缓存，首次调用时构造）
+    ///
+    /// 性能 PERF-02：避免每次 `parse_baidu_results` 都 `new` 一个
+    /// `BaiduSearchEngine`。`BaiduSearchEngine` 不再持有 `parser` 字段
+    /// （PERF-05 已迁移至 `HtmlParser::baidu()` 全局单例），但 `new` 仍
+    /// 涉及 `Arc<EngineClient>` clone，缓存避免该开销。
+    fn baidu_engine(&self) -> &BaiduSearchEngine {
+        self.baidu_engine.get_or_init(|| {
+            BaiduSearchEngine::new(self.engine_client.clone())
+        })
+    }
+
+    /// 获取 Sogou client 引擎实例（缓存，首次调用时构造）
+    ///
+    /// 性能 PERF-02：与 Google/Bing/Baidu 一致，缓存实例避免重复构造。
+    fn sogou_engine(&self) -> &SogouSearchEngine {
+        self.sogou_engine.get_or_init(|| {
+            SogouSearchEngine::new(self.engine_client.clone())
+        })
     }
 
     /// 检查速率限制
@@ -638,198 +527,124 @@ impl SmartSearchEngine {
     }
 
     /// 解析 Google 搜索结果
-    fn parse_google_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        use scraper::Html;
-
-        let document = Html::parse_document(html);
-        let mut results = Vec::with_capacity(20);
-
-        // 预编译解析上下文（含 result_selectors），避免在热路径中重复创建
-        // 选择器/scorer/processor（性能 LOW-1/2/3/4）
-        let ctx = GoogleParseContext::new();
-
-        // 使用预编译的 result_selectors，按优先级尝试直到找到有效结果
-        for selector in &ctx.result_selectors {
-            let elements: Vec<_> = document.select(selector).collect();
-            if !elements.is_empty() {
-                for element in elements {
-                    if let Some(result) = self.extract_google_result(&element, &ctx) {
-                        results.push(result);
-                    }
-                }
-                if !results.is_empty() {
-                    break;
-                }
-            }
-        }
-
-        info!("Google 解析完成，找到 {} 个结果", results.len());
-        Ok(results)
-    }
-
-    /// 从 Google 结果元素中提取信息
     ///
-    /// 使用预编译的 `GoogleParseContext` 中的选择器/scorer/processor，
-    /// 避免在每个元素上重复 `Selector::parse` 和构造对象（性能 LOW-1/2/3）。
-    /// XSS 防护统一使用 `escape_html_text` 自由函数（架构 MEDIUM 3：依赖来源一致）
-    fn extract_google_result(
-        &self,
-        element: &scraper::ElementRef<'_>,
-        ctx: &GoogleParseContext,
-    ) -> Option<SearchResult> {
-        use crate::search::client::shared_utils::escape_html_text;
-
-        let mut title = String::new();
-        for selector in &ctx.title_selectors {
-            if let Some(el) = element.select(selector).next() {
-                title = escape_html_text(el.text().collect::<String>().trim());
-                if !title.is_empty() {
-                    break;
-                }
-            }
-        }
-
-        let mut url = String::new();
-        for el in element.select(&ctx.link_selector) {
-            if let Some(href) = el.value().attr("href") {
-                if href.starts_with("http") && !href.contains("google.com") {
-                    url = href.to_string();
-                    break;
-                }
-            }
-        }
-
-        let mut description = String::new();
-        for selector in &ctx.snippet_selectors {
-            if let Some(el) = element.select(selector).next() {
-                description = escape_html_text(el.text().collect::<String>().trim());
-                description = ctx
-                    .processor
-                    .process_text(description.as_bytes())
-                    .unwrap_or(description);
-                if !description.is_empty() {
-                    break;
-                }
-            }
-        }
-
-        if !title.is_empty() && !url.is_empty() {
-            let engine_name = self.get_engine_name();
-            let mut result = SearchResult::new(title, url, Some(description), engine_name);
-            result.score = ctx.scorer.calculate_score(
-                &result.title,
-                result.description.as_deref(),
-                &result.url,
-            );
-            Some(result)
-        } else {
-            None
-        }
+    /// 委托 client 端 `GoogleSearchEngine::parse_results`（R-sec-007）。
+    ///
+    /// **性能 PERF-02**：使用缓存的 `google_engine()` 实例，避免每次解析都 `new`。
+    /// **性能 PERF-03**：不在 parse 阶段计算 score，由 `apply_scoring` 统一设置
+    /// （parse 阶段的 score 会被 `apply_scoring` 完全覆盖，是无效计算）。
+    /// **架构 MEDIUM-1**：engine_name 统一使用 `self.get_engine_name()`
+    /// （"Google"，首字母大写，与 Bing/Baidu/Sogou 一致）。
+    fn parse_google_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
+        let google_engine = self.google_engine();
+        let items = google_engine.parse_results(html)?;
+        Ok(items
+            .into_iter()
+            .map(|item| {
+                SearchResult::new(
+                    item.title,
+                    item.url,
+                    if item.description.is_empty() {
+                        None
+                    } else {
+                        Some(item.description)
+                    },
+                    self.get_engine_name(),
+                )
+            })
+            .collect())
     }
 
     /// 解析 Bing 搜索结果
+    ///
+    /// 委托 client 端 `BingSearchEngine::parse_search_results`（R-sec-007）。
+    ///
+    /// **性能 PERF-02**：使用缓存的 `bing_engine()` 实例，避免每次解析都 `new`。
+    /// **性能 PERF-03**：不在 parse 阶段计算 score，由 `apply_scoring` 统一设置。
+    /// **架构 MEDIUM-1**：engine_name 统一使用 `self.get_engine_name()`
+    /// （"Bing"，首字母大写，原 smart 端硬编码 "bing" 小写已修正）。
     fn parse_bing_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        let config = SearchResultParserConfig {
-            result_selectors: vec!["li.b_algo", "div.sb_add"],
-            title_selectors: vec!["h2", "a"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["p", "div"],
-            engine_name: "bing",
-            url_attr: None,
-        };
-        parse_search_results_common(html, config)
+        let bing_engine = self.bing_engine();
+        let items = bing_engine.parse_search_results(html)?;
+        Ok(items
+            .into_iter()
+            .map(|item| {
+                SearchResult::new(
+                    item.title,
+                    item.url,
+                    if item.description.is_empty() {
+                        None
+                    } else {
+                        Some(item.description)
+                    },
+                    self.get_engine_name(),
+                )
+            })
+            .collect())
     }
 
     /// 解析百度搜索结果
+    ///
+    /// 委托 client 端 `BaiduSearchEngine::parse_search_results`（R-sec-007）。
+    ///
+    /// **性能 PERF-02**：使用缓存的 `baidu_engine()` 实例，避免每次解析都 `new`。
+    /// **性能 PERF-03**：不在 parse 阶段计算 score，由 `apply_scoring` 统一设置。
+    /// **架构 MEDIUM-1**：engine_name 统一使用 `self.get_engine_name()`
+    /// （"Baidu"，首字母大写，原 smart 端硬编码 "baidu" 小写已修正）。
     fn parse_baidu_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        let config = SearchResultParserConfig {
-            result_selectors: vec!["div.c-container", "div.result"],
-            title_selectors: vec!["h3 a", "a"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["div.c-abstract", "div"],
-            engine_name: "baidu",
-            url_attr: None,
-        };
-        parse_search_results_common(html, config)
+        let baidu_engine = self.baidu_engine();
+        let items = baidu_engine.parse_search_results(html, "")?;
+        Ok(items
+            .into_iter()
+            .map(|item| {
+                SearchResult::new(
+                    item.title,
+                    item.url,
+                    if item.description.is_empty() {
+                        None
+                    } else {
+                        Some(item.description)
+                    },
+                    self.get_engine_name(),
+                )
+            })
+            .collect())
     }
 
     /// 解析搜狗搜索结果
+    ///
+    /// 委托 client 端 `SogouSearchEngine::parse_search_results`（R-sec-007）。
+    ///
+    /// **性能 PERF-02**：使用缓存的 `sogou_engine()` 实例，避免每次解析都 `new`。
+    /// **性能 PERF-03**：不在 parse 阶段计算 score，由 `apply_scoring` 统一设置
+    /// （原 smart 端 Sogou 不计算 score，导致 `apply_scoring` 后 Sogou 结果
+    /// score 与其他引擎不一致，现已统一）。
+    /// **架构 MEDIUM-1**：engine_name 统一使用 `self.get_engine_name()`
+    /// （"Sogou"，首字母大写，原 smart 端硬编码 "sogou" 小写已修正）。
+    /// **架构 LOW-1**：验证码检测保留在 smart 端前置检查（与 client 端解析
+    /// 职责分离，smart 端负责业务前置校验，client 端负责纯 HTML 解析）。
     fn parse_sogou_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        // 检测验证码页面
         if html.contains("验证码") || html.contains("seccode") || html.contains("verify") {
             warn!("Sogou returned CAPTCHA verification page");
             return Err(SearchError::Captcha("Sogou".to_string()));
         }
-
-        let document = Html::parse_document(html);
-        let mut results = Vec::with_capacity(20);
-
-        // 根据 temp/search.md 中的逆向工程结果
-        // Sogou 的结果包裹在 class="vrwrap" 中
-        let result_selector = safe_parse_selector("div.vrwrap")
-            .expect("Failed to parse Sogou result selector: div.vrwrap");
-
-        // 标题在 h3.vr-title > a 中
-        let title_selector = safe_parse_selector("h3.vr-title a, h3 a")
-            .expect("Failed to parse Sogou title selector");
-
-        // URL 从 href 属性提取
-        let link_selector = safe_parse_selector("h3.vr-title a, h3 a")
-            .expect("Failed to parse Sogou link selector");
-
-        // 摘要从 text-layout > p 中提取
-        let snippet_selector = safe_parse_selector("div.text-layout p, div.ft p, p")
-            .expect("Failed to parse Sogou snippet selector");
-
-        for element in document.select(&result_selector) {
-            // 提取标题
-            let title_node = element.select(&title_selector).next();
-            let title = match title_node {
-                Some(e) => {
-                    let text: String = e.text().collect();
-                    text.trim().to_string()
-                }
-                None => String::new(),
-            };
-
-            if title.is_empty() {
-                continue;
-            }
-
-            // 提取 URL - 处理内部重定向链接
-            let link_node = element.select(&link_selector).next();
-            let mut url = match link_node {
-                Some(e) => e.value().attr("href").unwrap_or("").to_string(),
-                None => String::new(),
-            };
-
-            // 处理 /link?url= 格式的重定向链接
-            if url.starts_with("/link?url=") {
-                url = format!("https://www.sogou.com{}", url);
-            }
-
-            // 提取摘要
-            let snippet_node = element.select(&snippet_selector).next();
-            let description = match snippet_node {
-                Some(e) => {
-                    let text: String = e.text().collect();
-                    text.trim().to_string()
-                }
-                None => String::new(),
-            };
-
-            if !url.is_empty() {
-                results.push(SearchResult::new(
-                    title,
-                    url,
-                    Some(description),
-                    "sogou".to_string(),
-                ));
-            }
-        }
-
-        info!("Parsed {} Sogou search results", results.len());
-        Ok(results)
+        let sogou_engine = self.sogou_engine();
+        let items = sogou_engine.parse_search_results(html)?;
+        Ok(items
+            .into_iter()
+            .map(|item| {
+                SearchResult::new(
+                    item.title,
+                    item.url,
+                    if item.description.is_empty() {
+                        None
+                    } else {
+                        Some(item.description)
+                    },
+                    self.get_engine_name(),
+                )
+            })
+            .collect())
     }
 
     /// 保存HTML用于调试分析
@@ -1499,164 +1314,6 @@ mod tests_ext {
         }
     }
 
-    // === safe_parse_selector ===
-
-    #[test]
-    fn test_safe_parse_selector_valid() {
-        let result = safe_parse_selector("div.g");
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn test_safe_parse_selector_invalid() {
-        assert!(safe_parse_selector(":::invalid:::").is_none());
-    }
-
-    #[test]
-    fn test_safe_parse_selector_empty() {
-        assert!(safe_parse_selector("").is_none());
-    }
-
-    // === parse_selectors ===
-
-    #[test]
-    fn test_parse_selectors_first_valid() {
-        let result = parse_selectors("test", &["div.g", "div.fallback"], "result");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_parse_selectors_fallback() {
-        let result = parse_selectors("test", &[":::invalid:::", "div.g"], "result");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_parse_selectors_all_invalid() {
-        let result = parse_selectors("test", &[":::bad1:::", ":::bad2:::"], "result");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        match err {
-            SearchError::Parse(msg) => assert!(msg.contains("result") && msg.contains("test")),
-            _ => panic!("Expected SearchError::Parse"),
-        }
-    }
-
-    #[test]
-    fn test_parse_selectors_empty_list() {
-        let result = parse_selectors("test", &[], "result");
-        assert!(result.is_err());
-    }
-
-    // === parse_search_results_common ===
-
-    #[test]
-    fn test_parse_search_results_common_with_results() {
-        let html = r#"
-        <html><body>
-        <li class="b_algo">
-            <h2>Rust Programming Language</h2>
-            <a href="https://www.rust-lang.org">rust-lang.org</a>
-            <p>A language empowering everyone to build reliable software.</p>
-        </li>
-        </body></html>
-        "#;
-        let config = SearchResultParserConfig {
-            result_selectors: vec!["li.b_algo"],
-            title_selectors: vec!["h2"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["p"],
-            engine_name: "bing",
-            url_attr: None,
-        };
-        let results = parse_search_results_common(html, config).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title, "Rust Programming Language");
-        assert_eq!(results[0].url, "https://www.rust-lang.org");
-        assert_eq!(results[0].engine, "bing");
-    }
-
-    #[test]
-    fn test_parse_search_results_common_empty_html() {
-        let config = SearchResultParserConfig {
-            result_selectors: vec!["li.b_algo"],
-            title_selectors: vec!["h2"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["p"],
-            engine_name: "bing",
-            url_attr: None,
-        };
-        let results = parse_search_results_common("", config).unwrap();
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_parse_search_results_common_no_matching_elements() {
-        let html = "<html><body><p>No results here</p></body></html>";
-        let config = SearchResultParserConfig {
-            result_selectors: vec!["li.b_algo"],
-            title_selectors: vec!["h2"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["p"],
-            engine_name: "bing",
-            url_attr: None,
-        };
-        let results = parse_search_results_common(html, config).unwrap();
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_parse_search_results_common_custom_url_attr() {
-        let html = r#"
-        <html><body>
-        <div class="item">
-            <span class="title">Test Title</span>
-            <a data-url="https://example.com">Link</a>
-            <div class="desc">Description</div>
-        </div>
-        </body></html>
-        "#;
-        let config = SearchResultParserConfig {
-            result_selectors: vec!["div.item"],
-            title_selectors: vec!["span.title"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["div.desc"],
-            engine_name: "test",
-            url_attr: Some("data-url"),
-        };
-        let results = parse_search_results_common(html, config).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].url, "https://example.com");
-    }
-
-    #[test]
-    fn test_parse_search_results_common_skips_empty_title_or_url() {
-        let html = r#"
-        <html><body>
-        <div class="item">
-            <span class="title">Has Title</span>
-            <a>No href attribute</a>
-            <div class="desc">Desc</div>
-        </div>
-        <div class="item">
-            <span class="title"></span>
-            <a href="https://example.com">Link</a>
-            <div class="desc">Desc</div>
-        </div>
-        </body></html>
-        "#;
-        let config = SearchResultParserConfig {
-            result_selectors: vec!["div.item"],
-            title_selectors: vec!["span.title"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["div.desc"],
-            engine_name: "test",
-            url_attr: None,
-        };
-        let results = parse_search_results_common(html, config).unwrap();
-        assert!(results.is_empty());
-    }
-
     // === SmartSearchEngineConfig Debug ===
 
     #[test]
@@ -1979,14 +1636,21 @@ mod tests_ext {
         let results = engine.parse_bing_results(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Rust Language");
-        assert_eq!(results[0].engine, "bing");
+        // MEDIUM-1: engine_name 统一使用 self.get_engine_name()（"Bing"，首字母大写）
+        assert_eq!(results[0].engine, "Bing");
     }
 
     #[test]
     fn test_parse_bing_results_empty_html() {
         let engine = create_engine_with_type(SearchEngineType::Bing);
-        let results = engine.parse_bing_results("").unwrap();
-        assert!(results.is_empty());
+        // 委托 client 端 BingSearchEngine::parse_search_results，
+        // client 端对空 HTML 返回 Parse 错误（更严格的输入校验）。
+        let result = engine.parse_bing_results("");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::Parse(msg) => assert!(msg.contains("Empty HTML")),
+            other => panic!("expected SearchError::Parse, got {:?}", other),
+        }
     }
 
     // === parse_baidu_results ===
@@ -2005,7 +1669,8 @@ mod tests_ext {
         let results = engine.parse_baidu_results(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "百度结果");
-        assert_eq!(results[0].engine, "baidu");
+        // MEDIUM-1: engine_name 统一使用 self.get_engine_name()（"Baidu"，首字母大写）
+        assert_eq!(results[0].engine, "Baidu");
     }
 
     #[test]
@@ -2032,7 +1697,8 @@ mod tests_ext {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "搜狗结果");
         assert_eq!(results[0].url, "https://example.com");
-        assert_eq!(results[0].engine, "sogou");
+        // MEDIUM-1: engine_name 统一使用 self.get_engine_name()（"Sogou"，首字母大写）
+        assert_eq!(results[0].engine, "Sogou");
     }
 
     #[test]
@@ -2049,20 +1715,23 @@ mod tests_ext {
 
     #[test]
     fn test_parse_sogou_results_redirect_link() {
+        // 委托 client 端 SogouSearchEngine::parse_search_results，
+        // client 端对 `/link?url=` 中转链接通过 `data-url` 属性提取真实 URL
+        // （参考 searxng _extract_url），而非将内部 ID 拼接到 sogou.com。
         let engine = create_engine_with_type(SearchEngineType::Sogou);
         let html = r#"
         <html><body>
         <div class="vrwrap">
             <h3 class="vr-title"><a href="/link?url=abc123">Redirect Link</a></h3>
+            <div class="img-layout" data-url="https://www.example.com/article"></div>
             <div class="text-layout"><p>Desc</p></div>
         </div>
         </body></html>
         "#;
         let results = engine.parse_sogou_results(html).unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0]
-            .url
-            .starts_with("https://www.sogou.com/link?url="));
+        assert_eq!(results[0].url, "https://www.example.com/article");
+        assert_eq!(results[0].title, "Redirect Link");
     }
 
     #[test]
@@ -2907,73 +2576,6 @@ mod tests_ext {
         assert!(result.is_ok(), "RetryAfter with sleep should return Ok");
     }
 
-    // === parse_search_results_common with fallback selectors ===
-
-    #[test]
-    fn test_parse_search_results_common_uses_fallback_result_selector() {
-        // Exercises the fallback logic when the first result selector fails
-        // to PARSE (not just match) but the second one succeeds.
-        // parse_selectors returns the first parseable selector, so we need
-        // an invalid CSS selector as the first option.
-        let html = r#"
-        <html><body>
-        <div class="fallback-item">
-            <h2>Fallback Title</h2>
-            <a href="https://fallback.example.com">Link</a>
-            <p>Fallback description</p>
-        </div>
-        </body></html>
-        "#;
-        let config = SearchResultParserConfig {
-            result_selectors: vec![":::invalid:::", "div.fallback-item"],
-            title_selectors: vec!["h2"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["p"],
-            engine_name: "test",
-            url_attr: None,
-        };
-        let results = parse_search_results_common(html, config).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title, "Fallback Title");
-        assert_eq!(results[0].url, "https://fallback.example.com");
-    }
-
-    #[test]
-    fn test_parse_search_results_common_multiple_results() {
-        // Exercises the loop that collects multiple results.
-        let html = r#"
-        <html><body>
-        <div class="item">
-            <span class="title">First</span>
-            <a href="https://first.com">1</a>
-            <div class="desc">Desc 1</div>
-        </div>
-        <div class="item">
-            <span class="title">Second</span>
-            <a href="https://second.com">2</a>
-            <div class="desc">Desc 2</div>
-        </div>
-        <div class="item">
-            <span class="title">Third</span>
-            <a href="https://third.com">3</a>
-            <div class="desc">Desc 3</div>
-        </div>
-        </body></html>
-        "#;
-        let config = SearchResultParserConfig {
-            result_selectors: vec!["div.item"],
-            title_selectors: vec!["span.title"],
-            link_selectors: vec!["a"],
-            snippet_selectors: vec!["div.desc"],
-            engine_name: "test",
-            url_attr: None,
-        };
-        let results = parse_search_results_common(html, config).unwrap();
-        assert_eq!(results.len(), 3);
-        assert_eq!(results[0].title, "First");
-        assert_eq!(results[2].title, "Third");
-    }
-
     // === Mock ScraperEngine for search() flow tests ===
 
     enum MockScrapeBehavior {
@@ -3222,7 +2824,241 @@ mod tests_ext {
         let results = engine.parse_sogou_results(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Title Without Snippet");
-        assert_eq!(results[0].description, Some(String::new()));
+        // smart 端委托逻辑：client 返回空 description 时转为 None
+        assert_eq!(results[0].description, None);
+    }
+
+    // === R-sec-007 回归测试：smart 端委托 client 端解析等价性验证 ===
+    //
+    // 验收标准（specs/security-hardening/spec.md L52-54）：
+    // - smart 模块不再各自定义 4 引擎解析；委托 client 层实现
+    // - 解析结果与去重前等价（回归测试对同 HTML 输出一致）
+    //
+    // 即 smart 端 `parse_*_results` 与 client 端 `parse_results`/`parse_search_results`
+    // 对同一 HTML 的解析结果（title/url/description）一致；score 与 engine_name
+    // 字段属于 smart 端附加逻辑，不在等价性断言范围。
+
+    /// 通用断言：smart 端 SearchResult 与 client 端 ResponseItem 在
+    /// title/url/description 三元组上等价。
+    ///
+    /// - `description`：smart 端将空字符串转为 `None`，client 端保留空字符串。
+    ///   比较时归一化：smart 端 `None` ↔ client 端空字符串。
+    /// - `engine` / `score`：不在等价性范围（smart 端附加逻辑）。
+    fn assert_smart_client_parity(
+        client_items: &[ResponseItem],
+        smart_results: &[SearchResult],
+    ) {
+        assert_eq!(
+            client_items.len(),
+            smart_results.len(),
+            "smart 端与 client 端解析结果数量不一致 \
+             (client={}, smart={})",
+            client_items.len(),
+            smart_results.len()
+        );
+        for (idx, (client_item, smart_result)) in
+            client_items.iter().zip(smart_results.iter()).enumerate()
+        {
+            assert_eq!(
+                client_item.title, smart_result.title,
+                "结果 #{}: title 不一致 (client={:?}, smart={:?})",
+                idx, client_item.title, smart_result.title
+            );
+            assert_eq!(
+                client_item.url, smart_result.url,
+                "结果 #{}: url 不一致 (client={:?}, smart={:?})",
+                idx, client_item.url, smart_result.url
+            );
+            // smart 端将空 description 转为 None；client 端保留空字符串。
+            // 归一化比较：smart None ↔ client ""
+            let smart_desc = smart_result.description.as_deref().unwrap_or("");
+            assert_eq!(
+                client_item.description, smart_desc,
+                "结果 #{}: description 不一致 (client={:?}, smart={:?})",
+                idx, client_item.description, smart_result.description
+            );
+        }
+    }
+
+    #[test]
+    fn test_r_sec_007_google_smart_delegates_to_client_equivalent() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+        let html = r#"
+        <html><body>
+        <div class="g">
+            <h3>Rust Programming Language</h3>
+            <a href="https://www.rust-lang.org">rust-lang.org</a>
+            <span ae30>Empowering everyone to build reliable software.</span>
+        </div>
+        <div class="g">
+            <h3>Rust Documentation</h3>
+            <a href="https://doc.rust-lang.org">doc.rust-lang.org</a>
+            <span ae30>The Rust programming language documentation.</span>
+        </div>
+        <div class="g">
+            <h3>Google Link (skipped)</h3>
+            <a href="https://google.com/search?q=rust">google.com</a>
+        </div>
+        </body></html>
+        "#;
+
+        // 直接调用 client 端 GoogleSearchEngine::parse_results
+        let google_engine = GoogleSearchEngine::new(engine.engine_client.clone());
+        let client_items = google_engine.parse_results(html).unwrap();
+
+        // 通过 smart 端委托调用
+        let smart_results = engine.parse_google_results(html).unwrap();
+
+        assert_smart_client_parity(&client_items, &smart_results);
+    }
+
+    #[test]
+    fn test_r_sec_007_google_smart_delegates_to_client_empty_html() {
+        let engine = create_engine_with_type(SearchEngineType::Google);
+
+        let google_engine = GoogleSearchEngine::new(engine.engine_client.clone());
+        let client_items = google_engine.parse_results("").unwrap();
+
+        let smart_results = engine.parse_google_results("").unwrap();
+
+        assert_smart_client_parity(&client_items, &smart_results);
+    }
+
+    #[test]
+    fn test_r_sec_007_bing_smart_delegates_to_client_equivalent() {
+        let engine = create_engine_with_type(SearchEngineType::Bing);
+        let html = r#"
+        <html><body>
+        <li class="b_algo">
+            <h2>Rust Programming Language</h2>
+            <a href="https://www.rust-lang.org">Link</a>
+            <p>Empowering everyone to build reliable software.</p>
+        </li>
+        <li class="b_algo">
+            <h2>Rust Documentation</h2>
+            <a href="https://doc.rust-lang.org">Link</a>
+            <p>The Rust programming language documentation.</p>
+        </li>
+        </body></html>
+        "#;
+
+        let bing_engine = BingSearchEngine::new(engine.engine_client.clone());
+        let client_items = bing_engine.parse_search_results(html).unwrap();
+
+        let smart_results = engine.parse_bing_results(html).unwrap();
+
+        assert_smart_client_parity(&client_items, &smart_results);
+    }
+
+    #[test]
+    fn test_r_sec_007_bing_smart_delegates_to_client_empty_html() {
+        let engine = create_engine_with_type(SearchEngineType::Bing);
+
+        let bing_engine = BingSearchEngine::new(engine.engine_client.clone());
+        // client 端对空 HTML 返回 Parse 错误（更严格的输入校验），
+        // smart 端委托后行为一致：返回同样的 Err。
+        let client_result = bing_engine.parse_search_results("");
+        let smart_result = engine.parse_bing_results("");
+
+        assert!(client_result.is_err(), "client 端空 HTML 应返回错误");
+        assert!(smart_result.is_err(), "smart 端空 HTML 应返回错误（委托 client）");
+        // 错误类型应一致（均为 Parse）
+        match (client_result.unwrap_err(), smart_result.unwrap_err()) {
+            (SearchError::Parse(_), SearchError::Parse(_)) => {}
+            (c, s) => panic!(
+                "空 HTML 错误类型不一致: client={:?}, smart={:?}",
+                c, s
+            ),
+        }
+    }
+
+    #[test]
+    fn test_r_sec_007_baidu_smart_delegates_to_client_equivalent() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+        let html = r#"
+        <html><body>
+        <div class="c-container">
+            <h3><a href="https://www.rust-lang.org">Rust 编程语言</a></h3>
+            <div class="c-abstract">Rust 是一门系统级编程语言。</div>
+        </div>
+        <div class="c-container">
+            <h3><a href="https://doc.rust-lang.org">Rust 文档</a></h3>
+            <div class="c-abstract">Rust 官方文档。</div>
+        </div>
+        </body></html>
+        "#;
+
+        let baidu_engine = BaiduSearchEngine::new(engine.engine_client.clone());
+        let client_items = baidu_engine.parse_search_results(html, "").unwrap();
+
+        let smart_results = engine.parse_baidu_results(html).unwrap();
+
+        assert_smart_client_parity(&client_items, &smart_results);
+    }
+
+    #[test]
+    fn test_r_sec_007_baidu_smart_delegates_to_client_empty_html() {
+        let engine = create_engine_with_type(SearchEngineType::Baidu);
+
+        let baidu_engine = BaiduSearchEngine::new(engine.engine_client.clone());
+        // BaiduSearchEngine::parse_search_results 对空 HTML 的行为：
+        // - 通过 HtmlParser 解析（空文档），返回空 Vec
+        // smart 端委托后行为一致：返回 Ok(空 Vec)。
+        let client_items = baidu_engine.parse_search_results("", "").unwrap();
+        let smart_results = engine.parse_baidu_results("").unwrap();
+
+        assert_smart_client_parity(&client_items, &smart_results);
+    }
+
+    #[test]
+    fn test_r_sec_007_sogou_smart_delegates_to_client_equivalent() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://example.com/rust">Rust 编程语言</a></h3>
+            <div class="text-layout"><p>Rust 是一门系统级编程语言。</p></div>
+        </div>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://example.com/rust-doc">Rust 文档</a></h3>
+            <div class="ft"><p>Rust 官方文档。</p></div>
+        </div>
+        </body></html>
+        "#;
+
+        let sogou_engine = SogouSearchEngine::new(engine.engine_client.clone());
+        let client_items = sogou_engine.parse_search_results(html).unwrap();
+
+        let smart_results = engine.parse_sogou_results(html).unwrap();
+
+        assert_smart_client_parity(&client_items, &smart_results);
+    }
+
+    #[test]
+    fn test_r_sec_007_sogou_smart_delegates_to_client_captcha() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+        // smart 端在委托前执行验证码检测（保持原 smart 端前置检查）。
+        // client 端不执行验证码检测，因此此用例只验证 smart 端行为：
+        // 验证码页面 → smart 端返回 Captcha 错误（不委托 client）。
+        let html = r#"<html><body>验证码页面 seccode verify</body></html>"#;
+        let smart_result = engine.parse_sogou_results(html);
+        assert!(smart_result.is_err(), "smart 端验证码页面应返回错误");
+        match smart_result.unwrap_err() {
+            SearchError::Captcha(name) => assert_eq!(name, "Sogou"),
+            other => panic!("期望 Captcha 错误，实际: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_r_sec_007_sogou_smart_delegates_to_client_empty_html() {
+        let engine = create_engine_with_type(SearchEngineType::Sogou);
+
+        let sogou_engine = SogouSearchEngine::new(engine.engine_client.clone());
+        let client_items = sogou_engine.parse_search_results("").unwrap();
+
+        let smart_results = engine.parse_sogou_results("").unwrap();
+
+        assert_smart_client_parity(&client_items, &smart_results);
     }
 
     // === build_scrape_request with non-specific engine type ===

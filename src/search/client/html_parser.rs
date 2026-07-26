@@ -7,6 +7,7 @@
 //! Provides reusable parsing logic for different search engines
 
 use super::{ResponseItem, SearchEngineType};
+use once_cell::sync::Lazy;
 use scraper::{Html, Selector};
 
 use super::shared_utils::{escape_html_text, safe_parse_selector};
@@ -19,6 +20,42 @@ pub struct HtmlParser {
     snippet_selectors: Vec<Selector>,
     result_selectors: Vec<Selector>,
 }
+
+/// Google 风格 parser 全局单例（性能 PERF-05）
+///
+/// 使用 `once_cell::sync::Lazy` 在首次访问时构造一次，避免每次
+/// `BaiduSearchEngine::new`/`BingSearchEngine::new` 都重复解析 4-8 个 CSS 选择器。
+/// `Selector::parse` 内部涉及 CSS tokenizer + AST 构造，是已知昂贵操作。
+static GOOGLE_PARSER: Lazy<HtmlParser> = Lazy::new(|| {
+    HtmlParser::new(
+        vec!["div.g", "div[data-hveid]", "div:has(> a > h3)"],
+        "h3",
+        "a[href]",
+        vec!["[data-sncf]", "span.st", "div[class*='snippet']"],
+    )
+});
+
+/// Bing 风格 parser 全局单例（性能 PERF-05）
+static BING_PARSER: Lazy<HtmlParser> = Lazy::new(|| HtmlParser::new(vec!["li.b_algo"], "h2", "a[href]", vec!["p"]));
+
+/// Baidu 风格 parser 全局单例（性能 PERF-05）
+static BAIDU_PARSER: Lazy<HtmlParser> = Lazy::new(|| {
+    HtmlParser::new(
+        vec![
+            "div.c-container",
+            "div.result",
+            "div.result-op",
+            ".c-container",
+        ],
+        "h3",
+        "a",
+        vec!["div.c-abstract", ".c-abstract", ".c-span18"],
+    )
+});
+
+/// Sogou 风格 parser 全局单例（性能 PERF-05）
+static SOGOU_PARSER: Lazy<HtmlParser> =
+    Lazy::new(|| HtmlParser::new(vec![".vrwrap", ".rb"], "h3", "h3 > a", vec![]));
 
 impl HtmlParser {
     /// Create a new parser with engine-specific selectors
@@ -55,39 +92,26 @@ impl HtmlParser {
         }
     }
 
-    /// Create parser for Google-style results
-    pub fn for_google() -> Self {
-        Self::new(
-            vec!["div.g", "div[data-hveid]", "div:has(> a > h3)"],
-            "h3",
-            "a[href]",
-            vec!["[data-sncf]", "span.st", "div[class*='snippet']"],
-        )
+    /// 获取 Google 风格 parser 全局单例（性能 PERF-05）
+    ///
+    /// 替代原 `for_google()` 构造函数，返回 `&'static Self` 避免重复构造。
+    pub fn google() -> &'static Self {
+        &*GOOGLE_PARSER
     }
 
-    /// Create parser for Bing-style results
-    pub fn for_bing() -> Self {
-        Self::new(vec!["li.b_algo"], "h2", "a[href]", vec!["p"])
+    /// 获取 Bing 风格 parser 全局单例（性能 PERF-05）
+    pub fn bing() -> &'static Self {
+        &*BING_PARSER
     }
 
-    /// Create parser for Baidu-style results
-    pub fn for_baidu() -> Self {
-        Self::new(
-            vec![
-                "div.c-container",
-                "div.result",
-                "div.result-op",
-                ".c-container",
-            ],
-            "h3",
-            "a",
-            vec!["div.c-abstract", ".c-abstract", ".c-span18"],
-        )
+    /// 获取 Baidu 风格 parser 全局单例（性能 PERF-05）
+    pub fn baidu() -> &'static Self {
+        &*BAIDU_PARSER
     }
 
-    /// Create parser for Sogou-style results
-    pub fn for_sogou() -> Self {
-        Self::new(vec![".vrwrap", ".rb"], "h3", "h3 > a", vec![])
+    /// 获取 Sogou 风格 parser 全局单例（性能 PERF-05）
+    pub fn sogou() -> &'static Self {
+        &*SOGOU_PARSER
     }
 
     /// Parse HTML content and extract search results
@@ -353,7 +377,7 @@ mod tests {
     #[test]
     fn test_parse_empty_html_returns_empty() {
         // 边界情况：空 HTML 返回空结果
-        let parser = HtmlParser::for_google();
+        let parser = HtmlParser::google();
         let results = parser.parse("", SearchEngineType::Google);
         assert!(results.is_empty());
     }
@@ -361,7 +385,7 @@ mod tests {
     #[test]
     fn test_parse_google_valid_results() {
         // 测试从有效 Google HTML 解析结果
-        let parser = HtmlParser::for_google();
+        let parser = HtmlParser::google();
         let html = r#"
         <html><body>
             <div class="g">
@@ -386,7 +410,7 @@ mod tests {
     #[test]
     fn test_parse_no_matching_selectors_returns_empty() {
         // 边界情况：HTML 不包含匹配的选择器时返回空
-        let parser = HtmlParser::for_google();
+        let parser = HtmlParser::google();
         let html = r#"<html><body><div>nothing here</div></body></html>"#;
         let results = parser.parse(html, SearchEngineType::Google);
         assert!(results.is_empty());
@@ -395,7 +419,7 @@ mod tests {
     #[test]
     fn test_parse_skips_results_without_title() {
         // 边界情况：缺少标题的结果被跳过
-        let parser = HtmlParser::for_google();
+        let parser = HtmlParser::google();
         let html = r#"
         <html><body>
             <div class="g">
@@ -415,7 +439,7 @@ mod tests {
     #[test]
     fn test_parse_skips_non_http_urls() {
         // 边界情况：非 http 开头的 URL 被跳过
-        let parser = HtmlParser::for_google();
+        let parser = HtmlParser::google();
         let html = r#"
         <html><body>
             <div class="g">
@@ -438,7 +462,7 @@ mod tests {
     #[test]
     fn test_parse_deduplicates_by_url() {
         // 测试相同 URL 的结果被去重
-        let parser = HtmlParser::for_google();
+        let parser = HtmlParser::google();
         let html = r#"
         <html><body>
             <div class="g">
@@ -462,7 +486,7 @@ mod tests {
     #[test]
     fn test_parse_bing_results() {
         // 测试 Bing 解析器从有效 HTML 提取结果
-        let parser = HtmlParser::for_bing();
+        let parser = HtmlParser::bing();
         let html = r#"
         <html><body>
             <li class="b_algo">
@@ -481,7 +505,7 @@ mod tests {
     #[test]
     fn test_parse_baidu_results() {
         // 测试百度解析器从有效 HTML 提取结果
-        let parser = HtmlParser::for_baidu();
+        let parser = HtmlParser::baidu();
         let html = r#"
         <html><body>
             <div class="c-container">

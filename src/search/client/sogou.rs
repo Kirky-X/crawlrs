@@ -86,6 +86,10 @@ impl SogouSearchEngine {
         // 搜狗中转链接的真实 URL 存在 data-url 属性里（参考 searxng _extract_url）。
         let data_url_selector =
             safe_parse_selector("[data-url]").expect("Failed to parse Sogou data-url selector");
+        // 摘要选择器（按优先级回退）：text-layout > ft > 裸 p
+        // 保持原 smart 端 parse_sogou_results 行为（R-sec-007 等价）。
+        let snippet_selector = safe_parse_selector("div.text-layout p, div.ft p, p")
+            .expect("Failed to parse Sogou snippet selector");
 
         let mut results = Vec::with_capacity(10);
 
@@ -125,10 +129,17 @@ impl SogouSearchEngine {
             };
 
             if !resolved_url.is_empty() {
+                // 提取摘要 - 按选择器优先级回退，找到第一个非空文本
+                let description = element
+                    .select(&snippet_selector)
+                    .next()
+                    .map(|node| escape_html_text(&node.text().collect::<String>()))
+                    .unwrap_or_default();
+
                 results.push(ResponseItem {
                     title,
                     url: resolved_url,
-                    description: String::new(),
+                    description,
                     engine: SearchEngineType::Sogou,
                 });
             }
