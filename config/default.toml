@@ -71,6 +71,13 @@ max_size = 5000
 [concurrency]
 default_team_limit = 10
 task_lock_duration_seconds = 300
+# 内存感知调度器（crawler-capability-absorption Stage 1 / T016-T018）
+# 内存使用率（0.0-1.0）达到 pressure 阈值时调度器对新任务执行 Defer；
+# 达到 critical 阈值时执行 Reschedule，持续超过 critical_timeout_seconds
+# 后通过 watch channel 发出优雅关闭信号。
+mem_pressure_threshold = 0.8
+mem_critical_threshold = 0.9
+critical_timeout_seconds = 30
 
 # Search Configuration
 [search]

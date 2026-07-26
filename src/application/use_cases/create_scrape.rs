@@ -194,7 +194,8 @@ fn map_engine_error(engine_error: crate::engines::engine_client::EngineError) ->
         }
         crate::engines::engine_client::EngineError::InvalidUrl(msg) => DomainError::InvalidUrl(msg),
         crate::engines::engine_client::EngineError::RequestFailed(msg)
-        | crate::engines::engine_client::EngineError::BrowserError(msg) => {
+        | crate::engines::engine_client::EngineError::BrowserError(msg)
+        | crate::engines::engine_client::EngineError::AntiBotDetected(msg) => {
             DomainError::NetworkError(msg)
         }
         crate::engines::engine_client::EngineError::NoEnginesAvailable => {

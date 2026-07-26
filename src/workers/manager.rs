@@ -23,6 +23,9 @@ use tokio::task::JoinHandle;
 
 use crate::config::settings::Settings;
 use crate::utils::robots::RobotsCheckerTrait;
+// T019（R-runtime-001）：MemoryScheduler 接入 WorkerManager
+#[cfg(feature = "metrics")]
+use crate::workers::scheduler::memory_scheduler::MemoryScheduler;
 
 /// 工作管理器
 pub struct WorkerManager {
@@ -42,6 +45,12 @@ pub struct WorkerManager {
     extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
     regex_cache: RegexCache,
+    /// 内存感知调度器（T019/R-runtime-001）
+    ///
+    /// 由 `WorkerManager::new` 从 `shared_system_monitor()` + `ConcurrencySettings`
+    /// 阈值构造，所有 worker 共享同一实例。
+    #[cfg(feature = "metrics")]
+    memory_scheduler: Arc<MemoryScheduler>,
 }
 
 /// Worker Manager Dependencies
@@ -70,6 +79,25 @@ pub struct WorkerManagerConfig {
 
 impl WorkerManager {
     pub fn new(deps: WorkerManagerDeps, config: WorkerManagerConfig) -> Self {
+        // T019（R-runtime-001）：构造内存感知调度器
+        //
+        // 复用 `shared_system_monitor()` 全局单例（init_metrics 启动时已初始化），
+        // 从 `ConcurrencySettings` 读取阈值（pressure/critical/timeout）。
+        #[cfg(feature = "metrics")]
+        let memory_scheduler = {
+            use crate::infrastructure::observability::metrics::{
+                shared_system_monitor, SystemMonitorTrait,
+            };
+            Arc::new(MemoryScheduler::new(
+                shared_system_monitor() as Arc<dyn SystemMonitorTrait>,
+                config.settings.concurrency.mem_pressure_threshold,
+                config.settings.concurrency.mem_critical_threshold,
+                std::time::Duration::from_secs(
+                    config.settings.concurrency.critical_timeout_seconds,
+                ),
+            ))
+        };
+
         Self {
             queue: deps.queue,
             repository: deps.repository,
@@ -86,6 +114,8 @@ impl WorkerManager {
             handles: Vec::new(),
             extraction_service: deps.extraction_service,
             regex_cache: deps.regex_cache,
+            #[cfg(feature = "metrics")]
+            memory_scheduler,
         }
     }
 
@@ -120,6 +150,8 @@ impl WorkerManager {
                 self.default_concurrency_limit,
                 self.extraction_service.clone(),
                 self.regex_cache.clone(),
+                #[cfg(feature = "metrics")]
+                self.memory_scheduler.clone(),
             );
 
             let queue = self.queue.clone();

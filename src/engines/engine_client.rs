@@ -14,6 +14,7 @@
 use crate::engines::health_monitor::{AggregateHealthStatus, EngineHealthMonitor};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::engines::validators::validate_url;
+use crate::utils::retry::RetryReason;
 use log::warn;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -524,6 +525,14 @@ pub enum EngineError {
     #[error("Browser error: {0}")]
     BrowserError(String),
 
+    /// 反爬虫检测命中（design.md §1.6/1.7，R-antibot-003）
+    ///
+    /// 携带 `antibot::classifier::classify` 给出的 `Detection::reason` 字符串。
+    /// 可重试：`is_retryable()=true`，`retry_reason()=AntiBot`，
+    /// 路由层据此切身份（UA/代理/stealth）+ 强制浏览器/FlareSolverr 引擎改派。
+    #[error("Anti-bot detected: {0}")]
+    AntiBotDetected(String),
+
     /// Request expired (circuit breaker open)
     #[error("Request expired")]
     Expired,
@@ -566,10 +575,39 @@ impl EngineError {
             Self::InvalidUrl(_) => false,
             Self::SsrfProtection(_) => false,
             Self::BrowserError(_) => true,
+            Self::AntiBotDetected(_) => true,
             Self::Internal(_) => false,
             Self::AllEnginesFailed(_) => false,
             Self::Expired => false,
             Self::Other(_) => false,
+        }
+    }
+
+    /// 将错误归类为重试原因（design.md §4，R-antibot-003）。
+    ///
+    /// 调用方应先查 [`is_retryable()`](Self::is_retryable)：
+    /// 不可重试的错误虽返回 [`RetryReason::Transient`]，
+    /// 但不会被重试系统消费，仅作占位以保证返回值完备。
+    ///
+    /// 当前映射（Stage 1）：
+    /// - `RequestFailed` / `Timeout` / `BrowserError` → `Transient`（同引擎可重试）
+    /// - `AntiBotDetected` → `AntiBot`（需切身份 + 浏览器引擎改派）
+    /// - 其余不可重试变体 → `Transient`（占位）
+    ///
+    /// Stage 2（T027）补 `FeatureToggle` 变体后，将新增 `→ RetryReason::FeatureToggle` 映射。
+    pub fn retry_reason(&self) -> RetryReason {
+        match self {
+            Self::AntiBotDetected(_) => RetryReason::AntiBot,
+            Self::RequestFailed(_)
+            | Self::Timeout(_)
+            | Self::BrowserError(_)
+            | Self::NoEnginesAvailable
+            | Self::InvalidUrl(_)
+            | Self::SsrfProtection(_)
+            | Self::Internal(_)
+            | Self::AllEnginesFailed(_)
+            | Self::Expired
+            | Self::Other(_) => RetryReason::Transient,
         }
     }
 }
@@ -798,6 +836,7 @@ fn convert_error(e: EngineError) -> EngineError {
         }
         EngineError::SsrfProtection(msg) => EngineError::SsrfProtection(msg),
         EngineError::BrowserError(msg) => EngineError::BrowserError(msg),
+        EngineError::AntiBotDetected(msg) => EngineError::AntiBotDetected(msg),
         EngineError::Expired => EngineError::Internal("Request expired".to_string()),
         EngineError::Other(msg) => EngineError::Internal(msg),
         EngineError::NoEnginesAvailable => EngineError::NoEnginesAvailable,
@@ -1232,6 +1271,7 @@ mod tests {
         assert!(EngineError::RequestFailed("err".to_string()).is_retryable());
         assert!(EngineError::Timeout(Duration::from_secs(10)).is_retryable());
         assert!(EngineError::BrowserError("crash".to_string()).is_retryable());
+        assert!(EngineError::AntiBotDetected("Cloudflare challenge".to_string()).is_retryable());
         assert!(!EngineError::NoEnginesAvailable.is_retryable());
         assert!(!EngineError::InvalidUrl("bad".to_string()).is_retryable());
         assert!(!EngineError::SsrfProtection("blocked".to_string()).is_retryable());
@@ -1511,10 +1551,80 @@ mod tests {
         assert!(!EngineError::InvalidUrl("bad".to_string()).is_retryable());
         assert!(!EngineError::SsrfProtection("blocked".to_string()).is_retryable());
         assert!(EngineError::BrowserError("err".to_string()).is_retryable());
+        assert!(EngineError::AntiBotDetected("rate limited".to_string()).is_retryable());
         assert!(!EngineError::Internal("err".to_string()).is_retryable());
         assert!(!EngineError::AllEnginesFailed("all failed".to_string()).is_retryable());
         assert!(!EngineError::Expired.is_retryable());
         assert!(!EngineError::Other("err".to_string()).is_retryable());
+    }
+
+    // === retry_reason() tests (T012, R-antibot-003) ===
+
+    #[test]
+    fn test_retry_reason_antibot_detected_maps_to_antibot() {
+        let err = EngineError::AntiBotDetected("Cloudflare challenge page".to_string());
+        assert_eq!(err.retry_reason(), RetryReason::AntiBot);
+    }
+
+    #[test]
+    fn test_retry_reason_transient_errors_map_to_transient() {
+        assert_eq!(
+            EngineError::RequestFailed("conn refused".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::Timeout(Duration::from_secs(10)).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::BrowserError("crash".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+    }
+
+    #[test]
+    fn test_retry_reason_non_retryable_errors_map_to_transient_placeholder() {
+        // 不可重试错误返回 Transient 占位（调用方应先查 is_retryable()）
+        assert_eq!(
+            EngineError::NoEnginesAvailable.retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::InvalidUrl("bad".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::SsrfProtection("blocked".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::Internal("err".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::AllEnginesFailed("all".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(EngineError::Expired.retry_reason(), RetryReason::Transient);
+        assert_eq!(
+            EngineError::Other("err".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+    }
+
+    #[test]
+    fn test_antibot_detected_display_format() {
+        let err = EngineError::AntiBotDetected("429 Too Many Requests".to_string());
+        assert_eq!(err.to_string(), "Anti-bot detected: 429 Too Many Requests");
+    }
+
+    #[test]
+    fn test_convert_error_antibot_detected_passthrough() {
+        let err = convert_error(EngineError::AntiBotDetected("WAF block".to_string()));
+        match err {
+            EngineError::AntiBotDetected(msg) => assert_eq!(msg, "WAF block"),
+            other => panic!("Expected AntiBotDetected, got {:?}", other),
+        }
     }
 
     // === to_public conversion tests ===

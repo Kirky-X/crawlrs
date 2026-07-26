@@ -11,6 +11,7 @@ pub mod backlog_worker;
 pub mod errors;
 pub mod expiration_worker;
 pub mod manager;
+pub mod scheduler;
 pub mod scrape_worker;
 pub mod task_state_machine;
 /// R-wh-001 / T026：webhook feature 关闭时不编译此模块

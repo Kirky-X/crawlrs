@@ -12,7 +12,12 @@ pub mod circuit_breaker;
 pub mod client;
 pub mod health_monitor;
 pub mod router;
+pub mod upgrade_probe; // T014：流式 HTTP→Chrome 升级探测
 pub mod validators;
+
+// 反爬虫检测模块（T009-T011）— 由 `antibot` feature 门控
+#[cfg(feature = "antibot")]
+pub mod antibot;
 
 // Shared validation utilities for SSRF protection
 pub mod shared;

@@ -633,6 +633,7 @@ impl EngineRouter {
     }
 
     /// Internal route implementation without timeout
+    #[allow(unused_variables)]
     async fn route_internal(
         &self,
         request: &InternalScrapeRequest,
@@ -675,6 +676,11 @@ impl EngineRouter {
         let max_retries = self.max_retries.max(1);
         let mut total_attempts = 0;
         let mut last_error = None;
+        // T013（R-antibot-003）：anti-bot 检测命中后，后续 attempt 强制 needs_js=true，
+        // 使浏览器/FlareSolverr 引擎走 JS 渲染路径突破反爬挑战。
+        // 仅 `antibot` 特性启用时 `force_needs_js` 会被改写；关闭时需抑制 unused_mut。
+        #[cfg_attr(not(feature = "antibot"), allow(unused_mut))]
+        let mut force_needs_js = false;
 
         for (score, engine) in candidates.into_iter().take(max_attempts) {
             total_attempts += 1;
@@ -702,7 +708,8 @@ impl EngineRouter {
                 method: request.method,
                 headers: request.headers.clone(),
                 timeout: remaining,
-                needs_js: request.needs_js,
+                // T013（R-antibot-003）：anti-bot 命中后强制 needs_js，使浏览器引擎走 JS 渲染
+                needs_js: request.needs_js || force_needs_js,
                 needs_screenshot: request.needs_screenshot,
                 screenshot_config: request.screenshot_config.clone(),
                 mobile: request.mobile,
@@ -719,6 +726,75 @@ impl EngineRouter {
             match engine.scrape(&attempt_request).await {
                 Ok(response) => {
                     let response_time = engine_start.elapsed();
+
+                    // T013（R-antibot-003）：引擎返回"成功"响应后，检查是否为反爬挑战页。
+                    // 命中 needs_browser 时将当前结果视为失败，强制后续 attempt needs_js=true，
+                    // 使浏览器/FlareSolverr 引擎走 JS 渲染路径突破反爬。
+                    #[cfg(feature = "antibot")]
+                    {
+                        if let Some(detection) = check_antibot_response(&response, &request.url) {
+                            if detection.needs_browser {
+                                self.update_engine_stats(engine_name, false, response_time);
+                                self.metrics
+                                    .record_engine_failure(engine_name, &detection.reason);
+                                warn!(
+                                    "Engine {} returned anti-bot challenge ({:?}): {}, \
+                                     forcing needs_js for subsequent attempts",
+                                    engine_name, detection.tech, detection.reason
+                                );
+                                last_error = Some(EngineError::AntiBotDetected(detection.reason));
+                                force_needs_js = true;
+
+                                if total_attempts >= max_retries {
+                                    warn!(
+                                        "Max retries {} reached after anti-bot detection",
+                                        max_retries
+                                    );
+                                    self.metrics
+                                        .total_requests
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    self.metrics
+                                        .failed_requests
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    return Err(last_error.unwrap_or_else(|| {
+                                        EngineError::AllEnginesFailed(
+                                            "Max retries reached".to_string(),
+                                        )
+                                    }));
+                                }
+                                continue;
+                            }
+                        }
+                    }
+
+                    // T015（R-jsrender-001）：流式 HTTP→Chrome 升级探测
+                    //
+                    // HTTP 引擎（needs_js==false）返回"成功"响应后，检查是否疑似 SPA 空壳。
+                    // 若 probe 判定 upgrade，将当前结果视为失败（不返回空壳给用户），
+                    // 以 needs_js=true 重新 route_internal 改派浏览器引擎（Playwright）渲染。
+                    //
+                    // 防递归：递归调用时 request.needs_js=true，attempt_request.needs_js=true，
+                    // 故 `!attempt_request.needs_js` 为 false，probe 检查自然跳过。
+                    if !attempt_request.needs_js {
+                        let verdict = check_js_upgrade_probe(&response);
+                        if verdict.upgrade {
+                            self.update_engine_stats(engine_name, false, response_time);
+                            self.metrics.record_engine_failure(
+                                engine_name,
+                                &format!("js-upgrade-probe: {}", verdict.reason),
+                            );
+                            info!(
+                                "Engine {} returned SPA shell (probe score={}, reason={}); \
+                                 re-routing with needs_js=true to dispatch browser engine",
+                                engine_name, verdict.score, verdict.reason
+                            );
+
+                            let mut js_request = request.clone();
+                            js_request.needs_js = true;
+                            return Box::pin(self.route_internal(&js_request)).await;
+                        }
+                    }
+
                     self.update_engine_stats(engine_name, true, response_time);
                     self.circuit_breaker.record_success(engine_name);
 
@@ -1070,6 +1146,63 @@ impl EngineRouterTrait for EngineRouter {
     }
 }
 
+/// T013（R-antibot-003）：检查引擎"成功"响应是否为反爬挑战页。
+///
+/// 将 `InternalScrapeResponse` 的 `HashMap<String,String>` headers 转为
+/// `reqwest::header::HeaderMap` 后调用 `antibot::classify`。仅在 `antibot`
+/// feature 启用时编译；关闭时 route_internal 的检测块被 cfg 移除，此函数也不存在。
+#[cfg(feature = "antibot")]
+fn check_antibot_response(
+    response: &InternalScrapeResponse,
+    url: &str,
+) -> Option<crate::engines::antibot::Detection> {
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+    let mut header_map = HeaderMap::new();
+    for (k, v) in &response.headers {
+        if let Ok(name) = HeaderName::from_bytes(k.as_bytes()) {
+            if let Ok(value) = HeaderValue::from_str(v) {
+                header_map.append(name, value);
+            }
+        }
+    }
+    crate::engines::antibot::classify(response.status_code, &response.content, &header_map, url)
+}
+
+/// T015（R-jsrender-001）：对引擎"成功"响应运行 JS 升级探测。
+///
+/// 将 `InternalScrapeResponse` 的 headers 转为 `reqwest::header::HeaderMap` 后
+/// 调用 [`crate::engines::upgrade_probe::JsUpgradeProbe::evaluate`]。返回
+/// [`crate::engines::upgrade_probe::ProbeVerdict`]，由 `route_internal` 消费
+/// `upgrade=true` 时以 `needs_js=true` 重新改派浏览器引擎。
+///
+/// 与 [`check_antibot_response`] 不同，此函数**不** feature-gate：`upgrade_probe`
+/// 模块是纯 Rust 无外部依赖，始终编译；SPA 空壳探测是通用能力，不应受 `antibot` 特性开关影响。
+fn check_js_upgrade_probe(
+    response: &InternalScrapeResponse,
+) -> crate::engines::upgrade_probe::ProbeVerdict {
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+    let probe = crate::engines::upgrade_probe::JsUpgradeProbe::default();
+    let mut header_map = HeaderMap::new();
+    for (k, v) in &response.headers {
+        if let Ok(name) = HeaderName::from_bytes(k.as_bytes()) {
+            if let Ok(value) = HeaderValue::from_str(v) {
+                header_map.append(name, value);
+            }
+        }
+    }
+    // 性能审查 HIGH-1 修复：evaluate docstring 明确「body_prefix」语义，
+    // 传入完整 body 会让多次 `contains`/`find` 退化为 O(body_len)。
+    // 截取前 PROBE_PREFIX_LEN 字节，覆盖典型 SPA 空壳的 head+顶层 body。
+    let prefix_end = response
+        .content
+        .len()
+        .min(crate::engines::upgrade_probe::PROBE_PREFIX_LEN);
+    let body_prefix = &response.content[..prefix_end];
+    probe.evaluate(&header_map, body_prefix)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1209,7 +1342,9 @@ mod tests {
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
                 status_code: 200,
-                content: "mock".to_string(),
+                // T013：内容需 ≥200 字节且可见文本 ≥50 字符，
+                // 否则被 antibot::classify Step 5 误判为 near-empty structural block。
+                content: "<html><body><h1>Mock Response</h1><p>This is a mock response for testing router logic. It contains enough visible text to avoid being flagged as a near-empty shell by the antibot classifier.</p></body></html>".to_string(),
                 screenshot: None,
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
@@ -1959,7 +2094,7 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status_code, 200);
-        assert_eq!(response.content, "mock");
+        assert!(response.content.contains("Mock Response"));
     }
 
     // === SSRF 保护测试 ===
@@ -2279,7 +2414,8 @@ mod tests {
             ) -> Result<InternalScrapeResponse, EngineError> {
                 Ok(InternalScrapeResponse {
                     status_code: 200,
-                    content: "ok".to_string(),
+                    // T013：同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
+                    content: "<html><body><h1>OK</h1><p>Succeeding engine response for testing trait delegation. It has enough visible text to pass the antibot classifier near-empty check.</p></body></html>".to_string(),
                     screenshot: None,
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
@@ -2314,7 +2450,8 @@ mod tests {
             ) -> Result<InternalScrapeResponse, EngineError> {
                 Ok(InternalScrapeResponse {
                     status_code: 200,
-                    content: "ok".to_string(),
+                    // T013：同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
+                    content: "<html><body><h1>OK</h1><p>Succeeding engine response for testing trait delegation. It has enough visible text to pass the antibot classifier near-empty check.</p></body></html>".to_string(),
                     screenshot: None,
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
@@ -2883,5 +3020,500 @@ mod tests_impl {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.content, "Result 2");
+    }
+
+    // === T013（R-antibot-003）：反爬挑战页改派浏览器引擎 ===
+    //
+    // 验证：HTTP 引擎返回 Cloudflare 挑战页 HTML（status=200），被 antibot::classify 判
+    // needs_browser=true，路由将其视为失败、强制后续 attempt needs_js=true，由浏览器引擎
+    // 接管并返回正常结果。
+    //
+    // 仅在 `antibot` feature 启用时编译——`check_antibot_response` 与 cfg 块都依赖该 feature。
+    #[cfg(feature = "antibot")]
+    #[tokio::test]
+    async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
+        use std::sync::Mutex;
+
+        /// 记录每次调用时的 `needs_js` 值，用于断言改派行为
+        struct NeedsJsRecordingEngine {
+            name: &'static str,
+            /// 用 Mutex 包装 Vec 以满足 ScraperEngine 的 Send+Sync 约束
+            recorded_needs_js: Arc<Mutex<Vec<bool>>>,
+            response: InternalScrapeResponse,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for NeedsJsRecordingEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.recorded_needs_js
+                    .lock()
+                    .expect("lock recorded_needs_js")
+                    .push(request.needs_js);
+                Ok(self.response.clone())
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        // Cloudflare 挑战页：命中 Tier1 /cdn-cgi/challenge-platform/ 标记
+        let cloudflare_body = concat!(
+            "<html><head><title>Just a moment...</title></head>",
+            "<body>",
+            "<script src=\"/cdn-cgi/challenge-platform/h/g/orchestrate/jsch/v1\"></script>",
+            "</body></html>"
+        );
+
+        let http_record = Arc::new(Mutex::new(Vec::new()));
+        let http_engine: Arc<dyn ScraperEngine> = Arc::new(NeedsJsRecordingEngine {
+            name: "http-reqwest",
+            recorded_needs_js: http_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: cloudflare_body.to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 50,
+            },
+        });
+
+        // 浏览器引擎应最终返回正常正文（body 需足够长且可见文本 >= 50 字符，
+        // 避免被 antibot Tier3 近空页检测误判为 StructuralBlock）
+        let browser_record = Arc::new(Mutex::new(Vec::new()));
+        let browser_engine: Arc<dyn ScraperEngine> = Arc::new(NeedsJsRecordingEngine {
+            name: "browser-playwright",
+            recorded_needs_js: browser_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "<html><body>This is the real rendered content from the browser \
+                           engine after JavaScript execution completed successfully.</body></html>"
+                    .to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 200,
+            },
+        });
+
+        let mut router = EngineRouter::new(vec![http_engine, browser_engine]);
+        // 关闭特征过滤与竞速，确保走顺序 fallback
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(2);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/protected".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_ok(),
+            "route should succeed via browser engine after antibot block, got: {:?}",
+            result.err()
+        );
+        let resp = result.unwrap();
+        assert!(resp.content.contains("real rendered content from the browser"));
+
+        // HTTP 引擎被调用 1 次，且 needs_js 与原始请求一致（false）
+        let http_calls = http_record.lock().unwrap().clone();
+        assert_eq!(http_calls.len(), 1, "http engine should be called exactly once");
+        assert!(
+            !http_calls[0],
+            "first attempt must have needs_js=false (original request)"
+        );
+
+        // 浏览器引擎被调用 1 次，且 needs_js=true（强制升级）
+        let browser_calls = browser_record.lock().unwrap().clone();
+        assert_eq!(
+            browser_calls.len(),
+            1,
+            "browser engine should be called exactly once"
+        );
+        assert!(
+            browser_calls[0],
+            "second attempt must have needs_js=true (force_needs_js after antibot block)"
+        );
+    }
+
+    /// T013 边界：HTTP 引擎返回正常页面（非反爬挑战），不应触发 force_needs_js
+    #[cfg(feature = "antibot")]
+    #[tokio::test]
+    async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
+        use std::sync::Mutex;
+
+        struct SingleCallEngine {
+            name: &'static str,
+            recorded_needs_js: Arc<Mutex<Vec<bool>>>,
+            response: InternalScrapeResponse,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for SingleCallEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.recorded_needs_js
+                    .lock()
+                    .expect("lock recorded_needs_js")
+                    .push(request.needs_js);
+                Ok(self.response.clone())
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        let http_record = Arc::new(Mutex::new(Vec::new()));
+        let http_engine: Arc<dyn ScraperEngine> = Arc::new(SingleCallEngine {
+            name: "http-reqwest",
+            recorded_needs_js: http_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "<html><body>Normal page with sufficient visible text content \
+                           to pass tier3 structural checks.</body></html>"
+                    .to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 30,
+            },
+        });
+
+        // 第二引擎不应被调用
+        let browser_record = Arc::new(Mutex::new(Vec::new()));
+        let browser_engine: Arc<dyn ScraperEngine> = Arc::new(SingleCallEngine {
+            name: "browser-playwright",
+            recorded_needs_js: browser_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "browser content".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 0,
+            },
+        });
+
+        let mut router = EngineRouter::new(vec![http_engine, browser_engine]);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(2);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/normal".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+
+        let result = router.route(&request).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().content, "<html><body>Normal page with sufficient visible text content to pass tier3 structural checks.</body></html>");
+
+        // HTTP 引擎被调用 1 次，needs_js=false
+        let http_calls = http_record.lock().unwrap().clone();
+        assert_eq!(http_calls.len(), 1);
+        assert!(!http_calls[0]);
+
+        // 浏览器引擎不应被调用
+        let browser_calls = browser_record.lock().unwrap().clone();
+        assert!(
+            browser_calls.is_empty(),
+            "browser engine should NOT be called for normal response"
+        );
+    }
+
+    // === T015（R-jsrender-001）：SPA 空壳响应触发改派浏览器引擎 ===
+    //
+    // 验证：HTTP 引擎（needs_js==false）返回含 `__NEXT_DATA__` 的 SPA 空壳响应，
+    // JsUpgradeProbe 判定 upgrade=true，路由以 needs_js=true 重新 route_internal
+    // 改派浏览器引擎，最终返回浏览器引擎渲染后的真实内容。
+    //
+    // 防递归：递归调用时 request.needs_js=true，attempt_request.needs_js=true，
+    // 故 `!attempt_request.needs_js` 为 false，probe 检查自然跳过。
+    #[tokio::test]
+    async fn test_t015_spa_shell_triggers_js_upgrade_re_dispatch() {
+        use std::sync::Mutex;
+
+        struct NeedsJsRecordingEngine {
+            name: &'static str,
+            recorded_needs_js: Arc<Mutex<Vec<bool>>>,
+            response: InternalScrapeResponse,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for NeedsJsRecordingEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.recorded_needs_js
+                    .lock()
+                    .expect("lock recorded_needs_js")
+                    .push(request.needs_js);
+                Ok(self.response.clone())
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        // SPA 空壳：含 __NEXT_DATA__ 强信号（probe score=10 >= threshold 10）
+        // 但可见文本 >= 50 字符，避免被 antibot Tier3 误判为 StructuralBlock
+        let spa_shell = concat!(
+            r#"<html><head>"#,
+            r#"<script id="__NEXT_DATA__" type="application/json">{"props":{}}</script>"#,
+            r#"</head><body>"#,
+            r#"Loading... please wait while we render the content for you. "#,
+            r#"This page requires JavaScript to function properly."#,
+            r#"</body></html>"#
+        );
+
+        let http_record = Arc::new(Mutex::new(Vec::new()));
+        let http_engine: Arc<dyn ScraperEngine> = Arc::new(NeedsJsRecordingEngine {
+            name: "http-reqwest",
+            recorded_needs_js: http_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: spa_shell.to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 30,
+            },
+        });
+
+        // 浏览器引擎返回渲染后的真实内容（可见文本 >= 50 避免 antibot 误判）
+        let browser_record = Arc::new(Mutex::new(Vec::new()));
+        let browser_engine: Arc<dyn ScraperEngine> = Arc::new(NeedsJsRecordingEngine {
+            name: "browser-playwright",
+            recorded_needs_js: browser_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "<html><body>This is the fully rendered content from the browser \
+                           engine after JavaScript execution completed successfully.</body></html>"
+                    .to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 200,
+            },
+        });
+
+        let mut router = EngineRouter::new(vec![http_engine, browser_engine]);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(2);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/spa-page".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_ok(),
+            "route should succeed via browser engine after SPA shell probe, got: {:?}",
+            result.err()
+        );
+        let resp = result.unwrap();
+        assert!(
+            resp.content.contains("fully rendered content from the browser"),
+            "should return browser engine's rendered content, got: {}",
+            resp.content
+        );
+
+        // HTTP 引擎被调用 1 次，needs_js=false
+        let http_calls = http_record.lock().unwrap().clone();
+        assert_eq!(
+            http_calls.len(),
+            1,
+            "http engine should be called exactly once"
+        );
+        assert!(
+            !http_calls[0],
+            "http engine attempt must have needs_js=false (original request)"
+        );
+
+        // 浏览器引擎被调用 1 次，needs_js=true（probe 触发改派）
+        let browser_calls = browser_record.lock().unwrap().clone();
+        assert_eq!(
+            browser_calls.len(),
+            1,
+            "browser engine should be called exactly once"
+        );
+        assert!(
+            browser_calls[0],
+            "browser engine attempt must have needs_js=true (probe-triggered re-route)"
+        );
+    }
+
+    /// T015 边界：HTTP 引擎返回非 SPA 页面（无 JS 框架信号），不应触发改派
+    #[tokio::test]
+    async fn test_t015_non_spa_response_does_not_trigger_re_dispatch() {
+        use std::sync::Mutex;
+
+        struct SingleCallEngine {
+            name: &'static str,
+            recorded_needs_js: Arc<Mutex<Vec<bool>>>,
+            response: InternalScrapeResponse,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for SingleCallEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.recorded_needs_js
+                    .lock()
+                    .expect("lock recorded_needs_js")
+                    .push(request.needs_js);
+                Ok(self.response.clone())
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        let http_record = Arc::new(Mutex::new(Vec::new()));
+        let http_engine: Arc<dyn ScraperEngine> = Arc::new(SingleCallEngine {
+            name: "http-reqwest",
+            recorded_needs_js: http_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "<html><body>This is a static page with sufficient visible text content \
+                           to pass all antibot and probe checks. No SPA framework signals here.</body></html>"
+                    .to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 30,
+            },
+        });
+
+        let browser_record = Arc::new(Mutex::new(Vec::new()));
+        let browser_engine: Arc<dyn ScraperEngine> = Arc::new(SingleCallEngine {
+            name: "browser-playwright",
+            recorded_needs_js: browser_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "browser content".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 0,
+            },
+        });
+
+        let mut router = EngineRouter::new(vec![http_engine, browser_engine]);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(2);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/static-page".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+        };
+
+        let result = router.route(&request).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().content.contains("static page with sufficient visible text"));
+
+        // HTTP 引擎被调用 1 次，needs_js=false
+        let http_calls = http_record.lock().unwrap().clone();
+        assert_eq!(http_calls.len(), 1);
+        assert!(!http_calls[0]);
+
+        // 浏览器引擎不应被调用（非 SPA，不触发 probe）
+        let browser_calls = browser_record.lock().unwrap().clone();
+        assert!(
+            browser_calls.is_empty(),
+            "browser engine should NOT be called for non-SPA response"
+        );
     }
 }

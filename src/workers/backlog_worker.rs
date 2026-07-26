@@ -382,6 +382,9 @@ mod tests {
             concurrency: ConcurrencySettings {
                 default_team_limit,
                 task_lock_duration_seconds: 300,
+                mem_pressure_threshold: 0.8,
+                mem_critical_threshold: 0.9,
+                critical_timeout_seconds: 30,
             },
             webhook: WebhookSettings::default(),
             bing_search: BingSearchSettings::default(),

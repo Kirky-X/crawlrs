@@ -438,6 +438,9 @@ impl From<crate::engines::engine_client::EngineError> for CrawlRsError {
             crate::engines::engine_client::EngineError::BrowserError(msg) => {
                 CrawlRsError::Engine(format!("Browser error: {}", msg))
             }
+            crate::engines::engine_client::EngineError::AntiBotDetected(msg) => {
+                CrawlRsError::Engine(format!("Anti-bot detected: {}", msg))
+            }
             crate::engines::engine_client::EngineError::Expired => {
                 CrawlRsError::Timeout("Request expired".to_string())
             }
@@ -1261,6 +1264,21 @@ mod tests {
             CrawlRsError::Engine(msg) => {
                 assert!(msg.contains("Browser error"));
                 assert!(msg.contains("crashed"));
+            }
+            other => panic!("expected Engine variant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_engine_error_antibot_detected() {
+        let err: CrawlRsError = crate::engines::engine_client::EngineError::AntiBotDetected(
+            "Cloudflare challenge".to_string(),
+        )
+        .into();
+        match err {
+            CrawlRsError::Engine(msg) => {
+                assert!(msg.contains("Anti-bot detected"));
+                assert!(msg.contains("Cloudflare challenge"));
             }
             other => panic!("expected Engine variant, got {:?}", other),
         }

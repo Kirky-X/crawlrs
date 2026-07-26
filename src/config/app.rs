@@ -152,6 +152,9 @@ pub struct RateLimitingSettings {
 ///
 /// * `default_team_limit` - 每个团队的最大并发任务数，默认 10
 /// * `task_lock_duration_seconds` - 任务锁持续时间，防止重复处理，默认 300 秒（5 分钟）
+/// * `mem_pressure_threshold` - 内存使用率进入 Pressure 状态的阈值，默认 0.8
+/// * `mem_critical_threshold` - 内存使用率进入 Critical 状态的阈值，默认 0.9
+/// * `critical_timeout_seconds` - Critical 状态持续多久后触发优雅关闭信号，默认 30 秒
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__CONCURRENCY__")]
 pub struct ConcurrencySettings {
@@ -162,6 +165,26 @@ pub struct ConcurrencySettings {
     /// 任务锁持续时间（秒）
     #[config(default = 300)]
     pub task_lock_duration_seconds: i64,
+
+    /// 内存使用率进入 Pressure 状态的阈值（0.0 - 1.0）
+    ///
+    /// 调度器在该阈值之上会对新任务执行 [`Admission::Defer`]。
+    /// 必须严格小于 `mem_critical_threshold`。
+    #[config(default = 0.8)]
+    pub mem_pressure_threshold: f64,
+
+    /// 内存使用率进入 Critical 状态的阈值（0.0 - 1.0）
+    ///
+    /// 调度器在该阈值之上会对新任务执行 [`Admission::Reschedule`]，
+    /// 持续超过 `critical_timeout_seconds` 后发出优雅关闭信号。
+    #[config(default = 0.9)]
+    pub mem_critical_threshold: f64,
+
+    /// Critical 状态持续超时（秒）
+    ///
+    /// 持续处于 Critical 状态超过该时长，调度器会触发优雅关闭信号。
+    #[config(default = 30)]
+    pub critical_timeout_seconds: u64,
 }
 
 #[cfg(test)]
@@ -267,8 +290,25 @@ mod tests {
         let settings = super::ConcurrencySettings {
             default_team_limit: 20,
             task_lock_duration_seconds: 600,
+            mem_pressure_threshold: 0.75,
+            mem_critical_threshold: 0.85,
+            critical_timeout_seconds: 45,
         };
         assert_eq!(settings.default_team_limit, 20);
         assert_eq!(settings.task_lock_duration_seconds, 600);
+        assert!((settings.mem_pressure_threshold - 0.75).abs() < f64::EPSILON);
+        assert!((settings.mem_critical_threshold - 0.85).abs() < f64::EPSILON);
+        assert_eq!(settings.critical_timeout_seconds, 45);
+    }
+
+    /// T018：内存感知调度器默认阈值符合 design.md（pressure=0.8, critical=0.9, timeout=30s）
+    #[test]
+    fn test_concurrency_settings_memory_defaults() {
+        let settings = super::ConcurrencySettings::default();
+        assert!((settings.mem_pressure_threshold - 0.8).abs() < f64::EPSILON);
+        assert!((settings.mem_critical_threshold - 0.9).abs() < f64::EPSILON);
+        assert_eq!(settings.critical_timeout_seconds, 30);
+        // pressure 必须严格小于 critical，否则状态机永不进入 Pressure
+        assert!(settings.mem_pressure_threshold < settings.mem_critical_threshold);
     }
 }

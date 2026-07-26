@@ -12,6 +12,7 @@ pub mod error_helpers;
 pub mod http_client;
 pub mod port_sniffer;
 pub mod regex_cache;
+pub mod retry;
 pub mod retry_policy;
 pub mod robots;
 pub mod search_test;
