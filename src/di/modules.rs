@@ -620,6 +620,7 @@ mod tests {
         kit.register::<InfrastructureModule>().unwrap();
         kit.register::<ServiceModule>().unwrap();
 
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let kit = kit.build().await.expect("Failed to build kit");
         let _services: ServicesComponents = kit
             .require::<ServiceModule>()
@@ -655,6 +656,7 @@ mod tests {
         kit.register::<InfrastructureModule>().unwrap();
         kit.register::<ServiceModule>().unwrap();
 
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let kit = kit.build().await.expect("Failed to build all modules");
 
         assert!(kit.contains::<SettingsModule>());

@@ -566,15 +566,15 @@ dbnexus provides connection pooling, permission control, migration framework, me
 | `tasks_backlog` | Backlog of expired/pending tasks for reprocessing |
 | `crawls` | Crawl configurations (depth, patterns) |
 | `scrape_results` | Scrape results (raw HTML, markdown, metadata) |
-| `api_keys` | API key management (bcrypt hashed) |
+| `api_keys` | ⚠️ PARTIALLY DEPRECATED (0.2.0): `key_hash`/`scopes` 列由 garrison 接管，仅保留 `id`/`team_id`/`key` 列供 `api_key_id→team_id` 反查映射（`deprecated_at` 标记） |
 | `webhooks` | Webhook configurations (URL, events, retry) |
 | `webhook_events` | Webhook event logs and delivery status |
-| `audit_logs` | API access and event audit logs |
+| `audit_logs` | API access and event audit logs (garrison `audit-log` 也写入此表) |
 | `team` | Team accounts and settings |
 | `credits` | Team credit balances |
 | `credits_transactions` | Credit usage history |
 | `geo_restriction_logs` | Geographic restriction check logs |
-| `auth_scopes` | API key permission scopes |
+| `auth_scopes` | ⚠️ DEPRECATED (0.2.0): garrison RBAC 接管权限映射，本表不再写入（`deprecated_at` 标记，仅作历史审计只读） |
 
 **Cache Layer:**
 
@@ -681,7 +681,7 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 | Feature | Default | Depends On | Off-mode Behavior |
 |---------|---------|------------|-------------------|
 | `teams` | on | `auth` | `/v1/teams/*` routes not registered; `extract_handler` loses GR generic + geo-restriction block; `CrawlRsState.{team_service, geo_location_service, geo_restriction_repo}` not compiled; `team_id` falls back to `DEFAULT_TEAM_ID` |
-| `auth` | on | — | `auth_middleware()` replaced by `default_identity_middleware` injecting fixed `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`; no DB lookup, no brute-force protection |
+| `auth` | on | `dep:garrison` | **0.2.0 起 garrison v0.8.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`，无 DB 查询、无暴力破解防护 |
 | `rate-limit` | on | `dep:limiteron` | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `limiteron_service`/`distributed_rate_limit_middleware`/`limiteron_rate_limit_middleware` modules not compiled |
 | `webhook` | on | — | `WebhookServiceImpl`/`WebhookManagementServiceImpl`/`webhook_sender`/`webhook_handler`/`webhook_worker` modules not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn blocks skipped; `WebhookService` trait preserved and assembled with `NoopWebhookService` (all ops return `Ok(())`) |
 
@@ -691,7 +691,7 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 [features]
 default = ["teams", "auth", "rate-limit", "webhook"]
 teams   = ["auth"]
-auth    = []
+auth    = ["dep:garrison"]   # 0.2.0: garrison v0.8.1 接管认证引擎
 rate-limit = ["dep:limiteron"]
 webhook = []
 ```
@@ -1175,12 +1175,15 @@ Configured with rules for:
 
 ### Authentication
 
-**API Key Authentication:**
-- Extract API key from `Authorization: Bearer` header or `x-api-key` header
-- Lookup key hash in database (bcrypt)
-- Verify via constant-time comparison (`subtle` crate)
-- Check active status and expiration
-- Load team ID, scopes, and permissions into `AuthState`
+> **0.2.0 变更（`garrison-auth-migration`）：** 认证引擎由 garrison v0.8.1 接管。旧的手写 SHA-256 `api_key_hash` 查表、`AuthRateLimiter`、`AuthScopeService` 已被删除；`api_keys.key_hash` / `scopes` 表标记为弃用（`deprecated_at` 列）。
+
+**Garrison 接管的认证流程：**
+
+1. 客户端在 `Authorization: Bearer` 头中传入 garrison 签发的 key，格式为 `garrison_key_id.garrison_secret`
+2. `auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` 校验 key、过期、状态、RBAC 权限
+3. garrison 内部维护 oxcache + 自管 postgres schema，命中时无 DB 往返
+4. `auth_bridge::bridge_to_auth_state` 将 garrison 返回的 `permissions` 通过 `map_perms_to_scope` 映射为 `ApiKeyScope`，注入 `AuthState`
+5. crawlrs 侧仅保留 `api_keys` 表的 `id`/`team_id`/`key` 列，用于 `api_key_id→team_id` 反查；该映射由 `TEAM_ID_CACHE` (LRU) 缓存
 
 ```rust
 pub struct AuthState {
@@ -1190,6 +1193,37 @@ pub struct AuthState {
     pub is_active: bool,
 }
 ```
+
+**401 / 429 由 garrison `firewall-bruteforce` 触发：**
+- 默认策略：5 次失败 / 60 秒窗口 / 300 秒锁定
+- 锁定期间所有请求返回 429（带 `Retry-After` 头）
+- 失败计数与锁定状态由 garrison 自管 oxcache 持有
+
+### Garrison 认证引擎
+
+garrison v0.8.1 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖：
+
+| 组件 | 职责 | crawlrs 集成方式 |
+|------|------|------------------|
+| **DAO** | 自管 postgres schema（`garrison_api_keys` / `garrison_roles` / `garrison_permissions` 等） | 由 garrison 自行迁移，crawlrs 不感知 |
+| **Interface** | `GarrisonUtil::check_api_key` / `ApiKeyHandler::generate_with_namespace` | `auth_middleware_inner` 与 `POST /v1/admin/api-keys` handler 直接调用 |
+| **Config** | RBAC 角色 / 权限 / tenant 隔离配置 | crawlrs 启动时通过 `reissue_api_keys` CLI 预置 RBAC（`tenant_id=0`，所有 team 共享） |
+| **RBAC + JWT** | HS256 JWT 签发、角色-权限映射、API Key 生成与校验 | 必填 `CRAWLRS__AUTH__JWT_SECRET`（≥32 字节，弱密钥拒绝启动） |
+| **firewall-bruteforce** | 失败计数、窗口锁定、IP 隔离 | 401/429 由 garrison 直接返回，crawlrs 透传 |
+| **audit-log** | 认证事件落库（成功 / 失败 / 锁定） | 写入 crawlrs `audit_logs` 表 + garrison 自管 schema |
+
+**预置 RBAC 模型（`tenant_id=0`，所有 team 共享）：**
+
+| 权限 | 角色 admin | 角色 user | 角色 read_only |
+|------|-----------|-----------|----------------|
+| `crawlrs:admin` | ✅ | ❌ | ❌ |
+| `crawlrs:write` | ✅ | ✅ | ❌ |
+| `crawlrs:read` | ✅ | ✅ | ✅ |
+
+`auth_bridge::map_perms_to_scope` 将上述权限映射回 `ApiKeyScope`：
+- `crawlrs:admin` → `ApiKeyScope::full_access()`
+- `crawlrs:write` → `scrape` + `crawl` + `search` + `extract`
+- `crawlrs:read` → 仅只读子集
 
 ### Authorization
 
@@ -1202,6 +1236,37 @@ pub struct ScopeValidator {
 ```
 
 Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
+
+> **0.2.0 起**：`ScopeValidator` 接收的 `scopes` 由 `auth_bridge::map_perms_to_scope` 从 garrison permissions 桥接而来，下游业务层无感知。
+
+### 迁移指南（0.2.0 garrison-auth-migration）
+
+**对现有部署的影响：**
+
+1. **旧 API Key 作废**：原 `api_keys.key_hash` (SHA-256) 中的所有 key 失效，客户端必须经 garrison 重新领取
+2. **`scopes` 表只读**：原有 scope 映射不再生效；新权限由 garrison RBAC 提供
+3. **必填配置**：`CRAWLRS__AUTH__JWT_SECRET` 必须设置（HS256，≥32 字节），弱密钥将拒绝启动
+
+**运维步骤：**
+
+```bash
+# 1. 启用 auth + admin-tools 特性
+cargo build --release --features admin-tools,auth
+
+# 2. 运行 reissue_api_keys 工具：
+#    - 预置 garrison RBAC（3 权限 / 3 角色 / 6 角色权限映射，tenant_id=0）
+#    - 枚举所有需重签的 team 清单
+#    - 为每个 team 签发新 garrison API Key（明文 key 仅打印一次）
+./target/release/reissue_api_keys
+
+# 3. 应用数据库迁移（标记旧表弃用，不删表不删列）
+psql -f migrations/005_deprecate_legacy_api_keys.sql
+```
+
+**`migrations/005_deprecate_legacy_api_keys.sql` 行为：**
+- 仅给 `api_keys` 表追加 `deprecated_at` 列并回填 `NOW()`
+- 仅给 `scopes` 表追加 `deprecated_at` 列并回填 `NOW()`
+- 不删除任何数据、不删除任何列，便于回滚与历史审计
 
 ### SSRF Protection
 

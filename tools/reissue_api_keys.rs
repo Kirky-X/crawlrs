@@ -317,11 +317,7 @@ pub async fn preset_rbac(pool: DbPool) -> GarrisonResult<RbacPresetReport> {
         })?;
         // 幂等 assign（garrison repository 内部 INSERT OR IGNORE 语义）
         role_perm_repo
-            .assign(
-                GARRISON_DEFAULT_TENANT_ID,
-                &role_row.id,
-                &perm_row.id,
-            )
+            .assign(GARRISON_DEFAULT_TENANT_ID, &role_row.id, &perm_row.id)
             .await?;
         report.role_permissions_assigned += 1;
     }
@@ -348,8 +344,12 @@ pub async fn preset_rbac(pool: DbPool) -> GarrisonResult<RbacPresetReport> {
 /// # Spec
 ///
 /// - R-key-lifecycle-002
-pub async fn enumerate_legacy_teams(pool: Arc<DbPool>) -> Result<Vec<ReissueTeamInfo>, sea_orm::DbErr> {
-    use crawlrs::infrastructure::database::entities::api_key::{Column as ApiKeyColumn, Entity as ApiKeyEntity};
+pub async fn enumerate_legacy_teams(
+    pool: Arc<DbPool>,
+) -> Result<Vec<ReissueTeamInfo>, sea_orm::DbErr> {
+    use crawlrs::infrastructure::database::entities::api_key::{
+        Column as ApiKeyColumn, Entity as ApiKeyEntity,
+    };
 
     let session = pool
         .get_session("admin")
@@ -488,7 +488,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = Arc::new(DbPool::with_config(cfg).await?);
 
     // 1. 预置 RBAC（幂等，重复运行安全）
-    println!("Presetting garrison RBAC (tenant_id={}, idempotent)...", GARRISON_DEFAULT_TENANT_ID);
+    println!(
+        "Presetting garrison RBAC (tenant_id={}, idempotent)...",
+        GARRISON_DEFAULT_TENANT_ID
+    );
     let rbac_report = preset_rbac((*pool).clone()).await?;
     print_rbac_report(&rbac_report);
 
@@ -627,7 +630,10 @@ mod tests {
         let codes: Vec<&str> = roles.iter().map(|r| r.code.as_str()).collect();
         assert!(codes.contains(&ROLE_ADMIN), "must include admin role");
         assert!(codes.contains(&ROLE_USER), "must include user role");
-        assert!(codes.contains(&ROLE_READ_ONLY), "must include read_only role");
+        assert!(
+            codes.contains(&ROLE_READ_ONLY),
+            "must include read_only role"
+        );
     }
 
     #[test]
@@ -663,7 +669,11 @@ mod tests {
     fn test_role_permission_mappings_count() {
         // admin(3) + user(2) + read_only(1) = 6 mappings
         let mappings = role_permission_mappings();
-        assert_eq!(mappings.len(), 6, "must define exactly 6 role-perm mappings");
+        assert_eq!(
+            mappings.len(),
+            6,
+            "must define exactly 6 role-perm mappings"
+        );
     }
 
     #[test]
@@ -691,7 +701,10 @@ mod tests {
         assert_eq!(user_perms.len(), 2, "user must have 2 permissions");
         assert!(user_perms.contains(&PERM_READ));
         assert!(user_perms.contains(&PERM_WRITE));
-        assert!(!user_perms.contains(&PERM_ADMIN), "user must NOT have admin");
+        assert!(
+            !user_perms.contains(&PERM_ADMIN),
+            "user must NOT have admin"
+        );
     }
 
     #[test]
@@ -790,10 +803,14 @@ mod tests {
         let pool = create_test_db_pool();
 
         // 第一次调用：可能新建或已存在
-        let first = preset_rbac((*pool).clone()).await.expect("first preset_rbac");
+        let first = preset_rbac((*pool).clone())
+            .await
+            .expect("first preset_rbac");
 
         // 第二次调用：所有项都应跳过（permissions_skipped == 3, roles_skipped == 3）
-        let second = preset_rbac((*pool).clone()).await.expect("second preset_rbac");
+        let second = preset_rbac((*pool).clone())
+            .await
+            .expect("second preset_rbac");
 
         // 第二次调用不应再创建任何 permission/role
         assert_eq!(
@@ -816,7 +833,10 @@ mod tests {
         let first_total = first.permissions_created + first.permissions_skipped;
         let second_total = second.permissions_created + second.permissions_skipped;
         assert_eq!(first_total, 3, "first call must process all 3 permissions");
-        assert_eq!(second_total, 3, "second call must see all 3 permissions existing");
+        assert_eq!(
+            second_total, 3,
+            "second call must see all 3 permissions existing"
+        );
     }
 
     /// 验证 `preset_rbac` 报告中的权限/角色数量与定义一致。
@@ -854,7 +874,9 @@ mod tests {
             return;
         }
         let pool = create_test_db_pool();
-        let teams = enumerate_legacy_teams(pool).await.expect("enumerate_legacy_teams");
+        let teams = enumerate_legacy_teams(pool)
+            .await
+            .expect("enumerate_legacy_teams");
 
         // 不验证具体数量（测试 DB 可能有残留数据），仅验证：
         // 1. 返回值是 Vec<ReissueTeamInfo>

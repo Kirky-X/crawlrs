@@ -996,6 +996,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_init_services_full_stack");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let handle = match tcf::DbHandle::start().await {
             Ok(h) => h,
             Err(e) => {

@@ -178,10 +178,7 @@ pub async fn create_api_key(
                 api_key_id,
                 e
             );
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to issue API key",
-            );
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to issue API key");
         }
     };
 
@@ -217,10 +214,14 @@ pub async fn create_api_key(
             };
             // 安全审查 [MEDIUM]：响应含明文 API Key，必须禁用缓存（CWE-525）
             // Cache-Control: no-store（HTTP/1.1）+ Pragma: no-cache（HTTP/1.0 兼容）+ Expires: 0
-            let mut resp = (StatusCode::CREATED, Json(ApiResponse::success(response))).into_response();
-            resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-            resp.headers_mut().insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
-            resp.headers_mut().insert(header::EXPIRES, HeaderValue::from_static("0"));
+            let mut resp =
+                (StatusCode::CREATED, Json(ApiResponse::success(response))).into_response();
+            resp.headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            resp.headers_mut()
+                .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+            resp.headers_mut()
+                .insert(header::EXPIRES, HeaderValue::from_static("0"));
             resp
         }
         Err(e) => {
@@ -298,7 +299,10 @@ fn validate_request(req: &CreateApiKeyRequest) -> Result<(), String> {
 /// - `Ok(())`：team 存在
 /// - `Err(sea_orm::DbErr)`：DB 查询失败（连接错误等），由调用方映射为 500
 /// - `team_id` 不存在：返回 `Err(DbErr::RecordNotFound("team not found"))`（CWE-862 IDOR 防护）
-async fn check_team_exists(pool: &Arc<dbnexus::DbPool>, team_id: Uuid) -> Result<(), sea_orm::DbErr> {
+async fn check_team_exists(
+    pool: &Arc<dbnexus::DbPool>,
+    team_id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
     let session = pool
         .get_session("admin")
         .await
@@ -394,13 +398,23 @@ mod tests {
     /// 构造一个 admin scope 的 AuthState（pool 指向测试 DB）。
     fn make_admin_auth_state() -> AuthState {
         let pool = create_test_db_pool();
-        AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::full_access())
+        AuthState::new(
+            pool,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::full_access(),
+        )
     }
 
     /// 构造一个非 admin scope 的 AuthState（read-only）。
     fn make_read_only_auth_state() -> AuthState {
         let pool = create_test_db_pool();
-        AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::read_only())
+        AuthState::new(
+            pool,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            ApiKeyScope::read_only(),
+        )
     }
 
     /// 注入 garrison DAO 全局态（必须先调 `reset_garrison_dao_for_test()` 清理先前状态）。
@@ -418,6 +432,43 @@ mod tests {
                  (call reset_garrison_dao_for_test() before inject)"
             );
         }
+    }
+
+    /// 在测试 DB 中创建 team 记录，满足 `check_team_exists` 校验。
+    ///
+    /// T034 修复：原测试未创建 team 导致 `check_team_exists` 返回 `RecordNotFound`，
+    /// handler 映射为 500 错误。此函数在调用 `create_api_key` 前预置 team。
+    ///
+    /// # Panics
+    ///
+    /// DB 写入失败时 panic（测试环境异常，不应静默）。
+    async fn seed_team_in_db(pool: &Arc<dbnexus::DbPool>, team_id: Uuid) {
+        use crate::infrastructure::database::entities::team::ActiveModel as TeamActiveModel;
+        use sea_orm::ActiveValue;
+
+        let session = pool
+            .get_session("admin")
+            .await
+            .expect("get_session failed in seed_team_in_db");
+        let conn = session
+            .connection()
+            .expect("connection failed in seed_team_in_db");
+        let now = time_utils::to_db_datetime(Utc::now());
+        let active = TeamActiveModel {
+            id: ActiveValue::Set(team_id),
+            name: ActiveValue::Set(format!("test-team-{}", team_id)),
+            allowed_countries: ActiveValue::Set(None),
+            blocked_countries: ActiveValue::Set(None),
+            ip_whitelist: ActiveValue::Set(None),
+            domain_blacklist: ActiveValue::Set(None),
+            enable_geo_restrictions: ActiveValue::Set(false),
+            created_at: ActiveValue::Set(now),
+            updated_at: ActiveValue::Set(now),
+        };
+        TeamEntity::insert(active)
+            .exec(conn)
+            .await
+            .expect("Failed to seed team in DB");
     }
 
     // ========== validate_request 测试 ==========
@@ -563,14 +614,16 @@ mod tests {
     /// 边界值测试：正好 MAX_SCOPES_LEN 个 scope 应通过校验。
     #[test]
     fn test_validate_request_scopes_at_limit_ok() {
-        let scopes: Vec<String> =
-            std::iter::repeat_n("read".to_string(), MAX_SCOPES_LEN).collect();
+        let scopes: Vec<String> = std::iter::repeat_n("read".to_string(), MAX_SCOPES_LEN).collect();
         let req = CreateApiKeyRequest {
             team_id: Uuid::new_v4(),
             scopes,
             expires_in_secs: None,
         };
-        assert!(validate_request(&req).is_ok(), "MAX_SCOPES_LEN boundary must pass");
+        assert!(
+            validate_request(&req).is_ok(),
+            "MAX_SCOPES_LEN boundary must pass"
+        );
     }
 
     #[test]
@@ -611,7 +664,11 @@ mod tests {
             expires_in_secs: None,
         };
         let err = validate_request(&req).unwrap_err();
-        assert!(err.contains("Read") || err.contains("invalid scope"), "err: {}", err);
+        assert!(
+            err.contains("Read") || err.contains("invalid scope"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]
@@ -833,7 +890,9 @@ mod tests {
     async fn test_create_api_key_dao_not_injected_returns_500() {
         // 不注入 DAO，验证返回 500（而非 panic）
         // 持有 TEST_MUTEX 到测试结束，避免其他测试注入 DAO 干扰本测试的"DAO 未注入"场景
-        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex().lock().await;
+        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex()
+            .lock()
+            .await;
         reset_garrison_dao_for_test();
 
         if skip_if_no_test_db() {
@@ -866,7 +925,9 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
-        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex().lock().await;
+        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex()
+            .lock()
+            .await;
         reset_garrison_dao_for_test();
         inject_test_garrison_dao().await;
 
@@ -875,6 +936,10 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let target_team_id = Uuid::new_v4();
+        // T034 修复：handler 步骤 3 的 `check_team_exists` 要求 team 存在，
+        // 必须在调用 create_api_key 前预置 team 记录，否则返回 500。
+        seed_team_in_db(&auth_state.pool, target_team_id).await;
+
         let req = CreateApiKeyRequest {
             team_id: target_team_id,
             scopes: vec!["read".to_string(), "write".to_string()],
@@ -897,7 +962,10 @@ mod tests {
 
         // 验证响应字段
         assert!(!data.api_key.is_empty(), "api_key must be non-empty");
-        assert!(data.api_key.contains('.'), "api_key must be dual-segment format");
+        assert!(
+            data.api_key.contains('.'),
+            "api_key must be dual-segment format"
+        );
         assert_eq!(data.team_id, target_team_id);
         assert_eq!(data.scopes, vec!["read".to_string(), "write".to_string()]);
         assert!(!data.expires_at.is_empty());
@@ -922,7 +990,9 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
-        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex().lock().await;
+        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex()
+            .lock()
+            .await;
         reset_garrison_dao_for_test();
         inject_test_garrison_dao().await;
 
@@ -930,8 +1000,10 @@ mod tests {
             return;
         }
         let auth_state = make_admin_auth_state();
+        let target_team_id = Uuid::new_v4();
+        seed_team_in_db(&auth_state.pool, target_team_id).await;
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: target_team_id,
             scopes: vec!["read".to_string()],
             expires_in_secs: None, // 测试默认值
         };
@@ -950,7 +1022,9 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
-        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex().lock().await;
+        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex()
+            .lock()
+            .await;
         reset_garrison_dao_for_test();
         inject_test_garrison_dao().await;
 
@@ -958,8 +1032,10 @@ mod tests {
             return;
         }
         let auth_state = make_admin_auth_state();
+        let target_team_id = Uuid::new_v4();
+        seed_team_in_db(&auth_state.pool, target_team_id).await;
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: target_team_id,
             scopes: vec!["admin".to_string()],
             expires_in_secs: Some(86400),
         };
@@ -978,7 +1054,9 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
-        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex().lock().await;
+        let _guard = crate::infrastructure::auth::garrison_dao::test_mutex()
+            .lock()
+            .await;
         reset_garrison_dao_for_test();
         inject_test_garrison_dao().await;
 
@@ -986,8 +1064,10 @@ mod tests {
             return;
         }
         let auth_state = make_admin_auth_state();
+        let target_team_id = Uuid::new_v4();
+        seed_team_in_db(&auth_state.pool, target_team_id).await;
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: target_team_id,
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(3600),
         };
@@ -1003,8 +1083,12 @@ mod tests {
         assert_eq!(resp2.status(), StatusCode::CREATED);
 
         // 解析两个响应，验证 api_key 不同
-        let body1 = axum::body::to_bytes(resp1.into_body(), usize::MAX).await.unwrap();
-        let body2 = axum::body::to_bytes(resp2.into_body(), usize::MAX).await.unwrap();
+        let body1 = axum::body::to_bytes(resp1.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body2 = axum::body::to_bytes(resp2.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let parsed1: ApiResponse<CreateApiKeyResponse> = serde_json::from_slice(&body1).unwrap();
         let parsed2: ApiResponse<CreateApiKeyResponse> = serde_json::from_slice(&body2).unwrap();
         assert_ne!(
@@ -1046,7 +1130,10 @@ mod tests {
     fn test_create_api_key_request_deserialize_minimal() {
         let json = r#"{"team_id":"550e8400-e29b-41d4-a716-446655440000","scopes":["read"]}"#;
         let req: CreateApiKeyRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.team_id.to_string(), "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(
+            req.team_id.to_string(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
         assert_eq!(req.scopes, vec!["read".to_string()]);
         assert!(req.expires_in_secs.is_none());
     }

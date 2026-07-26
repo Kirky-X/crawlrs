@@ -582,6 +582,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_app_state_all_accessors_return_valid_arcs");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -698,6 +699,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_app_state_arc_accessors_delegate_correctly");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -728,6 +730,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_app_state_clone_preserves_fields");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -803,6 +806,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state_with_test_db().await {
             Ok(s) => s,
             Err(e) => {
@@ -922,6 +926,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state_with_test_db().await {
             Ok(s) => s,
             Err(e) => {

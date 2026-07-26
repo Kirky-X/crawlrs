@@ -102,7 +102,7 @@
 | **缓存** | 基于 oxcache 的多层缓存（L1 内存 moka 后端），支持 search/dns/regex 分类型 TTL |
 | **指标与监控** | Prometheus 兼容的导出 |
 | **Webhooks** | 事件驱动的任务完成通知 |
-| **API Key 认证** | 作用域访问控制和团队隔离 |
+| **API Key 认证** | garrison v0.8.1 接管认证：RBAC + JWT + firewall-bruteforce + audit-log，作用域访问控制和团队隔离 |
 | **审计日志** | 完整的请求跟踪 |
 | **代理支持** | 统一出站代理配置 |
 | **LLM 抽取** | 基于 genai 的 LLM 内容抽取 |
@@ -221,7 +221,7 @@ cargo build --release --no-default-features --features teams
 | 特性 | 默认 | 依赖关系 | 关闭时行为 | 关联常量/Noop 实现 |
 |------|------|----------|------------|---------------------|
 | `teams` | ✅ 启用 | 隐含 `auth` | 降级为单租户，所有请求归属 `DEFAULT_TEAM_ID`（`Uuid::from_u128(1)`） | `DEFAULT_TEAM_ID` |
-| `auth` | ✅ 启用 | 无 | 走 `default_identity_middleware`，注入固定 `AuthState`（`DEFAULT_API_KEY_ID` + `full_access` scope） | `DEFAULT_API_KEY_ID`（`Uuid::from_u128(2)`）、`default_identity_middleware` |
+| `auth` | ✅ 启用 | `dep:garrison` | **0.2.0 起 garrison v0.8.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce + audit-log。关闭时走 `default_identity_middleware` 注入固定 `AuthState`（`DEFAULT_API_KEY_ID` + `full_access` scope） | `DEFAULT_API_KEY_ID`（`Uuid::from_u128(2)`）、`default_identity_middleware`、`auth_bridge::map_perms_to_scope` |
 | `rate-limit` | ✅ 启用 | `dep:limiteron` | 注入 `NoopRateLimitingService`，`check_rate_limit` 返回 `Allowed`、`check_and_deduct_quota` 返回 `Ok(())`、`get_quota_balance` 返回 `Ok(i64::MAX)` | `NoopRateLimitingService` |
 | `webhook` | ✅ 启用 | 无 | 注入 `NoopWebhookService`，`trigger_completion` / `trigger_failure` 返回 `Ok(())`；移除 `/v1/webhooks` 路由与 `webhook_worker` | `NoopWebhookService` |
 
@@ -393,11 +393,70 @@ crawlrs 使用 confers 管理配置，支持 TOML 文件和 `CRAWLRS__` 前缀�
 Authorization: Bearer YOUR_API_KEY
 
 # 示例 curl
-curl -H "Authorization: Bearer crawlrs_sk_abc123" \
+curl -H "Authorization: Bearer garrison_key_id.garrison_secret" \
   http://localhost:8899/v1/scrape
 ```
 
-> **⚠️ 安全提示:** 永远不要将 API 密钥提交到版本控制系统。使用环境变量。
+> **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.8.1** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验。crawlrs 不再自管 `key_hash`，旧的 `CRAWLRS__AUTH__KEYS` / `[auth] keys` 配置项已弃用。
+
+**Garrison 提供的认证能力：**
+
+| 能力 | 说明 |
+|------|------|
+| **JWT 签发** | garrison 用 `CRAWLRS__AUTH__JWT_SECRET`（HS256，≥32 字节，弱密钥拒绝启动）签发 API Key 内嵌的 JWT |
+| **RBAC** | 预置 3 权限（`crawlrs:read/write/admin`）+ 3 角色（`admin/user/read_only`），`tenant_id=0` 所有 team 共享 |
+| **firewall-bruteforce** | 5 次失败/60 秒窗口/300 秒锁定；401/429 由 garrison 直接触发 |
+| **audit-log** | 认证事件落库到 crawlrs `audit_logs` + garrison 自管 schema |
+
+**签发新 API Key（管理员）：**
+
+```bash
+curl -X POST http://localhost:8899/v1/admin/api-keys \
+  -H "Authorization: Bearer garrison_admin_key_id.garrison_admin_secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "team_id": "770e8400-e29b-41d4-a716-446655440000",
+    "scopes": ["read", "write"],
+    "expires_in_secs": 2592000
+  }'
+```
+
+> **⚠️ 安全提示:** 永远不要将 API 密钥提交到版本控制系统。明文 key 仅在签发响应中返回一次，请立即写入 secrets manager。
+
+### 迁移到 0.2.0：Garrison 认证
+
+**影响范围：**
+
+- 现有 API Key（基于旧表 `api_keys.key_hash` SHA-256）**全部作废**，需经 garrison 重新领取
+- `scopes` 表只读（`deprecated_at` 标记），原有 scope 映射不再生效
+- 必填 `CRAWLRS__AUTH__JWT_SECRET`（HS256 ≥32 字节，弱密钥拒绝启动）
+
+**重新领取流程（运维）：**
+
+```bash
+# 1. 构建带 admin-tools + auth 的二进制
+cargo build --release --features admin-tools,auth
+
+# 2. 设置 JWT_SECRET 环境变量（≥32 字节，HS256）
+export CRAWLRS__AUTH__JWT_SECRET="your-32-byte-or-longer-secret-key-here"
+
+# 3. 运行 reissue_api_keys 工具：
+#    - 预置 garrison RBAC（3 权限 / 3 角色 / 6 角色权限映射，tenant_id=0）
+#    - 枚举需重签 team 清单
+#    - 为每个 team 签发新 garrison API Key（明文 key 仅打印一次）
+./target/release/reissue_api_keys
+
+# 4. 应用数据库迁移（标记旧表弃用，不删表不删列）
+psql -f migrations/005_deprecate_legacy_api_keys.sql
+```
+
+**客户端迁移：**
+
+- 调用方式不变，仍是 `Authorization: Bearer <key>`
+- 仅需将 `<key>` 替换为新的 `garrison_key_id.garrison_secret`
+- 401/429 响应语义不变，但 429 触发逻辑由 garrison `firewall-bruteforce` 接管
+
+详细架构说明参见 [ARCHITECTURE.md → Garrison 认证引擎](docs/ARCHITECTURE.md#garrison-认证引擎)。
 
 ### 📡 公开端点
 
@@ -431,6 +490,7 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 | `/v1/tasks/_cancel` | POST | 批量取消任务 |
 | `/v1/audit/logs` | GET | 获取审计日志 |
 | `/v1/audit/denied` | GET | 获取被拒绝的请求 |
+| `/v1/admin/api-keys` | POST | 签发 garrison API Key（0.2.0 新增，需 `crawlrs:admin` 权限） |
 
 ### 📡 SDK 端点
 

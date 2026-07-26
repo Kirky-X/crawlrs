@@ -130,9 +130,7 @@ pub async fn init_garrison_dao() -> garrison::prelude::GarrisonResult<Arc<dyn Ga
 /// # Spec
 ///
 /// - R-key-lifecycle-001：业务 handler 需 dao 来构造 `ApiKeyHandler::generate_with_namespace`
-pub fn set_garrison_dao(
-    dao: Arc<dyn GarrisonDao>,
-) -> Result<(), Arc<dyn GarrisonDao>> {
+pub fn set_garrison_dao(dao: Arc<dyn GarrisonDao>) -> Result<(), Arc<dyn GarrisonDao>> {
     let mut guard = GARRISON_DAO.write();
     if guard.is_some() {
         return Err(dao);

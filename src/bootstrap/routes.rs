@@ -1358,6 +1358,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_test_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -1393,6 +1394,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_test_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -1415,6 +1417,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_test_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -1435,6 +1438,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_test_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -1471,6 +1475,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_test_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -1526,6 +1531,10 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        // T034 修复：build_test_state() → init_services() → init_garrison_auth() →
+        // set_garrison_dao，缺少此守卫会与其它调用 init_services 的并行测试竞态，
+        // 导致 "global DAO already injected" panic。
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_test_state().await {
             Ok(s) => s,
             Err(e) => {

@@ -4033,6 +4033,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_scrape_worker_new_constructs_successfully");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {
@@ -4052,6 +4053,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_scrape_worker_should_crawl_with_no_patterns");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {
@@ -4072,6 +4074,7 @@ mod tests {
             );
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {
@@ -4094,6 +4097,7 @@ mod tests {
             );
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {
@@ -4114,6 +4118,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_scrape_worker_builder_builds_full_worker");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let handle = match tcf::DbHandle::start().await {
             Ok(h) => h,
             Err(e) => {
@@ -4182,6 +4187,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_scrape_worker_build_crawl_request");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {

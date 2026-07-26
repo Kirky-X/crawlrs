@@ -672,21 +672,9 @@ async fn test_auth_middleware_empty_bearer_token_returns_401() {
     );
 }
 
-#[tokio::test]
-async fn test_auth_middleware_rate_limit_lockout_returns_429() {
-    // Stage 3 重构（决策 2）：本测试已删除。
-    // crawlrs 侧已删除 `AuthRateLimiter`，暴力破解防护完全依赖 garrison firewall。
-    // 429 响应由 garrison 在 `check_api_key` 内部触发，crawlrs 中间件仅透传
-    // `AuthError::RateLimited` → 429。此路径需 garrison 单例 + 真实 IP 上下文，
-    // 由 Stage 7 集成测试 `tests/integration/auth_garrison_test.rs` 覆盖。
-}
-
-#[tokio::test]
-async fn test_auth_middleware_different_ip_not_locked_out() {
-    // Stage 3 重构（决策 2）：本测试已删除。
-    // 同 `test_auth_middleware_rate_limit_lockout_returns_429`——IP 级限速由
-    // garrison firewall 负责，crawlrs 不再持有 `AuthRateLimiter`。
-}
+// T031（Stage 7）：rate_limit 与 IP 锁定测试已迁移至
+// `tests/integration/auth_garrison_test.rs`——需 garrison 单例 + 真实 IP 上下文，
+// 单元测试无法覆盖（参考文件头注释 §Stage 3 重构）。
 
 // ============================================================================
 // Global State Function Tests

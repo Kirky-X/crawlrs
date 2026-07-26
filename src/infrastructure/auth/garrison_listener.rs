@@ -84,10 +84,13 @@ use garrison::error::GarrisonResult;
 use garrison::listener::{GarrisonEvent, GarrisonListener, RequestContext};
 use parking_lot::RwLock;
 use std::net::IpAddr;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+
+#[cfg(test)]
+use tokio::sync::Mutex;
 
 /// inflight audit write task 上限。
 ///
@@ -175,15 +178,20 @@ static AUDIT_SEMAPHORE: LazyLock<Semaphore> =
 /// 使用 `std::sync::Mutex` 而非 `tokio::sync::Mutex` 的理由：
 /// - `spawn` 是同步方法，不跨 await 持有锁
 /// - `wait_audit_tasks` 中 `std::mem::take` 取出 JoinSet 后立即释放锁，再 await
-static AUDIT_TASKS: LazyLock<Mutex<JoinSet<()>>> =
-    LazyLock::new(|| Mutex::new(JoinSet::new()));
+static AUDIT_TASKS: LazyLock<StdMutex<JoinSet<()>>> =
+    LazyLock::new(|| StdMutex::new(JoinSet::new()));
 
 /// 测试串行化锁，避免 `AUDIT_SERVICE` 全局态在并行测试中竞态。
 ///
 /// 涉及 `set_audit_service`/`reset_audit_service_for_test` 的测试通过此锁串行化。
 /// `#[tokio::test]` 默认并行执行，全局 `RwLock` 会污染——串行化是必要折衷。
+///
+/// T034 修复：从 `std::sync::Mutex` 改为 `tokio::sync::Mutex`（经 `OnceLock` 延迟初始化）。
+/// 原因：`std::sync::MutexGuard` 跨 await 持有会阻塞 runtime 线程，导致并行测试死锁。
+/// `tokio::sync::MutexGuard` 是 async-aware，安全跨 await 持有。
+/// 与 `garrison_dao::TEST_MUTEX` 同一模式（OnceLock + tokio::sync::Mutex）。
 #[cfg(test)]
-static TEST_MUTEX: Mutex<()> = Mutex::new(());
+static TEST_MUTEX: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
 
 /// 注入 crawlrs [`AuditServiceTrait`] 实例，供 [`CrawlrsAuditListener`] 后续读取。
 ///
@@ -220,9 +228,21 @@ pub fn set_audit_service(
 ///
 /// 单测在 setup/teardown 中调用以避免测试间全局态污染。
 /// 生产代码禁止调用——会导致 audit_service 丢失，事件被静默 drop。
+///
+/// T034 修复：暴露为 `pub(crate)` 以供 `test_helpers::reset_garrison_global_state_for_test`
+/// 统一调用——所有调用 `init_services` 的测试都需 reset AUDIT_SERVICE 全局态。
 #[cfg(test)]
-fn reset_audit_service_for_test() {
+pub(crate) fn reset_audit_service_for_test() {
     *AUDIT_SERVICE.write() = None;
+}
+
+/// 测试专用：获取 [`TEST_MUTEX`] 的引用（用于跨模块串行化）。
+///
+/// T034 修复：与 `garrison_dao::test_mutex` 同一模式，供 `test_helpers`
+/// 统一获取锁，避免调用 `init_services` 的测试间全局态竞态。
+#[cfg(test)]
+pub(crate) fn test_mutex() -> &'static Mutex<()> {
+    TEST_MUTEX.get_or_init(|| Mutex::new(()))
 }
 
 /// 读取全局 [`AuditServiceTrait`] 引用（clone `Arc`）。
@@ -722,17 +742,14 @@ fn build_entry(
     event: &GarrisonEvent,
 ) -> AuditLogBuilder {
     let api_key_id = login_id.and_then(|id| uuid::Uuid::parse_str(id).ok());
-    let mut builder = AuditLogBuilder::new(action.to_string(), decision)
-        .maybe_with_api_key_id(api_key_id);
+    let mut builder =
+        AuditLogBuilder::new(action.to_string(), decision).maybe_with_api_key_id(api_key_id);
 
     // HIGH-1 修复：无论 api_key_id 是否解析成功，原始 login_id 都写入 metadata
     // 非 UUID 主体（社交登录、LoginFailure 等）的认证事件可追溯（CWE-778）
     if let Some(raw) = login_id {
         let truncated = truncate_string(raw, MAX_LOGIN_ID_LEN);
-        builder = builder.with_metadata(
-            "login_id",
-            serde_json::Value::String(truncated),
-        );
+        builder = builder.with_metadata("login_id", serde_json::Value::String(truncated));
     }
 
     // HIGH-2 修复：从 garrison task-local 读取 tenant_id，记录到 metadata 供多租户追溯
@@ -760,10 +777,8 @@ fn build_entry(
                     // 供安全分析追溯（如恶意 X-Forwarded-For 构造非 IP 字符串）
                     // 截断到 MAX_RAW_IP_LEN 防止 audit_logs 表膨胀
                     let truncated = truncate_string(ip_str, MAX_RAW_IP_LEN);
-                    builder = builder.with_metadata(
-                        "request_ip_raw",
-                        serde_json::Value::String(truncated),
-                    );
+                    builder = builder
+                        .with_metadata("request_ip_raw", serde_json::Value::String(truncated));
                 }
             }
         }
@@ -943,8 +958,11 @@ mod tests {
     /// `#[tokio::test]` 默认并行执行，涉及 `set_audit_service`/`reset_audit_service_for_test`
     /// 的测试必须串行——guard 在 setup 阶段持有，await 前 drop（spawn task 持有 Arc clone，
     /// 全局态改变不影响已 spawn 的 task）。
-    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
-        TEST_MUTEX.lock().expect("TEST_MUTEX poisoned")
+    ///
+    /// T034 修复：改为 async，使用 `tokio::sync::Mutex` 避免跨 await 持有 `std::sync::MutexGuard`
+    /// 阻塞 runtime 线程。调用方需 `.await`。
+    async fn test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        test_mutex().lock().await
     }
 
     // ============================================================
@@ -1627,9 +1645,9 @@ mod tests {
     // set_audit_service 测试
     // ============================================================
 
-    #[test]
-    fn test_set_audit_service_succeeds_when_none() {
-        let _guard = test_lock();
+    #[tokio::test]
+    async fn test_set_audit_service_succeeds_when_none() {
+        let _guard = test_lock().await;
         // setup: 确保全局态干净
         reset_audit_service_for_test();
         let mock = Arc::new(CapturingAuditService::new()) as Arc<dyn AuditServiceTrait>;
@@ -1639,9 +1657,9 @@ mod tests {
         reset_audit_service_for_test();
     }
 
-    #[test]
-    fn test_set_audit_service_returns_err_when_already_set() {
-        let _guard = test_lock();
+    #[tokio::test]
+    async fn test_set_audit_service_returns_err_when_already_set() {
+        let _guard = test_lock().await;
         // setup: 先注入一个实例
         reset_audit_service_for_test();
         let mock1 = Arc::new(CapturingAuditService::new()) as Arc<dyn AuditServiceTrait>;
@@ -1676,7 +1694,7 @@ mod tests {
     async fn test_on_event_persists_entry_via_audit_service() {
         // setup: 持有串行化锁，避免并行测试污染 AUDIT_SERVICE
         let mock = {
-            let _guard = test_lock();
+            let _guard = test_lock().await;
             reset_audit_service_for_test();
             let mock = Arc::new(CapturingAuditService::new());
             match set_audit_service(mock.clone() as Arc<dyn AuditServiceTrait>) {
@@ -1721,7 +1739,7 @@ mod tests {
 
         // teardown: 持有锁重置全局态
         {
-            let _guard = test_lock();
+            let _guard = test_lock().await;
             reset_audit_service_for_test();
         }
     }
@@ -1730,7 +1748,7 @@ mod tests {
     async fn test_on_event_returns_ok_when_audit_service_not_injected() {
         // setup: 持有串行化锁，确保全局态为 None
         {
-            let _guard = test_lock();
+            let _guard = test_lock().await;
             reset_audit_service_for_test();
         }
 
@@ -1758,7 +1776,7 @@ mod tests {
     async fn test_on_event_returns_ok_when_log_fails() {
         // setup: 持有串行化锁，注入失败型 mock
         {
-            let _guard = test_lock();
+            let _guard = test_lock().await;
             reset_audit_service_for_test();
             let mock = Arc::new(CapturingAuditService::failing());
             match set_audit_service(mock.clone() as Arc<dyn AuditServiceTrait>) {
@@ -1786,7 +1804,7 @@ mod tests {
 
         // teardown
         {
-            let _guard = test_lock();
+            let _guard = test_lock().await;
             reset_audit_service_for_test();
         }
     }

@@ -130,7 +130,9 @@ async fn fetch_team_id_by_api_key_id(
     pool: &Arc<DbPool>,
     api_key_id: Uuid,
 ) -> Result<Option<Uuid>, AuthError> {
-    // 1. 查缓存（读锁）。LOW-1 修复：debug! 移到锁外，避免锁内 I/O。
+    // 1. 查缓存。性能审查 HIGH-1 修复：`LruCache::get` 需 `&mut self` 更新 LRU 访问顺序，
+    // 故必须用 write 锁（非读锁）。debug! 已移到锁外，避免锁内 I/O。
+    // 长期优化建议：换用 `moka::Cache`（concurrent LRU，无锁读路径）。
     let cached_hit = {
         let mut cache = TEAM_ID_CACHE.write();
         if let Some((team_id, cached_at)) = cache.get(&api_key_id) {

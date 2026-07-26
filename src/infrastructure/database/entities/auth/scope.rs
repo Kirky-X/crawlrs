@@ -20,7 +20,10 @@ use uuid::Uuid;
 /// `CrawlrsGarrisonInterface` 返回，经 `auth_bridge::map_perms_to_scope` 映射。
 ///
 /// 此 entity 保留供历史数据迁移/查询使用，不参与热路径。待全量重签完成后可移除。
-#[deprecated(since = "0.2.0", note = "garrison RBAC 接管；保留仅供历史数据迁移/查询")]
+#[deprecated(
+    since = "0.2.0",
+    note = "garrison RBAC 接管；保留仅供历史数据迁移/查询"
+)]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "scopes")]
 pub struct Model {
