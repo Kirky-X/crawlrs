@@ -13,6 +13,15 @@
 //! 三种模式（Full / Cdp / Tls）共享同一个 FlareSolverr API 客户端实现，
 //! 仅在 support_score 和 name 上有差异，Tls 模式额外拒绝截图请求。
 //!
+//! ## T056 范围外说明（ProxyProvider 接入）
+//!
+//! 本引擎仍使用单 `proxy_url`（`Option<&str>`）而非 `ProxyProvider` trait。
+//! 这是 design.md 明确标注的 T056 范围外项：
+//! - FlareSolverr 通过 HTTP API 调用外部服务，proxy_url 仅记录到 `X-Proxy-URL` header
+//!   供 FlareSolverr 服务自身识别代理（不同于 ReqwestEngine 直接通过 reqwest::Proxy 使用代理）
+//! - 接入 ProxyProvider 需要 FlareSolverr 服务端支持代理轮换语义，超出 T056 范围
+//! - 后续如需接入，可在 `with_mode_and_proxy` / `with_url` 等构造函数中扩展
+//!
 //! This engine is particularly useful for:
 //! - Google search (bypasses CAPTCHA)
 //! - Cloudflare-protected sites

@@ -169,8 +169,13 @@ flaresolverr_tls_default = 40               # Default score for basic requests
 # HTTP Proxy Configuration
 # Configure proxy for all scraping engines
 [proxy]
-url = "http://localhost:10808"
+urls = ["http://localhost:10808"]
+strategy = "round_robin"
 enabled = false
+# Sticky session TTL (seconds): same session_id returns same proxy within TTL
+sticky_ttl_seconds = 60
+# Failed proxy cooldown (seconds): proxies marked failed are not selected during cooldown
+cooldown_seconds = 30
 
 # Engine Configuration
 # Configure scraping engines (FlareSolverr variants)

@@ -11,6 +11,8 @@ pub mod browser_downloader; // 新增：浏览器自动下载管理器
 pub mod circuit_breaker;
 pub mod client;
 pub mod health_monitor;
+pub mod provider; // H2 修复：ProxyProvider trait 抽象（DIP）
+pub mod proxy_pool; // T054：代理轮换池（R-identity-003）
 pub mod router;
 pub mod upgrade_probe; // T014：流式 HTTP→Chrome 升级探测
 pub mod validators;
@@ -42,6 +44,11 @@ pub use engine_client::{
 };
 
 pub use engine_client::ScraperEngine;
+
+// H2 修复：ProxyProvider trait 抽象
+pub use provider::ProxyProvider;
+// H3 修复：ClientHandle 封装
+pub use client::ClientHandle;
 
 // 导出浏览器下载管理器
 pub use browser_downloader::{

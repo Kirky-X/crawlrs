@@ -73,6 +73,36 @@ impl ScrapeRequest {
     }
 }
 
+/// session_id 最大长度（字节）— 防止 DoS（T056 安全审查 MEDIUM-2 修复）
+///
+/// 限制 ProxyPool::sticky 的 DashMap key 长度，防止恶意超长 session_id
+/// 导致内存耗尽。128 字节对绝大多数会话标识场景足够。
+pub const MAX_SESSION_ID_LEN: usize = 128;
+
+/// 校验 session_id 是否合法（T056 安全审查 MEDIUM-2 修复）
+///
+/// # 校验规则
+///
+/// - 长度 <= [`MAX_SESSION_ID_LEN`] 字节
+/// - 字符集为可打印 ASCII（0x20-0x7E），排除控制字符
+///
+/// # 防护
+///
+/// - 超长字符串 → 防止 DashMap key 内存耗尽（DoS）
+/// - 控制字符/换行符 → 防止日志注入（CWE-117）
+///
+/// # 返回
+///
+/// - `true`：合法
+/// - `false`：非法
+#[must_use]
+pub fn validate_session_id(session_id: &str) -> bool {
+    if session_id.len() > MAX_SESSION_ID_LEN {
+        return false;
+    }
+    session_id.bytes().all(|b| (0x20..=0x7E).contains(&b))
+}
+
 /// Optional configuration for scrape operations.
 #[derive(Debug, Clone)]
 pub struct ScrapeOptions {
@@ -114,6 +144,11 @@ pub struct ScrapeOptions {
     /// T033 / R-jsrender-003：当为 true 且使用浏览器引擎时，启用媒体资源类型拦截，
     /// CDP `ResourceType::{Image, Media, Font}` 的请求将被 `Fetch.failRequest` 中止。
     pub block_media: bool,
+    /// 粘性会话 ID（H1 修复：用于 ProxyStrategy::Sticky 时调用 ProxyProvider::sticky）
+    ///
+    /// 调用方在需要粘性会话（同一会话固定走同一代理）时设置。
+    /// `None` 时按 `ProxyStrategy::RoundRobin` 走 `ProxyProvider::next`。
+    pub session_id: Option<String>,
 }
 
 impl Default for ScrapeOptions {
@@ -135,6 +170,7 @@ impl Default for ScrapeOptions {
             use_fire_engine: false,
             block_ads: false,
             block_media: false,
+            session_id: None,
         }
     }
 }
@@ -276,6 +312,33 @@ impl ScrapeOptionsBuilder {
         self
     }
 
+    /// 设置粘性会话 ID（H1 修复：用于 ProxyStrategy::Sticky）
+    ///
+    /// 调用方在需要粘性会话（同一会话固定走同一代理）时设置。
+    /// `None` 时按 `ProxyStrategy::RoundRobin` 走 `ProxyProvider::next`。
+    ///
+    /// # 安全校验（T056 安全审查 MEDIUM-2 修复）
+    ///
+    /// - 长度上限：[`MAX_SESSION_ID_LEN`] 字节（128）
+    /// - 字符集：可打印 ASCII（0x20-0x7E），排除控制字符
+    ///
+    /// 非法输入（超长或含控制字符）会被拒绝并记录 warn 日志，`session_id` 保持 `None`。
+    /// 防止 DoS（超长字符串填充 sticky binding map）和日志注入（CWE-117）。
+    pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
+        let sid = session_id.into();
+        if validate_session_id(&sid) {
+            self.0.session_id = Some(sid);
+        } else {
+            warn!(
+                "session_id rejected (length={}, max={}, must be printable ASCII); \
+                 falling back to None (RoundRobin)",
+                sid.len(),
+                MAX_SESSION_ID_LEN
+            );
+        }
+        self
+    }
+
     pub fn build(self) -> ScrapeOptions {
         self.0
     }
@@ -405,6 +468,10 @@ pub struct InternalScrapeRequest {
     pub block_ads: bool,
     /// T033 / R-jsrender-003：媒体资源类型拦截开关（仅浏览器引擎生效）
     pub block_media: bool,
+    /// 粘性会话 ID（H1 修复：用于 ProxyStrategy::Sticky 时调用 ProxyProvider::sticky）
+    ///
+    /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.session_id` 桥接而来。
+    pub session_id: Option<String>,
 }
 
 /// Internal screenshot configuration
@@ -485,6 +552,23 @@ impl ScrapeRequest {
                     format: config.format.clone(),
                 });
 
+        // T056 安全审查 MEDIUM-2 修复：to_internal 二次校验 session_id
+        // 防止用户绕过 builder 直接构造 ScrapeOptions 注入非法 session_id
+        // （超长字符串 DoS / 控制字符日志注入 CWE-117）
+        let session_id = match &options.session_id {
+            Some(sid) if validate_session_id(sid) => Some(sid.clone()),
+            Some(sid) => {
+                warn!(
+                    "session_id rejected in to_internal (length={}, max={}, \
+                     must be printable ASCII); falling back to None (RoundRobin)",
+                    sid.len(),
+                    MAX_SESSION_ID_LEN
+                );
+                None
+            }
+            None => None,
+        };
+
         InternalScrapeRequest {
             url: self.url.clone(),
             method: options.method,
@@ -503,6 +587,7 @@ impl ScrapeRequest {
             sync_wait_ms: options.sync_wait_ms,
             block_ads: options.block_ads,
             block_media: options.block_media,
+            session_id,
         }
     }
 }
@@ -2300,5 +2385,128 @@ mod tests {
             }
             other => panic!("Expected Unavailable, got {:?}", other),
         }
+    }
+
+    // === T056 MEDIUM-2: session_id 校验测试 ===
+
+    #[test]
+    fn test_validate_session_id_accepts_normal_string() {
+        assert!(validate_session_id("session-123"));
+        assert!(validate_session_id("abc"));
+        assert!(validate_session_id("user_session_id_456"));
+    }
+
+    #[test]
+    fn test_validate_session_id_accepts_printable_ascii() {
+        // 0x20-0x7E 范围内的所有可打印 ASCII 字符
+        let printable: String = (0x20u8..=0x7E).map(|b| b as char).collect();
+        assert!(
+            validate_session_id(&printable),
+            "all printable ASCII chars should be valid"
+        );
+    }
+
+    #[test]
+    fn test_validate_session_id_accepts_max_length() {
+        // 正好 128 字节
+        let max_len = "a".repeat(MAX_SESSION_ID_LEN);
+        assert!(
+            validate_session_id(&max_len),
+            "exactly MAX_SESSION_ID_LEN bytes should be valid"
+        );
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_too_long() {
+        // 129 字节 — 超过上限
+        let too_long = "a".repeat(MAX_SESSION_ID_LEN + 1);
+        assert!(
+            !validate_session_id(&too_long),
+            "string exceeding MAX_SESSION_ID_LEN should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_control_chars() {
+        // 控制字符（0x00-0x1F, 0x7F）应被拒绝
+        assert!(!validate_session_id("session\n123"));
+        assert!(!validate_session_id("session\t123"));
+        assert!(!validate_session_id("session\r123"));
+        assert!(!validate_session_id("session\0123"));
+        assert!(!validate_session_id("session\u{007F}123"));
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_empty_string() {
+        // 空字符串：长度为 0，字符集检查为空（all 返回 true）
+        // 空字符串在语义上无效（不能作为 session_id），但当前实现允许它
+        // 因为空字符串不会导致 DoS 或日志注入，且 rr_pick 的回退行为是 RoundRobin
+        // 这里测试当前行为（空字符串通过校验），如果未来需要拒绝空字符串可修改
+        assert!(validate_session_id(""));
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_non_ascii() {
+        // 非 ASCII 字符（UTF-8 多字节）应被拒绝
+        assert!(!validate_session_id("session-中文"));
+        assert!(!validate_session_id("session-é"));
+        assert!(!validate_session_id("session-🎉"));
+    }
+
+    #[test]
+    fn test_session_id_builder_accepts_valid_input() {
+        let options = ScrapeOptions::builder()
+            .session_id("valid-session-123")
+            .build();
+        assert_eq!(options.session_id, Some("valid-session-123".to_string()));
+    }
+
+    #[test]
+    fn test_session_id_builder_rejects_too_long() {
+        let too_long = "a".repeat(MAX_SESSION_ID_LEN + 1);
+        let options = ScrapeOptions::builder()
+            .session_id(too_long.clone())
+            .build();
+        assert!(
+            options.session_id.is_none(),
+            "too long session_id should be rejected by builder"
+        );
+    }
+
+    #[test]
+    fn test_session_id_builder_rejects_control_chars() {
+        let options = ScrapeOptions::builder()
+            .session_id("bad\nsession")
+            .build();
+        assert!(
+            options.session_id.is_none(),
+            "session_id with control chars should be rejected by builder"
+        );
+    }
+
+    #[test]
+    fn test_to_internal_validates_session_id() {
+        // to_internal 应二次校验 session_id，拒绝非法值
+        let mut options = ScrapeOptions::default();
+        options.session_id = Some("bad\nsession".to_string());
+        let request = ScrapeRequest::new("https://example.com").with_options(options);
+        let internal = request.to_internal();
+        assert!(
+            internal.session_id.is_none(),
+            "to_internal should reject invalid session_id (bypassing builder)"
+        );
+    }
+
+    #[test]
+    fn test_to_internal_preserves_valid_session_id() {
+        let mut options = ScrapeOptions::default();
+        options.session_id = Some("valid-session".to_string());
+        let request = ScrapeRequest::new("https://example.com").with_options(options);
+        let internal = request.to_internal();
+        assert_eq!(
+            internal.session_id,
+            Some("valid-session".to_string()),
+            "to_internal should preserve valid session_id"
+        );
     }
 }

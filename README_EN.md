@@ -371,7 +371,7 @@ crawlrs uses confers for configuration management, supporting TOML files and `CR
 | `[concurrency]` | Concurrency control | `default_team_limit`, `task_lock_duration_seconds` |
 | `[search]` | Search config | `default_engine`, `ab_test_enabled`, `timeout_seconds` |
 | `[webhook]` | Webhook | `timeout_seconds`, `max_retries`, `secret`, `batch_size` |
-| `[proxy]` | Outbound proxy | `url`, `enabled` |
+| `[proxy]` | Outbound proxy | `urls`, `strategy`, `enabled`, `sticky_ttl_seconds`, `cooldown_seconds` |
 | `[llm]` | LLM extraction | `api_key`, `model`, `api_base_url` |
 | `[workers]` | Worker pool | `count` (`"auto"` or number) |
 | `[engines.flaresolverr]` | FlareSolverr | `enabled`, `url`, `timeout_seconds` |

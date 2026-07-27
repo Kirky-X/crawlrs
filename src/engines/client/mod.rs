@@ -6,6 +6,9 @@
 /// 基础 HTTP 引擎模块 (始终可用)
 pub mod reqwest;
 
+/// 客户端句柄（H3 修复：tuple 泄漏状态）
+pub mod handle;
+
 /// Playwright 浏览器自动化引擎
 #[cfg(feature = "engine-playwright")]
 pub mod playwright;
@@ -29,6 +32,8 @@ pub mod flaresolverr_types;
 
 // Re-exports
 
+/// Reqwest 引擎 (始终可用)
+pub use self::handle::ClientHandle;
 /// Reqwest 引擎 (始终可用)
 pub use self::reqwest::ReqwestEngine;
 

@@ -34,7 +34,8 @@ pub use llm::LLMSettings;
 
 pub use runtime::RuntimeConfig;
 pub use settings::{
-    CacheSettings, ProxySettings, TimeoutSettings, WebhookSettings, WorkerCount, WorkerSettings,
+    CacheSettings, ProxySettings, ProxyStrategy, TimeoutSettings, WebhookSettings, WorkerCount,
+    WorkerSettings,
 };
 
 // 主配置结构体

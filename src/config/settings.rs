@@ -213,34 +213,99 @@ impl AuthSettings {
 // 代理配置
 // =============================================================================
 
+/// 代理轮换策略（design.md §12，T055/R-identity-003）
+///
+/// 决定调用方在 ProxyPool 上的默认行为：
+/// - `RoundRobin`：每次请求调用 `ProxyPool::next(category)` 取下一个
+/// - `Sticky`：按 `session_id` 调用 `ProxyPool::sticky(session_id)` 锁定同一代理
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyStrategy {
+    RoundRobin,
+    Sticky,
+}
+
+impl Default for ProxyStrategy {
+    fn default() -> Self {
+        Self::RoundRobin
+    }
+}
+
 /// HTTP代理配置设置
 ///
-/// 配置HTTP代理参数，用于转发爬虫请求
+/// 配置HTTP代理参数，用于转发爬虫请求。
+///
+/// 支持多代理轮换池（design.md §12 / R-identity-003）：
+/// - `urls`: 代理 URL 列表，可包含 userinfo（日志输出会脱敏）
+/// - `strategy`: 轮换策略（RoundRobin / Sticky）
+/// - `enabled`: 是否启用代理
+/// - `sticky_ttl_seconds`: 粘性会话 TTL（秒），TTL 内同一 session_id 返回同一代理
+/// - `cooldown_seconds`: 失败代理默认冷却时长（秒）
 #[derive(Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__PROXY__")]
 pub struct ProxySettings {
-    /// 代理服务器URL (可能包含认证信息)
-    #[config(default = "http://localhost:10808".to_string())]
-    pub(crate) url: String,
+    /// 代理 URL 列表（支持多个代理轮换，按 strategy 决定调度方式）
+    #[config(default = Vec::<String>::new())]
+    pub urls: Vec<String>,
+
+    /// 代理轮换策略
+    #[serde(default)]
+    pub strategy: ProxyStrategy,
 
     /// 是否启用代理
     #[config(default = false)]
     pub enabled: bool,
+
+    /// 粘性会话 TTL（秒）
+    ///
+    /// `ProxyStrategy::Sticky` 时，TTL 内同一 `session_id` 返回同一代理；
+    /// TTL 过期或代理冷却中时重选。
+    /// 默认 60 秒（MEDIUM-2 修复：从 di/modules.rs 硬编码移入配置）。
+    #[config(default = 60)]
+    #[serde(default = "default_sticky_ttl_seconds")]
+    pub sticky_ttl_seconds: u64,
+
+    /// 失败代理默认冷却时长（秒）
+    ///
+    /// `mark_failure` 后代理进入冷却，在此期间不被 `next` / `sticky` 选中。
+    /// 默认 30 秒（MEDIUM-2 修复：从 di/modules.rs 硬编码移入配置）。
+    #[config(default = 30)]
+    #[serde(default = "default_cooldown_seconds")]
+    pub cooldown_seconds: u64,
+}
+
+/// serde 默认值：粘性会话 TTL（与 `#[config(default = 60)]` 保持一致）
+fn default_sticky_ttl_seconds() -> u64 {
+    60
+}
+
+/// serde 默认值：失败代理冷却时长（与 `#[config(default = 30)]` 保持一致）
+fn default_cooldown_seconds() -> u64 {
+    30
 }
 
 impl std::fmt::Debug for ProxySettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 安全：urls 可能含 user:pass@host 凭证，Debug 输出统一脱敏
         f.debug_struct("ProxySettings")
-            .field("url", &"***REDACTED***")
+            .field("urls", &"***REDACTED***")
+            .field("strategy", &self.strategy)
             .field("enabled", &self.enabled)
+            .field("sticky_ttl_seconds", &self.sticky_ttl_seconds)
+            .field("cooldown_seconds", &self.cooldown_seconds)
             .finish()
     }
 }
 
 impl ProxySettings {
-    /// 获取代理服务器URL
-    pub fn url(&self) -> &str {
-        &self.url
+    /// 获取代理 URL 列表
+    pub fn urls(&self) -> &[String] {
+        &self.urls
+    }
+
+    /// 获取代理轮换策略
+    pub fn strategy(&self) -> ProxyStrategy {
+        self.strategy
     }
 }
 
@@ -825,55 +890,110 @@ mod tests {
     // ========== ProxySettings tests ==========
 
     #[test]
-    fn test_proxy_settings_default_url() {
+    fn test_proxy_settings_default_empty_urls_and_round_robin_strategy() {
         let settings = ProxySettings::default();
-        assert_eq!(settings.url(), "http://localhost:10808");
+        assert!(settings.urls.is_empty(), "default urls should be empty");
+        assert_eq!(settings.strategy, ProxyStrategy::RoundRobin);
         assert!(!settings.enabled);
+        // MEDIUM-2 修复：默认 sticky_ttl=60s, cooldown=30s
+        assert_eq!(settings.sticky_ttl_seconds, 60);
+        assert_eq!(settings.cooldown_seconds, 30);
     }
 
     #[test]
-    fn test_proxy_settings_url_accessor() {
+    fn test_proxy_settings_urls_and_strategy_accessor() {
         let settings = ProxySettings {
-            url: "http://proxy.example.com:8080".to_string(),
+            urls: vec!["http://proxy.example.com:8080".to_string()],
+            strategy: ProxyStrategy::Sticky,
             enabled: true,
+            sticky_ttl_seconds: 120,
+            cooldown_seconds: 45,
         };
-        assert_eq!(settings.url(), "http://proxy.example.com:8080");
+        assert_eq!(settings.urls(), &["http://proxy.example.com:8080"]);
+        assert_eq!(settings.strategy(), ProxyStrategy::Sticky);
         assert!(settings.enabled);
     }
 
     #[test]
-    fn test_proxy_settings_debug_redacts_url() {
+    fn test_proxy_settings_debug_redacts_urls() {
         let settings = ProxySettings {
-            url: "http://secret:password@proxy:8080".to_string(),
+            urls: vec!["http://secret:password@proxy:8080".to_string()],
+            strategy: ProxyStrategy::RoundRobin,
             enabled: true,
+            sticky_ttl_seconds: 60,
+            cooldown_seconds: 30,
         };
         let debug_str = format!("{:?}", settings);
-        assert!(debug_str.contains("***REDACTED***"));
-        assert!(!debug_str.contains("secret:password"));
-        assert!(debug_str.contains("true"));
+        assert!(debug_str.contains("***REDACTED***"), "urls must be redacted in Debug");
+        assert!(
+            !debug_str.contains("secret:password"),
+            "credentials must not leak to Debug"
+        );
+        assert!(debug_str.contains("true"), "enabled should be visible");
+        assert!(
+            debug_str.contains("RoundRobin"),
+            "strategy should be visible (non-sensitive)"
+        );
     }
 
     #[test]
     fn test_proxy_settings_clone_preserves_fields() {
         let settings = ProxySettings {
-            url: "http://clone-proxy:9090".to_string(),
+            urls: vec!["http://clone-proxy:9090".to_string()],
+            strategy: ProxyStrategy::Sticky,
             enabled: true,
+            sticky_ttl_seconds: 90,
+            cooldown_seconds: 20,
         };
         let cloned = settings.clone();
-        assert_eq!(cloned.url(), "http://clone-proxy:9090");
+        assert_eq!(cloned.urls(), &["http://clone-proxy:9090"]);
+        assert_eq!(cloned.strategy(), ProxyStrategy::Sticky);
         assert!(cloned.enabled);
+        assert_eq!(cloned.sticky_ttl_seconds, 90);
+        assert_eq!(cloned.cooldown_seconds, 20);
     }
 
     #[test]
     fn test_proxy_settings_serde_roundtrip() {
         let settings = ProxySettings {
-            url: "http://serde-proxy:7070".to_string(),
+            urls: vec!["http://serde-proxy:7070".to_string()],
+            strategy: ProxyStrategy::Sticky,
             enabled: false,
+            sticky_ttl_seconds: 100,
+            cooldown_seconds: 50,
         };
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: ProxySettings = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(back.url(), "http://serde-proxy:7070");
+        assert_eq!(back.urls(), &["http://serde-proxy:7070"]);
+        assert_eq!(back.strategy(), ProxyStrategy::Sticky);
         assert!(!back.enabled);
+        assert_eq!(back.sticky_ttl_seconds, 100);
+        assert_eq!(back.cooldown_seconds, 50);
+    }
+
+    /// strategy 字段 serde 用 snake_case：JSON/TOML 中 "round_robin" / "sticky"
+    #[test]
+    fn test_proxy_settings_strategy_serde_snake_case() {
+        // RoundRobin ↔ "round_robin"
+        let json = r#"{"urls":[],"strategy":"round_robin","enabled":false}"#;
+        let s: ProxySettings = serde_json::from_str(json).expect("deserialize round_robin");
+        assert_eq!(s.strategy, ProxyStrategy::RoundRobin);
+        let back = serde_json::to_string(&s).expect("serialize");
+        assert!(back.contains("\"round_robin\""), "serialized should be snake_case: {back}");
+
+        // Sticky ↔ "sticky"
+        let json = r#"{"urls":[],"strategy":"sticky","enabled":false}"#;
+        let s: ProxySettings = serde_json::from_str(json).expect("deserialize sticky");
+        assert_eq!(s.strategy, ProxyStrategy::Sticky);
+    }
+
+    /// strategy 字段缺失时 serde(default) → RoundRobin
+    #[test]
+    fn test_proxy_settings_strategy_missing_falls_back_to_default() {
+        let json = r#"{"urls":["http://x:8080"],"enabled":true}"#;
+        let s: ProxySettings = serde_json::from_str(json).expect("deserialize missing strategy");
+        assert_eq!(s.strategy, ProxyStrategy::RoundRobin);
+        assert!(s.enabled);
     }
 
     // ========== WorkerSettings tests ==========

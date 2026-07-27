@@ -1104,9 +1104,12 @@ mod tests {
 
         // Build engine router + client.
         // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
-        // proxy_url=None：此处无代理配置（架构 MEDIUM 5：用 Option 替代空字符串 sentinel）
+        // proxy_provider=None, proxy_strategy=RoundRobin, proxy_url=None：测试环境无代理配置
+        // H1/H2 修复：proxy_provider 改为 Option<Arc<dyn ProxyProvider>>，新增 strategy 参数
         let engines = crate::bootstrap::engines::init_engines(
             infra.http_client.clone(),
+            None,
+            crate::config::settings::ProxyStrategy::RoundRobin,
             None,
             &settings.engines,
             settings.timeouts.engines.default_timeout_seconds,

@@ -611,6 +611,7 @@ impl ScrapeWorker {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             })
     }
 
@@ -814,6 +815,7 @@ impl ScrapeWorker {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             })
     }
 
@@ -1712,6 +1714,7 @@ impl ScrapeWorker {
                 sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
                 block_ads: false,
                 block_media: false,
+                session_id: None,
             },
         })
     }
@@ -4832,7 +4835,10 @@ mod tests {
         let infra = init_infrastructure(&settings).await?;
         let engines = crate::bootstrap::engines::init_engine_components(
             infra.http_client.clone(),
-            // proxy_url=None：此处无代理配置（架构 MEDIUM 5：用 Option 替代空字符串 sentinel）
+            // proxy_provider=None, proxy_strategy=RoundRobin, proxy_url=None：测试环境无代理配置
+            // H1/H2 修复：proxy_provider 改为 Option<Arc<dyn ProxyProvider>>，新增 strategy 参数
+            None,
+            crate::config::settings::ProxyStrategy::RoundRobin,
             None,
             &settings.engines,
             // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
@@ -5004,7 +5010,9 @@ mod tests {
         };
         let engines = crate::bootstrap::engines::init_engine_components(
             infra.http_client.clone(),
-            // proxy_url=None：此处无代理配置（架构 MEDIUM 5：用 Option 替代空字符串 sentinel）
+            // proxy_pool=None, proxy_url=None：此处无代理配置（T056：用 ProxyPool 替代单 proxy_url）
+            None,
+            crate::config::settings::ProxyStrategy::RoundRobin,
             None,
             &settings.engines,
             // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）

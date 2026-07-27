@@ -115,6 +115,7 @@ impl CreateScrapeUseCase {
             use_fire_engine: options.use_fire_engine.unwrap_or(false),
             block_ads: false,
             block_media: false,
+            session_id: None,
         };
 
         Ok(ScrapeRequest::new(dto.url).with_options(scrape_options))

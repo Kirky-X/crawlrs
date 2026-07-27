@@ -371,7 +371,7 @@ crawlrs 使用 confers 管理配置，支持 TOML 文件和 `CRAWLRS__` 前缀�
 | `[concurrency]` | 并发控制 | `default_team_limit`, `task_lock_duration_seconds` |
 | `[search]` | 搜索配置 | `default_engine`, `ab_test_enabled`, `timeout_seconds` |
 | `[webhook]` | Webhook | `timeout_seconds`, `max_retries`, `secret`, `batch_size` |
-| `[proxy]` | 出站代理 | `url`, `enabled` |
+| `[proxy]` | 出站代理 | `urls`, `strategy`, `enabled`, `sticky_ttl_seconds`, `cooldown_seconds` |
 | `[llm]` | LLM 抽取 | `api_key`, `model`, `api_base_url` |
 | `[workers]` | Worker 池 | `count`（`"auto"` 或数字） |
 | `[engines.flaresolverr]` | FlareSolverr | `enabled`, `url`, `timeout_seconds` |

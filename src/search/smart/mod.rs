@@ -492,6 +492,7 @@ impl SmartSearchEngine {
                 sync_wait_ms: if needs_js { 10000 } else { 0 },
                 block_ads: false,
                 block_media: false,
+                session_id: None,
             },
         }
     }

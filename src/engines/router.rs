@@ -849,6 +849,7 @@ impl EngineRouter {
                 sync_wait_ms: request.sync_wait_ms,
                 block_ads: request.block_ads,
                 block_media: request.block_media,
+                session_id: request.session_id.clone(),
             };
 
             let engine_start = Instant::now();
@@ -1054,6 +1055,7 @@ impl EngineRouter {
                 sync_wait_ms: request.sync_wait_ms,
                 block_ads: request.block_ads,
                 block_media: request.block_media,
+                session_id: request.session_id.clone(),
             };
 
             let race_future: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
@@ -1445,6 +1447,7 @@ mod tests {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
         let result = router.route(&request).await;
 
@@ -1523,6 +1526,7 @@ mod tests {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             }
     }
 
@@ -2669,6 +2673,7 @@ mod tests {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
 
         // The low-score engine should be filtered out, leaving no candidates
@@ -3112,6 +3117,7 @@ mod tests_impl {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
         let result = router.aggregate(&request).await;
 
@@ -3165,6 +3171,7 @@ mod tests_impl {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
         let result = router.aggregate(&request).await;
 
@@ -3281,6 +3288,7 @@ mod tests_impl {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
 
         let result = router.route(&request).await;
@@ -3403,6 +3411,7 @@ mod tests_impl {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
 
         let result = router.route(&request).await;
@@ -3529,6 +3538,7 @@ mod tests_impl {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
 
         let result = router.route(&request).await;
@@ -3657,6 +3667,7 @@ mod tests_impl {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
 
         let result = router.route(&request).await;
@@ -3799,6 +3810,7 @@ mod tests_impl {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
 
         let result = router.route(&request).await;
@@ -3967,6 +3979,7 @@ mod tests_impl {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
         };
 
         let result = router.route(&request).await;
@@ -4112,6 +4125,7 @@ mod tests_impl {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
 
         let result = router.route(&request).await;

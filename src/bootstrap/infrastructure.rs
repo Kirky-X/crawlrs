@@ -107,52 +107,20 @@ pub fn init_http_client(
         }
         None => crate::infrastructure::dns::create_ipv4_only_resolver(),
     };
-    let mut client_builder = reqwest::Client::builder()
+    // T056/C1 修复：移除 init_http_client 中的代理注入逻辑。
+    // 代理已统一由 EngineModule 构造 ProxyPool 注入 ReqwestEngine（按 ProxyCategory::Html 路由）。
+    // 双重注入会导致代理配置冲突：http_client 级别 + ReqwestEngine 级别同时生效。
+    let client = reqwest::Client::builder()
         .timeout(timeout)
         .connect_timeout(Duration::from_secs(15))
         .pool_idle_timeout(Duration::from_secs(90))
         .local_address(Some(Ipv4Addr::UNSPECIFIED.into()))
-        .dns_resolver(resolver);
-
-    // Configure proxy if enabled
-    if settings.proxy.enabled {
-        let proxy_url = settings.proxy.url();
-        match reqwest::Proxy::all(proxy_url) {
-            Ok(proxy) => {
-                client_builder = client_builder.proxy(proxy);
-                info!("HTTP client configured with proxy (credentials hidden)");
-            }
-            Err(e) => {
-                // 安全：日志中脱敏 proxy URL（剥离 userinfo 部分），防止凭据泄露到日志
-                let safe_url = sanitize_proxy_url(proxy_url);
-                log::warn!("Invalid proxy URL '{}', disabling proxy: {}", safe_url, e);
-            }
-        }
-    }
-
-    let client = client_builder.build()?;
+        .dns_resolver(resolver)
+        .build()?;
     let client = Arc::new(client);
 
     info!("HTTP client initialized (timeout: {}s)", timeout_secs);
     Ok(client)
-}
-
-/// 脱敏 proxy URL：剥离 userinfo（user:pass@）部分，只保留 scheme://host:port
-/// 用于日志输出，防止 proxy 凭据泄露到日志文件
-fn sanitize_proxy_url(url: &str) -> String {
-    match reqwest::Url::parse(url) {
-        Ok(parsed) => {
-            // 重新构造不含 userinfo 的 URL
-            let scheme = parsed.scheme();
-            let host = parsed.host_str().unwrap_or("");
-            let port = parsed.port();
-            match port {
-                Some(p) => format!("{}://{}:{}", scheme, host, p),
-                None => format!("{}://{}", scheme, host),
-            }
-        }
-        Err(_) => "<unparseable>".to_string(),
-    }
 }
 
 /// Initialize all application repositories.
@@ -363,42 +331,19 @@ mod tests {
     }
 
     #[test]
-    fn test_init_http_client_with_proxy_disabled() {
-        let mut settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        settings.proxy.enabled = false;
-        let result = init_http_client(&settings, None);
-        assert!(
-            result.is_ok(),
-            "init_http_client should succeed with proxy disabled"
-        );
-    }
-
-    #[test]
-    fn test_init_http_client_with_invalid_proxy_url_does_not_panic() {
+    fn test_init_http_client_ignores_proxy_settings() {
+        // T056/C1 修复后，init_http_client 不再注入代理。
+        // 代理统一由 EngineModule 构造 ProxyPool 注入 ReqwestEngine。
+        // 此测试验证即使 settings.proxy.enabled=true 且 urls 非空，
+        // init_http_client 也只创建无代理的 http_client。
         let mut settings =
             crate::bootstrap::config::load_settings().expect("Failed to load settings");
         settings.proxy.enabled = true;
-        // Set an invalid proxy URL to test error handling path
-        settings.proxy.url = "not-a-valid-url".to_string();
-        // init_http_client should handle the invalid proxy gracefully (warn + continue)
+        settings.proxy.urls = vec!["http://localhost:10808".to_string()];
         let result = init_http_client(&settings, None);
         assert!(
             result.is_ok(),
-            "init_http_client should succeed even with invalid proxy URL (just disables proxy)"
-        );
-    }
-
-    #[test]
-    fn test_init_http_client_with_valid_proxy_url() {
-        let mut settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        settings.proxy.enabled = true;
-        settings.proxy.url = "http://localhost:10808".to_string();
-        let result = init_http_client(&settings, None);
-        assert!(
-            result.is_ok(),
-            "init_http_client should succeed with a valid proxy URL"
+            "init_http_client should succeed regardless of proxy settings"
         );
     }
 

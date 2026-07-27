@@ -6,6 +6,7 @@
 //! Scraper engines initialization and configuration.
 
 use crate::config::engines::EngineSettings;
+use crate::config::settings::ProxyStrategy;
 #[cfg(feature = "engine-flaresolverr")]
 use crate::engines::client::flare_solverr::FlareSolverrEngine;
 #[cfg(feature = "engine-playwright")]
@@ -13,8 +14,11 @@ use crate::engines::client::playwright::PlaywrightEngine;
 use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::engine_client::ScraperEngine;
+use crate::engines::provider::ProxyProvider;
 use crate::engines::router::EngineRouter;
 use std::sync::Arc;
+#[cfg(test)]
+use crate::engines::proxy_pool::ProxyPool;
 
 /// All engine-related components.
 #[derive(Clone)]
@@ -35,8 +39,13 @@ pub struct EngineComponents {
 /// # Arguments
 ///
 /// * `http_client` - Shared HTTP client
-/// * `proxy_url` - URL for the HTTP proxy (if enabled)。`None` 表示未配置代理，
-///   替代之前的空字符串 sentinel（架构 MEDIUM 5：API 语义明确化）
+/// * `proxy_provider` - 代理提供者（design.md §12，T054/T056/R-identity-003 + H2 修复）。
+///   `None` 时 ReqwestEngine 不使用代理；`Some` 时按 `proxy_strategy` 调度策略取代理。
+///   `Arc<dyn ProxyProvider>` 可被多 worker 共享，并依赖抽象 trait 而非具体 `ProxyPool`。
+/// * `proxy_strategy` - 代理调度策略（H1 修复：RoundRobin / Sticky）。
+///   `proxy_provider` 为 `None` 时此参数被忽略。
+/// * `proxy_url` - FlareSolverr 引擎使用的单代理 URL（FlareSolverr 服务自身访问代理）。
+///   `None` 表示未配置代理。注意：FlareSolverr 暂未接入 ProxyProvider（T056 范围外）。
 /// * `engine_config` - Engine-specific configuration settings
 /// * `timeout_seconds` - 请求超时（秒），从 `settings.timeouts.engines.default_timeout_seconds`
 ///   注入 ReqwestEngine，避免硬编码 30 秒（架构 MEDIUM 2）
@@ -44,24 +53,31 @@ pub struct EngineComponents {
 /// # Returns
 ///
 /// Returns a vector of initialized engines.
-#[allow(deprecated)]
 #[allow(unused_variables)]
 pub fn init_engines(
     http_client: Arc<reqwest::Client>,
+    proxy_provider: Option<Arc<dyn ProxyProvider>>,
+    proxy_strategy: ProxyStrategy,
     proxy_url: Option<&str>,
     engine_config: &EngineSettings,
     timeout_seconds: u64,
 ) -> Vec<Arc<dyn ScraperEngine>> {
-    // 将 Option<&str> 转换为 ReqwestEngine::with_proxy_and_timeout 接受的 String。
-    // None → 空字符串（ReqwestEngine 内部会将空字符串视为未配置代理）
-    let proxy_url_str = proxy_url.unwrap_or("");
+    // T056/R-identity-003 + H1/H2 修复: ReqwestEngine 接入 ProxyProvider + 策略
+    // - provider 为 Some 时 with_provider_strategy_and_timeout 注入
+    // - provider 为 None 时 new_with_timeout（无代理）
     #[allow(unused_mut)]
-    let mut engines: Vec<Arc<dyn ScraperEngine>> =
-        vec![Arc::new(ReqwestEngine::with_proxy_and_timeout(
+    let mut engines: Vec<Arc<dyn ScraperEngine>> = match proxy_provider {
+        Some(provider) => vec![Arc::new(ReqwestEngine::with_provider_strategy_and_timeout(
             http_client.clone(),
-            proxy_url_str.to_string(),
+            provider,
+            proxy_strategy,
             timeout_seconds,
-        ))];
+        ))],
+        None => vec![Arc::new(ReqwestEngine::new_with_timeout(
+            http_client.clone(),
+            timeout_seconds,
+        ))],
+    };
 
     #[cfg(feature = "engine-playwright")]
     engines.push(Arc::new(PlaywrightEngine::new()));
@@ -115,7 +131,10 @@ pub fn init_engines(
 /// # Arguments
 ///
 /// * `http_client` - Shared HTTP client
-/// * `proxy_url` - URL for the HTTP proxy。`None` 表示未配置代理（架构 MEDIUM 5）
+/// * `proxy_provider` - 代理提供者（H2 修复：`Arc<dyn ProxyProvider>`）。
+///   `None` 时不使用代理。
+/// * `proxy_strategy` - 代理调度策略（H1 修复：RoundRobin / Sticky）。
+/// * `proxy_url` - FlareSolverr 单代理 URL（`None` 表示未配置）
 /// * `engine_config` - Engine-specific configuration
 /// * `timeout_seconds` - 请求超时（秒），从 `settings.timeouts.engines.default_timeout_seconds`
 ///   注入 ReqwestEngine，避免硬编码 30 秒（架构 MEDIUM 2）
@@ -123,15 +142,18 @@ pub fn init_engines(
 /// # Returns
 ///
 /// Returns all engine components.
-#[allow(deprecated)]
 pub fn init_engine_components(
     http_client: Arc<reqwest::Client>,
+    proxy_provider: Option<Arc<dyn ProxyProvider>>,
+    proxy_strategy: ProxyStrategy,
     proxy_url: Option<String>,
     _engine_config: &EngineSettings,
     timeout_seconds: u64,
 ) -> EngineComponents {
     let engines = init_engines(
         http_client,
+        proxy_provider,
+        proxy_strategy,
         proxy_url.as_deref(),
         _engine_config,
         timeout_seconds,
@@ -149,9 +171,18 @@ pub fn init_engine_components(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn make_http_client() -> Arc<reqwest::Client> {
         Arc::new(reqwest::Client::new())
+    }
+
+    fn make_proxy_provider() -> Arc<dyn ProxyProvider> {
+        Arc::new(ProxyPool::from_urls(
+            vec!["http://localhost:10808".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ))
     }
 
     // ========== init_engines tests ==========
@@ -162,6 +193,8 @@ mod tests {
         let engine_config = EngineSettings::default();
         let engines = init_engines(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808"),
             &engine_config,
             30,
@@ -178,6 +211,8 @@ mod tests {
         let engine_config = EngineSettings::default();
         let engines = init_engines(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808"),
             &engine_config,
             30,
@@ -199,6 +234,8 @@ mod tests {
         let engine_config = EngineSettings::default();
         let engines = init_engines(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808"),
             &engine_config,
             30,
@@ -210,11 +247,34 @@ mod tests {
     }
 
     #[test]
-    fn test_init_engines_with_empty_proxy_url() {
-        // Verify init_engines works with None proxy URL.
+    fn test_init_engines_with_no_proxy_provider() {
+        // Verify init_engines works with None proxy_provider (无代理路径)
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let engines = init_engines(http_client, None, &engine_config, 30);
+        let engines = init_engines(
+            http_client,
+            None,
+            ProxyStrategy::RoundRobin,
+            None,
+            &engine_config,
+            30,
+        );
+        assert!(!engines.is_empty());
+    }
+
+    #[test]
+    fn test_init_engines_with_sticky_strategy() {
+        // H1 修复验证：Sticky 策略可正常构造 ReqwestEngine
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let engines = init_engines(
+            http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::Sticky,
+            None,
+            &engine_config,
+            30,
+        );
         assert!(!engines.is_empty());
     }
 
@@ -226,6 +286,8 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
             30,
@@ -245,6 +307,8 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
             30,
@@ -261,6 +325,8 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
             30,
@@ -279,6 +345,8 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
             30,
@@ -296,6 +364,8 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
             30,

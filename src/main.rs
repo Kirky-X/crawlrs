@@ -204,13 +204,12 @@ mod app {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize inklog logger: {}", e))?;
 
-        // 3. Set proxy environment variables if enabled
-        if settings.proxy.enabled {
-            env::set_var("CRAWLRS_PROXY_URL", settings.proxy.url());
-            log::info!("HTTP proxy enabled (credentials hidden)");
-        }
+        // T056/C1 修复：移除 CRAWLRS_PROXY_URL 环境变量桥接。
+        // 代理已统一由 EngineModule 构造 ProxyPool 注入 ReqwestEngine，
+        // 通过 settings.proxy.urls 直接读取，无需通过环境变量中转。
+        // 双重生效会导致：http_client 级别代理 + ReqwestEngine 级别代理 同时生效冲突。
 
-        // 4. Build application state via trait-kit AsyncKit
+        // 3. Build application state via trait-kit AsyncKit
         log::info!("Initializing application dependencies...");
 
         let mut kit = AsyncKit::new();
@@ -243,7 +242,7 @@ mod app {
 
         log::info!("Application dependencies initialized successfully");
 
-        // 5. Start service based on type
+        // 4. Start service based on type
         match ServiceType::from_args() {
             ServiceType::Api => {
                 start_api_service(&app_state, settings).await?;
