@@ -17,6 +17,13 @@ pub mod playwright;
 #[cfg(feature = "engine-playwright")]
 pub mod playwright_pool;
 
+/// Chrome CDP Tab 池（T068，R-jsrender-004）
+///
+/// Page（tab）级复用，减少 `browser.new_page` 开销。
+/// 依赖 chromiumoxide::Page，仅在浏览器引擎启用时可用。
+#[cfg(feature = "engine-playwright")]
+pub mod tab_pool;
+
 /// FlareSolverr 引擎模块（统一 Full / CDP / TLS 三模式）
 ///
 /// 通过 `FlareSolverrMode` 枚举区分 Full / Cdp / Tls 三种工作模式：
@@ -45,8 +52,12 @@ pub use self::playwright::PlaywrightEngine;
 #[cfg(feature = "engine-playwright")]
 pub use self::playwright_pool::{
     get_global_pool, init_global_pool, shutdown_global_pool, BrowserInstance, BrowserPool,
-    BrowserPoolConfig, BrowserPoolStats,
+    BrowserPoolConfig, BrowserPoolStats, PooledPage,
 };
+
+/// Chrome CDP Tab 池
+#[cfg(feature = "engine-playwright")]
+pub use self::tab_pool::TabPool;
 
 /// 统一的 FlareSolverr 引擎（合并原 FireEngineCdp / FireEngineTls / FlareSolverrEngine）
 ///

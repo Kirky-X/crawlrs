@@ -17,9 +17,10 @@
 //! - 优雅关闭支持
 
 use crate::engines::browser_downloader::{BrowserDownloadConfig, BrowserDownloadManager};
+use crate::engines::client::tab_pool::TabPool;
 use crate::engines::engine_client::EngineError;
 use crate::infrastructure::services::config_service::BrowserConfigTrait;
-use chromiumoxide::{Browser, BrowserConfig};
+use chromiumoxide::{Browser, BrowserConfig, Page};
 use futures::StreamExt;
 use log::{debug, info, warn};
 use std::collections::HashMap;
@@ -45,6 +46,11 @@ pub struct BrowserPoolConfig {
     pub enable_reuse: bool,
     /// 浏览器启动参数
     pub browser_args: Vec<String>,
+    /// TabPool 最大容量（T068，R-jsrender-004）
+    ///
+    /// 每个 Browser 实例独立的 Tab 池容量。0 = 禁用 tab 复用。
+    /// 默认 10（每个 Browser 缓存最多 10 个空闲 Page）。
+    pub tab_pool_max_size: usize,
 }
 
 impl Default for BrowserPoolConfig {
@@ -60,6 +66,7 @@ impl Default for BrowserPoolConfig {
                 "--disable-dev-shm-usage".to_string(),
                 "--no-sandbox".to_string(),
             ],
+            tab_pool_max_size: 10,
         }
     }
 }
@@ -91,10 +98,15 @@ struct PooledBrowser {
     is_healthy: AtomicBool,
     /// 实例 ID
     instance_id: u64,
+    /// Tab 池（T068，per-Browser 实例）
+    ///
+    /// 每个 Browser 实例维护独立的 TabPool，避免 Page 跨 Browser 复用导致的
+    /// CDP session 失效问题（chromiumoxide Page 持有的 session 与 Browser 绑定）。
+    tab_pool: Arc<TabPool>,
 }
 
 impl PooledBrowser {
-    fn new(browser: Arc<Browser>, instance_id: u64) -> Self {
+    fn new(browser: Arc<Browser>, instance_id: u64, tab_pool_max_size: usize) -> Self {
         let now = Instant::now();
         Self {
             browser,
@@ -103,6 +115,7 @@ impl PooledBrowser {
             use_count: AtomicU64::new(0),
             is_healthy: AtomicBool::new(true),
             instance_id,
+            tab_pool: Arc::new(TabPool::new(tab_pool_max_size)),
         }
     }
 
@@ -234,6 +247,36 @@ impl BrowserPoolState {
         self.create_new_instance().await
     }
 
+    /// 获取 Browser 实例 + 对应的 TabPool（T068，R-jsrender-004）
+    ///
+    /// 内部调用 [`acquire`] 获取 Browser，再从 `in_use` 中取出对应 PooledBrowser 的
+    /// `tab_pool` 引用。返回的 `(instance_id, browser, tab_pool)` 三元组用于上层
+    /// [`BrowserPool::acquire_page`] 构造 [`PooledPage`]。
+    ///
+    /// # 错误
+    ///
+    /// - 池已关闭：`EngineError::Other("Browser pool is shutting down")`
+    /// - 信号量获取失败：`EngineError::Other("Failed to acquire semaphore")`
+    /// - 实例不在 in_use（不应发生）：`EngineError::Other`
+    async fn acquire_with_tab_pool(
+        &self,
+    ) -> Result<(u64, Arc<Browser>, Arc<TabPool>), EngineError> {
+        let (instance_id, browser) = self.acquire().await?;
+        // acquire 后 PooledBrowser 必在 in_use 中（acquire 内部插入）
+        let tab_pool = {
+            let in_use = self.in_use.read().await;
+            in_use
+                .get(&instance_id)
+                .map(|p| p.tab_pool.clone())
+                .ok_or_else(|| {
+                    EngineError::Other(format!(
+                        "instance {instance_id} not found in_use after acquire"
+                    ))
+                })?
+        };
+        Ok((instance_id, browser, tab_pool))
+    }
+
     async fn try_get_available(&self) -> Option<(u64, Arc<Browser>)> {
         let mut available = self.available.write().await;
 
@@ -269,7 +312,11 @@ impl BrowserPoolState {
         info!("Creating new browser instance {}", instance_id);
 
         let browser = self.launch_browser().await?;
-        let pooled = Arc::new(PooledBrowser::new(browser.clone(), instance_id));
+        let pooled = Arc::new(PooledBrowser::new(
+            browser.clone(),
+            instance_id,
+            self.config.tab_pool_max_size,
+        ));
         pooled.touch();
 
         // 添加到使用中
@@ -557,6 +604,93 @@ impl Drop for BrowserInstance {
     }
 }
 
+/// 浏览器 Page 包装器（T068，R-jsrender-004）
+///
+/// 同时持有 [`BrowserInstance`] 和 [`Page`]，drop 时自动归还两者：
+///
+/// 1. **Page 归还**：通过 `tokio::spawn` 异步调用 [`TabPool::release`]（导航到
+///    `about:blank` 清理状态后压栈）。runtime 不可用时 Page 直接 drop（关闭 tab）。
+/// 2. **Browser 归还**：`browser_instance` 字段 drop 时触发
+///    [`BrowserInstance::drop`]，通过 return channel 归还到 BrowserPool。
+///
+/// # 手动释放
+///
+/// 调用 [`release`](Self::release) 可显式异步归还两者（等待 Page 导航完成），
+/// 适用于需要在 drop 前确保 Page 状态清理的场景。
+pub struct PooledPage {
+    /// Page 实例（Option 便于 Drop 中 take）
+    page: Option<Page>,
+    /// 对应的 BrowserInstance（drop 时归还 Browser）
+    browser_instance: Option<BrowserInstance>,
+    /// 对应的 TabPool（用于归还 Page）
+    tab_pool: Arc<TabPool>,
+}
+
+impl PooledPage {
+    /// 获取 Page 引用
+    ///
+    /// # Panics
+    ///
+    /// 若 Page 已被 [`release`](Self::release) 或 drop 取走则 panic。
+    pub fn page(&self) -> &Page {
+        self.page
+            .as_ref()
+            .expect("PooledPage already released (page taken)")
+    }
+
+    /// 获取 Browser 引用（透传 BrowserInstance）
+    ///
+    /// # Panics
+    ///
+    /// 若 BrowserInstance 已被 [`release`](Self::release) 或 drop 取走则 panic。
+    pub fn browser(&self) -> &Arc<Browser> {
+        self.browser_instance
+            .as_ref()
+            .expect("PooledPage already released (browser_instance taken)")
+            .browser()
+    }
+
+    /// 手动释放（异步归还 Page + Browser）
+    ///
+    /// 1. 调用 [`TabPool::release`] 归还 Page（等待导航到 `about:blank`）
+    /// 2. 调用 [`BrowserInstance::release`] 归还 Browser（发送到 return channel）
+    ///
+    /// 调用后 `self` 被消费，不应再访问。
+    pub async fn release(mut self) {
+        // 1. 归还 Page 到 TabPool
+        if let Some(page) = self.page.take() {
+            self.tab_pool.release(page).await;
+        }
+        // 2. 归还 BrowserInstance（BrowserInstance::release 消费 self）
+        if let Some(instance) = self.browser_instance.take() {
+            instance.release().await;
+        }
+    }
+}
+
+impl Drop for PooledPage {
+    fn drop(&mut self) {
+        // 1. 归还 Page（spawn task，因为 TabPool::release 是 async）
+        if let Some(page) = self.page.take() {
+            let tab_pool = self.tab_pool.clone();
+            // 尝试在当前 runtime spawn 归还 task
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    handle.spawn(async move {
+                        tab_pool.release(page).await;
+                    });
+                }
+                Err(_) => {
+                    // runtime 不可用（如 shutdown 中），Page 直接 drop（关闭 tab）
+                    debug!("tokio runtime unavailable, dropping Page directly");
+                }
+            }
+        }
+        // 2. BrowserInstance drop 自动归还 Browser（通过 return_sender）
+        // browser_instance 字段 drop 时触发 BrowserInstance::drop
+    }
+}
+
 /// 浏览器实例池管理器
 ///
 /// 管理浏览器实例的生命周期，支持实例复用、最大实例数限制、
@@ -604,6 +738,57 @@ impl BrowserPool {
             browser: Some(browser),
             instance_id,
             return_sender,
+        })
+    }
+
+    /// 获取 Browser + Page（T068，R-jsrender-004）
+    ///
+    /// 在 [`acquire`](Self::acquire) 基础上额外从对应 Browser 的 [`TabPool`]
+    /// 获取/复用 [`Page`]。返回的 [`PooledPage`] 在 drop 时自动归还 Browser 与 Page。
+    ///
+    /// # Page 复用语义
+    ///
+    /// - 池中有空闲 Page（LIFO）→ 弹出复用，避免 `browser.new_page` 开销
+    /// - 池空 → 调用 `browser.new_page("about:blank")` 新建
+    ///
+    /// # 错误
+    ///
+    /// - 池已关闭、信号量失败、实例不在 in_use：透传 [`acquire`](Self::acquire) 错误
+    /// - TabPool::acquire 失败（`browser.new_page` CDP 错误）：
+    ///   `EngineError::BrowserError`，并自动归还 Browser 避免泄漏
+    pub async fn acquire_page(&self) -> Result<PooledPage, EngineError> {
+        let (instance_id, browser, tab_pool) = self.state.acquire_with_tab_pool().await?;
+
+        // 从 TabPool 获取 Page，失败时归还 Browser 避免泄漏
+        let page = match tab_pool.acquire(&browser).await {
+            Ok(page) => page,
+            Err(e) => {
+                // acquire Page 失败，归还 Browser 到 return channel
+                let return_sender = self.state.return_sender.lock().await.clone();
+                if let Some(sender) = &return_sender {
+                    let _ = sender.try_send(ReturnMessage {
+                        instance_id,
+                        browser,
+                    });
+                }
+                return Err(EngineError::BrowserError(e.to_string()));
+            }
+        };
+
+        // 获取归还通道发送端（用于 BrowserInstance 归还）
+        let return_sender = {
+            let sender = self.state.return_sender.lock().await;
+            sender.clone()
+        };
+
+        Ok(PooledPage {
+            page: Some(page),
+            browser_instance: Some(BrowserInstance {
+                browser: Some(browser),
+                instance_id,
+                return_sender,
+            }),
+            tab_pool,
         })
     }
 
@@ -765,6 +950,29 @@ mod tests {
         assert_eq!(config.idle_timeout_secs, 300);
         assert_eq!(config.health_check_interval_secs, 60);
         assert!(config.enable_reuse);
+        // T068：tab_pool_max_size 默认 10
+        assert_eq!(config.tab_pool_max_size, 10);
+    }
+
+    #[test]
+    fn test_browser_pool_config_tab_pool_disabled() {
+        // tab_pool_max_size=0 禁用 tab 复用
+        let config = BrowserPoolConfig {
+            tab_pool_max_size: 0,
+            ..BrowserPoolConfig::default()
+        };
+        assert_eq!(config.tab_pool_max_size, 0);
+    }
+
+    #[tokio::test]
+    async fn test_browser_pool_acquire_page_shutdown_fails() {
+        // 池关闭后 acquire_page 应返回错误
+        let config = BrowserPoolConfig::default();
+        let browser_config = Arc::new(BrowserConfigComponent::default());
+        let pool = BrowserPool::new(config, browser_config);
+        pool.shutdown().await;
+        let result = pool.acquire_page().await;
+        assert!(result.is_err());
     }
 
     #[test]
