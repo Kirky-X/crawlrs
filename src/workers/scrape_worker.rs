@@ -36,6 +36,11 @@ use crate::domain::services::webhook_service::WebhookService;
 use crate::utils::regex_cache::RegexCache;
 // T053/R-frontier-001：URL 分层去重器（Bloom 预筛 + DB 保权威）
 use crate::utils::dedup::{DedupResult, Deduplicator};
+// T066/R-frontier-002/003：深度爬取过滤 + 评分 + 优先级队列
+use crate::workers::crawl::{
+    FilterContext, Frontier, PathDepthScorer, ScoringContext, UrlFilter, UrlPatternFilter,
+    UrlScorer,
+};
 
 use crate::common::HttpMethod;
 use crate::engines::engine_client::{
@@ -66,6 +71,10 @@ use crate::workers::errors::ScrapeWorkerError;
 use crate::workers::scheduler::memory_scheduler::{Admission, MemoryScheduler};
 
 /// 从缓存获取正则表达式
+///
+/// T066 后 `should_crawl` 委托 `UrlPatternFilter`（内部自管 regex 缓存），
+/// 此函数仅保留供测试验证 `RegexCache` 行为，标记 `#[cfg(test)]` 避免生产死代码。
+#[cfg(test)]
 fn get_cached_regex(pattern: &str, cache: &RegexCache) -> Result<regex::Regex, ScrapeWorkerError> {
     cache
         .get_or_insert(pattern)
@@ -102,6 +111,10 @@ pub struct ScrapeWorker {
     default_concurrency_limit: usize,
     retry_handler: RetryHandler,
     extraction_service: Arc<dyn ExtractionServiceTrait>,
+    /// T066 后 `should_crawl` 委托 `UrlPatternFilter`，此字段不再被生产代码读取。
+    /// 保留以维持 builder API 兼容（`with_regex_cache` + 构造器签名），
+    /// 全面移除需更新 30+ 调用点，作为独立重构任务处理。
+    #[allow(dead_code)]
     regex_cache: RegexCache,
     /// 内存感知调度器（T019/R-runtime-001）
     ///
@@ -1257,47 +1270,9 @@ impl ScrapeWorker {
             }
         }
 
-        // DefinitelyNew 直接入队（已 insert，无需二次锁）
-        for link in &to_enqueue {
-            let mut priority = task.priority;
-            if let Some(strategy) = &config.strategy {
-                if strategy.to_lowercase() == "dfs" {
-                    priority = priority.saturating_add(1);
-                }
-            }
-
-            let new_task = Task {
-                id: Uuid::new_v4(),
-                task_type: TaskType::Crawl,
-                status: TaskStatus::Queued,
-                priority,
-                team_id: task.team_id,
-                api_key_id: task.api_key_id,
-                url: link.to_string(),
-                payload: json!({
-                    "crawl_id": crawl_id.to_string(),
-                    "depth": current_depth + 1,
-                    "config": config
-                }),
-                retry_count: 0,
-                attempt_count: 0,
-                max_retries: 3,
-                scheduled_at: None,
-                created_at: Utc::now(),
-                started_at: None,
-                completed_at: None,
-                crawl_id: Some(crawl_id),
-                updated_at: Utc::now(),
-                lock_token: None,
-                lock_expires_at: None,
-                expires_at: None,
-            };
-
-            self.repository.create(&new_task).await?;
-            self.crawl_repository
-                .increment_total_tasks(crawl_id)
-                .await?;
-        }
+        // T066/R-frontier-003：收集新 URL，统一经 Frontier 评分排序后入队
+        let mut new_urls: Vec<String> = Vec::with_capacity(unique_links.len());
+        new_urls.extend(to_enqueue.iter().cloned());
 
         // 对 db_check 列表进行 DB 批量校验（保权威层）
         if !db_check.is_empty() {
@@ -1344,8 +1319,38 @@ impl ScrapeWorker {
                 }
             }
 
-            // 入队 DB 校验后确认为新的 URL
-            for link in &to_db_enqueue {
+            // 收集 DB 校验后确认为新的 URL
+            new_urls.extend(to_db_enqueue.iter().cloned());
+        }
+
+        // T066/R-frontier-003：用 Frontier 按 URL 评分 + 域名 round-robin 排序入队
+        //
+        // 浅路径（hub/index 页面）评分更高，优先出队以提升爬取覆盖效率。
+        // 域名 round-robin 避免单域名饥饿。
+        if !new_urls.is_empty() {
+            let scorer = PathDepthScorer::new();
+            let scoring_ctx = ScoringContext::default();
+            let frontier = Frontier::new();
+
+            for url in &new_urls {
+                let score = scorer.score(url, &scoring_ctx);
+                match crate::workers::crawl::ScoredUrl::new(url.clone(), score) {
+                    Ok(scored) => frontier.push(scored),
+                    Err(e) => {
+                        // URL 域名提取失败（不应到达，links 已过滤 http/https）
+                        warn!("task_id: {}, URL 评分失败跳过: {} ({})", task.id, url, e);
+                    }
+                }
+            }
+
+            info!(
+                "task_id: {}, {} URLs 入 Frontier（{} 域名），按评分出队",
+                task.id,
+                frontier.len(),
+                frontier.domain_count()
+            );
+
+            while let Some(scored) = frontier.pop() {
                 let mut priority = task.priority;
                 if let Some(strategy) = &config.strategy {
                     if strategy.to_lowercase() == "dfs" {
@@ -1360,7 +1365,7 @@ impl ScrapeWorker {
                     priority,
                     team_id: task.team_id,
                     api_key_id: task.api_key_id,
-                    url: link.to_string(),
+                    url: scored.url,
                     payload: json!({
                         "crawl_id": crawl_id.to_string(),
                         "depth": current_depth + 1,
@@ -1391,40 +1396,16 @@ impl ScrapeWorker {
     }
 
     fn should_crawl(&self, url: &str, config: &CrawlConfigDto) -> bool {
-        // 1. 检查包含模式 (如果有配置，必须匹配其中一个)
-        if let Some(includes) = &config.include_patterns {
-            let mut matched = false;
-            for pattern in includes {
-                if let Ok(re) = get_cached_regex(pattern, &self.regex_cache) {
-                    if re.is_match(url) {
-                        matched = true;
-                        break;
-                    }
-                } else if url.contains(pattern) {
-                    // 简单的字符串包含回退
-                    matched = true;
-                    break;
-                }
-            }
-            if !matched {
-                return false;
-            }
+        // T066/R-frontier-002：委托 UrlPatternFilter（行为等价，回归测试断言）
+        //
+        // 边界场景：Some(vec![]) 空 include 列表 → 无 pattern 可匹配 → 拒绝（vacuous truth）。
+        // UrlPatternFilter 将空 include 视为"无限制"（返回 true），需在此显式处理。
+        if matches!(&config.include_patterns, Some(patterns) if patterns.is_empty()) {
+            return false;
         }
-
-        // 2. 检查排除模式 (如果有配置，不能匹配任何一个)
-        if let Some(excludes) = &config.exclude_patterns {
-            for pattern in excludes {
-                if let Ok(re) = get_cached_regex(pattern, &self.regex_cache) {
-                    if re.is_match(url) {
-                        return false;
-                    }
-                } else if url.contains(pattern) {
-                    return false;
-                }
-            }
-        }
-
-        true
+        let include = config.include_patterns.clone().unwrap_or_default();
+        let exclude = config.exclude_patterns.clone().unwrap_or_default();
+        UrlPatternFilter::new(include, exclude).accept(url, &FilterContext::default())
     }
 
     async fn handle_scrape_success(

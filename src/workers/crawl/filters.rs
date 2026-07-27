@@ -13,8 +13,6 @@
 //!
 //! 三者通过 [`crate::workers::crawl::FilterChain`] 串联，全部 `accept` 才放行。
 
-use std::sync::Arc;
-
 use regex::Regex;
 use url::Url;
 
@@ -371,6 +369,7 @@ impl UrlFilter for UrlPatternFilter {
 mod tests {
     use super::*;
     use crate::workers::crawl::{FilterChain, FilterContext};
+    use std::sync::Arc;
 
     // ============ DomainFilter ============
 
