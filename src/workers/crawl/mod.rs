@@ -12,10 +12,11 @@
 //!
 //! - [`filters`]：URL 过滤器 trait + FilterChain + 三个具体 filter（T063）
 //! - [`scorers`]：URL 评分器 trait + CompositeScorer + 两个具体 scorer（T064）
-//! - `frontier`：优先级队列 + 域名 round-robin（T065，待实现）
+//! - [`frontier`]：优先级队列 ScoredUrl + 域名 round-robin（T065）
 //! - `adaptive`：自适应策略 + 停止条件（T067，待实现）
 
 pub mod filters;
+pub mod frontier;
 pub mod scorers;
 
 use std::sync::Arc;
@@ -234,4 +235,5 @@ impl FilterChain {
 }
 
 pub use filters::{ContentTypeFilter, DomainFilter, UrlPatternFilter};
+pub use frontier::{Frontier, FrontierError, ScoredUrl};
 pub use scorers::{CompositeScorer, KeywordRelevanceScorer, PathDepthScorer};
