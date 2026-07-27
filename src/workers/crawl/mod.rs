@@ -11,11 +11,12 @@
 //! # 模块组成
 //!
 //! - [`filters`]：URL 过滤器 trait + FilterChain + 三个具体 filter（T063）
-//! - `scorers`：URL 评分器 trait + CompositeScorer（T064，待实现）
+//! - [`scorers`]：URL 评分器 trait + CompositeScorer + 两个具体 scorer（T064）
 //! - `frontier`：优先级队列 + 域名 round-robin（T065，待实现）
 //! - `adaptive`：自适应策略 + 停止条件（T067，待实现）
 
 pub mod filters;
+pub mod scorers;
 
 use std::sync::Arc;
 
@@ -44,6 +45,33 @@ pub trait UrlFilter: Send + Sync {
     fn accept(&self, url: &str, context: &FilterContext) -> bool;
 }
 
+/// URL 评分器 trait（T064，R-frontier-003）
+///
+/// 实现者定义 URL 的相关性分数，[`scorers::CompositeScorer`] 加权聚合多个 scorer。
+/// 分数归一化到 `[0.0, 1.0]`，越高表示越相关，应优先出队。
+///
+/// # 实现要求
+///
+/// - 必须线程安全（`Send + Sync`），CompositeScorer 可被多 worker 共享
+/// - 决策幂等：同一 `(url, context)` 输入应返回相同分数
+/// - 分数归一化：返回值必须落在 `[0.0, 1.0]` 区间
+///   - `0.0`: 完全不相关
+///   - `0.5`: 中性（如空关键词列表无法判定相关性）
+///   - `1.0`: 完全相关
+pub trait UrlScorer: Send + Sync {
+    /// 计算 URL 的相关性分数
+    ///
+    /// # 参数
+    ///
+    /// - `url`: 待评分的 URL（已归一化）
+    /// - `context`: 评分上下文（关键词列表等辅助信息）
+    ///
+    /// # 返回
+    ///
+    /// 归一化分数 `[0.0, 1.0]`，高=更相关
+    fn score(&self, url: &str, context: &ScoringContext) -> f32;
+}
+
 /// 过滤上下文（T063）
 ///
 /// 提供 filter 决策所需的辅助信息，避免每个 filter 自行解析 URL 或重复查询。
@@ -51,10 +79,10 @@ pub trait UrlFilter: Send + Sync {
 /// # 字段说明
 ///
 /// - `source_content_type`: 源页面（即发现该 URL 的页面）的 Content-Type。
-///   [`ContentTypeFilter`] 用此判定是否跨类型跳转（如从 text/html 跳到 application/pdf）。
-/// - `source_domain`: 源页面域名。[`DomainFilter`] 用此判定是否跨域。
+///   [`filters::ContentTypeFilter`] 用此判定是否跨类型跳转（如从 text/html 跳到 application/pdf）。
+/// - `source_domain`: 源页面域名。[`filters::DomainFilter`] 用此判定是否跨域。
 /// - `link_text`: 链接文本（如 `<a href="...">link_text</a>`）。
-///   [`UrlPatternFilter`] 在 regex 失败回退时可用作辅助判定（当前未使用，预留扩展）。
+///   [`filters::UrlPatternFilter`] 在 regex 失败回退时可用作辅助判定（当前未使用，预留扩展）。
 #[derive(Debug, Clone, Default)]
 pub struct FilterContext {
     /// 源页面的 Content-Type（如 `text/html; charset=utf-8`）
@@ -90,6 +118,45 @@ impl FilterContext {
     #[must_use]
     pub fn with_link_text(mut self, text: impl Into<String>) -> Self {
         self.link_text = Some(text.into());
+        self
+    }
+}
+
+/// 评分上下文（T064）
+///
+/// 提供 scorer 决策所需的辅助信息。
+///
+/// # 字段说明
+///
+/// - `keywords`: 关键词列表（用于 [`scorers::KeywordRelevanceScorer`]）。
+///   通常由 CrawlConfigDto 的 `keywords` 字段或 LLM 查询扩展生成。
+/// - `source_url`: 源页面 URL（预留扩展，用于上下文相关评分，如 source 同 path 前缀加分）。
+#[derive(Debug, Clone, Default)]
+pub struct ScoringContext {
+    /// 关键词列表
+    pub keywords: Vec<String>,
+    /// 源页面 URL（预留扩展）
+    pub source_url: Option<String>,
+}
+
+impl ScoringContext {
+    /// 构造空上下文（无关键词，无源 URL）
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 设置关键词列表
+    #[must_use]
+    pub fn with_keywords(mut self, keywords: Vec<String>) -> Self {
+        self.keywords = keywords;
+        self
+    }
+
+    /// 设置源页面 URL
+    #[must_use]
+    pub fn with_source_url(mut self, url: impl Into<String>) -> Self {
+        self.source_url = Some(url.into());
         self
     }
 }
@@ -167,3 +234,4 @@ impl FilterChain {
 }
 
 pub use filters::{ContentTypeFilter, DomainFilter, UrlPatternFilter};
+pub use scorers::{CompositeScorer, KeywordRelevanceScorer, PathDepthScorer};
